@@ -210,6 +210,24 @@
     "PS-P7 merged (DEC-97; stampText and buildPackageCover's drawable pattern)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-13 at the PS-P7 merge (DEC-31): PS-P7 proposed it as 'PS-P7b'. One file; no migration; runs any time."
+  },
+  {
+   "name": "PS-P9 PER-PRINT SHEET TOKEN \u2014 a printed pack's sheet QR names its sheet by a per-print token, not by its place in the live membership",
+   "findings": [
+    "intelligence DACL-8 criterion 2 (assigned at the I-12 merge): each printed sheet carries a per-print token (a table of print id \u2192 sheet \u2192 document version, written when the pack is stamped); /api/verify-package and /api/verify answer for that sheet exactly, and a legacy cover QR keeps I-12's place-only wording"
+   ],
+   "files": [
+    "supabase/migrations: one DEC-30 file (the token table, RLS, DRLS-16)",
+    "lib/stamping.ts / the pack print path, app/api/verify-package/route.ts, app/api/verify/route.ts",
+    "tests: a reprinted pack's old sheet reads stale; a current sheet reads current; nothing about a restricted document's name is disclosed (I-12's rule)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "intelligence I-12 merged (2026-10-14; lib/verifyDisclosure, the place-only legacy wording)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the I-12 merge, 2026-10-14 (DEC-31; rulings under DEC-90 recorded on the DEC-90 I-12 landing line)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

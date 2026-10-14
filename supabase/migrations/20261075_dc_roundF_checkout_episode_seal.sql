@@ -123,4 +123,4 @@ SELECT 'search_path pinned on the guard',
           FROM pg_proc WHERE proname = 'enforce_checkout_episode_guard'),
        NULL
 UNION ALL
-SELECT check, NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;
+SELECT "check", NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;

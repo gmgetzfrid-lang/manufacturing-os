@@ -44,6 +44,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
+import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { addUsage, ZERO_USAGE, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
 import { assertAiGates, GovernedCallError, type AiGatePass, type AiReservation } from "@/lib/ai/aiGates";
@@ -161,11 +162,19 @@ export async function POST(req: NextRequest) {
     .eq("id", documentId).eq("org_id", orgId).maybeSingle();
   if (!doc) return bad("Sheet not found", 404);
 
-  // Fail closed: a mirrored controlled document obeys the source's ACL.
+  // Fail closed: a mirrored controlled document obeys the source's ACL —
+  // and (KACL-10) the AI boundary as it stands now: a sheet whose document
+  // is held back, superseded / void / archived or has no current file is
+  // never looked at by the model, whatever a racing sync left in place.
   if (doc.source_document_id) {
     try {
-      const readable = await readableControlledDocIds(principal, [doc.source_document_id as string]);
-      if (!readable.has(doc.source_document_id as string)) return bad("Not permitted", 403);
+      const src = doc.source_document_id as string;
+      const [readable, aiOk] = await Promise.all([
+        readableControlledDocIds(principal, [src]),
+        aiReadableControlledIds(orgId, [src]),
+      ]);
+      if (!readable.has(src)) return bad("Not permitted", 403);
+      if (!aiOk.has(src)) return bad("This sheet's document is not available to AI features (held back, superseded, archived, or without a current file).", 409);
     } catch {
       return bad("Not permitted", 403);
     }
@@ -255,8 +264,13 @@ export async function POST(req: NextRequest) {
         let readable = new Set<string>();
         if (mirrors.length > 0) {
           try {
-            readable = await readableControlledDocIds(
-              principal, [...new Set(mirrors.map((d) => d.source_document_id as string))]);
+            // KACL-10: readable to the caller AND to the AI now.
+            const sources = [...new Set(mirrors.map((d) => d.source_document_id as string))];
+            const [acl, aiOk] = await Promise.all([
+              readableControlledDocIds(principal, sources),
+              aiReadableControlledIds(orgId, sources),
+            ]);
+            readable = new Set(sources.filter((id) => acl.has(id) && aiOk.has(id)));
           } catch { readable = new Set(); }
         }
         const best = new Map<string, { document_id: string; page: number }>();

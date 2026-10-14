@@ -391,7 +391,7 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     admin.state.user = null;
     expect((await post({ orgId: ORG, libraryId: LIB, action: "list" })).status).toBe(401);
   });
-  it("reproduction: the seam judges a document restricted ONLY by its library's ACL as readable when the libraries read fails (loadDcLandscape ignores the error)", async () => {
+  it("KACL-12 (intelligence I-12): a document restricted ONLY by its library's ACL is never judged readable when the libraries read fails — the seam throws (this was the reproduction of loadDcLandscape ignoring the error)", async () => {
     const { loadPrincipal, readableControlledDocIds } = await import("@/lib/knowledgeAccess");
     const RLIB = "0c000000-0000-4000-8000-000000000002";
     const DLIB = "0e000000-0000-4000-8000-000000000003";
@@ -401,7 +401,9 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     const pv = (await loadPrincipal(ORG, V))!;
     expect([...await readableControlledDocIds(pv, [DLIB])]).toEqual([]);           // the library's ACL denies V
     admin.state.failReads.libraries = { message: "statement timeout" };
-    expect([...await readableControlledDocIds(pv, [DLIB])]).toEqual([DLIB]);      // …until the libraries read fails
+    // Was [DLIB] (the leak). Now the landscape load throws, and every caller
+    // fails closed on the throw.
+    await expect(readableControlledDocIds(pv, [DLIB])).rejects.toThrow(/libraries \(and their access rules\) could not be read: statement timeout/);
   });
   it("…so the history route checks the libraries and folders reads first: either failing answers 500 with NO rows (fail closed)", async () => {
     const K_LIBR = "0f000000-0000-4000-8000-000000000003";
@@ -429,7 +431,7 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     admin.state.user = { id: A };
     expect((await post({ orgId: ORG, libraryId: LIB, action: "list" })).status).toBe(200);
   });
-  it("reproduction: the seam judges a document DENIED to the reader's team as readable when the team_members read fails (loadPrincipal ignores the error)", async () => {
+  it("KACL-12 (intelligence I-12): a team_members read failure yields NO principal, so a document DENIED to the reader's team is never judged readable (this was the reproduction of loadPrincipal ignoring the error)", async () => {
     const { loadPrincipal, readableControlledDocIds } = await import("@/lib/knowledgeAccess");
     const TM = "3a000000-0000-4000-8000-000000000001";
     const DTEAM = "0e000000-0000-4000-8000-000000000004";
@@ -441,9 +443,11 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
       ] } });
     expect([...await readableControlledDocIds((await loadPrincipal(ORG, V))!, [DTEAM])]).toEqual([]);   // the team DENY binds
     admin.state.failReads.team_members = { message: "statement timeout" };
-    const blind = (await loadPrincipal(ORG, V))!;
-    expect(blind.teamIds).toEqual([]);                                                                 // the error is dropped
-    expect([...await readableControlledDocIds(blind, [DTEAM])]).toEqual([DTEAM]);                     // …and the DENY never matches
+    // Was a principal with teamIds [] that read DTEAM (the leak). Now no
+    // principal is built from a failed read: loadPrincipal THROWS
+    // PrincipalUnreadableError (I-12 second review fix — it answered null,
+    // which callers told the reader as "Not a member"); every caller refuses.
+    await expect(loadPrincipal(ORG, V)).rejects.toMatchObject({ name: "PrincipalUnreadableError", what: "teams" });
   });
   it("…so the history route reads the reader's teams again: a failed read answers 500 with NO rows, and a principal whose teams were lost is judged with the teams actually read", async () => {
     const TM = "3a000000-0000-4000-8000-000000000001";
@@ -460,20 +464,25 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     admin.state.user = { id: V };
     // healthy: withheld by the team DENY
     expect(await (await post({ orgId: ORG, libraryId: LIB, action: "list" })).text()).not.toContain("TEAM-DENIED QUOTE");
-    // the team read fails: nothing is served
+    // the team read fails: nothing is served. Since KACL-12 (intelligence
+    // I-12) loadPrincipal itself refuses to build a principal on that
+    // failure, so the route refuses at its member check (no rows) before its
+    // own re-read of the teams is reached — 503 "try again" since the second
+    // review fix (it said 403 "Not a member of this workspace").
     admin.state.failReads = { team_members: { message: "statement timeout" } };
     const res = await post({ orgId: ORG, libraryId: LIB, action: "list" });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     const text = await res.text();
-    expect(JSON.parse(text).rows).toBeUndefined();
-    expect(JSON.parse(text).error).toMatch(/teams \(and the access rules that name them\) could not be read: statement timeout/);
+    expect(JSON.parse(text)).toEqual({ error: "Couldn't check your access just now — try again." });
     expect(text).not.toContain("TEAM-DENIED QUOTE");
     // loadPrincipal's read failed but the re-read succeeds: judged with the teams read
     admin.state.failReads = {};
     const { loadPrincipal } = await import("@/lib/knowledgeAccess");
     const lost = { ...(await loadPrincipal(ORG, V))!, teamIds: [] };
     expect([...await readableKnowledgeDocIds(lost, [K_TEAM, K_OPEN])]).toEqual([K_OPEN]);
-    // a controller is not filtered, so nothing is read for them (DEC-43)
+    // a controller is not filtered, so nothing is read for them (DEC-43) —
+    // and a controller still loads while team_members fails (a controller's
+    // teams decide nothing, KACL-12's loadPrincipal)
     admin.state.failReads = { team_members: { message: "statement timeout" } };
     admin.state.user = { id: A };
     expect((await post({ orgId: ORG, libraryId: LIB, action: "list" })).status).toBe(200);

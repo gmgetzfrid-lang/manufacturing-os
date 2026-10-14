@@ -165,7 +165,7 @@ lib/capabilityPolicy.ts:70-71 —
 ## ROUTE-3 · Dead notification plumbing that the code documents as live: the ticket-follower resolver, the engineer-initial routing branch, and the entire web-push channel
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N10 PUSH (limb (c), through `TAX-12`) — restated by the integrator at the N15 merge, 2026-10-14 (DEC-31). Limb (a) was N15's and is done.
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (limb (a): `lib/notify/recipients.ts` `resolveFollowers`' ticket branch removed, or its header says the two ticket routes fold `tickets.watchers` themselves) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
@@ -239,6 +239,24 @@ self.addEventListener("push", (event) => {
 - Done-when 3 is not met: `TAX-12`, notifications N10.
 
 **Scope / residual.** Stays OPEN on (c) only (`TAX-12`, N10).
+
+**Resolution (2026-10-14, notifications Round G).** Package N10 PUSH, branch `fleet/N10-push` (base `ce5a053`), commits `3f53779` (`web-push` 3.6.7), `b3358d9` (the channel) and `669afad` (no push for a registration older than the opt-in control) — limb (c), through notifications `TAX-12`.
+
+**Re-verified** on `ce5a053`: limb (a) is N15's (✓ above); limb (b) is DF-P3's (✓ above); limb (c) held: the push handler in `public/sw.js`, the `push_subscriptions` table, and no subscriber or sender.
+
+**What landed (limb (c)).** Push subscription and a VAPID sender are implemented:
+- `components/settings/PushOptIn.tsx` subscribes a device after the person's click and the browser's permission;
+- `app/api/push/subscribe/route.ts` stores it;
+- `lib/push/sendPush.ts` sends with VAPID keys from `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`, called from `lib/notify/dispatch.ts` `emit()`'s third leg.
+The record is `TAX-12` / `OS-2` (notifications `03-taxonomy.md`, `07-os-notifications-and-nudges.md`). The migration header's "reach you even when the app is closed" is now true of the channel. Its "reminder cron reads every row" is not, and a migration is never edited; the sender's own header says who reads the table.
+- Verified (loop on `fleet/N10-push` at `669afad`, 2026-10-14): `npx tsc --noEmit` exit 0; `npx eslint` on the changed files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` in four shards (`--shard=N/4`), each exit 0 — 568 files, 12532 passed, 8 expected fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ 1 (N15, above).
+- ✓ 2 (DF-P3, above).
+- ✓ 3: push subscription and a VAPID sender are implemented (notifications `TAX-12`).
+
+**Scope / residual.** None in this finding. A request's mention or assignment is not yet pushed, because the two ticket routes write their bell rows outside `emit()`. That is notifications `OS-14` (new; the integrator routes it — the ticket routes are drafting-flow's).
 
 ---
 

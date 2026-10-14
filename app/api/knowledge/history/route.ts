@@ -40,7 +40,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { loadPrincipal } from "@/lib/knowledgeAccess";
+import { loadPrincipal, PrincipalUnreadableError, PRINCIPAL_UNREADABLE } from "@/lib/knowledgeAccess";
 import {
   citedKnowledgeDocIds, contextKnowledgeDocIds, isUuid, planVisibleHistory, knowledgeDocAccess,
   type StoredAnswerRow,
@@ -96,7 +96,13 @@ export async function POST(req: NextRequest) {
   if (action !== "list" && action !== "search" && action !== "thread") return bad("Unknown action");
 
   let principal;
-  try { principal = await loadPrincipal(orgId, user.id); } catch { principal = null; }
+  // KACL-12 (intelligence I-12 second review fix): an unreadable membership
+  // or teams (loadPrincipal's PrincipalUnreadableError) is a temporary 503,
+  // never "Not a member"; any other failure stays closed, as before.
+  try { principal = await loadPrincipal(orgId, user.id); } catch (e) {
+    if (e instanceof PrincipalUnreadableError) return bad(PRINCIPAL_UNREADABLE, 503);
+    principal = null;
+  }
   if (!principal) return bad("Not a member of this workspace", 403);
 
   const { data: lib, error: libErr } = await supabaseAdmin

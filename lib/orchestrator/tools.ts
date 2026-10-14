@@ -20,6 +20,8 @@
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
+import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
+import { aiReadability } from "@/lib/aiBoundary";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { orIlikeContains, type ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge, type TraceStep } from "@/lib/pidTrace";
@@ -156,9 +158,30 @@ async function unreadableMirrors(ctx: ToolContext, knowledgeDocIds: string[], bu
     }
     if (mirrored.length === 0) return new Set(unchecked);
     if (budgetSpent(budget)) return new Set([...unchecked, ...mirrored.map((m) => m.id)]);
-    const readable = await readableControlledDocIds(ctx.principal, [...new Set(mirrored.map((m) => m.source_document_id))]);
-    return new Set([...unchecked, ...mirrored.filter((m) => !readable.has(m.source_document_id)).map((m) => m.id)]);
+    // KACL-9 / KACL-10: the AI boundary is asked here too, at query time
+    // (lib/aiBoundary aiReadability, through aiReadableControlledIds): a
+    // mirror whose document is held back, superseded / void / archived, or
+    // has no current file is never read back to the model, whatever a racing
+    // sync left in place.
+    const sources = [...new Set(mirrored.map((m) => m.source_document_id))];
+    const [readable, aiOk] = await Promise.all([
+      readableControlledDocIds(ctx.principal, sources),
+      aiReadableControlledIds(ctx.orgId, sources),
+    ]);
+    return new Set([...unchecked, ...mirrored
+      .filter((m) => !readable.has(m.source_document_id) || !aiOk.has(m.source_document_id)).map((m) => m.id)]);
   } catch { return new Set(ids); }
+}
+
+/** KACL-9: which of these controlled documents may the caller read AND the
+ *  AI read now — for a tool that hands the model what the document SAYS
+ *  (a mention's proving sentence). Fails CLOSED. */
+async function contentReadableIds(ctx: ToolContext, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  try {
+    const [readable, aiOk] = await Promise.all([readableIds(ctx, ids), aiReadableControlledIds(ctx.orgId, ids)]);
+    return new Set(ids.filter((id) => readable.has(id) && aiOk.has(id)));
+  } catch { return new Set(); }
 }
 
 /** Stable id for "this exact action", so approving one thing approves that
@@ -185,12 +208,11 @@ const findDocuments: ToolDef = {
     const q = String(args.query);
     const { data, error } = await supabaseAdmin
       .from("documents")
-      .select("id, document_number, title, rev, status, library_id, updated_at")
+      .select("id, document_number, title, rev, status, library_id, updated_at, ai_excluded, archived_at, current_version_id")
       .eq("org_id", ctx.orgId)
-      // PILLAR A. `ai_excluded` is the per-document carve-out a controller sets
-      // when a document must stay invisible to anything automated. It is
-      // honoured here explicitly because this code runs on the service-role
-      // key, where RLS would not stop us.
+      // PILLAR A. `ai_excluded` (NOT NULL) is pre-filtered in the query so
+      // held-back rows never fill the LIMIT window and crowd real matches
+      // out; aiReadability below is the named check (KACL-9, I-12 review fix).
       .eq("ai_excluded", false)
       // ORCH-6: the model's text is a quoted, escaped literal — a comma or a
       // parenthesis in a title no longer re-splits the filter list.
@@ -203,8 +225,22 @@ const findDocuments: ToolDef = {
     if (error) {
       return { data: { error: "The document lookup failed — this is NOT the same as finding nothing. Say it could not be checked.", matches: null } };
     }
+    // PILLAR A / KACL-9: the AI boundary is lib/aiBoundary aiReadability —
+    // the one function every AI door asks — honoured here explicitly because
+    // this code runs on the service-role key, where RLS would not stop us. A
+    // finder hands the model a document's IDENTITY, not its text, so the
+    // reason that binds here is `held_back` (ai_excluded: the per-document
+    // carve-out a controller sets when a document must stay invisible to
+    // anything automated); a superseded or file-less document is still found
+    // and named with its status, as before.
+    const rows = ((data ?? []) as Array<Record<string, unknown>>).filter((r) => aiReadability({
+      id: String(r.id),
+      status: (r.status as string | null) ?? null,
+      archivedAt: (r.archived_at as string | null) ?? null,
+      currentVersionId: (r.current_version_id as string | null) ?? null,
+      aiExcluded: r.ai_excluded === true,
+    }, true).reason !== "held_back");
     // SURF-7: only what the caller could open themselves.
-    const rows = (data ?? []) as Array<Record<string, unknown>>;
     const readable = await readableIds(ctx, rows.map((r) => String(r.id)));
     return {
       data: {
@@ -237,30 +273,19 @@ const searchDocuments: ToolDef = {
       p_org_id: ctx.orgId, p_query: String(args.query), p_limit: limit,
     });
     if (error) return { data: { error: "Text search isn't installed yet.", passages: [] } };
-    // graph_ask runs on the service role here, so the ai_excluded boundary
-    // (documents.ai_excluded, the per-document "keep AI out" carve-out that
-    // every other AI surface honors) must be applied at this layer — the
-    // RPC itself doesn't know about it. Map excluded doc-control documents
-    // to their knowledge mirrors via source_document_id.
+    // graph_ask runs on the service role here, so the AI boundary
+    // (documents.ai_excluded — the per-document "keep AI out" carve-out —
+    // and the rest of lib/aiBoundary aiReadability) must be applied at this
+    // layer — the RPC itself doesn't know about it. KACL-9: it rides the
+    // mirror hop below (unreadableMirrors asks aiReadability for every
+    // mirror's document, read per mirror, failing closed), which replaced a
+    // held-back list capped at 2000 documents / 4000 mirrors whose failed
+    // read excluded nothing.
     const excluded = new Set<string>();
-    try {
-      const { data: exDocs } = await supabaseAdmin
-        .from("documents").select("id")
-        .eq("org_id", ctx.orgId).eq("ai_excluded", true).limit(2000);
-      const exIds = new Set(((exDocs ?? []) as Array<{ id: string }>).map((r) => r.id));
-      if (exIds.size > 0) {
-        const { data: mirrors } = await supabaseAdmin
-          .from("knowledge_documents").select("id, source_document_id")
-          .eq("org_id", ctx.orgId).not("source_document_id", "is", null).limit(4000);
-        for (const m of (mirrors ?? []) as Array<{ id: string; source_document_id: string }>) {
-          if (exIds.has(m.source_document_id)) excluded.add(m.id);
-        }
-      }
-    } catch { /* columns absent on old schemas — nothing to exclude */ }
     // SURF-7: a passage from a knowledge MIRROR of a controlled document is
     // only returned when the caller may read that document (the same hop the
-    // knowledge ask route makes). Fails closed for mirrors; upload-origin
-    // knowledge documents stay org-readable, unchanged.
+    // knowledge ask route makes) and the AI may read it now. Fails closed for
+    // mirrors; upload-origin knowledge documents stay org-readable, unchanged.
     const kIds = ((data ?? []) as Array<Record<string, unknown>>).map((r) => String(r.knowledge_document_id));
     for (const id of await unreadableMirrors(ctx, kIds)) excluded.add(id);
     return {
@@ -328,7 +353,7 @@ const equipmentMentions: ToolDef = {
     const rows = (data ?? []) as Array<Record<string, unknown>>;
     const [hiddenMirrors, readableDocs] = await Promise.all([
       unreadableMirrors(ctx, rows.map((r) => String(r.knowledge_document_id ?? ""))),
-      readableIds(ctx, [...new Set(rows.map((r) => r.document_id).filter((d): d is string => typeof d === "string" && d.length > 0))]),
+      contentReadableIds(ctx, [...new Set(rows.map((r) => r.document_id).filter((d): d is string => typeof d === "string" && d.length > 0))]),
     ]);
     const visible = rows.filter((r) => {
       if (typeof r.knowledge_document_id === "string" && hiddenMirrors.has(r.knowledge_document_id)) return false;

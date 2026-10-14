@@ -29,6 +29,7 @@ import {
 // from browser bundles (the publish pipeline's sweep), so the server route
 // hands the matcher in (LNK-6).
 import type { SkillMatcherFactory } from "@/lib/customSkillRunner";
+import { aiReadability } from "@/lib/aiBoundary";
 
 const BATCH = 400;
 const CHUNK = 150;
@@ -360,6 +361,11 @@ export async function runLinkProposers(
   // ── Controlled documents: identity index + revision, excluding anything
   // carved out of AI reading. ai_excluded is a young column; if it isn't
   // there yet the select would fail wholesale, so fall back gracefully.
+  // KACL-9: the carve-out is judged by lib/aiBoundary aiReadability, the one
+  // function every AI door asks. The proposer links documents by identity,
+  // so the reason that binds is `held_back` (as before: a superseded
+  // drawing is still a reference target); the query keeps its pre-filter so
+  // the read cap counts only documents the proposer may use.
   type DocRow = { id: string; document_number: string | null; rev: string | null };
   let docRead = await readPaged<DocRow & { ai_excluded?: boolean }>((from, to) => admin
     .from("documents")
@@ -368,6 +374,11 @@ export async function runLinkProposers(
     .eq("ai_excluded", false)
     .order("id", { ascending: true })
     .range(from, to), READ_CAP.documents);
+  if (!docRead.error) {
+    docRead = { ...docRead, rows: docRead.rows.filter((d) => aiReadability({
+      id: d.id, status: null, archivedAt: null, currentVersionId: null, aiExcluded: d.ai_excluded === true,
+    }, true).reason !== "held_back") };
+  }
   if (docRead.error) {
     docRead = await readPaged<DocRow>((from, to) => admin
       .from("documents").select("id, document_number, rev")

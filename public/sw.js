@@ -654,9 +654,17 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-/* ─── Web Push: scheduled reminders ──────────────────────────────────────
- * Shows the OS notification the reminder cron sends (fires whether the app is
- * open or closed). Clicking focuses an existing window or opens a new one. */
+/* ─── Web Push ───────────────────────────────────────────────────────────
+ * Shows the OS notification the push channel sends (fires whether the app is
+ * open or closed): lib/push/sendPush.ts, called from emit() at the moment of
+ * the event for the few push-worthy kinds (KIND_META.pushWorthy) — never by
+ * a cron (notifications Round G, N10 — GAP-205). Its payload is exactly
+ * { title, body, url, tag } (pushPayloadFor): a generic title per kind, no
+ * document number, title, reason or name; `url` a root-relative path into
+ * the app; `tag` one per kind and resource, so a second push about the same
+ * thing replaces the first. Clicking focuses an existing window and
+ * navigates it there, or opens one when none is open (GAP-205 acceptance 4;
+ * lib/__tests__/sw.test.ts pins both). */
 self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }

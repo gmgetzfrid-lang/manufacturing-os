@@ -248,18 +248,17 @@ export async function readableKnowledgeDocIds(
  * no longer exist? Throws on
  * a failed read of knowledge_documents — the caller fails CLOSED (serves
  * nothing) rather than serving an unfiltered answer. A failed read of the
- * controlled documents themselves admits none of them (closed).
- * loadDcLandscape (lib/knowledgeAccess, the seam owner's file) ignores a
- * failed libraries / folders read and would then judge a document restricted
- * ONLY by its library or folder ACL by its own ACL alone; until it throws,
- * the same two reads are made here first and a failure of either throws
- * (closed). What remains is a read failing between this check and the
- * seam's own — closed for good when loadDcLandscape throws (handed over).
- * loadPrincipal (same file) ignores a failed team_members read too, leaving
- * teamIds empty, so an ACL that DENIES the reader's team would never match
- * and the document would be judged readable. The reader's teams are read
- * again here, a failure throws (closed), and the mirrors are judged with the
- * teams actually read — until loadPrincipal throws on that read (handed over).
+ * controlled documents themselves THROWS too (readableControlledDocIds
+ * raises DcLandscapeUnreadableError "documents" since the I-12 third review
+ * fix; it used to admit none of them) — the caller answers nothing, never a
+ * partial list.
+ * The libraries / folders reads and the reader's teams are read here first
+ * and a failure of any throws (closed). They were added while
+ * loadDcLandscape and loadPrincipal (lib/knowledgeAccess) ignored those
+ * failures (a document restricted only by its library or folder ACL judged
+ * by its own ACL alone; teamIds empty, so a team DENY never matched); since
+ * intelligence I-12 both throw on them as well, so these reads are a second,
+ * earlier check of the same rule.
  */
 export async function knowledgeDocAccess(
   principal: KnowledgePrincipal,

@@ -17,9 +17,9 @@
       "LOW": 28
     },
     "by_status": {
-      "RESOLVED": 57,
+      "RESOLVED": 59,
       "WONTFIX": 1,
-      "OPEN": 8
+      "OPEN": 6
     }
   },
   "status_vocabulary": [
@@ -984,7 +984,7 @@
       "id": "VFY-7",
       "title": "/d/[number] is not punctuation-forgiving as documented, and silently redirects to a DIFFERENT drawing when the typed number is a substring of another",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1655,7 +1655,7 @@
       "id": "VFY-16",
       "title": "The public verify endpoints answer for a private or hidden document with its number and title — no verify route reads `documents.visibility` (intelligence `DACL-8` / `DACL-3` criterion 3, handed over)",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

@@ -92,9 +92,16 @@ describe("ALOG-14 remainder — every snapshot row is checked against its enforc
     expect(row("Upload files / create folders").warn).toContain("once 20261011 is confirmed applied, the database refuses anyone but Admin / Document Control a new folder");
   });
 
-  it("download: canServeContent (controller, owner, normal visibility, else an ACL read / download grant); the hard ack gate", () => {
+  it("download: canServeContent (controller, owner, a chain with no ACL on a normal document, else an ACL read / download grant over the full chain); the hard ack gate", () => {
     expect(row("Download / print (stamped when uncontrolled)").m).toBe("yycccccccccc");
-    expect(src("lib/permissions.ts")).toMatch(/if \(isControllerPrincipal\(principal\)\) return true;\s+if \(params\.effectiveOwnerUserId && principal\.uid && params\.effectiveOwnerUserId === principal\.uid\) return true;\s+if \(visibility !== "hidden" && visibility !== "private"\) return true;[\s\S]*?return decision\.can\("download"\) \|\| decision\.can\("read"\);/);
+    // KACL-5 / IEDGE-12 (intelligence I-12): canServeContent is the one read
+    // predicate (canReadNode) asking read or download over the full chain.
+    // I-12 review fix: a private draft is its creator's alone — decided after
+    // the controller tier and before the owner arm (IEDGE-12).
+    expect(src("lib/permissions.ts")).toMatch(/if \(isControllerPrincipal\(principal\)\) return true;\s+if \(params\.privateDraft && !\(principal\.uid && params\.privateDraft\.createdBy === principal\.uid\)\) return false;\s+if \(params\.effectiveOwnerUserId && principal\.uid && params\.effectiveOwnerUserId === principal\.uid\) return true;[\s\S]*?if \(!decision\) return visibility === "normal";\s+return actions\.some\(\(a\) => decision\.can\(a\)\);/);
+    expect(row("Download / print (stamped when uncontrolled)").cond).toContain("A private draft is its creator's alone (and the controllers').");
+    expect(src("lib/permissions.ts")).toMatch(/return canReadNode\(\{ \.\.\.params, actions: \["read", "download"\] \}\);/);
+    expect(row("Download / print (stamped when uncontrolled)").cond).toContain("over that chain on any visibility");
     expect(src("app/api/storage/download-url/route.ts")).toMatch(/canServeContent\(contentCheck\)/);
     expect(src("lib/downloads.ts")).toContain("export class AcknowledgmentRequiredError extends Error");
   });

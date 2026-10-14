@@ -236,12 +236,12 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
   }
   const asDoc = (d: Row) => ({ id: d.id, orgId: ORG, libraryId: "lib1", documentNumber: d.document_number, title: d.title, rev: d.rev, status: d.status, currentVersionId: d.current_version_id ?? undefined, metadata: d.metadata });
   const issued = () => T("audit_logs").filter((a) => a.action === "DOCUMENT_ISSUED");
-  function save(d: Row, opts: { activeRole?: string | null; uid?: string | null; pageSees?: Row } = {}) {
+  function save(d: Row, opts: { activeRole?: string | null; uid?: string | null; pageSees?: Row; cds?: typeof changeDocumentStatus } = {}) {
     const st = { error: null as string | null, alerts: [] as Array<{ title: string; message: string }> };
     const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "isUnguardedEntryIntoForce", "isControlledIssueStatus", "computeUniquenessKey", "setError", "appAlert"])({
       selectedDoc: asDoc({ ...d, ...(opts.pageSees ?? {}) }), uid: opts.uid === undefined ? "ctl1" : opts.uid, userEmail: "ctl@example.com",
       activeRole: opts.activeRole === undefined ? "DocCtrl" : opts.activeRole, activeOrgId: ORG,
-      library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus, isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, computeUniquenessKey,
+      library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus: opts.cds ?? changeDocumentStatus, isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, computeUniquenessKey,
       setError: (v: string | null) => { st.error = v; },
       appAlert: async (a: { title: string; message: string }) => { st.alerts.push(a); },
     });
@@ -387,6 +387,32 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(issued()).toEqual([]);
     expect(rb.st.error).toMatch(/^D13 was saved, but its state just before the save could not be read, so whether this save issued it is unknown/);
     expect(rb.st.alerts).toEqual([]);
+    // REV-30 (intelligence I-12): both read-failed sentences are true before
+    // and after 20261205 — the bulk editor's wording, never "no issue record
+    // was written" (since 20261205 the database writes it, if it was one).
+    const since = "this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one)";
+    expect(ra.st.error).toContain(since);
+    expect(rb.st.error).toContain(since);
+    for (const e of [ra.st.error, rb.st.error]) expect(e).not.toMatch(/no issue record was written|or issue record —/);
+  });
+
+  it("REV-30 — the read-failed branch names a refused follow-up row (recordError), on both sentences, as the bulk editor does", async () => {
+    const refused = async () => ({ issued: false, putBack: false, complianceClockErrors: [], notRecordedBecause: "read_failed" as const, recordError: "new row violates row-level security policy" });
+    const a = seed("d15", { status: "Draft" });
+    const ra = save(a, { cds: refused as unknown as typeof changeDocumentStatus });
+    await ra.fn({ metadata: {}, core: { title: "d15", documentNumber: "D15", status: "Issued" } });
+    expect(ra.st.error).toMatch(/^D15 was saved as Issued, but 2 follow-up steps did not complete\./);
+    expect(ra.st.error).toContain("The record that no clock was started could not be written (new row violates row-level security policy), so the document's history does not say so.");
+    const b = seed("d16", { status: "Issued" });
+    const rb = save(b, { cds: refused as unknown as typeof changeDocumentStatus });
+    await rb.fn({ metadata: {}, core: { title: "d16", documentNumber: "D16", status: "Issued" } });
+    expect(rb.st.error).toMatch(/^D16 was saved, but its state just before the save could not be read/);
+    expect(rb.st.error).toContain("The record that no clock was started could not be written (new row violates row-level security policy), so the document's history does not say so.");
+    // …and without a refused row, neither sentence names one
+    const ok = async () => ({ issued: false, putBack: false, complianceClockErrors: [], notRecordedBecause: "read_failed" as const, recordError: null });
+    const c = save(seed("d17", { status: "Issued" }), { cds: ok as unknown as typeof changeDocumentStatus });
+    await c.fn({ metadata: {}, core: { title: "d17", documentNumber: "D17", status: "Issued" } });
+    expect(c.st.error).not.toContain("could not be written");
   });
 
   it("regression — a register row with no revision (rev editable): ONE UPDATE with rev in the payload (DRLS-15); nothing to issue, nothing recorded", async () => {

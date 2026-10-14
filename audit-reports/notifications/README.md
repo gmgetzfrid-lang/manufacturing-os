@@ -29,7 +29,7 @@ stacking, and what a real OS notification would attach to.
 
 ## Findings
 
-**125 findings** — 2 CRITICAL, 17 HIGH, 77 MEDIUM, 29 LOW — plus **7 gap specs**, all buildable.
+**127 findings** — 2 CRITICAL, 17 HIGH, 78 MEDIUM, 30 LOW — plus **7 gap specs**, all buildable.
 
 > **One finding here carries `Status: REFUTED`** — `NEDGE-1`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 

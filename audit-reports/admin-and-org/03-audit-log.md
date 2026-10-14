@@ -875,7 +875,11 @@ Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "done-when 1: th
 2. ✗ `write_access` / `admin_access` are still written, by the wizard save and by `createLibrary`, and not enforced. The admin picker is gone and the upload picker is real (owner P8).
 3. ✗ no decision recorded (owner P8, with I-12's DACL-10 default).
 
+**Assigned (2026-10-14, the integrator at the intelligence I-12 merge): intelligence I-31 LEGACY LISTS INTO THE ACL.** admin-and-org P8 merged without closing this. The decision is now recorded: `DEC-90`'s I-12 rulings R1 (a legacy library's read lists — `read_access`, `visible_to`, `write_access`, `admin_access` — bind as a fallback where its ACL says nothing) and R6 (the lists are retired into `libraries.acl`; no RESTRICTIVE policy). Until I-31 lands, the app's legacy rung reads those columns, so they cannot be dropped first; I-31 retires them from the wizard and `createLibrary` and corrects the console comment.
+
 **Scope / residual.** All three criteria are open. No application code changed in this package.
+
+*Cross-note (2026-10-14, intelligence Round G, I-12 review fix): one more file now names the three columns — `lib/libraryAccess.ts` (`LIBRARY_RUNG_COLUMNS`, `effectiveLibraryAclFromRow`), the one library check `DACL-10` built. It READS `read_access`, `visible_to`, `write_access` and `admin_access` for a legacy library whose ACL says nothing, and synthesizes the read rung that list stands for (discover / read / download to each listed role, write and admin roles included, as the wizard grants); the library page, the AI seam (`lib/knowledgeAccess` `loadDcLandscape`) and the bytes door (`lib/docFileServer` `loadContainerAclChain`) take the library rung from it. So `write_access` / `admin_access` now feed a READ decision for those legacy rows — a fact for done-when 2's enforce-or-drop choice: dropping the columns drops the write / admin roles from that rung (retiring the lists into `libraries.acl`, `DACL-10` criterion 1 option (a), carries them over). The census test's set (`aoRoundGP0Records.test.ts`) lists the file.*
 
 ---
 

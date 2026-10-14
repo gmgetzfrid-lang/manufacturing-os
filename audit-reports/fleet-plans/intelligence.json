@@ -1217,6 +1217,70 @@
       "sequencingNotes": [
         "Added by the integrator at the I-17 merge, 2026-10-14 (DEC-31). LOW severity, but it touches the policy helpers every read uses: regression-first, every policy's answer pinned before and after on the replay."
       ]
+    },
+    {
+      "name": "I-29 KNOWLEDGE VIEWER KEYS AND PICKER READS — a source-linked knowledge mirror never hands the browser a storage key, and the knowledge pickers treat an errored held-back read as closed",
+      "findings": [
+        "KACL-5 criterion 4 and KACL-7 criterion 3 (assigned at the I-12 merge): knowledge_documents.file_key no longer reaches the browser for a source-linked mirror (lib/knowledge.ts, the knowledge page, CitedPageViewer): the viewer asks a server route that decides through the I-12 read predicate (lib/permissions canReadNode / lib/knowledgeAccess) and signs; every legitimate reader opens exactly what they open today",
+        "KACL-9 residual (assigned at the I-12 merge): /api/flows/browse and /api/area/knowledge-status read the held-back (ai_excluded) flag and ignore an errored read before calling aiReadability — an errored read withholds (fail closed), a missing column means nothing is held back (as the sync does)"
+      ],
+      "files": [
+        "lib/knowledge.ts, app/(protected)/knowledge/**, the CitedPageViewer component, a server signing route for mirrors",
+        "app/api/flows/browse/route.ts, app/api/area/knowledge-status/route.ts",
+        "tests: a mirror of a document the caller may not read yields no key and no bytes; a readable one opens as today; the pickers' errored read withholds"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "intelligence I-12 merged (2026-10-14; the read predicate and lib/aiBoundaryServer)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the I-12 merge, 2026-10-14 (DEC-31; rulings under DEC-90 recorded on the DEC-90 I-12 landing line)."
+      ]
+    },
+    {
+      "name": "I-30 NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED GRANTS — the database agrees with the app on a normal row's allow-list and on inherited grants, and a drop box keeps taking uploads with the read-deny binding on",
+      "findings": [
+        "DACL-1 criterion 1, KACL-7's allow-list / private-draft half, IEDGE-6 criterion 1, IEDGE-12 criterion 1 (assigned at the I-12 merge; ruling R5 under DEC-90): node_visible honours a normal row's chain allow-list as the app does (lib/acl aclSaysSomething), with the orgs bucket added to acl_subject_in_bucket so the library wizard's 'Everyone' grant keeps every member in; counts-only inventory first (who would lose a row), DEC-30",
+        "DACL-9 criterion 1 and its grants half (ruling R3): a non-inheriting library's or folder's GRANTS reach the descendants that inherit, in lib/acl evaluateAclChain / buildAclIndexFromChain and in acl_index at the rebuild — sized by 20261212's DACL-9 inventory count before it ships",
+        "DACL-12 criterion 1 and the normal-row read deny (rulings R2 and its follow-up): 20261212 holds the database read-deny binding back by default (an operator switch that stays off), so it lands HERE, with no switch, together with drop-box support — a library or folder that denies a role READ and lets it UPLOAD keeps taking that role's uploads at any time (an uploader rule at insert, or a server-side insert that does not read the row back); node_visible re-created from its NEWEST body with the deny for every subject (uid, every held role, org-scoped teams, the workspace) on every visibility, as 20261212's switch-on body proves on the harness",
+        "DACL-12 criterion 3 (and IRLS-9 criterion 3 unless I-12 closed it by pointer): the 22-case app-vs-database agreement matrix runs on the I-17 harness (npm run test:db) as a NEW file under lib/__tests__/rls/",
+        "DACL-6 criterion 3 (assigned at the I-12 merge): the app-vs-database agreement matrix's normal allow-list residual is DACL-1 criterion 1, built here; DACL-6 closes by pointer once the matrix agrees on it"
+      ],
+      "files": [
+        "supabase/migrations: one DEC-30 file re-creating node_visible (both forms), acl_subject_in_bucket and any policy that must change from their NEWEST bodies (lineDiff-pinned), counts-only inventory, DRLS-16",
+        "lib/acl.ts, lib/permissions.ts, the library page's upload (app/(protected)/documents/[libraryId]/page.tsx uploadOne) or a server upload route",
+        "lib/__tests__/rls/<new>.test.ts"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "intelligence I-12 merged (2026-10-14; 20261212, the read predicate)",
+        "intelligence I-27 merged (it owns the existing lib/__tests__/rls/** files and the fresh-install replay)",
+        "intelligence I-28 merged or not in flight on node_visible (it decides node_visible's p_owner answer)",
+        "20261212's inventory read back by the user (the DACL-9 and drop-box counts size this package)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the I-12 merge, 2026-10-14 (DEC-31; rulings under DEC-90 recorded on the DEC-90 I-12 landing line). Regression-first: every member who reads a row today keeps it unless an allow-list or deny the admin wrote says otherwise, proven on the harness before and after."
+      ]
+    },
+    {
+      "name": "I-31 LEGACY LISTS INTO THE ACL — a legacy library's read_access / visible_to lists are written into libraries.acl once, counted first, so one model decides who reads a library",
+      "findings": [
+        "DACL-10 criterion 1, database half (assigned at the I-12 merge; ruling R6 under DEC-90 — the plan's default): retire read_access / visible_to as enforcement by writing each legacy library's lists into libraries.acl (the rules the app's legacy rung evaluates today, so nobody's access changes at the paste), counts-only inventory first; NO RESTRICTIVE policy on libraries; once landed, the app's legacy rung (lib/libraryAccess legacyLibraryAcl) is retired and the wizard / console show the ACL",
+        "admin-and-org ALOG-13 (assigned at the I-12 merge; its decision is now DEC-90's I-12 rulings R1 and R6): the /admin/permissions comment states what the code does, and write_access / admin_access are retired from the wizard UI and payload (and createLibrary) as part of writing the legacy lists into libraries.acl — the legacy rung (lib/libraryAccess) reads them until this package lands, so the drop happens here, not before"
+      ],
+      "files": [
+        "supabase/migrations: one DEC-30 file (counts first; idempotent; writes only rows whose ACL is NULL or zero-rule and whose lists are restricted)",
+        "lib/libraryAccess.ts, the documents home (computeCanRead), the library settings surface",
+        "tests: every member reads exactly the libraries they read before the paste and after it"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "intelligence I-12 merged (2026-10-14; ruling R1: the legacy rung binds in the app)",
+        "admin-and-org P8 merged (the wizard writes libraries.acl)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the I-12 merge, 2026-10-14 (DEC-31; rulings under DEC-90 recorded on the DEC-90 I-12 landing line)."
+      ]
     }
   ],
   "crossAreaFileOverlaps": [
@@ -1252,7 +1316,7 @@
     "ING-7": "paste 20261122",
     "SEM-9": "paste 20261121 and send back its last row (recall@12 vs exact scan; >= 0.90 closes it, below turns it back into code work)",
     "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory",
-    "ING-13": "paste 20261186 (after 20261122; I-22 merged 2026-10-07) and send back its result set \u2014 the integrator sets RESOLVED then (DEC-58 as ruled under DEC-90 A18)",
-    "ING-6": "paste 20261186 (after 20261122; I-22 merged 2026-10-07) and send back its result set \u2014 the integrator sets RESOLVED then (DEC-58 as ruled under DEC-90 A18)"
+    "ING-13": "paste 20261186 (after 20261122; I-22 merged 2026-10-07) and send back its result set — the integrator sets RESOLVED then (DEC-58 as ruled under DEC-90 A18)",
+    "ING-6": "paste 20261186 (after 20261122; I-22 merged 2026-10-07) and send back its result set — the integrator sets RESOLVED then (DEC-58 as ruled under DEC-90 A18)"
   }
 }

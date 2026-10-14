@@ -260,7 +260,13 @@ describe("SESS-6 — the consumers", () => {
   });
 
   it("documents: no role known reads no library by role — not even an \"ALL\" one", () => {
-    expect(src("app/(protected)/documents/page.tsx")).toMatch(/const _canRead = activeRole !== null && computeCanRead\(normalized, activeRole, roles\);/);
+    // DACL-10 (intelligence I-12): computeCanRead moved to lib/libraryAccess
+    // as libraryReadsByRole. The library page (I-12 review fix) asks the
+    // explorer's evaluation of the library rung, which takes the principal —
+    // and with no role known there is no principal, so nothing is visible.
+    expect(src("app/(protected)/documents/page.tsx")).toMatch(/const _canRead = activeRole !== null && libraryReadsByRole\(normalized, activeRole, roles\);/);
+    expect(src("app/(protected)/documents/[libraryId]/page.tsx")).toMatch(/\|\| explorerLibraryVisible\(principal, library\);/);
+    expect(src("lib/libraryAccess.ts")).toMatch(/if \(!principal \|\| !lib\) return false;/);
   });
 
   it("the library page: no role, no principal — nothing discoverable or readable, no publish, no permission management, no inspector, no collection controls", () => {

@@ -947,7 +947,7 @@ lib/
   notifications.ts, markupRequests.ts, exportRunner.ts, dataExport.ts
   workflow.ts                     ← ticket state machine
 supabase/
-  schema.sql                      ← cumulative create-from-scratch reference
+  schema.sql                      ← frozen pre-migration baseline (DB-8): run first, then every migration in filename order
   migrations/                     ← dated, header-commented, additive
 types/
   schema.ts                       ← all shared TS interfaces

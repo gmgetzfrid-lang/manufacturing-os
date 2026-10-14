@@ -11,9 +11,10 @@
 //
 //   * the principal is the one loadPrincipal builds (role collection, teams);
 //     an inactive or absent membership yields null and the route answers 403
-//     before any key, meter or provider is touched — and so does an ACTIVE
-//     member whose principal cannot be loaded, although the route's own
-//     member read still finds them (the `!principal` limb, Done-when 1);
+//     before any key, meter or provider is touched — and an ACTIVE member
+//     whose principal cannot be READ, although the route's own member read
+//     still finds them, is refused there too (503 "try again" since I-12's
+//     second review fix — the principal limb, Done-when 1);
 //   * a folder-level deny, and a folder restricted to a team the caller is
 //     not in, both remove the document inside the folder from find_documents
 //     AND its mirror's passages from search_documents, while a controller
@@ -37,7 +38,16 @@
 // `.limit()` (filter, sort, then window, as PostgREST does), so when the
 // container reads start paging these cases run that loop too; the row-cap
 // limb itself (more folders than one window) is KACL-12 Done-when 4 and is not
-// reproduced here.
+// reproduced here (lib/__tests__/intelRoundGDocAcl.test.ts pages it).
+//
+// Since intelligence I-12 (2026-10-14) all four hold: loadDcLandscape throws
+// on a failed container read, loadPrincipal THROWS PrincipalUnreadableError
+// on a failed team_members read (superseded wording: the first build answered
+// no principal; since the I-12 second review fix it throws, and the routes
+// answer 503 "try again", never 403 "Not a member"), the container reads page
+// by keyset until an empty page, readableControlledDocIds throws on a failed
+// documents read (I-12 third review fix), and a chain is never evaluated with
+// a rung missing — the four cases are plain `it`.
 //
 // DACL-2 criterion 1 (a key belonging to a held document is refused) did not
 // hold for a revision's NATIVE SOURCE file when this file was written:
@@ -192,9 +202,11 @@ function seed(folderAcl: Row | null, folderVisibility = "normal") {
     }],
     documents: [
       { id: IN_FOLDER, org_id: ORG, library_id: LIB, collection_id: FOLDER, document_number: "INC-0042", title: "Flare KO drum incident report",
-        rev: "A", status: "Issued", ai_excluded: false, acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null, updated_at: "2026-09-01" },
+        rev: "A", status: "Issued", ai_excluded: false, acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null, updated_at: "2026-09-01",
+        archived_at: null, current_version_id: "v-inc" },
       { id: AT_ROOT, org_id: ORG, library_id: LIB, collection_id: null, document_number: "STD-0007", title: "Flare header standard",
-        rev: "C", status: "Issued", ai_excluded: false, acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null, updated_at: "2026-08-01" },
+        rev: "C", status: "Issued", ai_excluded: false, acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null, updated_at: "2026-08-01",
+        archived_at: null, current_version_id: "v-std" },
     ],
     // k1 mirrors the document inside the folder, k2 the one at the root,
     // k3 is an upload-origin knowledge document (no controlled source).
@@ -253,21 +265,25 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 1: the principal is loadPrinci
     expect(db.providerCalls).toBe(0);
   });
 
-  it("/api/orchestrator answers 403 for an ACTIVE member whose principal cannot be loaded, though its own member read finds them", async () => {
+  it("/api/orchestrator refuses an ACTIVE member whose principal cannot be loaded, though its own member read finds them — 503 'try again' since intelligence I-12's second review fix (an unreadable row is not 'Not a member'); nothing reaches the provider", async () => {
     seed(null);
     // loadPrincipal's read (`role, roles`) fails; the route's second read of
     // the same row (`uid, role, display_name, email`) succeeds — so only the
-    // `!principal` limb of route.ts's guard can refuse this caller.
+    // principal limb of route.ts's guard can refuse this caller. Since I-12
+    // (second review fix) loadPrincipal THROWS PrincipalUnreadableError on a
+    // failed read (it answered null, which the route told the member as "Not
+    // a member of this workspace"); the route answers 503 with the try-again
+    // sentence — still refused, still before any key, meter or provider.
     db.failSelect.add("org_members|role, roles");
-    expect(await loadPrincipal(ORG, "u-viewer")).toBeNull();
+    await expect(loadPrincipal(ORG, "u-viewer")).rejects.toMatchObject({ name: "PrincipalUnreadableError" });
     db.user = { id: "u-viewer" };
     const res = await orchestratorPOST(new NextRequest("http://test/api/orchestrator", {
       method: "POST",
       headers: { authorization: "Bearer tok", "content-type": "application/json" },
       body: JSON.stringify({ orgId: ORG, question: "what does the incident report say about the flare knockout drum?" }),
     }));
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "Not a member of this workspace" });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "Couldn't check your access just now — try again." });
     expect(db.providerCalls).toBe(0);
   });
 });
@@ -305,14 +321,17 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 2 and 3: a FOLDER-level ACL re
     expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual(["INC-0042", "STD-0007", "Site note"]);
   });
 
-  it("fails CLOSED: when the seam cannot read the documents' own ACL rows, nothing controlled is returned (upload-origin passages only)", async () => {
+  it("fails CLOSED: when the seam cannot read the documents' own ACL rows it THROWS (I-12 third review fix — it read as 'no rows'), so nothing controlled is returned and the passage hop hides everything, as for any seam throw", async () => {
     seed(null);
     const viewer = await ctxFor("u-viewer");
     // find_documents' own candidate query still succeeds (it is not an
     // `.in("id", …)` read); only readableControlledDocIds' row read fails.
     db.failIn.add("documents");
     expect(matchIds(await run("find_documents", { query: "flare" }, viewer))).toEqual([]);
-    expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual(["Site note"]);
+    // unreadableMirrors treats every id as unreadable when the seam throws
+    // (lib/orchestrator/tools.ts) — the upload-origin note included, as on a
+    // landscape read failure; it came back while the failure read as "no rows".
+    expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual([]);
   });
 
   it("fails CLOSED on the mirror hop: when knowledge_documents cannot be read, every returned knowledge document is hidden", async () => {
@@ -323,7 +342,7 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 2 and 3: a FOLDER-level ACL re
   });
 });
 
-describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails until the fix lands, then flip each to `it`", () => {
+describe("KACL-12 (owner I-12): the seam's own reads fail CLOSED — flipped from it.fails to it by intelligence I-12 (2026-10-14)", () => {
   /** What a denied Viewer gets back from both tools: the denied document's
    *  match and its passage, if either leaks. The tools catch a throwing seam
    *  (tools.ts:89, :112), so a fix that throws reads as "nothing leaked". */
@@ -351,7 +370,7 @@ describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails unti
       if (where === "library") db.tables.libraries[0].acl = DENY_VIEWER_READ;
       expect(await leakedTo(await ctxFor("u-viewer"))).toEqual([]);
     });
-    it.fails(`a ${table} read error never lets a document under a ${where}-level deny through either tool — nothing controlled comes back, or the seam aborts`, async () => {
+    it(`a ${table} read error never lets a document under a ${where}-level deny through either tool — nothing controlled comes back, or the seam aborts`, async () => {
       seed(where === "folder" ? (DENY_VIEWER_READ as unknown as Row) : null);
       if (where === "library") db.tables.libraries[0].acl = DENY_VIEWER_READ;
       const viewer = await ctxFor("u-viewer");
@@ -378,7 +397,7 @@ describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails unti
     seedTeamDeny();
     expect(await leakedTo(await ctxFor("u-viewer"))).toEqual([]);
   });
-  it.fails("a team_members read error never drops a team deny — no principal, an abort, or the deny still applies", async () => {
+  it("a team_members read error never drops a team deny — no principal, an abort, or the deny still applies", async () => {
     seedTeamDeny();
     db.errors.team_members = { message: "statement timeout" };
     const outcome = await loadPrincipal(ORG, "u-viewer").then(
@@ -408,7 +427,7 @@ describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails unti
     const l = await loadDcLandscape(ORG);
     expect([containerReadable("library", LIB, principal, l), containerReadable("folder", FOLDER, principal, l)]).toEqual([false, false]);
   });
-  it.fails("a libraries read error never makes a folder under a library-level deny a readable container — refused, or the landscape load aborts", async () => {
+  it("a libraries read error never makes a folder under a library-level deny a readable container — refused, or the landscape load aborts", async () => {
     seed(null);
     db.tables.libraries[0].acl = DENY_VIEWER_READ;
     const principal = (await loadPrincipal(ORG, "u-viewer")) as KnowledgePrincipal;

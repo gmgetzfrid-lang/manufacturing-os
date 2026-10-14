@@ -17,6 +17,12 @@
 // cadence list come from lib/notificationPrefs.ts, which a test pins to the
 // digest_frequency CHECK. The page used to write 'immediate', which the
 // CHECK refuses, so a member with no row could never save (NEDGE-2).
+//
+// Device notifications (notifications Round G, N10 — GAP-205): the third
+// channel, Web Push, is its own card (components/settings/PushOptIn.tsx) —
+// the person-wide push_enabled switch, saved the moment it is flipped, and
+// "Turn on notifications for this device", the only place the app asks the
+// browser for permission. The Save button below never writes push_enabled.
 
 import React, { useEffect, useState } from "react";
 import {
@@ -35,6 +41,7 @@ import {
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
+import PushOptIn from "@/components/settings/PushOptIn";
 
 type Prefs = NotificationPrefs;
 type PgError = { code?: string; message: string; details?: string };
@@ -51,7 +58,7 @@ function saveFailure(err: PgError): string {
 }
 
 export default function NotificationSettingsPage() {
-  const { uid } = useRole();
+  const { uid, activeOrgId } = useRole();
   const [prefs, setPrefs] = useState<Prefs>({ ...PREF_DEFAULTS });
   // RT-10: the per-category pop-up switches, saved beside the rest.
   const [toastCats, setToastCats] = useState<ToastCategoryPrefs>({ ...TOAST_CATEGORY_DEFAULTS });
@@ -152,7 +159,7 @@ export default function NotificationSettingsPage() {
             className="flex-1 min-w-0"
             icon={Bell}
             title="Notifications"
-            subtitle="Control which events email you. In-app bell notifications are always on."
+            subtitle="Control which events email you or reach your devices. In-app bell notifications are always on."
           />
         </div>
 
@@ -242,6 +249,10 @@ export default function NotificationSettingsPage() {
             Save preferences
           </Button>
         </div>
+
+        {/* Device notifications (Web Push — N10): saved on its own, not by
+            the button above */}
+        <PushOptIn uid={uid} orgId={activeOrgId ?? null} />
     </PageShell>
   );
 }

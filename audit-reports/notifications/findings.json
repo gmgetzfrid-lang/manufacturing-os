@@ -12,18 +12,19 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 125,
+    "findings": 127,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
-      "MEDIUM": 77,
-      "LOW": 29
+      "MEDIUM": 78,
+      "LOW": 30
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 89,
-      "OPEN": 32,
+      "RESOLVED": 96,
+      "OPEN": 26,
+      "RESOLVED (2026-10-14, notifications Round G, N10 PUSH — done-when 1 met as narrowed by the integrator, `DEC-90`)": 1,
       "RESOLVED (2026-10-13, notifications N15; PASTE pending (both pastes): `20261206` — once BEFORE the N15 deploy and again, REQUIRED, after the next maintenance run following that deploy)": 1
     }
   },
@@ -759,7 +760,7 @@
       "id": "DELIV-14",
       "title": "Web push is a phantom channel: table, preference column and service-worker handler all ship, but nothing subscribes a device and nothing sends — 100% of that channel is dropped",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1075,7 +1076,7 @@
       "id": "OS-2",
       "title": "Web Push is a decapitated stack: the service-worker receiver, the DB table, and the preference column all survive, but every subscriber and sender was deleted",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1100,7 +1101,7 @@
       "id": "OS-3",
       "title": "No permission prompt exists anywhere, and ServiceWorkerManager — the natural mount point — deliberately never touches the Notification API",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1201,7 +1202,7 @@
       "id": "OS-9",
       "title": "emit() — the single declared fan-out point — has only two channels, and the deliberate push seam that used to sit there was deleted",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1226,7 +1227,7 @@
       "id": "OS-10",
       "title": "notification_preferences.push_enabled exists, defaults TRUE, and is read by nothing — the settings page does not even show it",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1270,6 +1271,32 @@
       ],
       "refuted": false,
       "summary": "An engineer is asked to sign off a draft (reviewrequested). The bell count goes up. Every sidebar item stays clean. The engineer scans the rail, sees nothing lit, and assumes the bell is stale. In a PSM/OSHA context the un-badged set includes legalholdplaced, retentioneligible, accessrecertdue and ackoverdue — the compliance-clock notifications, which are exactly the ones that must not be missed.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
+    },
+    {
+      "id": "OS-14",
+      "title": "Four push-worthy kinds are written outside emit() at their main producers, so they never reach the push channel",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from the code on `fleet/N10-push`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/tickets/comment/route.ts:359",
+        "app/api/tickets/workflow-action/route.ts:1226-1230",
+        "lib/acknowledgments.ts:409",
+        "lib/reviewControl.ts:574",
+        "lib/notify/dispatch.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "An engineer turns on device notifications. A drafter @-mentions them on a request and assigns them as the reviewer. Neither reaches their phone. (Fix pass: the card no longer lists these. It names them under \"Not sent to devices yet\" — components/settings/PushOptIn.tsx PUSHNOTSENTYET / PUSHNOTYETNOTE — so nobody is told to expect them. The channel still does not carry them.)",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
     },
@@ -1679,7 +1706,7 @@
       "id": "RT-7",
       "title": "The OS-level notification path is fully built on the service-worker side and completely unwired on the client side — no subscribe, no VAPID key, no sender",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-14, notifications Round G, N10 PUSH — done-when 1 met as narrowed by the integrator, `DEC-90`)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2323,7 +2350,7 @@
       "id": "TAX-12",
       "title": "OS-level notification presence is a fully built shell with zero wiring: the service worker handles `push`, the `push_subscriptions` table and RLS exist, `push_enabled` is a stored preference - and nothing subscribes or sends",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2816,7 +2843,7 @@
       "id": "OS-11",
       "title": "schemaExpectations asserts push_subscriptions must exist — a health check demanding the table of a fully-deleted feature",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2858,6 +2885,29 @@
       ],
       "refuted": false,
       "summary": "A member opens /checkouts in a tab loaded before the N9 deploy and clicks Nudge repeatedly after a refresh: each click writes a fresh checkoutconflict row to the same colleague; the N9 tab's \"Already nudged\" refusal never applies.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
+    },
+    {
+      "id": "OS-15",
+      "title": "A shared browser stays subscribed for the person who turned device notifications on after they sign out",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from the code on `fleet/N10-push`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/push/subscribe/route.ts",
+        "lib/swSession.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "On a control-room PC, A signs out at the end of a shift. During the next shift the PC shows \"You're asked to review a document\" for A. The push names no document, reason or person (DEC-108), and opening it lands on the sign-in page. But the next user sees that the departed shift's engineer has a pending review. (Fix pass 4: the title was \"You're asked to sign off a document\" until the fourth revie",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
     },
