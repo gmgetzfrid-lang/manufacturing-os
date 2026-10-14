@@ -229,14 +229,25 @@ export async function POST(req: NextRequest) {
   const keysFailed = Math.max(0, keysToDelete.length - keysDeleted);
   const persisted = await persistReclaimShortfall(sb, orgId, archiveId, keysFailed);
   if (!persisted.ok) errors.push(persisted.error);
+  // ALOG-8 (admin-and-org P13): CHECKED — the reclaim has happened either
+  // way, so a refused TICKET_ARCHIVE_RECLAIM row is carried in the answer
+  // (`auditError`) and logged, never a silent success (the purge's rule).
+  let auditError: string | null = null;
   try {
-    await sb.from("audit_logs").insert({
+    const { error: auditErr } = await sb.from("audit_logs").insert({
       action: "TICKET_ARCHIVE_RECLAIM",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
       details: { archiveId, reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) },
     });
-  } catch { /* best-effort */ }
+    if (auditErr) auditError = auditErr.message || "audit insert refused";
+  } catch (e) {
+    auditError = (e as Error).message || String(e);
+  }
+  if (auditError) console.error("[admin/ticket-shed/commit] the TICKET_ARCHIVE_RECLAIM audit row was not written", auditError);
 
-  return NextResponse.json({ ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors });
+  return NextResponse.json({
+    ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors,
+    ...(auditError ? { auditError: `the reclaim moved ${reclaimedTickets} ticket(s) to the archive but its TICKET_ARCHIVE_RECLAIM audit row was not written: ${auditError}` } : {}),
+  });
 }

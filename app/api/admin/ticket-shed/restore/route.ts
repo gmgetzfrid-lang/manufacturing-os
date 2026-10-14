@@ -237,14 +237,25 @@ export async function POST(req: NextRequest) {
     restored++;
   }
 
+  // ALOG-8 (admin-and-org P13): CHECKED — the restore has happened either
+  // way, so a refused TICKET_ARCHIVE_RESTORE row is carried in the answer
+  // (`auditError`) and logged, never a silent success (the purge's rule).
+  let auditError: string | null = null;
   try {
-    await sb.from("audit_logs").insert({
+    const { error: auditErr } = await sb.from("audit_logs").insert({
       action: "TICKET_ARCHIVE_RESTORE",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
       details: { restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors: errors.slice(0, 8) },
     });
-  } catch { /* best-effort */ }
+    if (auditErr) auditError = auditErr.message || "audit insert refused";
+  } catch (e) {
+    auditError = (e as Error).message || String(e);
+  }
+  if (auditError) console.error("[admin/ticket-shed/restore] the TICKET_ARCHIVE_RESTORE audit row was not written", auditError);
 
-  return NextResponse.json({ ok: true, restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors });
+  return NextResponse.json({
+    ok: true, restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors,
+    ...(auditError ? { auditError: `the restore put back ${restored} ticket(s) but its TICKET_ARCHIVE_RESTORE audit row was not written: ${auditError}` } : {}),
+  });
 }

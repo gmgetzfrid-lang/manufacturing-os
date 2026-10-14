@@ -151,6 +151,15 @@ export default function StorageBackupPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // admin-and-org ALOG-8 (P13): a destructive operation that ran but whose
+  // audit row was refused answers 2xx with `auditError` (purge, orphans,
+  // archive-cancel, both reclaims, the ticket restore). The page says so
+  // here instead of treating any 2xx as a recorded success.
+  const [auditGaps, setAuditGaps] = useState<string[]>([]);
+  const noteAuditGap = (what: string, body: unknown) => {
+    const gap = (body as { auditError?: unknown } | null)?.auditError;
+    if (typeof gap === "string" && gap) setAuditGaps((g) => [...g, `${what} — NOT recorded in the audit log: ${gap}`]);
+  };
 
   // Purge state
   const [purgeDays, setPurgeDays] = useState(90);
@@ -333,7 +342,7 @@ export default function StorageBackupPage() {
   // Pending archives are workspace-specific and live only in component state —
   // clear them when the active workspace changes so a Step-2 card can never be
   // committed against the wrong org.
-  useEffect(() => { setPendingArchive(null); setPendingTicketArchive(null); setTicketRestoreMsg(null); setCatalog(null); setCatalogMsg(null); }, [activeOrgId]);
+  useEffect(() => { setPendingArchive(null); setPendingTicketArchive(null); setTicketRestoreMsg(null); setCatalog(null); setCatalogMsg(null); setAuditGaps([]); }, [activeOrgId]);
 
   const saveArchiveLoc = async () => {
     if (!activeOrgId) return;
@@ -451,6 +460,7 @@ export default function StorageBackupPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      noteAuditGap("Orphaned files deleted", body);
       setOrphanMsg({
         text: `Reclaimed ${fmtBytes(body.freedBytes ?? 0)} — ${fmtNum(body.deleted ?? 0)} orphaned file(s) deleted.`,
         warn: (body.errors?.length ?? 0) > 0,
@@ -481,6 +491,7 @@ export default function StorageBackupPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      noteAuditGap("Purge ran", body);
       await Promise.all([load(), loadPreview(purgeDays)]);
     } catch (e) {
       setError((e as Error).message);
@@ -547,6 +558,7 @@ export default function StorageBackupPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      noteAuditGap(`${pendingArchive.archiveId}: space reclaimed`, body);
       setPendingArchive(null);
       // Delete-shortfall honesty: stamped-but-not-deleted objects keep billing.
       const reclaimed = Number(body?.reclaimed ?? 0);
@@ -624,6 +636,7 @@ export default function StorageBackupPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      noteAuditGap(`${pendingTicketArchive.archiveId}: tickets moved to the archive`, body);
       setPendingTicketArchive(null);
       await Promise.all([load(), loadTicketShedPreview(ticketDays), loadCatalog()]);
     } catch (e) {
@@ -653,6 +666,10 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, archiveId }),
       });
       const body = await res.json().catch(() => null);
+      // ALOG-8 (P13): a refused discard can still have changed data (tickets
+      // unlinked before the revisions' unlink was refused) — its 500 carries
+      // the audit gap too, so it is said before the error is thrown.
+      noteAuditGap(`${archiveId}: discard`, body);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       if (which === "ticket") setPendingTicketArchive(null); else setPendingArchive(null);
       await Promise.all([load(), which === "ticket" ? loadTicketShedPreview(ticketDays) : loadShedPreview(shedKeep), loadCatalog()]);
@@ -697,6 +714,7 @@ export default function StorageBackupPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      noteAuditGap(`${row.archiveId}: ${retry ? "reclaim retried" : "space reclaimed"}`, body);
       const reclaimed = Number(body?.reclaimed ?? 0);
       const keysDeleted = Number(body?.keysDeleted ?? reclaimed);
       const errCount = Array.isArray(body?.errors) ? body.errors.length : 0;
@@ -738,6 +756,7 @@ export default function StorageBackupPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      noteAuditGap("Tickets restored from the archive", body);
       const r = (body ?? {}) as {
         restored?: number; partial?: number; filesUploaded?: number; filesMissing?: number;
         skippedForeign?: number; skippedForeignKey?: number; notArchived?: number;
@@ -892,6 +911,16 @@ export default function StorageBackupPage() {
       {error && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+        </div>
+      )}
+      {auditGaps.length > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2" role="alert" data-testid="storage-audit-gaps">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            {auditGaps.map((g, i) => <div key={i}>{g}</div>)}
+            <div className="mt-1 text-amber-800">The operation itself completed; only its audit-log record is missing. Record what was done by other means and tell whoever keeps the audit trail.</div>
+          </div>
+          <button type="button" onClick={() => setAuditGaps([])} className="text-[11px] font-bold underline shrink-0">Dismiss</button>
         </div>
       )}
 
