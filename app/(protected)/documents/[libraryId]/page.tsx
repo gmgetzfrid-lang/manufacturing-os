@@ -121,6 +121,7 @@ import {
   type PathedFile,
 } from "@/lib/folderUpload";
 import { makeLibraryStoragePath, uploadToPath } from "@/lib/storage";
+import { nudgeEstateResolver } from "@/lib/estate/nudge";
 import type {
   AccessControl,
   CheckoutSession,
@@ -604,6 +605,7 @@ export default function LibraryExplorerPage() {
           .update({ acl_index: aclIndex ?? null }).eq("id", newId);
         if (idxErr) throw new Error(`Couldn't apply permissions to the new folder "${node.name}": ${idxErr.message}`);
       }
+      nudgeEstateResolver(activeOrgId, { folderIds: [newId] });
       chainByFolderId.set(newId, myChain);
       register(parentCollectionId, node.name, newId);
       idByKey.set(node.key, newId);
@@ -2073,6 +2075,7 @@ export default function LibraryExplorerPage() {
         await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
       }
 
+      nudgeEstateResolver(activeOrgId, { folderIds: [newId] });
       setCreatingFolder(false);
       setRenameValue("");
     } catch (e) {
@@ -2297,6 +2300,10 @@ export default function LibraryExplorerPage() {
   //    8 files don't take 8× one-file time.
   const UPLOAD_CONCURRENCY = 4;
   const handleStagedUpload = async (items: StagedItem[], signal?: AbortSignal) => {
+    // Every document that lands is handed to the estate resolver once the
+    // upload is done — unit, project and equipment links from its name,
+    // folder and (once read) pages. Fire-and-forget; never blocks an upload.
+    const createdDocIds: string[] = [];
     const notifyLibrarySubscribers = (count: number, firstName: string) => {
       if (!activeOrgId || !uid || count === 0) return;
       void import("@/lib/notify/dispatch").then((m) =>
@@ -2473,6 +2480,7 @@ export default function LibraryExplorerPage() {
         if (verErr || !newVersion) throw new Error(verErr?.message || "Failed to create document version");
 
         await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+        createdDocIds.push(newDoc.id as string);
       };
 
       // ── Run in capped-concurrency chunks ──────────────────────────
@@ -2531,6 +2539,7 @@ export default function LibraryExplorerPage() {
         // A file just landed in doc control — any AI library watching this
         // one picks it up NOW, not at the next cron pass.
         nudgeKnowledgeSources(activeOrgId!, libraryId);
+        if (createdDocIds.length) nudgeEstateResolver(activeOrgId!, { documentIds: createdDocIds });
         setPendingUploadFiles([]);
         uploadPathsRef.current = new Map();
         uploadFolderPlanRef.current = null;

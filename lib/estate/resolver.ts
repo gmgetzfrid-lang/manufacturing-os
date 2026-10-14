@@ -17,7 +17,8 @@
 // decision. Everything is unit-tested in lib/__tests__/estateResolver.test.ts.
 
 import { canonicalForm, findCodes } from "@/lib/fileFinder/tagForms";
-import { words } from "@/lib/fileFinder/tokens";
+import { words, isStopword } from "@/lib/fileFinder/tokens";
+import { docTypesIn } from "@/lib/fileFinder/docTypes";
 import { wordNamesUnit, type UnitLike } from "@/lib/fileFinder/queryParse";
 import { aliasConfidence, type FinderAlias } from "@/lib/fileFinder/aliasTypes";
 import { nid, type EdgeType, type EdgeTier, type EdgeOrigin } from "./ids";
@@ -147,6 +148,24 @@ export function resolveTarget(t: ResolveTarget, ctx: ResolveContext): ProposedEd
     const u = unitByCode(ctx.units, own.code), a = unitByCode(ctx.units, above.code);
     if (u && a) out.push({ a: self, b: nid.cbunit(a.code), type: "belongs_to_unit", origin: "resolver", tier: "inferred", confidence: 0.3,
       summary: `${label} names ${u.label} but is filed under ${a.label} — one of them is wrong`, evidence: { named: u.code, filedUnder: a.code } });
+  }
+
+  // ── Alias proposal ──────────────────────────────────────────────────────
+  // A folder whose name names nothing we know, sitting under a unit, is how
+  // nicknames surface: "Born" under "20 - Crude" is probably what people call
+  // the crude heater area. Proposed only (inferred); a human makes it an alias.
+  if (t.kind === "folder" && !own && !fromDrawing && above) {
+    const ws = words(t.name).filter((w) => !isStopword(w));
+    const plain = ws.length >= 1 && ws.length <= 2 && !/\d/.test(t.name) && docTypesIn(ws).length === 0
+      && !ws.some((w) => ctx.units.some((u) => words(u.label).includes(w)))
+      && !["equipment", "drawing", "drawings", "file", "files", "misc", "old", "new", "archive", "temp", "scan", "scans", "general", "photo", "photos", "vendor", "project", "projects"].includes(ws.join(" "));
+    const u = unitByCode(ctx.units, above.code);
+    if (plain && u) {
+      const term = ws.join(" ");
+      const known = ctx.aliases.some((a) => a.kind === "unit" && a.termCanonical === canonicalForm(term));
+      if (!known) out.push({ a: `term:${canonicalForm(term)}`, b: nid.cbunit(u.code), type: "alias_of", origin: "resolver", tier: "inferred", confidence: 0.4,
+        summary: `People may say "${term}" for ${u.label} (${u.code}) — folder "${t.name}" sits under it`, evidence: { term, folder: nid.folder(t.id), unit: u.code } });
+    }
   }
 
   // ── Project ─────────────────────────────────────────────────────────────

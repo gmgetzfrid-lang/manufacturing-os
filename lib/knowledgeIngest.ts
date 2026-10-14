@@ -453,6 +453,16 @@ export async function ingestKnowledgeDocBatch(
     void import("@/lib/equipmentBridgeServer")
       .then((m) => m.computeForKnowledgeDoc(supabaseAdmin, doc.id))
       .catch(() => undefined);
+    // One Estate: the tags just read off its pages become provable
+    // tagged_to edges on the controlled document. Same posture — can never
+    // break indexing.
+    void (async () => {
+      const { data } = await supabaseAdmin.from("knowledge_documents").select("source_document_id").eq("id", doc.id).maybeSingle();
+      const src = (data as { source_document_id?: string | null } | null)?.source_document_id;
+      if (!src) return;
+      const m = await import("@/lib/estate/resolverServer");
+      await m.resolveEstate(supabaseAdmin, { orgId: doc.org_id, documentIds: [src] });
+    })().catch(() => undefined);
   }
 
   if (visionPages > 0) {

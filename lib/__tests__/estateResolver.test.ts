@@ -48,7 +48,7 @@ describe("resolving a folder", () => {
   });
   it("inherits the unit from a linked ancestor when its own name is silent", () => {
     const edges = resolveTarget({ kind: "folder", id: "f3", name: "Heaters", path: ["20 - Crude"], pathIds: ["f-crude"] }, ctx);
-    expect(edges).toEqual([expect.objectContaining({ b: "cbunit:20", tier: "provable", summary: expect.stringMatching(/sits under a folder linked to Crude Unit/) })]);
+    expect(edges.filter((e) => e.type === "belongs_to_unit")).toEqual([expect.objectContaining({ b: "cbunit:20", tier: "provable", summary: expect.stringMatching(/sits under a folder linked to Crude Unit/) })]);
   });
   it("flags a folder that names one unit but is filed under another", () => {
     const edges = resolveTarget({ kind: "folder", id: "f4", name: "Transmix pumps", path: ["20 - Crude"], pathIds: ["f-crude"] }, ctx);
@@ -86,5 +86,18 @@ describe("resolving a document", () => {
   });
   it("proposes nothing for a file that says nothing", () => {
     expect(resolveTarget({ kind: "document", id: "d3", name: "scan0001.pdf", path: ["Dave's stuff"], pathIds: ["dv"] }, ctx)).toEqual([]);
+  });
+});
+
+describe("alias proposals", () => {
+  it("proposes a nickname when a plain-named folder sits under a unit", () => {
+    const edges = resolveTarget({ kind: "folder", id: "f7", name: "Born", path: ["20 - Crude"], pathIds: ["f-crude"] }, { ...ctx, aliases: [] });
+    expect(edges).toEqual(expect.arrayContaining([expect.objectContaining({ a: "term:BORN", b: "cbunit:20", type: "alias_of", tier: "inferred" })]));
+  });
+  it("does not propose an alias that is already taught, nor for type or unit words", () => {
+    const taught = resolveTarget({ kind: "folder", id: "f7", name: "Born", path: ["20 - Crude"], pathIds: ["f-crude"] }, ctx);
+    expect(taught.some((e) => e.type === "alias_of")).toBe(false);
+    const pids = resolveTarget({ kind: "folder", id: "f8", name: "PIDs", path: ["20 - Crude"], pathIds: ["f-crude"] }, { ...ctx, aliases: [] });
+    expect(pids.some((e) => e.type === "alias_of")).toBe(false);
   });
 });
