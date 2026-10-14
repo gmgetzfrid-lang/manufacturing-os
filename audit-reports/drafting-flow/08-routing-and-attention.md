@@ -543,7 +543,7 @@ contrast components/requests/EngineerPickerModal.tsx:77-89 —
 **Done-when.**
 - ✓ The drafter picker selects `roles` and matches headline ∪ additive — by the route's own rule under the org's policy (`lib/ticketPage.ts` `drafterCandidates`, `pickRoles`); `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` and `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` as recorded on `EDGE-6`.
 - ✗ in part — one shared helper for all three: the drafter picker's rule lives in `lib/ticketPage.ts` and `lib/ticketRouting.ts` reads `heldRoles`, but `components/requests/EngineerPickerModal.tsx` still carries its own filter. **Owner:** drafting-flow **DF-P5** (its package lists `EngineerPickerModal.tsx`): move the engineer picker onto a shared "active members holding capability X" helper (`drafterCandidates`' shape with `ticket.eng_review` / the engineer tokens).
-- ✓ The route validates the `assignment` pick: `policyAllows(capPolicy, "ticket.draft_work", held[0], held, ref, resource)` (`app/api/tickets/workflow-action/route.ts`, WF-14 — landed in an earlier round, re-verified), so widening the picker widened nothing.
+- ✓ The route validates the `assignment` pick: `policyAllows(capPolicy, "ticket.draft_work", held[0], held, ref, resource)` (`app/api/tickets/workflow-action/route.ts`, WF-14 — landed in an earlier round, re-verified), so widening the picker widened nothing. *DF-P9 review fix pass:* the picker also follows the route's two per-ticket refusals — the current drafter is not offered on a reassignment, and the requester is shown disabled with the reason in a workspace of 3+ — as recorded on `EDGE-6`.
 
 **Scope / residual.** Done-when 2's engineer picker → DF-P5.
 

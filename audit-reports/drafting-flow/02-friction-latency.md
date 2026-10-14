@@ -372,6 +372,8 @@ role/status combination, ideally because attention is derived from the engine.
 
 **Scope / residual.** None. The finding's "deeper reading" (Document Control's slot at issue and release) stays `DCW-2` / `GAP-104` under DF-P6, as recorded.
 
+*DF-P9 review fix pass (2026-10-14):* the ticket page's OWN read of its requester's membership (`app/(protected)/requests/[id]/page.tsx`, the `requesterRoles` effect, :1279) did not hold this record's rule — it ignored `error`, so a failed read (`{ data: null, error }`, not a rejection) became `[]` ("left the workspace"): the page's engine offered engineers and managers a required co-review and the new waiting line (`UI-1`) said the requester was gone. It now reads `{ data, error }`: an error is null (unknown, assumed present), exactly as `loadRequesterRoles` answers; `[]` only when the read succeeded and found no active row. `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "fix pass (FRIC-7): a requester read that ERRORS invents no departure — the line still waits on the requester by name" and its success-with-no-row regression.
+
 ---
 
 ## FRIC-8 · Three ticket-creation paths, three different field contracts

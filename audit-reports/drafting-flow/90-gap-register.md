@@ -658,6 +658,8 @@ first-time requester can see the process before committing to it.
 
 **Related findings:** `UI-1`, `UI-2`, `UI-4`, `UI-7`.
 
+*Landed 2026-10-14 (drafting-flow Round G, DF-P9 TICKET-PAGE): acceptance 1–3 — the ticket's waiting line states the stage in words, who it waits on by name and part, and for how long, with "Your turn" when the engine offers the viewer a live action (`UI-1`); "View Only" is explained (`UI-4`); the workflow map has a visible affordance on the ticket and opens from the queue and from the request form before anything is filed (`UI-2`). The labels are one list (`lib/ticketStatusLabels.ts`), which the map's stage names read too. **Acceptance 4 is NOT met:** the request surfaces read that list, but four sites outside DF-P9's files still show the raw status or keep a third label set — `app/(protected)/admin/analytics/page.tsx:516`, the workflow route's bell body (`app/api/tickets/workflow-action/route.ts:1407`) and email (`:1455`, `:1458`), and `components/dashboard/widgets.tsx:289-290`. The remainder and its owners are recorded under `UI-7` (OPEN, Partial); each fix is a call to `ticketStatusLabel`, never a new list ("Do not write a third set").*
+
 ---
 
 <a id="gap-109"></a>
