@@ -200,6 +200,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "transmittals", column: "stamp_check", migration: "20261199_dc_roundF_transmittal_issue_verdict.sql", feature: "The transmittal issue verdict the server recorded for each PDF of the draft as issued (TRX-17)" },
   { table: "audit_logs", column: "actor_kind", migration: "20261201_ao_roundG_audit_identity.sql", feature: "Whose word an audit row's identity is — resolved by the database for a member's own row, or the server's (/admin/audit; ALOG-7)" },
   { table: "notification_preferences", column: "toast_on_sla_warning", migration: "20261200_notif_roundG_realtime_publication_and_identity.sql", feature: "The per-category pop-up switches on the notification settings page (mention, assignment, status change, watched activity, SLA warning)" },
+  { table: "tickets", column: "library_id", migration: "20261208_df_roundG_ticket_library.sql", feature: "A request carries its library: derived from its source document at creation, set at triage (DCW-1)" },
   { table: "ai_connections", column: "embedding_api_key", migration: "20260930_semantic_layer.sql", feature: "Meaning-based (semantic) search" },
   { table: "knowledge_chunks", column: "embedding", migration: "20260930_semantic_layer.sql", feature: "pgvector semantic index" },
   { table: "documents", column: "ai_excluded", migration: "20260807_link_proposals.sql", feature: "Per-document AI exclusion (Pillar A)" },
@@ -444,5 +445,23 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     probeArgs: { p_record: "schema-health-probe" },
     migration: "20261205_dc_roundF_direct_write_issue_record.sql",
     feature: "A member's revision upload is judged by the policy's own limbs, without the recursive first-version read (SEC-23)",
+  },
+  // notifications N15 DELIV-16 (20261206): a browser asks whether IT wrote a
+  // notice to another member before retrying it. The uuid arguments refuse
+  // "schema-health-probe" (22P02), so the body never runs. Missing → the
+  // browser simply does not retry (today's path).
+  {
+    signature: "notification_i_wrote(uuid, uuid, text, text, text, timestamptz)",
+    fn: "notification_i_wrote",
+    probeArgs: {
+      p_org: "schema-health-probe",
+      p_user: "schema-health-probe",
+      p_kind: "schema-health-probe",
+      p_title: "schema-health-probe",
+      p_resource_id: "schema-health-probe",
+      p_since: "2026-01-01T00:00:00Z",
+    },
+    migration: "20261206_notif_roundG_stale_escalation_kind.sql",
+    feature: "A browser notice to another member is retried once, never twice, after a lost answer (DELIV-16)",
   },
 ];

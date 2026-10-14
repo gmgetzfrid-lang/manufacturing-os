@@ -40,6 +40,13 @@ export interface TransitionInput {
    *  end one (close_ticket, close_rfi, cancel_request) — validated by the
    *  workflow route against lib/ticketOutcome.ts. Absent → defaultOutcome(). */
   outcome?: TicketOutcome | null;
+  /** DCW-1 / GAP-105 and DCW-7 / FRIC-3 (DF-P4): what triage sets with
+   *  `assign` / `request_eng_review` at PENDING_ASSIGNMENT — the library the
+   *  request targets (the route has checked it is a library of the ticket's
+   *  org) and the unit (the route has resolved it against the org's list,
+   *  lib/ticketCreate.ts unitOptionsFor). Ignored for any other action or
+   *  status. Neither is ever required. */
+  triage?: { library?: { id: string; name: string } | null; unit?: string | null } | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -56,15 +63,20 @@ export interface TransitionResult {
   newComment: Record<string, unknown> | null;
 }
 
-/** Map a tickets DB row to the Ticket shape the engine reads. */
+/** Map a tickets DB row to the Ticket shape the engine reads.
+ *  PERS-5 (DF-P4): no `as Ticket` cast — the object literal is checked
+ *  against the type, so a required field added to Ticket and not mapped here
+ *  is a compile error, and every column a server reader takes through this
+ *  mapper is mapped (the archive stamps, closed_at, updated_at, the search
+ *  keywords, the library). PERS-6: `unit` is NULL when unknown. */
 export function rowToTicket(row: Record<string, unknown>): Ticket {
-  return {
+  const ticket: Ticket = {
     id: row.id as string,
     orgId: row.org_id as string,
     ticketId: row.ticket_id as string,
     title: row.title as string,
     description: row.description as string | undefined,
-    unit: row.unit as string,
+    unit: typeof row.unit === "string" ? row.unit : null,
     requestType: row.request_type as string,
     status: row.status as Ticket["status"],
     priority: row.priority as number | undefined,
@@ -100,9 +112,18 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     slaBreachWarnedAt: row.sla_breach_warned_at as string | null | undefined,
     slaBreachedAt: row.sla_breached_at as string | null | undefined,
     outcome: (row.outcome as Ticket["outcome"]) ?? null,
+    // GAP-105 / DCW-1 (DF-P4): the library the request targets (null before
+    // 20261208 is pasted, or when none is known yet).
+    libraryId: typeof row.library_id === "string" ? row.library_id : null,
+    searchKeywords: Array.isArray(row.search_keywords) ? (row.search_keywords as string[]) : undefined,
+    closedAt: row.closed_at as string | null | undefined,
+    archivedAt: row.archived_at as string | null | undefined,
+    archiveId: row.archive_id as string | null | undefined,
     createdAt: row.created_at as string,
     lastModified: row.last_modified as string | undefined,
-  } as Ticket;
+    updatedAt: row.updated_at as string | undefined,
+  };
+  return ticket;
 }
 
 // ─── Deliverable revision scheme (pure, exported for tests) ──────────────
@@ -513,6 +534,42 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       // A reopened request has not ended (LEAK-9).
       updates.outcome = null;
       break;
+  }
+
+  // DCW-1 / DCW-7 (DF-P4): triage records the library and the unit with the
+  // assignment (or the engineering flag) — on the same compare-and-set write,
+  // with a history line of their own naming what changed. Setting the unit
+  // retires the intake's "unknown / not on the list / not checked" marks
+  // (DEC-101 item 1: "triage assigns").
+  if (input.triage && ticket.status === "PENDING_ASSIGNMENT" && updates.status !== undefined
+      && (input.actionType === "assign" || input.actionType === "request_eng_review")) {
+    const parts: string[] = [];
+    const lib = input.triage.library;
+    if (lib?.id && lib.id !== (ticket.libraryId ?? null)) {
+      updates.library_id = lib.id;
+      parts.push(`Library: ${lib.name}${ticket.libraryId ? " (changed)" : ""}`);
+    }
+    const unit = input.triage.unit?.trim() || null;
+    const meta = (ticket.metadata ?? {}) as Record<string, unknown>;
+    const marked = meta.unit_unknown === true || meta.unit_unlisted === true || meta.unit_unchecked != null;
+    if (unit && (unit !== (ticket.unit ?? null) || marked)) {
+      updates.unit = unit;
+      const rest = { ...meta };
+      delete rest.unit_unknown;
+      delete rest.unit_unlisted;
+      delete rest.unit_unchecked;
+      updates.metadata = rest;
+      parts.push(`Unit: ${unit} (was ${ticket.unit ? ticket.unit : "unknown"})`);
+    }
+    if (parts.length > 0) {
+      (updates.history as TicketHistoryEntry[]).push({
+        action: "Triage details set",
+        user: input.actor.email || "Unknown",
+        role: input.actor.role,
+        date: now,
+        details: parts.join(" · "),
+      } as TicketHistoryEntry);
+    }
   }
 
   updates.attachments = currentAttachments;

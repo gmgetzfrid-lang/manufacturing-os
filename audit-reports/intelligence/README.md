@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**267 findings** — 9 CRITICAL, 59 HIGH, 148 MEDIUM, 51 LOW — plus **15 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01).
+**270 findings** — 9 CRITICAL, 59 HIGH, 150 MEDIUM, 52 LOW — plus **15 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01).
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
@@ -79,7 +79,7 @@ It is not a missing brain. It is a missing memory.
 | 13 | [**Process flows**](./13-process-flows.md) | 14 | **Your PFD question** |
 | 14 | [Drawing intelligence](./14-drawing-intelligence.md) | 13 | Extraction, OPC refs, tracing, revision staleness |
 | 15 | [Orchestrator](./15-orchestrator.md) | 11 | The highest-privilege AI surface |
-| 16 | [Persistence & RLS](./16-persistence-rls.md) | 16 | Table by table — `IRLS-13`, `IRLS-14`, `IRLS-15` opened by intelligence Round G (I-08), 2026-09-30; `IRLS-16` (LOW) opened by I-23, 2026-10-07 |
+| 16 | [Persistence & RLS](./16-persistence-rls.md) | 19 | Table by table — `IRLS-13`, `IRLS-14`, `IRLS-15` opened by intelligence Round G (I-08), 2026-09-30; `IRLS-16` (LOW) opened by I-23, 2026-10-07; `IRLS-17` (MEDIUM), `IRLS-18` (LOW), `IRLS-19` (MEDIUM) opened by I-17, 2026-10-14 |
 | 17 | [Hub UX](./17-hub-ux.md) | 12 | What a new org sees; whether the numbers are real |
 | 18 | [Lifecycle](./18-lifecycle.md) | 14 | Export, restore, delete, orphans |
 | 19 | [Wiring](./19-wiring.md) | 10 | De-facto links, dead FKs, one-directional joins |

@@ -18,12 +18,14 @@
 // allow-list, VFY-1), not held, the QR names the version printed (a QR with
 // no ?v= cannot say which revision the paper is — VFY-3), that version is
 // the current one, and its effective date has arrived in the facility's
-// calendar (effectiveStatusFor → effectiveTodayISO, VFY-4 / REV-9).
+// calendar (effectiveStatusFor → effectiveTodayISO, VFY-4 / REV-9) — the
+// document's workspace zone when its Admin set one, else the deployment's
+// (VFY-15: workspaceEffectiveDateTimeZone).
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
-import { effectiveStatusFor } from "@/lib/effectiveDate";
+import { effectiveStatusFor, workspaceEffectiveDateTimeZone } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
@@ -42,6 +44,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // these can never carry a column the public contract does not list.
 interface DocRow {
   id: string;
+  // VFY-15: read only to pick the calendar "in effect" is decided in (the
+  // workspace's zone); never part of the response.
+  org_id: string | null;
   document_number: string | null;
   title: string | null;
   name: string | null;
@@ -78,7 +83,7 @@ export async function GET(req: NextRequest) {
 
   const { data: doc, error: docErr } = await sb
     .from("documents")
-    .select("id, document_number, title, name, rev, status, current_version_id, legal_hold")
+    .select("id, org_id, document_number, title, name, rev, status, current_version_id, legal_hold")
     .eq("id", docId)
     .maybeSingle();
   if (docErr) {
@@ -203,7 +208,10 @@ export async function GET(req: NextRequest) {
   // (lib/effectiveDate.ts: effectiveStatusFor → effectiveTodayISO), the same
   // "today" as the in-app badge, the watermark and the daily scan; with no
   // zone configured it is UTC-12, which can only ever be late, never early.
-  else if (effectiveStatusFor(effectiveDate) === "pending") verdict = "not_yet_effective";
+  // VFY-15: the calendar is the document's workspace zone (an Admin's
+  // setting, read with this service client); none set, or unreadable, it is
+  // the deployment's — today's behaviour.
+  else if (effectiveStatusFor(effectiveDate, new Date(), effectiveDate ? await workspaceEffectiveDateTimeZone(sb, d.org_id) : undefined) === "pending") verdict = "not_yet_effective";
   else verdict = "current";
 
   await scan(verdict);

@@ -98,6 +98,9 @@ describe("reconcileClassOf — which condition retires which row", () => {
     expect(r("branch_open", "document", "d", null)).toBe(null);
     expect(r("checkout_released", "document", "d", { staleSessionId: "s", escalation: true })).toBe("stale_checkout");
     expect(r("checkout_released", "document", "d", null)).toBe(null);
+    // TAX-17 (N15): the escalation's own kind takes the same class, the same check
+    expect(r("checkout_stale_escalation", "document", "d", { staleSessionId: "s", escalation: true })).toBe("stale_checkout");
+    expect(r("checkout_stale_escalation", "document", "d", null)).toBe(null);
     expect(r("ack_requested", "document", "d", { ackRequest: true })).toBe("ack");
     expect(r("review_requested", "document", "d", null)).toBe("review");
     expect(r("review_invalidated", "document", "d", null)).toBe("review");
@@ -239,10 +242,13 @@ describe("retireStaleAlerts — the server re-checks, then marks only the gone o
       notif(3, { kind: "branch_open", resource_type: "document", resource_id: id(9), metadata: { branchId: id(499) } }), // unknown branch: not proven resolved
       notif(4, { kind: "checkout_released", resource_type: "document", resource_id: id(9), metadata: { staleSessionId: S_ACTIVE, escalation: true } }),
       notif(5, { kind: "checkout_released", resource_type: "document", resource_id: id(9), metadata: { staleSessionId: S_ENDED, escalation: true } }),
+      // TAX-17 (N15): the escalation's own kind, retired by the same check
+      notif(6, { kind: "checkout_stale_escalation", resource_type: "document", resource_id: id(9), metadata: { staleSessionId: S_ACTIVE, escalation: true } }),
+      notif(7, { kind: "checkout_stale_escalation", resource_type: "document", resource_id: id(9), metadata: { staleSessionId: S_ENDED, escalation: true } }),
     ];
-    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [1, 2, 3, 4, 5].map(id) });
-    expect(a.retired.sort()).toEqual([id(2), id(5)]);
-    expect(a.kept).toBe(2);
+    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [1, 2, 3, 4, 5, 6, 7].map(id) });
+    expect(a.retired.sort()).toEqual([id(2), id(5), id(7)]);
+    expect(a.kept).toBe(3);
     expect(a.failed).toBe(1);
   });
 

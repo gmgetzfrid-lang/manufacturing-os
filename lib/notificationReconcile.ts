@@ -33,9 +33,10 @@ export type ReconcileClass =
   /** branch_open: retired once the branch is resolved (TRAIL-9 dw2; the
    *  DocCtrl copies too — DEC-81 Risk). */
   | "branch"
-  /** checkout_released, the maintenance cron's stale-checkout escalation to
-   *  the controllers: retired once that checkout session has ended (DEC-81
-   *  Risk — "clear a controller copy when its session ends"). */
+  /** checkout_stale_escalation (TAX-17, notifications N15) and its legacy
+   *  name checkout_released, the maintenance cron's stale-checkout
+   *  escalation to the controllers: retired once that checkout session has
+   *  ended (DEC-81 Risk — "clear a controller copy when its session ends"). */
   | "stale_checkout"
   /** ack_requested: retired once the recipient owes no acknowledgment on the
    *  document (DEC-81 §2 — the obligation is discharged). */
@@ -95,6 +96,7 @@ export function reconcileClassOf(row: ReconcilableRow): ReconcileClass | null {
     case "branch_open":
       return meta && typeof meta.branchId === "string" && meta.branchId ? "branch" : null;
     case "checkout_released":
+    case "checkout_stale_escalation":
       return meta && typeof meta.staleSessionId === "string" && meta.staleSessionId ? "stale_checkout" : null;
     case "ack_requested":
       return row.resourceId && row.resourceType === "document" ? "ack" : null;

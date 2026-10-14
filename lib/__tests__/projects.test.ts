@@ -130,7 +130,7 @@ vi.mock("@/lib/inAppNotifications", async (importOriginal) => ({
   // the sweep's own client — the real one, writing through the fake client.
   notifyBatchChecked: (await importOriginal<typeof import("@/lib/inAppNotifications")>()).notifyBatchChecked,
 }));
-vi.mock("@/lib/subscriptions", () => ({ listFollowerIds: vi.fn(async () => []) }));
+vi.mock("@/lib/watches", () => ({ listFollowerIds: vi.fn(async () => []) }));
 vi.mock("@/lib/checkoutEpisodes", () => ({
   ensureActiveEpisode: vi.fn(async () => null),
   postEpisodeSystemMessage: vi.fn(async () => undefined),
@@ -252,7 +252,7 @@ describe("PROD-4 dw2 (notifications N9) — a project notice's audience is the d
     const src = readFileSync(join(process.cwd(), "lib/projects.ts"), "utf8");
     const fn = src.slice(src.indexOf("async function notifyProjectAudience("), src.indexOf("\n}\n", src.indexOf("async function notifyProjectAudience(")));
     expect(fn).not.toMatch(/project_members|listFollowerIds|involved:/);
-    expect(src).not.toMatch(/from "@\/lib\/subscriptions"/);
+    expect(src).not.toMatch(/from "@\/lib\/watches"/);
   });
 });
 

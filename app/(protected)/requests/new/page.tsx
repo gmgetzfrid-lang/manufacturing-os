@@ -11,6 +11,7 @@ import { readDraft, discardDraft } from '@/lib/draftHandoff';
 // inserts and notifies server-side. This page stages the files and posts.
 import { capSourceDocuments, contractLimitRefusal, droppedSourceDocumentsWarning, missingRequiredCustomField, ticketStagingFolder, unitOptionsFor, UNIT_UNKNOWN_LABEL, type TicketCreateAttachment, type TicketCreateSourceDoc } from '@/lib/ticketCreate';
 import { submitTicketCreate, discardStagedFiles, loadCodebookUnitList, queueNotNotifiedLine } from '@/lib/ticketCreateClient';
+import { linkableDocumentQuery, linkableDocumentFilter } from '@/lib/ticketLibrary';
 import IsoGuidance from '@/components/ui/IsoGuidance';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
@@ -118,6 +119,28 @@ export default function NewTicketPage() {
   const [stashedDocs, setStashedDocs] = useState<Array<{ id: string; number: string }>>([]);
   const srcDocId = sourceDocId || stashedDoc?.id || '';
   const srcDocNum = sourceDocNum || stashedDoc?.number || '';
+  // DCW-5 (DF-P4): with no hand-off, the requester may still NAME the
+  // document the request is about — by number, through their own session
+  // (the database returns a document they may at least discover, never its
+  // file). The route reads it again as the requester (DEC-101 item 5) and
+  // derives the request's library from it (GAP-105).
+  const [linkedDoc, setLinkedDoc] = useState<{ id: string; number: string | null; title: string | null; rev: string | null } | null>(null);
+  const [docQuery, setDocQuery] = useState('');
+  const [docResults, setDocResults] = useState<Array<{ id: string; number: string | null; title: string | null; rev: string | null }>>([]);
+  const [docSearch, setDocSearch] = useState<'idle' | 'searching' | 'error'>('idle');
+  const findDocuments = async () => {
+    const q = linkableDocumentQuery(docQuery);
+    if (!q || !activeOrgId) { setDocResults([]); setDocSearch('idle'); return; }
+    setDocSearch('searching');
+    const { data, error } = await supabase
+      .from('documents').select('id, document_number, title, rev')
+      .eq('org_id', activeOrgId).or(linkableDocumentFilter(q)).limit(8);
+    if (error) { setDocResults([]); setDocSearch('error'); return; }
+    setDocResults(((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      id: String(r.id), number: (r.document_number as string | null) ?? null, title: (r.title as string | null) ?? null, rev: (r.rev as string | null) ?? null,
+    })));
+    setDocSearch('idle');
+  };
 
   // Pull in marked-up PDFs handed off from the book viewer (stashed in
   // IndexedDB) and attach them as files, so they upload with the request.
@@ -334,6 +357,9 @@ export default function NewTicketPage() {
     const sourceDocuments: TicketCreateSourceDoc[] = [];
     if (srcDocId) {
       sourceDocuments.push({ id: srcDocId, documentNumber: srcDocNum || null, title: sourceDocTitle || null, rev: sourceDocRev || null, versionId: null });
+    } else if (linkedDoc) {
+      // DCW-5: a document named by number (no file attached).
+      sourceDocuments.push({ id: linkedDoc.id, documentNumber: linkedDoc.number, title: linkedDoc.title, rev: linkedDoc.rev, versionId: null });
     }
     for (const d of stashedDocs) {
       if (d.id !== srcDocId) sourceDocuments.push({ id: d.id, documentNumber: d.number || null, title: null, rev: null, versionId: null });
@@ -453,6 +479,52 @@ export default function NewTicketPage() {
                     : <>Your marked-up sheet is attached. The ticket will link back to this document once you submit.</>}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* DCW-5 (DF-P4): name the document without opening it */}
+          {!srcDocId && !sourceFileUrl && (
+            <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4" data-testid="link-document">
+              <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Document this request is about (optional)</div>
+              {linkedDoc ? (
+                <div className="mt-2 flex items-start gap-3">
+                  <FileText className="w-5 h-5 text-teal-700 mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-bold text-[var(--color-text)] truncate">{linkedDoc.number || linkedDoc.title || 'Document'}{linkedDoc.rev ? ` · Rev ${linkedDoc.rev}` : ''}</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Linked by number only — no file is attached and none of the document&apos;s content is copied into the request; triage opens it with their own access.</div>
+                  </div>
+                  <button type="button" className="text-xs font-bold text-[var(--color-text-muted)] underline" onClick={() => setLinkedDoc(null)}>Remove</button>
+                </div>
+              ) : (
+                <div className="mt-2">
+                  <div className="flex gap-2">
+                    <Input
+                      value={docQuery}
+                      onChange={(e) => setDocQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void findDocuments(); } }}
+                      placeholder="Type a document number or title"
+                      aria-label="Find the document by number"
+                    />
+                    <button type="button" className="text-xs font-bold px-3 rounded-lg border border-[var(--color-border)]"
+                      disabled={docSearch === 'searching' || !linkableDocumentQuery(docQuery)} onClick={() => { void findDocuments(); }}>
+                      {docSearch === 'searching' ? 'Finding…' : 'Find'}
+                    </button>
+                  </div>
+                  {docSearch === 'error' && <div role="alert" className="text-[11px] text-amber-700 mt-1">Couldn&apos;t search the documents right now — you can still file the request and name the document in the description.</div>}
+                  {docResults.length > 0 && (
+                    <ul className="mt-2 border border-[var(--color-border)] rounded-lg divide-y divide-[var(--color-border)]">
+                      {docResults.map((d) => (
+                        <li key={d.id}>
+                          <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-[var(--color-surface-2)]"
+                            onClick={() => { setLinkedDoc(d); setDocQuery(''); setDocResults([]); }}>
+                            <span className="font-bold">{d.number || 'Document'}</span>{d.title ? ` — ${d.title}` : ''}{d.rev ? ` · Rev ${d.rev}` : ''}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

@@ -263,6 +263,54 @@ describe("DCK-5 — forceReleaseDocument writes the audit row itself, after the 
     expect(state.emits[0]).toMatchObject({ kind: "checkout_force_released", audience: { involved: ["vic"] } });
   });
 
+  it("PROD-17 (notifications N15): the document's followers hear the force-release in a watcher's words, minus the holders the personal notice told", async () => {
+    state.emits.length = 0;
+    state.rows.checkout_sessions = [{ id: "s1", user_id: "vic", user_name: "vic", started_at: "2026-09-01T00:00:00Z", document_id: "d1", status: "active" }];
+    state.rows.checkout_episodes = [{ id: "ep-1", document_id: "d1", status: "active", org_id: "o1", seq: 2, opened_at: "2026-09-01T00:00:00Z" }];
+    state.rows.documents = [{ id: "d1", document_number: "P-4412", library_id: "lib-1" }];
+    state.rpcResult = { data: { documentId: "d1", previousHolder: "vic", endedSessions: 1 }, error: null };
+    state.auditResult = { error: null };
+    await forceReleaseDocument(input);
+    // the watchers' FYI is not awaited by the release (fix pass 3): it lands after
+    await vi.waitFor(() => expect(state.emits).toHaveLength(2));
+    expect(state.emits[0]).toMatchObject({ kind: "checkout_force_released", audience: { involved: ["vic"] } });
+    expect(state.emits[1]).toMatchObject({
+      // fix pass: its own lock kind, not the thread's chat kind (checkout_message)
+      kind: "checkout_force_released_fyi", category: "watched",
+      title: "P-4412 was force-released by ctl",
+      resource: { type: "document", id: "d1" }, link: "/documents/lib-1?doc=d1",
+      actorUserId: "ctl", audience: { followers: true, exclude: ["vic"] },
+      metadata: { forceRelease: true, followerNotice: true },
+      // until 20261206 declares the kind the rail refuses the bell row; no email without it
+      emailOnlyWithBell: true,
+    });
+    expect(state.emits[1].kind).not.toBe("checkout_message");
+    // the reason stays in the body (never a subject line — NEDGE-6), and the holder's words are not reused
+    expect(String(state.emits[1].title)).not.toContain("walkdown");
+    expect(String(state.emits[1].body)).toContain('"walkdown finished, drawing abandoned"');
+    expect(String(state.emits[1].body)).not.toMatch(/your session/i);
+  });
+
+  it("fix pass 3 (the review's major): a watchers' FYI that never finishes (a hung discover check, a stalled insert) does not hold the release — forceReleaseDocument returns, the holder is told", async () => {
+    const { emit } = await import("@/lib/notify/dispatch");
+    vi.mocked(emit).mockImplementation(async (p) => {
+      state.emits.push(p as unknown as Record<string, unknown>);
+      if ((p as { kind?: string }).kind === "checkout_force_released_fyi") await new Promise(() => undefined); // never resolves
+      return { recipients: 1 };
+    });
+    try {
+      state.rows.checkout_sessions = [{ id: "s1", user_id: "vic", user_name: "vic", started_at: "2026-09-01T00:00:00Z", document_id: "d1", status: "active" }];
+      state.rows.checkout_episodes = [{ id: "ep-1", document_id: "d1", status: "active", org_id: "o1", seq: 2, opened_at: "2026-09-01T00:00:00Z" }];
+      state.rows.documents = [{ id: "d1", document_number: "P-4412", library_id: "lib-1" }];
+      state.rpcResult = { data: { documentId: "d1", previousHolder: "vic", endedSessions: 1 }, error: null };
+      await expect(forceReleaseDocument(input)).resolves.toEqual({ auditRecorded: true, auditError: null });
+      expect(state.emits[0]).toMatchObject({ kind: "checkout_force_released", audience: { involved: ["vic"] } });
+      await vi.waitFor(() => expect(state.emits.map((e) => e.kind)).toContain("checkout_force_released_fyi"));
+    } finally {
+      vi.mocked(emit).mockImplementation(async (p) => { state.emits.push(p as unknown as Record<string, unknown>); return { recipients: 1 }; });
+    }
+  });
+
   it("a successful RPC whose audit INSERT is refused: the release stands, and the caller is told the row is missing", async () => {
     state.rows.checkout_sessions = [{ id: "s1", user_id: "vic", user_name: "vic", started_at: "2026-09-01T00:00:00Z", document_id: "d1", status: "active" }];
     state.rows.checkout_episodes = [{ id: "ep-1", document_id: "d1", status: "active", org_id: "o1", seq: 2, opened_at: "2026-09-01T00:00:00Z" }];

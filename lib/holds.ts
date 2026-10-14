@@ -642,6 +642,9 @@ async function notifyHoldChange(input: {
         followers: true,
         ...(team.projectId ? { projectId: team.projectId } : {}),
       },
+      // DELIV-16 (notifications N15): a stop-work notice is one-shot — its
+      // bell rows retry and dead-letter like a compliance notice (DEC-102).
+      inappRetry: {},
     });
   } catch (e) {
     // HLD-10: the hold itself is already written; a failed stop-work
@@ -655,6 +658,9 @@ async function notifyHoldChange(input: {
 /** A hold with no expected-release date is nudged once it has been open this
  *  long. Overridable per deployment (HOLD_AGING_DAYS); the default is a month. */
 export const HOLD_AGING_DAYS = Math.max(1, Number(process.env.HOLD_AGING_DAYS) || 30);
+/** How far back the hold-aging scan reads its own dead letters (DELIV-7
+ *  dw1, N15): a missed recipient is retried while their miss is this recent. */
+export const HOLD_RETRY_LOOKBACK_MS = 7 * 86_400_000;
 
 /** HLD-14: the aging sweep. Rides the EXISTING /api/cron/maintenance route
  *  (a third vercel.json cron entry fails deployment on this plan), as one of
@@ -689,21 +695,51 @@ export async function scanStaleHolds(orgId: string, now: Date = new Date()): Pro
   for (const r of [...((late.data as StaleRow[] | null) ?? []), ...((aged.data as StaleRow[] | null) ?? [])]) rows.set(r.id, r);
   if (rows.size === 0) return 0;
 
-  const [{ emit }, policy] = await Promise.all([import("@/lib/notify/dispatch"), loadCapabilityPolicy(orgId)]);
+  const [{ emit }, policy, { loadScanRetryPlan }] = await Promise.all([
+    import("@/lib/notify/dispatch"), loadCapabilityPolicy(orgId), import("@/lib/complianceNotify"),
+  ]);
   const pool = await resolveHoldAudience(orgId, policy);
+  // DELIV-7 dw1 (notifications N15): the nudge's bell rows retry and
+  // dead-letter (notifyCompliance, through emit's in-app leg with a retry
+  // key). The watermark is the rows themselves, PER RECIPIENT: a nudge whose
+  // row dead-lettered for one person is not "sent" to them — the next run
+  // sends it again to the recipients its last run lost (the dead letters
+  // under this hold's key, loadScanRetryPlan) who still have no row, and to
+  // nobody else (a pool member who joined since is not nudged about an old
+  // miss — as before). When the dead letters cannot be read (plan.unreadable)
+  // the plan cannot say who was lost, so a hold someone was already told
+  // about is DEFERRED to the next run, not decided (fix pass 3): re-sending
+  // to everyone without a row would re-nudge whoever deleted their read
+  // nudge (hold_opened is not a compliance kind — 20261161 lets it be
+  // cleared) and pool members who joined since, on every unreadable run;
+  // skipping for good would mark a lost recipient as sent. The dead letters
+  // stay readable for HOLD_RETRY_LOOKBACK_MS, so the next run that can read
+  // them sends the lost row; loadScanRetryPlan logs the unreadable run.
+  const plan = await loadScanRetryPlan(orgId, "hold-aging", HOLD_RETRY_LOOKBACK_MS);
   let nudged = 0;
   for (const h of rows.values()) {
     // The dedupe key is the hold AND the expectation it missed: a re-dated
     // hold that misses its new date is nudged again; an age nudge (no date)
     // fires once until a date is set.
     const staleFor = h.expected_release_at ?? "age";
+    const retryKey = `hold-aging:${h.id}:${staleFor}`;
     const { data: existing } = await supabase
       .from("notifications")
-      .select("id")
+      .select("user_id")
       .eq("kind", "hold_opened")
       .contains("metadata", { staleHoldId: h.id, staleFor })
-      .limit(1);
-    if (((existing as unknown[] | null) ?? []).length > 0) continue;
+      .limit(1000);
+    const told = new Set((((existing as Array<{ user_id?: string | null }> | null) ?? [])).map((r) => String(r.user_id ?? "")));
+    let audience = [h.opened_by, ...pool];
+    let retry = false;
+    if (told.size > 0) {
+      if (plan.unreadable) continue; // deferred: the next readable run decides
+      if (!plan.has(retryKey, null)) continue;
+      const lost = plan.only(retryKey, null);
+      audience = [...new Set(audience)].filter((u) => !!u && !told.has(u) && lost("hold_opened", u));
+      if (audience.length === 0) continue;
+      retry = true;
+    }
 
     const { data: doc } = await supabase
       .from("documents").select("document_number, title, name, library_id")
@@ -726,8 +762,12 @@ export async function scanStaleHolds(orgId: string, now: Date = new Date()): Pro
       link: doc?.library_id ? `/documents/${doc.library_id}?doc=${h.document_id}` : "/admin/holds",
       resource: { type: "document", id: h.document_id },
       actorName: "System",
-      audience: { involved: [h.opened_by, ...pool] },
+      audience: { involved: audience },
       metadata: { staleHoldId: h.id, staleFor, escalation: true },
+      inappRetry: { retryKey },
+      // a retry re-sends only the bell row its last run lost — the email was
+      // queued then, on its own channel
+      channels: retry ? ["inapp"] : undefined,
     });
     nudged += 1;
   }

@@ -646,6 +646,56 @@ describe("NEDGE-19 / VFY-15 — the workspace time zone", () => {
     expect(await readWorkspaceTimeZone(makeFakeSupabase(s.db), "o1")).toEqual({ ok: true, timeZone: null, stored: "Mars/Olympus" });
   });
 
+  it("VFY-15 re-review: with the switch set, a stored zone the server cannot show to be an Admin's gets a re-confirm notice; re-confirming re-writes it as this Admin, audited, and the notice goes", async () => {
+    const prevGate = process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
+    process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE = "20261203";
+    try {
+      seedSettings();
+      s.db.tables.org_configurations = [{ id: "cfg1", org_id: "o1", key: "timezone", data: { timeZone: "Pacific/Kiritimati" } }];
+      let confirmed = false;
+      const zoneCalls: string[] = [];
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("/api/workspace-effective-zone")) {
+          zoneCalls.push(url);
+          return new Response(JSON.stringify(confirmed
+            ? { zone: "Pacific/Kiritimati", honoured: true, reconfirm: false, stored: "Pacific/Kiritimati" }
+            : { zone: "America/Chicago", honoured: false, reconfirm: true, stored: "Pacific/Kiritimati" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ error: "n/a" }), { status: 500 });
+      }) as typeof fetch;
+      await act(async () => { root.render(React.createElement(WorkspaceSettingsPage)); });
+      await flush();
+      const card = host.querySelector('[data-testid="workspace-timezone-card"]')!;
+      expect(zoneCalls[0]).toBe("/api/workspace-effective-zone?orgId=o1");
+      const notice = card.querySelector('[data-testid="workspace-timezone-reconfirm"]');
+      expect(notice?.textContent).toMatch(/Re-confirm the workspace time zone\. The stored zone \(Pacific\/Kiritimati\) is not shown to have been set by a current Admin/);
+      // the browser names its own deployment calendar (no facility zone here: UTC-12)
+      expect(notice?.textContent).toMatch(/decided in the deployment's time zone \(Etc\/GMT\+12\) until an Admin confirms it here/);
+      // the ordinary Save stays off (nothing changed); the notice's own button re-writes the same zone
+      expect(button(/Save time zone/)!.disabled).toBe(true);
+      confirmed = true;
+      await click(button(/Re-confirm Pacific\/Kiritimati/));
+      expect((s.db.tables.org_configurations ?? []).find((r) => r.key === "timezone")).toMatchObject({ data: { timeZone: "Pacific/Kiritimati" } });
+      expect(audits("WORKSPACE_TIMEZONE_CHANGED").at(-1)!.details).toEqual({ before: "Pacific/Kiritimati", after: "Pacific/Kiritimati" });
+      expect(audits("WORKSPACE_TIMEZONE_CHANGED").at(-1)!.user_id).toBe("a1");
+      expect(zoneCalls.length).toBeGreaterThanOrEqual(2);
+      expect(card.querySelector('[data-testid="workspace-timezone-reconfirm"]')).toBeNull();
+    } finally {
+      if (prevGate === undefined) delete process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
+      else process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE = prevGate;
+    }
+  });
+
+  it("REGRESSION: switch unset, the card asks the server nothing and shows no notice", async () => {
+    seedSettings();
+    s.db.tables.org_configurations = [{ id: "cfg1", org_id: "o1", key: "timezone", data: { timeZone: "Pacific/Kiritimati" } }];
+    await mountSettings();
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
+    expect(calls.some((u) => u.startsWith("/api/workspace-effective-zone"))).toBe(false);
+    expect(host.querySelector('[data-testid="workspace-timezone-reconfirm"]')).toBeNull();
+  });
+
   it("an unknown zone is refused before anything is written; a refused write is said; clearing an unset zone is not a refusal", async () => {
     const sb = makeFakeSupabase(s.db);
     expect(await saveWorkspaceTimeZone(sb, { orgId: "o1", timeZone: "Mars/Olympus", before: null, actorId: "a1" })).toMatchObject({ ok: false, error: expect.stringMatching(/not a time zone/) });

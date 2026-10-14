@@ -3,7 +3,7 @@
 // admin-and-org Round G, package P4 — BILL-8 Done-when 1, the page half: the
 // billing page (app/(protected)/admin/billing/page.tsx) sends a workspace
 // that holds a subscription Stripe still bills (past due, unpaid, a Stripe
-// trial — lib/subscription.ts holdsLiveSubscription) to the Customer Portal
+// trial — lib/billing.ts holdsLiveSubscription) to the Customer Portal
 // instead of showing the plans grid, since subscribing again would start a
 // second subscription beside it. A workspace with no billed subscription (the
 // app's own trial, a canceled one, an incomplete first checkout that never
@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { SubscriptionInfo } from "@/lib/subscription";
+import type { SubscriptionInfo } from "@/lib/billing";
 
 const ctx = vi.hoisted(() => ({ info: null as SubscriptionInfo | null, roles: ["Admin"] as string[] }));
 
