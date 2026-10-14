@@ -614,6 +614,29 @@
     "AUTHZ-5 substrate → DC RET-6 (same defect on the document shed; P9) — the ticket-shed commit is what remains",
     "HAND-1, HAND-6, HAND-4, HAND-9, HAND-11, HAND-12, HAND-13, EDGE-5, EDGE-10 → the DC / A&O ids named above (in flight; record-only once merged)"
    ]
+  },
+  {
+   "name": "DF-P12 DELIVERABLE FOLLOW-UPS — the ticket deliverable's remaining trust gaps after DF-P10: history 'issued Rev N' lines server-only, attachment identity on the QR, the LEAK-7 (a) repair, ticket copies visible to staleCopies, and the server-side stamp and record (SM-5, LEAK-7, PHYS-17, PHYS-8 dw3, EVID-16)",
+   "findings": [
+    "drafting-flow SM-5 (residual after DF-P10: a member-appended 'issued Rev N' history line can still mark a real issue superseded under a review label and skip a number on the service-role re-cycle) and the guard limb: ticket_update_guard re-created from its NEWEST body (found by scanning; 20261195 or later) refuses a client-appended history entry matching 'issued Rev N' — only the server's workflow writes it; once landed, the verify verdict may trust history again (record it); SM-5 done-when 3, attachment identity on the QR (?a=), with LEAK-7 (b)",
+    "drafting-flow LEAK-7 (a)-row data repair: a counts-first DEC-30 migration for rows reopened before Round E that kept a label (inventory before, one result set)",
+    "public-surfaces PHYS-17 and PHYS-8 done-when 3: download_audits.ticket_id UUID and attachment_id TEXT (a migration after 20261068's columns; comment the source values drafting / drafting_print / drafting_unstamped / drafting_print_unstamped), and a ticket arm in lib/staleCopies.ts so a superseded ticket deliverable's copies are recalled like a document's",
+    "drafting-flow EVID-16: the drafting-ticket copy is stamped and recorded in the server request that serves it (a stamping route), not in the browser after the copy",
+    "Wording and observation left by DF-P10 (DEC-31): what 'withdrawn' says for an RFI closed on a review label; reject_final then Force Close keeps issued label N, so the package the requester rejected scans green on CLOSED (base did the same) — decide and record (DEC-90: fail-safe)",
+    "drafting-flow EVID-5 (MEDIUM; its ticket half landed in DF-P10): closes by pointer when EVID-16 (here) and EVID-15 (projects-joint J15) are RESOLVED and document-control's 20261068 policy half is pasted — record the pointer"
+   ],
+   "files": [
+    "supabase/migrations: the guard limb, the LEAK-7 (a) repair and the download_audits columns (DEC-30 each, lineDiff-pinned, DRLS-16)",
+    "lib/verifyTicketVerdict.ts, lib/ticketDeliverableCopy.ts, app/api/verify-ticket/route.ts, a new server stamping route",
+    "lib/staleCopies.ts (the ticket arm)",
+    "tests for every limb; regression — a legitimately issued, current deliverable scans current and prints exactly as after DF-P10"
+   ],
+   "migrationsLikely": 3,
+   "dependsOn": [
+    "drafting-flow DF-P10 merged (2026-10-14)",
+    "drafting-flow DF-P4 merged (it re-creates ticket_update_guard — start from its body)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-14 at the DF-P10 merge (DEC-31: DF-P10 named these 'a DF-P10 follow-up'). Migration numbers are allocated at launch."
   }
  ],
  "crossAreaFileOverlaps": [

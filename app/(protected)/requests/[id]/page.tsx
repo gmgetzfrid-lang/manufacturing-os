@@ -20,7 +20,7 @@ import CommentBody from '@/components/requests/CommentBody';
 import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
 import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
-import { downloadStampedPdf, stampWatermark } from '@/lib/stamping';
+import { downloadStampedPdf } from '@/lib/stamping';
 import { parseSourceDocument, revDrift } from '@/lib/sourceDocRef';
 import { heldRoles } from '@/lib/roleHeld';
 // GAP-6 / DEC-22: the ticket → document hand-back. Publish authority on the
@@ -32,6 +32,7 @@ import { getMyTeamIds } from '@/lib/teams';
 import { handbackPreset, latestFinalAttachment, deliverableStateOf } from '@/lib/ticketHandback';
 import RevUpModal from '@/components/documents/RevUpModal';
 import { publicOrigin } from '@/lib/publicOrigin';
+import { ticketCopyPlan, recordTicketCopy, type TicketCopyLiveFacts } from '@/lib/ticketDeliverableCopy';
 import { logAuditAction } from '@/lib/audit';
 // Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
 // of which the request-detail page needs until the user actually opens markup.
@@ -520,26 +521,30 @@ const FileViewerModal = ({
   onClose,
   ticketId,
   ticketRowId,
-  deliverableRev,
   orgId,
   userId,
   onApprove,
   archived,
   archiveId,
+  liveTicket,
 }: {
   file: TicketAttachment | null;
   isOpen: boolean;
   onClose: () => void;
   ticketId?: string;
-  /** Row UUID — powers the /verify-ticket QR stamped on downloads. */
+  /** Row UUID — powers the /verify-ticket QR stamped on downloads. The
+   *  revision on the QR and in the footer is the FILE's own (file.rev —
+   *  PHYS-2), never the ticket's live deliverable_rev. */
   ticketRowId?: string;
-  /** Current deliverable rev (1A while in review, 1 once issued). */
-  deliverableRev?: string | null;
   orgId?: string;
   userId?: string;
   onApprove?: () => void;
   archived?: boolean;
   archiveId?: string | null;
+  /** The ticket as this page holds it — a WARNING input only (PHYS-2): a
+   *  file the page knows is superseded, or whose ticket is being re-worked,
+   *  is confirmed before stamping and stamped as such. Never the QR's rev. */
+  liveTicket?: TicketCopyLiveFacts | null;
 }) => {
   const [showCompliance, setShowCompliance] = useState(false);
   // file.url is stored as the raw R2 storage path (orgs/<org>/tickets/...).
@@ -547,7 +552,7 @@ const FileViewerModal = ({
   // / img tags actually load. Without this they show "not found".
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
-  const { userEmail } = useRole();
+  const { userEmail, activeRole } = useRole();
 
   useEffect(() => {
     // Archived tickets have had their attachment binaries shed to the cold
@@ -571,26 +576,51 @@ const FileViewerModal = ({
   const isPdf = file.type?.includes('pdf') || file.name.toLowerCase().endsWith('.pdf');
   const isImage = file.type?.includes('image') || file.name.match(/\.(jpeg|jpg|gif|png)$/i);
 
+  // PHYS-2 / PHYS-9 / HAND-3: what this file's copy says — its OWN revision
+  // on the QR and in the footer (none recorded → no ?r=, "cannot confirm"),
+  // one control state for both marks, and "not a controlled document
+  // revision". lib/ticketDeliverableCopy.ts.
+  const planFor = (channel: "print" | "download") =>
+    ticketCopyPlan({ file, ticketNumber: ticketId, ticketRowId, origin: publicOrigin(), channel, live: liveTicket });
+  // A superseded or re-worked file is never stamped silently: the user is
+  // asked first, and the stamp says what the page knows.
+  const confirmStanding = async (plan: ReturnType<typeof planFor>) =>
+    !plan.confirmMessage || (await appConfirm({ message: plan.confirmMessage, tone: "danger" }));
+
+  // EVID-5 / PHYS-8: the copy's record is awaited and checked; a refusal never
+  // blocks the copy, and it is said rather than swallowed.
+  const recordCopy = async (channel: "print" | "download", stamped: boolean, watermark: string, expiresAt: Date) => {
+    if (!orgId || !userId) return;
+    const res = await recordTicketCopy(supabase, logAuditAction, {
+      orgId, userId, userEmail: userEmail ?? null, userRole: activeRole ?? null,
+      ticketRowId: ticketRowId ?? null, ticketNumber: ticketId ?? null,
+      file, channel, stamped, watermark: stamped ? watermark : null, expiresAt,
+    });
+    if (!res.recorded) {
+      await appAlert({
+        message: `This ${channel === "print" ? "print" : "download"} is not fully recorded: ${res.error}. Tell Document Control which file you took, so the copy can be recalled if it changes.`,
+        tone: "danger",
+      });
+    }
+  };
+
   const handlePrint = async () => {
     if (!resolvedUrl) { await appAlert({ message: 'Still loading file — try again in a moment.' }); return; }
     // Print the STAMPED stream, never the raw file: watermark + rev footer +
     // the verify QR, exactly like a download. Paper is where copies escape.
     let printUrl = resolvedUrl;
     let stamped = false;
+    const plan = planFor("print");
+    if (!(await confirmStanding(plan))) return;
     try {
       const { stampPdf } = await import("@/lib/stamping");
-      const verifyUrl = ticketRowId && publicOrigin()
-        ? `${publicOrigin()}/verify-ticket/${ticketRowId}${deliverableRev ? `?r=${encodeURIComponent(deliverableRev)}` : ""}`
-        : undefined;
       const blob = await stampPdf(resolvedUrl, {
         userLabel: userEmail?.split("@")[0] || userId || "USER",
         email: userEmail || undefined,
         timestamp: new Date(),
-        watermarkText: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "UNCONTROLLED COPY",
-        verifyUrl,
-        footerNotice: deliverableRev
-          ? `${ticketId ?? "Ticket"} deliverable Rev ${deliverableRev} at time of printing — scan the QR to confirm it is still the latest.`
-          : undefined,
+        controlState: plan.controlState,
+        verifyUrl: plan.verifyUrl,
+        footerNotice: plan.footerNotice,
       });
       printUrl = URL.createObjectURL(blob);
       stamped = true;
@@ -601,17 +631,6 @@ const FileViewerModal = ({
         "Couldn't apply the watermark/QR stamp to this file. Print the UNSTAMPED copy anyway?",
       );
       if (!proceed) return;
-    }
-    // Record the print on the audit trail either way.
-    if (orgId && userId) {
-      void supabase.from("download_audits").insert({
-        org_id: orgId, ticket_id: ticketId ?? null, attachment_id: file.id,
-        attachment_type: file.type, filename: file.name, user_id: userId,
-        user_email: userEmail ?? null,
-        expires_at: new Date(Date.now() + 30 * 24 * 3600 * 1000),
-        watermark_text: stamped ? "UNCONTROLLED COPY" : "UNSTAMPED (stamping failed)",
-        source: "drafting_print",
-      }).then(() => {}, () => {});
     }
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
@@ -625,6 +644,10 @@ const FileViewerModal = ({
       document.body.removeChild(iframe);
       if (stamped) URL.revokeObjectURL(printUrl);
     }, 60_000);
+    // Record the print on the audit trail either way — AFTER the print has
+    // started, as the download path does: a slow or refused record never
+    // delays or blocks the copy, and a refusal is said once it settles.
+    await recordCopy("print", stamped, plan.watermark, new Date(Date.now() + 30 * 24 * 3600 * 1000));
   };
 
   const handleDownloadClick = () => {
@@ -642,14 +665,13 @@ const FileViewerModal = ({
       : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     let stamped = false;
+    const plan = planFor("download");
+    if (!(await confirmStanding(plan))) { setShowCompliance(false); return; }
     try {
       const downloadUrl = resolvedUrl || (await getSignedUrlForPath(file.url));
       // Every downloaded copy carries a QR that answers "is this still the
       // latest revision of this ticket's deliverable?" — so a copy a PM
       // handed out keeps warning for itself after a new revision lands.
-      const verifyUrl = ticketRowId && publicOrigin()
-        ? `${publicOrigin()}/verify-ticket/${ticketRowId}${deliverableRev ? `?r=${encodeURIComponent(deliverableRev)}` : ""}`
-        : undefined;
       await downloadStampedPdf({
         url: downloadUrl,
         filename: file.name,
@@ -658,11 +680,9 @@ const FileViewerModal = ({
           email: userEmail || undefined,
           timestamp: now,
           expiresAt,
-          watermarkText: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY",
-          verifyUrl,
-          footerNotice: deliverableRev
-            ? `${ticketId ?? "Ticket"} deliverable Rev ${deliverableRev} at time of download — scan the QR to confirm it is still the latest.`
-            : undefined,
+          controlState: plan.controlState,
+          verifyUrl: plan.verifyUrl,
+          footerNotice: plan.footerNotice,
         },
       });
       stamped = true;
@@ -683,20 +703,12 @@ const FileViewerModal = ({
       link.click();
       document.body.removeChild(link);
     } finally {
-      // The audit row records the pull EITHER WAY — an unstamped fallback is
-      // exactly the copy the distribution record most needs to know about.
-      if (orgId && userId) {
-        void supabase.from("download_audits").insert({
-          org_id: orgId, ticket_id: ticketId ?? null, attachment_id: file.id,
-          attachment_type: file.type, filename: file.name, user_id: userId,
-          user_email: userEmail ?? null, expires_at: expiresAt,
-          watermark_text: stamped
-            ? stampWatermark(file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY", undefined)
-            : "UNSTAMPED (stamping failed)",
-          source: "drafting",
-        }).then(() => {}, () => {});
-      }
+      // The record names the pull EITHER WAY — an unstamped fallback is
+      // exactly the copy the distribution record most needs to know about —
+      // and it records the watermark the stamper printed for this file's
+      // control state (PHYS-9), never a caller literal.
       setShowCompliance(false);
+      await recordCopy("download", stamped, plan.watermark, expiresAt);
     }
   };
 
@@ -1687,11 +1699,11 @@ export default function TicketDetailView() {
         onClose={() => setViewerFile(null)}
         ticketId={ticket?.ticketId}
         ticketRowId={ticket?.id}
-        deliverableRev={ticket?.deliverableRev}
         orgId={activeOrgId ?? undefined}
         userId={uid ?? undefined}
         archived={!!ticket?.archivedAt}
         archiveId={ticket?.archiveId}
+        liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}
         onApprove={(() => {
           const action = availableActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;
