@@ -864,7 +864,8 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
  *  cannot take a Node stream (no `readable-stream` support), the string, as
  *  before. Exported for tests. */
 export function tableJsonContent(rows: unknown): Readable | string {
-  if (!JSZip.support.nodestream) return JSON.stringify(rows, null, 2);
+  // JSZip reports it at runtime; its typings leave the key out.
+  if (!(JSZip.support as unknown as { nodestream?: boolean }).nodestream) return JSON.stringify(rows, null, 2);
   return Readable.from(batchedChunks(prettyJsonChunks(rows, 1)));
 }
 
