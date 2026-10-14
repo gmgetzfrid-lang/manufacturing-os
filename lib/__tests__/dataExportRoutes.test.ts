@@ -1620,6 +1620,9 @@ describe("fourth review fix — the JSON export is held to the hourly cap, with 
     const run = rowsOf("export_runs")[0];
     expect(res.headers.get("x-export-run-id")).toBe(run.id);
     expect(run).toMatchObject({ status: "succeeded", triggered_by: "u-admin", file_count: 3, destination_type: "json" });
+    // admin-and-org Round G P14 (ILIFE-11 criterion 2): measured before the
+    // body is streamed — the run row, the X-Export-Bytes header and the body agree.
+    expect(res.headers.get("x-export-bytes")).toBe(String(run.total_bytes));
     expect(Number(run.total_bytes)).toBe((await res.text()).length);
     db.writeError = (table, op) => (table === "export_runs" && op === "update" ? { code: "57014", message: "statement timeout" } : null);
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);

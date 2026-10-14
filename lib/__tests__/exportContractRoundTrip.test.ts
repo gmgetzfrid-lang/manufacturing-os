@@ -830,6 +830,18 @@ describe("the server ZIP's embed loop: a size-unknown file is capped before it i
       "README.md",
     ]);
     expect(await zip.file("README.md")!.async("string")).not.toMatch(/Omitted binaries/);
+    // admin-and-org Round G P14 (intelligence ILIFE-11 criterion 2): each
+    // table is STREAMED into the ZIP row by row — and its text is exactly
+    // what JSON.stringify(rows, null, 2) wrote before.
+    // (audit_logs gains this build's own DATA_EXPORT rows after `env` was
+    // taken, so its rows differ; its text is still JSON.stringify's.)
+    for (const t of Object.keys(env.tables)) {
+      const text = await zip.file(`tables/${t}.json`)!.async("string");
+      expect(text, t).toBe(JSON.stringify(JSON.parse(text), null, 2));
+      if (t !== "audit_logs") expect(text, t).toBe(JSON.stringify(env.tables[t], null, 2));
+    }
+    // ILIFE-11 (P14): the README names the derived columns left out, from manifest.omittedColumns.
+    expect(await zip.file("README.md")!.async("string")).toMatch(/\n## Omitted derived columns\n\n[^\n]*\n- knowledge_chunks: embedding — the semantic-search vector/);
     expect(out.diagnostics.map((d) => d.step)).toEqual([
       "envelope:start", "envelope:done", "zip:build", "schema:migrations", "files:fetch", "files:done", "zip:compress", "zip:ready",
     ]);

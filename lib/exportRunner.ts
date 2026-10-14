@@ -21,10 +21,13 @@ import { S3Client, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, De
 import { createHash, randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { runOrgExport, recordExportUndelivered, DataExportEnvelope } from "@/lib/dataExport";
+import { EXPORT_OMITTED_COLUMNS } from "@/lib/exportTables";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 import net from "node:net";
+import { prettyJsonChunks, batchedChunks } from "@/lib/prettyJsonStream";
 import { lookup } from "node:dns/promises";
 
 type DiagnosticStep = { ts: string; step: string; detail?: string };
@@ -451,10 +454,14 @@ async function buildAndDeliver(
     step("schema:migrations:err", (e as Error).message);
   }
 
-  // One table file per data type — small files unzip nicely
+  // One table file per data type — small files unzip nicely.
+  // intelligence ILIFE-11 criterion 2 (admin-and-org Round G, P14): each
+  // table's JSON is STREAMED into the compressor a batch of rows at a time
+  // (tableJsonContent) — the same text as JSON.stringify(rows, null, 2), never
+  // held as one string beside the rows it was made from.
   const tableFolder = zip.folder("tables");
   for (const [name, rows] of Object.entries(envelope.tables)) {
-    tableFolder?.file(`${name}.json`, JSON.stringify(rows, null, 2));
+    tableFolder?.file(`${name}.json`, tableJsonContent(rows));
   }
 
   // Embed binary files inline. Each file's path mirrors its storage key, and
@@ -851,6 +858,31 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
+/** ILIFE-11 criterion 2 (P14): a table file's content for the ZIP — a Node
+ *  stream of JSON.stringify(rows, null, 2), row by row (lib/
+ *  prettyJsonStream.ts), which JSZip reads as it compresses. Where JSZip
+ *  cannot take a Node stream (no `readable-stream` support), the string, as
+ *  before. Exported for tests. */
+export function tableJsonContent(rows: unknown): Readable | string {
+  if (!JSZip.support.nodestream) return JSON.stringify(rows, null, 2);
+  return Readable.from(batchedChunks(prettyJsonChunks(rows, 1)));
+}
+
+/** ILIFE-11 (P14): the README's section naming the derived columns this
+ *  archive leaves out (manifest.omittedColumns), with each one's reason from
+ *  the export contract (lib/exportTables.ts EXPORT_OMITTED_COLUMNS — the
+ *  same words as the manifest's OMITTED note), so someone reading the archive
+ *  is told that, for example, every knowledge_chunks row lacks `embedding`. */
+export function omittedColumnsReadmeSection(omittedColumns: Record<string, readonly string[]> | undefined): string {
+  const entries = Object.entries(omittedColumns ?? {}).filter(([, cols]) => Array.isArray(cols) && cols.length > 0);
+  if (entries.length === 0) return "";
+  const lines = entries.map(([t, cols]) => {
+    const reason = Object.prototype.hasOwnProperty.call(EXPORT_OMITTED_COLUMNS, t) ? EXPORT_OMITTED_COLUMNS[t].reason : null;
+    return `- ${t}: ${cols.join(", ")}${reason ? ` — ${reason}` : ""}`;
+  });
+  return `\n## Omitted derived columns\n\nThese columns are derived data and are NOT in this archive (not exported as null — left out):\n${lines.join("\n")}\n`;
+}
+
 function buildReadme(envelope: DataExportEnvelope, omittedCount = 0, late = { atDeadline: 0, sizeUnknown: 0 }): string {
   const m = envelope.manifest;
   const totalRows = m.tables.reduce((s, t) => s + t.rowCount, 0);
@@ -873,6 +905,7 @@ function buildReadme(envelope: DataExportEnvelope, omittedCount = 0, late = { at
   const redactedNote = redacted.length > 0
     ? `\n## Redacted credential columns\n\nSecrets never leave the database. These columns are exported as null:\n${redacted.map(([t, cols]) => `- ${t}: ${cols.join(", ")}`).join("\n")}\nAfter a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), and export destinations must have their credentials re-entered (restored rows arrive disabled).\n`
     : "";
+  const omittedColumnsNote = omittedColumnsReadmeSection(m.omittedColumns);
   return `# manufacturing-os export
 
 Organization: ${m.orgName || m.orgId}
@@ -893,7 +926,7 @@ Schema version: ${m.schemaVersion}
 - schema/migrations/*.sql   — every schema migration, in order (base + migrations = the exact live schema)
 - tables/<name>.json        — one file per table; JSON array of rows
 - files/<storage-path>      — every binary file, path-preserved
-${omittedNote}${shedNote}${redactedNote}
+${omittedNote}${shedNote}${redactedNote}${omittedColumnsNote}
 To rebuild elsewhere: apply schema.sql, then each migration in filename order,
 then import tables/*.json (parents before children), then upload files/* to
 your storage under the same keys.
