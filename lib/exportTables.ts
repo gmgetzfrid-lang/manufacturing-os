@@ -27,6 +27,10 @@ export const ORG_SCOPED_TABLES = [
   // equipment nicknames a normalizer can't derive.
   "proposed_links",
   "asset_aliases",
+  // File finder — what people SAY vs what files SAY, and pasted drive
+  // listings (paths only). Taught by document control; not re-derivable.
+  "finder_aliases",
+  "finder_listings",
   // Skills — the org's authored detectors and answer disciplines. Pure
   // human knowledge (names, patterns, packs, sharing); not re-derivable.
   "link_rules",
