@@ -838,7 +838,7 @@ DEC-63 §4 Reversal (4): "An org / library zone setting replaces the deployment 
 ## VFY-16 · The public verify endpoints answer for a private or hidden document with its number and title — no verify route reads `documents.visibility` (intelligence `DACL-8` / `DACL-3` criterion 3, handed over)
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts` (the `documents` select and the `docNumber` / `title` response fields), `app/api/verify-package/route.ts` (each sheet's `label`), `app/api/verify-hold/route.ts` (`docLabel`)
 - **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY) so the intelligence handover on `VFY-14` is a finding rather than a note (DEC-31: not in PS-VERIFY's plan, not built here); re-read against the branch, not yet challenged by a second party.
@@ -885,7 +885,14 @@ grep -n "visibility" app/api/verify*/route.ts → no match
 3. ◐ `DACL-8` criterion 1 is closed by pointer here (its record, 2026-10-14 at the P12 merge). `DACL-3` criterion 3 is NOT closed, because it does not hold as written (`DEC-29`): it asks that `/api/verify` "requires BOTH doc and version ids and refuses documents whose visibility is private/hidden, or is scoped to versions that were actually stamped/issued". The visibility limb holds on the `DEC-90` default's reading (the verdict without number or title, rather than a refusal), but `/api/verify` still answers a doc-only QR (`unverifiable`, never green, `DEC-65` §2 — kept: refusing it would take the held / retired answer away from every paper printed before `?v=`, `verifyRouteVerdict.test.ts` "a retired or held document still says so without ?v="), and no per-print token exists. That remaining limb is `DACL-8` criterion 2's.
 
 **Remaining / owner.** Done-when 3's `DACL-3` criterion 3 limb (both ids required, or a per-print token). This finding resolves when `DACL-3` criterion 3 closes (owner below), or when the integrator rules done-when 3 down to `DACL-3` criterion 3's visibility limb, which holds now.
-- **Owner:** public-surfaces PS-P9 PER-PRINT SHEET TOKEN (done-when 3's `DACL-3` criterion 3 limb only; done-when 1 and 2 are met) — the package the integrator assigned `DACL-8` criterion 2 to at the I-12 merge (2026-10-14); the same limb, integrator to confirm at merge.
+- **Owner:** public-surfaces PS-P9 PER-PRINT SHEET TOKEN — the per-print sheet token, as an improvement, not a precondition (the integrator, 2026-10-14; see the Resolution below).
+
+**Resolution (2026-10-14, intelligence I-12 — done-when 3 met as narrowed by the integrator under `DEC-90`).** The integrator ruled `DACL-3` criterion 3 met as narrowed: a doc-only QR keeps being answered, so prints made before `?v=` keep their held / retired answer (refusing them would be a regression), and it answers without disclosure — verdict `unverifiable`, and no number or title for a restricted document. `DACL-8` criterion 1 and `DACL-3` criterion 3 are closed by pointer here; the per-print sheet token stays public-surfaces PS-P9's as an improvement.
+
+**Done-when.**
+1. ✓ (as recorded).
+2. ✓ (as recorded).
+3. ✓ `DACL-8` criterion 1 and `DACL-3` criterion 3 (as narrowed, `DEC-90`) are closed by pointer.
 
 ---
 

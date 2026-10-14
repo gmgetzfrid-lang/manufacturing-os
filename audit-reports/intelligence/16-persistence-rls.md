@@ -454,7 +454,7 @@ Tests: `lib/__tests__/processFlowsLib.test.ts` ("resolveAssetEndpoints — IRLS-
 
 **Scope / residual.** As `IEDGE-6`: open on I-12 (normal-visibility ACLs and private drafts inside `node_visible`) and on a database-backed test.
 
-**Partial (2026-10-14, intelligence Round G).** Package I-12. `20261212` (pending migration) brings explicit READ denies into `node_visible` for every subject and on a normal row (`DACL-12`, `IEDGE-12`), so a mention of a document such a deny names is hidden from that member through `entity_mentions_source_readable`, which reads the document row under the caller's RLS.
+**Partial (2026-10-14, intelligence Round G).** Package I-12. `20261212` (pending migration) brings explicit READ denies into `node_visible` for every subject and on a normal row (`DACL-12`, `IEDGE-12`), so a mention of a document such a deny names is hidden from that member through `entity_mentions_source_readable`, which reads the document row under the caller's RLS. *(Superseded at the I-12 merge, 2026-10-14: as pasted, `20261212` holds this binding back by default — its operator switch stays off, `DEC-90`; the database binding lands with intelligence I-30. The app's predicate refuses these reads meanwhile.)*
 
 **Done-when.**
 1. Partly — as `IEDGE-6` criterion 1: ✓ for a read deny; ✗ for a normal row's allow-list and a private draft.
@@ -465,15 +465,15 @@ Tests: `lib/__tests__/processFlowsLib.test.ts` ("resolveAssetEndpoints — IRLS-
 
 **Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`).
 
-**Partial (2026-10-14, intelligence I-12, at the integration merge).** The I-17 harness now exists (`npm run test:db`: a real PostgreSQL 16, every migration replayed, statements run as PostgREST runs a request — `SET ROLE` plus `request.jwt.claims`). Criterion 3 asks for exactly this finding's case, not merely a policy run per role, so a new harness suite asserts it: `lib/__tests__/rls/intelMentionRowsAcl.test.ts:62` — a Viewer without access to a mirrored PRIVATE document (granted to Engineer) gets zero `entity_mentions` rows for it (`:64`), the Engineer and a controller (Viewer + DocCtrl) get its row, another workspace's member gets nothing; `:74` — the same for a NORMAL document whose index denies the Viewer's role read (`:76`; `20261212`'s binding applied on the replayed fresh install, which has no drop box); `:81` — the mirror row itself follows the same access; `:93` — the sentence (`context_snippet`) is withheld with the row. `20261212`'s deny binding now self-gates on drop boxes (`DEC-90` R2, recorded on `DACL-12`).
+**Partial (2026-10-14, intelligence I-12, at the integration merge).** The I-17 harness now exists (`npm run test:db`: a real PostgreSQL 16, every migration replayed, statements run as PostgREST runs a request — `SET ROLE` plus `request.jwt.claims`). Criterion 3 asks for exactly this finding's case, not merely a policy run per role, so a new harness suite asserts it: `lib/__tests__/rls/intelMentionRowsAcl.test.ts:78` — a Viewer without access to a mirrored PRIVATE document (granted to Engineer) gets zero `entity_mentions` rows for it (`:80`), the Engineer and a controller (Viewer + DocCtrl) get its row, another workspace's member gets nothing; `:90` — the mirror row itself follows the same access; `:120` — the sentence (`context_snippet`) of the private document is withheld with the row. These hold on the replayed install as pasted (`20261203`'s private branch). `20261212`'s deny binding is NOT applied as pasted — held back by default behind an operator switch that stays off, landing with intelligence I-30 (`DEC-90`, recorded on `DACL-12`) — so `:97` pins as OPEN that a NORMAL document whose index denies the Viewer's role read still reaches the Viewer (mention row and mirror row), and `:103` shows a scratch copy pasted with the switch on withholding it from the Viewer and keeping it for the others.
 
 **Done-when.**
-1. Partly — ✓ for a read deny once `20261212` is pasted with its gate open; ✗ a normal row's allow-list and a private draft (as recorded).
+1. Partly — ✓ for a private / hidden document the reader is not granted; ✗ at the database for a normal row's read deny (held back by default until I-30), a normal row's allow-list and a private draft.
 2. Partly — the same split.
-3. ✓ Closed by pointer: `lib/__tests__/rls/intelMentionRowsAcl.test.ts:62` (`:64`) and `:74` (`:76`), run by `npm run test:db`.
+3. ✓ Closed by pointer (accepted by the integrator, `DEC-90`, 2026-10-14): `lib/__tests__/rls/intelMentionRowsAcl.test.ts:78` (`:80`), run by `npm run test:db`.
 
 **Remaining / owner.**
-- **Assigned (2026-10-14, the integrator at the I-12 merge):** intelligence I-30 NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED GRANTS (criteria 1–2's remainder — the allow-list at the database, `DEC-90` R5, the private-draft rule, and lifting `20261212`'s drop-box gate).
+- **Assigned (2026-10-14, the integrator at the I-12 merge):** intelligence I-30 NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED GRANTS (criteria 1–2's remainder — the read-deny binding `20261212` holds back by default, applied with drop-box support and no switch; the allow-list at the database, `DEC-90` R5; and the private-draft rule).
 
 ---
 
