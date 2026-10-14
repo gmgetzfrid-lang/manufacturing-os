@@ -1,6 +1,6 @@
 # 16 · Persistence & RLS across the layer
 
-**19 findings** — 1 CRITICAL · 4 HIGH · 9 MEDIUM · 5 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30; `IRLS-16` opened by I-23, 2026-10-07; `IRLS-17` (MEDIUM), `IRLS-18` (LOW) and `IRLS-19` (MEDIUM) opened by I-17, 2026-10-14).
+**20 findings** — 1 CRITICAL · 4 HIGH · 9 MEDIUM · 6 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30; `IRLS-16` opened by I-23, 2026-10-07; `IRLS-17` (MEDIUM), `IRLS-18` (LOW) and `IRLS-19` (MEDIUM) opened by I-17, 2026-10-14; `IRLS-20` (LOW) opened by I-27, 2026-10-14).
 
 Table by table: who can write what, and which writes carry authority.
 
@@ -246,6 +246,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - **Severity:** MEDIUM
 - **Status:** RESOLVED
 - **Assigned:** intelligence I-17 DATABASE HARNESS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (done-when 2 and 3) — by the integrator, 2026-10-14 (at the I-17 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260806_intelligence_layer.sql:57-61`, `supabase/migrations/20260911_knowledge_ai.sql:91`, `lib/schemaExpectations.ts:1-13`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on a fresh DB: knowledge_questions does not exist in supabase/schema.sql (grep over its 1341 lines returns nothing), there is no README or ordering manifest in supabase/migrations, and lib/schemaExpectations.ts:4-5 states migrations are "applied BY HAND in the Supabase SQL editor" — where a multi-statement script runs as one implicit transaction, so the whole file rolls back. The knock-on is real too: 20260807_link_proposals.sql:95 does `ALTER TABLE document_related_resources ADD COLUMN…` on a table only created at 20260806:68, inside the file that just aborted.
@@ -908,10 +909,23 @@ Under DB-8 the migrations are the single source of truth, and the header already
 Measured 2026-10-14 on PostgreSQL 16.13 with pgvector 0.6.0, `npm run test:db` exit 0. The replay logged `baseline supabase/schema.sql as one script: ok` and 303 migrations with no failure line; the four suites pass (59 tests); the scratch cluster was deleted afterwards.
 
 **Done-when.**
-- ✓ `supabase/schema.sql` runs as ONE script with zero errors on an empty database carrying the harness's Supabase stand-in (PostgreSQL 16.13: its roles, default privileges, `auth` schema, publication and pgvector). Of the four routes the record offered: the forward references moved to their migrations, which already carried them; the `pg_trgm` statement is on its own line; and the `archived_at` index is removed, its column and index coming from `20260808`. No live database is touched: the file is never re-run on one (DB-8, above). A note on "empty Supabase project": this is the harness's install, not a hosted project. The integrator's DEC-90 ruling in this package's brief counts that install in place of a real Supabase project, and it is the install `IRLS-6` done-when 3 reads. The one statement the file now runs that it did not before, `CREATE EXTENSION IF NOT EXISTS pg_trgm`, is the statement `20260724:60` already runs, a file older than the paste guide's range (`20261007` on), so one every live database has applied.
+- ✓ `supabase/schema.sql` runs as ONE script with zero errors on an empty database carrying the harness's Supabase stand-in (PostgreSQL 16.13: its roles, default privileges, `auth` schema, publication and pgvector). Of the four routes the record offered: the forward references moved to their migrations, which already carried them; the `pg_trgm` statement is on its own line; and the `archived_at` index is removed, its column and index coming from `20260808`. No live database is touched: the file is never re-run on one (DB-8, above).
+  - **"An empty Supabase project": met on the harness's empty stand-in, not on a hosted project.** The run was on PostgreSQL 16.13 carrying the stand-in's Supabase roles, `auth` schema, default privileges, publication and pgvector, with nothing else in it. **Counting that in place of an empty hosted project is this package's own call, not an integrator ruling.** The DEC-90 ruling in this package's brief covers only the PostgREST stand-in for `/api/admin/schema-health`'s reads (`IRLS-6` done-when 3). It does not cover this criterion, so this reading extends it, for the integrator to ratify or reverse at merge (listed on DEC-90's I-27 Landed line so the ratification has a home). The reason for the call:
+    - The defects the criterion names are in the file's own text: forward references, a statement glued to a comment line, and an index on a column the file never makes. PostgreSQL decides each of those the same way with or without a hosted project around it.
+    - Every outside object the file names is in the stand-in: `auth.uid()`, `auth.users`, the roles `anon`, `authenticated` and `service_role`, and the `supabase_realtime` publication. `pg_trgm` is the extension `20260724` already created on every live database. `gen_random_uuid()` is built into PostgreSQL from version 13.
+    - A hosted project adds services the file never touches: auth, storage and PostgREST's schema cache.
+    - On the pre-fix file (base `e13bc7b`), the stand-in reproduced the failure the record describes for a paste: `relation "projects" does not exist`, with nothing applied.
+
+    **If the call is not ratified:** done-when 1 is not met until the file is pasted once into an empty hosted project (a user step), and `IRLS-17` goes back to OPEN until then. Nothing in the code changes either way.
+  - **The three statements the file now runs that failed before.** Each is a no-op on a migrated database (`freshReplay.test.ts`, "IRLS-17: every statement schema.sql gained is a no-op …"), and each repeats a statement in a file older than the paste guide's range (`20261007` on), so one every live database has applied:
+    - `CREATE EXTENSION IF NOT EXISTS pg_trgm;` (`:502`), the same statement as `20260724:60`;
+    - `CREATE INDEX IF NOT EXISTS tickets_ticket_id_trgm_idx …` (`:503`), which failed before only because the extension never ran; it is the same statement as `20260724:61`;
+    - `ALTER TABLE IF EXISTS document_assets ENABLE ROW LEVEL SECURITY;` (`:1362`), which `20260609:185` already runs without `IF EXISTS`.
 - ✓ `BASELINE_KNOWN_ERRORS` in `lib/__tests__/rls/replayKnownDefects.ts` is empty, and `npm run test:db` passes (exit 0).
 
-**Scope / residual.** None in this finding. The `.github/workflows/ci.yml` comment still says every schema change "is mirrored into supabase/schema.sql". That predates DB-8 and contradicts the file's header. It is a comment only, outside this package's files, and noted here for the integrator.
+**Scope / residual.** Two items remain, each with an owner:
+- **Done-when 1's reading of "an empty Supabase project"** is this package's own call, for the integrator to ratify or reverse at merge (above). Owner: the integrator.
+- **A conflicting instruction found during the work.** The header of `.github/workflows/ci.yml` (`:16-19`) still tells authors to mirror every schema change into `supabase/schema.sql`. That instruction predates DB-8 and contradicts this file's header. That file is in no package's list, so it was not edited here. It is opened as `IRLS-20` (LOW, DEC-31). Owner: the integrator, to route.
 
 ---
 
@@ -1020,5 +1034,47 @@ Measured 2026-10-14 on PostgreSQL 16.13 with pgvector 0.6.0, `npm run test:db` e
 - ✓ `20261075` has left `OUT_OF_ORDER_FILES`. `enforce_checkout_episode_guard()` is in `TRIGGER_FUNCTIONS`, and the opt-in census checks it against the replayed catalog. `npm run test:db` passes (exit 0).
 
 **Scope / residual.** None in this finding. Document-control `DCK-14` done-when 1 ("holds only once the SQL is applied") now waits only on the user's paste of row 70. That is document-control's record, and the integrator updates it at merge. This package does not edit it.
+
+---
+
+<a id="irls-20"></a>
+
+## IRLS-20 · The CI workflow's header tells authors to mirror every schema change into `supabase/schema.sql` — the opposite of DB-8 and of `IRLS-17`'s rule
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** the integrator, to route (DEC-31). `.github/workflows/ci.yml` is in no package's file list. Opened 2026-10-14 by intelligence Round G I-27 as a defect found while resolving `IRLS-17`.
+- **Verification:** CONFIRMED (read on branch `fleet/I-27-fresh-install-replay`; the comment is unchanged since 2026-08-18, before DB-8 resolved on 2026-09-17)
+- **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-27 by reading; not yet challenged by a second party).
+- **Locations:** `.github/workflows/ci.yml:16-19`; `supabase/schema.sql:1-34` (the header); `lib/__tests__/schemaBootstrapCensus.test.ts`, `lib/__tests__/intelRoundGFreshInstallReplay.test.ts` (the default-suite guards on `schema.sql`)
+
+**Mechanism.** The comment block at the top of the CI workflow reads:
+
+```
+# Migration discipline (manual until a supabase CLI pipeline is set up):
+# every schema change ships as an idempotent file in supabase/migrations/ AND
+# is mirrored into supabase/schema.sql; apply migrations in the Supabase SQL
+# editor BEFORE merging code that depends on them.
+```
+
+Outside `audit-reports/`, it is the only place in the repository that states a "migration discipline" (`git grep`), and it predates DB-8. Since DB-8 (`roles-and-permissions/11-database-authority.md`), the numbered migrations are the single source of truth. `supabase/schema.sql` is the frozen pre-migration baseline. Its header says three things:
+- everything added since the baseline "lives ONLY in the numbered migrations";
+- "Never re-run this file on a live database";
+- since `IRLS-17`, the file runs as ONE script on an empty database, and nothing in it may reference a table created further down.
+
+**Failure scenario.** An author follows the CI comment and mirrors a new migration into `schema.sql`. The default suite catches two shapes of mirror:
+- a mirrored function, policy or trigger, through `schemaBootstrapCensus.test.ts`'s frozen set;
+- a mirrored table that references a table created further down, through `IRLS-17`'s one-script census in `intelRoundGFreshInstallReplay.test.ts`.
+
+It does not catch a mirrored table that references only earlier tables. That table is then made twice on a fresh install: first by `schema.sql`, and then the migration's `CREATE TABLE IF NOT EXISTS` is a no-op. If the copy differs from what the migrations build, a fresh install ends with a different table than a live database. `IRLS-17` measured this on the `milestones` copy, whose `first_completed_at` landed in a different column position. The instruction is also simply wrong for anyone reading it.
+
+**Done when.**
+
+- [ ] `.github/workflows/ci.yml:16-19` states DB-8:
+  - every schema change ships as ONE idempotent numbered file in `supabase/migrations/`, the only source of truth, applied in the Supabase SQL editor before the code that depends on it merges;
+  - `supabase/schema.sql` is the frozen pre-migration baseline, run once on an empty database before the migrations, and never edited to mirror a migration or re-run on a live database.
+
+  Only the comment changes. No step changes, and the comment must not name `test:db`: `intelRoundGDbHarness.test.ts` ("CI runs the default suite only") refuses that string in the file.
+- [ ] A default-suite pin: `ci.yml` no longer says a schema change "is mirrored into supabase/schema.sql", and it names the migrations as the source of truth.
 
 ---
