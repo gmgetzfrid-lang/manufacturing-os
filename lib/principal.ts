@@ -46,9 +46,16 @@ export async function resolveActorPrincipal(input: {
       getMyTeamIds(input.uid),
     ]);
     if (memberRes.error || !memberRes.data) {
-      // Unknown membership: keep the caller's headline, still carry teams
-      // (team grants are additive and evaluated against the ACL, so this
-      // cannot widen beyond what the database itself grants).
+      // admin-and-org ORG-22: a read that SUCCEEDED for a named workspace
+      // and found no ACTIVE row is a known answer — the actor is not an
+      // active member there (suspended, removed, never added). The principal
+      // says so (isActiveMember: false), so lib/acl.ts drops every ACL grant
+      // and the client's pre-check matches what RLS will answer. A read that
+      // FAILED (or no workspace was named) is unknown: keep the caller's
+      // headline, still carry teams (team grants are additive and evaluated
+      // against the ACL, so this cannot widen beyond what the database
+      // itself grants) — the documented "never wider" fallback.
+      if (input.orgId && !memberRes.error) return { ...fallback, teamIds, isActiveMember: false };
       return { ...fallback, teamIds };
     }
     const row = memberRes.data as { role?: string | null; roles?: unknown };
