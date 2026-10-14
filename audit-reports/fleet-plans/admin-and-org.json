@@ -527,5 +527,8 @@
   "cron/maintenance \u2194 DC P5, PS-VERIFY",
   "storage-stats route \u2194 R&P SURF-19"
  ],
- "notes": "Reports are a month behind the code: seven findings close by record (P0). ~10 migrations expected, four inventory-before-apply."
+ "notes": "Reports are a month behind the code: seven findings close by record (P0). ~10 migrations expected, four inventory-before-apply.",
+ "userHeld": {
+  "VFY-15": "paste 20261203, then set NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE=20261203 in the deployment (a Docker build argument on self-host) and redeploy; after that each workspace's Admin re-confirms the time zone on /admin/settings if the card asks. Until then every effective date is decided in the deployment zone (VFY-15 stays OPEN: met in code, dormant). The integrator sets RESOLVED when the step is recorded done (admin-and-org P12 re-review, DEC-29 / DEC-90)."
+ }
 }

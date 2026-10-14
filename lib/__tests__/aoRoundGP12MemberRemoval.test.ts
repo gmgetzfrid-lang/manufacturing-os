@@ -27,6 +27,9 @@ const db = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown>; membersAtCall: number }>,
   rpcReply: null as null | ((args: Record<string, unknown>, n: number) => { data: unknown; error: unknown }),
   order: [] as string[],
+  // ORG-7 re-review: audit_logs.actor_kind absent (20261201 not pasted) —
+  // a select naming it answers 42703, as PostgREST does.
+  missingActorKind: false,
 }));
 
 function fake() {
@@ -35,6 +38,7 @@ function fake() {
     let write: { m: string; row: unknown } | null = null;
     let range: [number, number] | null = null;
     let limit: number | null = null;
+    let cols = "*";
     const rows = () => {
       let out = [...(db.tables[table] ?? [])];
       for (const f of filters) {
@@ -46,10 +50,15 @@ function fake() {
       }
       if (range) out = out.slice(range[0], range[1] + 1);
       if (limit !== null) out = out.slice(0, limit);
+      if (table === "audit_logs" && db.missingActorKind) out = out.map(({ actor_kind: _gone, ...r }) => r);
       return out;
     };
     const run = (single: boolean) => {
       if (db.readError[table] && !write) return { data: null, error: { message: db.readError[table] } };
+      if (!write && table === "audit_logs" && db.missingActorKind && /actor_kind/.test(cols)) {
+        db.order.push(`${table}.select42703`);
+        return { data: null, error: { code: "42703", message: "column audit_logs.actor_kind does not exist" } };
+      }
       if (write) {
         db.writes.push({ table, m: write.m, row: write.row });
         db.order.push(`${table}.${write.m}`);
@@ -70,6 +79,7 @@ function fake() {
           if (p === "insert" || p === "update" || p === "upsert" || p === "delete") write = { m: p, row: args[0] };
           if (p === "range") range = [args[0] as number, args[1] as number];
           if (p === "limit") limit = args[0] as number;
+          if (p === "select" && typeof args[0] === "string") cols = args[0];
           if (p === "maybeSingle" || p === "single") return Promise.resolve(run(true));
           return new Proxy(c, h);
         };
@@ -106,7 +116,7 @@ import { effectiveOwnerForDocument } from "@/lib/ownership";
 import { POST as createUser } from "@/app/api/admin/create-user/route";
 
 beforeEach(() => {
-  db.tables = {}; db.readError = {}; db.writes = []; db.rpcCalls = []; db.rpcReply = null; db.order = [];
+  db.tables = {}; db.readError = {}; db.writes = []; db.rpcCalls = []; db.rpcReply = null; db.order = []; db.missingActorKind = false;
 });
 
 // ── done-when 3 ────────────────────────────────────────────────────────────
@@ -245,6 +255,7 @@ describe("ORG-7 re-add — stale inherited index entries are cleared before the 
     db.tables.access_requests = [];
     db.tables.audit_logs = prunedAclGrants === null ? [] : [{
       org_id: "o1", action: "MEMBER_REMOVED", resource_id: "pat", timestamp: "2026-10-12T00:00:00Z",
+      user_id: "a1", actor_kind: "member",
       details: { memberEmail: "pat@x.io", prunedAclGrants },
     }];
   };
@@ -293,14 +304,16 @@ describe("ORG-7 re-add — stale inherited index entries are cleared before the 
     expect(db.rpcCalls).toEqual([]);
   });
 
-  it("a removal record that cannot be read never blocks the add", async () => {
-    seed(3);
+  it("a removal record that cannot be read never blocks the add, and walks (re-review: fail safe = walk)", async () => {
+    seed(0);
     db.readError.audit_logs = "permission denied";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const res = await post();
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ uid: "pat", aclIndexCleanup: { done: false, error: "permission denied" } });
-    expect(db.rpcCalls).toEqual([]);
+    expect(await res.json()).toMatchObject({ uid: "pat", aclIndexCleanup: { done: true, calls: 1 } });
+    expect(db.rpcCalls.length).toBe(1);
+    expect(db.order.indexOf("rpc.prune_removed_member_acl_index")).toBeLessThan(db.order.indexOf("org_members.insert"));
+    expect(warn.mock.calls.some((c) => /could not be read .*fail safe/.test(String(c[0])))).toBe(true);
     warn.mockRestore();
   });
 
@@ -345,10 +358,103 @@ describe("ORG-7 re-add — stale inherited index entries are cleared before the 
 
   it("pins: a settled-walk read that fails answers 'not settled' (the walk runs); the writer must hold Admin by the role collection", () => {
     const route = readFileSync(join(process.cwd(), "app/api/admin/create-user/route.ts"), "utf8");
-    expect(route).toMatch(/if \(error \|\| !Array\.isArray\(data\)\) return false;/);
-    expect(route).toMatch(/if \(admErr \|\| !Array\.isArray\(admins\)\) return false;/);
+    expect(route).toMatch(/if \(ev\.rows === null\) return false;/);
+    expect(route).toMatch(/if \(error \|\| !Array\.isArray\(data\)\) return null;/);
     expect(route).toMatch(/memberHoldsAny\(m, \["Admin"\]\)/);
-    expect(route).toMatch(/if \(last\.timestamp && await removalWalkSettled\(orgId, uid, last\.timestamp\)\) return null;/);
+    expect(route).toMatch(/\.eq\("status", "active"\)/);
+    expect(route).toMatch(/r\.actor_kind === "server" \|\| r\.actor_kind === "system"/);
+    expect(route).toMatch(/err\.code === "42703" \|\| err\.code === "PGRST204"/);
+  });
+
+  // Re-review (DEC-90, fail safe = walk): a skip is honoured only on
+  // evidence an Admin or the server wrote.
+  describe("the skip's evidence must be trustworthy (server / system, or an Admin writer at read time)", () => {
+    const removedRow = (extra: Row) => ({
+      org_id: "o1", action: "MEMBER_REMOVED", resource_id: "pat", timestamp: "2026-10-13T00:00:00Z",
+      details: { memberEmail: "pat@x.io", prunedAclGrants: 0 }, ...extra,
+    });
+    const withViewer = () => db.tables.org_members.push({ org_id: "o1", uid: "v1", email: "v1@x.io", role: "Viewer", roles: ["Viewer"], status: "active" });
+
+    it("a MEMBER_REMOVED row a member forged ('prunedAclGrants: 0', newer than the real one) → the walk runs", async () => {
+      seed(2); withViewer();
+      db.tables.audit_logs.unshift(removedRow({ user_id: "v1", actor_kind: "member" }));
+      const res = await post();
+      expect(res.status).toBe(200);
+      expect(db.rpcCalls.length).toBeGreaterThan(0);
+      expect((db.tables.org_members ?? []).some((m) => m.uid === "pat")).toBe(true);
+    });
+
+    it("a forged settling row (done: true by a member) does not settle a real removal → the walk runs", async () => {
+      seed(2); withViewer();
+      db.tables.audit_logs.push(prunedRow({ reason: "member_removed", phase: "acl_index", table: "document_sets", nodes: 1, done: true }, { user_id: "v1", actor_kind: "member" }));
+      await post();
+      expect(db.rpcCalls.length).toBeGreaterThan(0);
+    });
+
+    it("an Admin-written removal row ('prunedAclGrants: 0') → skipped, the answer is as before", async () => {
+      seed(0);
+      expect(await (await post()).json()).toEqual({ uid: "pat" });
+      expect(db.rpcCalls).toEqual([]);
+    });
+
+    it("the removal's writer is no longer an Admin when read → the walk runs", async () => {
+      // The removal was written by a0, an Admin then, a Manager now; and by
+      // a3, an Admin then, suspended now.
+      for (const writer of [
+        { org_id: "o1", uid: "a0", email: "a0@x.io", role: "Manager", roles: ["Manager"], status: "active" },
+        { org_id: "o1", uid: "a3", email: "a3@x.io", role: "Admin", roles: ["Admin"], status: "suspended" },
+      ]) {
+        beforeEachReset(); seed(null);
+        db.tables.org_members.push(writer);
+        db.tables.audit_logs.push(removedRow({ user_id: writer.uid, actor_kind: "member" }));
+        const res = await post();
+        expect(res.status).toBe(200);
+        expect(db.rpcCalls.length).toBeGreaterThan(0);
+      }
+    });
+
+    it("server / system rows → skipped (a removal row and a settling row of an earlier service-role walk)", async () => {
+      for (const kind of ["server", "system"]) {
+        beforeEachReset(); seed(null);
+        db.tables.audit_logs.push(removedRow({ user_id: null, actor_kind: kind }));
+        expect(await (await post()).json()).toEqual({ uid: "pat" });
+        expect(db.rpcCalls).toEqual([]);
+      }
+      beforeEachReset(); seed(2);
+      db.tables.audit_logs.push(prunedRow({ reason: "member_removed", phase: "acl_index", table: "document_sets", nodes: 1, done: true }, { user_id: null, actor_kind: "system", timestamp: "2026-10-12T00:00:09Z" }));
+      expect(await (await post()).json()).toEqual({ uid: "pat" });
+      expect(db.rpcCalls).toEqual([]);
+    });
+
+    it("a removal row with no writer and no server actor_kind → the walk runs", async () => {
+      seed(null);
+      db.tables.audit_logs.push(removedRow({ user_id: null }));
+      await post();
+      expect(db.rpcCalls.length).toBeGreaterThan(0);
+    });
+
+    it("before 20261201 (no actor_kind column, 42703): the read is repeated without it and only the Admin-writer rule applies", async () => {
+      // Admin-written → skipped, as today.
+      seed(0); db.missingActorKind = true;
+      expect(await (await post()).json()).toEqual({ uid: "pat" });
+      expect(db.rpcCalls).toEqual([]);
+      expect(db.order).toContain("audit_logs.select42703");
+      // A row claiming 'system' cannot be read as such → the walk runs.
+      beforeEachReset(); seed(null); db.missingActorKind = true;
+      db.tables.audit_logs.push(removedRow({ user_id: null, actor_kind: "system" }));
+      await post();
+      expect(db.rpcCalls.length).toBeGreaterThan(0);
+      // A member's row → the walk runs.
+      beforeEachReset(); seed(2); withViewer(); db.missingActorKind = true;
+      db.tables.audit_logs.unshift(removedRow({ user_id: "v1" }));
+      await post();
+      expect(db.rpcCalls.length).toBeGreaterThan(0);
+      // An Admin's settling row still settles.
+      beforeEachReset(); seed(2); db.missingActorKind = true;
+      db.tables.audit_logs.push(prunedRow({ reason: "member_removed", phase: "acl_index", table: "document_sets", nodes: 1, done: true }, { timestamp: "2026-10-12T00:00:05Z" }));
+      expect(await (await post()).json()).toEqual({ uid: "pat" });
+      expect(db.rpcCalls).toEqual([]);
+    });
   });
 
   it("the walk is bounded by a time budget (the rest is the nightly rebuild's)", () => {
@@ -361,5 +467,5 @@ describe("ORG-7 re-add — stale inherited index entries are cleared before the 
 });
 
 function beforeEachReset() {
-  db.tables = {}; db.readError = {}; db.writes = []; db.rpcCalls = []; db.rpcReply = null; db.order = [];
+  db.tables = {}; db.readError = {}; db.writes = []; db.rpcCalls = []; db.rpcReply = null; db.order = []; db.missingActorKind = false;
 }

@@ -16,6 +16,9 @@
 // ahead of the workspace's and leave "not yet in effect" off the first
 // paint; the latest calendar can only show the badge a little longer, never
 // drop it early (DEC-63 / REV-9's "late, never early").
+// Re-review: the browser asks /api/workspace-effective-zone (the server
+// decides whether the stored zone is shown to be an Admin's — it needs the
+// audit trail), so the badge agrees with /api/verify and the scan.
 
 import React, { useEffect, useState } from "react";
 import { CalendarClock } from "lucide-react";

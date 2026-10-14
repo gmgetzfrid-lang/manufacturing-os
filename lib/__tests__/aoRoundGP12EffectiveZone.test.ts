@@ -27,7 +27,18 @@ const st = vi.hoisted(() => ({
   // verify-route fixtures
   verifyDoc: null as Record<string, unknown> | null,
   versionEffective: null as string | null,
+  // VFY-15 re-review: who set the zone. org id → WORKSPACE_TIMEZONE_CHANGED
+  // rows, newest first; undefined = one row by the Admin "adm" naming the
+  // stored zone (the legitimate save on /admin/settings).
+  zoneAudit: {} as Record<string, Array<Record<string, unknown>>>,
+  auditReadError: null as null | { message: string; code?: string },
+  missingActorKind: false,
+  members: [] as Array<Record<string, unknown>>,
+  caller: "adm" as string | null,
 }));
+
+const ADMIN = { uid: "adm", role: "Admin", roles: ["Admin"], status: "active" };
+const VIEWER = { uid: "vw", role: "Viewer", roles: ["Viewer"], status: "active" };
 
 function answer(table: string, ops: Op[]): { data: unknown; error: unknown; count?: number } {
   const eq = (k: string) => ops.find((o) => o.m === "eq" && o.args[0] === k)?.args[1];
@@ -35,6 +46,19 @@ function answer(table: string, ops: Op[]): { data: unknown; error: unknown; coun
     if (st.zoneReadError) return { data: null, error: st.zoneReadError };
     const org = String(eq("org_id"));
     return { data: org in st.zones ? { data: { timeZone: st.zones[org] } } : null, error: null };
+  }
+  if (table === "audit_logs" && ops.some((o) => o.m === "select")) {
+    if (st.auditReadError) return { data: null, error: st.auditReadError };
+    const cols = String(ops.find((o) => o.m === "select")!.args[0] ?? "");
+    if (st.missingActorKind && cols.includes("actor_kind")) return { data: null, error: { code: "42703", message: "column audit_logs.actor_kind does not exist" } };
+    const org = String(eq("org_id"));
+    const rows = st.zoneAudit[org] ?? (org in st.zones ? [{ user_id: "adm", actor_kind: "member", details: { before: null, after: st.zones[org] } }] : []);
+    return { data: st.missingActorKind ? rows.map(({ actor_kind: _gone, ...r }) => r) : rows, error: null };
+  }
+  if (table === "org_members" && ops.some((o) => o.m === "select")) {
+    if (eq("uid") !== undefined) return { data: st.members.find((m) => m.uid === eq("uid")) ?? null, error: null };
+    const uids = (ops.find((o) => o.m === "in" && o.args[0] === "uid")?.args[1] ?? []) as string[];
+    return { data: st.members.filter((m) => uids.includes(String(m.uid)) && m.status === eq("status")), error: null };
   }
   if (table === "documents" && ops.some((o) => o.m === "update")) return { data: [{ id: "d1" }], error: null };
   if (table === "document_versions" && ops.some((o) => o.m === "update")) return { data: [{ id: "v1" }], error: null };
@@ -70,7 +94,10 @@ function chainFor(table: string) {
 }
 
 vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chainFor(t) } }));
-vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ from: (t: string) => chainFor(t) }) }));
+vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({
+  from: (t: string) => chainFor(t),
+  auth: { getUser: async () => (st.caller ? { data: { user: { id: st.caller, email: `${st.caller}@x.io` } }, error: null } : { data: { user: null }, error: { message: "bad token" } }) },
+}) }));
 vi.mock("@/lib/complianceNotify", () => ({
   notifyCompliance: vi.fn(async () => true),
   loadScanRetryPlan: vi.fn(async () => ({ only: () => () => true })),
@@ -83,7 +110,7 @@ vi.mock("@/lib/ownership", () => ({
 import {
   effectiveStatusFor, effectiveDateTimeZone, workspaceEffectiveDateTimeZone, cachedWorkspaceEffectiveDateTimeZone,
   resetWorkspaceZoneCacheForTests, applyEffectiveDate, scanEffectiveDates, daysUntilEffective, EFFECTIVE_DATE_FALLBACK_TIME_ZONE,
-  workspaceEffectiveZoneHonoured, WORKSPACE_EFFECTIVE_ZONE_PREREQUISITE,
+  workspaceEffectiveZoneHonoured, WORKSPACE_EFFECTIVE_ZONE_PREREQUISITE, decideWorkspaceEffectiveZone,
 } from "@/lib/effectiveDate";
 import { supabase } from "@/lib/supabase";
 
@@ -97,6 +124,7 @@ const prevGate = process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
 beforeEach(() => {
   st.zones = {}; st.zoneReadError = null; st.calls = []; st.docs = [];
   st.verifyDoc = null; st.versionEffective = null;
+  st.zoneAudit = {}; st.auditReadError = null; st.missingActorKind = false; st.members = [ADMIN, VIEWER]; st.caller = "adm";
   resetWorkspaceZoneCacheForTests();
   process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = "America/Chicago";
   // These suites describe the deployment AFTER 20261203 is pasted and
@@ -354,7 +382,7 @@ describe("VFY-15 review fix — the workspace zone decides nothing until 2026120
 
   it("the settings card says which calendar decides effective dates, by the same gate", () => {
     const page = readFileSync(join(process.cwd(), "app/(protected)/admin/settings/page.tsx"), "utf8");
-    expect(page).toContain("import { workspaceEffectiveZoneHonoured } from \"@/lib/effectiveDate\";");
+    expect(page).toMatch(/import \{ workspaceEffectiveZoneHonoured, [^}]*\} from "@\/lib\/effectiveDate";/);
     expect(page).toMatch(/\{workspaceEffectiveZoneHonoured\(\)\s*\? <>Effective dates and whether a revision is &ldquo;in effect&rdquo; are decided in this zone too/);
     expect(page).toContain("still follow the deployment&apos;s facility time zone, not this setting, until the deployment enables it.");
     expect(page).not.toContain("until that change lands");
@@ -364,5 +392,174 @@ describe("VFY-15 review fix — the workspace zone decides nothing until 2026120
     const env = readFileSync(join(process.cwd(), ".env.example"), "utf8");
     expect(env).toMatch(/^NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE=$/m);
     expect(env).toMatch(/AFTER 20261203 is pasted/);
+  });
+});
+
+// Re-review (DEC-90, fail safe): with the switch set, the stored zone decides
+// only when its writer is shown to be an Admin — the row has no writer
+// column and 20261203 stamps no marker, so the writer is read from the
+// newest trustworthy WORKSPACE_TIMEZONE_CHANGED row (an Admin at read time,
+// or actor_kind server / system). Otherwise the deployment's calendar
+// decides and the Admin is asked to re-confirm.
+describe("VFY-15 re-review — the workspace zone is honoured only when an Admin is shown to have set it", () => {
+  const audit = (user_id: string | null, after: unknown, extra: Record<string, unknown> = {}) =>
+    ({ user_id, actor_kind: user_id ? "member" : "system", details: { before: null, after }, ...extra });
+
+  it("REGRESSION: the Admin's save (the legitimate path) is honoured exactly as before", async () => {
+    st.zones = { perth: "Australia/Perth" };
+    expect(await decideWorkspaceEffectiveZone(supabase, "perth")).toEqual({ zone: "Australia/Perth", honoured: true, reconfirm: false, stored: "Australia/Perth" });
+  });
+
+  it("a legacy row a non-Admin wrote before 20261203 (their own audit row, or none at all): the deployment's calendar, and the Admin is asked to re-confirm", async () => {
+    st.zones = { w: "Pacific/Kiritimati" };
+    st.zoneAudit = { w: [audit("vw", "Pacific/Kiritimati")] };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toEqual({ zone: "America/Chicago", honoured: false, reconfirm: true, stored: "Pacific/Kiritimati" });
+    expect(await workspaceEffectiveDateTimeZone(supabase, "w")).toBe("America/Chicago");
+    st.zoneAudit = { w: [] };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ zone: "America/Chicago", honoured: false, reconfirm: true });
+    // a row with no writer and no server actor_kind is not evidence either
+    st.zoneAudit = { w: [{ user_id: null, details: { after: "Pacific/Kiritimati" } }] };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ honoured: false, reconfirm: true });
+  });
+
+  it("the row was changed after the Admin's save (the newest trusted record names another zone): not honoured", async () => {
+    st.zones = { w: "Pacific/Kiritimati" };
+    st.zoneAudit = { w: [audit("adm", "America/Chicago")] };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ zone: "America/Chicago", honoured: false, reconfirm: true });
+    // an OLDER Admin record naming the stored zone does not count
+    st.zoneAudit = { w: [audit("adm", "Europe/London"), audit("adm", "Pacific/Kiritimati")] };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ honoured: false, reconfirm: true });
+  });
+
+  it("a member's forged record is ignored both ways: it neither vouches for its zone nor hides the Admin's", async () => {
+    st.zones = { w: "Pacific/Kiritimati" };
+    st.zoneAudit = { w: [audit("vw", "Pacific/Kiritimati"), audit("adm", "America/Denver")] };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ honoured: false });
+    st.zones = { w: "America/Denver" };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ zone: "America/Denver", honoured: true, reconfirm: false });
+  });
+
+  it("the writer is checked against the CURRENT role: an Admin since demoted (or suspended) no longer vouches", async () => {
+    st.zones = { w: "Australia/Perth" };
+    st.members = [{ ...ADMIN, role: "Manager", roles: ["Manager"] }];
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ honoured: false, reconfirm: true });
+    st.members = [{ ...ADMIN, status: "suspended" }];
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ honoured: false, reconfirm: true });
+    // an additive Admin (collection, not headline) vouches
+    st.members = [{ ...ADMIN, role: "Manager", roles: ["Manager", "Admin"] }];
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ honoured: true });
+  });
+
+  it("a server / system record vouches (a restore or a database function's write)", async () => {
+    for (const kind of ["server", "system"]) {
+      st.zones = { w: "Australia/Perth" };
+      st.zoneAudit = { w: [{ user_id: null, actor_kind: kind, details: { after: "Australia/Perth" } }] };
+      expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ zone: "Australia/Perth", honoured: true });
+    }
+  });
+
+  it("before 20261201 (no actor_kind column, 42703): the read is repeated without it and only the Admin-writer rule applies", async () => {
+    st.missingActorKind = true;
+    st.zones = { w: "Australia/Perth" };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ honoured: true });
+    st.zoneAudit = { w: [{ user_id: null, actor_kind: "system", details: { after: "Australia/Perth" } }] };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toMatchObject({ honoured: false, reconfirm: true });
+    const auditReads = st.calls.filter((c) => c.table === "audit_logs").map((c) => String(c.ops.find((o) => o.m === "select")!.args[0]));
+    expect(auditReads).toContain("details, timestamp, user_id, actor_kind");
+    expect(auditReads).toContain("details, timestamp, user_id");
+  });
+
+  it("the audit trail or the writers' roles cannot be read: the deployment's calendar, said once, no re-confirm notice", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    st.zones = { w: "Australia/Perth" };
+    st.auditReadError = { message: "timeout" };
+    expect(await decideWorkspaceEffectiveZone(supabase, "w")).toEqual({ zone: "America/Chicago", honoured: false, reconfirm: false, stored: "Australia/Perth" });
+    expect(await workspaceEffectiveDateTimeZone(supabase, "w")).toBe("America/Chicago");
+    expect(err.mock.calls.filter((c) => String(c[0]).includes("could not be read"))).toHaveLength(1);
+  });
+
+  it("no zone stored, or one this runtime does not know: the deployment's calendar and no notice (as before)", async () => {
+    expect(await decideWorkspaceEffectiveZone(supabase, "unset")).toEqual({ zone: "America/Chicago", honoured: false, reconfirm: false, stored: null });
+    st.zones = { bad: "Mars/Olympus_Mons" };
+    expect(await decideWorkspaceEffectiveZone(supabase, "bad")).toMatchObject({ honoured: false, reconfirm: false });
+  });
+
+  it("switch unset: nothing is read at all, whoever wrote the row (REGRESSION)", async () => {
+    delete process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
+    st.zones = { perth: "Australia/Perth" };
+    expect(await decideWorkspaceEffectiveZone(supabase, "perth")).toEqual({ zone: "America/Chicago", honoured: false, reconfirm: false, stored: null });
+    expect(st.calls).toEqual([]);
+  });
+
+  it("/api/verify: a legacy non-Admin Kiritimati does not turn tomorrow's revision green even with the switch set", async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(INSTANT);
+    try {
+      const { GET } = await import("@/app/api/verify/route");
+      const DOC = "22222222-2222-2222-2222-222222222222";
+      const u = new URL("https://app/api/verify");
+      u.searchParams.set("doc", DOC);
+      u.searchParams.set("v", "11111111-1111-1111-1111-111111111111");
+      st.versionEffective = EFFECTIVE;
+      st.zones = { w: "Pacific/Kiritimati" };
+      st.zoneAudit = { w: [audit("vw", "Pacific/Kiritimati")] };
+      st.verifyDoc = { id: DOC, org_id: "w", document_number: "P-101", title: "P&ID", name: "P-101", rev: "5", status: "Issued", current_version_id: "11111111-1111-1111-1111-111111111111", legal_hold: false };
+      expect(((await (await GET(new NextRequest(u))).json()) as Record<string, unknown>).verdict).toBe("not_yet_effective");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("the scan and the watermark follow the same decision (legacy non-Admin row → the deployment's calendar)", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(INSTANT);
+    try {
+      st.zones = { w: "Australia/Perth" };
+      st.zoneAudit = { w: [audit("vw", "Australia/Perth")] };
+      await scanEffectiveDates("w");
+      const lte = st.calls.find((c) => c.table === "documents" && c.ops.some((o) => o.m === "lte"))!;
+      expect(lte.ops.find((o) => o.m === "lte")!.args).toEqual(["effective_date", "2026-03-01"]);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("VFY-15 re-review — /api/workspace-effective-zone answers the browser", () => {
+  const ask = async (orgId = "w") => {
+    const { GET } = await import("@/app/api/workspace-effective-zone/route");
+    const res = await GET(new NextRequest(`https://app/api/workspace-effective-zone?orgId=${orgId}`, { headers: { authorization: "Bearer t" } }));
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
+  });
+
+  it("switch unset: the deployment's calendar, nothing read, no sign-in needed", async () => {
+    delete process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
+    expect(await ask()).toEqual({ status: 200, body: { zone: "America/Chicago", honoured: false, reconfirm: false, stored: null } });
+  });
+
+  it("switch set: the Admin hears the decision with the re-confirm notice; a Viewer the same calendar without it; a non-member is refused", async () => {
+    st.zones = { w: "Pacific/Kiritimati" };
+    st.zoneAudit = { w: [{ user_id: "vw", actor_kind: "member", details: { after: "Pacific/Kiritimati" } }] };
+    expect(await ask()).toEqual({ status: 200, body: { zone: "America/Chicago", honoured: false, reconfirm: true, stored: "Pacific/Kiritimati" } });
+    st.caller = "vw";
+    expect(await ask()).toEqual({ status: 200, body: { zone: "America/Chicago", honoured: false, reconfirm: false, stored: null } });
+    st.caller = "stranger";
+    expect((await ask()).status).toBe(403);
+    st.caller = null;
+    expect((await ask()).status).toBe(401);
+    // REGRESSION: the Admin's own save is honoured for every member
+    st.caller = "vw";
+    st.zones = { w: "Australia/Perth" }; st.zoneAudit = {};
+    expect(await ask()).toEqual({ status: 200, body: { zone: "Australia/Perth", honoured: true, reconfirm: false, stored: null } });
+  });
+
+  it("source pins: any active member may ask; the re-confirm notice and the stored value are said only to an Admin; the browser helper calls it", () => {
+    const route = readFileSync(join(process.cwd(), "app/api/workspace-effective-zone/route.ts"), "utf8");
+    expect(route).toMatch(/authorizeOrgRole\(req, orgId, \[\.\.\.ALL_ROLES\]\)/);
+    expect(route).toMatch(/decideWorkspaceEffectiveZone\(actor\.admin, orgId\)/);
+    expect(route).toMatch(/reconfirm: isAdmin \? d\.reconfirm : false/);
+    const lib = readFileSync(join(process.cwd(), "lib/effectiveDate.ts"), "utf8");
+    expect(lib).toMatch(/if \(inBrowser\(\)\) \{\s*const d = await fetchWorkspaceZoneDecision\(orgId\);/);
   });
 });

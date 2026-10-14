@@ -17,9 +17,9 @@
       "LOW": 28
     },
     "by_status": {
-      "RESOLVED": 58,
+      "RESOLVED": 57,
       "WONTFIX": 1,
-      "OPEN": 7
+      "OPEN": 8
     }
   },
   "status_vocabulary": [
@@ -1632,7 +1632,7 @@
       "id": "VFY-15",
       "title": "Effective dates are decided in ONE deployment-wide facility zone — a deployment whose orgs run plants in different zones has no per-org calendar, so \"NOT YET IN EFFECT\" can lift early for one org's field scans",
       "severity": "LOW",
-      "status": "RESOLVED",
+      "status": "OPEN",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

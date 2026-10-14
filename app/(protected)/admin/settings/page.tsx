@@ -24,7 +24,7 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { logAuditAction } from "@/lib/audit";
 import { readWorkspaceTimeZone, saveWorkspaceTimeZone, knownTimeZones, timeZoneOptions } from "@/lib/workspaceTimeZone";
-import { workspaceEffectiveZoneHonoured } from "@/lib/effectiveDate";
+import { workspaceEffectiveZoneHonoured, fetchWorkspaceZoneDecision, forgetWorkspaceEffectiveZone, type WorkspaceZoneDecision } from "@/lib/effectiveDate";
 
 // DEC-17: this page's main action (schema health) is an Admin-only API — the
 // client gate now says the same thing instead of admitting DocCtrl to a 403.
@@ -493,7 +493,18 @@ function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  // VFY-15 re-review: once the deployment honours the workspace zone, the
+  // server says whether the STORED zone is shown to be an Admin's; if not
+  // (a row written before 20261203, when any member could write it) the
+  // deployment's calendar decides and this card asks an Admin to re-confirm.
+  const [decision, setDecision] = useState<WorkspaceZoneDecision | null>(null);
   const zones = React.useMemo(() => knownTimeZones(), []);
+  const loadDecision = React.useCallback(async () => {
+    if (!orgId || !workspaceEffectiveZoneHonoured()) { setDecision(null); return; }
+    forgetWorkspaceEffectiveZone(orgId);
+    setDecision(await fetchWorkspaceZoneDecision(orgId));
+  }, [orgId]);
+  useEffect(() => { void loadDecision(); }, [loadDecision]);
 
   const load = React.useCallback(async () => {
     if (!orgId) return;
@@ -508,17 +519,21 @@ function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null
   }, [orgId]);
   useEffect(() => { void load(); }, [load]);
 
-  const save = async () => {
+  // `zone` defaults to the picker's choice; the re-confirm button passes the
+  // stored zone (an upsert of the same value re-writes the row as this
+  // Admin, with its WORKSPACE_TIMEZONE_CHANGED record).
+  const save = async (zone: string | null = choice || null) => {
     if (!orgId || !uid || saving) return;
     setSaving(true);
     setNote(null);
     try {
-      const r = await saveWorkspaceTimeZone(supabase, { orgId, timeZone: choice || null, before: stored, actorId: uid, actorEmail: userEmail, actorRole: "Admin" });
+      const r = await saveWorkspaceTimeZone(supabase, { orgId, timeZone: zone, before: stored, actorId: uid, actorEmail: userEmail, actorRole: "Admin" });
       if (!r.ok) { setNote({ tone: "error", text: `Not saved: ${r.error}` }); return; }
       setStored(r.timeZone);
       setNote(r.auditError
         ? { tone: "error", text: `Saved, but the audit record could not be written: ${r.auditError}` }
         : { tone: "ok", text: r.timeZone ? `Saved — times are now written in ${r.timeZone}.` : "Cleared — times are written in UTC." });
+      await loadDecision();
     } finally { setSaving(false); }
   };
 
@@ -532,6 +547,24 @@ function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null
           ? <>Effective dates and whether a revision is &ldquo;in effect&rdquo; are decided in this zone too (not set, in the deployment&apos;s facility time zone).</>
           : <>Effective dates and whether a revision is &ldquo;in effect&rdquo; still follow the deployment&apos;s facility time zone, not this setting, until the deployment enables it.</>}
       </p>
+      {!readError && loaded && decision?.reconfirm && stored && (
+        <div role="status" data-testid="workspace-timezone-reconfirm" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>
+              Re-confirm the workspace time zone. The stored zone ({stored}) is not shown to have been set by a current Admin — it may have been written before the time zone became an Admin-only setting — so effective dates are decided in the deployment&apos;s time zone ({decision.zone}) until an Admin confirms it here.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void save(stored)}
+            disabled={saving}
+            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Re-confirm {stored}
+          </button>
+        </div>
+      )}
       {readError ? (
         <div role="alert" className="text-xs text-rose-700 inline-flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5" /> The workspace time zone could not be loaded ({readError}), so it cannot be changed here until it is.

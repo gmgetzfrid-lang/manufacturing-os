@@ -18,29 +18,27 @@ const st = vi.hoisted(() => ({
   release: null as null | (() => void),
 }));
 
-vi.mock("@/lib/supabase", () => {
-  // org_configurations read for key "timezone": held until the test releases it.
-  const chain = (org: { id: string | null }) => {
-    const c: Record<string, unknown> = {};
-    const h: ProxyHandler<Record<string, unknown>> = {
-      get(_t, p: string) {
-        if (p === "then") return undefined;
-        return (...args: unknown[]) => {
-          if (p === "eq" && args[0] === "org_id") org.id = String(args[1]);
-          if (p === "maybeSingle" || p === "single") {
-            st.reads++;
-            return new Promise((res) => {
-              st.release = () => res({ data: org.id && st.zones[org.id] ? { data: { timeZone: st.zones[org.id] } } : null, error: null });
-            });
-          }
-          return new Proxy(c, h);
-        };
-      },
-    };
-    return new Proxy(c, h);
-  };
-  return { supabase: { from: () => chain({ id: null }) } };
-});
+// VFY-15 re-review: in the browser the decision is the server's
+// (/api/workspace-effective-zone — it needs the audit trail to know who set
+// the zone). The call is held until the test releases it.
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    from: () => { throw new Error("the browser no longer reads the setting itself"); },
+    auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) },
+  },
+}));
+const fetchCalls: string[] = [];
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = String(input);
+  fetchCalls.push(`${url} ${(init?.headers as Record<string, string> | undefined)?.Authorization ?? ""}`);
+  st.reads++;
+  const org = new URL(url, "https://app").searchParams.get("orgId") ?? "";
+  return new Promise<Response>((res) => {
+    st.release = () => res(new Response(JSON.stringify(st.zones[org]
+      ? { zone: st.zones[org], honoured: true, reconfirm: false, stored: null }
+      : { zone: process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE, honoured: false, reconfirm: false, stored: null }), { status: 200 }));
+  });
+}) as typeof fetch;
 vi.mock("@/lib/complianceNotify", () => ({ notifyCompliance: vi.fn(async () => true), loadScanRetryPlan: vi.fn(async () => ({ only: () => () => true })) }));
 vi.mock("@/lib/ownership", () => ({ effectiveOwnerForDocument: vi.fn(async () => null), getOrgControllers: vi.fn(async () => []) }));
 
@@ -85,6 +83,17 @@ describe("VFY-15 review fix — the badge before the workspace zone loads", () =
     expect(pill()).toContain(`Effective ${EFFECTIVE}`);
     await act(async () => { st.release!(); });
     expect(pill()).toContain(`Effective ${EFFECTIVE}`);
+    // the server decides, asked with the caller's token
+    expect(fetchCalls.at(-1)).toBe("/api/workspace-effective-zone?orgId=chicago Bearer tok");
+  });
+
+  it("the server says the stored zone is not shown to be an Admin's: the badge follows its deployment calendar (Perth: in effect, no badge)", async () => {
+    process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE = "20261203";
+    st.zones = {}; // the route answers honoured: false with the deployment's zone
+    await act(async () => { root.render(React.createElement(EffectivePill, { effectiveDate: EFFECTIVE, orgId: "legacy" })); });
+    expect(pill()).toContain(`Effective ${EFFECTIVE}`); // loading: UTC-12
+    await act(async () => { st.release!(); });
+    expect(pill()).toBe("");
   });
 
   it("a workspace whose zone is AHEAD (Perth): shown while loading (late is the safe side), gone once loaded", async () => {

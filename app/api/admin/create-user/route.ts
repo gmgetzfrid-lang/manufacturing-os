@@ -75,6 +75,86 @@ const READD_ACL_INDEX_CHUNK = 2_000;
 
 type ReAddAclIndexCleanup = { done: boolean; pruned: number; calls: number; error?: string };
 
+/** One audit row read as EVIDENCE for skipping the re-add walk, with what is
+ *  needed to judge whose word it is. `actor_kind` exists from 20261201. */
+type AuditEvidenceRow = {
+  details?: Record<string, unknown> | null;
+  timestamp?: string | null;
+  user_id?: string | null;
+  actor_kind?: string | null;
+};
+
+/** Postgres / PostgREST "no such column" — audit_logs.actor_kind before
+ *  20261201 is pasted. */
+function isMissingColumnError(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!err) return false;
+  if (err.code === "42703" || err.code === "PGRST204") return true;
+  const msg = String(err.message ?? "");
+  return /actor_kind/.test(msg) && /column/i.test(msg);
+}
+
+/** ORG-7 re-review fix (DEC-90, fail-safe = walk): the person's audit rows of
+ *  one action, newest first, with the writer columns. Asks for actor_kind;
+ *  when the column is not there (42703 / PGRST204 — 20261201 not pasted) the
+ *  read is repeated without it and `actorKind` is false, so only the
+ *  Admin-writer rule can make a row trustworthy. Any other read error
+ *  answers null — the caller walks. */
+async function readRemovalEvidence(
+  orgId: string, uid: string, action: string, opts: { sinceIso?: string; limit: number },
+): Promise<{ rows: AuditEvidenceRow[]; actorKind: boolean; error?: string } | { rows: null; actorKind: false; error: string }> {
+  const read = async (cols: string) => {
+    let q = supabaseAdmin.from("audit_logs").select(cols)
+      .eq("org_id", orgId).eq("action", action).eq("resource_id", uid);
+    if (opts.sinceIso) q = q.gte("timestamp", opts.sinceIso);
+    const { data, error } = await q.order("timestamp", { ascending: false }).limit(opts.limit);
+    return { data: data as unknown, error: error as { code?: string | null; message?: string | null } | null };
+  };
+  let actorKind = true;
+  let res = await read("details, timestamp, user_id, actor_kind");
+  if (res.error && isMissingColumnError(res.error)) {
+    actorKind = false;
+    res = await read("details, timestamp, user_id");
+  }
+  if (res.error || !Array.isArray(res.data)) {
+    return { rows: null, actorKind: false, error: String(res.error?.message ?? "audit_logs read returned no rows array") };
+  }
+  return { rows: res.data as AuditEvidenceRow[], actorKind };
+}
+
+/** ORG-7 re-review fix: which evidence rows may switch the re-add walk off.
+ *  Any active member can INSERT an audit_logs row naming themselves, with
+ *  any action and details (audit_logs_insert asks only user_id =
+ *  auth.uid()), so a row's CONTENT alone is never trusted. A row counts
+ *  only when
+ *   · its actor_kind is 'server' or 'system' (20261201's stamp: the service
+ *     role or a database function's machine pass — a member's own row is
+ *     always 'member'; read only when the column exists), or
+ *   · its writer (user_id) holds Admin in this workspace NOW — an ACTIVE
+ *     membership, by the role collection (memberHoldsAny). revoke_member's
+ *     remove and the chunk RPC both refuse anyone but an active Admin, so
+ *     every legitimate row passes while its writer is still an Admin.
+ *  Anything else — no writer, a non-Admin writer, an Admin read that fails
+ *  (null) — is untrusted, and the caller walks. */
+async function trustedEvidence(orgId: string, rows: AuditEvidenceRow[], actorKind: boolean): Promise<boolean[] | null> {
+  const byServer = (r: AuditEvidenceRow) => actorKind && (r.actor_kind === "server" || r.actor_kind === "system");
+  const writers = new Set<string>();
+  for (const r of rows) if (!byServer(r) && r.user_id) writers.add(String(r.user_id));
+  const admins = new Set<string>();
+  if (writers.size > 0) {
+    const { data, error } = await supabaseAdmin
+      .from("org_members")
+      .select("uid, role, roles")
+      .eq("org_id", orgId)
+      .eq("status", "active")
+      .in("uid", [...writers]);
+    if (error || !Array.isArray(data)) return null;
+    for (const m of data as Array<{ uid: string; role?: unknown; roles?: unknown }>) {
+      if (writers.has(String(m.uid)) && memberHoldsAny(m, ["Admin"])) admins.add(String(m.uid));
+    }
+  }
+  return rows.map((r) => byServer(r) || (!!r.user_id && admins.has(String(r.user_id))));
+}
+
 /** ORG-7 review fix: does the audit trail already show that nothing the
  *  removal left can still name the person? Read from the
  *  MEMBER_ACL_GRANTS_PRUNED rows written at or after the removal
@@ -85,44 +165,27 @@ type ReAddAclIndexCleanup = { done: boolean; pruned: number; calls: number; erro
  *     a document or a set is inherited by nothing, so there is nothing to
  *     walk; or
  *   · a chunk row of prune_removed_member_acl_index (`phase: "acl_index"`)
- *     says `done: true` — the members page's walk finished.
+ *     says `done: true` — the members page's walk, or an earlier re-add's
+ *     service-role walk, finished.
  *  The chunk RPC writes a row only for a call that pruned something, so a
  *  walk whose LAST call pruned nothing leaves no `done` row: that case
- *  still walks (within the budget). Only a row whose writer is an ACTIVE
- *  Admin of the workspace counts — both writers (revoke_member's remove and
- *  the chunk RPC) refuse anyone else, so a row any other member inserted
- *  into audit_logs cannot switch the clean-up off; a service-role row (no
- *  user) is not trusted either and the walk runs. A read that fails
- *  answers false — the walk runs, as before this check. */
+ *  still walks (within the budget). Re-review fix: a settling row counts
+ *  only when trustedEvidence says so (server / system actor_kind, or an
+ *  Admin writer at read time). A read that fails answers false — the walk
+ *  runs. */
 async function removalWalkSettled(orgId: string, uid: string, sinceIso: string): Promise<boolean> {
-  const { data, error } = await supabaseAdmin
-    .from("audit_logs")
-    .select("details, user_id")
-    .eq("org_id", orgId)
-    .eq("action", "MEMBER_ACL_GRANTS_PRUNED")
-    .eq("resource_id", uid)
-    .gte("timestamp", sinceIso)
-    .order("timestamp", { ascending: false })
-    .limit(200);
-  if (error || !Array.isArray(data)) return false;
-  const writers = new Set<string>();
-  for (const row of data as Array<{ details?: Record<string, unknown> | null; user_id?: string | null }>) {
+  const ev = await readRemovalEvidence(orgId, uid, "MEMBER_ACL_GRANTS_PRUNED", { sinceIso, limit: 200 });
+  if (ev.rows === null) return false;
+  const settling = ev.rows.filter((row) => {
     const d = row.details ?? {};
-    const settles = (d.phase === "acl_index" && d.done === true)
+    return (d.phase === "acl_index" && d.done === true)
       || (d.phase === undefined && d.reason === "member_removed"
           && Number(d.libraries ?? NaN) === 0 && Number(d.collections ?? NaN) === 0);
-    if (settles && row.user_id) writers.add(String(row.user_id));
-  }
-  if (writers.size === 0) return false;
-  const { data: admins, error: admErr } = await supabaseAdmin
-    .from("org_members")
-    .select("uid, role, roles")
-    .eq("org_id", orgId)
-    .eq("status", "active")
-    .in("uid", [...writers]);
-  if (admErr || !Array.isArray(admins)) return false;
-  return (admins as Array<{ uid: string; role?: unknown; roles?: unknown }>)
-    .some((m) => writers.has(String(m.uid)) && memberHoldsAny(m, ["Admin"]));
+  });
+  if (settling.length === 0) return false;
+  const trusted = await trustedEvidence(orgId, settling, ev.actorKind);
+  if (!trusted) return false;
+  return trusted.some(Boolean);
 }
 
 /** ORG-7 — the re-add residual of the member-removal prune. A removal
@@ -135,32 +198,38 @@ async function removalWalkSettled(orgId: string, uid: string, sinceIso: string):
  *  window would make them count again. So before the membership row is
  *  created again, the same RPC (it admits the service role, and refuses
  *  while any membership row exists) walks the workspace's libraries within
- *  READD_ACL_INDEX_BUDGET_MS. It runs only when the person's latest
- *  MEMBER_REMOVED row says the removal pruned a grant (`prunedAclGrants`,
- *  written only by 20261204's revoke_member): no pruned grant, nothing
- *  inherited one. Review fix: and not when the audit trail already shows
- *  the walk is settled (removalWalkSettled — no library or folder carried
- *  the grant, or the members page's walk recorded `done`). Never blocks the re-add: a read or call that fails, or a
- *  walk the budget cuts short, is logged and returned, and the rest is the
- *  nightly rebuild's. Returns null when there was nothing to clear. */
+ *  READD_ACL_INDEX_BUDGET_MS. Never blocks the re-add: a call that fails, or
+ *  a walk the budget cuts short, is logged and returned, and the rest is the
+ *  nightly rebuild's. Returns null when there was nothing to clear.
+ *
+ *  When the walk is SKIPPED (re-review fix, DEC-90 fail-safe = walk): only
+ *  on evidence nobody but an Admin or the server could have written.
+ *   · No MEMBER_REMOVED row at all: never removed, nothing a removal left
+ *     (an absent row cannot be forged) — skipped, as before.
+ *   · The person's LATEST MEMBER_REMOVED row is trustworthy
+ *     (trustedEvidence) AND either says the removal pruned no grant
+ *     (`prunedAclGrants` 0 or absent — written by 20261204's revoke_member)
+ *     or a trustworthy row shows the walk settled (removalWalkSettled).
+ *  Everything else walks: a latest row a non-Admin wrote (a forged
+ *  "prunedAclGrants: 0" cannot switch the clean-up off), a writer no longer
+ *  an Admin, a read that fails, an Admin lookup that fails. */
 async function clearStaleInheritedAclIndex(orgId: string, uid: string): Promise<ReAddAclIndexCleanup | null> {
   try {
-    const { data: removed, error: remErr } = await supabaseAdmin
-      .from("audit_logs")
-      .select("details, timestamp")
-      .eq("org_id", orgId)
-      .eq("action", "MEMBER_REMOVED")
-      .eq("resource_id", uid)
-      .order("timestamp", { ascending: false })
-      .limit(1);
-    if (remErr) {
-      console.warn(`[create-user] ORG-7: the removal record of ${uid} could not be read (${remErr.message}) — any stale index entries are left to the nightly rebuild.`);
-      return { done: false, pruned: 0, calls: 0, error: remErr.message };
+    const removal = await readRemovalEvidence(orgId, uid, "MEMBER_REMOVED", { limit: 1 });
+    let skip = false;
+    if (removal.rows === null) {
+      console.warn(`[create-user] ORG-7: the removal record of ${uid} could not be read (${removal.error}) — walking the workspace's index entries (fail safe).`);
+    } else {
+      const last = removal.rows[0] ?? null;
+      if (!last) return null;
+      const trusted = await trustedEvidence(orgId, [last], removal.actorKind);
+      if (trusted?.[0] === true) {
+        const prunedGrants = Number(last.details?.prunedAclGrants ?? 0);
+        skip = !(prunedGrants > 0)
+          || (!!last.timestamp && await removalWalkSettled(orgId, uid, last.timestamp));
+      }
     }
-    const last = (Array.isArray(removed) ? removed[0] : null) as { details?: { prunedAclGrants?: unknown } | null; timestamp?: string | null } | null;
-    const prunedGrants = Number(last?.details?.prunedAclGrants ?? 0);
-    if (!last || !(prunedGrants > 0)) return null;
-    if (last.timestamp && await removalWalkSettled(orgId, uid, last.timestamp)) return null;
+    if (skip) return null;
     const libraries: string[] = [];
     for (let from = 0; from < 50_000; from += 1000) {
       const { data: libs, error: libErr } = await supabaseAdmin
