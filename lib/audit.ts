@@ -53,7 +53,12 @@ const AUDIT_ACTOR_SENTINELS: ReadonlySet<string> = new Set(["", "unknown", "syst
  *  route; the server's service-role client directly), which the maintenance
  *  cron drains into the audit trail and reports. The result is unchanged
  *  ({ ok: false, error }) and so is its log line; a second line says whether
- *  the row was kept.
+ *  the row was kept. *P13 integrator fix pass:* in the BROWSER the
+ *  dead-letter POST is sent without awaiting — the caller gets its
+ *  { ok: false, error } at once, never held for the route (the POST stays
+ *  bounded by DEAD_LETTER_TIMEOUT_MS and caught; its log line comes when it
+ *  settles). On the SERVER the outbox write is awaited as before, so a route
+ *  or cron that returns right after does not drop it.
  *  Before 20261219 is pasted the outbox is missing and the row is not kept —
  *  today's path. A row with no workspace is refused before any write and is
  *  not dead-lettered (the outbox, like the trail, needs its workspace). */
@@ -93,13 +98,15 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
       // catch below is only for a row that could not be built (kept as before)
       console.error(`Failed to write audit log (${entry.action}):`, thrown);
       const message = (thrown as Error)?.message ?? String(thrown);
-      sayKept(entry.action, await deadLetterAuditRow(row, message));
+      const keeping = keepDeadLetter(entry.action, row, message);
+      if (keeping) await keeping;
       return { error: message, ok: false };
     }
     if (error) {
       console.error(`Failed to write audit log (${entry.action}):`, error.message);
       const message = error.message || "audit insert refused";
-      sayKept(entry.action, await deadLetterAuditRow(row, message));
+      const keeping = keepDeadLetter(entry.action, row, message);
+      if (keeping) await keeping;
       return { error: message, ok: false };
     }
     return { error: null, ok: true };
@@ -107,6 +114,17 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
     console.error(`Failed to write audit log (${entry?.action}):`, error);
     return { error: (error as Error)?.message ?? String(error), ok: false };
   }
+}
+
+/** EVID-6: dead-letters a refused row and logs whether it was kept. In the
+ *  browser it answers nothing — the POST runs on its own, bounded by
+ *  DEAD_LETTER_TIMEOUT_MS and caught — so logAuditAction never holds its
+ *  caller for it; on the server it answers the write to await. */
+function keepDeadLetter(action: string, row: DeadLetterRow, message: string): Promise<void> | null {
+  const keeping = deadLetterAuditRow(row, message)
+    .then((kept) => sayKept(action, kept))
+    .catch((e) => console.error(`Audit log (${action}): the refused row was NOT kept in the audit dead-letter outbox (${(e as Error)?.message ?? String(e)})`));
+  return typeof window !== "undefined" ? null : keeping;
 }
 
 /** EVID-6: the second log line — whether the refused row was kept in the outbox. */

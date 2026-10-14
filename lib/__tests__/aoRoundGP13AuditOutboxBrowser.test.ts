@@ -76,7 +76,32 @@ describe("EVID-6 (P13) — the browser keeps a refused audit row through the ver
   it("logAuditAction in the browser: the refused row goes to the route, the result is unchanged", async () => {
     const r = await logAuditAction({ action: "VIEW", resourceId: "d1", resourceType: "document", orgId: ORG, userId: UID, userEmail: "a@x.io", userRole: "Drafter" });
     expect(r).toEqual({ ok: false, error: "new row violates row-level security policy" });
-    expect(calls).toHaveLength(1);
+    // sent on its own (P13 integrator fix pass): it lands after the caller has its answer
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
     expect(JSON.parse(String(calls[0].init.body)).entry).toMatchObject({ action: "VIEW", org_id: ORG, user_id: UID });
+    await vi.waitFor(() => expect(vi.mocked(console.error).mock.calls.some((c) => /was kept in the audit dead-letter outbox/.test(String(c[0])))).toBe(true));
+  });
+
+  it("P13 integrator fix pass: the caller is never held for the dead-letter POST — a route that never answers does not delay logAuditAction's { ok: false, error }", async () => {
+    let release: (r: Response) => void = () => undefined;
+    answer = () => new Promise<Response>((res) => { release = res; });
+    const entry = { action: "VIEW", resourceId: "d1", resourceType: "document", orgId: ORG, userId: UID, userEmail: "a@x.io", userRole: "Drafter" };
+    let settled = false;
+    const p = logAuditAction(entry).then((r) => { settled = true; return r; });
+    // the route has been asked and has NOT answered; the caller already has its answer
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await Promise.resolve();
+    expect(settled).toBe(true);
+    expect(await p).toEqual({ ok: false, error: "new row violates row-level security policy" });
+    // the POST is still bounded and caught: when it answers (here a refusal) it only logs
+    release(new Response(JSON.stringify({ error: "too many" }), { status: 429 }));
+    await vi.waitFor(() => expect(vi.mocked(console.error).mock.calls.some((c) => /was NOT kept in the audit dead-letter outbox \(too many\)/.test(String(c[0])))).toBe(true));
+  });
+
+  it("P13 integrator fix pass: a dead-letter POST that throws never reaches the caller (caught)", async () => {
+    answer = () => { throw new TypeError("Failed to fetch"); };
+    const entry = { action: "VIEW", resourceId: "d1", resourceType: "document", orgId: ORG, userId: UID, userEmail: "a@x.io", userRole: "Drafter" };
+    expect(await logAuditAction(entry)).toEqual({ ok: false, error: "new row violates row-level security policy" });
+    await vi.waitFor(() => expect(vi.mocked(console.error).mock.calls.some((c) => /was NOT kept in the audit dead-letter outbox \(Failed to fetch\)/.test(String(c[0])))).toBe(true));
   });
 });
