@@ -9,10 +9,14 @@
 // checked, the archive-cancel pattern: the act has happened either way, so
 // the answer stays 200 with its counts, carries `auditError`, and the refusal
 // is logged. Regression: a recorded row answers exactly as before (no
-// auditError key).
+// auditError key). Fix pass: the two exits that returned AFTER destructive
+// work without attempting the row — the ticket reclaim's 503 (stubs already
+// stamped) and the restore's 413 (tickets already put back) — now write it,
+// marked partial, and carry auditError the same way.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
 import JSZip from "jszip";
 
 type Row = Record<string, unknown>;
@@ -24,6 +28,8 @@ const state = vi.hoisted(() => ({
   throws: {} as Record<string, string>,
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   r2Sends: 0,
+  /** zip entry paths whose bytes claim to inflate past the restore's 2 GB bound */
+  huge: [] as string[],
 }));
 
 function chain(table: string) {
@@ -82,7 +88,22 @@ vi.mock("@/lib/shedKeyGuard", async (orig) => ({
   sharedLiveKeys: vi.fn(async () => new Set<string>()),
 }));
 vi.mock("@/lib/archiveCatalog", () => ({ persistReclaimShortfall: vi.fn(async () => ({ ok: true })) }));
+// The real JSZip, except that an entry named in state.huge reports an inflated
+// size past the restore's MAX_DECOMPRESSED (2 GB) — the bound cannot be
+// reached with real bytes in a unit test.
+vi.mock("jszip", async (orig) => {
+  const Real = (await orig<{ default: typeof import("jszip") }>()).default as unknown as { loadAsync: (...a: unknown[]) => Promise<{ files: Record<string, { async: unknown }> }> } & (new () => object);
+  const Wrapped = function () { return new Real(); } as unknown as Record<string, unknown>;
+  Object.assign(Wrapped, Real);
+  Wrapped.loadAsync = async (...args: unknown[]) => {
+    const z = await Real.loadAsync(...args);
+    for (const p of Object.keys(z.files)) if (state.huge.includes(p)) z.files[p].async = async () => ({ byteLength: 3 * 1024 ** 3 });
+    return z;
+  };
+  return { default: Wrapped };
+});
 
+import { sharedLiveKeys } from "@/lib/shedKeyGuard";
 import * as shedCommit from "@/app/api/admin/shed/commit/route";
 import * as ticketCommit from "@/app/api/admin/ticket-shed/commit/route";
 import * as ticketRestore from "@/app/api/admin/ticket-shed/restore/route";
@@ -95,7 +116,7 @@ const audits = () => state.calls.filter((c) => c.table === "audit_logs" && c.met
 let logged: string[] = [];
 
 beforeEach(() => {
-  state.rows = {}; state.errors = {}; state.throws = {}; state.calls = []; state.r2Sends = 0;
+  state.rows = {}; state.errors = {}; state.throws = {}; state.calls = []; state.r2Sends = 0; state.huge = [];
   logged = [];
   vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => { logged.push(a.map(String).join(" ")); });
 });
@@ -168,6 +189,36 @@ describe("ALOG-8 (P13) — /api/admin/ticket-shed/commit: the TICKET_ARCHIVE_REC
     expect(logged.some((l) => /\[admin\/ticket-shed\/commit\] the TICKET_ARCHIVE_RECLAIM audit row was not written/.test(l))).toBe(true);
   });
 
+  it("fix pass: the shared-key read failing AFTER stubs were stamped (comments and history cleared) writes the row, partial, before the 503", async () => {
+    seedTicketShed();
+    vi.mocked(sharedLiveKeys).mockRejectedValueOnce(new Error("The shared-key check could not be read."));
+    const res = await ticketCommit.POST(post("/api/admin/ticket-shed/commit", { archiveId: "MOS-T1", confirm: true }));
+    expect(res.status).toBe(503);
+    const body = await res.json() as Row;
+    expect(String(body.error)).toMatch(/Stubs are stamped; re-run Reclaim to finish freeing\./);
+    expect(body).toMatchObject({ processed: 1, reclaimedTickets: 1 });
+    expect("auditError" in body).toBe(false);
+    expect(audits()).toHaveLength(1);
+    expect(audits()[0]).toMatchObject({
+      action: "TICKET_ARCHIVE_RECLAIM", org_id: O1, user_id: "u-admin",
+      details: { archiveId: "MOS-T1", partial: true, reclaimedTickets: 1, reprocessed: 0, keysDeleted: 0, stopError: "The shared-key check could not be read." },
+    });
+    // nothing was freed from storage or ticket_comments
+    expect(state.r2Sends).toBe(0);
+    expect(state.calls.some((c) => c.table === "ticket_comments" && c.method === "delete")).toBe(false);
+  });
+
+  it("fix pass: that 503 with its row refused carries auditError and is logged", async () => {
+    seedTicketShed();
+    vi.mocked(sharedLiveKeys).mockRejectedValueOnce(new Error("read failed."));
+    state.errors["audit_logs.insert"] = { message: "permission denied for table audit_logs" };
+    const res = await ticketCommit.POST(post("/api/admin/ticket-shed/commit", { archiveId: "MOS-T1", confirm: true }));
+    expect(res.status).toBe(503);
+    const body = await res.json() as Row;
+    expect(String(body.auditError)).toMatch(/stopped after stamping 1 ticket\(s\) \(their comments and history were cleared\) and its TICKET_ARCHIVE_RECLAIM audit row was not written: permission denied/);
+    expect(logged.some((l) => /\[admin\/ticket-shed\/commit\] the TICKET_ARCHIVE_RECLAIM audit row was not written/.test(l))).toBe(true);
+  });
+
   it("regression: a recorded reclaim answers as before, no auditError", async () => {
     seedTicketShed();
     const body = await (await ticketCommit.POST(post("/api/admin/ticket-shed/commit", { archiveId: "MOS-T1", confirm: true }))).json() as Row;
@@ -186,6 +237,50 @@ describe("ALOG-8 (P13) — /api/admin/ticket-shed/restore: the TICKET_ARCHIVE_RE
     const body = await res.json() as Row;
     expect(body).toMatchObject({ ok: true, restored: 0, skippedForeign: 1 });
     expect(String(body.auditError)).toMatch(/put back 0 ticket\(s\) but its TICKET_ARCHIVE_RESTORE audit row was not written: connection reset/);
+    expect(logged.some((l) => /\[admin\/ticket-shed\/restore\] the TICKET_ARCHIVE_RESTORE audit row was not written/.test(l))).toBe(true);
+  });
+
+  async function partWayZip(): Promise<NextRequest> {
+    const zip = new JSZip();
+    const keyA = `orgs/${O1}/tickets/t1/a.pdf`;
+    const keyB = `orgs/${O1}/tickets/t2/b.pdf`;
+    zip.file("tickets/t1.json", JSON.stringify({ id: "t1", org_id: O1, comments: [{ id: "c1" }], history: [], metadata: {} }));
+    zip.file("tickets/t2.json", JSON.stringify({ id: "t2", org_id: O1, comments: [], history: [], metadata: {} }));
+    zip.file(keyA, "hello");
+    zip.file(keyB, "world");
+    zip.file("files-manifest.json", JSON.stringify({ [keyA]: { sha256: createHash("sha256").update("hello").digest("hex"), size: 5 } }));
+    state.huge = [keyB];
+    state.rows.tickets = [
+      { id: "t1", org_id: O1, archived_at: "2026-09-01T00:00:00.000Z", archive_id: "MOS-T1", attachments: [{ url: keyA }] },
+      { id: "t2", org_id: O1, archived_at: "2026-09-01T00:00:00.000Z", archive_id: "MOS-T1", attachments: [{ url: keyB }] },
+    ];
+    const buf = await zip.generateAsync({ type: "uint8array" });
+    return new NextRequest(`http://x/api/admin/ticket-shed/restore?orgId=${O1}&confirm=true`, {
+      method: "POST", headers: { authorization: "Bearer t", "content-type": "application/zip" }, body: buf as unknown as BodyInit,
+    });
+  }
+
+  it("fix pass: the decompression bound stopping the restore part way (one ticket already put back, one file uploaded) writes the row, partial, before the 413", async () => {
+    const res = await ticketRestore.POST(await partWayZip());
+    expect(res.status).toBe(413);
+    const body = await res.json() as Row;
+    expect(body).toMatchObject({ error: "Archive decompresses to too much data; aborted.", restored: 1, filesUploaded: 1 });
+    expect("auditError" in body).toBe(false);
+    expect(state.rows.tickets.find((t) => t.id === "t1")?.archived_at).toBeNull(); // really put back
+    expect(audits()).toHaveLength(1);
+    expect(audits()[0]).toMatchObject({
+      action: "TICKET_ARCHIVE_RESTORE", org_id: O1, user_id: "u-admin",
+      details: { restored: 1, filesUploaded: 1, aborted: "Archive decompresses to too much data; aborted.", stoppedPartWay: true },
+    });
+  });
+
+  it("fix pass: that 413 with its row refused carries auditError and is logged", async () => {
+    const req = await partWayZip();
+    state.errors["audit_logs.insert"] = { message: "connection reset" };
+    const res = await ticketRestore.POST(req);
+    expect(res.status).toBe(413);
+    const body = await res.json() as Row;
+    expect(String(body.auditError)).toMatch(/stopped part way after putting back 1 ticket\(s\) and uploading 1 file\(s\), and its TICKET_ARCHIVE_RESTORE audit row was not written: connection reset/);
     expect(logged.some((l) => /\[admin\/ticket-shed\/restore\] the TICKET_ARCHIVE_RESTORE audit row was not written/.test(l))).toBe(true);
   });
 

@@ -7,7 +7,8 @@
 // audit row was refused (the routes' half of done-when 1's "response body"
 // form). The page now says it, in an amber notice naming what ran and why its
 // record is missing. Regression: a recorded operation shows no notice and
-// behaves as before.
+// behaves as before. Fix pass: a gap carried by a NON-2xx answer (the
+// operation stopped part way) says part of it ran, never that it completed.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -109,7 +110,8 @@ describe("ALOG-8 (P13) — /admin/storage says when a destructive operation ran 
     expect(posts).toContain("/api/admin/purge");
     const t = gaps();
     expect(t).toContain("Purge ran — NOT recorded in the audit log: the purge ran but its DATA_PURGE audit row was not written: permission denied");
-    expect(t).toContain("only its audit-log record is missing");
+    expect(t).toContain("The operation itself completed; only its audit-log record is missing.");
+    expect(t).not.toContain("Part of the operation ran");
   });
 
   it("regression: a recorded purge shows no notice", async () => {
@@ -134,6 +136,20 @@ describe("ALOG-8 (P13) — /admin/storage says when a destructive operation ran 
     await click(/^Discard$/);
     expect(gaps()).toContain("the 3 ticket(s) unlinked were not recorded");
     expect(container.textContent).toContain("The revisions could not be unlinked");
+    // fix pass: a non-2xx answer never reads "the operation itself completed"
+    expect(gaps()).toContain("Part of the operation ran (see the error above), and that part is NOT recorded in the audit log.");
+    expect(gaps()).not.toContain("The operation itself completed");
+  });
+
+  it("fix pass: the catalog reclaim's 503 after stubs were stamped, with its row refused, says part ran — not that it completed", async () => {
+    answers["/api/admin/shed/commit"] = { status: 503, body: { error: "The shared-key check could not be read. Stubs are stamped; re-run Reclaim to finish freeing.", auditError: "the reclaim stopped after stamping 4 ticket(s) (their comments and history were cleared) and its TICKET_ARCHIVE_RECLAIM audit row was not written: refused" } };
+    await render();
+    await click(/I saved it — reclaim/);
+    const t = gaps();
+    expect(t).toContain("MOS-20261014-AB12: space reclaimed — NOT recorded in the audit log: the reclaim stopped after stamping 4 ticket(s)");
+    expect(t).toContain("Part of the operation ran (see the error above)");
+    expect(t).not.toContain("The operation itself completed");
+    expect(container.textContent).toContain("Stubs are stamped; re-run Reclaim to finish freeing.");
   });
 
   it("the catalog's reclaim (shed commit): a 200 carrying auditError is said; regression: a recorded one is not", async () => {

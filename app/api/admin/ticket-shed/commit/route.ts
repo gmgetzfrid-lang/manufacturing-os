@@ -198,6 +198,29 @@ export async function POST(req: NextRequest) {
   }
   const freeIds = idsToFree.filter((id) => stillArchived.has(id));
   const candidateKeys = freeIds.flatMap((id) => keysByTicket.get(id) ?? []);
+
+  // ALOG-8 (admin-and-org P13): CHECKED — the TICKET_ARCHIVE_RECLAIM row is
+  // written on every exit after step 1 has stamped stubs (their comments and
+  // history are gone from the live rows), so a refused or thrown insert is
+  // carried in the answer (`auditError`) and logged, never a silent success
+  // (the purge's rule). Fix pass: the 503 below wrote no row at all.
+  const writeReclaimAudit = async (details: Record<string, unknown>): Promise<string | null> => {
+    let auditError: string | null = null;
+    try {
+      const { error: auditErr } = await sb.from("audit_logs").insert({
+        action: "TICKET_ARCHIVE_RECLAIM",
+        resource_id: orgId, resource_type: "org", org_id: orgId,
+        user_id: actor.userId, user_email: actor.email,
+        details: { archiveId, ...details },
+      });
+      if (auditErr) auditError = auditErr.message || "audit insert refused";
+    } catch (e) {
+      auditError = (e as Error).message || String(e);
+    }
+    if (auditError) console.error("[admin/ticket-shed/commit] the TICKET_ARCHIVE_RECLAIM audit row was not written", auditError);
+    return auditError;
+  };
+
   // RET-8 (same class): a substituted attachment key that names a LIVE
   // controlled revision's object must never be freed here either. Fail
   // CLOSED on the read — the stubs are already stamped, so a re-run finishes
@@ -209,7 +232,16 @@ export async function POST(req: NextRequest) {
     keysToDelete = candidateKeys.filter((k) => !shared.has(k));
     sharedSkipped = candidateKeys.length - keysToDelete.length;
   } catch (e) {
-    return NextResponse.json({ error: `${(e as Error).message} Stubs are stamped; re-run Reclaim to finish freeing.`, processed: idsToFree.length }, { status: 503 });
+    const message = (e as Error).message;
+    // The stubs stamped so far stay stamped: say so in the audit trail, partially.
+    const auditError = await writeReclaimAudit({
+      partial: true, stoppedAt: "shared-key read (nothing deleted from storage or ticket_comments)", stopError: message.slice(0, 500),
+      reclaimedTickets: newlyStamped, reprocessed: idsToFree.length - newlyStamped, keysDeleted: 0, rejectedKeys, errors: errors.slice(0, 8),
+    });
+    return NextResponse.json({
+      error: `${message} Stubs are stamped; re-run Reclaim to finish freeing.`, processed: idsToFree.length, reclaimedTickets: newlyStamped,
+      ...(auditError ? { auditError: `the reclaim stopped after stamping ${newlyStamped} ticket(s) (their comments and history were cleared) and its TICKET_ARCHIVE_RECLAIM audit row was not written: ${auditError}` } : {}),
+    }, { status: 503 });
   }
 
   for (let i = 0; i < freeIds.length; i += 200) {
@@ -229,22 +261,9 @@ export async function POST(req: NextRequest) {
   const keysFailed = Math.max(0, keysToDelete.length - keysDeleted);
   const persisted = await persistReclaimShortfall(sb, orgId, archiveId, keysFailed);
   if (!persisted.ok) errors.push(persisted.error);
-  // ALOG-8 (admin-and-org P13): CHECKED — the reclaim has happened either
-  // way, so a refused TICKET_ARCHIVE_RECLAIM row is carried in the answer
-  // (`auditError`) and logged, never a silent success (the purge's rule).
-  let auditError: string | null = null;
-  try {
-    const { error: auditErr } = await sb.from("audit_logs").insert({
-      action: "TICKET_ARCHIVE_RECLAIM",
-      resource_id: orgId, resource_type: "org", org_id: orgId,
-      user_id: actor.userId, user_email: actor.email,
-      details: { archiveId, reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) },
-    });
-    if (auditErr) auditError = auditErr.message || "audit insert refused";
-  } catch (e) {
-    auditError = (e as Error).message || String(e);
-  }
-  if (auditError) console.error("[admin/ticket-shed/commit] the TICKET_ARCHIVE_RECLAIM audit row was not written", auditError);
+  // ALOG-8 (admin-and-org P13): the reclaim has happened either way (see
+  // writeReclaimAudit above).
+  const auditError = await writeReclaimAudit({ reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) });
 
   return NextResponse.json({
     ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors,
