@@ -32,6 +32,7 @@ build time**, so those must be your real values when the image is built:
 | `NEXT_PUBLIC_SITE_URL` | **build** (and runtime) — **required** for QR codes, share links and transmittal portal links: your public address, e.g. `https://mfg.yourplant.com` |
 | `NEXT_PUBLIC_FACILITY_TIME_ZONE` | **build** (and runtime) — the facility's IANA time zone, e.g. `America/Chicago`; decides the day a revision's effective date comes into force (unset, effective dates are decided a day late, never early) |
 | `NEXT_PUBLIC_FIELD_PACK_BUDGET` | build (optional) — `on` switches on the field-pack budget: a work package's or an asset tag's pack over the sheet / page / byte budget is refused or split. Leave it unset (off) until Document Control has ratified the budget (document-control PKG-12); with a raw `docker build`, pass `--build-arg NEXT_PUBLIC_FIELD_PACK_BUDGET=on` and rebuild |
+| `NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE` | build (optional) — set it to exactly `20261203` only after that migration is pasted (it makes the workspace time-zone setting Admin-only); a workspace whose Admin set a zone then has its effective dates decided in it, with `NEXT_PUBLIC_FACILITY_TIME_ZONE` as the fallback. Unset, the setting decides nothing about effective dates (public-surfaces VFY-15); with a raw `docker build`, pass `--build-arg NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE=20261203` and rebuild |
 | `SUPABASE_SERVICE_ROLE_KEY` | runtime |
 | `R2_*` (storage) | runtime |
 

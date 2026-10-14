@@ -269,11 +269,17 @@ export async function notifyPackagesOfRetirement(input: {
       .select("id, name, owner_user_id")
       .in("id", pkgIds)
       .neq("status", "closed");
-    const { notifyMany } = await import("@/lib/inAppNotifications");
+    // DELIV-16 (notifications N15): a compliance kind — its row retries and
+    // dead-letters (lib/complianceNotify.ts, DEC-102). The actor is not told
+    // of their own act (as notifyMany dropped them).
+    // (aliased to notify, as the other compliance producers import it, so the
+    // actor census in notificationWriteRails.test.ts still reads the call)
+    const { notifyCompliance: notify } = await import("@/lib/complianceNotify");
     for (const p of (pkgs as Array<{ id: string; name: string; owner_user_id: string }>) ?? []) {
-      void notifyMany({
+      if (!p.owner_user_id || p.owner_user_id === input.actorUserId) continue;
+      void notify({
         orgId: input.orgId,
-        userIds: [p.owner_user_id],
+        userId: p.owner_user_id,
         actorUserId: input.actorUserId,
         actorName: input.actorName,
         // PROD-13 / TAX-13 (N9): a packed document's retirement is its own kind.

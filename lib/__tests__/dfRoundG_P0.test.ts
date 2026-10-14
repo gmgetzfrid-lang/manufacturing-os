@@ -127,7 +127,8 @@ const ticketRow = (over: Record<string, unknown> = {}) => ({
 const updateOf = (table: string) => state.calls.filter((c) => c.table === table && c.method === "update").map((c) => c.args[0] as Record<string, unknown>);
 const insertsOf = (table: string) => state.calls.filter((c) => c.table === table && c.method === "insert").flatMap((c) => (Array.isArray(c.args[0]) ? c.args[0] : [c.args[0]]) as Array<Record<string, unknown>>);
 const callIndex = (table: string, method: string) => state.calls.findIndex((c) => c.table === table && c.method === method);
-const legsAfter = (i: number, table: string) => state.calls.slice(i + 1).filter((c) => c.table === table && c.method === "eq").map((c) => c.args as [string, unknown]);
+// DF-P4 fix pass 3 (GAP-8): the intent bridge filters its sheets with one `.in("document_id", ids)` leg, so the legs read both `.in` and `.eq`.
+const legsAfter = (i: number, table: string) => state.calls.slice(i + 1).filter((c) => c.table === table && (c.method === "eq" || c.method === "in")).map((c) => c.args as [string, unknown]);
 const casLegs = () => {
   const i = state.calls.findIndex((c) => c.table === "tickets" && c.method === "update");
   return state.calls.slice(i + 1).filter((c) => c.table === "tickets" && c.method === "eq").map((c) => c.args as [string, unknown]);
@@ -456,7 +457,7 @@ describe("SM-11 — rowToTicket carries metadata, so the ticket ⇄ intent bridg
     expect((await post({ ticketId: "t1", actionType: "assign", assignment: { id: "d-1", name: "Hector" } })).status).toBe(200);
     const up = callIndex("document_intents", "upsert");
     expect(up).toBeGreaterThan(callIndex("tickets", "update"));
-    expect(state.calls[up].args[0]).toMatchObject({ document_id: "doc-1", user_id: "d-1", kind: "edit", source: "ticket", ticket_id: "t1" });
+    expect(state.calls[up].args[0]).toMatchObject([{ document_id: "doc-1", user_id: "d-1", kind: "edit", source: "ticket", ticket_id: "t1" }]); // one batched upsert (DF-P4 GAP-8)
 
     state.calls = []; state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", attachments: [FINAL], metadata: { source_document: { id: "doc-1", documentNumber: "P-100" } } })];
@@ -465,7 +466,7 @@ describe("SM-11 — rowToTicket carries metadata, so the ticket ⇄ intent bridg
     expect((await closed.json()).status).toBe("CLOSED");
     const del = callIndex("document_intents", "delete");
     expect(del).toBeGreaterThan(callIndex("tickets", "update"));
-    expect(legsAfter(del, "document_intents")).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"]]);
+    expect(legsAfter(del, "document_intents")).toEqual([["document_id", ["doc-1"]], ["ticket_id", "t1"], ["source", "ticket"]]);
     expect(callIndex("document_intents", "upsert")).toBe(-1);
   });
 });

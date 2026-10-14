@@ -1032,7 +1032,8 @@ describe("REV-9 — the portal's 'not yet in force' is decided in the facility's
     expect(page).not.toMatch(/toISOString\(\)\.slice\(0, 10\)/);
     expect(page).toContain("i.notYetInForce");
     const route = readFileSync("app/api/transmittal/route.ts", "utf8");
-    expect(route).toContain('notYetInForce: effectiveStatusFor(i.effectiveDate ?? null) === "pending",');
+    // VFY-15 (admin-and-org P12): in the issuing workspace's calendar.
+    expect(route).toContain('notYetInForce: effectiveStatusFor(i.effectiveDate ?? null, new Date(), effectiveZone) === "pending",');
   });
 });
 

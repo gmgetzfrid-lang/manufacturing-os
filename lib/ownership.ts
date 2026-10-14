@@ -187,7 +187,11 @@ export async function effectiveOwnerForDocument(doc: {
   if (eff.source !== "team" || !eff.userId) return eff;
 
   // Team rung: the supervisor's CURRENT display name (the row carries none).
-  const { data: m } = await supabase.from("org_members").select("display_name, email").eq("uid", eff.userId).maybeSingle();
+  // ORG-7 (admin-and-org P12): read in THIS workspace — a supervisor who is a
+  // member of two workspaces has two rows, and an unscoped maybeSingle()
+  // errored and fell back to the team's name.
+  const nameQuery = supabase.from("org_members").select("display_name, email").eq("uid", eff.userId);
+  const { data: m } = await (orgId ? nameQuery.eq("org_id", orgId) : nameQuery).maybeSingle();
   const name = (m?.display_name as string) || (m?.email as string) || teamName || "Supervisor";
   return { ...eff, name };
 }

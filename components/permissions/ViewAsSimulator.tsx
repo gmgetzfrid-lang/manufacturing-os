@@ -42,7 +42,10 @@ import type { AccessControl, AclIndex, NodeVisibility, Role } from "@/types/sche
 
 /** `role` is the stored headline, or null when the row carries none — never
  *  a placeholder (DEC-91): a member with no role known holds no role here. */
-interface Member { uid: string; name: string; role: string | null; roles: string[] }
+// ORG-7 (admin-and-org P12): `status` is the member's real membership
+// status, passed to the ACL evaluators (isActiveMember) — a simulation shows
+// what the server would decide, never a hard-coded "active".
+interface Member { uid: string; name: string; role: string | null; roles: string[]; status: string | null }
 interface LibRow { id: string; name: string; acl: AccessControl | null; aclIndex: AclIndex | null; visibility: NodeVisibility; ownerUserId: string | null }
 interface ProjectRow { id: string; name: string; ownerUserId: string | null; visibility: string | null }
 
@@ -94,7 +97,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     if (!activeOrgId) return;
     void (async () => {
       const [m, l, p, rt, pr, tm] = await Promise.all([
-        supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", activeOrgId).eq("status", "active").order("display_name"),
+        supabase.from("org_members").select("uid, display_name, email, role, roles, status").eq("org_id", activeOrgId).eq("status", "active").order("display_name"),
         supabase.from("libraries").select("id, name, acl, acl_index, visibility, owner_user_id").eq("org_id", activeOrgId).order("name"),
         loadCapabilityPolicyEntry(activeOrgId),
         loadRequestTypeOptions(activeOrgId),
@@ -118,6 +121,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
         // DEC-91: a row with no headline role is null here, never "Viewer".
         role: typeof r.role === "string" && r.role.trim() ? r.role : null,
         roles: (r.roles as string[] | null) ?? [],
+        status: typeof r.status === "string" ? r.status : null,
       })));
       setLibs((((l.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), name: String(r.name),
@@ -447,7 +451,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                 // app will actually allow, not a re-implementation. A null headline
                 // (no role known) reaches them as null: heldRoles drops it and the
                 // ACL role match (lib/acl.ts) guards `ctx.role &&` — it grants nothing.
-                const principal = { uid: who.uid, role: who.role as Role, roles: who.roles as Role[], orgId: activeOrgId ?? undefined, teamIds, isActiveMember: true };
+                const principal = { uid: who.uid, role: who.role as Role, roles: who.roles as Role[], orgId: activeOrgId ?? undefined, teamIds, isActiveMember: who.status === "active" };
                 const isLibOwner = !!l.ownerUserId && l.ownerUserId === who.uid;
                 const sees = canDiscover({ principal, aclChain: [l.acl ?? undefined], visibility: l.visibility, effectiveOwnerUserId: l.ownerUserId });
                 const viaIdx = canPublishViaIndex(l.aclIndex, principal);

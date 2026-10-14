@@ -35,7 +35,7 @@
 //     applied one after the other, so the ordering read above sees the first.
 //     A delivery waits up to 8 s for its turn, then answers 503;
 //   - a Stripe status that means no payment was taken, or one this code does
-//     not know, never maps to access (lib/subscription.ts mapStripeStatus),
+//     not know, never maps to access (lib/billing.ts mapStripeStatus),
 //     the plan is written only on a status that pays for it, and an ended
 //     subscription clears it;
 //   - a subscription the workspace is not on cannot take its access away; a
@@ -52,7 +52,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getStripe, isStripeConfigured, planFromSubscription } from "@/lib/stripe";
-import { ACCESS_STATUSES, LIVE_STRIPE_STATUSES, PLAN_HOLDING_STRIPE_STATUSES, UNSTARTED_STRIPE_STATUSES, mapStripeStatus } from "@/lib/subscription";
+import { ACCESS_STATUSES, LIVE_STRIPE_STATUSES, PLAN_HOLDING_STRIPE_STATUSES, UNSTARTED_STRIPE_STATUSES, mapStripeStatus } from "@/lib/billing";
 import type Stripe from "stripe";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";

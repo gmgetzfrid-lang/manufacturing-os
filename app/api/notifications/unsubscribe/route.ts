@@ -19,9 +19,11 @@
 // an upsert on the member's own row: a member who never saved preferences
 // gets a row with every other column at its default (the CHECK accepts them —
 // NEDGE-2's fix is what makes this row savable). A drawing recall and a PSM
-// alert still pass the switch (DEC-74 §9), and the transmittal route's
-// notices to an issuer do not read it yet (notifications N9); the page names
-// both.
+// alert still pass the switch (DEC-74 §9), and so do the transmittal
+// route's unstamped / refused-PDF notices to an issuer (DEC-90 A10); the page
+// names both. The issuer's acknowledgment receipt reads the switch since N9
+// (lib/transmittalReceiptNotice.ts → queueEmail → email_gate — NEDGE-10,
+// verified by notifications N15), so the page no longer lists it.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -41,8 +43,7 @@ const page = (title: string, body: string, status = 200) =>
 
 const SAFETY_NOTE =
   "<p style=\"color:#475569\">Some email still arrives whatever this setting says: drawing recalls and safety alerts, " +
-  "and the notices a transmittal sends the person who issued it (a recipient's acknowledgment, and a PDF that could " +
-  "not be stamped or was refused). " +
+  "and the notices a transmittal sends the person who issued it when a PDF could not be stamped or was refused. " +
   "You can turn email back on, or choose which emails you get, on your <a href=\"/settings/notifications\">notification settings page</a>.</p>";
 
 const UID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

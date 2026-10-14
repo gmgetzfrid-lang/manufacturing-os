@@ -9,7 +9,8 @@ import { isSafeStorageKey } from "@/lib/storageKey";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
-import { defaultSlaTargetDate } from "@/lib/notifications";
+import { boundedSlaDays, defaultSlaTargetDate, slaTargetDateInDays } from "@/lib/notifications";
+import { missingLibraryColumn } from "@/lib/ticketLibrary";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
 import { escapeHtml } from "@/lib/ticketTransitions";
@@ -211,6 +212,9 @@ interface SourceRow {
   rev: string | null;
   current_version_id: string | null;
   collection_id?: string | null;
+  /** GAP-105 (DF-P4): the document's library — the root of the one
+   *  container chain (lib/containerChain.ts, DEC-36); the ticket targets it. */
+  library_id?: string | null;
   metadata: Record<string, unknown> | null;
   unit_code?: string | null;
 }
@@ -225,7 +229,7 @@ interface SourceRow {
  *  document's metadata. */
 async function readSourceDocuments(client: SupabaseClient, orgId: string, ids: string[]): Promise<SourceRow[] | "error"> {
   const out: SourceRow[] = [];
-  const base = "id, document_number, title, name, rev, current_version_id, collection_id, metadata";
+  const base = "id, document_number, title, name, rev, current_version_id, collection_id, library_id, metadata";
   for (let i = 0; i < ids.length; i += SOURCE_READ_CHUNK) {
     const chunk = ids.slice(i, i + SOURCE_READ_CHUNK);
     const first = await client.from("documents").select(`${base}, unit_code`).eq("org_id", orgId).in("id", chunk);
@@ -600,6 +604,33 @@ async function create(
   }
   const numberCfg = ticketNumberConfigFromRow(orgRow as Record<string, unknown> | null);
 
+  // EDGE-7 done-when 2 / ROUTE-9 done-when 4 (DF-P4): the request's due date
+  // is the one the requester named, else the workspace's own window for the
+  // type (sla_defaults — the window the SLA clock already reads for a ticket
+  // with no target, lib/ticketSla.ts), else the built-in DEFAULT_SLA_DAYS. A
+  // window that cannot be read falls back to the built-in default (a due
+  // date is not authority; the failure is logged).
+  let targetCompletionAt = input.targetCompletionAt;
+  if (!targetCompletionAt) {
+    const { data: slaRow, error: slaErr } = await supabaseAdmin
+      .from("sla_defaults").select("default_days").eq("org_id", orgId).eq("request_type", input.requestType).maybeSingle();
+    if (slaErr) console.warn(`[tickets/create] sla_defaults could not be read for ${orgId}/${input.requestType} (${slaErr.message}); the built-in window is used`);
+    // DF-P4 fix pass: any active member can write sla_defaults (EDGE-16), so
+    // the window is bounded here — a whole number of days, 1 to
+    // SLA_DEFAULT_DAYS_MAX — and a value outside it (or a date that cannot be
+    // computed) is the built-in window, never a refused request.
+    const rawDays = (slaRow as { default_days?: unknown } | null)?.default_days;
+    const days = slaErr ? null : boundedSlaDays(rawDays);
+    if (!slaErr && days === null && rawDays !== undefined && rawDays !== null) {
+      console.warn(`[tickets/create] sla_defaults.default_days for ${orgId}/${input.requestType} is out of bounds (${String(rawDays).slice(0, 40)}); the built-in window is used`);
+    }
+    let fromWindow: string | null = null;
+    if (days !== null) {
+      try { fromWindow = slaTargetDateInDays(days); } catch { fromWindow = null; }
+    }
+    targetCompletionAt = fromWindow ?? defaultSlaTargetDate(input.requestType);
+  }
+
   // 5. The row — 20261038 ticket_insert_integrity, replicated.
   const now = new Date().toISOString();
   const requesterRole = stampedRequesterRole(input.requesterRole, member);
@@ -620,6 +651,11 @@ async function create(
   if (unit.unit == null) metadata.unit_unknown = true;              // FRIC-3: the explicit answer
   else if (unit.kind === "unmatched") metadata.unit_unlisted = true; // DCW-7: kept as derived, not on the list
   if (unitUnchecked) metadata.unit_unchecked = unitUnchecked;        // DCW-7: given, but the list could not be read
+  // EDGE-8 (DF-P4): the queue's creation notice is owed — created_notice_at
+  // (stamped once it is out) settles it; lib/ticketLibrary.ts
+  // creationNoticeOwed reads the pair, so a ticket filed before this marker
+  // existed is never mistaken for an unannounced one.
+  metadata.created_notice_owed = true;
   if (origin.kind === "checkin") {
     const o = origin;
     metadata.checkin = { episodeId: o.episodeId, checkoutNumber: o.checkoutNumber, purpose: o.purpose, outcome: o.outcome };
@@ -661,11 +697,20 @@ async function create(
     unread_by: [],
     // The requester follows their own request.
     watchers: [caller.id],
-    target_completion_at: input.targetCompletionAt ?? defaultSlaTargetDate(input.requestType),
+    target_completion_at: targetCompletionAt,
+    // ticket_insert_integrity (20261195) does not run for the service role:
+    // this route never writes sla_breached_at, sla_breach_warned_at or
+    // outcome — a request is born on the SLA clock and not ended (pinned by
+    // lib/__tests__/dfRoundG_P4_library.test.ts).
     created_at: now,
     last_modified: now,
   };
   if (Object.keys(metadata).length > 0) row.metadata = metadata;
+  // GAP-105 / DCW-1 (DF-P4): the library is the primary source document's —
+  // derived, never asked for (99-fix-sequencing Phase 2 item 1). With no
+  // source document it stays unset and triage sets it.
+  const primaryLibrary = primary ? (byId.get(primary.id)?.library_id ?? null) : null;
+  if (primaryLibrary) row.library_id = primaryLibrary;
 
   let ticketNumber = "";
   let ticketId = "";
@@ -684,7 +729,15 @@ async function create(
     ticketNumber = formatTicketNumber(numberCfg, year, seq);
     row.ticket_id = ticketNumber;
 
-    const { data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single();
+    let { data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single();
+    // GAP-105 (DF-P4): before 20261208 is pasted tickets.library_id is not
+    // there (42703 / PGRST204) — Postgres refused the insert, nothing was
+    // written, so the same number is retried without the library (today's
+    // path: the ticket has no library).
+    if (insErr && "library_id" in row && missingLibraryColumn(insErr)) {
+      delete row.library_id;
+      ({ data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single());
+    }
     if (!insErr && inserted) {
       ticketId = String((inserted as { id: string }).id);
       break;
