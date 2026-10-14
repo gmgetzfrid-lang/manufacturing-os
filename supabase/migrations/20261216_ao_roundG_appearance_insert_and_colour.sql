@@ -43,16 +43,21 @@
 --       as before. No app INSERT writes them (lib/libraryCollections.ts
 --       createLibrary / createCollection, the admin wizard's insert, the
 --       intake route's service-role folder), so no app flow changes.
---       Folders: collections_insert_controllers (20261011) already admits
---       only a controller to INSERT a folder, so the folder INSERT arm
---       refuses nobody the policy admits; it holds the colour rule.
+--       Folders: the INSERT arm holds for a folder exactly as for a
+--       library, and it holds the colour rule. IF 20261011's RESTRICTIVE
+--       collections_insert_controllers is live, it already admits only a
+--       controller to INSERT a folder, so the folder arm then refuses nobody
+--       that policy admits — but whether 20261011 was ever pasted is not
+--       known (MIGRATION-PASTE-ORDER row 10: unknown), so this file does not
+--       rely on it: the inventory reports whether the policy is present
+--       (1 / 0), and no probe requires it.
 --     · The UPDATE arm is 20261210's, unchanged: only the cover image, its
 --       tint and the page background are judged by authority, OLD vs NEW.
 --     · No policy is re-created and no other function or trigger is
---       touched: libraries_org_access, collections_insert_controllers /
---       collections_update_controllers (20261011 / 20261044), the INSERT
---       rail (20261062), enforce_library_sensitive_columns (20261077), the
---       review-control audit triggers (20261072) and the library-delete
+--       touched: libraries_org_access, collections_insert_controllers
+--       (20261011, if live), collections_update_controllers (20261044), the
+--       INSERT rail (20261062), enforce_library_sensitive_columns (20261077),
+--       the review-control audit triggers (20261072) and the library-delete
 --       audit (20261204, if pasted) stay as they are. The final SELECT
 --       compares the trigger and policy counts with those captured before
 --       the transaction.
@@ -68,15 +73,24 @@
 -- library carrying a cover / tint / background, or any direct write of a
 -- colour that is not a hex colour, is refused (23514). No app path reads or
 -- calls anything new (no 42703 / 42883 / 42P01 / PGRST2xx path).
--- ORDER: paste AFTER 20261210 (this file re-creates its function and
--- trigger; it is self-contained — it needs only is_org_controller, live
--- since 20260814). ⚠ Do NOT paste 20261210 again after this file: that
--- would put back the UPDATE-only body; if it happens, paste this file again.
--- Either order with the P15 deploy. ⚠ APPLIED BY HAND (DEC-30). One script;
--- re-running is safe.
+-- ORDER: this file SUPERSEDES 20261210. Its function body is 20261210's,
+-- line for line and in order, plus the colour arm and the INSERT arm (the
+-- shape test pins it), and it re-attaches the trigger itself, so it is
+-- self-contained: it needs only is_org_controller, live since 20260814.
+-- Paste it after 20261210, or alone. The inventory row 'before:
+-- trg_node_appearance_columns attached' reads 2 when 20261210 (or an earlier
+-- paste of this file) came first, and 0 when neither did; at 0, 20261210 is
+-- folded into this file and is NOT to be pasted afterwards.
+-- ⚠ NEVER paste 20261210 once this file is live. That paste silently puts
+-- back the UPDATE-only body and BEFORE UPDATE trigger (the INSERT door and
+-- the colour rule are gone), and 20261210's own probes still read ok = true
+-- because they expect BEFORE UPDATE only. If it happens, paste this file
+-- again. Either order with the P15 deploy. ⚠ APPLIED BY HAND (DEC-30). One
+-- script; re-running is safe.
 --
 -- ROLLBACK: paste 20261210 again (it re-creates the UPDATE-only body and
--- re-attaches the trigger as BEFORE UPDATE).
+-- re-attaches the trigger as BEFORE UPDATE) — the deliberate form of the
+-- paste the ORDER note forbids.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── 0. pre-apply inventory (counts only) ────────────────────────────────────
@@ -112,7 +126,15 @@ SELECT 'before: triggers on collections other than this file''s', COUNT(*)
   FROM pg_trigger WHERE tgrelid = 'public.collections'::regclass AND NOT tgisinternal AND tgname <> 'trg_node_appearance_columns'
 UNION ALL
 SELECT 'before: policies on libraries and collections', COUNT(*)
-  FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('libraries', 'collections');
+  FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('libraries', 'collections')
+UNION ALL
+SELECT 'before: collections_insert_controllers present (20261011''s RESTRICTIVE controller-only folder INSERT policy; 1 = present, 0 = absent; whether 20261011 is live is unknown, so this is reported, not judged)', COUNT(*)
+  FROM pg_policies WHERE schemaname = 'public' AND tablename = 'collections'
+                     AND policyname = 'collections_insert_controllers' AND permissive = 'RESTRICTIVE'
+UNION ALL
+SELECT 'before: trg_node_appearance_columns attached (2 = 20261210 or an earlier paste of this file came first; 0 = neither, so 20261210 is now folded into this file: never paste 20261210 afterwards)', COUNT(*)
+  FROM pg_trigger WHERE tgname = 'trg_node_appearance_columns' AND NOT tgisinternal
+                    AND tgrelid IN ('public.libraries'::regclass, 'public.collections'::regclass);
 
 BEGIN;
 
@@ -230,12 +252,10 @@ SELECT 'every other trigger on libraries and collections is still there (counts 
          = (SELECT n FROM ao_p15_20261216_inventory WHERE check_name = 'before: triggers on collections other than this file''s'),
        NULL
 UNION ALL
-SELECT 'no policy on libraries or collections was added or dropped; libraries_org_access and collections_insert_controllers are kept',
+SELECT 'no policy on libraries or collections was added or dropped (counts equal those before the paste); libraries_org_access is kept',
        (SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('libraries', 'collections'))
          = (SELECT n FROM ao_p15_20261216_inventory WHERE check_name = 'before: policies on libraries and collections')
-       AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'libraries' AND policyname = 'libraries_org_access')
-       AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'collections'
-                      AND policyname = 'collections_insert_controllers' AND permissive = 'RESTRICTIVE'),
+       AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'libraries' AND policyname = 'libraries_org_access'),
        NULL
 UNION ALL
 SELECT 'the library INSERT rail (20261062) is still attached to libraries and was not re-created here',

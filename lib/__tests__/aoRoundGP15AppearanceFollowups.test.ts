@@ -61,6 +61,9 @@ function definitions(name: string, files: string[]): Array<[string, string]> {
   return out;
 }
 
+/** A set difference (Array.includes): it says which lines exist on one side
+ *  only, not where. Order and repeats are pinned by the exact reconstruction
+ *  test below. */
 function lineDiff(a: string, b: string) {
   const A = a.split("\n"), B = b.split("\n");
   return { onlyInA: A.filter((l) => !B.includes(l)), onlyInB: B.filter((l) => !A.includes(l)) };
@@ -116,6 +119,44 @@ describe("20261216 — DEC-30 one-paste shape", () => {
   });
 });
 
+// ── 20261216: paste order (supersedes 20261210) and the 20261011 folder policy ──
+describe("20261216 — paste order and what the paste may rely on", () => {
+  const tail = CODE.slice(CODE.lastIndexOf("\nCOMMIT;"));
+  const rows = tail.split(/\nUNION ALL\n/);
+  const probes = rows.filter((r) => !/FROM ao_p15_20261216_inventory;\s*$/.test(r));
+  const inv = CODE.slice(CODE.indexOf("INSERT INTO ao_p15_20261216_inventory"), CODE.indexOf("\nBEGIN;"));
+
+  it("no probe requires collections_insert_controllers (20261011 is 'unknown' in the paste guide); the inventory reports it as 1 / 0", () => {
+    expect(probes.length).toBe(8);
+    for (const r of probes) expect(r, r.slice(0, 80)).not.toContain("collections_insert_controllers");
+    const policyProbe = probes.find((r) => r.includes("no policy on libraries or collections was added or dropped"))!;
+    expect(policyProbe).toContain("policyname = 'libraries_org_access'");
+    expect(policyProbe).toContain("= (SELECT n FROM ao_p15_20261216_inventory WHERE check_name = 'before: policies on libraries and collections')");
+    const row = inv.split(/UNION ALL/).find((r) => r.includes("collections_insert_controllers"))!;
+    expect(row).toMatch(/^\s*SELECT 'before: collections_insert_controllers present \(/);
+    expect(row).toContain("COUNT(*)");
+    expect(row).toContain("policyname = 'collections_insert_controllers' AND permissive = 'RESTRICTIVE'");
+    // the header no longer states the policy as live
+    expect(SQL).not.toMatch(/collections_insert_controllers \(20261011\) already admits/);
+    expect(SQL).toContain("IF 20261011's RESTRICTIVE\n--       collections_insert_controllers is live");
+  });
+
+  it("SUPERSEDES 20261210: the header says so and forbids a later 20261210 paste; the inventory says whether 20261210 came first", () => {
+    expect(SQL).toContain("-- ORDER: this file SUPERSEDES 20261210.");
+    expect(SQL).toContain("-- ⚠ NEVER paste 20261210 once this file is live.");
+    const row = inv.split(/UNION ALL/).find((r) => r.includes("before: trg_node_appearance_columns attached"))!;
+    expect(row).toContain("COUNT(*)");
+    expect(row).toContain("tgname = 'trg_node_appearance_columns' AND NOT tgisinternal");
+    expect(row).toContain("never paste 20261210 afterwards");
+    // why it must be written down: 20261210's own trigger probe expects BEFORE UPDATE
+    // only and never checks the INSERT bit as present, so a late 20261210 paste
+    // still reads ok = true while it takes the INSERT door and the colour rule out
+    const p11 = read(P11);
+    expect(p11).toContain("AND (tg.tgtype & (4 | 8 | 32)) = 0),  -- not INSERT / DELETE / TRUNCATE");
+    expect(p11).not.toContain("NEW.color");
+  });
+});
+
 // ── 20261216: the re-created function, line-diffed against its newest earlier body ──
 describe("20261216 — enforce_node_appearance_columns re-created from its NEWEST definition (20261210), lineDiff-pinned", () => {
   const before = definitions("enforce_node_appearance_columns", FILES.filter((f) => f < FILE));
@@ -152,6 +193,41 @@ describe("20261216 — enforce_node_appearance_columns re-created from its NEWES
     ]);
     // (a set diff: lines 20261210 already carries — "  END IF;", the UPDATE arm's
     // sentence at its own indentation — are not repeated here)
+  });
+
+  it("ORDER AND REPEATS: the body is exactly 20261210's, unchanged and in order, with the colour arm and then the INSERT arm spliced in right after the uid pass", () => {
+    const UID = "  IF auth.uid() IS NULL THEN RETURN NEW; END IF;\n";
+    const colourArm = [
+      "  -- ORG-21: a colour is a hex colour (#rgb / #rrggbb, lib/nodeColor.ts) or",
+      "  -- none. Judged when a new row sets one or a write changes it, so a stored",
+      "  -- value that fails the format never blocks a write that keeps it.",
+      `  IF NEW.color IS NOT NULL AND NEW.color !~ '${NODE_COLOR_SQL_PATTERN}'`,
+      "     AND (TG_OP = 'INSERT' OR NEW.color IS DISTINCT FROM OLD.color) THEN",
+      "    RAISE EXCEPTION 'A folder''s or library''s colour must be a hex colour such as #2563eb.'",
+      "      USING ERRCODE = 'check_violation';",
+      "  END IF;",
+    ];
+    const insertArm = [
+      "  -- ORG-19: a new row has no OLD. One that sets the cover image, its tint",
+      "  -- or a page background is judged by the same gate as a change, on the new",
+      "  -- row's workspace; one that sets none of them is decided as before.",
+      "  IF TG_OP = 'INSERT' THEN",
+      "    IF NEW.cover_image_url IS NOT NULL",
+      "       OR NEW.cover_tint IS NOT NULL",
+      "       OR NULLIF(NEW.page_config -> 'background', 'null'::jsonb) IS NOT NULL THEN",
+      "      IF NOT is_org_controller(NEW.org_id) THEN",
+      "        RAISE EXCEPTION 'Only an Admin or a Document Controller can change a folder''s or library''s cover image or background.'",
+      "          USING ERRCODE = 'check_violation';",
+      "      END IF;",
+      "    END IF;",
+      "    RETURN NEW;",
+      "  END IF;",
+    ];
+    const p11 = before.at(-1)![1];
+    expect(p11.split(UID)).toHaveLength(2);
+    // a reordered, duplicated or dropped 20261210 line fails here, which the set diff above cannot see
+    // (a replacer function: the colour pattern's "$'" must not be read as a replacement token)
+    expect(fn).toBe(p11.replace(UID, () => UID + [...colourArm, ...insertArm].join("\n") + "\n"));
   });
 
   it("the uid pass is still the first statement; the INSERT arm returns before the UPDATE arm reads OLD", () => {
@@ -293,6 +369,13 @@ describe("ORG-19 regression — no app INSERT into libraries or collections sets
 // ── ORG-21: the colour rule and the render sites ────────────────────────────
 describe("ORG-21 — one colour rule: #rgb / #rrggbb, in the app and in the database", () => {
   it("the JS and SQL patterns are the same rule, and the rail, the inventory and the probe use the SQL one", () => {
+    // This pins TEXTUAL agreement only: NODE_COLOR_SQL_PATTERN is compiled here
+    // as a JavaScript RegExp, so PostgreSQL ARE semantics (how '$' treats a
+    // trailing newline, flags, POSIX classes) are not exercised by vitest. The
+    // authority for the database behaviour is the PostgreSQL 16 run in the
+    // ORG-21 record (#abc / #ABC accepted, 'red', 'blue', the payload and
+    // '#2563eb' plus a trailing newline refused, a write that keeps a stored
+    // value passing). Re-run it if this pattern changes.
     expect(NODE_COLOR_PATTERN.source).toBe("^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$");
     expect(NODE_COLOR_SQL_PATTERN).toBe("^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$");
     const sqlAsJs = new RegExp(NODE_COLOR_SQL_PATTERN);
