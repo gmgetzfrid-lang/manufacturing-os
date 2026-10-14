@@ -1220,13 +1220,14 @@ The chain reaction held too: the `CRON_SECRET` comment named `reminders/run`.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** unassigned. Owner: notifications, to be planned by the integrator (DEC-31). The file is `lib/staleCopies.ts` (`recallRetiredDocument`), which belongs to the notifications area. Document-control P26 opened this finding and may not edit that file.
+- **Assigned:** Assigned (2026-10-14, the integrator at the P26 merge): document-control P28 STATUS-DOOR REMAINDERS — a failed `download_audits` read inside `recallRetiredDocument` drops the recall with no audit row and no log. The file is `lib/staleCopies.ts` (`recallRetiredDocument`), which belongs to the notifications area. Written by document-control P26 fix pass 4 under the integrator's rulings (`DEC-90`). *(Replaces "unassigned. Owner: notifications, to be planned by the integrator (DEC-31). … Document-control P26 opened this finding and may not edit that file." P26 fix pass 4 did edit that function, for the integrator's ruling R1 only — a `recallCopyHolders: false` that skips the read for a never-issued document — and left this finding's read unchanged.)*
 - **Verification:** CONFIRMED by reading the code on `fleet/DC-P26-status-doors` (base `ce5a053` plus P26).
 - **Independently verified:** opened 2026-10-14 by document-control Round G (P26 fix pass 3) on a minor finding from the package review. The reviewer read the code. No second party has challenged it yet.
 - **Locations:**
   - In `lib/staleCopies.ts`: `:298-303` (the `download_audits` read; only `{ data }` is taken), `:304-308` (`holders`), `:313` (the recall runs only when there are holders), `:386-388` (the outer `catch { return 0; }`).
   - The callers: `lib/revisions.ts:3446-3456` (`supersedeDocument`, `.catch(() => {})`) and `lib/revisions.ts:506-530` (`recallOnRetirement`, added by P26, used by `archiveDocument`, `changeDocumentStatus`, `lib/documentLifecycle/split.ts` and `merge.ts`).
   - For contrast: `lib/staleCopies.ts` `getDocumentRecall` / `nudgeStaleHolders` (`unavailable`, `DIST-9` done-when 3).
+- *(Fix pass 4: the lines have moved — the read is `lib/staleCopies.ts:310-315`, inside `if (input.recallCopyHolders !== false)`, `holders` `:316-320`, the recall branch `:326`, the outer catch `:399-401`; supersede's call `lib/revisions.ts:3486-3496`; `recallOnRetirement` `:510-539`. A never-issued document's retirement (`recallCopyHolders: false`, R1) does no read, so this finding applies to an issued document's recall. `recallOnRetirement` now logs with `console.error`, still only when the call rejects.)*
 - **Opened:** 2026-10-14, document-control Round G, package P26 STATUS-DOOR FOLLOW-UPS (fix pass 3). P26 routed four more retirement doors through this function (`PROD-17`), and its records had claimed a recall that does not run is "never silent". That claim is now narrowed.
 
 **Mechanism.** `recallRetiredDocument` finds the copy holders with `const { data } = await supabase.from("download_audits").select("user_id")…` (`:298-303`) and never reads the error.
@@ -1239,7 +1240,7 @@ When the read fails (a transient 5xx, a dropped connection, a statement timeout,
 
 The callers cannot tell anything went wrong:
 - Supersede fires the function with `.catch(() => {})`.
-- Since P26, the Archive dialog, a status change into a retired status, a split and a merge fire it through `recallOnRetirement`. That function's `console.warn` runs only when the call itself rejects, which means a failed module load. `recallRetiredDocument` never rejects.
+- Since P26, the Archive dialog, a status change into a retired status, a split and a merge fire it through `recallOnRetirement`. That function's `console.warn` (fix pass 4: `console.error`) runs only when the call itself rejects, which means a failed module load. `recallRetiredDocument` never rejects.
 
 The publish-time stale-copy recall had the same gap and closed it under `DIST-9` done-when 3 (document-control `05-distribution.md`). There, `getDocumentRecall` returns `unavailable` on a failed read, and `nudgeStaleHolders` then writes a `DISTRIBUTION_RECALL` row with `unavailable: true` instead of quietly nudging nobody. The retirement recall reads `download_audits` itself rather than through `getDocumentRecall`, so that fix never reached it.
 
@@ -1272,6 +1273,6 @@ The publish-time stale-copy recall had the same gap and closed it under `DIST-9`
 
 **Related, not a done-when.** The same read stops at 1000 rows (`DOC_RECALL_ROW_CAP`, 365 days, `DIST-11`). It has no order, and the recall's audit row does not report that the cap was hit. So on a document with more than 1000 downloads in the window, which holders are told is not defined, and nothing says some were left out. `DIST-11` flagged the cap on the panel's read (`getDocumentRecall`'s `capped`) and deferred a full-history read; the retirement recall got neither the flag nor the full read. It is recorded here so the closer can weigh it alongside this finding.
 
-**Closer:** notifications (the integrator routes it). Document-control's records cite it: `PROD-17`'s Partial (`01-producer-census.md`) and `DEC-106`'s Landed line.
+**Closer:** ~~notifications (the integrator routes it)~~ document-control P28 STATUS-DOOR REMAINDERS (assigned by the integrator at the P26 merge, 2026-10-14). Document-control's records cite it: `PROD-17`'s Partial (`01-producer-census.md`) and `DEC-106`'s Landed line.
 
 ---
