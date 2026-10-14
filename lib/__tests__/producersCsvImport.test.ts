@@ -75,7 +75,9 @@ describe("PROD-5 — a CSV import notifies the library's followers, once per bat
     await importCsv("documentNumber,title,rev\nP-101,Pump,0\nP-102,Valve,0", { actorName: "dc@acme.test" });
     expect(s.db.tables.documents).toHaveLength(2);           // REGRESSION: the rows land
     expect(s.imported).toEqual([2]);                         // REGRESSION: onImported, with the count
-    expect(s.notified).toEqual([{ orgId: "o1", libraryId: "lib1", count: 2, firstLabel: "P-101", actorUserId: "u1", actorName: "dc@acme.test" }]);
+    // NEDGE-22 (notifications N16): the first row's document id rides along with its number
+    expect(s.notified).toEqual([{ orgId: "o1", libraryId: "lib1", count: 2, firstLabel: "P-101", firstDocumentId: s.db.tables.documents[0].id, actorUserId: "u1", actorName: "dc@acme.test" }]);
+    expect(s.db.tables.documents[0].document_number).toBe("P-101");
   });
 
   it("only the rows that landed count; a batch that inserted nothing notifies nobody", async () => {

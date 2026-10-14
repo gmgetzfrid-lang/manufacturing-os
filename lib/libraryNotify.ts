@@ -23,6 +23,11 @@
 // "Someone" only when neither is known (N8's final review fix — every CSV
 // import used to read "Someone added …").
 //
+// NEDGE-22 (notifications N16): a notice that names ONE document carries its
+// id (`firstDocumentId`, passed by both callers), and the dispatcher tells the
+// name only to a follower who may discover it; the others read "New document
+// added". A notice about several documents names none, as before.
+//
 // Fire-and-forget by contract: never throws, never blocks the import.
 
 import { emit } from "@/lib/notify/dispatch";
@@ -35,6 +40,13 @@ export interface LibraryDocsAddedInput {
   count: number;
   /** The first document's number (or name) — the title when count is 1. */
   firstLabel: string;
+  /** NEDGE-22 (notifications N16): the id of the document `firstLabel`
+   *  names. With count 1 the notice names that document, so a follower who
+   *  may not discover it reads the notice without the name (the
+   *  dispatcher's discover check, DEC-106). Absent with count 1: the notice
+   *  names no document to anyone — nothing to check it against (fail safe:
+   *  a notice without the name, never a name unchecked). */
+  firstDocumentId?: string | null;
   /** The signed-in member who added them (DEC-86 §2: the session's uid). */
   actorUserId: string | null | undefined;
   /** How the notice names them — the staged-upload path passes the
@@ -60,18 +72,26 @@ export async function notifyLibraryDocsAdded(input: LibraryDocsAddedInput): Prom
   if (!orgId || !libraryId || !actorUserId || !(count > 0)) return;
   try {
     const name = input.actorName || (await actorEmailInOrg(orgId, actorUserId));
+    // NEDGE-22 (notifications N16): with one document the notice names it.
+    // The name goes only to a follower who may discover that document (the
+    // dispatcher's check, namesDocuments); the others read UNNAMED. With no
+    // id to check against, nobody reads the name. A batch of several names
+    // none (as before).
+    const unnamed = { title: "New document added", body: `${name ?? "Someone"} added a document to a library you subscribe to.` };
+    const namesOne = count === 1 && !!input.firstDocumentId;
     await emit({
       orgId,
       category: "watched",
       kind: "library_doc_added",
-      title: count === 1 ? `New document: ${firstLabel}` : `${count} new documents added`,
-      body: `${name ?? "Someone"} added ${count === 1 ? firstLabel : `${count} documents`} to a library you subscribe to.`,
+      title: count === 1 ? (namesOne ? `New document: ${firstLabel}` : unnamed.title) : `${count} new documents added`,
+      body: count === 1 ? (namesOne ? `${name ?? "Someone"} added ${firstLabel} to a library you subscribe to.` : unnamed.body) : `${name ?? "Someone"} added ${count} documents to a library you subscribe to.`,
       link: `/documents/${libraryId}`,
       resource: { type: "library", id: libraryId },
       actorUserId,
       actorName: name ?? "someone",
       audience: { followers: true },
       channels: ["inapp"],
+      ...(namesOne ? { namesDocuments: { ids: [input.firstDocumentId as string], unnamed } } : {}),
     });
   } catch (e) {
     console.warn("[libraryNotify] the library followers' notice was not sent (non-blocking)", e);

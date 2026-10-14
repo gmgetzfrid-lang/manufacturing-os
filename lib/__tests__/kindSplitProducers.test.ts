@@ -148,7 +148,8 @@ describe("PROD-5 dw2 — the library page's staged upload tells followers throug
     const lib = src("app/(protected)/documents/[libraryId]/page.tsx");
     expect(lib).toContain('import { notifyLibraryDocsAdded } from "@/lib/libraryNotify";');
     const fn = lib.slice(lib.indexOf("const notifyLibrarySubscribers = "), lib.indexOf("if (!activeOrgId || !uid || !library) return;", lib.indexOf("const notifyLibrarySubscribers = ")));
-    expect(fn).toMatch(/void notifyLibraryDocsAdded\(\{\s*orgId: activeOrgId, libraryId, count, firstLabel: firstName,\s*actorUserId: uid, actorName: userEmail \?\? null,\s*\}\);/);
+    // NEDGE-22 (notifications N16): the named document's id rides along (firstDocumentId)
+    expect(fn).toMatch(/void notifyLibraryDocsAdded\(\{\s*orgId: activeOrgId, libraryId, count, firstLabel: firstName, firstDocumentId,\s*actorUserId: uid, actorName: userEmail \?\? null,\s*\}\);/);
     expect(fn).not.toMatch(/emit\(|library_doc_added/);
     expect(lib).toMatch(/<CsvImportModal[\s\S]*?actorName=\{userEmail \?\? undefined\}/);
     // the helper is in-app only (PROD-7 dw3: a bulk upload is chatty — the bell carries it, the inbox does not)

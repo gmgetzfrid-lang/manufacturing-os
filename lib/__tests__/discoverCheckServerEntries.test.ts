@@ -39,11 +39,13 @@ function readTree(): Sources {
 const DECL = /^(?:export\s+)?(?:async\s+)?function\s+(\w+)|^(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=]+)?=>/gm;
 const IMPORTS = /import\s+(?!type\s)\{([^{}]*)\}\s+from\s+["']([^"']+)["']|\{([^{}]*)\}\s*=\s*await\s+import\(\s*["']([^"']+)["']\s*\)/g;
 
-/** A function body that emits a document-scoped follower notice. */
+/** A function body that emits a document-scoped follower notice — or (NEDGE-22,
+ *  notifications N16) a follower notice about another resource that NAMES
+ *  documents (`namesDocuments`), which the dispatcher checks the same way. */
 function emitsDocumentFollowers(name: string, body: string): boolean {
   if (name === "notifyCheckoutActivity") return true;
   return [...body.matchAll(/emit\(\{[\s\S]*?\n\s*\}\);/g)]
-    .some((m) => /followers:\s*true/.test(m[0]) && /resource:\s*\{\s*type:\s*"document"/.test(m[0]));
+    .some((m) => /followers:\s*true/.test(m[0]) && (/resource:\s*\{\s*type:\s*"document"/.test(m[0]) || /namesDocuments:/.test(m[0])));
 }
 
 interface Census {
@@ -119,6 +121,9 @@ describe("NEDGE-6 (fix pass 4) — every server entry that sends a document's fo
       "lib/staleCopies.ts#recallRetiredDocument",
       "lib/checkoutEpisodes.ts#forceReleaseDocument",
       "lib/activityThread.ts#notifyCheckoutActivity",
+      // NEDGE-22 (notifications N16): the library notices that name a document
+      "lib/libraryNotify.ts#notifyLibraryDocsAdded",
+      "lib/transmittals.ts#notifyTransmittalIssued",
       // reached through a call, not an emit of its own
       "lib/postPublish.ts#runPostPublishSideEffects",
       "lib/holds.ts#openHold",
@@ -139,14 +144,17 @@ describe("NEDGE-6 (fix pass 4) — every server entry that sends a document's fo
       ["app/api/fake-ok/route.ts", 'import "@/lib/documentDiscoverers";\nexport async function POST() {\n  const { publishThing } = await import("@/lib/fakeNotice");\n  await publishThing("d");\n}\n'],
       ["app/api/fake-inline/route.ts", 'import { emit } from "@/lib/notify/dispatch";\nexport async function POST() {\n  await emit({\n    kind: "hold_opened",\n    resource: { type: "document", id: "d" },\n    audience: { followers: true },\n  });\n}\n'],
       ["app/api/fake-library/route.ts", 'import { emit } from "@/lib/notify/dispatch";\nexport async function POST() {\n  await emit({\n    kind: "doc_superseded",\n    resource: { type: "library", id: "l" },\n    audience: { followers: true },\n  });\n}\n'],
+      ["app/api/fake-library-named/route.ts", 'import { emit } from "@/lib/notify/dispatch";\nexport async function POST() {\n  await emit({\n    kind: "library_doc_revised",\n    resource: { type: "library", id: "l" },\n    audience: { followers: true },\n    namesDocuments: { ids: ["d"] },\n  });\n}\n'],
     ]);
     const c = census(fake);
     expect(c.entries).toEqual([
       { file: "app/api/fake/route.ts", reaches: ["app/api/fake/route.ts#POST", "lib/fakeNotice.ts#publishThing"], loadsCheck: false },
       { file: "app/api/fake-ok/route.ts", reaches: ["app/api/fake-ok/route.ts#POST", "lib/fakeNotice.ts#publishThing"], loadsCheck: true },
       { file: "app/api/fake-inline/route.ts", reaches: ["app/api/fake-inline/route.ts#POST"], loadsCheck: false },
+      // NEDGE-22 (notifications N16): a library notice that names a document is checked, so it counts
+      { file: "app/api/fake-library-named/route.ts", reaches: ["app/api/fake-library-named/route.ts#POST"], loadsCheck: false },
     ]);
-    // a library-scoped follower notice is not discover-checked (NEDGE-22) and is not counted
+    // a library-scoped follower notice that names no document is not discover-checked and is not counted
   });
 
   it("with no check registered the runtime path is unchanged — everyone kept, logged loudly (lib/notify/recipients.ts)", () => {

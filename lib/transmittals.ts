@@ -1414,12 +1414,13 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
       }
       const labels = rows.map((d) => labelOf.get(d.id as string) ?? "a document");
       const what = labels.length === 1 ? labels[0] : `${labels.length} documents`;
+      const by = actor.actorName || "A member of your workspace";
       await emit({
         orgId: t.orgId,
         category: "watched",
         kind: "transmittal_issued",
         title: `Transmittal ${t.number} issued: ${what} to ${to}`,
-        body: `${actor.actorName || "A member of your workspace"} issued transmittal ${t.number}${t.purpose ? ` (${t.purpose})` : ""} to ${to}: ` +
+        body: `${by} issued transmittal ${t.number}${t.purpose ? ` (${t.purpose})` : ""} to ${to}: ` +
           `${labels.slice(0, 5).join(", ")}${labels.length > 5 ? ` and ${labels.length - 5} more` : ""}. ` +
           "A controlled copy is now outside the organization; its receipt is tracked on the transmittal register.",
         link: "/transmittals",
@@ -1428,6 +1429,18 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
         actorName: actor.actorName,
         audience: { involved: [...owners], followers: true },
         metadata: { transmittalId: t.id },
+        // NEDGE-22 (notifications N16): the title and body name up to five of
+        // the library's documents. A follower who may not discover every one
+        // of THOSE reads the issue without the names (the dispatcher's check,
+        // DEC-106); the owners named above are not filtered.
+        namesDocuments: {
+          ids: rows.slice(0, 5).map((d) => d.id as string),
+          unnamed: {
+            title: `Transmittal ${t.number} issued to ${to}`,
+            body: `${by} issued transmittal ${t.number}${t.purpose ? ` (${t.purpose})` : ""} to ${to}, with documents from a library you follow. ` +
+              "A controlled copy is now outside the organization; its receipt is tracked on the transmittal register.",
+          },
+        },
       });
       started += 1;
     }

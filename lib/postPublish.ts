@@ -74,6 +74,9 @@ export async function notifySuperseded(input: {
     });
     // Library subscribers hear about every rev-up in the library they watch —
     // the "subscriptions" idea from Hermes, on the existing watch machinery.
+    // NEDGE-22 (notifications N16): the notice names the document, so a
+    // subscriber who may not discover it reads the rev-up without the name
+    // or the document's link (the dispatcher's discover check, DEC-106).
     await emit({
       orgId: input.orgId,
       category: "watched",
@@ -85,6 +88,14 @@ export async function notifySuperseded(input: {
       actorUserId: input.actorUserId,
       actorName: input.actorName,
       audience: { followers: true },
+      namesDocuments: {
+        ids: [input.documentId],
+        unnamed: {
+          title: "New revision in a library you follow",
+          body: `${input.actorName} published a new revision in a library you subscribe to.`,
+          link: `/documents/${input.libraryId}`,
+        },
+      },
     });
   } catch (e) {
     console.warn("[postPublish] supersede notify failed (non-blocking)", e);
