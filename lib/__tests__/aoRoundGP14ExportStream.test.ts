@@ -109,6 +109,35 @@ describe("ILIFE-11 criterion 2 — the server ZIP's tables are streamed into the
     expect(await back.file("tables/knowledge_chunks.json")!.async("string")).toBe(JSON.stringify(rows, null, 2));
     expect(await back.file("tables/empty.json")!.async("string")).toBe("[]");
   });
+
+  // P14 review fix (blocker): JSZip treats a stream as binary — it skips its
+  // UTF-8 encoder and keeps the low byte of each char code of a string chunk —
+  // so a stream of JS strings wrote every non-ASCII character back as U+FFFD.
+  // The stream yields UTF-8 bytes; the text reads back exactly.
+  it("non-ASCII text (°, Ø, µ, —, accents, CJK, an emoji) reads back exactly, on every row and across batch boundaries", async () => {
+    const odd = { title: "Ø 50 mm flange — 120 °C ± 2 µm", owner: "Zoë 日本", note: "pump 🔧 — naïve café, Straße, Ελλάδα" };
+    const rows = [
+      odd,
+      ...Array.from({ length: 2500 }, (_, i) => ({ id: `c${i}`, content: `passage ${i} — ${i % 3 === 0 ? "Ø°µ" : "日本語"} 🔧\nline`, seq: i })),
+    ];
+    const content = tableJsonContent(rows);
+    const stream = tableJsonContent([odd]);
+    expect(typeof stream).not.toBe("string");
+    const chunks: unknown[] = [];
+    for await (const c of stream as AsyncIterable<unknown>) chunks.push(c);
+    expect(chunks.every((c) => Buffer.isBuffer(c))).toBe(true); // bytes, never a JS string JSZip would cut to its low byte
+    expect(Buffer.concat(chunks as Buffer[]).toString("utf8")).toBe(JSON.stringify([odd], null, 2));
+    const zip = new JSZip();
+    zip.folder("tables")!.file("assets.json", content);
+    zip.folder("tables")!.file("one.json", tableJsonContent([odd]));
+    const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
+    const back = await JSZip.loadAsync(bytes);
+    const text = await back.file("tables/assets.json")!.async("string");
+    expect(text).toBe(JSON.stringify(rows, null, 2));
+    expect(text).not.toContain("\uFFFD");
+    expect(JSON.parse(await back.file("tables/one.json")!.async("string"))).toEqual([odd]);
+    expect(await back.file("tables/one.json")!.async("string")).toContain("Ø 50 mm flange — 120 °C ± 2 µm");
+  });
 });
 
 describe("ILIFE-11 — the README's Omitted derived columns section", () => {

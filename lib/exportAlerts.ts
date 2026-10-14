@@ -179,6 +179,15 @@ export async function alertAdminsOfExport(
 // the night a backup stops. A run the gate skipped for another reason
 // (cancelled, no grace step) neither counts nor breaks the count; any other
 // run (a confirmed push, a run from before this rule) ends it.
+// P14 review fix: a night whose confirmation could not be VERIFIED (the
+// configurer's role read failed) never ends the grace. The sweep still reads
+// the count: a paused destination stays paused (skipped as on any paused
+// night); otherwise it runs (a backup is never stopped on a guess) and its run
+// row carries GRACE_UNVERIFIED_STEP, which neither counts nor breaks the count
+// — so the next readable night continues it, never restarting at night 1. The
+// count reads the destination's run rows page by page (keyset, newest first)
+// until a deciding row: a pause is never forgotten behind a long run of gate
+// skips or unverified nights.
 
 /** DEC-87 §1 (amended): consecutive unconfirmed nightly runs before a pause. */
 export const UNCONFIRMED_GRACE_NIGHTS = 7;
@@ -186,6 +195,11 @@ export const UNCONFIRMED_GRACE_NIGHTS = 7;
 export const GRACE_NIGHT_STEP = "grace:unconfirmed-night";
 /** The run row's diagnostics step for a night the destination stayed paused. */
 export const GRACE_PAUSED_STEP = "grace:paused";
+/** The run row's diagnostics step for a night whose confirmation could not be
+ *  verified (P14 review fix): it neither counts nor breaks the grace's count. */
+export const GRACE_UNVERIFIED_STEP = "grace:unverified";
+/** Run rows read per page by the grace's count. */
+export const GRACE_COUNT_PAGE = 100;
 
 export interface UnconfirmedGrace {
   /** Tonight's unconfirmed night (1-based), or null when the count could not be read (it runs). */
@@ -210,42 +224,90 @@ export function graceNightStep(g: UnconfirmedGrace, ts: string): { ts: string; s
   return { ts, step: GRACE_NIGHT_STEP, detail: `night=${g.night ?? "?"}/${g.of}` };
 }
 
+/** The run row's diagnostics entry for a night whose confirmation could not
+ *  be verified (P14 review fix) — neutral in the grace's count. */
+export function graceUnverifiedStep(ts: string): { ts: string; step: string; detail: string } {
+  return { ts, step: GRACE_UNVERIFIED_STEP, detail: "whether the destination is confirmed could not be verified tonight; this night neither counts nor breaks its unconfirmed-night count" };
+}
+
+const PAUSED_LEAD = (of: number) =>
+  `Paused: no Admin has confirmed this destination after ${of} unconfirmed nightly pushes, so no scheduled push leaves until an Admin opens it under Admin → Data export and saves it to confirm it (or disables it).`;
+
 /** What a paused night's run row, card and sweep result say. */
 export function pausedNote(u: { by: string; holds: string }, of = UNCONFIRMED_GRACE_NIGHTS): string {
-  return `Paused: no Admin has confirmed this destination after ${of} unconfirmed nightly pushes, so no scheduled push leaves until an Admin opens it under Admin → Data export and saves it to confirm it (or disables it). ${unconfirmedSentence(u)}`;
+  return `${PAUSED_LEAD(of)} ${unconfirmedSentence(u)}`;
+}
+
+/** P14 review fix: what a paused destination's run row, card and sweep
+ *  result say on a night its confirmation could not be verified — it stays
+ *  paused (an unverifiable read never ends the pause; only an Admin's save
+ *  does). */
+export function pausedUnverifiedNote(reason: string, of = UNCONFIRMED_GRACE_NIGHTS): string {
+  const entry = adminSurface("data-export")?.entry ?? ["Admin"];
+  const holds = entry === "*" ? "the data-export role" : entry.join(" or ");
+  return `${PAUSED_LEAD(of)} Whether the member who last configured it holds ${holds} could not be verified tonight (${reason}), so it stays paused; this is checked again at the next run.`;
+}
+
+/** The keyset condition for the run rows after (started_at, id), newest
+ *  first. Values are double-quoted — a timestamp carries '.', ':' and '+'. */
+function afterRunCursor(c: { at: string; id: string }): string {
+  const v = (x: string) => `"${x.replace(/["\\]/g, (ch) => `\\${ch}`)}"`;
+  return `started_at.lt.${v(c.at)},and(started_at.eq.${v(c.at)},id.lt.${v(c.id)})`;
 }
 
 /** Tonight's place in the grace for an unconfirmed destination, read from
- *  its recent scheduled run rows (newest first). `paused` when the previous
+ *  its scheduled run rows (newest first, a page at a time — keyset on
+ *  (started_at, id) — until a deciding row). `paused` when the previous
  *  counted night was the last one, or a paused night; otherwise tonight's
  *  night. A read that fails answers `night: null` — the push runs (a backup
- *  is never stopped on a guess) and says the count could not be read. */
+ *  is never stopped on a guess) and says the count could not be read.
+ *  Neutral rows (a gate skip, an unread count, an unverified night) are paged
+ *  past, never taken as the end of the history (P14 review fix: a fixed
+ *  window of 28 rows forgot a pause behind 28 gate skips). */
 export async function unconfirmedGraceTonight(
   sb: Pick<SupabaseClient, "from">,
   destinationId: string,
   of = UNCONFIRMED_GRACE_NIGHTS,
+  pageSize = GRACE_COUNT_PAGE,
 ): Promise<{ paused: true } | ({ paused: false } & UnconfirmedGrace) | ({ paused: false; error: string } & UnconfirmedGrace)> {
-  const { data, error } = await sb
-    .from("export_runs")
-    .select("id, status, diagnostics, started_at")
-    .eq("destination_id", destinationId)
-    .eq("trigger_type", "scheduled")
-    .order("started_at", { ascending: false })
-    .limit(4 * of);
-  if (error) return { paused: false, night: null, of, pausing: false, error: error.message };
   let previous = 0;
-  for (const run of (Array.isArray(data) ? data : []) as Array<{ status?: unknown; diagnostics?: unknown }>) {
-    const steps = Array.isArray(run.diagnostics) ? run.diagnostics as Array<{ step?: unknown; detail?: unknown }> : [];
-    if (steps.some((d) => d?.step === GRACE_PAUSED_STEP)) return { paused: true };
-    const night = steps.find((d) => d?.step === GRACE_NIGHT_STEP);
-    if (night) {
-      const m = /^night=(\d+)\/\d+$/.exec(String(night.detail ?? ""));
-      if (!m) continue; // an unread count: it neither counts nor breaks the run of nights
-      previous = Number(m[1]);
-      break;
+  let cursor: { at: string; id: string } | null = null;
+  scan: for (;;) {
+    let q = sb
+      .from("export_runs")
+      .select("id, status, diagnostics, started_at")
+      .eq("destination_id", destinationId)
+      .eq("trigger_type", "scheduled")
+      // every scheduled row is written with started_at; a row without one has no place in the order
+      .not("started_at", "is", null);
+    if (cursor) q = q.or(afterRunCursor(cursor));
+    const { data, error } = await q
+      .order("started_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(pageSize);
+    if (error) return { paused: false, night: null, of, pausing: false, error: error.message };
+    const rows = (Array.isArray(data) ? data : []) as Array<{ id?: unknown; status?: unknown; diagnostics?: unknown; started_at?: unknown }>;
+    for (const run of rows) {
+      const steps = Array.isArray(run.diagnostics) ? run.diagnostics as Array<{ step?: unknown; detail?: unknown }> : [];
+      if (steps.some((d) => d?.step === GRACE_PAUSED_STEP)) return { paused: true };
+      const night = steps.find((d) => d?.step === GRACE_NIGHT_STEP);
+      if (night) {
+        const m = /^night=(\d+)\/\d+$/.exec(String(night.detail ?? ""));
+        if (!m) continue; // an unread count: it neither counts nor breaks the run of nights
+        previous = Number(m[1]);
+        break scan;
+      }
+      if (steps.some((d) => d?.step === GRACE_UNVERIFIED_STEP)) continue; // an unverified night: neutral
+      if (run.status === "cancelled") continue; // a gate skip for another reason
+      break scan; // a confirmed push, or a run from before this rule: the count starts again
     }
-    if (run.status === "cancelled") continue; // a gate skip for another reason
-    break; // a confirmed push, or a run from before this rule: the count starts again
+    if (rows.length < pageSize) break; // the destination's whole history was read
+    const last = rows[rows.length - 1];
+    const next = { at: String(last.started_at ?? ""), id: String(last.id ?? "") };
+    if (!next.at || !next.id || (cursor && next.at === cursor.at && next.id === cursor.id)) {
+      return { paused: false, night: null, of, pausing: false, error: "the run history could not be paged" };
+    }
+    cursor = next;
   }
   if (previous >= of) return { paused: true };
   const tonight = previous + 1;
@@ -272,14 +334,16 @@ export function unconfirmedNote(u: { by: string; holds: string }): string {
  *  email — their uid when they are no longer an active member — and the
  *  role it takes) when they do not, which the night's bell turns into a
  *  request to confirm it; `notice` when the lookup failed and nothing can be
- *  said (the push ran; checked again at the next run). Read by the
+ *  said (the push ran; checked again at the next run), with `unverified` the
+ *  read's error — the sweep then still reads the bounded grace, so an
+ *  unverifiable night never ends a pause (P14 review fix). Read by the
  *  scheduled sweep (whose gate has already checked the configurer is an
  *  active member) and by Run Now, so neither leaves the card saying less
  *  than the truth. Never throws. */
 export async function destinationConfirmation(
   sb: Pick<SupabaseClient, "from">,
   dest: { org_id: string; updated_by?: string | null; created_by?: string | null },
-): Promise<{ unconfirmed?: { by: string; holds: string }; notice?: string }> {
+): Promise<{ unconfirmed?: { by: string; holds: string }; notice?: string; unverified?: string }> {
   const entry = adminSurface("data-export")?.entry ?? ["Admin"];
   if (entry === "*") return {};
   const configurer = dest.updated_by || dest.created_by || null;
@@ -291,7 +355,10 @@ export async function destinationConfirmation(
       .eq("org_id", dest.org_id).eq("uid", configurer).eq("status", "active")
       .maybeSingle();
     if (error) {
-      return { notice: `whether the member who last configured this destination holds ${entry.join(" or ")} could not be verified (${error.message}); the push ran, and this is checked again at the next run` };
+      return {
+        notice: `whether the member who last configured this destination holds ${entry.join(" or ")} could not be verified (${error.message}); the push ran, and this is checked again at the next run`,
+        unverified: error.message,
+      };
     }
     const member = data as { role?: unknown; roles?: unknown; email?: unknown } | null;
     if (!memberHoldsAny(member, entry)) {
@@ -300,7 +367,10 @@ export async function destinationConfirmation(
     }
     return {};
   } catch (e) {
-    return { notice: `whether the member who last configured this destination holds ${entry.join(" or ")} could not be verified (${(e as Error).message}); the push ran, and this is checked again at the next run` };
+    return {
+      notice: `whether the member who last configured this destination holds ${entry.join(" or ")} could not be verified (${(e as Error).message}); the push ran, and this is checked again at the next run`,
+      unverified: (e as Error).message,
+    };
   }
 }
 

@@ -165,7 +165,8 @@ function seedSource() {
     asset_photos: [{ id: "ap-1", org_id: SRC, asset_id: "as-1", file_url: K.photo, file_size: 4, status: "active", uploaded_by: "u-alice" }],
     tickets: [{ id: "tk-1", org_id: SRC, title: "Redlines", attachments: [{ url: K.attachment, size: "0.01 MB", name: "REDLINE_r1.pdf" }] }],
     markup_requests: [{ id: "mr-1", org_id: SRC, document_id: "doc-1", requested_by_user_id: "u-alice", requested_from_user_id: "u-alice", status: "done", shared_markup_url: K.markup }],
-    plot_plans: [{ id: "pp-1", org_id: SRC, name: "Unit 100", image_path: K.plot, markers: [] }],
+    // P14 review fix: non-ASCII text, so the streamed tables/<t>.json equality below pins the encoding
+    plot_plans: [{ id: "pp-1", org_id: SRC, name: "Unit 100 — Ø 50 mm flange, 120 °C ± 2 µm (Zoë, 日本) 🔧", image_path: K.plot, markers: [] }],
     org_configurations: [{ id: "cfg-1", org_id: SRC, key: "branding", data: { logoPath: K.logo } }],
     // a key no registered column names (a future evidence field, inside JSON)
     notes: [{ id: "n-1", org_id: SRC, body: "Field photo", task_meta: { evidence: [{ path: K.unregistered }] } }],
@@ -840,6 +841,8 @@ describe("the server ZIP's embed loop: a size-unknown file is capped before it i
       expect(text, t).toBe(JSON.stringify(JSON.parse(text), null, 2));
       if (t !== "audit_logs") expect(text, t).toBe(JSON.stringify(env.tables[t], null, 2));
     }
+    // P14 review fix (blocker): the stream carries UTF-8 bytes, so non-ASCII text is kept exactly (never U+FFFD).
+    expect(await zip.file("tables/plot_plans.json")!.async("string")).toContain('"name": "Unit 100 — Ø 50 mm flange, 120 °C ± 2 µm (Zoë, 日本) 🔧"');
     // ILIFE-11 (P14): the README names the derived columns left out, from manifest.omittedColumns.
     expect(await zip.file("README.md")!.async("string")).toMatch(/\n## Omitted derived columns\n\n[^\n]*\n- knowledge_chunks: embedding — the semantic-search vector/);
     expect(out.diagnostics.map((d) => d.step)).toEqual([

@@ -38,11 +38,13 @@
 // That night's bell to every Admin names who last confirmed it and asks them
 // to open it and save it to confirm it (that stamps updated_by), or disable
 // it; the run row, the destination card and the sweep result say the same.
-// It rings every night until an Admin saves it. A failed bell is recorded on
-// the run (alert:unsent) and named on the sweep result. A push that FAILS
-// carries the same sentence on its run row, its card (after the failure) and
-// the sweep result (fifth review fix: it was dropped there); no bell rings
-// for an export that did not leave.
+// It rings every night until an Admin saves it (P14 bounds this at 7 nights,
+// below). A failed bell is recorded on the run (alert:unsent) and named on
+// the sweep result. A push that FAILS carries the same sentence on its run
+// row, its card (after the failure) and the sweep result (fifth review fix:
+// it was dropped there). A CONFIRMED destination's failed push rings no bell;
+// an unconfirmed destination's failed night in the bounded grace (below)
+// rings every Admin's bell, saying nothing left (P14).
 //
 // DEC-87 §1 as amended 2026-10-13 under DEC-90 (admin-and-org Round G, P14;
 // intelligence IEDGE-10 / DACL-7): that grace is BOUNDED. Each unconfirmed
@@ -54,7 +56,11 @@
 // skips it with a cancelled run row and the card saying it is paused (no
 // bell), until an Admin opens it and saves it (confirmed: it runs as any
 // other destination) or disables it. A count that cannot be read never stops
-// a backup: it runs, and says so.
+// a backup: it runs, and says so. P14 review fix: a night whose confirmation
+// cannot be VERIFIED (the configurer's role read failed) never ends the
+// pause — the count is still read, and a paused destination is skipped as on
+// any paused night; otherwise it runs, its run row marked grace:unverified,
+// which neither counts nor breaks the count (only an Admin's save ends it).
 //
 // admin-and-org BKP-6: a succeeded bucket push whose retention purge ran puts
 // the purge's deleted and failed counts on its run row's own columns
@@ -70,7 +76,8 @@ import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, exportEmbed
 import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
 import {
   alertAdminsOfExport, destinationConfirmation, unconfirmedNote as unconfirmedNoteFor,
-  unconfirmedGraceTonight, graceSentence, graceNightStep, pausedNote, GRACE_PAUSED_STEP, type UnconfirmedGrace,
+  unconfirmedGraceTonight, graceSentence, graceNightStep, graceUnverifiedStep, pausedNote, pausedUnverifiedNote,
+  GRACE_PAUSED_STEP, type UnconfirmedGrace,
 } from "@/lib/exportAlerts";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -242,11 +249,19 @@ async function handler(req: NextRequest) {
     // bounded grace — or, past its last night, a pause.
     let grace: UnconfirmedGrace | null = null;
     let graceReadNote: string | null = null;
-    if (confirmation.unconfirmed) {
+    // P14 review fix: a confirmation that could not be VERIFIED (the role read
+    // failed) still reads the grace — a paused destination stays paused, and
+    // tonight's run row is marked neutral in the count (grace:unverified), so
+    // an unreadable night neither pushes from a paused destination nor
+    // restarts the count at night 1.
+    const unverified = !confirmation.unconfirmed && confirmation.notice ? (confirmation.unverified ?? "the role read failed") : null;
+    if (confirmation.unconfirmed || unverified !== null) {
       const tonight = await unconfirmedGraceTonight(sb, dest.id);
       if (tonight.paused) {
         const at = new Date().toISOString();
-        const msg = `skipped: ${pausedNote(confirmation.unconfirmed)}`;
+        const note = confirmation.unconfirmed ? pausedNote(confirmation.unconfirmed) : pausedUnverifiedNote(unverified ?? "");
+        if (unverified !== null) console.warn(`[run-scheduled] destination ${dest.id}: ${confirmation.notice}; it stays paused`);
+        const msg = `skipped: ${note}`;
         const unrecorded: string[] = [];
         const { error: runErr } = await sb.from("export_runs").insert({
           org_id: dest.org_id,
@@ -255,7 +270,7 @@ async function handler(req: NextRequest) {
           status: "cancelled",
           error_message: msg.slice(0, 1000),
           destination_type: dest.destination_type,
-          diagnostics: [{ ts: at, step: GRACE_PAUSED_STEP, detail: pausedNote(confirmation.unconfirmed) }],
+          diagnostics: [{ ts: at, step: GRACE_PAUSED_STEP, detail: note }],
           started_at: at,
           completed_at: at,
           duration_ms: 0,
@@ -271,7 +286,7 @@ async function handler(req: NextRequest) {
         results.push({ destinationId: dest.id, ok: false, error: [msg, ...unrecorded].join("; ") });
         continue;
       }
-      grace = { night: tonight.night, of: tonight.of, pausing: tonight.pausing };
+      if (confirmation.unconfirmed) grace = { night: tonight.night, of: tonight.of, pausing: tonight.pausing };
       if ("error" in tonight) {
         graceReadNote = `the unconfirmed-night count could not be read (${tonight.error}); the push ran`;
         console.warn(`[run-scheduled] destination ${dest.id}: ${graceReadNote}`);
@@ -289,7 +304,8 @@ async function handler(req: NextRequest) {
     const startedAt = new Date().toISOString();
     // The night is counted on the run row from the moment it opens, so a push
     // killed mid-flight (its row left "running") still counts.
-    const graceStep = grace ? graceNightStep(grace, startedAt) : null;
+    // P14 review fix: an unverified night is marked neutral from the moment its row opens.
+    const graceStep = grace ? graceNightStep(grace, startedAt) : unverified !== null ? graceUnverifiedStep(startedAt) : null;
     const { data: runRow, error: runRowErr } = await sb.from("export_runs").insert({
       org_id: dest.org_id,
       destination_id: dest.id,

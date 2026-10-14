@@ -862,11 +862,21 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
  *  stream of JSON.stringify(rows, null, 2), row by row (lib/
  *  prettyJsonStream.ts), which JSZip reads as it compresses. Where JSZip
  *  cannot take a Node stream (no `readable-stream` support), the string, as
- *  before. Exported for tests. */
+ *  before. Exported for tests.
+ *
+ *  P14 review fix: each batch is yielded as its UTF-8 BYTES, never as a JS
+ *  string. JSZip treats any stream input as binary — it skips its UTF-8
+ *  encoder and keeps only the low byte of each char code of a string chunk —
+ *  so a string stream wrote "Ø 50 mm — 120 °C" back as "� 50 mm  120 �C" in
+ *  every server-built backup. Bytes are stored as they are, and the file
+ *  reads back as the same text as the string fallback (aoRoundGP14ExportStream,
+ *  exportContractRoundTrip pin non-ASCII text). */
 export function tableJsonContent(rows: unknown): Readable | string {
   // JSZip reports it at runtime; its typings leave the key out.
   if (!(JSZip.support as unknown as { nodestream?: boolean }).nodestream) return JSON.stringify(rows, null, 2);
-  return Readable.from(batchedChunks(prettyJsonChunks(rows, 1)));
+  return Readable.from((function* () {
+    for (const s of batchedChunks(prettyJsonChunks(rows, 1))) yield Buffer.from(s, "utf8");
+  })());
 }
 
 /** ILIFE-11 (P14): the README's section naming the derived columns this
