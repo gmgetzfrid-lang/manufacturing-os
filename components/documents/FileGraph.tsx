@@ -37,6 +37,8 @@ export interface FileGraphNode {
   type: FileTypeInfo;
   /** A small pill under the label — the unit this node is linked to. */
   badge?: string;
+  /** Equipment linked to it: a green count on the icon's shoulder. */
+  equipment?: number;
 }
 
 export interface FileGraphLight {
@@ -302,20 +304,39 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       // relates to, spread around it so several never overlap.
       const sats = satRef.current;
       const satsHere = sats.filter((sat) => sat.links.some((l) => pos.has(l.to)));
-      // Placed OUTSIDE the ring of what they link to (never on top of a file
-      // or its label), and turned away from the "up" button, which sits above.
+      // One ring for all of them, never overlapping: the ring sits outside
+      // everything they link to, each marker gets an arc as wide as its
+      // label, and they keep the order of the direction their files lie in,
+      // so each sits near its own files. Turned away from the "up" button.
       const upHere = upPosRef.current;
-      satsHere.forEach((sat, i) => {
+      const centroids = new Map<string, { x: number; y: number }>();
+      let ax = 0, ay = 0, an = 0;
+      for (const sat of satsHere) {
         let cx = 0, cy = 0, n = 0;
-        for (const l of sat.links) { const p = pos.get(l.to); if (p) { cx += p.x; cy += p.y; n++; } }
-        if (!n) return;
-        cx /= n; cy /= n;
-        let reach = 0;
-        for (const l of sat.links) { const p = pos.get(l.to); if (p) reach = Math.max(reach, Math.hypot(p.x - cx, p.y - cy)); }
-        const away = upHere ? Math.atan2(cy - upHere.y, cx - upHere.x) : Math.PI / 2;
-        const ang = away + Math.PI / 4 + (i * 2 * Math.PI) / Math.max(1, satsHere.length);
-        const dist = reach + 90;
-        const target = { x: cx + Math.cos(ang) * dist, y: cy + Math.sin(ang) * dist };
+        for (const l of sat.links) { const p = pos.get(l.to); if (p) { cx += p.x; cy += p.y; n++; ax += p.x; ay += p.y; an++; } }
+        if (n) centroids.set(sat.id, { x: cx / n, y: cy / n });
+      }
+      const anchor = an ? { x: ax / an, y: ay / an } : { x: 0, y: 0 };
+      let reach = 0;
+      for (const sat of satsHere) for (const l of sat.links) { const p = pos.get(l.to); if (p) reach = Math.max(reach, Math.hypot(p.x - anchor.x, p.y - anchor.y)); }
+      ctx.font = "800 12px ui-sans-serif, system-ui";
+      const arcOf = (sat: FileGraphSatellite) => Math.max(66, ctx.measureText(sat.label).width + 16);
+      const total = satsHere.reduce((a, sat) => a + arcOf(sat), 0);
+      const radius = Math.max(reach + 70, total / (2 * Math.PI));
+      const gap = upHere ? Math.atan2(upHere.y - anchor.y, upHere.x - anchor.x) : -Math.PI / 2;
+      const dirOf = (sat: FileGraphSatellite) => { const c = centroids.get(sat.id) ?? anchor; const a = Math.atan2(c.y - anchor.y, c.x - anchor.x) - gap; return ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI); };
+      const ordered = [...satsHere].sort((a, b) => dirOf(a) - dirOf(b));
+      const slot = new Map<string, number>();
+      {
+        // Spread the free arc evenly so the gap at the "up" side stays clear.
+        const free = Math.max(0, 2 * Math.PI * radius - total);
+        let at = free / 2;
+        for (const sat of ordered) { const w = arcOf(sat); slot.set(sat.id, gap + (at + w / 2) / radius); at += w; }
+      }
+      satsHere.forEach((sat) => {
+        if (!centroids.has(sat.id)) return;
+        const ang = slot.get(sat.id) ?? 0;
+        const target = { x: anchor.x + Math.cos(ang) * radius, y: anchor.y + Math.sin(ang) * radius };
         const cur = satPos.current.get(sat.id) ?? target;
         cur.x += (target.x - cur.x) * 0.2; cur.y += (target.y - cur.y) * 0.2;
         satPos.current.set(sat.id, cur);
@@ -394,6 +415,19 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           ctx.fillStyle = "#fff"; ctx.font = `700 ${Math.max(8, br * 1.1)}px ui-sans-serif, system-ui`;
           ctx.textBaseline = "middle";
           ctx.fillText(n.childCount > 999 ? "999+" : String(n.childCount), bx, by);
+          ctx.textBaseline = "top";
+        }
+        // Equipment count, on the icon's right shoulder: always visible.
+        if (n.equipment) {
+          const t = n.equipment > 99 ? "99+" : String(n.equipment);
+          ctx.font = "800 9px ui-sans-serif, system-ui";
+          const w = Math.max(15, ctx.measureText(t).width + 8);
+          const bx = p.x + r * 0.62, byy = p.y - 6.5;
+          ctx.fillStyle = dim ? "rgba(5,150,105,0.35)" : "#059669";
+          ctx.beginPath(); ctx.roundRect(bx, byy, w, 13, 6.5); ctx.fill();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(t, bx + w / 2, byy + 6.8);
           ctx.textBaseline = "top";
         }
         // Label.

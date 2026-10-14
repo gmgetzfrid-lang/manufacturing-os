@@ -190,15 +190,30 @@ function GraphPageInner() {
     const folderParent = (f: { parentId: string | null; libraryId: string }) => (f.parentId && data.folders.has(f.parentId) ? `folder:${f.parentId}` : `lib:${f.libraryId}`);
     for (const f of data.folders.values()) bump(folderParent(f));
     for (const e of data.entries) bump(e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`);
-    for (const l of data.libraries) out.push({ id: `lib:${l.id}`, kind: "library", label: l.name, parentId: null, childCount: counts.get(`lib:${l.id}`) ?? 0, type: CONTAINER_TYPES.library });
+    // Distinct equipment tagged to each file, and rolled up through its
+    // folders to its library, so a closed folder still says what it holds.
+    const eqOf = new Map<string, Set<string>>();
+    if (showEstate) {
+      const add = (id: string, a: string) => { const set = eqOf.get(id) ?? new Set<string>(); set.add(a); eqOf.set(id, set); };
+      const entryOf = new Map(data.entries.map((e) => [e.id, e]));
+      for (const ed of data.edges) {
+        if (ed.type !== "tagged_to" || !ed.a.startsWith("doc:") || !ed.b.startsWith("asset:")) continue;
+        const e = entryOf.get(ed.a); if (!e) continue;
+        add(e.id, ed.b);
+        for (const fid of e.pathIds) add(`folder:${fid}`, ed.b);
+        if (e.libraryId) add(`lib:${e.libraryId}`, ed.b);
+      }
+    }
+    const eq = (id: string) => eqOf.get(id)?.size || undefined;
+    for (const l of data.libraries) out.push({ id: `lib:${l.id}`, kind: "library", label: l.name, parentId: null, childCount: counts.get(`lib:${l.id}`) ?? 0, type: CONTAINER_TYPES.library, equipment: eq(`lib:${l.id}`) });
     const unitLabel = (code?: string) => { const u = data.units.find((x) => x.code === code); return u ? ` · ${u.label}` : ""; };
     const unitBadge = (code?: string) => { if (!code) return undefined; const u = data.units.find((x) => x.code === code); return u ? `${u.label}` : `unit ${code}`; };
-    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: f.unitCode ? { ...CONTAINER_TYPES.folder, label: `Folder${unitLabel(f.unitCode)}` } : CONTAINER_TYPES.folder, badge: unitBadge(f.unitCode) });
+    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: f.unitCode ? { ...CONTAINER_TYPES.folder, label: `Folder${unitLabel(f.unitCode)}` } : CONTAINER_TYPES.folder, badge: unitBadge(f.unitCode), equipment: eq(`folder:${f.id}`) });
     for (const e of data.entries) {
       // A file's own unit link is worth a badge only when its folder does not already say so.
       const parentUnit = e.folderId ? data.folders.get(e.folderId)?.unitCode : undefined;
       const own = e.unitCodes.find((c) => c !== parentUnit);
-      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name), badge: unitBadge(own) });
+      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name), badge: unitBadge(own), equipment: eq(e.id) });
     }
     for (const l of listings) {
       const drive = `drive:${l.id}`;
@@ -224,7 +239,7 @@ function GraphPageInner() {
       for (const e of le) out.push({ id: e.id, kind: "extfile", label: e.name, parentId: e.pathIds.length ? e.pathIds[e.pathIds.length - 1] : drive, childCount: 0, type: fileTypeOf(e.name) });
     }
     return out;
-  }, [data, listings, listingEntries]);
+  }, [data, listings, listingEntries, showEstate]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
   // ── Search ────────────────────────────────────────────────────────────
@@ -329,33 +344,17 @@ function GraphPageInner() {
   // Entities the search resolved, drawn beside the files they relate to.
   const satellites = useMemo<FileGraphSatellite[]>(() => {
     if (!serverFind) {
-      // No search: the estate lens. Every unit beside the folders and files
-      // linked to it, and the equipment tagged on what is in view — so the
-      // map shows the ecosystem, not only the paper.
-      if (!showEstate || !data) return [];
-      const vis = new Set(visible.map((n) => n.id));
-      const unitLinks = new Map<string, FileGraphSatellite["links"]>();
-      const assetLinks = new Map<string, FileGraphSatellite["links"]>();
-      for (const e of data.edges) {
-        if (!vis.has(e.a)) continue;
-        if (e.type === "belongs_to_unit" && e.b.startsWith("cbunit:")) unitLinks.set(e.b, [...(unitLinks.get(e.b) ?? []), { to: e.a, kind: "linked_unit" }]);
-        if (e.type === "tagged_to" && e.b.startsWith("asset:")) assetLinks.set(e.b, [...(assetLinks.get(e.b) ?? []), { to: e.a, kind: "tagged_to" }]);
-        if (e.type === "about_asset" && e.b.startsWith("asset:")) assetLinks.set(e.b, [...(assetLinks.get(e.b) ?? []), { to: e.a, kind: "filed_under" }]);
-      }
+      // No search: units are the purple pills under their folders and every
+      // file carries a green count of its equipment. The equipment itself
+      // is drawn only for the file picked — in a ring around it, each piece
+      // named — so the map never turns into a pile of markers.
+      if (!showEstate || !data || !selectedId) return [];
       const out: FileGraphSatellite[] = [];
-      for (const [node, links] of unitLinks) {
-        const code = node.slice(7); const u = data.units.find((x) => x.code === code);
-        // A folder that belongs to the unit speaks for everything inside it:
-        // one line to the folder, not one to every sheet.
-        const linked = new Set(links.map((l) => l.to));
-        const lean = links.filter((l) => !ancestorsOf(l.to).some((a) => linked.has(a)));
-        out.push({ id: node, label: u?.label ?? `Unit ${code}`, sub: `Unit ${code} · ${links.length} linked`, color: "#7c3aed", iconKey: "unit", links: lean.slice(0, 60) });
-      }
-      const ranked = [...assetLinks.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, focusId ? 80 : 40);
-      for (const [node, links] of ranked) {
-        const a = data.assets.find((x) => x.id === node.slice(6));
+      const picked = data.edges.filter((e) => e.a === selectedId && e.type === "tagged_to" && e.b.startsWith("asset:"));
+      for (const e of picked.slice(0, 60)) {
+        const a = data.assets.find((x) => x.id === e.b.slice(6));
         if (!a) continue;
-        out.push({ id: node, label: a.tag, sub: `Equipment${a.description ? ` · ${a.description}` : ""}${a.unitCode ? ` · unit ${a.unitCode}` : ""}`, color: "#059669", iconKey: "equipment", href: `/assets/${encodeURIComponent(a.tag)}`, links: links.slice(0, 40) });
+        out.push({ id: e.b, label: a.tag, sub: `Equipment${a.description ? ` · ${a.description}` : ""}${a.unitCode ? ` · unit ${a.unitCode}` : ""}`, color: "#059669", iconKey: "equipment", href: `/assets/${encodeURIComponent(a.tag)}`, links: [{ to: selectedId, kind: "tagged_to" }] });
       }
       return out;
     }
@@ -372,7 +371,7 @@ function GraphPageInner() {
         color: ent.kind === "asset" ? "#059669" : ent.kind === "unit" ? "#7c3aed" : ent.kind === "tag" ? "#64748b" : "#d97706", iconKey: ent.kind === "asset" ? "equipment" : ent.kind === "tag" ? "tag" : ent.kind === "unit" ? "unit" : "project", href: ent.href, links });
     }
     return out;
-  }, [serverFind, nodeById, entryById, showEstate, data, visible, focusId, ancestorsOf]);
+  }, [serverFind, nodeById, entryById, showEstate, data, selectedId]);
 
   // Symbolic links ("also filed under") between files and folders on the map.
   const filedLinks = useMemo<Array<[string, string]>>(() => {
@@ -487,39 +486,77 @@ function GraphPageInner() {
     } catch (e) { setReadAsk({ ...readAsk, busy: false, note: (e as Error).message }); }
   };
 
-  /** Open a system document right here: fetch its row and current version,
-   *  then put the viewer over the map. The library page is never loaded. */
-  const openEntry = useCallback(async (id: string) => {
+  /** Everything opening a file needs — its row, its current version and a
+   *  signed link to the bytes — fetched together and kept for a while. A
+   *  single click starts it, so the double-click finds it ready. */
+  const openCache = useRef(new Map<string, { at: number; p: Promise<{ doc: DocumentRecord; version: DocumentVersion }> }>());
+  const prepareOpen = useCallback((id: string) => {
     const e = entryById.get(id);
-    if (!e || e.source !== "system") return;
+    if (!e || e.source !== "system") return null;
+    const hit = openCache.current.get(id);
+    if (hit && Date.now() - hit.at < 45 * 60_000) return hit.p;
     const docId = id.replace(/^doc:/, "");
+    const p = (async () => {
+      const versionQ = e.versionId
+        ? supabase.from("document_versions").select("*").eq("id", e.versionId).maybeSingle()
+        : Promise.resolve({ data: null, error: null });
+      const [{ data: row, error }, { data: vFirst }, { data: { session } }] = await Promise.all([
+        supabase.from("documents").select("*").eq("id", docId).maybeSingle(),
+        versionQ,
+        supabase.auth.getSession(),
+      ]);
+      if (error) throw new Error(error.message);
+      if (!row) throw new Error("That document is no longer available.");
+      const doc = docRowToDocumentRecord(row as Record<string, unknown>);
+      let vrow = (vFirst as Record<string, unknown> | null) ?? null;
+      if (!vrow || (doc.currentVersionId && vrow.id !== doc.currentVersionId)) {
+        const { data } = doc.currentVersionId
+          ? await supabase.from("document_versions").select("*").eq("id", doc.currentVersionId).maybeSingle()
+          : await supabase.from("document_versions").select("*").eq("record_id", docId).or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }).limit(1).maybeSingle();
+        vrow = (data as Record<string, unknown> | null) ?? null;
+      }
+      if (!vrow) throw new Error("This document has no file to open yet.");
+      const version = rowToVersion(vrow);
+      // Sign the link now; the viewer then streams page 1 straight away.
+      const path = version.fileUrl;
+      if (path && !/^(https?:|blob:)/.test(path) && session?.access_token) {
+        const res = await fetch(`/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=3600`, { headers: { authorization: `Bearer ${session.access_token}` } }).catch(() => null);
+        const signed = res && res.ok ? ((await res.json().catch(() => null)) as { url?: string } | null)?.url : null;
+        if (signed) return { doc, version: { ...version, fileUrl: signed } };
+      }
+      return { doc, version };
+    })();
+    openCache.current.set(id, { at: Date.now(), p });
+    p.catch(() => openCache.current.delete(id));
+    return p;
+  }, [entryById]);
+
+  /** Open a system document right here, over the map. The library page is
+   *  never loaded. */
+  const openEntry = useCallback(async (id: string) => {
+    const p = prepareOpen(id);
+    if (!p) return;
     onOpenHit();
     setViewerError(null);
     setViewerLoading(id);
     try {
-      const { data: row, error } = await supabase.from("documents").select("*").eq("id", docId).maybeSingle();
-      if (error) throw new Error(error.message);
-      if (!row) throw new Error("That document is no longer available.");
-      const doc = docRowToDocumentRecord(row as Record<string, unknown>);
-      let vrow: Record<string, unknown> | null = null;
-      if (doc.currentVersionId) {
-        const { data } = await supabase.from("document_versions").select("*").eq("id", doc.currentVersionId).maybeSingle();
-        vrow = (data as Record<string, unknown> | null) ?? null;
-      }
-      if (!vrow) {
-        const { data } = await supabase.from("document_versions").select("*").eq("record_id", docId)
-          .or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }).limit(1);
-        vrow = ((data as Record<string, unknown>[] | null) ?? [])[0] ?? null;
-      }
-      if (!vrow) throw new Error("This document has no file to open yet.");
-      setViewer({ doc, version: rowToVersion(vrow) });
+      setViewer(await p);
     } catch (err) {
       setViewerError((err as Error).message);
     } finally {
       setViewerLoading(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entryById, parsed, activeOrgId]);
+  }, [prepareOpen, parsed, activeOrgId]);
+
+  // The viewer's code (PDF engine, markup tools) loads while the map is idle,
+  // not after the first double-click.
+  useEffect(() => {
+    const t = window.setTimeout(() => { void import("@/components/viewers/FullScreenViewer"); }, 1500);
+    return () => window.clearTimeout(t);
+  }, []);
+  // A single click on a file starts preparing it.
+  useEffect(() => { if (selectedId) void prepareOpen(selectedId)?.catch(() => undefined); }, [selectedId, prepareOpen]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -646,7 +683,7 @@ function GraphPageInner() {
             </div>
           ) : (
             <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); if (id) setSelSat(null); }} onDrill={drill} onUp={up} onOpen={openEntry}
-              satellites={satellites} onSatellite={(sat) => { setSelSat(sat); setSelectedId(null); }} filedLinks={filedLinks} />
+              satellites={satellites} onSatellite={(sat) => setSelSat(sat)} filedLinks={filedLinks} />
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
             <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
@@ -675,7 +712,7 @@ function GraphPageInner() {
                   {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Resolve links
                 </button>
               )}
-              <button onClick={() => setShowEstate((v) => !v)} title="Draw every unit and piece of equipment beside what belongs to it"
+              <button onClick={() => setShowEstate((v) => !v)} title="Green counts of equipment on every file and folder; click a file to see its equipment around it"
                 className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 ${showEstate ? "bg-purple-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
                 <Factory className="w-3 h-3" /> Units &amp; equipment
               </button>
@@ -1024,6 +1061,12 @@ function EntityPanel({ sat, data, entryById, nodeById, serverFind, onClose, onOp
       const isDoc = n.kind === "file" || n.kind === "extfile";
       m.set(l.to, { id: l.to, name: n.label, how: l.kind === "tagged_to" ? "tagged to it" : l.kind === "linked_unit" ? "belongs to it" : l.kind === "filed_under" ? "its folder" : l.kind === "drawn_on" ? "drawn on it" : l.kind === "mentioned_in" ? "mentions it" : l.kind === "in_project" ? "in the project" : "found with it", isDoc });
     }
+    // Every file the estate ties it to, not only the ones on screen now.
+    for (const e of data.edges) {
+      if (e.b !== sat.id || !e.a.startsWith("doc:") || m.has(e.a)) continue;
+      const entry = entryById.get(e.a); if (!entry) continue;
+      m.set(e.a, { id: e.a, name: entry.name, how: e.type === "tagged_to" ? "tagged to it" : e.type === "belongs_to_unit" ? "belongs to it" : e.type === "in_project" ? "in the project" : "linked", isDoc: true });
+    }
     for (const r of serverFind?.results ?? []) for (const rel of r.relations) {
       if (rel.node !== sat.id || !nodeById.has(r.id)) continue;
       const cur = m.get(r.id);
@@ -1031,7 +1074,7 @@ function EntityPanel({ sat, data, entryById, nodeById, serverFind, onClose, onOp
       else if (!cur) m.set(r.id, { id: r.id, name: r.name, how: rel.rel === "mentioned_in" ? `mentions it${rel.page ? ` (page ${rel.page})` : ""}` : rel.rel.replace("_", " "), page: rel.page, isDoc: true });
     }
     return [...m.values()].sort((a, b) => (a.page ?? 0) - (b.page ?? 0) || a.name.localeCompare(b.name));
-  }, [sat, nodeById, serverFind]);
+  }, [sat, nodeById, serverFind, data.edges, entryById]);
   const Icon = kind === "asset" ? Cpu : kind === "unit" ? Factory : kind === "project" ? FolderKanban : Tag;
   const photoList = photos && asset && photos.id === asset.id ? photos.list : null;
   return (

@@ -60,6 +60,8 @@ export interface IndexEntry {
   sizeBytes?: number | null;
   hash?: string | null;
   href?: string;
+  /** The current version, so opening the file needs no lookup first. */
+  versionId?: string | null;
 }
 
 export interface FolderLike {
@@ -88,6 +90,7 @@ export interface DocLike {
   tags?: string[] | null;
   asset_tags?: Array<{ tag?: string }> | null;
   metadata?: Record<string, unknown> | null;
+  current_version_id?: string | null;
 }
 
 export interface VersionMeta {
@@ -156,6 +159,7 @@ export function entryFromDocument(
   return {
     id: `doc:${d.id}`,
     source: "system",
+    versionId: d.current_version_id ?? null,
     name,
     title: d.title ?? null,
     number: d.document_number ?? null,
