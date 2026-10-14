@@ -24,6 +24,8 @@ import {
   FileText,
 } from "lucide-react";
 import { searchDocuments, type DocumentRow } from "@/lib/search";
+import { libraryIsPublicRead, libraryReadsByRole } from "@/lib/libraryAccess";
+import { shortLinkExactMatches, shortLinkMatchState, isCurrentMatch } from "@/lib/docNumberMatch";
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
@@ -42,21 +44,10 @@ type UiLibrary = LibraryConfig & {
 const toArrayRole = (v: unknown): Role[] => (Array.isArray(v) ? (v as Role[]) : []);
 const safeLower = (v: unknown) => (typeof v === "string" ? v.toLowerCase() : "");
 
-function computeCanRead(lib: Partial<LibraryConfig>, role: Role, roles: Role[] = []) {
-  const readAccess = (lib as { readAccess?: Role[] | "ALL" }).readAccess;
-  if (readAccess === "ALL") return true;
+// DACL-10: the library read check lives in lib/libraryAccess — the library
+// page asks the same function, so a direct URL never shows what this page
+// hides (libraryReadsByRole was this file's computeCanRead, unchanged).
 
-  const readList = toArrayRole(readAccess);
-  const visibleTo = toArrayRole((lib as { visibleTo?: unknown }).visibleTo);
-  // ADD-1: a role-granted read follows the full collection, not the headline.
-  const held = [role, ...roles];
-
-  return held.some((r) => readList.includes(r) || visibleTo.includes(r));
-}
-
-function computeIsPublicRead(lib: Partial<LibraryConfig>) {
-  return (lib as { readAccess?: Role[] | "ALL" }).readAccess === "ALL";
-}
 
 export default function DocumentsHomePage() {
   const router = useRouter();
@@ -105,21 +96,51 @@ export default function DocumentsHomePage() {
   // service-role oracle. An exact normalized match deep-links into the viewer;
   // anything else falls back to a pre-filled search, disclosing nothing beyond
   // what this user could already search for.
+  // VFY-7: the match is punctuation-forgiving at the query too — beside the
+  // search, a second candidate read matches the NORMALIZED number itself
+  // (still under RLS, org-scoped): an anchored, case-insensitive pattern
+  // that admits the typed letters and digits in order with only separators
+  // around and between them — exactly the numbers whose normalized form is
+  // the one typed, so no window of loose matches can crowd an exact one out.
+  // Both reads always run (lib/docNumberMatch shortLinkExactMatches — I-12
+  // second review fix: the second ran only when the search found no exact
+  // match, so "P-101" found by the search hid "P101"). Only an EXACT
+  // normalized match is ever taken. Two or more open a chooser; none — or a
+  // read that failed, when one match cannot be told from two — falls back
+  // to the search. The chooser lists documents in force first and shows each
+  // row's revision, status and "archived" (I-12 third review fix: a
+  // superseded row sharing the current one's number looked the same — both
+  // reads now select status, rev and archived_at; searchDocuments selects *).
+  const [shortLinkChoices, setShortLinkChoices] = useState<{ raw: string; rows: DocumentRow[] } | null>(null);
   useEffect(() => {
     if (!activeOrgId || typeof window === "undefined") return;
     const raw = new URLSearchParams(window.location.search).get("d");
     if (!raw) return;
-    const norm = raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
     let alive = true;
     void (async () => {
-      let hit: DocumentRow | undefined;
+      let hits: DocumentRow[] = [];
       try {
-        const rows = await searchDocuments({ orgId: activeOrgId, query: raw, limit: 25 });
-        hit = rows.find((r) => (r.document_number ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "") === norm);
-      } catch { /* fall through to search */ }
+        hits = await shortLinkExactMatches<DocumentRow>(raw, {
+          search: (q) => searchDocuments({ orgId: activeOrgId, query: q, limit: 25 }),
+          normalized: async (pattern) => {
+            const { data, error } = await supabase.from("documents")
+              .select("id, library_id, document_number, title, rev, status, archived_at, updated_at")
+              .eq("org_id", activeOrgId)
+              .regexIMatch("document_number", pattern)
+              .order("updated_at", { ascending: false })
+              .limit(200);
+            if (error) throw new Error(error.message);
+            return (data ?? []) as unknown as DocumentRow[];
+          },
+        });
+      } catch { hits = []; /* one match cannot be told from two — fall through to search */ }
       if (!alive) return;
-      if (hit) {
-        router.replace(`/documents/${hit.library_id}?doc=${hit.id}`);
+      if (hits.length === 1) {
+        router.replace(`/documents/${hits[0].library_id}?doc=${hits[0].id}`);
+      } else if (hits.length > 1) {
+        // VFY-7 done-when 3: never pick one by updated_at — the reader chooses.
+        setShortLinkChoices({ raw, rows: hits });
+        router.replace("/documents");
       } else {
         // No exact match the caller can see — pre-fill search, drop the ?d=.
         setSearch(raw);
@@ -243,8 +264,8 @@ export default function DocumentsHomePage() {
 
         // SESS-6: no role known (activeRole null) reads nothing by role —
         // not even an "ALL" library; the least-privileged state.
-        const _canRead = activeRole !== null && computeCanRead(normalized, activeRole, roles);
-        const _isPublicRead = computeIsPublicRead(normalized);
+        const _canRead = activeRole !== null && libraryReadsByRole(normalized, activeRole, roles);
+        const _isPublicRead = libraryIsPublicRead(normalized);
 
         return {
           ...(normalized as LibraryConfig),
@@ -409,6 +430,42 @@ export default function DocumentsHomePage() {
             </button>
           </div>
         </div>
+
+        {shortLinkChoices && (
+          <div className="mb-6 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm" data-short-link-chooser>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-bold text-[var(--color-text)]">
+                {shortLinkChoices.rows.length} documents are numbered “{shortLinkChoices.raw}” — choose one
+              </div>
+              <button
+                onClick={() => setShortLinkChoices(null)}
+                className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              >
+                Dismiss
+              </button>
+            </div>
+            <ul className="mt-3 divide-y divide-[var(--color-border)]">
+              {shortLinkChoices.rows.map((r) => (
+                <li key={r.id}>
+                  <Link href={`/documents/${r.library_id}?doc=${r.id}`} className="flex items-center gap-2 py-2 text-sm hover:underline">
+                    <FileText className="h-4 w-4 text-[var(--color-text-faint)]" />
+                    <span className="font-bold">{r.document_number}</span>
+                    {r.title && <span className="text-[var(--color-text-muted)]">{r.title}</span>}
+                    {shortLinkMatchState(r) && (
+                      <span
+                        className={`text-xs ${isCurrentMatch(r) ? "text-[var(--color-text-muted)]" : "font-bold text-amber-700"}`}
+                        data-short-link-state={isCurrentMatch(r) ? "current" : "not-current"}
+                      >
+                        {shortLinkMatchState(r)}
+                      </span>
+                    )}
+                    <span className="ml-auto text-xs text-[var(--color-text-faint)]">{libById.get(r.library_id)?.name ?? "Library"}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">

@@ -41,6 +41,7 @@ vi.mock("@supabase/supabase-js", () => {
 
 vi.mock("@/lib/shareAuthorization", () => ({
   shareStillAuthorized: vi.fn(async () => rs.authorized),
+  shareAuthority: vi.fn(async () => (rs.authorized ? "ok" : "lapsed")),
 }));
 
 beforeEach(() => {

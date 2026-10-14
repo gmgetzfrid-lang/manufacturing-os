@@ -1711,7 +1711,7 @@ Not touched here:
 ## REV-30 · After 20261205 the metadata editor's two read-failed sentences say no issue record was written, though the database wrote one
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** the next package that edits `app/(protected)/documents/[libraryId]/page.tsx` — proposed: intelligence **I-12** (the page's next editor); opened 2026-10-13 by document-control P23 DIRECT-WRITE ISSUE RECORD under DEC-31 (the page is not P23's file); the integrator confirms the owner at the P23 merge.
 - **Assigned:** intelligence I-12 (the page's next editor; both sentences, `:2847` and `:2861`) — confirmed by the integrator at the document-control P23 merge, 2026-10-13 (DEC-31; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 - **Verification:** READ (the sentence at `app/(protected)/documents/[libraryId]/page.tsx:2847` on `596d34e`; 20261205's trigger driven on PostgreSQL 16 — `REV-19`'s record)
@@ -1726,5 +1726,13 @@ Not touched here:
 **Done when.**
 - [ ] Both of the page's read-failed sentences (`:2847` and `:2861`) are true before and after `20261205` (the bulk editor's wording: "this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one)"), and its test (`lib/__tests__/isP1LibraryPage.test.ts`, the failed-read cases) pins both.
 - [ ] The page's read-failed branch also names a `recordError` (the follow-up row refused), as the bulk editor does — added by P23's fix pass, 2026-10-13.
+
+**Resolution (2026-10-14, intelligence Round G).** Package I-12 (the page's next editor). Both read-failed sentences of `saveMetadata` in `app/(protected)/documents/[libraryId]/page.tsx` use the bulk editor's wording — the branch where the page expected an issue (`:2859`: "… so no review clock or acknowledgment roster was started and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one). Check its history and start its clocks from the document.") and its twin where the page saw nothing to issue (`:2878`: "… it is now issued with no review clock or acknowledgment roster, and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one) — check its history.") — so each is true before and after `20261205` is pasted. On both, a refused follow-up row is named as the bulk editor names it: "The record that no clock was started could not be written (<recordError>), so the document's history does not say so." Tests (`lib/__tests__/isP1LibraryPage.test.ts`): the failed-read cases now assert the bulk editor's clause on both sentences and that neither says "no issue record was written"; "REV-30 — the read-failed branch names a refused follow-up row (recordError), on both sentences, as the bulk editor does" (and, without a refused row, neither names one).
+
+**Done-when.**
+1. ✓ Both sentences are true before and after `20261205`, pinned in `isP1LibraryPage.test.ts`.
+2. ✓ The read-failed branch names a `recordError`, on both sentences.
+
+**Scope / residual.** None. The page's `isActiveMember` line (admin-and-org P12) is untouched.
 
 ---

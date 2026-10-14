@@ -93,17 +93,23 @@ const state = vi.hoisted(() => ({
   creatorMemberError: null as null | { message: string },
   // the creator's teams (the download-deny check reads them only when the index carries a download deny)
   teams: { data: [] as Row[], error: null as null | { message: string } },
+  // DACL-4 (intelligence I-12): the creator's pending acknowledgments and the library's ack policy
+  acks: { data: [] as Row[], error: null as null | { message: string } },
+  libraryAck: null as Row | null,
   auditError: null as null | string,
   updateRows: [] as Row[],
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   rpcCalls: [] as Array<{ fn: string; args: Row }>,
   rpcResult: { data: null as unknown, error: null as null | { message: string } },
   origin: "https://app.example.com",
-  authorized: true,
+  authorized: true as boolean | "unknown",
   audits: [] as Row[],
   // the order the bytes, the stamp and the two record writes happened in
   seq: [] as string[],
   versionError: null as null | { message: string },
+  // KACL-12 (I-12 third review fix): the seam's own documents-row read
+  // (readableControlledDocIds' `.in("id", …)`, never a maybeSingle) errors
+  docsReadError: null as null | { message: string },
 }));
 
 function makeClient() {
@@ -121,8 +127,10 @@ function makeClient() {
         return { data: err ? null : [payload], error: err ?? null };
       }
       if (op === "update") return { data: state.updateRows, error: null };
+      if (table === "documents" && state.docsReadError) return { data: null, error: state.docsReadError };
       if (table === "document_holds") return state.holds;
       if (table === "team_members") return state.teams;
+      if (table === "document_acknowledgments") return state.acks;
       if (table === "document_versions") return { data: state.latest, error: null };
       return { data: null, error: null };
     };
@@ -144,6 +152,7 @@ function makeClient() {
             if (table === "documents") return Promise.resolve(state.docError ? { data: null, error: state.docError } : { data: state.doc, error: null });
             if (table === "org_members") return Promise.resolve({ data: state.creatorMemberError ? null : state.creatorMember, error: state.creatorMemberError });
             if (table === "orgs") return Promise.resolve({ data: { name: "Org A" }, error: null });
+            if (table === "libraries") return Promise.resolve({ data: { ack_policy: state.libraryAck }, error: null });
             if (table === "document_versions") {
               if (state.versionError) return Promise.resolve({ data: null, error: state.versionError });
               const id = eqs.find(([k]) => k === "id")?.[1] as string | undefined;
@@ -166,7 +175,12 @@ function makeClient() {
 
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => makeClient() }));
 vi.mock("@/lib/supabase", () => ({ supabase: makeClient() }));
-vi.mock("@/lib/shareAuthorization", () => ({ shareStillAuthorized: vi.fn(async () => state.authorized) }));
+// KACL-12 (I-12 second review fix): share serving asks shareAuthority, which
+// tells a lapsed authority ("revoked") from one that could not be checked.
+vi.mock("@/lib/shareAuthorization", () => ({
+  shareStillAuthorized: vi.fn(async () => state.authorized === true),
+  shareAuthority: vi.fn(async () => (state.authorized === "unknown" ? "unknown" : state.authorized ? "ok" : "lapsed")),
+}));
 vi.mock("@/lib/publicOrigin", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/publicOrigin")>()),
   publicOrigin: () => state.origin,
@@ -206,6 +220,8 @@ beforeEach(() => {
   state.creatorMember = { role: "DocCtrl", roles: ["DocCtrl"] };
   state.creatorMemberError = null;
   state.teams = { data: [], error: null };
+  state.acks = { data: [], error: null };
+  state.libraryAck = null;
   state.auditError = null;
   state.updateRows = [];
   state.calls = [];
@@ -216,6 +232,7 @@ beforeEach(() => {
   state.audits = [];
   state.seq = [];
   state.versionError = null;
+  state.docsReadError = null;
   stamp.calls = [];
   r2.send.mockClear();
 });
@@ -568,7 +585,8 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     // the check runs AFTER the read decision and BEFORE the status / hold / version steps
     const serve = src("lib/shareServe.ts");
     const body = serve.slice(serve.indexOf("export async function resolveShareForServing"));
-    expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeGreaterThan(body.indexOf("await shareStillAuthorized("));
+    expect(body.indexOf("await shareAuthority(")).toBeGreaterThan(0);
+    expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeGreaterThan(body.indexOf("await shareAuthority("));
     expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeLessThan(body.indexOf("shareStatusRefusal(d)"));
     expect(serve).toMatch(/memberHoldsAny\(member as \{ role\?: unknown; roles\?: unknown \}, SHARE_CONTROLLER_ROLES\)/);
   });
@@ -607,7 +625,8 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
       expect((await fileGet()).status).toBe(200);
     }
     // the documents read carries the index; the check is the member route's own helper, asked inside creatorMayShare
-    const sel = state.calls.filter((c) => c.table === "documents" && c.method === "select").at(-1);
+    // (DACL-4, intelligence I-12: the legal-hold / ack-policy read that follows the hold gate is not the share's documents read)
+    const sel = state.calls.filter((c) => c.table === "documents" && c.method === "select" && !String(c.args[0]).startsWith("legal_hold")).at(-1);
     expect(String(sel?.args[0])).toMatch(/\bacl_index\b/);
     const serve = src("lib/shareServe.ts");
     expect(serve).toContain('import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";');
@@ -617,8 +636,91 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect(may).toMatch(/if \(download\.unreadable\) \{[\s\S]*?return false;\s*\n\s*\}\s*\n\s*if \(download\.denied\) return false;/);
     const route = src("app/api/storage/download-url/route.ts");
     expect(route).toContain('import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";');
-    expect(route).toMatch(/const \{ denied \} = await memberDownloadDenied\(supabaseAdmin, \{/);
+    // intelligence KACL-5: the route keeps the rule and refuses on a read error (closed).
+    expect(route).toMatch(/const download = await memberDownloadDenied\(supabaseAdmin, \{/);
+    expect(route).toMatch(/if \(download\.unreadable\) throw new Error/);
     expect(route).not.toMatch(/dl\.users\?\.download/); // the inline copy is gone: one rule, two callers
+  });
+  it("DACL-4 (intelligence I-12): a document under a LEGAL hold refuses (423 on_hold); a creator held by an outstanding HARD acknowledgment gate refuses (409 'unavailable' — temporary, never 'revoked'; recorded as acknowledgment_outstanding); an unreadable gate refuses (503); a soft policy, or none pending, serves", async () => {
+    state.doc = issuedDoc({ legal_hold: true });
+    let res = await fileGet();
+    expect(res.status).toBe(423);
+    expect(await res.json()).toMatchObject({ error: "on_hold", reason: "This document is under a legal hold." });
+    expect(r2.send).not.toHaveBeenCalled();
+    // a hard gate on the library, one pending acknowledgment assigned to the creator
+    state.doc = issuedDoc({ legal_hold: false });
+    state.acks = { data: [{ document_id: "docA" }], error: null };
+    state.libraryAck = { enabled: true, hardGate: true };
+    res = await fileGet();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "unavailable", reason: "This link is temporarily unavailable — ask the person who sent it." });
+    expect(inserted("document_share_accesses").at(-1)).toMatchObject({ kind: "refused", reason: "acknowledgment_outstanding" });
+    expect(state.calls).toContainEqual({ table: "document_acknowledgments", method: "eq", args: ["assignee_user_id", "u1"] });
+    expect(state.calls).toContainEqual({ table: "document_acknowledgments", method: "eq", args: ["status", "pending"] });
+    // the document's own policy is the most specific defined level: enabled:false there clears the library's gate
+    state.doc = issuedDoc({ ack_policy: { enabled: false } });
+    expect((await fileGet()).status).toBe(200);
+    // a soft policy serves
+    state.doc = issuedDoc();
+    state.libraryAck = { enabled: true, hardGate: false };
+    expect((await fileGet()).status).toBe(200);
+    // an unreadable acknowledgment read refuses (a copy leaving the organisation fails closed)
+    state.libraryAck = { enabled: true, hardGate: true };
+    state.acks = { data: [], error: { message: "boom" } };
+    state.inserts = [];
+    res = await fileGet();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "unavailable", unreadable: true });
+    // I-12 second review fix: an unreadable gate is recorded as unverified, never as an outstanding acknowledgment
+    expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "acknowledgment_unverified" })]);
+    // nothing pending serves even under a hard gate
+    state.acks = { data: [], error: null };
+    expect((await fileGet()).status).toBe(200);
+  });
+  it("KACL-12 (intelligence I-12 second review fix): a creator's authority that could not be CHECKED (an unreadable membership, teams or chain) answers 503 'unavailable' with the try-again sentence — never 'revoked' — and is recorded as authority_unverified, never authority_lapsed; no bytes leave", async () => {
+    const { SHARE_UNAVAILABLE_UNREADABLE } = await import("@/lib/shareServe");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.authorized = "unknown"; state.inserts = [];
+    r2.send.mockClear();
+    const res = await fileGet();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "unavailable", reason: SHARE_UNAVAILABLE_UNREADABLE, unreadable: true });
+    expect(r2.send).not.toHaveBeenCalled();
+    expect(inserted("download_audits")).toHaveLength(0);
+    expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "authority_unverified" })]);
+    const landing = await resolveGet();
+    expect(landing.status).toBe(503);
+    expect(await landing.json()).toMatchObject({ error: "unavailable", unreadable: true });
+    // a lapsed authority is still "revoked" (control)
+    state.authorized = false; state.inserts = [];
+    expect((await fileGet()).status).toBe(410);
+    expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ reason: "authority_lapsed" })]);
+    err.mockRestore();
+  });
+  it("KACL-12 (intelligence I-12 third review fix): through the REAL shareAuthority, a creator's document chain whose documents-row read fails answers 503 'unavailable' / authority_unverified — it read as 'no rows' and answered 410 'revoked' / authority_lapsed; a row that is truly gone is still a lapse", async () => {
+    const actual = await vi.importActual<typeof import("@/lib/shareAuthorization")>("@/lib/shareAuthorization");
+    const { shareAuthority } = await import("@/lib/shareAuthorization");
+    vi.mocked(shareAuthority).mockImplementation(actual.shareAuthority);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // a non-controller creator, so the chain is asked (a controller is answered before any read)
+      state.creatorMember = { role: "Engineer", roles: ["Engineer"] };
+      state.docsReadError = { message: "canceling statement due to statement timeout" };
+      state.inserts = [];
+      r2.send.mockClear();
+      const res = await fileGet();
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "unavailable", unreadable: true });
+      expect(r2.send).not.toHaveBeenCalled();
+      expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "authority_unverified" })]);
+      // control: the read answers and the creator can no longer reach the row → revoked, as before
+      state.docsReadError = null; state.inserts = [];
+      expect((await fileGet()).status).toBe(410);
+      expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ reason: "authority_lapsed" })]);
+    } finally {
+      err.mockRestore();
+      vi.mocked(shareAuthority).mockImplementation(async () => (state.authorized === "unknown" ? "unknown" : state.authorized ? "ok" : "lapsed"));
+    }
   });
   it("a refused attempt on a KNOWN share leaves one 'refused' access row with the reason, IP and UA (SHR-10); an unknown token leaves none", async () => {
     const cases: Array<[Row, Row | null, boolean, string, number]> = [

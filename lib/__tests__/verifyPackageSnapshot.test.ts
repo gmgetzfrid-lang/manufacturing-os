@@ -104,7 +104,7 @@ function chain(table: string) {
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ from: (t: string) => chain(t) }) }));
 
 const docRow = (over: Record<string, unknown> = {}) => ({
-  id: DOC, document_number: "P-101", title: "P&ID", name: "P-101", rev: "4", current_version_id: "v2", status: "Issued", legal_hold: false, ...over,
+  id: DOC, document_number: "P-101", title: "P&ID", name: "P-101", rev: "4", current_version_id: "v2", status: "Issued", legal_hold: false, visibility: "normal", ...over,
 });
 const printAt = (sheets: Array<Record<string, unknown>>) => ({ id: PRINT, package_id: PKG, printed_at: "2026-08-20T00:00:00Z", sheets });
 const sheetV2 = { documentId: DOC, versionId: "v2", revLabel: "4", label: "P-101" };
@@ -880,5 +880,155 @@ describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing 
     expect(missingSheetWhen({ leftOutAtPrint: "fetch_failed" })).toBe("left out of this printing — its file could not be fetched when printed");
     expect(missingSheetWhen({ leftOutAtPrint: "left_out" })).toBe("left out of this printing");
     expect(packLeftOutText("nonsense")).toBe("left out of this printing");
+  });
+});
+
+describe("VFY-16 (intelligence I-12) — a private or hidden document's sheet is answered without its number or title", () => {
+  it("private, hidden, an unknown value and an unread visibility each label the sheet 'Restricted document' — on a print-keyed pack with its place on the paper (the printed label withheld too); the verdict is unchanged", async () => {
+    for (const visibility of ["private", "hidden", "secret", undefined]) {
+      state.print = printAt([sheetV2]);
+      const row = docRow({ visibility });
+      if (visibility === undefined) delete (row as Record<string, unknown>).visibility;
+      state.docs = [row];
+      const r = await verify(true);
+      const sheets = r.sheets as Array<Record<string, unknown>>;
+      expect(sheets[0].label, String(visibility)).toBe("Restricted document — sheet 1 of 1 in this pack");
+      expect(JSON.stringify(r), String(visibility)).not.toMatch(/P-101|P&ID/);
+      expect(r.verdict).toBe("current");
+    }
+  });
+  it("second review fix: three private sheets, one superseded — each restricted row names its place on the paper (the snapshot's print order), so the stale one can be pulled; a left-out sheet takes no place; the advice's 'marked below' points at it", async () => {
+    const sheet = (id: string, label: string, v = "w1") => ({ documentId: id, versionId: v, revLabel: "1", label });
+    state.print = printAt([
+      sheet(DOC2, "P-202"),
+      { documentId: "abababab-abab-abab-abab-abababababab", versionId: null, revLabel: null, label: "P-999", printed: false, leftOutCode: "not_issued" },
+      sheet(DOC, "P-101", "v2"),
+      sheet(DOC3, "P-303"),
+    ]);
+    state.liveMembers = [DOC2, DOC, DOC3].map((id) => ({ document_id: id, pinned_version_id: id === DOC ? "v2" : "w1", pinned_rev_label: "1" }));
+    state.docs = [
+      docRow({ id: DOC2, document_number: "P-202", current_version_id: "w1", rev: "1", visibility: "private" }),
+      docRow({ id: DOC, visibility: "private", status: "Superseded" }),
+      docRow({ id: DOC3, document_number: "P-303", current_version_id: "w1", rev: "1", visibility: "hidden" }),
+    ];
+    const r = await verify(true);
+    const sheets = r.sheets as Array<Record<string, unknown>>;
+    expect(sheets.map((x) => [x.label, x.state])).toEqual([
+      ["Restricted document — sheet 1 of 3 in this pack", "fresh"],
+      ["Restricted document — sheet 2 of 3 in this pack", "superseded"],
+      ["Restricted document — sheet 3 of 3 in this pack", "fresh"],
+    ]);
+    expect(new Set(sheets.map((x) => x.label)).size).toBe(3);
+    expect(JSON.stringify(sheets)).not.toMatch(/P-101|P-202|P-303|P&ID/);
+    expect(r.verdict).toBe("stale");
+    const v = presentPackVerdict(r as unknown as PackVerifyResult);
+    expect(v.advice ?? "").not.toMatch(/cannot say which sheets/);
+    // a normal sheet beside them keeps its number (positions are only for the restricted)
+    state.docs[0] = { ...state.docs[0], visibility: "normal" };
+    const r2 = await verify(true);
+    expect((r2.sheets as Array<Record<string, unknown>>).map((x) => x.label)).toEqual([
+      "P-202", "Restricted document — sheet 2 of 3 in this pack", "Restricted document — sheet 3 of 3 in this pack",
+    ]);
+    const { restrictedSheetLabel } = await import("@/lib/verifyDisclosure");
+    expect(restrictedSheetLabel(3, 6)).toBe("Restricted document — sheet 3 of 6 in this pack");
+  });
+  it("a package member left off the paper is listed without its number either; a normal one (and a NULL visibility, the database's 'normal') keeps its label", async () => {
+    state.print = printAt([sheetV2]);
+    state.liveMembers.push({ document_id: DOC2, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1", status: "Draft", visibility: "hidden" }));
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "Restricted document", reason: "not_issued" }]);
+    state.docs = [docRow({ visibility: null })];
+    state.liveMembers = [{ document_id: DOC, pinned_version_id: "v2", pinned_rev_label: "4" }];
+    expect(((await verify(true)).sheets as Array<Record<string, unknown>>)[0].label).toBe("P-101");
+  });
+});
+
+describe("DACL-8 criterion 3 (intelligence I-12) — a cover QR without a print id answers the verdict without the live membership's numbers, titles or positions", () => {
+  // Review fix: the first build named each sheet "Sheet N" by its index in
+  // the live membership, which the route reads in NO order — the ordinal
+  // matched no sheet in the crew's folder. A legacy cover now COUNTS its
+  // sheets by state; no row names or numbers one.
+  const DOC4 = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+  const DOC5 = "abababab-abab-abab-abab-abababababab";
+  const DOC6 = "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd";
+  const member = (id: string, label: string, over: Record<string, unknown> = {}) => {
+    state.liveMembers.push({ document_id: id, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id, document_number: label, title: `${label} title`, name: label, current_version_id: "w1", rev: "1", ...over }));
+  };
+  const labels = (r: Record<string, unknown>) => (r.sheets as Array<Record<string, unknown>>).map((x) => x.label);
+
+  it("reproduction → fix: the reviewer's pack (1 superseded, 1 on hold, 4 in force) is answered as counts by state — no 'Sheet N', no number, no title", async () => {
+    state.docs = [docRow({ status: "Superseded" })];            // P-101
+    member(DOC2, "P-204");
+    state.holds = [{ document_id: DOC2, reason: "Client Review", released_at: null }];
+    member(DOC3, "P-301"); member(DOC4, "P-302"); member(DOC5, "P-303"); member(DOC6, "P-304");
+    const r = await verify(false);
+    const sheets = r.sheets as Array<Record<string, unknown>>;
+    // stop-work first, then withdrawn, then "printing unknown" — a fixed order, not the read order
+    expect(sheets.map((x) => [x.label, x.state])).toEqual([
+      ["1 of 6 sheets", "held"],
+      ["1 of 6 sheets", "superseded"],
+      ["4 of 6 sheets", "unconfirmed"],
+    ]);
+    expect(sheets[0].holdReasons).toEqual(["Client Review"]);
+    expect(sheets.every((x) => x.printedRev === null && x.currentRev === null)).toBe(true);
+    expect(labels(r).some((l) => /^Sheet \d/.test(String(l)))).toBe(false);
+    expect(JSON.stringify(r)).not.toMatch(/P-101|P-204|P-30\d|P&ID|title/);
+    // the verdict and the counts are the per-sheet ones, unchanged
+    expect(r.verdict).toBe("held");
+    expect(r.sheetCount).toBe(6);
+    expect(r.heldCount).toBe(1);
+    expect(r.staleCount).toBe(1);
+    expect(r.printConfirmed).toBe(false);
+    // the page's words never point at a sheet it cannot name
+    const v = presentPackVerdict(r as unknown as PackVerifyResult);
+    expect(v.advice).toMatch(/cannot say which sheets these are — do not work from any sheet in this pack/);
+    expect(v.blurb).toMatch(/counted below/);
+    const { sheetLabel } = await import("@/lib/verifyPresent");
+    expect(sheets.map((x) => sheetLabel(x as never).text)).toEqual(["ON HOLD · Client Review", "SUPERSEDED", "PRINTING UNKNOWN"]);
+  });
+
+  it("the answer does not depend on the order the membership is read in", async () => {
+    member(DOC2, "P-102", { status: "Draft" });
+    member(DOC3, "P-103", { status: "Void" });
+    const a = await verify(false);
+    state.liveMembers.reverse();
+    state.docs.reverse();
+    const b = await verify(false);
+    expect(b.sheets).toEqual(a.sheets);
+    expect((a.sheets as Array<Record<string, unknown>>).map((x) => [x.label, x.state])).toEqual([
+      ["1 of 3 sheets", "void"], ["1 of 3 sheets", "draft"], ["1 of 3 sheets", "unconfirmed"],
+    ]);
+    expect(a.verdict).toBe("stale");
+    expect(presentPackVerdict(a as unknown as PackVerifyResult).advice).toMatch(/cannot say which sheets/);
+  });
+
+  it("legacyCoverStateRows: one row per state, a count label, reasons merged, a fixed order", async () => {
+    const { legacyCoverStateRows, legacyCoverCountLabel } = await import("@/lib/verifyDisclosure");
+    expect(legacyCoverCountLabel(1, 1)).toBe("1 of 1 sheet");
+    expect(legacyCoverStateRows([])).toEqual([]);
+    const rows = legacyCoverStateRows([
+      { state: "unconfirmed", held: false, holdReasons: [], retired: false },
+      { state: "held", held: true, holdReasons: ["Safety"], retired: false },
+      { state: "held", held: true, holdReasons: ["Client Review", "Safety"], retired: false },
+      { state: "retired", held: false, holdReasons: [], retired: true },
+    ]);
+    expect(rows.map((x) => [x.label, x.state, x.held, x.retired, x.holdReasons])).toEqual([
+      ["2 of 4 sheets", "held", true, false, ["Safety", "Client Review"]],
+      ["1 of 4 sheets", "retired", false, true, []],
+      ["1 of 4 sheets", "unconfirmed", false, false, []],
+    ]);
+  });
+
+  it("regression: a cover QR that names its print still names every printed sheet, one row each", async () => {
+    state.print = printAt([sheetV2]);
+    const r = await verify(true);
+    expect((r.sheets as Array<Record<string, unknown>>)[0].label).toBe("P-101");
+    expect(r.verdict).toBe("current");
+    // and its advice is unchanged
+    state.docs = [docRow({ status: "Void" })];
+    const s = await verify(true);
+    expect(presentPackVerdict(s as unknown as PackVerifyResult).advice).not.toMatch(/cannot say which sheets/);
   });
 });

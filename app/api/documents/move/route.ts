@@ -13,7 +13,14 @@
 //   3. Retention: retention policy inherits doc → folder → library, and
 //      retention_until is MATERIALIZED — so a move re-clocks every moved
 //      doc against the destination's effective policy.
-//   4. Audit: one DOCS_MOVED entry with the count and destination.
+//   4. Access index: a document's acl_index is chain-resolved (DEC-10), so
+//      a move that changes its folder changes the rules it carries. The
+//      library's indexes are rebuilt from the live chain in the same
+//      request (intelligence DACL-1 criterion 3, the drawer's and the
+//      folder move's rebuild), so the database never enforces the OLD
+//      folder's rules until the nightly pass. A rebuild that reports an
+//      error says so (the nightly rebuild remains the backstop).
+//   5. Audit: one DOCS_MOVED entry with the count and destination.
 //
 // Knowledge-source scope: the client fires nudgeKnowledgeSources after this
 // returns (same library on both ends, so one nudge covers it); the sync
@@ -29,6 +36,7 @@ import {
   type RetentionDocRow,
 } from "@/lib/serverRetention";
 import type { RetentionPolicy } from "@/types/schema";
+import { rebuildAclIndexes } from "@/lib/aclIndexRebuild";
 
 export const runtime = "nodejs";
 
@@ -106,6 +114,20 @@ export async function POST(req: NextRequest) {
   const { libPolicy } = await loadDestinationPolicies(supabaseAdmin, libraryId, null);
   const reclock = await reclockRetentionForDocs(supabaseAdmin, docs, folderPolicy, libPolicy);
 
+  // DACL-1 c3: the moved documents now sit under another folder's rules —
+  // rebuild the library's chain-resolved acl_index now (only what changed is
+  // written), never leaving the old folder's grants and denies in force
+  // until the nightly rebuild.
+  let aclIndexErrors: string[] = [];
+  let aclIndexRebuilt = 0;
+  try {
+    const rebuilt = await rebuildAclIndexes(supabaseAdmin, Date.now(), { orgId, libraryId });
+    aclIndexErrors = rebuilt.errors;
+    aclIndexRebuilt = rebuilt.documents;
+  } catch (e) {
+    aclIndexErrors = [(e as Error)?.message ?? String(e)];
+  }
+
   await supabaseAdmin.from("audit_logs").insert({
     action: "DOCS_MOVED",
     resource_type: "collection", resource_id: targetFolderId ?? libraryId,
@@ -115,16 +137,25 @@ export async function POST(req: NextRequest) {
       retentionRecomputed: reclock.updated,
       retentionFailed: reclock.failed,
       ...(reclock.firstError ? { retentionError: reclock.firstError } : {}),
+      aclIndexRebuilt,
+      ...(aclIndexErrors.length > 0 ? { aclIndexError: aclIndexErrors[0] } : {}),
     },
   }).then(() => undefined, () => undefined);
+
+  const warnings: string[] = [];
+  if (reclock.failed > 0) {
+    warnings.push(`Moved, but ${reclock.failed} retention clock${reclock.failed === 1 ? "" : "s"} couldn't be recomputed (${reclock.firstError ?? "unknown error"}). They'll correct on the next retention pass.`);
+  }
+  if (aclIndexErrors.length > 0) {
+    warnings.push(`Moved, but the access index couldn't be fully rebuilt for the new folder (${aclIndexErrors[0]}), so the database may apply the old folder's access rules to these documents until the nightly rebuild.`);
+  }
 
   return NextResponse.json({
     ok: true,
     moved: docIds.length,
     retentionRecomputed: reclock.updated,
     retentionFailed: reclock.failed,
-    ...(reclock.failed > 0
-      ? { warning: `Moved, but ${reclock.failed} retention clock${reclock.failed === 1 ? "" : "s"} couldn't be recomputed (${reclock.firstError ?? "unknown error"}). They'll correct on the next retention pass.` }
-      : {}),
+    aclIndexRebuilt,
+    ...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
   });
 }

@@ -13,11 +13,40 @@
 //     can read, and adding a source re-verifies server-side.
 //
 // Evaluation uses the same lib/acl engine the app's screens use (single ACL
-// truth) — never a parallel re-implementation.
+// truth) — never a parallel re-implementation. The read decision itself is
+// lib/permissions canReadNode (IEDGE-12), the predicate the bytes door asks
+// too.
+//
+// KACL-12: the seam FAILS CLOSED on its own reads. loadPrincipal throws
+// PrincipalUnreadableError when the caller's membership or (for a
+// non-controller) teams cannot be read — a team deny is never dropped, and a
+// failed read is never told to anyone as "not a member" (I-12 second review
+// fix: it answered no principal, which every caller turned into 403 "Not a
+// member of this workspace", and share serving into "revoked"); routes
+// answer 503 "try again" (PRINCIPAL_UNREADABLE). loadDcLandscape throws
+// DcLandscapeUnreadableError when the libraries, folders or teams cannot be
+// read, and pages the container reads by keyset until an empty page (a row
+// cap never truncates the folder ACLs, and a row deleted mid-read never
+// shifts another out of the read); and a document or folder whose library or
+// folder is absent from the landscape is unreadable to everyone but a
+// controller (its chain is never evaluated with a rung missing).
+// readableControlledDocIds throws the same error when the documents' own rows
+// cannot be read (I-12 third review fix: that read's error was dropped and a
+// timeout read as "unreadable" — share serving then said "revoked" and wrote
+// `authority_lapsed` for a temporary failure).
+//
+// DACL-10 (review fix): the library rung is lib/libraryAccess
+// effectiveLibraryAclFromRow — the library's ACL, or, for a legacy row whose
+// ACL says nothing while its read list is restricted, the ACL that list
+// stands for — the one library check the documents home, the library page
+// and the bytes door ask too. Before it, a legacy library whose read list
+// named only HR, with a zero-rule ACL, said nothing here (lib/acl
+// aclSaysSomething) and every member's AI could read and offer it.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { evaluateAclChain } from "@/lib/acl";
+import { canReadNode } from "@/lib/permissions";
 import { resolveEffectiveOwner, type TeamSupervisor } from "@/lib/ownership";
+import { effectiveLibraryAclFromRow, LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 export interface KnowledgePrincipal {
@@ -31,22 +60,50 @@ export interface KnowledgePrincipal {
   teamIds: string[];
 }
 
-/** Load the principal (role + teams) the ACL engine evaluates against. */
+/** KACL-12 (I-12 second review fix): the caller's membership or teams could
+ *  not be read — a TEMPORARY condition, never a verdict. loadPrincipal throws
+ *  it; a route answers 503 with PRINCIPAL_UNREADABLE (never "Not a member"),
+ *  share serving answers "unavailable" (never "revoked"), and every other
+ *  caller that catches fails closed. */
+export class PrincipalUnreadableError extends Error {
+  constructor(readonly what: "membership" | "teams", detail: string) {
+    super(`Your ${what === "teams" ? "teams (and the access rules that name them)" : "membership"} could not be read: ${detail}`);
+    this.name = "PrincipalUnreadableError";
+  }
+}
+
+/** What a route answers (503) when loadPrincipal throws
+ *  PrincipalUnreadableError. */
+export const PRINCIPAL_UNREADABLE = "Couldn't check your access just now — try again.";
+
+/** Load the principal (role + teams) the ACL engine evaluates against.
+ *  `null` — refused by every caller — for a non-member (no active
+ *  membership row). THROWS PrincipalUnreadableError when the membership
+ *  cannot be read, and (KACL-12) when a non-controller's teams cannot be
+ *  read: a principal built without its teams would match no TEAM deny, so a
+ *  document denied to the caller's team would read as open — and an
+ *  unreadable row is not "not a member". A controller's teams decide nothing
+ *  (every evaluator short-circuits the controller tier, DEC-2 / DEC-43), so a
+ *  controller still loads, with no teams. */
 export async function loadPrincipal(orgId: string, uid: string): Promise<KnowledgePrincipal | null> {
-  const [{ data: member }, { data: teams }] = await Promise.all([
+  const [{ data: member, error: memberErr }, { data: teams, error: teamsErr }] = await Promise.all([
     supabaseAdmin.from("org_members").select("role, roles")
       .eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle(),
     supabaseAdmin.from("team_members").select("team_id").eq("uid", uid),
   ]);
+  if (memberErr) throw new PrincipalUnreadableError("membership", memberErr.message ?? String(memberErr));
   if (!member) return null;
   const roles = new Set<string>([member.role as string, ...((member.roles as string[]) ?? [])]);
+  if (teamsErr && !(roles.has("Admin") || roles.has("DocCtrl"))) {
+    throw new PrincipalUnreadableError("teams", teamsErr.message ?? String(teamsErr));
+  }
   return {
     uid,
     orgId,
     role: (member.role as Role) ?? ("Viewer" as Role),
     roles: [...roles].filter(Boolean) as Role[],
     isController: roles.has("Admin") || roles.has("DocCtrl"),
-    teamIds: (teams ?? []).map((t) => t.team_id as string),
+    teamIds: teamsErr ? [] : (teams ?? []).map((t) => t.team_id as string),
   };
 }
 
@@ -59,23 +116,28 @@ type ContainerNode = {
   owner_user_id?: string | null;
 };
 
-/** Read-decision for one node given its ancestor ACL chain. Default-allow
- *  (matching the app's screens) EXCEPT hidden nodes, which need an explicit
- *  grant to surface. */
-function chainReadable(
+/** Read-decision for one node given its ancestor ACL chain: lib/permissions
+ *  canReadNode asking `read` (IEDGE-12 — the one predicate). A controller and
+ *  the effective owner read (DEL-2; loadPrincipal only returns ACTIVE
+ *  members, so a departed owner never reaches here); wherever the chain says
+ *  something, `read` must be granted — on a HIDDEN node too: a discover-only
+ *  grant lets a person know the document exists, never lets the AI read it
+ *  (KACL-3; canBlindDrill's both-of semantics); with no ACL anywhere only a
+ *  NORMAL node is open — hidden AND private ones are not (KACL-11, matching
+ *  canDiscover). Exported so a caller judging one node asks the same
+ *  question the seam asks. */
+export function chainReadable(
   chain: Array<AccessControl | null | undefined>,
   visibility: NodeVisibility | null | undefined,
   principal: KnowledgePrincipal,
   effectiveOwnerUid?: string | null,
+  /** A private draft's creator (canReadNode's `privateDraft`) — omit for any
+   *  other row. */
+  privateDraft?: { createdBy: string | null } | null,
 ): boolean {
   if (principal.isController) return true;
-  // DEL-2: the effective owner reads their own node, whatever the ACL says —
-  // the same arm lib/permissions.ts and node_visible carry. (loadPrincipal
-  // only returns ACTIVE members, so a departed owner never reaches here.)
-  if (effectiveOwnerUid && effectiveOwnerUid === principal.uid) return true;
-  const decision = evaluateAclChain(
-    chain.map((a) => a ?? undefined),
-    {
+  return canReadNode({
+    principal: {
       uid: principal.uid,
       role: principal.role,
       roles: principal.roles,
@@ -83,48 +145,109 @@ function chainReadable(
       teamIds: principal.teamIds,
       isActiveMember: true,
     },
-  );
-  if (decision) {
-    if (visibility === "hidden") return decision.can("read") || decision.isDiscoverable();
-    return decision.can("read");
-  }
-  return visibility !== "hidden";
+    aclChain: chain,
+    visibility: visibility ?? null,
+    effectiveOwnerUserId: effectiveOwnerUid ?? null,
+    actions: ["read"],
+    privateDraft: privateDraft ?? null,
+  });
 }
 
+/** KACL-12: the landscape could not be read in full — a libraries, folders
+ *  or teams read failed — or (`what: "documents"`, I-12 third review fix)
+ *  readableControlledDocIds could not read the documents' own rows. Every
+ *  caller fails closed on it: the readable set is never computed from a
+ *  partial read (readableControlledDocIds lets it propagate to its callers,
+ *  which drop everything controlled; share serving answers "unavailable",
+ *  never "revoked"), and the direct callers answer 503 or skip the library.
+ *  A TEMPORARY condition, never a verdict. */
+export class DcLandscapeUnreadableError extends Error {
+  constructor(readonly what: "libraries" | "folders" | "teams" | "documents", detail: string) {
+    super(`${what === "documents" ? "The documents" : `The document ${what}`} (and their access rules) could not be read: ${detail}`);
+    this.name = "DcLandscapeUnreadableError";
+  }
+}
+
+/** Rows per container read. Each read pages by KEYSET on `id` until it
+ *  holds every row (KACL-12 done-when 4): each page asks for the rows whose
+ *  id is greater than the last one read, and only an EMPTY page ends the
+ *  read — so a project max-rows BELOW this page size (a short page that is
+ *  not the last) never truncates the landscape, and (I-12 second review fix)
+ *  a row deleted while the landscape is read never shifts another out of
+ *  the read. Offset windows did: a folder deleted mid-read pushed the next
+ *  one out of every window, and the knowledge sync, which builds a library's
+ *  folder list from this landscape, then removed that folder's documents'
+ *  mirrors. The rows are also kept strictly ascending here, so a page that
+ *  repeats an id already read (a stand-in that ignores the bound) ends the
+ *  read instead of looping. */
+export const DC_LANDSCAPE_PAGE = 1000;
+
+async function readAllPages(
+  table: "libraries" | "collections" | "teams",
+  columns: string,
+  orgId: string,
+): Promise<Array<Record<string, unknown>>> {
+  const what = table === "collections" ? "folders" : table;
+  const out: Array<Record<string, unknown>> = [];
+  let lastId: string | null = null;
+  for (;;) {
+    let q = supabaseAdmin.from(table).select(columns).eq("org_id", orgId);
+    if (lastId !== null) q = q.gt("id", lastId);
+    const { data, error } = await q.order("id", { ascending: true }).limit(DC_LANDSCAPE_PAGE);
+    if (error) throw new DcLandscapeUnreadableError(what, error.message ?? String(error));
+    const rows = ((data ?? []) as unknown as Array<Record<string, unknown>>)
+      .filter((r) => lastId === null || String(r.id) > lastId);
+    if (rows.length === 0) return out;
+    out.push(...rows);
+    lastId = String(rows[rows.length - 1].id);
+  }
+}
+
+type LandscapeFolder = ContainerNode & { name: string; library_id: string; path_names: string[] };
+
 /** The document-control landscape needed for chain evaluation, fetched once
- *  per request. */
+ *  per request. THROWS DcLandscapeUnreadableError when any of its reads fails
+ *  (KACL-12): a map missing a library or a folder would evaluate a chain
+ *  without that rung's ACL. */
 export async function loadDcLandscape(orgId: string): Promise<{
   libraries: Map<string, ContainerNode & { name: string; owner_team_id?: string | null }>;
-  folders: Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>;
+  /** Live folders — the containers a picker may offer. */
+  folders: Map<string, LandscapeFolder>;
+  /** Folders in the 30-day trash. Never offered as containers, but their ACL
+   *  still rides the chain of whatever sits below them (a document whose
+   *  folder is in the trash is judged under that folder's rules, never
+   *  without them). Optional so a hand-built landscape needs no entry. */
+  trashedFolders?: Map<string, LandscapeFolder>;
   /** team id → supervisor, the last rung of the ownership cascade (the
    *  shape the one resolver takes — OWN-16). */
   teamSupervisors: Map<string, TeamSupervisor>;
 }> {
   // collections is select("*") so the trash filter works before AND after
   // migration 20261011 (naming deleted_at explicitly would 42703 pre-migration).
-  const [libsRes, foldersRes, teamsRes] = await Promise.all([
-    supabaseAdmin.from("libraries").select("id, name, acl, visibility, owner_user_id, owner_team_id").eq("org_id", orgId),
-    supabaseAdmin.from("collections").select("*").eq("org_id", orgId),
-    supabaseAdmin.from("teams").select("id, supervisor_user_id").eq("org_id", orgId),
+  const [libRows, folderRows, teamRows] = await Promise.all([
+    readAllPages("libraries", `id, name, owner_user_id, owner_team_id, ${LIBRARY_RUNG_COLUMNS}`, orgId),
+    readAllPages("collections", "*", orgId),
+    readAllPages("teams", "id, supervisor_user_id", orgId),
   ]);
   const libraries = new Map<string, ContainerNode & { name: string; owner_team_id?: string | null }>();
-  for (const l of libsRes.data ?? []) {
+  for (const l of libRows) {
     libraries.set(l.id as string, {
       name: (l.name as string) ?? "Library",
-      acl: (l.acl as AccessControl) ?? null,
+      // DACL-10: the effective rung (a legacy read list binds — see the header).
+      acl: effectiveLibraryAclFromRow(l) ?? null,
       visibility: (l.visibility as NodeVisibility) ?? null,
       owner_user_id: (l.owner_user_id as string | null) ?? null,
       owner_team_id: (l.owner_team_id as string | null) ?? null,
     });
   }
   const teamSupervisors = new Map<string, TeamSupervisor>();
-  for (const t of teamsRes.data ?? []) {
+  for (const t of teamRows) {
     if (t.supervisor_user_id) teamSupervisors.set(t.id as string, { userId: t.supervisor_user_id as string });
   }
-  const folders = new Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>();
-  for (const c of foldersRes.data ?? []) {
-    if ((c as Record<string, unknown>).deleted_at) continue; // in the 30-day trash
-    folders.set(c.id as string, {
+  const folders = new Map<string, LandscapeFolder>();
+  const trashedFolders = new Map<string, LandscapeFolder>();
+  for (const c of folderRows) {
+    const node: LandscapeFolder = {
       name: (c.name as string) ?? "Folder",
       library_id: c.library_id as string,
       parent_id: (c.parent_id as string | null) ?? null,
@@ -132,9 +255,13 @@ export async function loadDcLandscape(orgId: string): Promise<{
       visibility: (c.visibility as NodeVisibility) ?? null,
       owner_user_id: (c.owner_user_id as string | null) ?? null,
       path_names: (c.path_names as string[]) ?? [],
-    });
+    };
+    // In the 30-day trash: not a container anyone is offered, but its ACL
+    // stays on the chain below it.
+    if (c.deleted_at) trashedFolders.set(c.id as string, node);
+    else folders.set(c.id as string, node);
   }
-  return { libraries, folders, teamSupervisors };
+  return { libraries, folders, trashedFolders, teamSupervisors };
 }
 
 /** DEL-2: the effective owner of a node — document owner, else the nearest
@@ -145,14 +272,14 @@ export function effectiveOwnerFor(
   docOwner: string | null | undefined,
   folderId: string | null | undefined,
   libraryId: string | null | undefined,
-  landscape: Pick<Awaited<ReturnType<typeof loadDcLandscape>>, "libraries" | "folders" | "teamSupervisors">,
+  landscape: Pick<Awaited<ReturnType<typeof loadDcLandscape>>, "libraries" | "folders" | "trashedFolders" | "teamSupervisors">,
 ): string | null {
   let folderOwner: string | null = null;
   let cur = folderId ?? null;
   const seen = new Set<string>();
   while (cur && !seen.has(cur)) {
     seen.add(cur);
-    const f = landscape.folders.get(cur);
+    const f = landscape.folders.get(cur) ?? landscape.trashedFolders?.get(cur);
     if (!f) break;
     if (f.owner_user_id) { folderOwner = f.owner_user_id; break; }
     cur = f.parent_id ?? null;
@@ -167,26 +294,41 @@ export function effectiveOwnerFor(
   ).userId;
 }
 
+/** A folder by id, live or in the trash — for chain resolution only. */
+function anyFolder(
+  id: string,
+  landscape: Awaited<ReturnType<typeof loadDcLandscape>>,
+): LandscapeFolder | undefined {
+  return landscape.folders.get(id) ?? landscape.trashedFolders?.get(id);
+}
+
 /** Build the ACL chain for a folder: library ACL, then ancestors top-down,
- *  then the folder itself. Cycle-guarded. */
+ *  then the folder itself. Cycle-guarded. `null` — the chain cannot be
+ *  evaluated, so nothing below it is readable to a non-controller — when the
+ *  folder, any ancestor its parent pointers name, or its library is absent
+ *  from the landscape (KACL-12 done-when 3: a chain is never evaluated with a
+ *  rung missing; before, the walk stopped at the gap and the library's ACL
+ *  fell back to "none", dropping their rules). A parent cycle stops the walk
+ *  where it closes, as before. */
 function folderChain(
   folderId: string,
   landscape: Awaited<ReturnType<typeof loadDcLandscape>>,
 ): { chain: Array<AccessControl | null>; visibility: NodeVisibility | null } | null {
-  const folder = landscape.folders.get(folderId);
+  const folder = anyFolder(folderId, landscape);
   if (!folder) return null;
   const lineage: Array<AccessControl | null> = [];
   let cur: string | null = folderId;
   const seen = new Set<string>();
   while (cur && !seen.has(cur)) {
     seen.add(cur);
-    const node = landscape.folders.get(cur);
-    if (!node) break;
+    const node = anyFolder(cur, landscape);
+    if (!node) return null;
     lineage.unshift(node.acl);
     cur = node.parent_id ?? null;
   }
   const lib = landscape.libraries.get(folder.library_id);
-  return { chain: [lib?.acl ?? null, ...lineage], visibility: folder.visibility };
+  if (!lib) return null;
+  return { chain: [lib.acl ?? null, ...lineage], visibility: folder.visibility };
 }
 
 /** Is one doc-control container (library or folder) readable? */
@@ -201,10 +343,14 @@ export function containerReadable(
     if (!lib) return false;
     return chainReadable([lib.acl], lib.visibility, principal, effectiveOwnerFor(null, null, id, landscape));
   }
-  const fc = folderChain(id, landscape);
-  if (!fc) return false;
+  // A folder in the trash is never offered as a container.
   const folder = landscape.folders.get(id);
-  return chainReadable(fc.chain, fc.visibility, principal, effectiveOwnerFor(null, id, folder?.library_id, landscape));
+  if (!folder) return false;
+  const fc = folderChain(id, landscape);
+  // A rung missing (its library, or an ancestor its parent pointers name):
+  // unreadable to everyone but a controller (DEC-43).
+  if (!fc) return principal.isController;
+  return chainReadable(fc.chain, fc.visibility, principal, effectiveOwnerFor(null, id, folder.library_id, landscape));
 }
 
 /** All folder ids in the subtree rooted at folderId (inclusive). */
@@ -242,8 +388,44 @@ type DocAclRow = {
   owner_user_id?: string | null;
 };
 
+/** The ACL chain above one controlled document (its library's ACL, then its
+ *  folder lineage), or `null` when a rung it names is absent from the
+ *  landscape — its library, its folder, or an ancestor (KACL-12 done-when 3:
+ *  never evaluated without that rung). A document in no folder needs only
+ *  its library. */
+function documentContainerChain(
+  doc: Pick<DocAclRow, "library_id" | "collection_id">,
+  landscape: Awaited<ReturnType<typeof loadDcLandscape>>,
+): Array<AccessControl | null> | null {
+  if (doc.collection_id) {
+    const fc = folderChain(doc.collection_id, landscape);
+    if (!fc) return null;
+    const folder = anyFolder(doc.collection_id, landscape);
+    // The document's own library, when it names one, must be there too.
+    if (doc.library_id && doc.library_id !== folder?.library_id) {
+      const own = landscape.libraries.get(doc.library_id);
+      if (!own) return null;
+      return [own.acl ?? null, ...fc.chain.slice(1)];
+    }
+    return fc.chain;
+  }
+  const lib = doc.library_id ? landscape.libraries.get(doc.library_id) : undefined;
+  if (!lib) return null;
+  return [lib.acl ?? null];
+}
+
 /** Which of these CONTROLLED documents can this principal read? Evaluates
- *  the full chain (library → folder lineage → document) per doc. */
+ *  the full chain (library → folder lineage → document) per doc.
+ *
+ *  KACL-12: THROWS DcLandscapeUnreadableError when the landscape cannot be
+ *  read in full, or (I-12 third review fix) when the documents' own rows
+ *  cannot be read — every caller already fails closed on a throw (the
+ *  orchestrator's tools and chips, the ask route, drawing, locate, share
+ *  serving and listing, the history filter, /api/flows/browse), and share
+ *  serving (lib/shareAuthorization shareAuthority) tells it apart as
+ *  "unknown" — 503 "unavailable", never "revoked". A document whose library
+ *  or folder is absent from the landscape is not readable; a document id
+ *  with no row (deleted, or another org's) is not readable. */
 export async function readableControlledDocIds(
   principal: KnowledgePrincipal,
   docIds: string[],
@@ -255,21 +437,27 @@ export async function readableControlledDocIds(
   const landscape = await loadDcLandscape(principal.orgId);
   const docs: DocAclRow[] = [];
   for (let i = 0; i < docIds.length; i += 100) {
-    const { data } = await supabaseAdmin
+    // A failed read of the documents' own rows THROWS (I-12 third review
+    // fix): it read as "no rows" — closed, but a caller could not tell a
+    // timeout from "not readable", so share serving answered "revoked" and
+    // recorded `authority_lapsed` for a temporary failure.
+    const { data, error } = await supabaseAdmin
       .from("documents")
       .select("id, library_id, collection_id, acl, visibility, is_private, scope, created_by, owner_user_id")
       .in("id", docIds.slice(i, i + 100));
+    if (error) throw new DcLandscapeUnreadableError("documents", error.message ?? String(error));
     docs.push(...((data ?? []) as DocAclRow[]));
   }
 
   for (const doc of docs) {
-    // Private drafts belong to their creator alone.
-    if ((doc.is_private || doc.scope === "private") && doc.created_by !== principal.uid) continue;
-    const lib = doc.library_id ? landscape.libraries.get(doc.library_id) : null;
-    const fc = doc.collection_id ? folderChain(doc.collection_id, landscape) : null;
-    const chain = [lib?.acl ?? null, ...(fc?.chain.slice(1) ?? []), doc.acl];
+    const above = documentContainerChain(doc, landscape);
+    if (!above) continue;
+    const chain = [...above, doc.acl];
     const owner = effectiveOwnerFor(doc.owner_user_id, doc.collection_id, doc.library_id, landscape);
-    if (chainReadable(chain, doc.visibility, principal, owner)) readable.add(doc.id);
+    // Private drafts belong to their creator alone — the one predicate's
+    // rule (IEDGE-12: the bytes door asks the same).
+    const privateDraft = doc.is_private || doc.scope === "private" ? { createdBy: doc.created_by } : null;
+    if (chainReadable(chain, doc.visibility, principal, owner, privateDraft)) readable.add(doc.id);
   }
   return readable;
 }

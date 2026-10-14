@@ -169,16 +169,19 @@ async function gateVerdict(): Promise<{ status: number; recorded: number }> {
 
 beforeEach(() => { seed(MEMBERS.viewer, DOCS.normal); });
 
-// Where the gate is STRICTER than today's egress route, by design: the
-// egress route evaluates only the document's own ACL, only for private /
-// hidden documents, and reads no org-subject deny (intelligence KACL-5). Every
-// other fixture decides — and records — alike.
-const STRICTER_THAN_EGRESS = new Set([
-  // An allow-list on a normal document binds (SEC-10's own scenario).
-  "viewer × normalOthersOnly", "manager × normalOthersOnly",
-  // …so a controller served it only by the tier is recorded (DEC-43).
-  "additiveDocCtrl × normalOthersOnly", "admin × normalOthersOnly",
-  // An org-subject download deny binds everyone, the owner included.
+// Where the gate is STRICTER than the egress route. Until intelligence KACL-5
+// the egress route evaluated only the document's own ACL, only for private /
+// hidden documents, and read no org-subject deny, so this named the allow-list
+// cases on a normal document (and their DEC-43 record for a controller) too.
+// KACL-5 (intelligence I-12, 2026-10-14) brought the egress route to the same
+// chain and the same predicate (lib/permissions canServeContent → canReadNode,
+// the container chain from loadContainerAclChain): those now decide — and
+// record — alike. One divergence stays, by design: the egress route applies
+// the download deny through lib/downloadDeny (users, roles, teams — the rule
+// the public share routes and its SQL twin user_download_denied share, SHR-3 /
+// SHR-14), which names no org subject; the gate also reads an org-subject
+// download deny.
+const STRICTER_THAN_EGRESS = new Set<string>([
   ...Object.keys(MEMBERS).flatMap((who) => [`${who} × orgDownloadDeny`, `${who} × orgDownloadDeny × effective owner`]),
 ]);
 
@@ -247,11 +250,11 @@ describe("SEC-10: the full chain — library → ancestor folders → folder →
   };
   const setAncestors = (rows: Array<{ id: string; acl: unknown }>) => { state.tables.collections = { data: rows }; };
 
-  it("(a) a normal document with an allow-list for team-A: 403 outside team-A, 200 inside — the egress route serves both today (KACL-5)", async () => {
+  it("(a) a normal document with an allow-list for team-A: 403 outside team-A, 200 inside — and since KACL-5 the egress route decides the same", async () => {
     seed(VIEWER, { acl: teamGrant("team-A", ["discover", "read"]) });
     expect((await gateVerdict()).status).toBe(403);
     seed(VIEWER, { acl: teamGrant("team-A", ["discover", "read"]) });
-    expect((await egressVerdict()).status).toBe(200);
+    expect((await egressVerdict()).status).toBe(403);
     seed(VIEWER, { acl: teamGrant("team-A", ["discover", "read"]) });
     inTeam("team-A");
     expect((await gateVerdict()).status).toBe(200);
@@ -279,7 +282,7 @@ describe("SEC-10: the full chain — library → ancestor folders → folder →
     expect((await gateVerdict()).status).toBe(200);
   });
 
-  it("(b) a private document whose read grant is INHERITED from its library serves a team-A member (200) — the egress route refuses today (KACL-5)", async () => {
+  it("(b) a private document whose read grant is INHERITED from its library serves a team-A member (200) — and since KACL-5 the egress route serves it too (it refused, reading only the document's own ACL)", async () => {
     seed(VIEWER, { visibility: "private" });
     setLibrary(teamGrant("team-A", ["discover", "read"]));
     inTeam("team-A");
@@ -287,7 +290,7 @@ describe("SEC-10: the full chain — library → ancestor folders → folder →
     seed(VIEWER, { visibility: "private" });
     setLibrary(teamGrant("team-A", ["discover", "read"]));
     inTeam("team-A");
-    expect((await egressVerdict()).status).toBe(403);
+    expect((await egressVerdict()).status).toBe(200);
   });
 
   it("an inherited DISCOVER-only grant on a private document is not enough (DOCACL-5)", async () => {

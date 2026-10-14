@@ -12,8 +12,9 @@
 //
 //   1. token shape → share row → revoked / expired (410)
 //   2. the document, org-joined (EGRESS-1) — a cross-org share is a 404
-//   3. the CREATOR's current authority (EGRESS-1 dw4) — lapsed is a 410:
-//      they can still read the document (shareStillAuthorized), are not
+//   3. the CREATOR's current authority (EGRESS-1 dw4) — lapsed is a 410
+//      (a check that could not be made is a 503 "unavailable", never a
+//      lapse — KACL-12): they can still read the document (shareAuthority), are not
 //      named by an explicit ACL download deny on it (the member download
 //      route's rule, lib/downloadDeny.ts — SHR-3), AND still hold the
 //      minting tier (DEC-46 §1 — a controller by the role collection, or a
@@ -50,11 +51,12 @@
 // discriminated result the routes turn into responses.
 
 import type { supabase } from "@/lib/supabase";
+import type { AckPolicy } from "@/types/schema";
 import { assertNotOnHold, isHoldBlockedError, type HoldBlockedError } from "@/lib/holdGate";
 import { publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK } from "@/lib/holds";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";
-import { shareStillAuthorized } from "@/lib/shareAuthorization";
+import { shareAuthority } from "@/lib/shareAuthorization";
 import { resolveServedVersion, shareStatusRefusal, versionServable, type ServableVersion } from "@/lib/shareRules";
 
 /** A service-role client (createClient(...) in the route) — `.from()` and `.rpc()`. */
@@ -101,6 +103,13 @@ export type ShareServeResult =
   | { ok: true; share: ShareRow; doc: ShareDocument; version: ServableVersion | null };
 
 const refuse = (status: number, body: ShareRefusal["body"]): ShareRefusal => ({ ok: false, status, body });
+
+/** DACL-4: the words for a link that cannot serve right now but has not been
+ *  revoked — its creator has a hard read-&-understood acknowledgment
+ *  outstanding on a re-issued document (it serves again once they sign). */
+export const SHARE_UNAVAILABLE_ACK = "This link is temporarily unavailable — ask the person who sent it.";
+/** …and when that check could not be made. */
+export const SHARE_UNAVAILABLE_UNREADABLE = "This link couldn't be checked just now — try again later, or ask the person who sent it.";
 
 export { shareStatusRefusal, versionServable };
 
@@ -154,7 +163,16 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
 
   // Serve only on the creator's CURRENT authority (EGRESS-1 dw4): if they
   // left the org or lost read access to this document, the link is dead.
-  if (!(await shareStillAuthorized(s.org_id, s.created_by, d.id))) return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
+  // KACL-12 (I-12 second review fix): a check that could not be made — the
+  // creator's membership, teams or the document's chain unreadable — is a
+  // TEMPORARY condition: 503 "unavailable", recorded as
+  // `authority_unverified`, never "revoked" / `authority_lapsed`.
+  const authority = await shareAuthority(s.org_id, s.created_by, d.id);
+  if (authority === "unknown") {
+    console.error("[share] creator's authority could not be checked — share refused", { share: s.id, document: d.id });
+    return refuseKnown(503, { error: "unavailable", reason: SHARE_UNAVAILABLE_UNREADABLE, unreadable: true }, "authority_unverified");
+  }
+  if (authority !== "ok") return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
   // ... and on their CURRENT sharing authority (DEC-46 §1): no download
   // deny names them, and the tier that lets a copy out is checked when the
   // copy leaves, not only when the link was minted.
@@ -173,6 +191,49 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
       return refuseKnown(423, { error: "on_hold", reason: publicShareHoldReason(e), unreadable: e.unreadable, documentStatus: d.status ?? undefined }, "on_hold");
     }
     throw e;
+  }
+
+  // DACL-4 (intelligence I-12): the documents-row LEGAL hold refuses too —
+  // a document preserved for a legal matter does not leave the organisation
+  // through a public link (/api/verify already reads it as held). Read
+  // apart from the row above so a database without the column (42703 /
+  // PGRST204) serves exactly as before; any other read error refuses as
+  // held, as the hold gate above does (fail closed).
+  const extra = await sb
+    .from("documents")
+    .select("legal_hold, collection_id, ack_policy")
+    .eq("id", d.id)
+    .maybeSingle();
+  const extraErr = extra.error as { code?: string; message?: string } | null;
+  const extraMissing = !!extraErr && (extraErr.code === "42703" || extraErr.code === "PGRST204");
+  if (extraErr && !extraMissing) {
+    console.error("[share] legal hold unreadable — share refused as held", { share: s.id, document: d.id, message: extraErr.message });
+    return refuseKnown(423, { error: "on_hold", reason: "This document's hold status could not be confirmed, so it is being treated as on hold.", unreadable: true, documentStatus: d.status ?? undefined }, "on_hold");
+  }
+  const extraRow = (extraMissing ? null : extra.data) as { legal_hold?: boolean | null; collection_id?: string | null; ack_policy?: unknown } | null;
+  if (extraRow?.legal_hold === true) {
+    return refuseKnown(423, { error: "on_hold", reason: "This document is under a legal hold.", documentStatus: d.status ?? undefined }, "legal_hold");
+  }
+  // DACL-4: the hard read-&-understood gate binds the SHARER — a link never
+  // lets out a copy its creator could not download themselves (the member
+  // download rail's rule, lib/downloads ackGateDocuments: a PENDING
+  // acknowledgment assigned to the creator, under an effective policy —
+  // document > folder > library, lib/acknowledgments resolveEffectiveAckPolicy
+  // — that is enabled with hardGate). Read here through this door's own
+  // client. Undecided (a read failed) refuses too: a copy leaving the
+  // organisation fails closed, as the field pack and the book do.
+  // I-12 review fix: the refusal says what it is — a TEMPORARY condition
+  // (it clears when the creator signs), never "revoked": 409 "unavailable"
+  // with an honest sentence; a gate that could not be read answers 503.
+  if (s.created_by && d.library_id) {
+    const gate = await creatorAckGate(sb, d.id, d.library_id, s.created_by, extraRow?.collection_id ?? null, extraRow?.ack_policy ?? null);
+    if (gate === "unknown") {
+      console.error("[share] acknowledgment gate unreadable — share refused", { share: s.id, document: d.id });
+      return refuseKnown(503, { error: "unavailable", reason: SHARE_UNAVAILABLE_UNREADABLE, unreadable: true }, "acknowledgment_unverified");
+    }
+    if (gate === "gated") {
+      return refuseKnown(409, { error: "unavailable", reason: SHARE_UNAVAILABLE_ACK }, "acknowledgment_outstanding");
+    }
   }
 
   // The version — the one rule (lib/shareRules.ts), shared with the modal.
@@ -299,4 +360,46 @@ export async function recordShareAccess(
     return { error: error.message || "access row not written" };
   }
   return { error: null };
+}
+
+/** DACL-4: is the share's creator held by a hard acknowledgment gate on this
+ *  document? "gated" / "clear", or "unknown" when a read failed (the caller
+ *  refuses — fail closed). Every read is checked: supabase-js resolves with
+ *  `{ error }` rather than throwing. */
+async function creatorAckGate(
+  sb: ShareServeClient,
+  documentId: string,
+  libraryId: string,
+  userId: string,
+  collectionId: string | null,
+  docPolicy: unknown,
+): Promise<"gated" | "clear" | "unknown"> {
+  try {
+    const pending = await sb
+      .from("document_acknowledgments")
+      .select("document_id")
+      .eq("document_id", documentId)
+      .eq("assignee_user_id", userId)
+      .eq("status", "pending")
+      .limit(1);
+    if (pending.error) return "unknown";
+    if (((pending.data as unknown[] | null) ?? []).length === 0) return "clear";
+    let folderPolicy: AckPolicy | null = null;
+    if (collectionId) {
+      const f = await sb.from("collections").select("ack_policy").eq("id", collectionId).maybeSingle();
+      if (f.error) return "unknown";
+      folderPolicy = ((f.data as { ack_policy?: AckPolicy | null } | null)?.ack_policy) ?? null;
+    }
+    const l = await sb.from("libraries").select("ack_policy").eq("id", libraryId).maybeSingle();
+    if (l.error) return "unknown";
+    const libraryPolicy = ((l.data as { ack_policy?: AckPolicy | null } | null)?.ack_policy) ?? null;
+    // lib/acknowledgments resolveEffectiveAckPolicy's rule, inlined so this
+    // door does not load that module's notification / signing imports: the
+    // most specific DEFINED level wins; enabled:false there means none.
+    const defined = [(docPolicy as AckPolicy | null) ?? null, folderPolicy, libraryPolicy].find((p) => !!p) ?? null;
+    const policy = defined?.enabled ? defined : null;
+    return policy?.enabled && policy.hardGate ? "gated" : "clear";
+  } catch {
+    return "unknown";
+  }
 }

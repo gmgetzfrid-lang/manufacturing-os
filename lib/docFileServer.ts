@@ -37,6 +37,7 @@ import {
   canDiscover, canWithAclChain, heldRoles, isControllerRole, type Principal,
 } from "@/lib/permissions";
 import { normalizeRoles } from "@/lib/roleCapabilities";
+import { effectiveLibraryAclFromRow, LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
 import type { AccessControl, NodeVisibility, PermissionAction, Role } from "@/types/schema";
 
 export interface ResolvedDocFile {
@@ -160,11 +161,16 @@ export async function loadContainerAclChain(
     folders.push((f.acl ?? undefined) as AccessControl | undefined);
   }
   if (!libraryId) throw new BrokenAclChainError("library", null);
+  // intelligence DACL-10 (I-12 review fix): the library rung is
+  // lib/libraryAccess effectiveLibraryAclFromRow — the library's ACL, or, for
+  // a legacy row whose ACL says nothing while its read list is restricted, the
+  // ACL that list stands for: the one library check the library page and the
+  // AI seam (lib/knowledgeAccess loadDcLandscape) apply too.
   const { data: lib, error: libErr } = await supabaseAdmin
-    .from("libraries").select("id, acl").eq("org_id", orgId).eq("id", libraryId).maybeSingle();
+    .from("libraries").select(`id, ${LIBRARY_RUNG_COLUMNS}`).eq("org_id", orgId).eq("id", libraryId).maybeSingle();
   if (libErr) throw new Error("The document's library could not be read.");
   if (!lib) throw new BrokenAclChainError("library", libraryId);
-  return [((lib as { acl?: unknown }).acl ?? undefined) as AccessControl | undefined, ...folders];
+  return [effectiveLibraryAclFromRow(lib as Record<string, unknown>), ...folders];
 }
 
 type DenyBuckets = {

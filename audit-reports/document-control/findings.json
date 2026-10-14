@@ -24,8 +24,8 @@
       "LOW": 26
     },
     "by_status": {
-      "RESOLVED": 160,
-      "OPEN": 11
+      "RESOLVED": 161,
+      "OPEN": 10
     }
   },
   "status_vocabulary": [
@@ -4343,7 +4343,7 @@
       "id": "REV-30",
       "title": "After 20261205 the metadata editor's two read-failed sentences say no issue record was written, though the database wrote one",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (the sentence at `app/(protected)/documents/[libraryId]/page.tsx:2847` on `596d34e`; 20261205's trigger driven on PostgreSQL 16 — `REV-19`'s record)",
       "blast_radius": null,

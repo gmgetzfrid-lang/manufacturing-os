@@ -66,6 +66,10 @@ const displayName = (d: DcDocRow): string => {
   return title || number || "Document";
 };
 
+/** Rows per page of the held-back read (KACL-10; keyset, until an empty
+ *  page — a project max-rows below it only makes more pages). */
+export const HELD_BACK_PAGE = 1000;
+
 const isPdf = (fileUrl: string | null, fileType: string | null): boolean => {
   if ((fileType ?? "").toLowerCase().includes("pdf")) return true;
   return (fileUrl ?? "").toLowerCase().endsWith(".pdf");
@@ -87,7 +91,18 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   if (sources.length === 0) return out;
   const orgId = sources[0].org_id;
 
-  const landscape = await loadDcLandscape(orgId);
+  // KACL-12: a landscape that could not be read in full never drives a
+  // reconcile. With the folders missing, a library source's subfolder
+  // documents fell out of `wanted` and the REMOVE pass below deleted their
+  // mirrors (the next good sync re-ingested and re-embedded them). Now the
+  // library is skipped — nothing added, refreshed or removed — and says why.
+  let landscape: Awaited<ReturnType<typeof loadDcLandscape>>;
+  try {
+    landscape = await loadDcLandscape(orgId);
+  } catch (e) {
+    out.errors.push(`landscape: ${(e as Error)?.message ?? String(e)} — this library was not reconciled (nothing added or removed)`);
+    return out;
+  }
 
   // ── Self-heal display names ─────────────────────────────────────────────
   // source_name is a denormalized snapshot from link time; matching is by id
@@ -130,12 +145,38 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   // confidential report. Enforced HERE, at the only door into the knowledge
   // side, so an excluded document is never mirrored, chunked, or retrievable.
   const aiExcluded = new Set<string>();
+  // Whether the column exists (pre-20260807 it does not): the post-insert
+  // re-check below reads it again only where it does.
+  let exclusionColumn = true;
   {
-    const { data, error } = await supabaseAdmin
-      .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true);
-    if (!error) for (const r of (data ?? []) as Array<{ id: string }>) aiExcluded.add(r.id);
-    // Column absent (pre-migration): nothing is excluded, which matches the
-    // behaviour before the feature existed.
+    // KACL-10: read in full, and an error FAILS CLOSED for this pass — it
+    // used to read as "nothing is excluded" and mirror every held-back
+    // document. Only a missing column (a database from before the feature)
+    // means nothing is excluded. Paged by KEYSET on id until an EMPTY page
+    // (I-12 third review fix — lib/knowledgeAccess readAllPages' rule): the
+    // offset loop stopped at the first short page, so under a PostgREST
+    // max-rows below the page size it read only the first page, and the
+    // held-back documents past it were inserted as pending mirrors an
+    // ingest worker could claim before the re-check below removed them.
+    let lastHeldId: string | null = null;
+    for (;;) {
+      let q = supabaseAdmin
+        .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true);
+      if (lastHeldId !== null) q = q.gt("id", lastHeldId);
+      const { data, error } = await q.order("id", { ascending: true }).limit(HELD_BACK_PAGE);
+      if (error) {
+        if (isMissingColumn(error)) { exclusionColumn = false; break; }
+        out.errors.push(`held-back documents: ${error.message} — this library was not reconciled (nothing added or removed)`);
+        return out;
+      }
+      // Strictly ascending: a page that repeats an id already read ends the
+      // read instead of looping.
+      const page = ((data ?? []) as Array<{ id: string }>)
+        .filter((r) => lastHeldId === null || String(r.id) > lastHeldId);
+      if (page.length === 0) break;
+      for (const r of page) aiExcluded.add(r.id);
+      lastHeldId = String(page[page.length - 1].id);
+    }
   }
 
   // ── What SHOULD be mirrored: current PDFs in each source container ──────
@@ -321,6 +362,41 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     }
   }
 
+  // ── KACL-10: the exclusion flip and this pass cannot leave a mirror ──────
+  // The held-back set above was read once, at the start. A controller who
+  // holds a document back while this pass runs writes the flag and then
+  // purges its mirrors (app/api/knowledge/exclusion); if that purge ran
+  // before this pass inserted (or re-pointed) the mirror, the mirror would
+  // stand. So the flag is read AGAIN now, after every insert and refresh, and
+  // any mirror of a document now held back is removed here. Either this read
+  // sees the flag, or the flag was written after it — and then the route's
+  // purge, which follows its flag write, runs after the insert above and
+  // removes the row. A failed re-read leaves the library to come round first
+  // (the ask route also judges every mirror's document at query time).
+  if (exclusionColumn && wanted.size > 0) {
+    const ids = [...wanted.keys()];
+    const nowHeld: string[] = [];
+    let recheckFailed = false;
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error } = await supabaseAdmin
+        .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true)
+        .in("id", ids.slice(i, i + 100));
+      if (error) { recheckFailed = true; out.errors.push(`held-back re-check: ${error.message}`); break; }
+      for (const r of (data ?? []) as Array<{ id: string }>) nowHeld.push(r.id);
+    }
+    if (recheckFailed) unsettled = true;
+    for (let i = 0; i < nowHeld.length; i += 100) {
+      const slice = nowHeld.slice(i, i + 100);
+      const { data: gone, error } = await supabaseAdmin
+        .from("knowledge_documents").delete()
+        .eq("library_id", libraryId).in("source_document_id", slice)
+        .select("id");
+      if (error) { out.errors.push(`held-back purge: ${error.message}`); unsettled = true; continue; }
+      out.removed += (gone ?? []).length;
+    }
+    for (const id of nowHeld) { wanted.delete(id); existingByDcDoc.delete(id); }
+  }
+
   // ── REMOVE mirrors whose controlled doc left the sources ────────────────
   for (const [dcDocId, row] of existingByDcDoc) {
     if (wanted.has(dcDocId)) continue;
@@ -428,7 +504,15 @@ export async function syncAllKnowledgeSources(
 
   for (const libraryId of queue) {
     if (out.libraries >= maxLibraries || Date.now() > deadlineMs) break;
-    const res = await syncKnowledgeLibrarySources(libraryId);
+    // KACL-12: one library's failure never stops the rest.
+    let res: SourceSyncSummary;
+    try {
+      res = await syncKnowledgeLibrarySources(libraryId);
+    } catch (e) {
+      out.libraries++;
+      out.errors.push(`library ${libraryId}: ${(e as Error)?.message ?? String(e)}`);
+      continue;
+    }
     out.libraries++;
     out.added += res.added;
     out.refreshed += res.refreshed;

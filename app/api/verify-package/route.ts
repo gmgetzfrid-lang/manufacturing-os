@@ -26,7 +26,8 @@
 // otherwise current pack amber "incomplete", never stale: a re-print would
 // leave it out too.
 // A cover QR with no print id cannot say which printing it is and is never
-// green (VFY-2's fail-safe default, 2026-09-17).
+// green (VFY-2's fail-safe default, 2026-09-17); its sheets are answered as
+// counts by state, never named or numbered (intelligence DACL-8 c3).
 // VFY-19 (document-control P8 FIELD): a print recorded since then also lists
 // the package sheets it LEFT OUT (`printed: false`, a lib/packLeftOut.ts
 // code). From such a snapshot each missing sheet also says WHEN: "left out of
@@ -45,6 +46,7 @@ import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import { isPackLeftOutCode } from "@/lib/packLeftOut";
 import type { NotPrintableReason, PackVerdict, SheetState } from "@/lib/verifyPresent";
+import { legacyCoverStateRows, RESTRICTED_DOCUMENT_LABEL, restrictedSheetLabel, verifyMayNameDocument } from "@/lib/verifyDisclosure";
 
 // A pack verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -61,13 +63,19 @@ interface MemberRow { document_id: string; pinned_version_id: string | null; pin
 interface DocRow {
   id: string; document_number: string | null; title: string | null; name: string | null;
   rev: string | null; current_version_id: string | null; status: string | null; legal_hold: boolean | null;
+  visibility?: string | null;
 }
 interface HoldRow { document_id: string; reason: string | null }
 interface VersionDateRow { id: string; effective_date: string | null }
 interface VersionFileRow { id: string; file_url: string | null; file_type?: string | null }
 
 /** One sheet as the paper (or, for a legacy QR, the live pin) records it. */
-interface SheetSource { document_id: string; version_id: string | null; rev_label: string | null; label: string | null }
+interface SheetSource {
+  document_id: string; version_id: string | null; rev_label: string | null; label: string | null;
+  /** A print-keyed sheet's place on the paper (1-based, of `onPaperOf`
+   *  printed sheets) — the snapshot's order, which is the print order. */
+  onPaperAt?: number; onPaperOf?: number;
+}
 
 const WITHDRAWN_STATES: ReadonlySet<SheetState> = new Set(["void", "archived", "superseded", "retired"]);
 const NOT_GOOD_STATES: ReadonlySet<SheetState> = new Set([
@@ -159,11 +167,13 @@ export async function GET(req: NextRequest) {
         if (s.printed !== false || !s.documentId) continue;
         leftOutAtPrint.set(String(s.documentId), isPackLeftOutCode(s.leftOutCode) ? s.leftOutCode : "left_out");
       }
-      sources = raw.filter((s) => s.printed !== false).map((s) => ({
+      sources = raw.filter((s) => s.printed !== false).map((s, i, printed) => ({
         document_id: String(s.documentId ?? ""),
         version_id: (s.versionId as string | null) ?? null,
         rev_label: (s.revLabel as string | null) ?? null,
         label: (s.label as string | null) ?? null,
+        onPaperAt: i + 1,
+        onPaperOf: printed.length,
       })).filter((s) => s.document_id);
     } else {
       // The QR names a print we can't find — never fall back to the live pins
@@ -188,7 +198,7 @@ export async function GET(req: NextRequest) {
   if (docIds.length) {
     const { data: docData, error: docErr } = await sb
       .from("documents")
-      .select("id, document_number, title, name, rev, current_version_id, status, legal_hold")
+      .select("id, document_number, title, name, rev, current_version_id, status, legal_hold, visibility")
       .in("id", docIds)
       .eq("org_id", pkgOrgId);
     if (docErr) return unavailable();
@@ -239,12 +249,20 @@ export async function GET(req: NextRequest) {
     ? await workspaceEffectiveDateTimeZone(sb, pkgOrgId || null)
     : undefined;
 
-  const labelOf = (id: string, fallback: string | null) => {
+  // VFY-16 (DEC-90 default): a private or hidden document's sheet is
+  // answered — its state, its revisions — without its number or title, the
+  // printed label included (lib/verifyDisclosure). A sheet whose document
+  // is gone keeps the label printed on the paper being scanned.
+  // On a print-keyed pack a restricted sheet is labelled by its position on
+  // the paper (the snapshot's order — the print order, the cover's contents
+  // list), so the stale or held one can be pulled (I-12 second review fix).
+  const labelOf = (id: string, fallback: string | null, onPaper?: { position: number; total: number }) => {
     const d = byId.get(id);
+    if (d && !verifyMayNameDocument(d)) return onPaper ? restrictedSheetLabel(onPaper.position, onPaper.total) : RESTRICTED_DOCUMENT_LABEL;
     return String(d?.document_number || d?.title || d?.name || fallback || "Document");
   };
 
-  const sheets = sources.map((s) => {
+  const perSheet = sources.map((s) => {
     const d = byId.get(s.document_id);
     const reasons = holdsByDoc.get(s.document_id) ?? [];
     const held = !!d && (holdsUnreadable || d.legal_hold === true || reasons.length > 0);
@@ -262,7 +280,7 @@ export async function GET(req: NextRequest) {
     else if (effectiveStatusFor(d.current_version_id ? effectiveByVersion.get(d.current_version_id) : null, new Date(), effectiveZone) === "pending") state = "not_yet_effective";
     else state = "fresh";
     return {
-      label: labelOf(s.document_id, s.label),
+      label: labelOf(s.document_id, s.label, s.onPaperAt && s.onPaperOf ? { position: s.onPaperAt, total: s.onPaperOf } : undefined),
       // A legacy QR records no printing: its live pin is not "what was printed".
       printedRev: printConfirmed ? s.rev_label : null,
       currentRev: d?.rev ?? null,
@@ -273,6 +291,12 @@ export async function GET(req: NextRequest) {
       holdReasons: held && !holdsUnreadable ? [...new Set(reasons)] : [],
     };
   });
+  // DACL-8 c3 (DEC-90 default): a legacy cover QR's list is the LIVE
+  // membership, read in no order — not the paper. No row names or numbers a
+  // sheet: they are counted by state, one row per state, in a fixed order
+  // (lib/verifyDisclosure legacyCoverStateRows). The verdict and the counts
+  // below are computed from the per-sheet list either way.
+  const sheets = printConfirmed ? perSheet : legacyCoverStateRows(perSheet);
   // Each package sheet missing from the paper, by what is true of it NOW.
   // Not printable now — the print gate's own refusals and no others:
   // lib/docPack.ts filterPackDocs refuses a status outside Issued / Locked
@@ -341,18 +365,18 @@ export async function GET(req: NextRequest) {
     else notInPack.push({ label, ...when });
   }
 
-  const staleCount = sheets.filter((s) => NOT_GOOD_STATES.has(s.state)).length;
-  const notIssuedCount = sheets.filter((s) => NOT_ISSUED_STATES.has(s.state)).length;
-  const heldCount = sheets.filter((s) => s.state === "held").length;
+  const staleCount = perSheet.filter((s) => NOT_GOOD_STATES.has(s.state)).length;
+  const notIssuedCount = perSheet.filter((s) => NOT_ISSUED_STATES.has(s.state)).length;
+  const heldCount = perSheet.filter((s) => s.state === "held").length;
 
   let verdict: PackVerdict;
   if (snapshotMissing) verdict = "unverifiable";
   else if (closed) verdict = "closed";                         // VFY-8
-  else if (sheets.length === 0) verdict = "empty";             // VFY-11
+  else if (perSheet.length === 0) verdict = "empty";           // VFY-11
   else if (heldCount > 0) verdict = "held";                    // HLD-3 / PHYS-1
   else if (staleCount > 0 || notInPack.length > 0) verdict = "stale";
   else if (!printConfirmed) verdict = "unconfirmed_print";     // VFY-2 legacy QR
-  else if (sheets.some((s) => s.state === "not_yet_effective")) verdict = "not_yet_effective";
+  else if (perSheet.some((s) => s.state === "not_yet_effective")) verdict = "not_yet_effective";
   else if (notPrintable.length > 0) verdict = "incomplete";    // VFY-2: amber, not stale
   else verdict = "current";
 
@@ -366,7 +390,7 @@ export async function GET(req: NextRequest) {
     snapshotMissing,
     // The QR named a print record AND it was found.
     printConfirmed: printConfirmed && !snapshotMissing,
-    sheetCount: sheets.length,
+    sheetCount: perSheet.length,
     staleCount,
     notIssuedCount,
     heldCount,

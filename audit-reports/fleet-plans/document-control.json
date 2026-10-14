@@ -745,6 +745,25 @@
    "sequencingNotes": [
     "Added by the integrator at the N15 merge, 2026-10-14 (DEC-31; PROD-17's Assigned line names it)."
    ]
+  },
+  {
+   "name": "P27 SHARE REMAINDERS \u2014 a share link written straight into document_shares leaves a SHARE_LINK_CREATED audit row, as the app's door does",
+   "findings": [
+    "intelligence DACL-4 criterion 3 (assigned at the I-12 merge): a direct insert into document_shares (PostgREST) writes the same SHARE_LINK_CREATED audit row lib/documentShares.ts writes, from a trigger or by routing creation through a definer door; the DB half also waits on 20261080's paste (DC wave 1)"
+   ],
+   "files": [
+    "supabase/migrations: one DEC-30 file (the audit trigger or door, from the NEWEST document_shares definitions, lineDiff-pinned, DRLS-16)",
+    "lib/documentShares.ts (no double row when the app's door already writes one)",
+    "tests: one row per share however it is created; the app's share flow unchanged"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "intelligence I-12 merged (2026-10-14; DACL-4 c1/c2 in lib/shareServe.ts)",
+    "document-control 20261080 pasted (DC wave 1)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the I-12 merge, 2026-10-14 (DEC-31; rulings under DEC-90 recorded on the DEC-90 I-12 landing line)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

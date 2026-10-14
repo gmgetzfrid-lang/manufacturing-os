@@ -34,7 +34,7 @@ interface ResolvedShare {
   fileUrl: string | null;
 }
 
-type PageState = "loading" | "ok" | "revoked" | "expired" | "withdrawn" | "on_hold" | "notfound" | "error";
+type PageState = "loading" | "ok" | "revoked" | "expired" | "withdrawn" | "on_hold" | "unavailable" | "notfound" | "error";
 
 export default function SharePage() {
   const { token } = useParams<{ token: string }>();
@@ -55,6 +55,8 @@ export default function SharePage() {
           else if (body?.error === "expired") setState("expired");
           else if (body?.error === "withdrawn") { setErrorMessage(body.reason ?? null); setState("withdrawn"); }
           else if (body?.error === "on_hold") { setErrorMessage(body.reason ?? null); setState("on_hold"); }
+          // intelligence DACL-4: a temporary condition, never "revoked".
+          else if (body?.error === "unavailable") { setErrorMessage(body.reason ?? null); setState("unavailable"); }
           else if (res.status === 404 || body?.error === "notfound" || body?.error === "invalid") setState("notfound");
           else { setErrorMessage(body?.error ?? `HTTP ${res.status}`); setState("error"); }
           return;
@@ -84,6 +86,9 @@ export default function SharePage() {
         if (body?.error === "withdrawn" || body?.error === "on_hold") {
           throw new Error(body.reason ?? "This document is not currently available through this link.");
         }
+        // intelligence DACL-4: the link is temporarily unavailable (it says
+        // why); a bare "unavailable" is the file fetch failing, below.
+        if (body?.error === "unavailable" && body.reason) throw new Error(body.reason);
         if (body?.error === "unrecorded") {
           throw new Error("The download could not be recorded on the distribution record, so the copy was not released. Try again, or ask the person who shared it.");
         }
@@ -125,6 +130,9 @@ export default function SharePage() {
         )}
         {state === "on_hold" && (
           <Centered icon={AlertTriangle} tone="amber" title="Document on hold" body={`${errorMessage ?? "This document is under an active hold."} It will serve again once the hold is released — do not work from a copy you already hold until then.`} />
+        )}
+        {state === "unavailable" && (
+          <Centered icon={AlertTriangle} tone="amber" title="Temporarily unavailable" body={errorMessage ?? "This link is temporarily unavailable — ask the person who sent it."} />
         )}
         {state === "error" && (
           <Centered icon={AlertTriangle} tone="rose" title="Couldn't load" body={errorMessage ?? "Something went wrong resolving this share link."} />

@@ -196,22 +196,48 @@ export function canDiscover(params: {
   return decision.isDiscoverable();
 }
 
-/** DOCACL-5: may this principal be handed the CONTENT (a signed URL)?
- *  `discover` means "may know it exists" — never "may open it". Private and
- *  hidden nodes require an effective `read` or `download`; a normal node stays
- *  default-open (the route's explicit download-deny check still applies).
- *  Controllers and the effective owner short-circuit exactly as in canDiscover. */
-export function canServeContent(params: {
+/** IEDGE-12: THE read predicate — may this principal read a node's CONTENT,
+ *  given the full ACL chain above it (library → folder lineage → the node)?
+ *  One function, asked by the doors that hand out what a document says:
+ *  the knowledge seam (lib/knowledgeAccess chainReadable — the AI's ask,
+ *  orchestrator, drawing, locate, share serving) and the bytes door
+ *  (canServeContent → /api/storage/download-url). The service-role page
+ *  reader (lib/docFileServer mayReadContent) evaluates the same chain rule
+ *  through canWithAclChain, without the private-draft input (IEDGE-12's
+ *  recorded residual).
+ *
+ *   - a controller (by the role collection, DEC-2 / DEC-43) and the node's
+ *     effective owner (GAP-15 / DEC-7) read;
+ *   - wherever the chain says something (lib/acl aclSaysSomething: a rule,
+ *     or a hidden / private node), one of `actions` must be granted — and an
+ *     explicit deny of it wins (DEC-8). A discover-only grant is never a read
+ *     (DOCACL-5, KACL-3), whatever the visibility;
+ *   - a chain that says nothing is default-open for a NORMAL node only — a
+ *     hidden or private one with no ACL anywhere is controllers' and the
+ *     owner's alone (KACL-11; canDiscover's fallback);
+ *   - a PRIVATE DRAFT (documents.is_private, or scope 'private') is its
+ *     creator's alone, whatever the chain and whoever owns it (controllers
+ *     still read it — DEC-43). Pass `privateDraft` with the row's
+ *     created_by when the row is one; omit it otherwise. Review fix
+ *     (IEDGE-12): the seam applied this rule and the bytes door did not.
+ *
+ *  `actions` is what counts as reading: the AI seam asks `read`; the bytes
+ *  door asks `read` or `download` (a download grant hands over the file). */
+export function canReadNode(params: {
   principal: Principal;
-  aclChain?: (AccessControl | undefined)[];
-  visibility?: NodeVisibility;
+  aclChain?: (AccessControl | null | undefined)[];
+  visibility?: NodeVisibility | null;
   effectiveOwnerUserId?: string | null;
+  actions?: readonly PermissionAction[];
+  privateDraft?: { createdBy: string | null } | null;
 }): boolean {
-  const { principal, aclChain = [], visibility = "normal" } = params;
+  const { principal, aclChain = [], actions = ["read"] } = params;
+  const visibility: NodeVisibility = params.visibility === "hidden" || params.visibility === "private"
+    ? params.visibility : "normal";
   if (isControllerPrincipal(principal)) return true;
+  if (params.privateDraft && !(principal.uid && params.privateDraft.createdBy === principal.uid)) return false;
   if (params.effectiveOwnerUserId && principal.uid && params.effectiveOwnerUserId === principal.uid) return true;
-  if (visibility !== "hidden" && visibility !== "private") return true;
-  const decision = evaluateAclChain(aclChain, {
+  const decision = evaluateAclChain(aclChain.map((a) => a ?? undefined), {
     uid: principal.uid,
     role: principal.role,
     roles: heldRoles(principal),
@@ -219,8 +245,72 @@ export function canServeContent(params: {
     teamIds: principal.teamIds,
     isActiveMember: principal.isActiveMember,
   });
-  if (!decision) return false;
-  return decision.can("download") || decision.can("read");
+  if (!decision) return visibility === "normal";
+  return actions.some((a) => decision.can(a));
+}
+
+/** DACL-9: the same read question asked of a row's chain-resolved
+ *  `acl_index` (built from the FULL library → folder → node chain by the
+ *  drawer's save, the folder-move rebuild and the nightly rebuild — DEC-10),
+ *  for a reader whose browser could not see every ancestor (RLS hides a
+ *  private folder the reader has no grant on, so its ACL is not on the page).
+ *  `null` when the row carries no index — the caller decides what that means.
+ *  Mirrors evaluateAcl's can(): an explicit deny of the action naming the
+ *  reader (uid, any held role, a team, the org) wins; then an allow of the
+ *  action, or of `admin` while `admin` itself is not denied; an index with
+ *  no entry for the reader grants nothing. Controllers and the effective
+ *  owner short-circuit as in canReadNode. */
+export function canReadViaIndex(
+  idx: import("@/types/schema").AclIndex | null | undefined,
+  p: Principal,
+  actions: readonly PermissionAction[] = ["read"],
+  effectiveOwnerUserId?: string | null,
+): boolean | null {
+  if (isControllerPrincipal(p)) return true;
+  if (effectiveOwnerUserId && p.uid && effectiveOwnerUserId === p.uid) return true;
+  if (!idx || (!idx.allow && !idx.deny)) return null;
+  type Lists = Record<string, string[]> | undefined;
+  // An index that names nobody at all carries no rule (buildAclIndexFromRules
+  // writes none for zero rules) — unknown, not "denied to everyone".
+  const anyEntry = (bucket: Record<string, Lists> | undefined) => !!bucket
+    && Object.values(bucket).some((m) => !!m && Object.values(m).some((l) => Array.isArray(l) && l.length > 0));
+  if (!anyEntry(idx.allow as unknown as Record<string, Lists>) && !anyEntry(idx.deny as unknown as Record<string, Lists>)) return null;
+  if (p.isActiveMember === false) return false;
+  const roles = heldRoles(p) as string[];
+  const teams = p.teamIds ?? [];
+  const org = p.orgId ?? null;
+  const has = (m: Lists, act: string, id: string) =>
+    Array.isArray(m?.[act]) && (m[act] as string[]).includes(id);
+  const names = (bucket: { users?: Lists; roles?: Lists; teams?: Lists; orgs?: Lists } | undefined, act: string) => !!bucket && (
+    has(bucket.users, act, p.uid) ||
+    roles.some((r) => has(bucket.roles, act, r)) ||
+    teams.some((t) => has(bucket.teams, act, t)) ||
+    (!!org && has(bucket.orgs, act, org))
+  );
+  const adminDenied = names(idx.deny, "admin");
+  return actions.some((a) => {
+    if (names(idx.deny, a)) return false;
+    if (!adminDenied && names(idx.allow, "admin")) return true;
+    return names(idx.allow, a);
+  });
+}
+
+/** DOCACL-5 / KACL-5: may this principal be handed the CONTENT (a signed
+ *  URL)? `discover` means "may know it exists" — never "may open it".
+ *  canReadNode over the FULL chain, asking `read` or `download`, on EVERY
+ *  visibility: an allow-list or a deny on a normal document, or on its folder
+ *  or library, binds the bytes door exactly as it binds the AI seam and the
+ *  library page (until KACL-5 a normal node was default-open here and only
+ *  the document's own ACL was read). The route's explicit download-deny
+ *  check still applies on top. */
+export function canServeContent(params: {
+  principal: Principal;
+  aclChain?: (AccessControl | null | undefined)[];
+  visibility?: NodeVisibility | null;
+  effectiveOwnerUserId?: string | null;
+  privateDraft?: { createdBy: string | null } | null;
+}): boolean {
+  return canReadNode({ ...params, actions: ["read", "download"] });
 }
 
 /** DOCACL-3 / DEC-43: did the CONTROLLER bypass decide this content read?
@@ -235,6 +325,7 @@ export function controllerBypassDecided(params: {
   aclChain?: (AccessControl | undefined)[];
   visibility?: NodeVisibility;
   effectiveOwnerUserId?: string | null;
+  privateDraft?: { createdBy: string | null } | null;
 }): boolean {
   const { principal } = params;
   if (!isControllerPrincipal(principal)) return false;

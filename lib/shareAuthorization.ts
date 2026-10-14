@@ -14,27 +14,53 @@
 
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 
+/** The creator's current authority over the shared document:
+ *   - "ok"      an active member of the share's org who can read it now;
+ *   - "lapsed"  no creator, no active membership, or the document is no
+ *               longer readable to them — the link is dead ("revoked");
+ *   - "unknown" a read the decision needs failed (the creator's membership or
+ *               teams — loadPrincipal's PrincipalUnreadableError — or the
+ *               landscape / document reads, KACL-12's
+ *               DcLandscapeUnreadableError; the documents-row read throws it
+ *               too since the I-12 third review fix — it read as "no rows",
+ *               so a timeout there answered "lapsed"): a TEMPORARY condition.
+ *               The share never serves on it, and never calls it "revoked" or
+ *               records it as a lapsed authority (I-12 second review fix: a
+ *               statement timeout told the recipient "revoked" and wrote
+ *               `authority_lapsed` — false evidence). */
+export type ShareAuthority = "ok" | "lapsed" | "unknown";
+
+export async function shareAuthority(
+  orgId: string,
+  createdBy: string | null | undefined,
+  documentId: string,
+): Promise<ShareAuthority> {
+  if (!createdBy) return "lapsed";
+  try {
+    const principal = await loadPrincipal(orgId, createdBy);
+    if (!principal) return "lapsed";
+    if (principal.isController) return "ok";
+    const readable = await readableControlledDocIds(principal, [documentId]);
+    return readable.has(documentId) ? "ok" : "lapsed";
+  } catch {
+    // Never serve a controlled document when we cannot confirm the creator's
+    // current authority — and never say it lapsed.
+    return "unknown";
+  }
+}
+
 /**
  * True when `createdBy` is an active member of `orgId` who can currently read
- * `documentId`. False (fail-closed) when the creator is unknown/left, or the
- * document is no longer readable to them. A null/absent creator is refused —
- * a share with no owner has no authority to serve on.
+ * `documentId` (shareAuthority "ok"). False (fail-closed) when the creator is
+ * unknown/left, the document is no longer readable to them, or that could not
+ * be confirmed. A null/absent creator is refused — a share with no owner has
+ * no authority to serve on. Share serving asks shareAuthority, which tells
+ * "lapsed" from "unknown".
  */
 export async function shareStillAuthorized(
   orgId: string,
   createdBy: string | null | undefined,
   documentId: string,
 ): Promise<boolean> {
-  if (!createdBy) return false;
-  try {
-    const principal = await loadPrincipal(orgId, createdBy);
-    if (!principal) return false;
-    if (principal.isController) return true;
-    const readable = await readableControlledDocIds(principal, [documentId]);
-    return readable.has(documentId);
-  } catch {
-    // Never serve a controlled document when we cannot confirm the creator's
-    // current authority.
-    return false;
-  }
+  return (await shareAuthority(orgId, createdBy, documentId)) === "ok";
 }
