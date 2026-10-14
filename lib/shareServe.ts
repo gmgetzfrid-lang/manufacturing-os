@@ -103,6 +103,13 @@ export type ShareServeResult =
 
 const refuse = (status: number, body: ShareRefusal["body"]): ShareRefusal => ({ ok: false, status, body });
 
+/** DACL-4: the words for a link that cannot serve right now but has not been
+ *  revoked — its creator has a hard read-&-understood acknowledgment
+ *  outstanding on a re-issued document (it serves again once they sign). */
+export const SHARE_UNAVAILABLE_ACK = "This link is temporarily unavailable — ask the person who sent it.";
+/** …and when that check could not be made. */
+export const SHARE_UNAVAILABLE_UNREADABLE = "This link couldn't be checked just now — try again later, or ask the person who sent it.";
+
 export { shareStatusRefusal, versionServable };
 
 /** What an outsider holding the link is told about a hold: the predefined
@@ -205,11 +212,17 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
   // — that is enabled with hardGate). Read here through this door's own
   // client. Undecided (a read failed) refuses too: a copy leaving the
   // organisation fails closed, as the field pack and the book do.
+  // I-12 review fix: the refusal says what it is — a TEMPORARY condition
+  // (it clears when the creator signs), never "revoked": 409 "unavailable"
+  // with an honest sentence; a gate that could not be read answers 503.
   if (s.created_by && d.library_id) {
     const gate = await creatorAckGate(sb, d.id, d.library_id, s.created_by, extraRow?.collection_id ?? null, extraRow?.ack_policy ?? null);
-    if (gate !== "clear") {
-      if (gate === "unknown") console.error("[share] acknowledgment gate unreadable — share refused", { share: s.id, document: d.id });
-      return refuseKnown(410, { error: "revoked" }, "acknowledgment_outstanding");
+    if (gate === "unknown") {
+      console.error("[share] acknowledgment gate unreadable — share refused", { share: s.id, document: d.id });
+      return refuseKnown(503, { error: "unavailable", reason: SHARE_UNAVAILABLE_UNREADABLE, unreadable: true }, "acknowledgment_outstanding");
+    }
+    if (gate === "gated") {
+      return refuseKnown(409, { error: "unavailable", reason: SHARE_UNAVAILABLE_ACK }, "acknowledgment_outstanding");
     }
   }
 

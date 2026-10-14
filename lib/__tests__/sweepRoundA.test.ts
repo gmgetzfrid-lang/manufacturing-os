@@ -109,7 +109,8 @@ describe("DEL-2 residual — the ownership cascade carries read access everywher
     expect(k).toMatch(/effectiveOwnerUserId: effectiveOwnerUid \?\? null,/);
     expect(src("lib/permissions.ts")).toMatch(/export function canReadNode\([\s\S]*?if \(params\.effectiveOwnerUserId && principal\.uid && params\.effectiveOwnerUserId === principal\.uid\) return true;/);
     // KACL-12 (intelligence I-12): the container reads page through readAllPages.
-    expect(k).toMatch(/readAllPages\("libraries", "id, name, acl, visibility, owner_user_id, owner_team_id", orgId\)/);
+    // DACL-10 (I-12 review fix): plus the legacy read-list columns for the effective rung.
+    expect(k).toMatch(/readAllPages\("libraries", `id, name, owner_user_id, owner_team_id, \$\{LIBRARY_RUNG_COLUMNS\}`, orgId\)/);
     expect(k).toMatch(/readAllPages\("teams", "id, supervisor_user_id", orgId\)/);
     expect(k).toMatch(/const owner = effectiveOwnerFor\(doc\.owner_user_id, doc\.collection_id, doc\.library_id, landscape\);/);
     expect(k).toMatch(/select\("id, library_id, collection_id, acl, visibility, is_private, scope, created_by, owner_user_id"\)/);

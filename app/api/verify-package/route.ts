@@ -26,7 +26,8 @@
 // otherwise current pack amber "incomplete", never stale: a re-print would
 // leave it out too.
 // A cover QR with no print id cannot say which printing it is and is never
-// green (VFY-2's fail-safe default, 2026-09-17).
+// green (VFY-2's fail-safe default, 2026-09-17); its sheets are answered as
+// counts by state, never named or numbered (intelligence DACL-8 c3).
 // VFY-19 (document-control P8 FIELD): a print recorded since then also lists
 // the package sheets it LEFT OUT (`printed: false`, a lib/packLeftOut.ts
 // code). From such a snapshot each missing sheet also says WHEN: "left out of
@@ -45,7 +46,7 @@ import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import { isPackLeftOutCode } from "@/lib/packLeftOut";
 import type { NotPrintableReason, PackVerdict, SheetState } from "@/lib/verifyPresent";
-import { legacyCoverSheetLabel, RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
+import { legacyCoverStateRows, RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
 
 // A pack verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -245,7 +246,7 @@ export async function GET(req: NextRequest) {
     return String(d?.document_number || d?.title || d?.name || fallback || "Document");
   };
 
-  const sheets = sources.map((s, position) => {
+  const perSheet = sources.map((s) => {
     const d = byId.get(s.document_id);
     const reasons = holdsByDoc.get(s.document_id) ?? [];
     const held = !!d && (holdsUnreadable || d.legal_hold === true || reasons.length > 0);
@@ -263,9 +264,7 @@ export async function GET(req: NextRequest) {
     else if (effectiveStatusFor(d.current_version_id ? effectiveByVersion.get(d.current_version_id) : null) === "pending") state = "not_yet_effective";
     else state = "fresh";
     return {
-      // DACL-8 c3 (DEC-90 default): a legacy cover QR's list is the LIVE
-      // membership, not the paper — each sheet is named by its place only.
-      label: printConfirmed ? labelOf(s.document_id, s.label) : legacyCoverSheetLabel(position + 1),
+      label: labelOf(s.document_id, s.label),
       // A legacy QR records no printing: its live pin is not "what was printed".
       printedRev: printConfirmed ? s.rev_label : null,
       currentRev: d?.rev ?? null,
@@ -276,6 +275,12 @@ export async function GET(req: NextRequest) {
       holdReasons: held && !holdsUnreadable ? [...new Set(reasons)] : [],
     };
   });
+  // DACL-8 c3 (DEC-90 default): a legacy cover QR's list is the LIVE
+  // membership, read in no order — not the paper. No row names or numbers a
+  // sheet: they are counted by state, one row per state, in a fixed order
+  // (lib/verifyDisclosure legacyCoverStateRows). The verdict and the counts
+  // below are computed from the per-sheet list either way.
+  const sheets = printConfirmed ? perSheet : legacyCoverStateRows(perSheet);
   // Each package sheet missing from the paper, by what is true of it NOW.
   // Not printable now — the print gate's own refusals and no others:
   // lib/docPack.ts filterPackDocs refuses a status outside Issued / Locked
@@ -344,18 +349,18 @@ export async function GET(req: NextRequest) {
     else notInPack.push({ label, ...when });
   }
 
-  const staleCount = sheets.filter((s) => NOT_GOOD_STATES.has(s.state)).length;
-  const notIssuedCount = sheets.filter((s) => NOT_ISSUED_STATES.has(s.state)).length;
-  const heldCount = sheets.filter((s) => s.state === "held").length;
+  const staleCount = perSheet.filter((s) => NOT_GOOD_STATES.has(s.state)).length;
+  const notIssuedCount = perSheet.filter((s) => NOT_ISSUED_STATES.has(s.state)).length;
+  const heldCount = perSheet.filter((s) => s.state === "held").length;
 
   let verdict: PackVerdict;
   if (snapshotMissing) verdict = "unverifiable";
   else if (closed) verdict = "closed";                         // VFY-8
-  else if (sheets.length === 0) verdict = "empty";             // VFY-11
+  else if (perSheet.length === 0) verdict = "empty";           // VFY-11
   else if (heldCount > 0) verdict = "held";                    // HLD-3 / PHYS-1
   else if (staleCount > 0 || notInPack.length > 0) verdict = "stale";
   else if (!printConfirmed) verdict = "unconfirmed_print";     // VFY-2 legacy QR
-  else if (sheets.some((s) => s.state === "not_yet_effective")) verdict = "not_yet_effective";
+  else if (perSheet.some((s) => s.state === "not_yet_effective")) verdict = "not_yet_effective";
   else if (notPrintable.length > 0) verdict = "incomplete";    // VFY-2: amber, not stale
   else verdict = "current";
 
@@ -369,7 +374,7 @@ export async function GET(req: NextRequest) {
     snapshotMissing,
     // The QR named a print record AND it was found.
     printConfirmed: printConfirmed && !snapshotMissing,
-    sheetCount: sheets.length,
+    sheetCount: perSheet.length,
     staleCount,
     notIssuedCount,
     heldCount,

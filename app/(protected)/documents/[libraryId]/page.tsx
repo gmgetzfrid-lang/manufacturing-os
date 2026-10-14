@@ -83,7 +83,7 @@ import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canWithAclChain, canPublishOnLibrary, canPublishViaIndex, type Principal } from "@/lib/permissions";
-import { effectiveLibraryAcl, explorerDocReadable, explorerFolderVisible, libraryReadsByRole } from "@/lib/libraryAccess";
+import { effectiveLibraryAcl, explorerDocReadable, explorerFolderVisible, explorerLibraryVisible } from "@/lib/libraryAccess";
 import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
@@ -312,7 +312,7 @@ export default function LibraryExplorerPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const { activeOrgId, activeRole, roles, hasAnyRole, uid, userEmail } = useRole();
+  const { activeOrgId, activeRole, roles, hasAnyRole, uid, userEmail, loading: roleLoading } = useRole();
 
   const libraryId = params.libraryId as string;
 
@@ -1715,10 +1715,16 @@ export default function LibraryExplorerPage() {
   );
 
   const [myTeamIds, setMyTeamIds] = useState<string[]>([]);
+  // DACL-10 / DACL-6 (I-12 review fix): whose team ids have been read — the
+  // page never says "restricted" from a principal whose teams are still
+  // loading (a team grant would then read as no access).
+  const [teamIdsFor, setTeamIdsFor] = useState<string | null>(null);
   useEffect(() => {
-    if (!uid) { setMyTeamIds([]); return; }
+    if (!uid) { setMyTeamIds([]); setTeamIdsFor(null); return; }
     let cancelled = false;
-    getMyTeamIds(uid).then((ids) => { if (!cancelled) setMyTeamIds(ids); }).catch(() => { /* noop */ });
+    getMyTeamIds(uid)
+      .then((ids) => { if (!cancelled) { setMyTeamIds(ids); setTeamIdsFor(uid); } })
+      .catch(() => { if (!cancelled) setTeamIdsFor(uid); });
     return () => { cancelled = true; };
   }, [uid]);
 
@@ -3180,10 +3186,15 @@ export default function LibraryExplorerPage() {
   const isController = hasAnyRole(["Admin", "DocCtrl"]);
   // DEL-6: the library's owner is told to recertify access — they can.
   const isLibraryOwner = !!uid && !!library?.ownerUserId && library.ownerUserId === uid;
-  // DACL-10: the documents home's own rule (lib/libraryAccess — one check,
-  // two screens). SESS-6: no role known reads nothing by role.
-  const libraryReadable = isController || isLibraryOwner
-    || (activeRole !== null && libraryReadsByRole(library, activeRole, roles));
+  // DACL-10 (I-12 review fix): the explorer's own evaluation of the library
+  // rung — canDiscover over effectiveLibraryAcl with the reader's roles,
+  // teams and uid (lib/libraryAccess explorerLibraryVisible), so a team or
+  // user grant from the Permissions drawer counts; the legacy role arrays
+  // bind through effectiveLibraryAcl. SESS-6: no role known sees nothing.
+  const libraryReadable = isController || isLibraryOwner || explorerLibraryVisible(principal, library);
+  // …and nothing is said about access until the role and the team ids have
+  // resolved (the loader shows instead — never a transient "no access").
+  const accessResolved = !roleLoading && (activeRole === null || !uid || teamIdsFor === uid);
   // DACL-6 / DACL-10: what the database returned here that the access rules
   // keep from this reader — said, never shown as an empty folder.
   const restrictedHere = deferredSearch.trim()
@@ -4147,7 +4158,13 @@ export default function LibraryExplorerPage() {
                   </div>
                 </div>
 
-                {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 && (!libraryReadable || restrictedHere > 0) ? (
+                {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 && !accessResolved ? (
+                  /* DACL-10 (review fix): the role or the team ids are still
+                     loading — wait, never a transient "restricted". */
+                  <div className="flex-1 flex flex-col items-center justify-center p-12 text-[var(--color-text-muted)]" data-access-pending>
+                    <Loader2 className="w-6 h-6 animate-spin mb-2" />Checking your access…
+                  </div>
+                ) : !loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 && (!libraryReadable || restrictedHere > 0) ? (
                   /* DACL-10 / DACL-6: a library the reader may not read, or a
                      folder whose every item the access rules keep from them,
                      is said as restricted — never as "Nothing here yet". */

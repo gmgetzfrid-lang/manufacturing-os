@@ -10,10 +10,15 @@
 //   · effectiveLibraryAcl — the library's ACL, or, for a legacy row whose ACL
 //     says nothing while readAccess is restricted, the ACL the library
 //     wizard would write for that readAccess (an allow of discover / read /
-//     download to each listed role — lib/acl's wizard vocabulary). The
-//     library page evaluates its folders and documents under it, so a legacy
-//     restriction binds the contents as it binds the card, and a grant deeper
-//     in the tree (a folder shared with another role) still merges in.
+//     download to each listed role, and to the write / admin roles the
+//     wizard also lets read — lib/acl's wizard vocabulary). The library page
+//     evaluates its folders and documents under it, so a legacy restriction
+//     binds the contents as it binds the card, and a grant deeper in the
+//     tree (a folder shared with another role) still merges in. Review fix:
+//     the AI seam (lib/knowledgeAccess loadDcLandscape) and the bytes door
+//     (lib/docFileServer loadContainerAclChain) take the library rung from
+//     effectiveLibraryAclFromRow too — one library check on both pages and
+//     at every door that reads a document's content for someone.
 //
 // DACL-9: the library page evaluated a document's chain from the folders the
 // browser happened to receive. RLS hides a private folder the reader has no
@@ -32,6 +37,10 @@ import type { AccessControl, AclIndex, NodeVisibility, PermissionAction, Role } 
 export interface LibraryAccessFields {
   readAccess?: Role[] | "ALL" | null;
   visibleTo?: Role[] | null;
+  /** The upload / admin roles (libraries.write_access / admin_access): the
+   *  wizard grants them read too (LibraryWizard handleSubmit). */
+  writeAccess?: Role[] | null;
+  adminAccess?: Role[] | null;
   acl?: AccessControl | null;
   visibility?: NodeVisibility | null;
 }
@@ -56,18 +65,22 @@ export function libraryIsPublicRead(lib: Pick<LibraryAccessFields, "readAccess">
 
 /** The ACL a legacy library's readAccess stands for, when its own ACL says
  *  nothing: an allow of discover / read / download to every role in
- *  readAccess ∪ visibleTo. `undefined` for "ALL" (or a missing value —
- *  the home page reads that as "ALL" too) and whenever the ACL says
- *  something (the ACL is then the model). A restricted list naming NO role
- *  (the home page shows the library to no one but controllers) stands for a
- *  private rung with no grant: a zero-rule normal ACL would say nothing
- *  (lib/acl aclSaysSomething) and leave the contents open, so the rung is
- *  marked private (hidden stays hidden) — a grant deeper in the tree still
- *  merges in, as it does under any restricted library. */
+ *  readAccess ∪ visibleTo ∪ writeAccess ∪ adminAccess (the wizard lets its
+ *  upload and admin roles read — review fix: a write role outside the read
+ *  list kept the documents it saw before). `undefined` for "ALL" (or a
+ *  missing value — the home page reads that as "ALL" too) and whenever the
+ *  ACL says something (the ACL is then the model). A restricted list naming
+ *  NO role (the home page shows the library to no one but controllers)
+ *  stands for a private rung with no grant: a zero-rule normal ACL would say
+ *  nothing (lib/acl aclSaysSomething) and leave the contents open, so the
+ *  rung is marked private (hidden stays hidden) — a grant deeper in the tree
+ *  still merges in, as it does under any restricted library. */
 export function legacyLibraryAcl(lib: LibraryAccessFields): AccessControl | undefined {
   if (aclSaysSomething(lib.acl)) return undefined;
   if (lib.readAccess === "ALL" || lib.readAccess == null) return undefined;
-  const roles = [...new Set([...toRoles(lib.readAccess), ...toRoles(lib.visibleTo)])];
+  const roles = [...new Set([
+    ...toRoles(lib.readAccess), ...toRoles(lib.visibleTo), ...toRoles(lib.writeAccess), ...toRoles(lib.adminAccess),
+  ])];
   const visibility: NodeVisibility = roles.length === 0
     ? (lib.visibility === "hidden" ? "hidden" : "private")
     : (lib.visibility ?? "normal");
@@ -82,6 +95,48 @@ export function legacyLibraryAcl(lib: LibraryAccessFields): AccessControl | unde
 export function effectiveLibraryAcl(lib: LibraryAccessFields | null | undefined): AccessControl | undefined {
   if (!lib) return undefined;
   return legacyLibraryAcl(lib) ?? (lib.acl ?? undefined);
+}
+
+/** The columns a server read of `libraries` selects for the library rung. */
+export const LIBRARY_RUNG_COLUMNS = "acl, visibility, read_access, visible_to, write_access, admin_access";
+
+/** effectiveLibraryAcl over a raw `libraries` row (the server's reads —
+ *  lib/knowledgeAccess loadDcLandscape, lib/docFileServer
+ *  loadContainerAclChain). read_access is JSONB: the string "ALL" or a role
+ *  array; NULL reads as "ALL" (the home page's rule), so a NULL never
+ *  synthesizes a rung. */
+export function effectiveLibraryAclFromRow(row: Record<string, unknown> | null | undefined): AccessControl | undefined {
+  if (!row) return undefined;
+  const ra = row.read_access;
+  return effectiveLibraryAcl({
+    readAccess: ra === "ALL" ? "ALL" : Array.isArray(ra) ? (ra as Role[]) : null,
+    visibleTo: toRoles(row.visible_to),
+    writeAccess: toRoles(row.write_access),
+    adminAccess: toRoles(row.admin_access),
+    acl: (row.acl as AccessControl | null | undefined) ?? null,
+    visibility: (row.visibility as NodeVisibility | null | undefined) ?? null,
+  });
+}
+
+/** DACL-10 done-when 2 (review fix): may the reader see THIS library at all
+ *  — the library page's "You don't have access" state? The explorer's own
+ *  evaluation of the library rung (canDiscover over effectiveLibraryAcl,
+ *  with the reader's role collection, teams and uid — so a team or user
+ *  grant in the Permissions drawer counts), never the legacy role arrays
+ *  alone. The library's owner and controllers see it (canDiscover's
+ *  short-circuits). `null` principal (SESS-6: no role known) sees nothing. */
+export function explorerLibraryVisible(
+  principal: Principal | null,
+  lib: (LibraryAccessFields & { ownerUserId?: string | null }) | null | undefined,
+): boolean {
+  if (!principal || !lib) return false;
+  const rung = effectiveLibraryAcl(lib);
+  return canDiscover({
+    principal,
+    visibility: lib.visibility ?? "normal",
+    aclChain: rung ? [rung] : [],
+    effectiveOwnerUserId: lib.ownerUserId ?? null,
+  });
 }
 
 interface ExplorerFolder {

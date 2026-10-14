@@ -630,7 +630,7 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect(route).toMatch(/if \(download\.unreadable\) throw new Error/);
     expect(route).not.toMatch(/dl\.users\?\.download/); // the inline copy is gone: one rule, two callers
   });
-  it("DACL-4 (intelligence I-12): a document under a LEGAL hold refuses (423 on_hold); a creator held by an outstanding HARD acknowledgment gate refuses (410, recorded as acknowledgment_outstanding); an unreadable gate refuses; a soft policy, or none pending, serves", async () => {
+  it("DACL-4 (intelligence I-12): a document under a LEGAL hold refuses (423 on_hold); a creator held by an outstanding HARD acknowledgment gate refuses (409 'unavailable' — temporary, never 'revoked'; recorded as acknowledgment_outstanding); an unreadable gate refuses (503); a soft policy, or none pending, serves", async () => {
     state.doc = issuedDoc({ legal_hold: true });
     let res = await fileGet();
     expect(res.status).toBe(423);
@@ -641,7 +641,8 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     state.acks = { data: [{ document_id: "docA" }], error: null };
     state.libraryAck = { enabled: true, hardGate: true };
     res = await fileGet();
-    expect(res.status).toBe(410);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "unavailable", reason: "This link is temporarily unavailable — ask the person who sent it." });
     expect(inserted("document_share_accesses").at(-1)).toMatchObject({ kind: "refused", reason: "acknowledgment_outstanding" });
     expect(state.calls).toContainEqual({ table: "document_acknowledgments", method: "eq", args: ["assignee_user_id", "u1"] });
     expect(state.calls).toContainEqual({ table: "document_acknowledgments", method: "eq", args: ["status", "pending"] });
@@ -655,7 +656,9 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     // an unreadable acknowledgment read refuses (a copy leaving the organisation fails closed)
     state.libraryAck = { enabled: true, hardGate: true };
     state.acks = { data: [], error: { message: "boom" } };
-    expect((await fileGet()).status).toBe(410);
+    res = await fileGet();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "unavailable", unreadable: true });
     // nothing pending serves even under a hard gate
     state.acks = { data: [], error: null };
     expect((await fileGet()).status).toBe(200);

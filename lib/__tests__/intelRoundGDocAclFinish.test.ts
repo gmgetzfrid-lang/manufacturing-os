@@ -189,7 +189,9 @@ describe("KACL-9 done-when 3 — aiReadability at the doors that still tested ai
     const find = tools.slice(tools.indexOf("const findDocuments: ToolDef"), tools.indexOf("const searchDocuments: ToolDef"));
     expect(find).toMatch(/\.filter\(\(r\) => aiReadability\(\{/);
     expect(find).toMatch(/aiExcluded: r\.ai_excluded === true,\s*\}, true\)\.reason !== "held_back"\)/);
-    expect(find).not.toMatch(/\.eq\("ai_excluded", false\)/);
+    // review fix: the query keeps its pre-filter (the column is NOT NULL), so
+    // held-back rows never fill the LIMIT window; aiReadability is the named check
+    expect(find).toMatch(/\.eq\("ai_excluded", false\)/);
     expect(find).toMatch(/\.select\("id, document_number, title, rev, status, library_id, updated_at, ai_excluded, archived_at, current_version_id"\)/);
     // the mirror hop and the mention tool ask the same function through aiReadableControlledIds
     expect(tools).toMatch(/aiReadableControlledIds\(ctx\.orgId, sources\)/);

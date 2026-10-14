@@ -868,6 +868,8 @@ Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "done-when 1: th
 
 **Scope / residual.** All three criteria are open. No application code changed in this package.
 
+*Cross-note (2026-10-14, intelligence Round G, I-12 review fix): one more file now names the three columns — `lib/libraryAccess.ts` (`LIBRARY_RUNG_COLUMNS`, `effectiveLibraryAclFromRow`), the one library check `DACL-10` built. It READS `read_access`, `visible_to`, `write_access` and `admin_access` for a legacy library whose ACL says nothing, and synthesizes the read rung that list stands for (discover / read / download to each listed role, write and admin roles included, as the wizard grants); the library page, the AI seam (`lib/knowledgeAccess` `loadDcLandscape`) and the bytes door (`lib/docFileServer` `loadContainerAclChain`) take the library rung from it. So `write_access` / `admin_access` now feed a READ decision for those legacy rows — a fact for done-when 2's enforce-or-drop choice: dropping the columns drops the write / admin roles from that rung (retiring the lists into `libraries.acl`, `DACL-10` criterion 1 option (a), carries them over). The census test's set (`aoRoundGP0Records.test.ts`) lists the file.*
+
 ---
 
 <a id="alog-14"></a>

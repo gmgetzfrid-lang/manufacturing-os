@@ -3,13 +3,14 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { canServeContent, controllerBypassDecided, type Principal } from "@/lib/permissions";
+import { canServeContent, controllerBypassDecided, isControllerPrincipal, type Principal } from "@/lib/permissions";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import { resolvePresignedLifetime } from "@/lib/presignedLifetime";
 import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition";
 import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";
 import { loadReaderPrincipal, loadContainerAclChain, BrokenAclChainError } from "@/lib/docFileServer";
-import type { AccessControl, NodeVisibility } from "@/types/schema";
+import { normalizeRoles } from "@/lib/roleCapabilities";
+import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 /** KACL-5: the access check could not be made (a lookup failed). */
 const ACCESS_UNVERIFIED = "Couldn't verify your access to this file — try again.";
@@ -23,7 +24,33 @@ type KeyDoc = {
   owner_user_id: string | null;
   collection_id: string | null;
   library_id: string | null;
+  is_private?: boolean | null;
+  scope?: string | null;
+  created_by?: string | null;
 };
+
+/** The reader in the document's workspace (lib/docFileServer
+ *  loadReaderPrincipal, which throws when the membership or the teams cannot
+ *  be read). DEC-43 (I-12 review fix): a CONTROLLER is still answered when
+ *  only their teams could not be read — teams decide nothing for the
+ *  controller tier here, and the explicit download deny below reads the
+ *  member's own teams and fails closed on its own. Anyone else's unreadable
+ *  membership or teams still throws (closed, 503). */
+async function loadGatePrincipal(orgId: string, uid: string): Promise<Principal | null> {
+  try {
+    return await loadReaderPrincipal(orgId, uid);
+  } catch (e) {
+    const { data: mem, error } = await supabaseAdmin.from("org_members").select("role, roles")
+      .eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle();
+    if (error || !mem) throw e;
+    const m = mem as { role?: string | null; roles?: unknown };
+    const p: Principal = {
+      uid, role: (m.role as Role) ?? "Viewer", roles: normalizeRoles(m.roles, m.role), orgId, teamIds: [], isActiveMember: true,
+    };
+    if (!isControllerPrincipal(p)) throw e;
+    return p;
+  }
+}
 
 /** Every document that names this key — as a revision's rendered file
  *  (file_url) or its native source (source_file_key) — in lookup order. Two
@@ -52,10 +79,15 @@ async function documentsNamingKey(path: string): Promise<string[]> {
  *  The documents naming the key are judged in turn and the first one that
  *  serves the caller serves the bytes (they are the same bytes; a clone that
  *  shares a revision file is read through either). For each: the one read
- *  predicate over its full chain; DEC-43's record when only the controller
+ *  predicate over its full chain (a private draft is its creator's alone —
+ *  IEDGE-12, the seam's rule); DEC-43's record when only the controller
  *  tier served it (unless the effective-owner cascade would have); GAP-15 /
  *  DEC-7's cascade when the ACL refuses; then the explicit download deny,
- *  which binds everyone (lib/downloadDeny — the share routes' rule too). */
+ *  which binds everyone (lib/downloadDeny — the share routes' rule too).
+ *  DEC-43 (review fix): a controller is answered before the chain, as
+ *  readableControlledDocIds answers one before the landscape — a chain that
+ *  is broken or cannot be read does not refuse a controller; the read is
+ *  recorded (CONTROLLER_RESTRICTED_READ, `chain_unverified`). */
 async function documentKeyGate(
   keyOrg: string,
   path: string,
@@ -69,7 +101,7 @@ async function documentKeyGate(
     for (const id of docIds) {
       const { data, error } = await supabaseAdmin
         .from("documents")
-        .select("id, visibility, acl, acl_index, org_id, owner_user_id, collection_id, library_id")
+        .select("id, visibility, acl, acl_index, org_id, owner_user_id, collection_id, library_id, is_private, scope, created_by")
         .eq("id", id)
         .maybeSingle();
       if (error) throw new Error(`the file's document could not be read: ${error.message}`);
@@ -84,71 +116,100 @@ async function documentKeyGate(
       // Judged in the document's own workspace (a document of another
       // workspace than the key's prefix needs an active membership there).
       const orgId = doc.org_id ?? keyOrg;
-      if (!principals.has(orgId)) principals.set(orgId, await loadReaderPrincipal(orgId, user.id));
+      if (!principals.has(orgId)) principals.set(orgId, await loadGatePrincipal(orgId, user.id));
       const principal = principals.get(orgId) ?? null;
       if (!principal) continue;
-      let containerChain: Array<AccessControl | undefined>;
+      const visibility: NodeVisibility = doc.visibility === "private" || doc.visibility === "hidden" ? doc.visibility : "normal";
+      // IEDGE-12: a private draft is its creator's alone (controllers still
+      // read it, recorded below) — the seam's rule, in the one predicate.
+      const privateDraft = doc.is_private === true || doc.scope === "private" ? { createdBy: doc.created_by ?? null } : null;
+      let containerChain: Array<AccessControl | undefined> | null = null;
+      let chainUnverified: string | null = null;
       try {
         containerChain = await loadContainerAclChain(orgId, { libraryId: doc.library_id, collectionId: doc.collection_id });
       } catch (e) {
-        // A rung that does not exist: the decision cannot be made — say so
-        // (permanent until a controller repairs the chain), never serve.
-        if (e instanceof BrokenAclChainError) { refusal = { error: e.message, status: 409 }; continue; }
-        throw e;
-      }
-      const visibility: NodeVisibility = doc.visibility === "private" || doc.visibility === "hidden" ? doc.visibility : "normal";
-      const contentCheck = {
-        principal,
-        aclChain: [...containerChain, (doc.acl ?? undefined) as AccessControl | undefined],
-        visibility,
-        // GAP-15/DEC-7: ownership serves on its own, so an owner who is also
-        // a controller is NOT a bypass read (DEC-43). The explicit document
-        // owner is authoritative here (user_is_effective_owner says the
-        // same); the folder / library / team cascade is asked below, before
-        // any audit row is written.
-        effectiveOwnerUserId: (doc.owner_user_id as string | null) ?? null,
-      };
-      const allowed = canServeContent(contentCheck);
-      // DOCACL-3 / DEC-43: controllers are unscoped by design (the recovery
-      // rail, DEC-2). The mitigation is a RECORD: when the bytes of a
-      // restricted node are served ONLY because the caller is a controller,
-      // write an audit row. Best-effort — a failed audit insert never blocks
-      // the rail.
-      if (allowed && controllerBypassDecided(contentCheck)) {
-        // Ownership that would have served the bytes anyway leaves no row:
-        // the same cascade the deny path consults. A lookup error records
-        // the read rather than skipping it.
-        const { data: isOwner } = await supabaseAdmin.rpc("user_is_effective_owner", {
-          p_doc_owner: (doc.owner_user_id as string | null) ?? null,
-          p_collection: (doc.collection_id as string | null) ?? null,
-          p_library: (doc.library_id as string | null) ?? null,
-          p_uid: user.id,
-        });
-        if (isOwner !== true) {
-          await supabaseAdmin.from("audit_logs").insert({
-            action: "CONTROLLER_RESTRICTED_READ",
-            resource_type: "document",
-            resource_id: doc.id,
-            org_id: orgId,
-            user_id: user.id,
-            user_email: user.email ?? null,
-            details: { path, visibility, roles: contentCheck.principal.roles },
-          }).then(() => undefined, () => undefined);
+        if (isControllerPrincipal(principal)) {
+          // DEC-43: never dropped — served by the tier and recorded below.
+          chainUnverified = e instanceof BrokenAclChainError ? e.message : "the folder chain could not be read";
+        } else if (e instanceof BrokenAclChainError) {
+          // A rung that does not exist: the decision cannot be made — say
+          // so (permanent until a controller repairs the chain), never serve.
+          refusal = { error: e.message, status: 409 };
+          continue;
+        } else {
+          throw e;
         }
       }
-      if (!allowed) {
-        // GAP-15/DEC-7: ownership carries read access — the effective owner
-        // (document → folder → library → team-supervisor cascade, resolved by
-        // the same DB function the publish guard uses) may pull the bytes of
-        // their own document. A lookup error is a check not made (closed).
-        const { data: isOwner, error: ownerErr } = await supabaseAdmin.rpc("user_is_effective_owner", {
-          p_doc_owner: (doc.owner_user_id as string | null) ?? null,
-          p_collection: (doc.collection_id as string | null) ?? null,
-          p_library: (doc.library_id as string | null) ?? null,
-          p_uid: user.id,
-        });
-        if (ownerErr) throw new Error(`ownership could not be checked: ${ownerErr.message}`);
-        if (isOwner !== true) continue;
+      if (containerChain === null) {
+        // DEC-43: the controller tier alone decided — the chain could not be
+        // evaluated, so the read is recorded whoever owns the document (a
+        // check not made records rather than skips). Best-effort.
+        await supabaseAdmin.from("audit_logs").insert({
+          action: "CONTROLLER_RESTRICTED_READ",
+          resource_type: "document",
+          resource_id: doc.id,
+          org_id: orgId,
+          user_id: user.id,
+          user_email: user.email ?? null,
+          details: { path, visibility, roles: principal.roles, chain_unverified: chainUnverified },
+        }).then(() => undefined, () => undefined);
+      } else {
+        const contentCheck = {
+          principal,
+          aclChain: [...containerChain, (doc.acl ?? undefined) as AccessControl | undefined],
+          visibility,
+          // GAP-15/DEC-7: ownership serves on its own, so an owner who is also
+          // a controller is NOT a bypass read (DEC-43). The explicit document
+          // owner is authoritative here (user_is_effective_owner says the
+          // same); the folder / library / team cascade is asked below, before
+          // any audit row is written.
+          effectiveOwnerUserId: (doc.owner_user_id as string | null) ?? null,
+          privateDraft,
+        };
+        const allowed = canServeContent(contentCheck);
+        // DOCACL-3 / DEC-43: controllers are unscoped by design (the recovery
+        // rail, DEC-2). The mitigation is a RECORD: when the bytes of a
+        // restricted node are served ONLY because the caller is a controller,
+        // write an audit row. Best-effort — a failed audit insert never blocks
+        // the rail.
+        if (allowed && controllerBypassDecided(contentCheck)) {
+          // Ownership that would have served the bytes anyway leaves no row:
+          // the same cascade the deny path consults. A lookup error records
+          // the read rather than skipping it.
+          const { data: isOwner } = await supabaseAdmin.rpc("user_is_effective_owner", {
+            p_doc_owner: (doc.owner_user_id as string | null) ?? null,
+            p_collection: (doc.collection_id as string | null) ?? null,
+            p_library: (doc.library_id as string | null) ?? null,
+            p_uid: user.id,
+          });
+          if (isOwner !== true) {
+            await supabaseAdmin.from("audit_logs").insert({
+              action: "CONTROLLER_RESTRICTED_READ",
+              resource_type: "document",
+              resource_id: doc.id,
+              org_id: orgId,
+              user_id: user.id,
+              user_email: user.email ?? null,
+              details: { path, visibility, roles: contentCheck.principal.roles },
+            }).then(() => undefined, () => undefined);
+          }
+        }
+        if (!allowed) {
+          // GAP-15/DEC-7: ownership carries read access — the effective owner
+          // (document → folder → library → team-supervisor cascade, resolved
+          // by the same DB function the publish guard uses) may pull the bytes
+          // of their own document — never another creator's private draft
+          // (the seam's rule). A lookup error is a check not made (closed).
+          if (privateDraft && privateDraft.createdBy !== user.id) continue;
+          const { data: isOwner, error: ownerErr } = await supabaseAdmin.rpc("user_is_effective_owner", {
+            p_doc_owner: (doc.owner_user_id as string | null) ?? null,
+            p_collection: (doc.collection_id as string | null) ?? null,
+            p_library: (doc.library_id as string | null) ?? null,
+            p_uid: user.id,
+          });
+          if (ownerErr) throw new Error(`ownership could not be checked: ${ownerErr.message}`);
+          if (isOwner !== true) continue;
+        }
       }
       // Explicit DOWNLOAD deny rules bind here too — URL issuance is the
       // enforcement point for bytes, so an ACL "deny download" must not be
@@ -230,9 +291,11 @@ export async function GET(req: NextRequest) {
     // read predicate (read or download over the FULL library → folder
     // lineage → document chain, on every visibility — an allow-list or a deny
     // on a normal document, its folder or its library binds here exactly as
-    // it binds the AI seam and the library page). A key behind a record FAILS
-    // CLOSED: a lookup that cannot be made answers 503, a chain with a rung
-    // that does not exist answers 409 naming it. Only a key with no document
+    // it binds the AI seam and the library page; a private draft is its
+    // creator's alone). A key behind a record FAILS CLOSED: a lookup that
+    // cannot be made answers 503, a chain with a rung that does not exist
+    // answers 409 naming it — for anyone but a controller, who is answered
+    // before the chain and recorded (DEC-43). Only a key with no document
     // behind it keeps the membership check alone (attachments, knowledge
     // uploads, logos — they have their own doors).
     const gate = await documentKeyGate(orgMatch[1], path, { id: user.id, email: user.email ?? null });

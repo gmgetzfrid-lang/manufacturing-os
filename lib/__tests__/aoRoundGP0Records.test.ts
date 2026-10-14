@@ -348,6 +348,9 @@ describe("ALOG-13 — NOT holding at HEAD (owner admin-and-org P8)", () => {
     "lib/libraryCollections.ts",
     "app/(protected)/documents/[libraryId]/page.tsx",
     "app/(protected)/documents/page.tsx",
+    // intelligence I-12 review fix (DACL-10): the one library check reads the
+    // legacy lists for the effective library rung (cross-note on ALOG-13).
+    "lib/libraryAccess.ts",
   ]);
 
   it("every source file that names read_access / write_access / admin_access is one the record lists", () => {

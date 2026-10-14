@@ -909,21 +909,91 @@ describe("VFY-16 (intelligence I-12) — a private or hidden document's sheet is
   });
 });
 
-describe("DACL-8 criterion 3 (intelligence I-12) — a cover QR without a print id answers the verdict without the live membership's numbers or titles", () => {
-  it("reproduction → fix: each sheet of a legacy cover is named by its place ('Sheet 1', 'Sheet 2'), the verdict and the per-sheet state unchanged", async () => {
-    state.liveMembers.push({ document_id: DOC2, pinned_version_id: "w1", pinned_rev_label: "1" });
-    state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1", status: "Draft" }));
+describe("DACL-8 criterion 3 (intelligence I-12) — a cover QR without a print id answers the verdict without the live membership's numbers, titles or positions", () => {
+  // Review fix: the first build named each sheet "Sheet N" by its index in
+  // the live membership, which the route reads in NO order — the ordinal
+  // matched no sheet in the crew's folder. A legacy cover now COUNTS its
+  // sheets by state; no row names or numbers one.
+  const DOC4 = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+  const DOC5 = "abababab-abab-abab-abab-abababababab";
+  const DOC6 = "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd";
+  const member = (id: string, label: string, over: Record<string, unknown> = {}) => {
+    state.liveMembers.push({ document_id: id, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id, document_number: label, title: `${label} title`, name: label, current_version_id: "w1", rev: "1", ...over }));
+  };
+  const labels = (r: Record<string, unknown>) => (r.sheets as Array<Record<string, unknown>>).map((x) => x.label);
+
+  it("reproduction → fix: the reviewer's pack (1 superseded, 1 on hold, 4 in force) is answered as counts by state — no 'Sheet N', no number, no title", async () => {
+    state.docs = [docRow({ status: "Superseded" })];            // P-101
+    member(DOC2, "P-204");
+    state.holds = [{ document_id: DOC2, reason: "Client Review", released_at: null }];
+    member(DOC3, "P-301"); member(DOC4, "P-302"); member(DOC5, "P-303"); member(DOC6, "P-304");
     const r = await verify(false);
     const sheets = r.sheets as Array<Record<string, unknown>>;
-    expect(sheets.map((x) => x.label)).toEqual(["Sheet 1", "Sheet 2"]);
-    expect(JSON.stringify(r)).not.toMatch(/P-101|P-102|P&ID/);
-    expect(r.verdict).toBe("stale");
+    // stop-work first, then withdrawn, then "printing unknown" — a fixed order, not the read order
+    expect(sheets.map((x) => [x.label, x.state])).toEqual([
+      ["1 of 6 sheets", "held"],
+      ["1 of 6 sheets", "superseded"],
+      ["4 of 6 sheets", "unconfirmed"],
+    ]);
+    expect(sheets[0].holdReasons).toEqual(["Client Review"]);
+    expect(sheets.every((x) => x.printedRev === null && x.currentRev === null)).toBe(true);
+    expect(labels(r).some((l) => /^Sheet \d/.test(String(l)))).toBe(false);
+    expect(JSON.stringify(r)).not.toMatch(/P-101|P-204|P-30\d|P&ID|title/);
+    // the verdict and the counts are the per-sheet ones, unchanged
+    expect(r.verdict).toBe("held");
+    expect(r.sheetCount).toBe(6);
+    expect(r.heldCount).toBe(1);
+    expect(r.staleCount).toBe(1);
     expect(r.printConfirmed).toBe(false);
+    // the page's words never point at a sheet it cannot name
+    const v = presentPackVerdict(r as unknown as PackVerifyResult);
+    expect(v.advice).toMatch(/cannot say which sheets these are — do not work from any sheet in this pack/);
+    expect(v.blurb).toMatch(/counted below/);
+    const { sheetLabel } = await import("@/lib/verifyPresent");
+    expect(sheets.map((x) => sheetLabel(x as never).text)).toEqual(["ON HOLD · Client Review", "SUPERSEDED", "PRINTING UNKNOWN"]);
   });
-  it("regression: a cover QR that names its print still names every printed sheet", async () => {
+
+  it("the answer does not depend on the order the membership is read in", async () => {
+    member(DOC2, "P-102", { status: "Draft" });
+    member(DOC3, "P-103", { status: "Void" });
+    const a = await verify(false);
+    state.liveMembers.reverse();
+    state.docs.reverse();
+    const b = await verify(false);
+    expect(b.sheets).toEqual(a.sheets);
+    expect((a.sheets as Array<Record<string, unknown>>).map((x) => [x.label, x.state])).toEqual([
+      ["1 of 3 sheets", "void"], ["1 of 3 sheets", "draft"], ["1 of 3 sheets", "unconfirmed"],
+    ]);
+    expect(a.verdict).toBe("stale");
+    expect(presentPackVerdict(a as unknown as PackVerifyResult).advice).toMatch(/cannot say which sheets/);
+  });
+
+  it("legacyCoverStateRows: one row per state, a count label, reasons merged, a fixed order", async () => {
+    const { legacyCoverStateRows, legacyCoverCountLabel } = await import("@/lib/verifyDisclosure");
+    expect(legacyCoverCountLabel(1, 1)).toBe("1 of 1 sheet");
+    expect(legacyCoverStateRows([])).toEqual([]);
+    const rows = legacyCoverStateRows([
+      { state: "unconfirmed", held: false, holdReasons: [], retired: false },
+      { state: "held", held: true, holdReasons: ["Safety"], retired: false },
+      { state: "held", held: true, holdReasons: ["Client Review", "Safety"], retired: false },
+      { state: "retired", held: false, holdReasons: [], retired: true },
+    ]);
+    expect(rows.map((x) => [x.label, x.state, x.held, x.retired, x.holdReasons])).toEqual([
+      ["2 of 4 sheets", "held", true, false, ["Safety", "Client Review"]],
+      ["1 of 4 sheets", "retired", false, true, []],
+      ["1 of 4 sheets", "unconfirmed", false, false, []],
+    ]);
+  });
+
+  it("regression: a cover QR that names its print still names every printed sheet, one row each", async () => {
     state.print = printAt([sheetV2]);
     const r = await verify(true);
     expect((r.sheets as Array<Record<string, unknown>>)[0].label).toBe("P-101");
     expect(r.verdict).toBe("current");
+    // and its advice is unchanged
+    state.docs = [docRow({ status: "Void" })];
+    const s = await verify(true);
+    expect(presentPackVerdict(s as unknown as PackVerifyResult).advice).not.toMatch(/cannot say which sheets/);
   });
 });

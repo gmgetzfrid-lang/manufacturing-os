@@ -179,6 +179,10 @@ function seed(opts: {
   folderAcl?: unknown; folderVisibility?: string;
   docAcl?: unknown; docVisibility?: string; docIndex?: unknown;
   teams?: string[];
+  /** A private draft (documents.is_private) and its creator (default u-dc). */
+  docPrivate?: boolean; docCreator?: string;
+  /** The legacy library role arrays (read_access / visible_to / write_access). */
+  libReadAccess?: unknown; libVisibleTo?: unknown; libWriteAccess?: unknown;
 } = {}) {
   db.tables = {
     org_members: [
@@ -187,7 +191,12 @@ function seed(opts: {
     ],
     team_members: (opts.teams ?? []).map((t) => ({ uid: "u-viewer", team_id: t })),
     teams: [{ id: "T-eng", org_id: ORG, supervisor_user_id: null }],
-    libraries: [{ id: LIB, org_id: ORG, name: "Operations", acl: opts.libAcl ?? null, visibility: opts.libVisibility ?? "normal", owner_user_id: null, owner_team_id: null }],
+    libraries: [{
+      id: LIB, org_id: ORG, name: "Operations", acl: opts.libAcl ?? null, visibility: opts.libVisibility ?? "normal", owner_user_id: null, owner_team_id: null,
+      ...(opts.libReadAccess !== undefined ? { read_access: opts.libReadAccess } : {}),
+      ...(opts.libVisibleTo !== undefined ? { visible_to: opts.libVisibleTo } : {}),
+      ...(opts.libWriteAccess !== undefined ? { write_access: opts.libWriteAccess } : {}),
+    }],
     collections: [{
       id: FOLDER, org_id: ORG, library_id: LIB, parent_id: null, path_ids: [], name: "Incident", path_names: ["Incident"],
       acl: opts.folderAcl ?? null, visibility: opts.folderVisibility ?? "normal", owner_user_id: null, deleted_at: null,
@@ -195,7 +204,7 @@ function seed(opts: {
     documents: [{
       id: DOC, org_id: ORG, library_id: LIB, collection_id: FOLDER, document_number: "HSE-7", title: "Incident procedure",
       acl: opts.docAcl ?? null, visibility: opts.docVisibility ?? "normal", acl_index: opts.docIndex ?? null,
-      is_private: false, scope: null, created_by: "u-dc", owner_user_id: null,
+      is_private: opts.docPrivate ?? false, scope: null, created_by: opts.docCreator ?? "u-dc", owner_user_id: null,
       status: "Issued", archived_at: null, current_version_id: "v1", ai_excluded: false, name: null,
     }],
     document_versions: [{ id: "v1", record_id: DOC, file_url: KEY, file_type: "application/pdf", archived_at: null, archive_id: null, revision_label: "A", size: 10 }],
@@ -517,6 +526,12 @@ describe("IEDGE-12 — the AI seam and the bytes door agree on the same document
     ["hidden, read", { docVisibility: "hidden", docAcl: acl([allow("role", "Viewer", ["read"])], "hidden") }],
     ["private, no ACL", { docVisibility: "private" }],
     ["zero-rule library ACL (a no-op drawer save)", { libAcl: acl([]) }],
+    // review fix: the private-draft rule is in the one predicate, so both doors apply it
+    ["another member's private draft", { docPrivate: true }],
+    ["the reader's own private draft", { docPrivate: true, docCreator: "u-viewer" }],
+    // review fix: a legacy read list binds at both doors (one library check)
+    ["legacy read_access ['HR'] with a zero-rule ACL, a Viewer", { libAcl: acl([]), libReadAccess: ["HR"], libVisibleTo: [] }],
+    ["legacy read_access ['Viewer'] with a zero-rule ACL", { libAcl: acl([]), libReadAccess: ["Viewer"], libVisibleTo: [] }],
   ];
   for (const [label, opts] of CASES) {
     it(label, async () => {
@@ -715,7 +730,12 @@ describe("DACL-9 / DACL-10 — the explorer's chains and the one library check (
     const lib = readFileSync(join(process.cwd(), "app/(protected)/documents/[libraryId]/page.tsx"), "utf8");
     expect(home).not.toMatch(/function computeCanRead/);
     expect(home).toMatch(/libraryReadsByRole\(normalized, activeRole, roles\)/);
-    expect(lib).toMatch(/libraryReadsByRole\(library, activeRole, roles\)/);
+    // review fix: the library page decides "no access" from the explorer's
+    // own evaluation of the effective library rung (lib/libraryAccess
+    // explorerLibraryVisible), and waits for the role and the teams first
+    expect(lib).toMatch(/const libraryReadable = isController \|\| isLibraryOwner \|\| explorerLibraryVisible\(principal, library\);/);
+    expect(lib).toMatch(/const accessResolved = !roleLoading && \(activeRole === null \|\| !uid \|\| teamIdsFor === uid\);/);
+    expect(lib).toMatch(/filteredFolders\.length === 0 && !accessResolved \? \(/);
     expect(lib).toContain("You don't have access to this library");
     expect(lib).toMatch(/restricted by their access rules\. To request access, ask the library's owner or a document controller\./);
     expect(lib).toMatch(/\(!libraryReadable \|\| restrictedHere > 0\) \? \(/);
@@ -733,5 +753,163 @@ describe("VFY-7 — the short link's resolver: punctuation-forgiving at the quer
     expect(home).toMatch(/else if \(hits\.length > 1\) \{[\s\S]*?setShortLinkChoices\(\{ raw, rows: hits \}\);/);
     expect(home).toContain("data-short-link-chooser");
     expect(home).not.toMatch(/\?\? \(rows \?\? \[\]\)\[0\]/);
+  });
+});
+
+// ── I-12 review fixes ──────────────────────────────────────────────────────
+describe("DACL-10 (review fix) — one library check at the AI seam and the bytes door: a legacy read list binds", () => {
+  const HR = (p: KnowledgePrincipal): KnowledgePrincipal => ({ ...p, role: "HR" as never, roles: ["HR" as never] });
+  it("reproduction → fix: read_access ['HR'], visible_to [] and a zero-rule ACL — a Viewer's AI does not read it and is not offered the library; HR's does", async () => {
+    seed({ libAcl: acl([]), libReadAccess: ["HR"], libVisibleTo: [] });
+    expect(await aiReads()).toBe(false);                         // was true: a zero-rule ACL said nothing
+    const l = await loadDcLandscape(ORG);
+    expect(containerReadable("library", LIB, await viewer(), l)).toBe(false);
+    expect(containerReadable("folder", FOLDER, await viewer(), l)).toBe(false);
+    const hr = HR(await viewer());
+    expect([...await readableControlledDocIds(hr, [DOC])]).toEqual([DOC]);
+    expect(containerReadable("library", LIB, hr, l)).toBe(true);
+    // the bytes door asks the same rung
+    expect(await bytes()).toBe(403);
+    db.tables.org_members[0] = { ...db.tables.org_members[0], role: "HR", roles: ["HR"] };
+    expect(await bytes()).toBe(200);
+  });
+  it("an ACL NULL legacy row binds the same way; \"ALL\", a NULL read list and a library whose ACL says something are unchanged", async () => {
+    seed({ libReadAccess: ["HR"] });
+    expect(await aiReads()).toBe(false);
+    seed({ libReadAccess: "ALL", libAcl: acl([]) });
+    expect(await aiReads()).toBe(true);
+    seed({ libReadAccess: null });
+    expect(await aiReads()).toBe(true);
+    seed({ libReadAccess: ["HR"], libAcl: acl([allow("role", "Viewer", ["read"])]) });
+    expect(await aiReads()).toBe(true);
+  });
+  it("a write role outside the read list reads, as the library wizard lets it (LibraryWizard: write roles get read)", async () => {
+    seed({ libAcl: acl([]), libReadAccess: ["Engineer-1"], libVisibleTo: [], libWriteAccess: ["Viewer"] });
+    expect(await aiReads()).toBe(true);
+    expect(await bytes()).toBe(200);
+    const { legacyLibraryAcl, effectiveLibraryAclFromRow } = await import("@/lib/libraryAccess");
+    const synthesized = legacyLibraryAcl({ readAccess: ["Engineer-1"] as never, writeAccess: ["Drafter"] as never, adminAccess: ["Admin"] as never, acl: null });
+    expect(synthesized?.rules.map((r) => (r.subject as { id: string }).id)).toEqual(["Engineer-1", "Drafter", "Admin"]);
+    expect(synthesized?.rules.every((r) => r.actions.join() === "discover,read,download")).toBe(true);
+    expect(effectiveLibraryAclFromRow({ acl: null, read_access: "ALL", write_access: ["Drafter"] })).toBeUndefined();
+  });
+  it("the seam and the bytes door take the rung from lib/libraryAccess (source pins)", () => {
+    const k = readFileSync(join(process.cwd(), "lib/knowledgeAccess.ts"), "utf8");
+    expect(k).toMatch(/acl: effectiveLibraryAclFromRow\(l\) \?\? null,/);
+    const d = readFileSync(join(process.cwd(), "lib/docFileServer.ts"), "utf8");
+    expect(d).toMatch(/\.from\("libraries"\)\.select\(`id, \$\{LIBRARY_RUNG_COLUMNS\}`\)/);
+    expect(d).toMatch(/return \[effectiveLibraryAclFromRow\(lib as Record<string, unknown>\), \.\.\.folders\];/);
+  });
+});
+
+describe("DACL-10 done-when 2 (review fix) — the library page's 'no access' state is the explorer's own evaluation", () => {
+  const V: Principal = { uid: "u-v", role: "Viewer" as never, roles: ["Viewer" as never], orgId: ORG, teamIds: [], isActiveMember: true };
+  it("a team or user grant on the library counts; the legacy arrays bind through the effective rung; no principal sees nothing", async () => {
+    const { explorerLibraryVisible } = await import("@/lib/libraryAccess");
+    const teamGrant = acl([allow("role", "HR", ["discover", "read"]), allow("team", "T-eng", ["discover", "read"])]) as AccessControl;
+    expect(explorerLibraryVisible(V, { readAccess: ["HR"] as never, acl: teamGrant })).toBe(false);
+    expect(explorerLibraryVisible({ ...V, teamIds: ["T-eng"] }, { readAccess: ["HR"] as never, acl: teamGrant })).toBe(true); // the role arrays alone said no
+    const userGrant = acl([allow("user", "u-v", ["discover"])]) as AccessControl;
+    expect(explorerLibraryVisible(V, { readAccess: ["HR"] as never, acl: userGrant })).toBe(true);
+    expect(explorerLibraryVisible(V, { readAccess: ["HR"] as never, acl: null })).toBe(false);
+    expect(explorerLibraryVisible(V, { readAccess: "ALL", acl: null })).toBe(true);
+    expect(explorerLibraryVisible(V, { readAccess: ["HR"] as never, acl: null, ownerUserId: "u-v" })).toBe(true);
+    expect(explorerLibraryVisible({ ...V, roles: ["DocCtrl" as never] }, { readAccess: ["HR"] as never, acl: null })).toBe(true);
+    expect(explorerLibraryVisible(null, { readAccess: "ALL", acl: null })).toBe(false);
+  });
+});
+
+describe("DACL-9 (review fix) — inherit:false resets on the node's OWN step only", () => {
+  const ctxX = { uid: "u1", role: "Viewer" as never, roles: ["Viewer" as never], orgId: ORG, teamIds: ["T-x"] };
+  const folder = acl([allow("org", ORG, ["read"]), deny("team", "T-x", ["read"])], "normal", false) as AccessControl;
+  const docOwn = acl([allow("team", "T-x", ["read"])]) as AccessControl;
+  it("reproduction → fix: a folder with inherit:false and [deny team X read] above a document carrying its own ACL — the deny binds (it was dropped and the document's allow won)", () => {
+    const lib = acl([allow("org", ORG, ["read"])]) as AccessControl;
+    const decision = evaluateAclChain([lib, folder, docOwn], ctxX);
+    expect(decision?.can("read")).toBe(false);
+    // the index is built the same way
+    const idx = buildAclIndexFromChain([lib, folder, docOwn], Date.now());
+    expect(idx?.deny.teams?.read).toContain("T-x");
+    expect(canReadViaIndex(idx, { ...ctxX, isActiveMember: true } as Principal)).toBe(false);
+  });
+  it("a node's own inherit:false still clears its ancestors' rules (a library deny above it no longer applies); the node below keeps the node's grants", () => {
+    const lib = acl([deny("team", "T-x", ["read"])]) as AccessControl;
+    const restart = acl([allow("team", "T-x", ["read"])], "normal", false) as AccessControl;
+    expect(evaluateAclChain([lib, restart], ctxX)?.can("read")).toBe(true);
+    expect(evaluateAclChain([lib, restart, acl([]) as AccessControl], ctxX)?.can("read")).toBe(true);     // was false: the next node cleared restart's grant
+    expect(buildAclIndexFromChain([lib, restart, acl([]) as AccessControl], Date.now())?.allow.teams?.read).toEqual(["T-x"]);
+  });
+});
+
+describe("KACL-5 / DEC-43 (review fix) — the bytes door answers a controller before the chain", () => {
+  it("a broken chain refuses a member (409) but serves a controller, recorded as chain_unverified (it was a 409 for the controller too)", async () => {
+    seed();
+    db.tables.documents[0].collection_id = "99999999-9999-4999-8999-999999999999";
+    expect(await bytes()).toBe(409);
+    expect(await bytes("u-dc")).toBe(200);
+    const rec = db.inserts.filter((i) => i.table === "audit_logs" && (i.row as Row).action === "CONTROLLER_RESTRICTED_READ");
+    expect(rec).toHaveLength(1);
+    expect(((rec[0].row as Row).details as Row).chain_unverified).toMatch(/folder chain is broken/);
+  });
+  it("a failed folder read (transient) is 503 for a member and served + recorded for a controller", async () => {
+    seed();
+    db.errors.collections = { message: "statement timeout" };
+    expect(await bytes()).toBe(503);
+    expect(await bytes("u-dc")).toBe(200);
+    expect(restrictedReads()).toBe(1);
+  });
+  it("a team_members read error is 503 for a member and still serves a controller (teams decide nothing for the tier)", async () => {
+    seed();
+    db.errors.team_members = { message: "statement timeout" };
+    expect(await bytes()).toBe(503);
+    expect(await bytes("u-dc")).toBe(200);
+  });
+  it("…and an explicit download deny still binds a controller (the deny reads its own membership)", async () => {
+    seed({ docIndex: { deny: { roles: { download: ["DocCtrl"] } } } });
+    db.tables.documents[0].collection_id = "99999999-9999-4999-8999-999999999999";
+    expect(await bytes("u-dc")).toBe(403);
+  });
+});
+
+describe("IEDGE-12 (review fix) — the private-draft rule is in the one predicate", () => {
+  it("another member's private draft is refused by the AI seam AND the bytes door; the creator and a controller (recorded) are served; the owner cascade does not open another creator's draft", async () => {
+    seed({ docPrivate: true });
+    expect(await aiReads()).toBe(false);
+    expect(await bytes()).toBe(403);                               // was 200: the bytes door never read is_private
+    db.rpc.user_is_effective_owner = (a) => a.p_uid === "u-viewer";
+    expect(await bytes()).toBe(403);
+    seed({ docPrivate: true, docCreator: "u-viewer" });
+    expect(await aiReads()).toBe(true);
+    expect(await bytes()).toBe(200);
+    seed({ docPrivate: true, docCreator: "u-other" });
+    expect(await bytes("u-dc")).toBe(200);
+    expect(restrictedReads()).toBe(1);
+  });
+  it("canReadNode: a private draft is its creator's alone, whatever the chain grants", () => {
+    const P: Principal = { uid: "u1", role: "Viewer" as never, roles: ["Viewer" as never], orgId: ORG, teamIds: [], isActiveMember: true };
+    const open = [acl([allow("org", ORG, ["read", "download"])]) as AccessControl];
+    expect(canReadNode({ principal: P, aclChain: open, privateDraft: { createdBy: "u2" } })).toBe(false);
+    expect(canReadNode({ principal: P, aclChain: open, privateDraft: { createdBy: "u2" }, effectiveOwnerUserId: "u1" })).toBe(false);
+    expect(canReadNode({ principal: P, aclChain: open, privateDraft: { createdBy: "u1" } })).toBe(true);
+    expect(canReadNode({ principal: P, aclChain: open, privateDraft: null })).toBe(true);
+    expect(canServeContent({ principal: { ...P, roles: ["Admin" as never] }, aclChain: [], privateDraft: { createdBy: "u2" } })).toBe(true);
+  });
+});
+
+describe("KACL-5 (review fix) — an allow-list on a normal chain binds the bytes door: the flows it changes, pinned", () => {
+  // Work-pack printing (lib/docPack resolveToHttpUrl) and the viewer opened
+  // from global search fetch through this door. A reader inside the
+  // allow-list is served — a pack they print still carries the sheet; a
+  // reader outside it is refused (403), which docPack records as the sheet
+  // left out with "the file could not be fetched (… 403)" — see KACL-5.
+  it("a Planner inside a role-restricted library's allow-list is served; one outside it is refused", async () => {
+    seed({ libAcl: acl([allow("role", "Planner", ["discover", "read", "download"])]) });
+    expect(await bytes()).toBe(403);
+    db.tables.org_members[0] = { ...db.tables.org_members[0], role: "Planner", roles: ["Planner"] };
+    expect(await bytes()).toBe(200);
+    // the same reader through a legacy read list
+    seed({ libReadAccess: ["Planner"] });
+    db.tables.org_members[0] = { ...db.tables.org_members[0], role: "Planner", roles: ["Planner"] };
+    expect(await bytes()).toBe(200);
   });
 });

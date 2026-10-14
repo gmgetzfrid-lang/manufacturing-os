@@ -205,7 +205,12 @@ export function evaluateAclChain(
 
     const nodeInherit = acl.inherit !== false;
 
-    if (!inherit || !nodeInherit) {
+    // DACL-9 (intelligence I-12 review fix): `inherit: false` on a node
+    // clears its ANCESTORS' rules — on that node's own step only. It used to
+    // test the previous node's flag too, so the node BELOW a non-inheriting
+    // one cleared the non-inheriting node's own rules (a folder's deny was
+    // dropped and an allow on the document below won).
+    if (!nodeInherit) {
       mergedRules = [];
       visibility = "normal";
     }
@@ -381,19 +386,17 @@ export function buildAclIndexFromChain(chain: Array<AccessControl | undefined>, 
   if (!chain.some(Boolean)) return null;
 
   let mergedRules: AccessRule[] = [];
-  let inherit = true;
 
   for (const acl of chain) {
     if (!acl) continue;
 
-    const nodeInherit = acl.inherit !== false;
-
-    if (!inherit || !nodeInherit) {
+    // DACL-9 (I-12 review fix): reset on the node's OWN inherit:false only —
+    // evaluateAclChain's rule, so the index and the app agree.
+    if (acl.inherit === false) {
       mergedRules = [];
     }
 
     mergedRules = mergedRules.concat(acl.rules ?? []);
-    inherit = nodeInherit;
   }
 
   return buildAclIndexFromRules(mergedRules, nowMs);

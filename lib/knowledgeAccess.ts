@@ -25,10 +25,19 @@
 // document or folder whose library or folder is absent from the landscape is
 // unreadable to everyone but a controller (its chain is never evaluated with
 // a rung missing).
+//
+// DACL-10 (review fix): the library rung is lib/libraryAccess
+// effectiveLibraryAclFromRow — the library's ACL, or, for a legacy row whose
+// ACL says nothing while its read list is restricted, the ACL that list
+// stands for — the one library check the documents home, the library page
+// and the bytes door ask too. Before it, a legacy library whose read list
+// named only HR, with a zero-rule ACL, said nothing here (lib/acl
+// aclSaysSomething) and every member's AI could read and offer it.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { canReadNode } from "@/lib/permissions";
 import { resolveEffectiveOwner, type TeamSupervisor } from "@/lib/ownership";
+import { effectiveLibraryAclFromRow, LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 export interface KnowledgePrincipal {
@@ -92,6 +101,9 @@ export function chainReadable(
   visibility: NodeVisibility | null | undefined,
   principal: KnowledgePrincipal,
   effectiveOwnerUid?: string | null,
+  /** A private draft's creator (canReadNode's `privateDraft`) — omit for any
+   *  other row. */
+  privateDraft?: { createdBy: string | null } | null,
 ): boolean {
   if (principal.isController) return true;
   return canReadNode({
@@ -107,6 +119,7 @@ export function chainReadable(
     visibility: visibility ?? null,
     effectiveOwnerUserId: effectiveOwnerUid ?? null,
     actions: ["read"],
+    privateDraft: privateDraft ?? null,
   });
 }
 
@@ -174,7 +187,7 @@ export async function loadDcLandscape(orgId: string): Promise<{
   // collections is select("*") so the trash filter works before AND after
   // migration 20261011 (naming deleted_at explicitly would 42703 pre-migration).
   const [libRows, folderRows, teamRows] = await Promise.all([
-    readAllPages("libraries", "id, name, acl, visibility, owner_user_id, owner_team_id", orgId),
+    readAllPages("libraries", `id, name, owner_user_id, owner_team_id, ${LIBRARY_RUNG_COLUMNS}`, orgId),
     readAllPages("collections", "*", orgId),
     readAllPages("teams", "id, supervisor_user_id", orgId),
   ]);
@@ -182,7 +195,8 @@ export async function loadDcLandscape(orgId: string): Promise<{
   for (const l of libRows) {
     libraries.set(l.id as string, {
       name: (l.name as string) ?? "Library",
-      acl: (l.acl as AccessControl) ?? null,
+      // DACL-10: the effective rung (a legacy read list binds — see the header).
+      acl: effectiveLibraryAclFromRow(l) ?? null,
       visibility: (l.visibility as NodeVisibility) ?? null,
       owner_user_id: (l.owner_user_id as string | null) ?? null,
       owner_team_id: (l.owner_team_id as string | null) ?? null,
@@ -391,13 +405,14 @@ export async function readableControlledDocIds(
   }
 
   for (const doc of docs) {
-    // Private drafts belong to their creator alone.
-    if ((doc.is_private || doc.scope === "private") && doc.created_by !== principal.uid) continue;
     const above = documentContainerChain(doc, landscape);
     if (!above) continue;
     const chain = [...above, doc.acl];
     const owner = effectiveOwnerFor(doc.owner_user_id, doc.collection_id, doc.library_id, landscape);
-    if (chainReadable(chain, doc.visibility, principal, owner)) readable.add(doc.id);
+    // Private drafts belong to their creator alone — the one predicate's
+    // rule (IEDGE-12: the bytes door asks the same).
+    const privateDraft = doc.is_private || doc.scope === "private" ? { createdBy: doc.created_by } : null;
+    if (chainReadable(chain, doc.visibility, principal, owner, privateDraft)) readable.add(doc.id);
   }
   return readable;
 }

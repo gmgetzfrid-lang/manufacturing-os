@@ -23,11 +23,76 @@ export function verifyMayNameDocument(row: { visibility?: unknown } | null | und
 /** DACL-8 criterion 3 (intelligence I-12, the DEC-90 less-disclosing
  *  default): a work-pack cover QR WITHOUT a print id cannot say which
  *  printing it is — its sheet list would be the package's LIVE membership,
- *  which is not what the paper carries (it is never green, DEC-65 §2). Its
- *  verdict is still answered, sheet by sheet, but each sheet is named only
- *  by its place in the list, never by the live membership's number or
- *  title. A cover QR that names its print (`?print=`) answers exactly the
- *  printed sheets, named as before. */
-export function legacyCoverSheetLabel(position: number): string {
-  return `Sheet ${position}`;
+ *  which is not what the paper carries (it is never green, DEC-65 §2), and
+ *  is read in no order, so no position in it is a position on the paper.
+ *  Its verdict is still answered, but NO row names or numbers a sheet:
+ *  the sheets are COUNTED by state, one row per state — "2 of 6 sheets ·
+ *  SUPERSEDED", "1 of 6 sheets · ON HOLD" — in a fixed order (stop-work
+ *  first). Review fix: the first build named each sheet "Sheet N" by its
+ *  index in that unordered list, which matched no sheet in the folder. A
+ *  cover QR that names its print (`?print=`) answers exactly the printed
+ *  sheets, named as before. */
+export interface LegacyCoverSheet {
+  state: string;
+  held: boolean;
+  holdReasons: string[];
+  retired: boolean;
+}
+
+/** One counted row of a legacy cover's answer (the pack page renders it as
+ *  a sheet row: the count on the left, the state on the right). */
+export interface LegacyCoverStateRow {
+  label: string;
+  printedRev: null;
+  currentRev: null;
+  state: string;
+  fresh: false;
+  retired: boolean;
+  held: boolean;
+  holdReasons: string[];
+}
+
+/** The order the counted rows are listed in: stop-work first, then
+ *  withdrawn, then gone, then not issued, then "printing unknown". */
+const LEGACY_STATE_ORDER = [
+  "held", "superseded", "void", "archived", "retired", "missing",
+  "status_unrecognised", "not_issued", "draft", "unconfirmed",
+];
+
+/** "2 of 6 sheets" — a count, never a position. */
+export function legacyCoverCountLabel(count: number, total: number): string {
+  return `${count} of ${total} sheet${total === 1 ? "" : "s"}`;
+}
+
+/** DACL-8 criterion 3: a legacy cover's per-sheet answer, counted by state
+ *  (see above). Pure: the route computes each sheet's state as before and
+ *  hands the list here; the verdict and the counts are computed from the
+ *  per-sheet list, not from these rows. */
+export function legacyCoverStateRows(sheets: readonly LegacyCoverSheet[]): LegacyCoverStateRow[] {
+  const total = sheets.length;
+  const groups = new Map<string, { count: number; held: boolean; retired: boolean; reasons: Set<string> }>();
+  for (const s of sheets) {
+    const g = groups.get(s.state) ?? { count: 0, held: false, retired: false, reasons: new Set<string>() };
+    g.count += 1;
+    g.held = g.held || s.held;
+    g.retired = g.retired || s.retired;
+    for (const r of s.holdReasons) g.reasons.add(r);
+    groups.set(s.state, g);
+  }
+  const rank = (state: string) => {
+    const i = LEGACY_STATE_ORDER.indexOf(state);
+    return i === -1 ? LEGACY_STATE_ORDER.length : i;
+  };
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([state, g]) => ({
+      label: legacyCoverCountLabel(g.count, total),
+      printedRev: null,
+      currentRev: null,
+      state,
+      fresh: false,
+      retired: g.retired,
+      held: g.held,
+      holdReasons: [...g.reasons],
+    }));
 }

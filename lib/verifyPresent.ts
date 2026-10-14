@@ -219,6 +219,11 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
   const v: PackVerdict = r.verdict ?? (r.snapshotMissing ? "unverifiable" : r.allFresh ? "current" : "stale");
   const n = r.sheetCount;
   const sheets = (k: number) => `${k} sheet${k === 1 ? "" : "s"}`;
+  // intelligence DACL-8 c3: a cover QR with no print id answers its sheets
+  // as counts by state — it cannot say WHICH sheets are held or stale, so
+  // its advice never points at a sheet (an older API build omits the flag).
+  const legacyCover = r.printConfirmed === false && !r.snapshotMissing;
+  const LEGACY_ADVICE = "This cover sheet's code predates print records, so it cannot say which sheets these are — do not work from any sheet in this pack. Ask the package owner or Document Control for a re-printed pack.";
   switch (v) {
     case "current":
       return { bg: "bg-emerald-600", icon: "ok", ok: true, headline: "PACK IS CURRENT", advice: null,
@@ -229,8 +234,8 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
         blurb: "Every sheet is the latest revision, but at least one does not come into force yet — the sheets marked below." };
     case "held":
       return { bg: "bg-red-700", icon: "stop", ok: false, headline: "PACK ON HOLD — STOP WORK",
-        advice: "Do not work from the held sheets until Document Control releases every hold on them.",
-        blurb: `${sheets(r.heldCount ?? 0)} in this pack ${(r.heldCount ?? 0) === 1 ? "is" : "are"} under an active hold — the sheets marked below.` };
+        advice: legacyCover ? LEGACY_ADVICE : "Do not work from the held sheets until Document Control releases every hold on them.",
+        blurb: `${sheets(r.heldCount ?? 0)} in this pack ${(r.heldCount ?? 0) === 1 ? "is" : "are"} under an active hold — ${legacyCover ? "counted below." : "the sheets marked below."}` };
     case "stale": {
       // A sheet of the package that is not in this pack but could be printed
       // now. The verdict words here say only that the package holds it and
@@ -253,7 +258,7 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
       const missingNotChanged = changed === 0 && missing > 0;
       return { bg: "bg-red-600", icon: "x", ok: false,
         headline: changed > 0 ? "PACK IS STALE" : missing > 0 ? "PACK IS MISSING SHEETS" : notIssued > 0 ? "PACK HAS UNISSUED SHEETS" : "PACK IS STALE",
-        advice: onlyNotIssued
+        advice: legacyCover ? LEGACY_ADVICE : onlyNotIssued
           ? "Do not work from the sheets marked below — they are not issued revisions. Get the issued revisions from Document Control before starting work."
           : missingNotChanged
             ? "Do not work from any sheet marked below, and ask the package owner or Document Control for a re-printed pack — the package's sheets that are not in this pack are listed below."
@@ -310,7 +315,9 @@ export function sheetLabel(s: PackSheetRow): { text: string; ok: boolean } {
     case "status_unrecognised": return { text: "STATUS NOT RECOGNISED", ok: false };
     case "missing": return { text: "NO LONGER AVAILABLE", ok: false };
     case "removed": return { text: "REMOVED FROM PACKAGE", ok: false };
-    case "unconfirmed": return { text: `now Rev ${s.currentRev ?? "—"} · printing unknown`, ok: false };
+    // A legacy cover's counted row (intelligence DACL-8 c3) carries no
+    // revision — it stands for several sheets.
+    case "unconfirmed": return { text: s.currentRev ? `now Rev ${s.currentRev} · printing unknown` : "PRINTING UNKNOWN", ok: false };
     case "stale":
     default: return { text: `${printed} → ${s.currentRev ?? "—"}`, ok: false };
   }

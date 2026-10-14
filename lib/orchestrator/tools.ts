@@ -210,6 +210,10 @@ const findDocuments: ToolDef = {
       .from("documents")
       .select("id, document_number, title, rev, status, library_id, updated_at, ai_excluded, archived_at, current_version_id")
       .eq("org_id", ctx.orgId)
+      // PILLAR A. `ai_excluded` (NOT NULL) is pre-filtered in the query so
+      // held-back rows never fill the LIMIT window and crowd real matches
+      // out; aiReadability below is the named check (KACL-9, I-12 review fix).
+      .eq("ai_excluded", false)
       // ORCH-6: the model's text is a quoted, escaped literal — a comma or a
       // parenthesis in a title no longer re-splits the filter list.
       .or(orIlikeContains(["document_number", "title"], q))

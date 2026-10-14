@@ -198,11 +198,13 @@ export function canDiscover(params: {
 
 /** IEDGE-12: THE read predicate — may this principal read a node's CONTENT,
  *  given the full ACL chain above it (library → folder lineage → the node)?
- *  One function, asked by every door that hands out what a document says:
+ *  One function, asked by the doors that hand out what a document says:
  *  the knowledge seam (lib/knowledgeAccess chainReadable — the AI's ask,
- *  orchestrator, drawing, locate, share serving), the bytes door
- *  (canServeContent → /api/storage/download-url) and the service-role page
- *  reader (lib/docFileServer).
+ *  orchestrator, drawing, locate, share serving) and the bytes door
+ *  (canServeContent → /api/storage/download-url). The service-role page
+ *  reader (lib/docFileServer mayReadContent) evaluates the same chain rule
+ *  through canWithAclChain, without the private-draft input (IEDGE-12's
+ *  recorded residual).
  *
  *   - a controller (by the role collection, DEC-2 / DEC-43) and the node's
  *     effective owner (GAP-15 / DEC-7) read;
@@ -212,7 +214,12 @@ export function canDiscover(params: {
  *     (DOCACL-5, KACL-3), whatever the visibility;
  *   - a chain that says nothing is default-open for a NORMAL node only — a
  *     hidden or private one with no ACL anywhere is controllers' and the
- *     owner's alone (KACL-11; canDiscover's fallback).
+ *     owner's alone (KACL-11; canDiscover's fallback);
+ *   - a PRIVATE DRAFT (documents.is_private, or scope 'private') is its
+ *     creator's alone, whatever the chain and whoever owns it (controllers
+ *     still read it — DEC-43). Pass `privateDraft` with the row's
+ *     created_by when the row is one; omit it otherwise. Review fix
+ *     (IEDGE-12): the seam applied this rule and the bytes door did not.
  *
  *  `actions` is what counts as reading: the AI seam asks `read`; the bytes
  *  door asks `read` or `download` (a download grant hands over the file). */
@@ -222,11 +229,13 @@ export function canReadNode(params: {
   visibility?: NodeVisibility | null;
   effectiveOwnerUserId?: string | null;
   actions?: readonly PermissionAction[];
+  privateDraft?: { createdBy: string | null } | null;
 }): boolean {
   const { principal, aclChain = [], actions = ["read"] } = params;
   const visibility: NodeVisibility = params.visibility === "hidden" || params.visibility === "private"
     ? params.visibility : "normal";
   if (isControllerPrincipal(principal)) return true;
+  if (params.privateDraft && !(principal.uid && params.privateDraft.createdBy === principal.uid)) return false;
   if (params.effectiveOwnerUserId && principal.uid && params.effectiveOwnerUserId === principal.uid) return true;
   const decision = evaluateAclChain(aclChain.map((a) => a ?? undefined), {
     uid: principal.uid,
@@ -299,6 +308,7 @@ export function canServeContent(params: {
   aclChain?: (AccessControl | null | undefined)[];
   visibility?: NodeVisibility | null;
   effectiveOwnerUserId?: string | null;
+  privateDraft?: { createdBy: string | null } | null;
 }): boolean {
   return canReadNode({ ...params, actions: ["read", "download"] });
 }
@@ -315,6 +325,7 @@ export function controllerBypassDecided(params: {
   aclChain?: (AccessControl | undefined)[];
   visibility?: NodeVisibility;
   effectiveOwnerUserId?: string | null;
+  privateDraft?: { createdBy: string | null } | null;
 }): boolean {
   const { principal } = params;
   if (!isControllerPrincipal(principal)) return false;
