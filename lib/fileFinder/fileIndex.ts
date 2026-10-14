@@ -161,7 +161,9 @@ export function entryFromDocument(
     uploadYear: yearOf(d.created_at),
     sizeBytes: v?.fileSize ?? null,
     hash: v?.fileHash ?? null,
-    href: `/documents/${d.library_id}?doc=${d.id}`,
+    // Land IN the folder (no lookup round-trip), on the drawing itself (fs=1),
+    // not merely with the row selected in the inspector.
+    href: `/documents/${d.library_id}?${d.collection_id ? `folderId=${d.collection_id}&` : ""}doc=${d.id}&fs=1`,
   };
 }
 
