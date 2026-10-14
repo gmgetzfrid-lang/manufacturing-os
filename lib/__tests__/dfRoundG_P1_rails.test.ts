@@ -938,12 +938,12 @@ describe("SM-14 — the intent bridge reads the source document in the ticket's 
     expect((await post({ ticketId: "t1", actionType: "assign", assignment: { id: "d-1", name: "d" } })).status).toBe(200);
     expect(state.calls.filter((c) => c.table === "document_intents" && c.method === "upsert")).toHaveLength(0);
     const read = state.calls.findIndex((c) => c.table === "documents" && c.method === "select");
-    expect(state.calls.slice(read + 1, read + 3).map((c) => c.args)).toEqual([["id", "foreign-doc"], ["org_id", "o1"]]);
+    expect(state.calls.slice(read + 1, read + 3).map((c) => c.args)).toEqual([["id", ["foreign-doc"]], ["org_id", "o1"]]); // one batched `.in` read (DF-P4 GAP-8)
     state.calls = [];
     state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, metadata: { source_document: { id: "doc-1" } } })];
     expect((await post({ ticketId: "t1", actionType: "assign", assignment: { id: "d-1", name: "d" } })).status).toBe(200);
     const up = state.calls.find((c) => c.table === "document_intents" && c.method === "upsert")!;
-    expect(up.args[0]).toMatchObject({ document_id: "doc-1", library_id: "lib-1", base_version_id: "v-1", org_id: "o1" });
+    expect(up.args[0]).toMatchObject([{ document_id: "doc-1", library_id: "lib-1", base_version_id: "v-1", org_id: "o1" }]);
   });
 });
 

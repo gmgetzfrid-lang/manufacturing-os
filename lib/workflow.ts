@@ -63,7 +63,14 @@ export interface WorkflowContext {
 /** DEC-13 stage 2: the RESOURCE a ticket presents to the capability policy —
  *  its request type and unit. The route, the page and the simulator all
  *  build it from here, so a type-scoped rule reads the same fields
- *  everywhere. (`libraryId` / `discipline` are not ticket properties.) */
+ *  everywhere. (`discipline` is not a ticket property. `libraryId` is —
+ *  `tickets.library_id`, GAP-105 / DF-P4 — but it is deliberately NOT in the
+ *  resource yet: the request page and the attention badge build their Ticket
+ *  without it, so a `when.libraryId` rule would govern the route and not the
+ *  screens, and a stored library rule on a ticket.* capability would start
+ *  matching backfilled tickets with no inventory. DF-P5 adds it together with
+ *  those mappers and that inventory — 99-fix-sequencing "Hand-offs from
+ *  DF-P4".) */
 export function ticketResource(ticket: Pick<Ticket, "requestType" | "unit">): CapabilityResource {
   return { requestType: ticket.requestType || null, unit: ticket.unit || null };
 }
