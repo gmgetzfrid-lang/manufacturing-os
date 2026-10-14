@@ -853,7 +853,7 @@ lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements t
 ## IRLS-18 · `20260630_perf_indexes.sql` indexes `team_members` before `20260707` creates it — the whole file rolls back on a fresh replay
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
 - **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness)
 - **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-17 on its PostgreSQL 16 replay; confirmed by the integrator by reading at the I-17 merge; not yet challenged by a second party).
@@ -867,6 +867,39 @@ lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements t
 
 - [ ] The `team_members` index is guarded with `to_regclass('public.team_members') IS NOT NULL` in `20260630`, or carried by a migration dated after `20260707`, without changing what a live database ends up with.
 - [ ] The `20260630_perf_indexes.sql` entry leaves `OUT_OF_ORDER_FILES` in `lib/__tests__/rls/replayKnownDefects.ts`, and `npm run test:db` passes.
+
+
+**Resolution (2026-10-14, intelligence Round G).** Fixed by guarding the statement in `20260630` (intelligence I-27 FRESH-INSTALL REPLAY; the integrator's exception for this package allowed the edit). No new numbered file was needed.
+
+Reproduced first on HEAD `e13bc7b`: `npm run test:db` logged `20260630_perf_indexes.sql: relation "team_members" does not exist`, and the harness had to re-run the file after the sequence.
+
+**The decision, from the replay.** `20260707_teams.sql:27` already builds the identical index with the table (`CREATE INDEX IF NOT EXISTS team_members_uid_idx ON team_members(uid);`). So a fresh install only needs `20260630` to stop failing; no later file has to carry the index. The options weighed:
+- A new file `20261218` would carry nothing `20260707` does not already create, and it would add a paste that does nothing on every live deployment.
+- Deleting the statement would be equally harmless, but it loses the original text.
+- Guarding it is the `IRLS-6` / `20260806` pattern: on any database that has the table, it is the original statement.
+
+**What landed.**
+- `supabase/migrations/20260630_perf_indexes.sql`: the last statement now sits in `DO $$ BEGIN IF to_regclass('public.team_members') IS NOT NULL THEN … END IF; END $$;`. Inside the guard it is byte-for-byte the original (`CREATE INDEX IF NOT EXISTS team_members_uid_idx\n  ON team_members (uid);`), and a comment says why. The file's other three indexes are untouched. `20260707` is not edited.
+- `lib/__tests__/rls/replayKnownDefects.ts`: `OUT_OF_ORDER_FILES` is now empty, and its comment records both files that left it. The re-run machinery in `replay.ts` stays for any future entry.
+
+**Tests.**
+- `lib/__tests__/rls/freshReplay.test.ts` (opt-in):
+  - "no file needed a re-run after the sequence (IRLS-18) …": `20260630` replays in filename order, `retries` is empty, and all four of its indexes exist. `team_members_uid_idx` reads `CREATE INDEX team_members_uid_idx ON public.team_members USING btree (uid)`, the definition the old re-paste produced.
+  - "IRLS-18: on an already-migrated database, re-pasting 20260630 — as corrected, or as it stood — changes nothing …": on a copy of the full replay, every index on `documents`, `collections`, `org_members` and `team_members` keeps its oid and its `pg_get_indexdef`, after either text.
+- `lib/__tests__/intelRoundGFreshInstallReplay.test.ts` (new, default suite, so CI catches the class without a database):
+  - "no CREATE INDEX reaches a table the sequence creates later (unguarded)". This is the sibling of IRLS-6's `ALTER TABLE` census, which did not look at indexes. It fails on the pre-fix `20260630` with "20260630_perf_indexes.sql indexes team_members, created only in 20260707_teams.sql", and a guard on the wrong table does not count.
+  - "20260630 runs the team_members index only when the table exists, byte-for-byte the original …".
+  - `20260707` builds the same index with the table.
+
+**Equivalence, measured on PostgreSQL 16.13.** A `pg_dump --schema-only` of HEAD's replay (the old way: `20260630` failing, then re-run) was compared with this commit's replay (`20260630` in order, plus IRLS-19). The only differences are `20261075`'s function, trigger and their ACL, and the apply-time timestamp `20261104` writes into `project_intake_links_ttl`. Index for index, the end state is identical.
+
+**Already-migrated databases:** nothing to paste. `20260630` predates the paste guide (it starts at `20261007`), and every live deployment applied the file after `team_members` existed, or re-pasted it. Pasting the corrected file again is a no-op (above).
+
+**Done-when.**
+- ✓ The `team_members` index is guarded with `to_regclass('public.team_members') IS NOT NULL` in `20260630`. It is also carried after the table by `20260707:27`, which was already there. What a live database ends up with does not change: a re-paste of either text leaves every index's oid and definition as they were, and a fresh replay ends index-for-index identical to the old re-paste path.
+- ✓ The `20260630_perf_indexes.sql` entry has left `OUT_OF_ORDER_FILES`, and `npm run test:db` passes (exit 0, PostgreSQL 16.13; the replay logs no `20260630` line).
+
+**Scope / residual.** None.
 
 ---
 

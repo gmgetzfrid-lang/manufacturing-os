@@ -105,11 +105,43 @@ describe.skipIf(skip !== null)("IRLS-6: a fresh install replays in filename orde
     }
   });
 
-  it("a rolled-back out-of-order file succeeds when re-run after the sequence", () => {
-    const failed = report().retries.filter((r) => !r.ok).map((r) => `${r.file}: ${r.error}`);
-    expect(failed).toEqual([]);
-    expect(report().retries.map((r) => r.file)).toContain("20260630_perf_indexes.sql");
-    expect(admin(REPLAY_DB, "SELECT to_regclass('public.team_members_uid_idx') IS NOT NULL")).toBe("t");
+  it("no file needed a re-run after the sequence (IRLS-18): 20260630 replays in filename order and every index it names exists", () => {
+    expect(OUT_OF_ORDER_FILES).toEqual([]);
+    expect(report().retries).toEqual([]);
+    expect(report().files.find((x) => x.file === "20260630_perf_indexes.sql")?.ok).toBe(true);
+    for (const ix of ["documents_folder_listing_idx", "collections_org_library_idx", "org_members_uid_org_active_idx", "team_members_uid_idx"]) {
+      expect(admin(REPLAY_DB, `SELECT to_regclass('public.${ix}') IS NOT NULL`), ix).toBe("t");
+    }
+    // the index 20260707 builds with the table: the one 20260630 named, the
+    // same definition the old re-paste of 20260630 produced
+    expect(admin(REPLAY_DB, `SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'team_members_uid_idx'`)).toBe(
+      "CREATE INDEX team_members_uid_idx ON public.team_members USING btree (uid)",
+    );
+  });
+
+  it("IRLS-18: on an already-migrated database, re-pasting 20260630 — as corrected, or as it stood — changes nothing (every index keeps its oid and definition)", () => {
+    const db = "mos_irls18";
+    admin("postgres", `CREATE DATABASE ${db} TEMPLATE ${REPLAY_DB}`);
+    try {
+      const snapshot = () => admin(db, `SELECT string_agg(c.oid::text || ' ' || pg_get_indexdef(c.oid), E'\n' ORDER BY c.relname)
+        FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+       WHERE i.indrelid IN ('documents'::regclass, 'collections'::regclass, 'org_members'::regclass, 'team_members'::regclass)`);
+      const before = snapshot();
+      expect(before).toContain("team_members_uid_idx ON public.team_members USING btree (uid)");
+      const fixed = readFileSync(join(process.cwd(), "supabase", "migrations", "20260630_perf_indexes.sql"), "utf8");
+      const r = runPsql(mosDb().conn!, db, "postgres", { sql: fixed });
+      expect(r.errors).toEqual([]);
+      expect(snapshot()).toBe(before);
+      // the file as it stood before the guard (what every live database ran)
+      const at = fixed.indexOf("-- team_members is created by 20260707_teams.sql");
+      expect(at).toBeGreaterThan(0);
+      const preFix = fixed.slice(0, at) + "CREATE INDEX IF NOT EXISTS team_members_uid_idx\n  ON team_members (uid);\n";
+      const old = runPsql(mosDb().conn!, db, "postgres", { sql: preFix });
+      expect(old.errors).toEqual([]);
+      expect(snapshot()).toBe(before);
+    } finally {
+      admin("postgres", `DROP DATABASE ${db}`);
+    }
   });
 
   it("20261075 replays in filename order: the checkout-episode guard is installed on the fresh install (IRLS-19)", () => {

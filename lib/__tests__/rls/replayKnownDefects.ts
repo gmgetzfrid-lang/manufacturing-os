@@ -55,18 +55,18 @@ export interface OutOfOrderFile {
   mode: "retry" | "unparseable";
 }
 
-// 20261075_dc_roundF_checkout_episode_seal.sql left this list on 2026-10-14
-// (intelligence I-27, IRLS-19): its final SELECT's bare `check` is quoted in
-// place, so the file parses and applies as one paste.
-export const OUT_OF_ORDER_FILES: readonly OutOfOrderFile[] = [
-  {
-    file: "20260630_perf_indexes.sql",
-    error: /relation "team_members" does not exist/,
-    finding: "intelligence IRLS-18",
-    owner: "the integrator, to route (team_members is created by 20260707_teams.sql)",
-    mode: "retry",
-  },
-];
+// Empty since 2026-10-14 (intelligence I-27): every numbered migration
+// replays in filename order. The two files this list held left it when their
+// owner landed the fix:
+//   * 20261075_dc_roundF_checkout_episode_seal.sql (IRLS-19): its final
+//     SELECT's bare `check` is quoted in place, so the file parses and
+//     applies as one paste;
+//   * 20260630_perf_indexes.sql (IRLS-18): its team_members index runs only
+//     when the table exists (20260707 builds the same index with the table),
+//     so the file no longer rolls back on a fresh install.
+// A file that cannot run in filename order is listed here again, with its
+// finding and owner, until it is fixed.
+export const OUT_OF_ORDER_FILES: readonly OutOfOrderFile[] = [];
 
 /**
  * A file that refuses on purpose until its operator says the deploy it waits
