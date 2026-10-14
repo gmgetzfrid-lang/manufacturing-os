@@ -224,6 +224,12 @@ describe("ALOG-5 — /activity states who can read what, and that the database a
     const p = page();
     expect(p).toMatch(/Permission \(access list\), ownership and recertification changes made on a library, folder or document are shown only to people with the Audit log permission and to those who may manage that library, folder or document/);
     expect(p).not.toMatch(/that includes permission \(access list\), ownership and recertification changes/);
+    // P13 integrator fix pass (minor 5): the parenthetical names EVERYONE the
+    // database admits (audit_row_node_manageable): is_org_controller (Admin /
+    // DocCtrl), the owner cascade (user_is_effective_owner), and an Admin or
+    // Manage Permissions grant (can_manage_node) — never fewer.
+    expect(p).toMatch(/\(the workspace&apos;s Admins and Document Control, its owner or the owner of the folder or library it is in, and anyone granted Admin or Manage Permissions on it\)/);
+    expect(p).not.toMatch(/its document controllers, its owner, and anyone granted Manage Permissions on it/);
     // ...and that is what the database does: the newest overlay narrows them
     // with audit_row_node_manageable, the action test inline …
     const dir = join(root, "supabase", "migrations");

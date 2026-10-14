@@ -169,4 +169,11 @@ describe("DEC-30 — one paste, counts-only inventory first, one result set", ()
     expect(M).not.toMatch(/\(recommended/);
     expect(M).toMatch(/PASTE THIS FILE AGAIN right\s*\n--\s+after 20261157, IN THE SAME SQL-EDITOR WINDOW/);
   });
+
+  it("integrator fix pass: the header states this file goes AFTER 20261157 (20261157 first in one session; again after any later 20261157 / 20261142 paste) and either order with 20261201", () => {
+    expect(M).toMatch(/AFTER 20261157, whenever 20261157 is pasted/);
+    expect(M).toMatch(/paste 20261157 FIRST and this\s*\n--\s+file AFTER it; never this file and then 20261157\./);
+    expect(M).toMatch(/any later re-paste of 20261142 or\s*\n--\s+20261157: each re-creates the overlay without this clause, so this\s*\n--\s+file is pasted AGAIN right after it\./);
+    expect(M).toMatch(/Either order with 20261201/);
+  });
 });

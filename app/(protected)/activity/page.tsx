@@ -22,8 +22,10 @@
 // ownership (OWNER_ASSIGNED / OWNER_CLEARED / OWNER_TEAM_*) and
 // recertification (ACCESS_RECERTIFIED) changes made on a library, folder or
 // document are readable only by Audit log holders and by those who may
-// manage that node (audit_row_node_manageable: its controllers, its effective
-// owner, a Manage Permissions / admin grant on it); every member reads the
+// manage that node (audit_row_node_manageable: the workspace's controllers —
+// Admin / DocCtrl, is_org_controller — its effective owner (the owner
+// cascade: the document's, its folder's or its library's owner), an Admin /
+// Manage Permissions grant on it, deny wins); every member reads the
 // rest of the document-level history. Stated from the deploy because the
 // P13 deploy is HARD-GATED on the paste (20261142, then 20261219, pasted
 // before this app is deployed — 20261219's header and MIGRATION-PASTE-ORDER),
@@ -250,7 +252,7 @@ export default function ActivityFeedPage() {
           title="Activity Feed"
           subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.{" "}
             <span className="block mt-1 text-[11px] text-[var(--color-text-faint)]">
-              Who can read this feed: workspace-level authority events (capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges) are shown only to people with the Audit log permission. Permission (access list), ownership and recertification changes made on a library, folder or document are shown only to people with the Audit log permission and to those who may manage that library, folder or document (its document controllers, its owner, and anyone granted Manage Permissions on it). Every member reads the rest of the workspace&apos;s document-level history. The database applies this rule, not this page.
+              Who can read this feed: workspace-level authority events (capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges) are shown only to people with the Audit log permission. Permission (access list), ownership and recertification changes made on a library, folder or document are shown only to people with the Audit log permission and to those who may manage that library, folder or document (the workspace&apos;s Admins and Document Control, its owner or the owner of the folder or library it is in, and anyone granted Admin or Manage Permissions on it). Every member reads the rest of the workspace&apos;s document-level history. The database applies this rule, not this page.
             </span></>}
           actions={
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>

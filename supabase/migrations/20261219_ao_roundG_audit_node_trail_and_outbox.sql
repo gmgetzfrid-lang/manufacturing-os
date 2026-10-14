@@ -105,6 +105,13 @@
 --
 -- PASTE AND DEPLOY ORDER:
 --   * AFTER 20261142 (the file stops otherwise).
+--   * AFTER 20261157, whenever 20261157 is pasted: the ALOG-16 narrowing
+--     lives in audit_logs_admin_trail, which 20261157 §7 re-creates WITHOUT
+--     it. When both are pasted in one session, paste 20261157 FIRST and this
+--     file AFTER it; never this file and then 20261157.
+--   * Either order with 20261201 (ALOG-7's actor_kind): independent. The
+--     drain's AUDIT_DEAD_LETTER rows are machine rows (user_id NULL), which
+--     20261201's trigger, once pasted, marks `system`.
 --   * BEFORE the admin-and-org P13 deploy — a HARD GATE, not a
 --     recommendation: deploy the app carrying admin-and-org P13 only once
 --     20261142 and then this file are pasted (expect ok = true on every
@@ -116,7 +123,8 @@
 --     every member — PASTE THIS FILE AGAIN right
 --     after 20261157, IN THE SAME SQL-EDITOR WINDOW (re-runnable; it then
 --     takes 20261157's body). The same for any later re-paste of 20261142 or
---     20261157.
+--     20261157: each re-creates the overlay without this clause, so this
+--     file is pasted AGAIN right after it.
 --
 -- ROLLBACK:
 --   Part 1 — re-paste the overlay's previous definition (20261157 §7 when
