@@ -635,7 +635,7 @@ upload/route.ts:232-240 `if (!collectionId) { const { data: col, error: colErr }
 ## INTK-14 · `bump_intake_use` is a SECURITY DEFINER function with no REVOKE — PostgREST exposes it and any caller can tamper with any org's intake-link usage record
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-17 DATABASE HARNESS (new; the SECURITY DEFINER grant census) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260902_project_intake.sql:73-79`, `supabase/migrations/20260913_projects_rls_recursion_fix.sql:99-102`, `supabase/migrations/20260930_semantic_layer.sql:119-120`, `app/api/intake/upload/route.ts:121,214,393`
@@ -667,6 +667,36 @@ upload/route.ts:232-240 `if (!collectionId) { const { data: col, error: colErr }
 - [ ] A sweep of every SECURITY DEFINER function added since 20260902 — **not done**: a census of the numbered migrations finds 59 such functions, 48 with no explicit REVOKE/GRANT. Most are trigger functions (not callable over PostgREST); 19 are not — `acl_index_denies`, `apply_milestone_moves`, `caller_holds_any_role`, `caller_is_active_member`, `can_manage_node`, `can_manage_project`, `doc_is_visible`, `is_org_admin`, `is_project_owner`, `member_is_active`, `my_team_ids`, `node_visible`, `org_capability_allows`, `org_capability_allows_for`, `project_org`, `project_visible_to_me`, `user_can_publish_doc`, `user_can_publish_on_library`, `user_owns_project`. Each needs its own reasoned decision (most are policy helpers that must stay executable by `authenticated`; `apply_milestone_moves` is an RPC; the ones taking a `p_uid` are oracles) — roles-and-permissions DB territory (DB-6's family), not this package's.
 
 **Scope / residual.** Pending migration: `20261104`. The sweep above stays open here.
+
+**Resolution (2026-10-14, intelligence Round G, I-17 DATABASE HARNESS).** Done-when 2's sweep is done, and it runs on the live catalog rather than on the text. The database harness (`npm run test:db`; a real PostgreSQL 16 started under a scratch directory, `supabase/schema.sql` and every numbered migration replayed in filename order onto a Supabase stand-in whose default privileges grant EXECUTE on every new function to `anon`, `authenticated` and `service_role`, as Supabase's do; the cluster deleted afterwards; it skips with one line when PostgreSQL is absent; the default suite and CI are unchanged) reads every SECURITY DEFINER function's EXECUTE state with `has_function_privilege`.
+
+What landed:
+- **The decision table.** `lib/__tests__/rls/definerDecisions.ts` gives each function a reasoned decision. The replay has 162 definer functions, all in `public`, all with `search_path = public` pinned (DRLS-16): 83 return `trigger`, and the harness proves none of them can be called directly (`0A000`); 79 are callable.
+- **The census test.** `lib/__tests__/rls/definerCensus.test.ts` compares the live catalog with the table, in both directions. It fails in the opt-in run only, never in the default suite, when a definer function has no row, when a row names a function the replay does not have, or when a row's `{anon, authenticated, service_role}` differs from the live grants. It also checks each decision against the catalog: a "policy-helper" is called by some policy, and a "role-only" function is executable by `intake_door`.
+- **The 79 callable functions by decision:**
+  - 17 `policy-helper`: called by policies written for every role, so they must stay executable by `anon` and `authenticated`; each judges the caller, so with no session it answers false or empty.
+  - 5 `policy-helper-oracle`: `user_can_publish_on_library`, `user_is_effective_owner`, `org_capability_allows` and `acl_index_denies` take the person to judge as `p_uid`, and `project_org` maps any project id to its org. These are kept because their policies need them; the narrowing is opened as `INTK-19`.
+  - 2 `own-scope-unused`: `my_team_ids`, `my_project_ids`.
+  - 27 `signed-in`: their own migration already revoked `anon` and `PUBLIC`.
+  - 21 `service-only`.
+  - 2 `role-only`: the contractor door's predicates.
+  - 1 `internal`: `intake_door_bound`.
+  - 4 narrowed by this package's `20261217`.
+- **`supabase/migrations/20261217_intel_roundG_definer_grants.sql`, the four REVOKEs the census needed.**
+  - `member_is_active(uuid, uuid)`: an any-uid membership oracle with no app caller. Its only caller is the SECURITY DEFINER `user_is_effective_owner`, which runs as its owner. It becomes `service_role` only.
+  - `next_ticket_number(uuid, integer)`, `issue_document_number(uuid)` and `force_release_document(uuid, text)`: each is called only by a signed-in member, and each already refused a caller with no session inside its body. `PUBLIC` and `anon` are revoked, and `authenticated` and `service_role` are granted by name.
+  - The file follows DEC-30's one-paste shape. A counts-only inventory of grant state goes into a TEMP TABLE before `BEGIN`, each REVOKE is guarded by `to_regprocedure`, and one final SELECT `(check, ok, n)` returns 5 probes and 4 counts. It creates or re-creates no function, policy or trigger.
+- **Exercised on the harness's PostgreSQL 16.13.** The replay snapshots the sequence just before `20261217` (`mos_before_20261217`). In that snapshot and after the file, a signed-in Admin's `next_ticket_number`, `issue_document_number` (returns `DOC-0007`), `force_release_document` (releases the lock) and `user_is_effective_owner` answer identically, and the service role's `member_is_active` still answers. Before the file, the `anon` key reaches all four functions; after it, each `anon` call is refused with `42501`, and a signed-in member can no longer call `member_is_active`. A second paste is clean and changes no ACL. The same paste on a scratch cluster that already had the whole sequence returned: probes `t` ×5; inventory 4 present, 4 executable by `anon` before (0 on the re-run); definer functions executable by `anon` 28 before and 24 after.
+- **Default-suite pins.** `lib/__tests__/intelRoundGDbHarness.test.ts` pins the file's shape and the call sites the decisions were reasoned from. `member_is_active` is named by no app code; `next_ticket_number` only by `app/api/tickets/create/route.ts` and `lib/ticketNumber.ts`; `issue_document_number` only by `lib/libraryNumbering.ts`; `force_release_document` only by `lib/checkoutEpisodes.ts`.
+
+**Done-when.**
+- [x] (2026-09-30) The REVOKE / GRANT on `bump_intake_use` ✓. Pending `20261104`; the replay shows the two-argument form executable by `service_role` only.
+- [x] ✓ A sweep confirms that every SECURITY DEFINER function, not only those added since 20260902, either carries an explicit grant policy or is deliberately executable with a written reason. Every one of the 162 has a row; the 5 kept oracles have an owner (`INTK-19`).
+
+**Scope / residual.**
+- **Pending migrations:** `20261104` (unchanged) and `20261217`. Paste `20261217` at any time, in either order with any deploy: no app change depends on it. Before the paste, every call works as today. After it, only a signed-out call is refused, and each of the four functions already refused one in its body, or, for `member_is_active`, had no app caller.
+- **The audited state is the replay's, not the live project's.** The live grants are reproduced from Supabase's documented default privileges. The paste's inventory rows report the live counts.
+- **Remainder:** the five policy-helper oracles → `INTK-19`.
 
 ---
 
@@ -862,3 +892,25 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 
 **Scope / residual.** None for this finding. The hold refusal exists only once `20261151` is pasted; before it, nothing in this path changes. For the integrator: the paste-order note that `20261159` waits for "the app offering the Intake tab's recorded hold override (INTK-18, projects-joint J14)" is met by this package's deploy.
 - Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
+
+---
+
+## INTK-19 · Five row-level-security helpers answer questions about ANY person to the public anon key — they take the uid (or project) to judge as a parameter
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** — (the integrator, to route to roles-and-permissions: the policy-helper family, `DB-7`'s census). Opened 2026-10-14 by intelligence Round G I-17, as the remainder of `INTK-14`'s grant census (DEC-31).
+- **Verification:** CONFIRMED (grant state read with `has_function_privilege` on a fresh replay of the whole sequence, PostgreSQL 16.13; `lib/__tests__/rls/definerCensus.test.ts`)
+- **Locations:** `user_can_publish_on_library(p_library uuid, p_uid uuid, p_org uuid)` (newest `20261059`), `user_is_effective_owner(p_doc_owner, p_collection, p_library, p_uid)` (`20261042`), `org_capability_allows(p_org, p_cap, p_uid)` (`20261052`), `acl_index_denies(p_idx, p_org, p_uid, p_action)` (`20261025`), `project_org(p_project)` (`20260913`); decisions in `lib/__tests__/rls/definerDecisions.ts` (`policy-helper-oracle`)
+
+**Mechanism.** All five are SECURITY DEFINER. Each is called inside row-level-security policies written for every role (5, 5, 4, 2 and 6 policies), so `anon` and `authenticated` must keep EXECUTE. Revoking it would turn every such read's empty answer into a `42501` error, which is why `INTK-14`'s census kept them. Unlike the caller-scoped helpers (`is_org_controller`, `caller_holds_any_role`, …), four of them judge a `p_uid` the caller supplies, and `project_org` maps any project id to its org. PostgREST exposes each as `rpc/<name>` to anyone holding the anon key, which ships in the browser bundle. Such a caller can ask whether uid X may publish into library Y, owns document Z, holds capability C, or is denied by an ACL index. Every call needs the uuids, which are not guessable, and the answer discloses a boolean, not a row.
+
+**Failure scenario.** A former contractor who kept workspace uuids from their session calls `org_capability_allows(org, 'document.publish', <a colleague's uid>)` with the anon key. They map who holds which authority, with no session and no audit row.
+
+**Done when.**
+
+- [ ] Each of the four uid-taking helpers answers only for `auth.uid()` when called by a client role, or the policies call a caller-bound wrapper and the uid-taking form is narrowed to `service_role` and the definer callers. Every policy that uses them must answer exactly as before for `authenticated` and for `anon`, proven per policy on the harness (`npm run test:db`), with a DRLS-16 migration in DEC-30's shape.
+- [ ] `project_org` gets a decision: kept with its reason, or caller-scoped.
+- [ ] The rows in `lib/__tests__/rls/definerDecisions.ts` are updated, and `definerCensus.test.ts` passes.
+
+---
