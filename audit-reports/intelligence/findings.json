@@ -25,17 +25,18 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 267,
+    "findings": 270,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
-      "MEDIUM": 148,
-      "LOW": 51
+      "MEDIUM": 150,
+      "LOW": 52
     },
     "by_status": {
-      "RESOLVED": 217,
-      "OPEN": 44,
+      "RESOLVED": 218,
+      "OPEN": 45,
+      "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
       "INVALID": 1
@@ -302,7 +303,7 @@
       "id": "AREA-1",
       "title": "The equipment registry has no write authority at all — RLS is FOR ALL to every active member, while the Operating Areas page prints a role restriction that does not exist",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2516,7 +2517,7 @@
       "id": "CB-2",
       "title": "Any active org member can write or delete the Bridge's proposal and applied ledger",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4943,6 +4944,52 @@
       "report": "audit-reports/intelligence/16-persistence-rls.md"
     },
     {
+      "id": "IRLS-17",
+      "title": "`supabase/schema.sql` cannot run on an empty database — the documented first step of a fresh install fails at line 328",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness, `npm run test:db`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/schema.sql:319-331",
+        "lib/__tests__/rls/replayKnownDefects.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A disaster-recovery or self-host install follows the header. The first paste fails with relation \"projects\" does not exist, and nothing is created. The operator has no documented way forward; the numbered migrations assume the baseline.",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/16-persistence-rls.md"
+    },
+    {
+      "id": "IRLS-19",
+      "title": "`20261075`'s final SELECT names its `check` column bare — a syntax error, so the pasted file changes nothing and the checkout-episode seal never installs",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness; the paste protocol is the editor's single simple-query message)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql:126",
+        "audit-reports/MIGRATION-PASTE-ORDER.md"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "The operator pastes row 70 and sees a syntax error. DCK-14's seal (closed episodes immutable to signed-in writers; no seal over an active session) is not installed. Re-pasting does not help. DCK-14's done-when 1 cannot be met until the file is fixed.",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/16-persistence-rls.md"
+    },
+    {
       "id": "KACL-6",
       "title": "Any active org member can ask any knowledge library and any of its linked libraries — knowledge_libraries carries no ACL of its own",
       "severity": "MEDIUM",
@@ -6730,6 +6777,29 @@
       ],
       "refuted": false,
       "summary": null,
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/16-persistence-rls.md"
+    },
+    {
+      "id": "IRLS-18",
+      "title": "`20260630_perf_indexes.sql` indexes `team_members` before `20260707` creates it — the whole file rolls back on a fresh replay",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20260630_perf_indexes.sql:24-25",
+        "supabase/migrations/20260707_teams.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A fresh install replays the sequence in filename order and gets the RLS hot-path indexes the file was written for (nodevisible()'s per-row lookups) only if the operator notices the error and re-pastes the file later.",
       "area": "intelligence",
       "report": "audit-reports/intelligence/16-persistence-rls.md"
     },
