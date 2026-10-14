@@ -23,6 +23,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
 import { globalGraphHref } from "@/lib/estate/lenses";
+import EstateReadiness from "@/components/documents/EstateReadiness";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf, CONTAINER_TYPES } from "@/lib/fileFinder/fileTypes";
 import {
@@ -47,10 +48,11 @@ import {
   listFinderListings, saveFinderListing, deleteFinderListing, storeState, type FinderListing,
 } from "@/lib/fileFinder/stores";
 import { estatePost } from "@/lib/estate/client";
+import { labelNodes, type NodeLabel } from "@/lib/estate/labels";
 import { triageListing } from "@/lib/fileFinder/triage";
 import { findEstate } from "@/lib/find/client";
 import type { FindResponse, FindRelation } from "@/lib/find/types";
-import { EntityStrip, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
+import { EntityStrip, EquipmentCards, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
 
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-green-100 text-green-800 border-green-200",
@@ -117,12 +119,12 @@ function GraphPageInner() {
     setResolving(true); setResolveNote(null);
     try {
       const r = await estatePost<{ folders: number; documents: number; applied: number; pending: number; unchanged: number; notes: string[] }>("/api/estate/resolve", { orgId: activeOrgId, all: true });
-      setResolveNote(`${r.folders} folders, ${r.documents} documents looked at — ${r.applied} links applied, ${r.pending} waiting in Review, ${r.unchanged} already known.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
+      setResolveNote(`${r.folders} folders and ${r.documents} documents looked at — ${r.applied} new links applied, ${r.pending} new waiting in Review, ${r.unchanged} links already in place. See the Links tab.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
       await refresh();
     } catch (e) { setResolveNote((e as Error).message); }
     finally { setResolving(false); }
   };
-  const [panel, setPanel] = useState<"search" | "drives" | "aliases">("search");
+  const [panel, setPanel] = useState<"search" | "drives" | "aliases" | "links">("search");
   const graphRef = useRef<FileGraphHandle | null>(null);
 
   const refresh = useCallback(async () => {
@@ -168,9 +170,13 @@ function GraphPageInner() {
     for (const e of data.entries) bump(e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`);
     for (const l of data.libraries) out.push({ id: `lib:${l.id}`, kind: "library", label: l.name, parentId: null, childCount: counts.get(`lib:${l.id}`) ?? 0, type: CONTAINER_TYPES.library });
     const unitLabel = (code?: string) => { const u = data.units.find((x) => x.code === code); return u ? ` · ${u.label}` : ""; };
-    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: f.unitCode ? { ...CONTAINER_TYPES.folder, label: `Folder${unitLabel(f.unitCode)}` } : CONTAINER_TYPES.folder });
+    const unitBadge = (code?: string) => { if (!code) return undefined; const u = data.units.find((x) => x.code === code); return u ? `${u.label}` : `unit ${code}`; };
+    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: f.unitCode ? { ...CONTAINER_TYPES.folder, label: `Folder${unitLabel(f.unitCode)}` } : CONTAINER_TYPES.folder, badge: unitBadge(f.unitCode) });
     for (const e of data.entries) {
-      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name) });
+      // A file's own unit link is worth a badge only when its folder does not already say so.
+      const parentUnit = e.folderId ? data.folders.get(e.folderId)?.unitCode : undefined;
+      const own = e.unitCodes.find((c) => c !== parentUnit);
+      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name), badge: unitBadge(own) });
     }
     for (const l of listings) {
       const drive = `drive:${l.id}`;
@@ -306,9 +312,12 @@ function GraphPageInner() {
       const links: FileGraphSatellite["links"] = [];
       for (const r of serverFind.results) for (const rel of r.relations) if (rel.node === ent.node && nodeById.has(r.id)) links.push({ to: r.id, kind: rel.rel });
       if (ent.kind === "unit") for (const r of serverFind.results) if (nodeById.has(r.id) && entryById.get(r.id)?.unitCodes.includes(ent.node.slice(7))) links.push({ to: r.id, kind: "linked_unit" });
+      // Resolved but nothing linked yet: still drawn, beside the top hits,
+      // so the person sees the equipment the map knows and what it lacks.
+      if (!links.length) for (const r of serverFind.results.slice(0, 3)) if (nodeById.has(r.id)) links.push({ to: r.id, kind: "named" });
       if (!links.length) continue;
-      out.push({ id: ent.node, label: ent.label, sub: ent.kind === "asset" ? `Equipment${ent.sub ? ` · ${ent.sub}` : ""}` : ent.kind === "unit" ? "Unit" : "Project",
-        color: ent.kind === "asset" ? "#059669" : ent.kind === "unit" ? "#7c3aed" : "#d97706", iconKey: ent.kind === "asset" ? "file" : ent.kind === "unit" ? "library" : "folder", href: ent.href, links });
+      out.push({ id: ent.node, label: ent.label, sub: ent.kind === "asset" ? `Equipment${ent.sub ? ` · ${ent.sub}` : ""}` : ent.kind === "unit" ? "Unit" : ent.kind === "tag" ? "Tag drawn on sheets · not in the registry" : "Project",
+        color: ent.kind === "asset" ? "#059669" : ent.kind === "unit" ? "#7c3aed" : ent.kind === "tag" ? "#64748b" : "#d97706", iconKey: ent.kind === "asset" || ent.kind === "tag" ? "file" : ent.kind === "unit" ? "library" : "folder", href: ent.href, links });
     }
     return out;
   }, [serverFind, nodeById, entryById]);
@@ -491,11 +500,12 @@ function GraphPageInner() {
         {/* ── Left: search, drives, aliases ───────────────────────────── */}
         <aside className="border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0">
           <div className="flex border-b border-[var(--color-border)] text-xs font-bold">
-            {([["search", "Find", Search], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
+            {([["search", "Find", Search], ["links", "Links", Link2], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setPanel(k)}
                 className={`flex-1 px-2 py-2 inline-flex items-center justify-center gap-1 border-b-2 ${panel === k ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)]"}`}>
                 <Icon className="w-3.5 h-3.5" /> {label}
                 {k === "drives" && listings.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-teal-100 text-teal-800">{listings.length}</span>}
+                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="ml-1 px-1.5 rounded-full bg-sky-100 text-sky-800">{data!.edges.length}</span>}
                 {k === "aliases" && aliases.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-purple-100 text-purple-800">{aliases.length}</span>}
               </button>
             ))}
@@ -556,6 +566,9 @@ function GraphPageInner() {
               </>
             )}
 
+            {panel === "links" && data && (
+              <LinksPanel orgId={activeOrgId} edges={data.edges} units={data.units} estateMissing={data.estateMissing} onReveal={(id) => { const n = nodeById.get(id); if (!n) return; if (n.kind === "file" || n.kind === "extfile") reveal(id); else drill(id); }} />
+            )}
             {panel === "drives" && (
               <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail} systemHashes={systemHashes}
                 onChange={setListings} onReveal={(id) => drill(id)} />
@@ -672,6 +685,13 @@ function GraphPageInner() {
                   </button>
                 )}
                 {serverFind && serverFind.entities.length > 0 && <div className="mb-2"><EntityStrip entities={serverFind.entities} /></div>}
+                {serverFind && (
+                  <div className="mb-2">
+                    <EquipmentCards entities={serverFind.entities} results={serverFind.results}
+                      onReveal={(node) => { const r = serverFind.results.find((x) => x.relations.some((rel) => rel.node === node) && nodeById.has(x.id)); if (r) reveal(r.id); }}
+                      onUnit={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
+                  </div>
+                )}
                 {finding && <div className="mb-2 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
                 {serverFind && serverFind.hidden.count > 0 && (
                   <div className="mb-2 text-[11px] text-[var(--color-text-muted)]">
@@ -886,6 +906,61 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
         </div>
       )}
       {hit && <EvidenceList hit={hit} />}
+    </div>
+  );
+}
+
+const EDGE_WORDS: Record<string, string> = {
+  belongs_to_unit: "belongs to unit", in_project: "is in project", project_scope: "project covers", about_asset: "is the folder for",
+  tagged_to: "is about", filed_under: "is also filed under", alias_of: "is a nickname for", related: "is related to",
+};
+
+function LinksPanel({ orgId, edges, units, estateMissing, onReveal }: {
+  orgId: string; edges: Array<{ a: string; b: string; type: string; summary: string }>; units: Array<{ code: string; label: string }>; estateMissing: boolean; onReveal: (id: string) => void;
+}) {
+  const [labels, setLabels] = useState<Map<string, NodeLabel>>(new Map());
+  const [filter, setFilter] = useState<string>("all");
+  const counts = useMemo(() => { const m = new Map<string, number>(); for (const e of edges) m.set(e.type, (m.get(e.type) ?? 0) + 1); return m; }, [edges]);
+  const shown = useMemo(() => edges.filter((e) => filter === "all" || e.type === filter).slice(0, 120), [edges, filter]);
+  useEffect(() => {
+    const ids = shown.flatMap((e) => [e.a, e.b]).filter((id) => !id.startsWith("cbunit:") && !id.startsWith("term:"));
+    if (!ids.length) return;
+    void labelNodes(orgId, ids).then(setLabels).catch(() => undefined);
+  }, [orgId, shown]);
+  const L = (id: string): NodeLabel => {
+    if (id.startsWith("cbunit:")) { const u = units.find((x) => x.code === id.slice(7)); return { label: u ? `${u.label} (${u.code})` : `Unit ${id.slice(7)}` }; }
+    if (id.startsWith("term:")) return { label: `"${id.slice(5).toLowerCase()}"` };
+    return labels.get(id) ?? { label: "…" };
+  };
+  if (estateMissing) return <div className="space-y-3"><div className="text-xs text-amber-700">Estate links are off until migration 20261020 is applied.</div><EstateReadiness orgId={orgId} /></div>;
+  return (
+    <div className="space-y-3">
+      <EstateReadiness orgId={orgId} />
+      <div className="text-xs text-[var(--color-text-muted)]">What the estate knows about where things belong — every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
+      <div className="flex flex-wrap gap-1">
+        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === "all" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
+        {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
+          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === t ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
+        ))}
+      </div>
+      {edges.length === 0 && <div className="text-xs text-[var(--color-text-muted)]">No links yet. Add your units to the Site Codebook, then press &ldquo;Resolve links&rdquo; above the map.</div>}
+      <ul className="space-y-1">
+        {shown.map((e, i) => {
+          const a = L(e.a), b = L(e.b);
+          const canReveal = e.a.startsWith("folder:") || e.a.startsWith("doc:");
+          return (
+            <li key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-x-1">
+                {canReveal ? <button onClick={() => onReveal(e.a)} className="font-bold hover:underline text-left">{a.label}</button> : <span className="font-bold">{a.label}</span>}
+                <span className="text-[var(--color-text-muted)]">{EDGE_WORDS[e.type] ?? e.type}</span>
+                {b.href ? <Link href={b.href} className="font-bold hover:underline">{b.label}</Link> : <span className="font-bold">{b.label}</span>}
+              </div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">{e.summary}</div>
+            </li>
+          );
+        })}
+        {edges.length > shown.length && <li className="text-[11px] text-[var(--color-text-muted)]">…and {edges.length - shown.length} more. Filter by type to see them.</li>}
+      </ul>
     </div>
   );
 }

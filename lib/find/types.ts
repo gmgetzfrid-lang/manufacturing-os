@@ -55,12 +55,23 @@ export interface FindResult {
 }
 
 export interface FindEntity {
-  node: string;            // asset:<id> / cbunit:<code> / proj:<id>
-  kind: "asset" | "unit" | "project";
+  node: string;            // asset:<id> / cbunit:<code> / proj:<id> / tag:<tag>
+  /** "tag" is equipment drawn on a sheet that the registry has never heard of. */
+  kind: "asset" | "unit" | "project" | "tag";
   label: string;           // "X-35"
   sub?: string;            // "Exchanger · Crude Unit" / "AFE200155"
   via: string;             // "typed" / "alias 'north furnace'" / "codebook"
   href?: string;
+  // Equipment only — what the card beside the results shows.
+  assetId?: string;
+  unitCode?: string;
+  unitLabel?: string;
+  description?: string;
+  typeName?: string;
+  code?: string;
+  photos?: number;
+  /** Storage paths of the newest photos (signed on the client), at most four. */
+  photoPaths?: string[];
 }
 
 export interface FindActivity {

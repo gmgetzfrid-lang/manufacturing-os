@@ -8,7 +8,9 @@
 
 import React from "react";
 import Link from "next/link";
-import { Cpu, Factory, FolderKanban, Ticket, Lock, PenLine, AlertOctagon, Flag, Eye, EyeOff, MapPin, Quote, Tag, FolderOpen, Briefcase } from "lucide-react";
+import { Cpu, Factory, FolderKanban, Ticket, Lock, PenLine, AlertOctagon, Flag, Eye, EyeOff, MapPin, Quote, Tag, FolderOpen, Briefcase, ImageIcon, ChevronRight, Globe, ExternalLink, Crosshair } from "lucide-react";
+import SignedImg from "@/components/assets/SignedImg";
+import { globalGraphHref } from "@/lib/estate/lenses";
 import type { FindEntity, FindActivity, FindCoverage, FindRelation, FindResult } from "@/lib/find/types";
 
 const REL_ICON: Record<FindRelation["rel"], React.ComponentType<{ className?: string }>> = {
@@ -20,7 +22,7 @@ const REL_LABEL: Record<FindRelation["rel"], string> = {
 
 export function EntityStrip({ entities }: { entities: FindEntity[] }) {
   if (!entities.length) return null;
-  const Icon = (k: FindEntity["kind"]) => (k === "asset" ? Cpu : k === "unit" ? Factory : FolderKanban);
+  const Icon = (k: FindEntity["kind"]) => (k === "asset" ? Cpu : k === "unit" ? Factory : k === "tag" ? Tag : FolderKanban);
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-xs">
       <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Looking at</span>
@@ -28,13 +30,87 @@ export function EntityStrip({ entities }: { entities: FindEntity[] }) {
         const I = Icon(e.kind);
         const body = (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5">
-            <I className={`w-3.5 h-3.5 ${e.kind === "asset" ? "text-emerald-600" : e.kind === "unit" ? "text-purple-600" : "text-amber-600"}`} />
+            <I className={`w-3.5 h-3.5 ${e.kind === "asset" ? "text-emerald-600" : e.kind === "unit" ? "text-purple-600" : e.kind === "tag" ? "text-slate-500" : "text-amber-600"}`} />
             <span className="font-bold">{e.label}</span>
             {e.sub && <span className="text-[var(--color-text-muted)]">· {e.sub}</span>}
             {e.via !== "typed" && <span className="text-[10px] text-[var(--color-text-faint)]">({e.via})</span>}
           </span>
         );
         return e.href ? <Link key={e.node} href={e.href} className="hover:underline">{body}</Link> : <span key={e.node}>{body}</span>;
+      })}
+    </div>
+  );
+}
+
+/** What the estate holds on each piece of equipment the query named: the
+ *  unit it sits in, what it is, its photos, and how many of the results are
+ *  drawn with it, tagged to it, mention it or are filed under it — with the
+ *  doors to its page and the global graph. A tag read off the drawings that
+ *  the registry has never heard of says so, with the step that fixes it. */
+export function EquipmentCards({ entities, results, onReveal, onUnit }: {
+  entities: FindEntity[]; results: FindResult[];
+  /** Centre the map on the results related to this entity. */
+  onReveal?: (node: string) => void;
+  /** Narrow to a unit. */
+  onUnit?: (code: string) => void;
+}) {
+  const cards = entities.filter((e) => e.kind === "asset" || e.kind === "tag");
+  if (!cards.length) return null;
+  const countsFor = (node: string) => {
+    const c = { drawn_on: 0, tagged_to: 0, mentioned_in: 0, filed_under: 0 };
+    for (const r of results) {
+      const kinds = new Set(r.relations.filter((x) => x.node === node).map((x) => x.rel));
+      for (const k of kinds) if (k in c) c[k as keyof typeof c]++;
+    }
+    return c;
+  };
+  return (
+    <div className="space-y-2">
+      {cards.map((e) => {
+        const c = countsFor(e.node);
+        const related = c.drawn_on + c.tagged_to + c.mentioned_in + c.filed_under;
+        const parts: string[] = [];
+        if (c.drawn_on) parts.push(`drawn on ${c.drawn_on} sheet${c.drawn_on === 1 ? "" : "s"}`);
+        if (c.tagged_to) parts.push(`tagged on ${c.tagged_to}`);
+        if (c.mentioned_in) parts.push(`mentioned in ${c.mentioned_in}`);
+        if (c.filed_under) parts.push(`${c.filed_under} filed under it`);
+        return (
+          <div key={e.node} className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20 p-2.5 text-xs">
+            <div className="flex items-center gap-1 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+              {e.unitCode ? (
+                <button onClick={() => onUnit?.(e.unitCode!)} className="inline-flex items-center gap-1 font-bold text-purple-700 hover:underline" title="Narrow to this unit"><Factory className="w-3 h-3" /> {e.unitLabel ?? e.unitCode}</button>
+              ) : <span className="inline-flex items-center gap-1"><Factory className="w-3 h-3" /> no unit on record</span>}
+              <ChevronRight className="w-3 h-3" />
+              <span className="inline-flex items-center gap-1 font-bold text-emerald-700">{e.kind === "asset" ? <Cpu className="w-3 h-3" /> : <Tag className="w-3 h-3" />} {e.typeName ?? (e.kind === "asset" ? "Equipment" : "Tag")}</span>
+            </div>
+            <div className="mt-0.5 flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-sm font-black text-[var(--color-text)]">{e.label}{e.code ? <span className="ml-1.5 text-[11px] font-semibold text-[var(--color-text-muted)]">{e.code}</span> : null}</div>
+                {e.description && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.description}</div>}
+                <div className="text-[11px] text-[var(--color-text-muted)]">
+                  {e.kind === "tag"
+                    ? <>Read off the drawings; not in the equipment registry yet. Documents › the drawing library › <b>Equipment</b> sweep puts it there.</>
+                    : related ? <>{parts.join(" · ")}{e.via !== "typed" ? ` · found ${e.via}` : ""}</> : <>Nothing in the results is linked to it yet{e.via !== "typed" ? ` · found ${e.via}` : ""}.</>}
+                </div>
+              </div>
+              {e.kind === "asset" && (
+                <div className="flex shrink-0 items-center gap-1">
+                  {e.photoPaths?.length ? e.photoPaths.slice(0, 3).map((p) => (
+                    <div key={p} className="w-11 h-11 rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface-2)]">
+                      <SignedImg path={p} alt="" className="w-full h-full object-cover" placeholder={<ImageIcon className="w-4 h-4 m-auto text-[var(--color-text-faint)]" />} />
+                    </div>
+                  )) : <div className="w-11 h-11 rounded-lg border border-dashed border-[var(--color-border)] flex items-center justify-center" title="No photos on file"><ImageIcon className="w-4 h-4 text-[var(--color-text-faint)]" /></div>}
+                  {(e.photos ?? 0) > 3 && <span className="text-[10px] text-[var(--color-text-muted)]">+{(e.photos ?? 0) - 3}</span>}
+                </div>
+              )}
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {e.href && <Link href={e.href} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold hover:underline"><ExternalLink className="w-3 h-3" /> Equipment page{e.photos ? ` · ${e.photos} photo${e.photos === 1 ? "" : "s"}` : ""}</Link>}
+              {e.kind === "asset" && <Link href={globalGraphHref(e.node)} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold hover:underline"><Globe className="w-3 h-3" /> Global graph</Link>}
+              {related > 0 && onReveal && <button onClick={() => onReveal(e.node)} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold hover:underline"><Crosshair className="w-3 h-3" /> Show on map</button>}
+            </div>
+          </div>
+        );
       })}
     </div>
   );

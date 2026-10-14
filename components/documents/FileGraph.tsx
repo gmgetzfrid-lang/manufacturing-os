@@ -35,6 +35,8 @@ export interface FileGraphNode {
   parentId: string | null;
   childCount: number;
   type: FileTypeInfo;
+  /** A small pill under the label — the unit this node is linked to. */
+  badge?: string;
 }
 
 export interface FileGraphLight {
@@ -51,7 +53,8 @@ export interface FileGraphSatellite {
   color: string;
   iconKey: FileTypeInfo["key"];
   href?: string;
-  links: Array<{ to: string; kind: "drawn_on" | "mentioned_in" | "tagged_to" | "filed_under" | "in_project" | "linked_unit" }>;
+  /** "named" is the fallback: the entity resolved but no result is linked to it yet, so it sits beside the top hits. */
+  links: Array<{ to: string; kind: "drawn_on" | "mentioned_in" | "tagged_to" | "filed_under" | "in_project" | "linked_unit" | "named" }>;
 }
 
 export interface FileGraphHandle {
@@ -310,7 +313,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         const cur = satPos.current.get(sat.id) ?? target;
         cur.x += (target.x - cur.x) * 0.2; cur.y += (target.y - cur.y) * 0.2;
         satPos.current.set(sat.id, cur);
-        const LINK: Record<string, string> = { drawn_on: "rgba(14,165,233,0.8)", mentioned_in: "rgba(99,102,241,0.8)", tagged_to: "rgba(16,185,129,0.8)", filed_under: "rgba(217,119,6,0.8)", in_project: "rgba(245,158,11,0.8)", linked_unit: "rgba(124,58,237,0.8)" };
+        const LINK: Record<string, string> = { drawn_on: "rgba(14,165,233,0.8)", mentioned_in: "rgba(99,102,241,0.8)", tagged_to: "rgba(16,185,129,0.8)", filed_under: "rgba(217,119,6,0.8)", in_project: "rgba(245,158,11,0.8)", linked_unit: "rgba(124,58,237,0.8)", named: "rgba(148,163,184,0.5)" };
         ctx.setLineDash([5 / s, 4 / s]); ctx.lineWidth = Math.max(1, 1.4 / s);
         for (const l of sat.links) {
           const p = pos.get(l.to);
@@ -399,6 +402,14 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           ctx.fillRect(p.x - tw / 2 - 3, p.y + r + 3, tw + 6, fontPx + 4);
           ctx.fillStyle = dim ? "rgba(51,65,85,0.5)" : container ? "#0f172a" : "#334155";
           ctx.fillText(label, p.x, p.y + r + 5);
+          if (n.badge) {
+            ctx.font = "700 9px ui-sans-serif, system-ui";
+            const bw = ctx.measureText(n.badge).width + 8;
+            const by = p.y + r + 5 + fontPx + 5;
+            ctx.fillStyle = dim ? "rgba(124,58,237,0.25)" : "#7c3aed";
+            ctx.beginPath(); ctx.roundRect(p.x - bw / 2, by, bw, 12, 6); ctx.fill();
+            ctx.fillStyle = "#fff"; ctx.fillText(n.badge, p.x, by + 2);
+          }
         }
         ctx.globalAlpha = 1;
       }

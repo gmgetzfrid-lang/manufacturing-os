@@ -24,7 +24,7 @@ import { parseQuery, type ParsedQuery } from "@/lib/fileFinder/queryParse";
 import { rankEntries } from "@/lib/fileFinder/rank";
 import { clusterByHash, type IndexEntry } from "@/lib/fileFinder/fileIndex";
 import { canonicalForm, tagVariants } from "@/lib/fileFinder/tagForms";
-import { isClose } from "@/lib/fileFinder/fuzzy";
+import { buildAssetIndex } from "./assetMatch";
 import { words } from "@/lib/fileFinder/tokens";
 import type { FinderAlias } from "@/lib/fileFinder/aliasTypes";
 import { normalizeTag } from "@/lib/codebook";
@@ -44,7 +44,7 @@ function aliasFromRow(r: Record<string, unknown>): FinderAlias {
   };
 }
 
-interface AssetLite { id: string; tag: string; description: string | null; unit_code: string | null }
+interface AssetLite { id: string; tag: string; description: string | null; unit_code: string | null; type_id: string | null; code: string | null }
 
 function inScope(e: IndexEntry, scope: FindRequest["scope"]): boolean {
   if (!scope) return true;
@@ -65,14 +65,15 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
   const [data, aliasesRes, assetsRes, projectsRes] = await Promise.all([
     loadFinderData(orgId, principal.role as Role, principal.isController, admin),
     admin.from("finder_aliases").select("*").eq("org_id", orgId),
-    admin.from("assets").select("id, tag, description, unit_code").eq("org_id", orgId).limit(20000),
+    admin.from("assets").select("id, tag, description, unit_code, type_id, code").eq("org_id", orgId).eq("archived", false).limit(20000),
     admin.from("projects").select("id, name, status").eq("org_id", orgId).limit(2000),
   ]);
   const aliases = ((aliasesRes.data as Record<string, unknown>[] | null) ?? []).map(aliasFromRow);
   const assets = ((assetsRes.data as AssetLite[] | null) ?? []);
   const projects = ((projectsRes.data as Array<{ id: string; name: string; status: string | null }> | null) ?? []);
-  const assetByCanon = new Map<string, AssetLite>();
-  for (const a of assets) assetByCanon.set(canonicalForm(a.tag), a);
+  // Tolerant of the unit prefix, the site code, a dropped train letter and
+  // a typo — and it says which allowance it used.
+  const aidx = buildAssetIndex(assets, data.units.map((u) => u.code));
 
   const q: ParsedQuery = parseQuery(req.query, { units: data.units, aliases });
   const entries = data.entries.filter((e) => inScope(e, req.scope));
@@ -82,12 +83,9 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
   const assetHits = new Map<string, { asset: AssetLite; via: string }>();
   const unitLabel = (code: string) => data.units.find((u) => u.code === code)?.label ?? code;
   for (const c of q.identifiers) {
-    const exact = assetByCanon.get(c.value);
-    if (exact) { assetHits.set(exact.id, { asset: exact, via: c.via === "alias" ? `alias` : "typed" }); continue; }
-    // Close spelling: one or two characters off.
-    for (const [canon, a] of assetByCanon) {
-      const cl = isClose(c.value, canon);
-      if (cl.close) { assetHits.set(a.id, { asset: a, via: `close to ${c.label} (${cl.edits} off)` }); break; }
+    for (const m of aidx.find(c.label).slice(0, 4)) {
+      if (assetHits.has(m.asset.id)) continue;
+      assetHits.set(m.asset.id, { asset: m.asset, via: c.via === "alias" ? "alias" : m.via });
     }
   }
   // Nicknames taught on the asset itself ("north furnace").
@@ -103,9 +101,16 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
     const a = assets.find((x) => x.id === req.scope!.assetId);
     if (a && !assetHits.has(a.id)) assetHits.set(a.id, { asset: a, via: "this page" });
   }
-  for (const { asset, via } of assetHits.values()) {
-    entities.push({ node: nid.asset(asset.id), kind: "asset", label: asset.tag, sub: [asset.description, asset.unit_code ? unitLabel(asset.unit_code) : null].filter(Boolean).join(" · ") || undefined, via, href: `/assets/${encodeURIComponent(asset.tag)}` });
-  }
+  const { data: typeRows } = assets.some((a) => a.type_id) ? await admin.from("asset_types").select("id, name").eq("org_id", orgId).limit(500) : { data: [] as unknown[] };
+  const typeName = new Map(((typeRows as Array<{ id: string; name: string }> | null) ?? []).map((t) => [t.id, t.name]));
+  const assetEntity = (asset: AssetLite, via: string): FindEntity => ({
+    node: nid.asset(asset.id), kind: "asset", label: asset.tag,
+    sub: [asset.type_id ? typeName.get(asset.type_id) : null, asset.description, asset.unit_code ? unitLabel(asset.unit_code) : null].filter(Boolean).join(" · ") || undefined,
+    via, href: `/assets/${encodeURIComponent(asset.tag)}`,
+    assetId: asset.id, unitCode: asset.unit_code ?? undefined, unitLabel: asset.unit_code ? unitLabel(asset.unit_code) : undefined,
+    description: asset.description ?? undefined, typeName: asset.type_id ? typeName.get(asset.type_id) : undefined, code: asset.code ?? undefined,
+  });
+  for (const { asset, via } of assetHits.values()) entities.push(assetEntity(asset, via));
   for (const c of q.units) entities.push({ node: nid.cbunit(c.value), kind: "unit", label: unitLabel(c.value), sub: `unit ${c.value}`, via: c.via });
   const projectHits = new Map<string, { id: string; name: string; status: string | null; via: string }>();
   for (const c of q.identifiers) {
@@ -128,15 +133,21 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
   // ── L1: what the estate knows ──────────────────────────────────────────
   const assetIds = [...assetHits.keys()];
   const mirrorToDoc = new Map<string, string>();
-  if (assetIds.length) {
+  // Tags the person typed that look like equipment, registered or not: a
+  // tag drawn on a sheet is found even when the registry has never heard
+  // of it — and the answer then says so.
+  const tagForms = new Set<string>();
+  for (const { asset } of assetHits.values()) { tagForms.add(normalizeTag(asset.tag)); for (const v of tagVariants(canonicalForm(asset.tag))) tagForms.add(v); tagForms.add(canonicalForm(asset.tag)); }
+  for (const c of q.identifiers) { if (c.value.length >= 2) { tagForms.add(normalizeTag(c.label)); for (const v of tagVariants(c.value)) tagForms.add(v); tagForms.add(c.value); } }
+  const drawnUnregistered = new Map<string, number>();
+  const drawnExtra = new Map<string, AssetLite>();
+  if (assetIds.length || tagForms.size) {
     layers.push("L1");
     const assetNodes = assetIds.map(nid.asset);
-    const tagForms = new Set<string>();
-    for (const { asset } of assetHits.values()) { tagForms.add(normalizeTag(asset.tag)); for (const v of tagVariants(canonicalForm(asset.tag))) tagForms.add(v); tagForms.add(canonicalForm(asset.tag)); }
     const [da, edges, mentions, ents] = await Promise.all([
-      admin.from("document_assets").select("document_id, asset_id, tag_text, source").eq("org_id", orgId).in("asset_id", assetIds).limit(2000),
-      admin.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").in("b", assetNodes).limit(2000),
-      admin.from("entity_mentions").select("asset_id, document_id, knowledge_document_id, page, context_snippet").eq("org_id", orgId).in("asset_id", assetIds).limit(2000),
+      assetIds.length ? admin.from("document_assets").select("document_id, asset_id, tag_text, source").eq("org_id", orgId).in("asset_id", assetIds).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
+      assetIds.length ? admin.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").in("b", assetNodes).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
+      assetIds.length ? admin.from("entity_mentions").select("asset_id, document_id, knowledge_document_id, page, context_snippet").eq("org_id", orgId).in("asset_id", assetIds).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
       admin.from("knowledge_page_entities").select("document_id, page, tag, x, y").eq("org_id", orgId).eq("kind", "equipment").in("tag", [...tagForms].slice(0, 40)).limit(2000),
     ]);
     const label = (assetId: string) => assetHits.get(assetId)?.asset.tag ?? "it";
@@ -185,7 +196,11 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
     for (const r of (ents.data as Array<{ document_id: string; page: number; tag: string; x: number | null; y: number | null }> | null) ?? []) {
       const docId = mirrorToDoc.get(r.document_id);
       if (!docId) continue;
-      const assetId = [...assetHits.values()].find(({ asset }) => canonicalForm(asset.tag) === canonicalForm(r.tag))?.asset.id;
+      const hit = [...assetHits.values()].find(({ asset }) => canonicalForm(asset.tag) === canonicalForm(r.tag)) ?? null;
+      const reg = hit ? null : aidx.best(r.tag);
+      const assetId = hit?.asset.id ?? (reg && reg.tier !== "close" ? reg.asset.id : undefined);
+      if (!hit && reg && reg.tier !== "close" && !assetHits.has(reg.asset.id)) drawnExtra.set(reg.asset.id, reg.asset);
+      if (!assetId) drawnUnregistered.set(r.tag, (drawnUnregistered.get(r.tag) ?? 0) + 1);
       const n = (drawnPerDoc.get(docId) ?? 0) + 1;
       drawnPerDoc.set(docId, n);
       const where = r.x != null && r.y != null ? `${r.y < 0.5 ? "upper" : "lower"} ${r.x < 0.5 ? "left" : "right"}` : "";
@@ -194,6 +209,25 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
         relations: [{ rel: "drawn_on", node: assetId ? nid.asset(assetId) : `tag:${r.tag}`, label: r.tag, detail: `sheet ${r.page}${where ? `, ${where}` : ""}`, page: r.page, x: r.x ?? undefined, y: r.y ?? undefined, knowledgeDocId: r.document_id }],
         pages: [],
       });
+    }
+  }
+  // Equipment the sheets named that the query did not: in the registry
+  // (brought in beside what was typed) or not yet (said plainly).
+  for (const a of drawnExtra.values()) entities.push(assetEntity(a, "drawn on the sheets found"));
+  for (const [tag, n] of drawnUnregistered) {
+    if (entities.some((e) => e.kind === "asset" && canonicalForm(e.label) === canonicalForm(tag))) continue;
+    entities.push({ node: `tag:${tag}`, kind: "tag", label: tag, sub: `drawn on ${n} sheet${n === 1 ? "" : "s"} · not in the equipment registry`, via: "read off the drawings" });
+  }
+  // Photos on file for the equipment named.
+  const photoFor = entities.filter((e) => e.kind === "asset" && e.assetId).map((e) => e.assetId!);
+  if (photoFor.length) {
+    const { data: ph } = await admin.from("asset_photos").select("asset_id, file_url, captured_at, uploaded_at").eq("org_id", orgId).in("asset_id", photoFor.slice(0, 20)).limit(400);
+    const rows = ((ph as Array<{ asset_id: string; file_url: string; captured_at: string | null; uploaded_at: string | null }> | null) ?? [])
+      .sort((a, b) => String(b.captured_at ?? b.uploaded_at ?? "").localeCompare(String(a.captured_at ?? a.uploaded_at ?? "")));
+    for (const e of entities) {
+      if (e.kind !== "asset" || !e.assetId) continue;
+      const mine = rows.filter((r) => r.asset_id === e.assetId);
+      if (mine.length) { e.photos = mine.length; e.photoPaths = mine.slice(0, 4).map((r) => r.file_url); }
     }
   }
   // Projects named: everything linked to them.
