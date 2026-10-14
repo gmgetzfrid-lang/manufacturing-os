@@ -1447,7 +1447,12 @@ function installDoor() {
     return out;
   };
 }
-const doorCalls = () => db.rpcCalls.filter((c) => c.fn.startsWith("intake_door_")).map((c) => c.fn);
+/** SEC-22 (b) (projects Round G J20): the door's housekeeping functions come from 20261214, not 20261184 — the J16
+ *  cases below count only 20261184's door functions; a database without 20261214 answers PGRST202 for these, once
+ *  per request, and the route keeps today's housekeeping beside the door's content writes. */
+const J20_DOOR_FNS = ["intake_door_housekeep", "intake_door_intake_folder"];
+const doorCalls = () => db.rpcCalls.filter((c) => c.fn.startsWith("intake_door_") && !J20_DOOR_FNS.includes(c.fn)).map((c) => c.fn);
+const housekeepCalls = () => db.rpcCalls.filter((c) => J20_DOOR_FNS.includes(c.fn)).map((c) => c.fn === "intake_door_housekeep" ? `housekeep:${String(c.args.p_op)}` : "intake_folder");
 /** The service-role content writes the door replaces (from(…) writes). */
 const serviceContentWrites = () => db.writes.filter((w) =>
   (w.table === "documents" && w.method === "insert")
@@ -2882,5 +2887,508 @@ describe("SAF-20 — the quote door's success sentence follows the link's contac
     const notice = readFileSync(join(process.cwd(), "app/api/intake/outcome-notice/route.ts"), "utf8");
     expect(notice).toContain('const to = (l.contact_email ?? "").trim();');
     expect(notice).toContain('if (!to) return NextResponse.json({ sent: false, reason: "no_contact" });');
+  });
+});
+
+// ── SEC-22 (b) (projects Round G J20): the door's housekeeping, after 20261214 ─
+// intake_door_housekeep and intake_door_intake_folder, as supabase/migrations/
+// 20261214 defines them, over the same tables: 'retire' needs a live link;
+// 'restore' / 'withdraw' / 'discard' / 'reference' need the link to exist (they
+// undo or record THIS request's own writes); each row must be the link's own —
+// for 'restore' / 'withdraw' the version alone (an un-assignment mid-request
+// never strands them), for 'retire' the document still the link's own or
+// assigned too; the link's identity is the bound session. Their SQL ran on a scratch
+// PostgreSQL 16 with the real guards (B1–B14 on SEC-22); these cases pin what
+// the ROUTE does with each answer — and that every upload answers as before.
+function installHousekeeping() {
+  const tolerant = (h: unknown) => (db.tables.project_intake_links ?? []).find((x) => x.token_hash === h);
+  const notfound: DoorRes = { data: null, error: { code: "28000", message: "intake_door: no link answers this credential.", hint: "notfound" } };
+  const assignedTo = (l: Row, id: unknown) => ((l.assigned_doc_ids as string[] | null) ?? []).includes(String(id));
+  db.rpc.intake_door_housekeep = (a) => {
+    let l: Row | undefined;
+    if (a.p_op === "retire") { const r = doorResolve(a.p_token_hash); if (!isResolved(r)) return r; l = r.link; }
+    else { l = tolerant(a.p_token_hash); if (!l) return notfound; }
+    if (l.purpose === "quote") return doorScope("a quote link files prices");
+    const doc = (db.tables.documents ?? []).find((x) => x.id === a.p_doc && x.org_id === l!.org_id);
+    if (!doc) return { data: 0, error: null };
+    const assigned = assignedTo(l, a.p_doc);
+    const ver = (db.tables.document_versions ?? []).find((v) => v.id === a.p_version && v.record_id === a.p_doc && v.org_id === l!.org_id && v.intake_link_id === l!.id);
+    if (["retire", "restore", "withdraw"].includes(String(a.p_op))) {
+      if (!ver) return doorScope("its own submissions only");
+      if (a.p_op === "retire" && !(doc.authored_by_link_id === l.id || assigned)) return doorScope("its own submissions only");
+      if (a.p_op === "retire" && !(l.allow_auto_supersede && doc.authored_by_link_id === l.id && !assigned)) return doorScope("only a trusted link replaces its own");
+    } else if (a.p_op === "discard") {
+      if (doc.authored_by_link_id !== l.id || doc.current_version_id) return doorScope("only a document it just created");
+    } else if (a.p_op === "reference") {
+      if (doc.authored_by_link_id !== l.id) return doorScope("only a document it created");
+    } else return { data: null, error: { code: "22023", message: "unknown operation" } };
+    db.doorSeen.push({ fn: `intake_door_housekeep:${String(a.p_op)}`, sub: String(l.id) });
+    switch (a.p_op) {
+      case "retire":
+        if (ver!.review_state !== "in_review" || ver!.superseded_at != null) return { data: 0, error: null };
+        Object.assign(ver!, { review_state: "superseded", superseded_at: a.p_at });
+        return { data: 1, error: null };
+      case "restore": {
+        let n = 0;
+        if (ver!.superseded_at === a.p_at) { ver!.superseded_at = null; n = 1; }
+        if (ver!.review_state === "superseded") ver!.review_state = "in_review";
+        return { data: n, error: null };
+      }
+      case "withdraw":
+        Object.assign(ver!, { review_state: "superseded", superseded_at: a.p_at });
+        return { data: 1, error: null };
+      case "discard":
+        db.tables.documents = db.tables.documents.filter((x) => x.id !== a.p_doc);
+        db.tables.document_versions = (db.tables.document_versions ?? []).filter((v) => v.record_id !== a.p_doc);
+        return { data: 1, error: null };
+      default: {
+        const refs = (db.tables.project_documents ??= []);
+        if (refs.some((x) => x.project_id === l!.project_id && x.document_id === a.p_doc)) return { data: 0, error: null };
+        refs.push({ org_id: l.org_id, project_id: l.project_id, document_id: a.p_doc, source: "manual", first_seen_at: a.p_at, last_seen_at: a.p_at });
+        return { data: 1, error: null };
+      }
+    }
+  };
+  db.rpc.intake_door_intake_folder = (a) => {
+    const r = doorResolve(a.p_token_hash); if (!isResolved(r)) return r;
+    if (r.link.purpose === "quote") return doorScope("a quote link files prices");
+    const lib = r.project.intake_library_id as string | null;
+    if (!lib) return doorScope("the project's intake library is not set", "not_configured");
+    const cur = (r.project.intake_collection_id as string | null) ?? null;
+    if (cur && (db.tables.collections ?? []).some((c) => c.id === cur && c.org_id === r.link.org_id && c.library_id === lib)) return { data: cur, error: null };
+    const id = `col-door-${++db.seq}`;
+    (db.tables.collections ??= []).push({ id, org_id: r.link.org_id, library_id: lib, name: `Intake — ${String(r.project.name ?? "Project")}` });
+    db.doorSeen.push({ fn: "intake_door_intake_folder", sub: String(r.link.id) });
+    if ((r.project.intake_collection_id ?? null) !== cur) {
+      db.tables.collections = db.tables.collections.filter((c) => c.id !== id);
+      return { data: r.project.intake_collection_id, error: null };
+    }
+    r.project.intake_collection_id = id;
+    return { data: id, error: null };
+  };
+}
+/** The service-role housekeeping writes the J20 functions replace. */
+const serviceHousekeeping = () => db.writes.filter((w) =>
+  (w.table === "document_versions" && w.method === "update")
+  || (w.table === "documents" && w.method === "delete")
+  || (w.table === "project_documents" && w.method === "upsert")
+  || (w.table === "collections" && (w.method === "insert" || w.method === "delete"))
+  || (w.table === "projects" && w.method === "update")).map((w) => `${w.table}.${w.method}`);
+
+describe("SEC-22 (b) (J20) — after 20261214: the door's housekeeping runs as the link's identity, and every upload answers as before", () => {
+  async function worlds(arrange: () => void, act: () => Promise<Response>) {
+    resetDb(); arrange();
+    const before = await act();
+    const b = { status: before.status, body: await before.json() as Row, tables: structuredClone(db.tables), writes: [...db.writes] };
+    resetDb(); arrange(); installDoor(); installHousekeeping();
+    const after = await act();
+    const a = { status: after.status, body: await after.json() as Row, tables: structuredClone(db.tables), writes: [...db.writes] };
+    return { b, a };
+  }
+  const answer = (x: { status: number; body: Row }) => ({ status: x.status, ...without(x.body, "documentId", "versionId", "quoteId", "ref") });
+  const withOwnPending = () => seed({
+    doc: { pending_version_id: "v-pend" },
+    versions: [
+      { id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", created_at: "2026-09-01T00:00:00Z" },
+      { id: "v-pend", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "in_review", created_at: "2026-09-20T00:00:00Z" },
+    ],
+  });
+
+  it("REGRESSION: a NEW document answers exactly as before — the folder asked of the door (the project's own, nothing written) and the project reference written through it, as the link; no service-role housekeeping", async () => {
+    const { b, a } = await worlds(() => seed({ doc: null }), () => upload({ title: "Skid GA", number: "V-300" }));
+    expect(answer(a)).toEqual(answer(b));
+    expect(a.status).toBe(200);
+    expect(housekeepCalls()).toEqual(["intake_folder", "housekeep:reference"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(a.tables.project_documents).toEqual([expect.objectContaining({ org_id: ORG, project_id: "p1", document_id: a.body.documentId, source: "manual" })]);
+    expect(without(a.tables.project_documents[0], "id", "created_at", "document_id", "first_seen_at", "last_seen_at")).toEqual(without(b.tables.project_documents[0], "id", "created_at", "document_id", "first_seen_at", "last_seen_at"));
+    expect(db.doorSeen.filter((s) => s.fn.startsWith("intake_door_housekeep")).every((s) => s.sub === LINK)).toBe(true);
+    // before the paste the same request wrote the reference as the service role
+    expect(b.writes.filter((w) => w.table === "project_documents").map((w) => w.method)).toEqual(["upsert"]);
+    for (const c of db.rpcCalls.filter((x) => J20_DOOR_FNS.includes(x.fn))) expect(c.args.p_token_hash).toBe(DOOR_HASH);
+  });
+
+  it("REGRESSION: a stale intake folder pointer is re-homed the same way before and after — a folder of the intake library, the pointer claimed — through the door as the link after", async () => {
+    const arrange = () => { seed({ doc: null }); db.tables.collections.push({ id: "col-elsewhere", org_id: ORG, library_id: "lib-other", name: "Other" }); db.tables.projects[0].intake_collection_id = "col-elsewhere"; };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { b, a } = await worlds(arrange, () => upload({ title: "Skid GA" }));
+    spy.mockRestore();
+    expect(answer(a)).toEqual(answer(b));
+    const filedInto = (t: typeof a.tables, id: unknown) => t.documents.find((d) => d.id === id)?.collection_id;
+    for (const w of [a, b]) {
+      const folder = w.tables.collections.find((c) => c.id === w.tables.projects[0].intake_collection_id);
+      expect(folder).toMatchObject({ library_id: "lib1", name: "Intake — Unit 4" });
+      expect(filedInto(w.tables, w.body.documentId)).toBe(folder?.id);
+    }
+    expect(housekeepCalls()[0]).toBe("intake_folder");
+    expect(db.doorSeen).toContainEqual({ fn: "intake_door_intake_folder", sub: LINK });
+    expect(serviceHousekeeping()).toEqual([]);
+  });
+
+  it("REGRESSION: a trusted link replacing its own pending submission answers exactly as before — the displaced draft retired through the door (compare-and-set), as the link", async () => {
+    const { b, a } = await worlds(withOwnPending, () => upload({ docId: D1, revLabel: "C" }));
+    expect(answer(a)).toEqual(answer(b));
+    expect(a.body.status).toBe("in_review");
+    expect(housekeepCalls()).toEqual(["housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    for (const w of [a, b]) expect(w.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "superseded" });
+    expect(a.tables.documents[0].pending_version_id).toBe(a.body.versionId);
+    expect(db.doorSeen).toContainEqual({ fn: "intake_door_housekeep:retire", sub: LINK });
+  });
+
+  it("REGRESSION: a lost pointer race answers as before — the replacement withdrawn, then the displaced draft restored, both through the door", async () => {
+    const arrange = () => { withOwnPending(); };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    resetDb(); arrange();
+    db.errors["documents.update"] = [{ message: "could not serialize access" }];
+    const before = await upload({ docId: D1, revLabel: "C" });
+    const bBody = await before.json();
+    resetDb(); arrange(); installDoor(); installHousekeeping();
+    db.rpc.intake_door_point_pending = () => ({ data: 0, error: null }); // the pointer moved meanwhile
+    const after = await upload({ docId: D1, revLabel: "C" });
+    const aBody = await after.json();
+    spy.mockRestore();
+    expect(before.status).toBe(409);
+    expect(after.status).toBe(409);
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:withdraw", "housekeep:restore"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review", superseded_at: null });
+    const withdrawn = db.tables.document_versions.find((v) => v.id !== "v-pend" && v.id !== "v-cur");
+    expect(withdrawn).toMatchObject({ review_state: "superseded" });
+    expect(typeof aBody.error).toBe("string");
+    expect(typeof bBody.error).toBe("string");
+  });
+
+  it("REGRESSION: a refused submission after a NEW document discards that document through the door — nothing left behind, as before", async () => {
+    const { b, a } = await worlds(() => seed({ doc: null }), () => upload({ title: "Skid GA" }));
+    expect(a.status).toBe(b.status);
+    resetDb(); seed({ doc: null }); installDoor(); installHousekeeping();
+    db.rpc.intake_door_submit_version = () => ({ data: null, error: { code: "XX000", message: "boom" } });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ title: "Skid GA" });
+    spy.mockRestore();
+    expect(res.status).toBe(500);
+    expect(housekeepCalls()).toEqual(["intake_folder", "housekeep:discard"]);
+    expect(db.tables.documents).toEqual([]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.r2Deletes).toHaveLength(1);
+  });
+
+  it("a link revoked mid-request: the retire is refused as the checks before the body refuse it (410 'revoked'), and nothing of the request is left — the discard of what it made still lands (it needs the link to exist, not to be live)", async () => {
+    // revoked between the create and the submission: the discard still lands
+    resetDb(); seed({ doc: null }); installDoor(); installHousekeeping();
+    const submit = db.rpc.intake_door_submit_version;
+    db.rpc.intake_door_submit_version = (x) => { db.tables.project_intake_links[0].revoked_at = new Date().toISOString(); return submit(x); };
+    const res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(410);
+    expect((await res.json()).code).toBe("revoked");
+    expect(db.tables.documents).toEqual([]);
+    expect(housekeepCalls()).toEqual(["intake_folder", "housekeep:discard"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    // revoked before the retire: 410, the displaced draft untouched
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const retire = db.rpc.intake_door_housekeep;
+    db.rpc.intake_door_housekeep = (x) => { if (x.p_op === "retire") db.tables.project_intake_links[0].revoked_at = new Date().toISOString(); return retire(x); };
+    const res2 = await upload({ docId: D1, revLabel: "C" });
+    expect(res2.status).toBe(410);
+    expect((await res2.json()).code).toBe("revoked");
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review" });
+    expect(serviceHousekeeping()).toEqual([]);
+  });
+
+  it("a housekeeping refusal is answered as that write's own failure and never retried as the service role", async () => {
+    // a retire the door refuses without one of its answers (a 42501 with no door HINT — the definer's own signed-in
+    // refusal): 503 with today's sentence, nothing inserted, no service-role retire
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    db.rpc.intake_door_housekeep = (x) => x.p_op === "retire"
+      ? { data: null, error: { code: "42501", message: "intake_door: only the intake route, under the service key, opens the contractor door." } }
+      : ({ data: 0, error: null });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/could not be replaced right now/);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.writes.filter((w) => w.table === "document_versions" && w.method === "insert")).toEqual([]);
+    // a reference the door refuses: logged, the submission stands, no service-role upsert
+    resetDb(); seed({ doc: null }); installDoor(); installHousekeeping();
+    const hk = db.rpc.intake_door_housekeep;
+    db.rpc.intake_door_housekeep = (x) => x.p_op === "reference" ? doorScope("only a document it created") : hk(x);
+    const res2 = await upload({ title: "Skid GA" });
+    expect(res2.status).toBe(200);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(spy.mock.calls.some((c) => String(c[0]).includes("project reference for"))).toBe(true);
+    spy.mockRestore();
+  });
+
+  it("review fix pass 2: a retire the door refuses as out of scope (42501 'scope': the link stopped being trusted mid-request) answers the replace check's own 409 — the sentence a retry gets — never 'try again shortly'", async () => {
+    // the pre-check's sentence, read from the route so the two never drift apart
+    const STILL = "Your previous submission for this document is still in review — it must be approved or rejected first.";
+    expect(readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8")).toContain(`return fail("${STILL}", 409);`);
+    // a controller turns off allow_auto_supersede while the trusted contractor's replacement is in flight: the
+    // pre-check passed, the door re-reads the link at the retire and refuses it (scope)
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const hk = db.rpc.intake_door_housekeep;
+    db.rpc.intake_door_housekeep = (x) => {
+      if (x.p_op === "retire") db.tables.project_intake_links[0].allow_auto_supersede = false;
+      return hk(x);
+    };
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(STILL);
+    expect(housekeepCalls()).toEqual(["housekeep:retire"]); // a refusal is asked once, never retried
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.writes.filter((w) => w.table === "document_versions" && w.method === "insert")).toEqual([]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review" });
+    // the retry: the pre-check now refuses before the body, with the same status and sentence
+    const again = await upload({ docId: D1, revLabel: "C" });
+    expect(again.status).toBe(409);
+    expect((await again.json()).error).toBe(STILL);
+    // before 20261214 (the service-role retire) the first request would have landed — the next one answers 409 too
+    resetDb(); withOwnPending();
+    db.tables.project_intake_links[0].allow_auto_supersede = false;
+    const pre = await upload({ docId: D1, revLabel: "C" });
+    expect(pre.status).toBe(409);
+    expect((await pre.json()).error).toBe(STILL);
+  });
+
+  it("review fix pass: retire and restore keep the single retry the service-role path makes — a transient failure is asked once more and the upload answers as if it had not happened", async () => {
+    // retire: a deadlock (40P01), then the compare-and-set lands — filed in review, the draft displaced, no 503
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const hk = db.rpc.intake_door_housekeep;
+    let retires = 0;
+    db.rpc.intake_door_housekeep = (x) => (x.p_op === "retire" && ++retires === 1 ? { data: null, error: { code: "40P01", message: "deadlock detected" } } : hk(x));
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("in_review");
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "superseded" });
+    // restore: the pointer race lost, the first restore times out (57014), the second lands — the draft back in
+    // review and NO INTAKE_DISPLACE_UNRESOLVED (before this fix pass a controller had to repair it by hand)
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const hk2 = db.rpc.intake_door_housekeep;
+    let restores = 0;
+    db.rpc.intake_door_point_pending = () => ({ data: 0, error: null });
+    db.rpc.intake_door_housekeep = (x) => (x.p_op === "restore" && ++restores === 1 ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } } : hk2(x));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res2 = await upload({ docId: D1, revLabel: "C" });
+    spy.mockRestore();
+    expect(res2.status).toBe(409);
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:withdraw", "housekeep:restore", "housekeep:restore"]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review", superseded_at: null });
+    expect((db.tables.audit_logs ?? []).find((a) => a.action === "INTAKE_DISPLACE_UNRESOLVED")).toBeUndefined();
+    expect(serviceHousekeeping()).toEqual([]);
+  });
+
+  it("review fix pass: a transient failure twice is answered as one failure was (retire 503, restore recorded INTAKE_DISPLACE_UNRESOLVED) — two calls, never a third, never the service role; a door refusal is not retried at all", async () => {
+    const transient = { data: null, error: { code: "08006", message: "connection failure" } };
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    db.rpc.intake_door_housekeep = (x) => (x.p_op === "retire" ? transient : { data: 0, error: null });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(503);
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.writes.filter((w) => w.table === "document_versions" && w.method === "insert")).toEqual([]);
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const hk = db.rpc.intake_door_housekeep;
+    db.rpc.intake_door_point_pending = () => ({ data: 0, error: null });
+    db.rpc.intake_door_housekeep = (x) => (x.p_op === "restore" ? transient : hk(x));
+    await upload({ docId: D1, revLabel: "C" });
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:withdraw", "housekeep:restore", "housekeep:restore"]);
+    expect(db.tables.audit_logs.find((a) => a.action === "INTAKE_DISPLACE_UNRESOLVED")).toMatchObject({ details: expect.objectContaining({ displacedVersionId: "v-pend", error: "connection failure" }) });
+    expect(serviceHousekeeping()).toEqual([]);
+    // a door refusal (42501 scope, 28000 the link) is asked once
+    for (const refusal of [doorScope("its own submissions only"), { data: null, error: { code: "28000", message: "intake_door: the link was revoked.", hint: "revoked" } }]) {
+      resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+      const hk3 = db.rpc.intake_door_housekeep;
+      db.rpc.intake_door_point_pending = () => ({ data: 0, error: null });
+      db.rpc.intake_door_housekeep = (x) => (x.p_op === "restore" ? refusal : hk3(x));
+      await upload({ docId: D1, revLabel: "C" });
+      expect(housekeepCalls().filter((c) => c === "housekeep:restore")).toHaveLength(1);
+      expect(db.tables.audit_logs.find((a) => a.action === "INTAKE_DISPLACE_UNRESOLVED")).toBeTruthy();
+    }
+    spy.mockRestore();
+  });
+
+  it("review fix pass: a document taken off an ASSIGNED link's assignments mid-request does not strand this request's own submission — the lost race's withdraw still lands (it needs only the version to be the link's own)", async () => {
+    resetDb();
+    seed({ link: { assigned_doc_ids: [D1], allow_auto_supersede: false }, doc: { authored_by_link_id: null },
+      versions: [{ id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: null, review_state: "approved", created_at: "2026-09-01T00:00:00Z" }] });
+    installDoor(); installHousekeeping();
+    // a controller un-assigns the document while the request runs, and the pointer write loses its race
+    db.rpc.intake_door_point_pending = () => { db.tables.project_intake_links[0].assigned_doc_ids = []; return { data: 0, error: null }; };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ docId: D1, revLabel: "C" });
+    const logged = spy.mock.calls.map((c) => String(c[0]));
+    spy.mockRestore();
+    expect(res.status).toBe(409);
+    expect(housekeepCalls()).toEqual(["housekeep:withdraw"]);
+    const mine = db.tables.document_versions.filter((v) => v.intake_link_id === LINK && v.record_id === D1);
+    expect(mine).toHaveLength(1);
+    // resolved: never left in review with nothing pointing at it (the in-flight index, "already received", the review data)
+    expect(mine[0]).toMatchObject({ review_state: "superseded" });
+    expect(mine[0].superseded_at).toBeTruthy();
+    expect(logged.some((l) => l.includes("not resolved"))).toBe(false);
+    expect(db.doorSeen).toContainEqual({ fn: "intake_door_housekeep:withdraw", sub: LINK });
+    expect(serviceHousekeeping()).toEqual([]);
+  });
+
+  it("the intake folder the door refuses for configuration answers 409 'not_configured' — never the revision sentence, nothing stored", async () => {
+    resetDb(); seed({ doc: null }); installDoor(); installHousekeeping();
+    db.rpc.intake_door_intake_folder = () => doorScope("the project's intake library is not set", "not_configured");
+    const res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("not_configured");
+    expect(db.r2Puts).toEqual([]);
+    expect(db.tables.documents).toEqual([]);
+  });
+
+  it("a database with the door (20261184) but not its housekeeping (20261214): the content writes still go through the door, the housekeeping keeps today's service-role writes, and the housekeeping functions are asked ONCE", async () => {
+    resetDb(); seed({ doc: null }); installDoor();
+    const res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(200);
+    expect(doorCalls()).toEqual(["intake_door_create_document", "intake_door_submit_version", "intake_door_point_pending"]);
+    expect(serviceContentWrites()).toEqual([]);
+    expect(housekeepCalls()).toEqual(["intake_folder"]);
+    expect(db.writes.filter((w) => w.table === "project_documents").map((w) => w.method)).toEqual(["upsert"]);
+  });
+
+  it("before 20261214 and 20261184 alike (neither pasted): every write as today, each family asked once", async () => {
+    resetDb(); seed({ doc: null });
+    const res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(200);
+    expect(doorCalls()).toEqual(["intake_door_create_document"]);
+    expect(housekeepCalls()).toEqual(["intake_folder"]);
+    expect(serviceContentWrites()).toEqual(["documents.insert", "document_versions.insert", "documents.update"]);
+  });
+});
+
+// SEC-22 done-when 4 (J20 integrator fix pass): the direct door (INTK-15, the portal's path) runs the same
+// housekeeping as the multipart door, so its finalize is pinned before and after 20261214 too — with the
+// housekeeping functions installed, and absent (20261184 alone; neither pasted).
+describe("SEC-22 (b) (J20) on the direct door (INTK-15): a finalize answers as before with 20261214's housekeeping installed and absent", () => {
+  const STAGING = "intake-staging/o1/p1/lnk1/";
+  const json = (step: "begin" | "finalize", payload: Row) => POST(new NextRequest(
+    `http://x/api/intake/upload?step=${step}`,
+    { method: "POST", body: JSON.stringify(payload), headers: { "x-intake-token": TOKEN, "content-type": "application/json" } },
+  ));
+  /** begin, "PUT" the bytes to the staged key the door chose, then finalize with the multipart field names. */
+  const direct = async (fields: Record<string, string>, bytes: Uint8Array = PDF, name = "sheet.pdf", type = "application/pdf") => {
+    const begun = await (await json("begin", { fileName: name, size: bytes.byteLength, contentType: type })).json() as { uploadKey: string };
+    expect(begun.uploadKey.startsWith(STAGING)).toBe(true);
+    db.r2Objects.set(begun.uploadKey, bytes);
+    const res = await json("finalize", { uploadKey: begun.uploadKey, fileName: name, contentType: type, fields });
+    return { res, staged: begun.uploadKey };
+  };
+  type World = { status: number; body: Row; tables: typeof db.tables; staged: string; deleted: string[] };
+  const run = async (arrange: () => void, install: () => void, fields: Record<string, string>, tweak: () => void = () => undefined): Promise<World> => {
+    resetDb(); arrange(); install(); tweak();
+    const { res, staged } = await direct(fields);
+    return { status: res.status, body: await res.json() as Row, tables: structuredClone(db.tables), staged, deleted: db.r2Deletes.map((d) => String(d.Key)) };
+  };
+  const none = () => undefined;
+  const housekept = () => { installDoor(); installHousekeeping(); };
+  const answer = (x: World) => ({ status: x.status, ...without(x.body, "documentId", "versionId", "ref") });
+  const withOwnPending = () => seed({
+    doc: { pending_version_id: "v-pend" },
+    versions: [
+      { id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", created_at: "2026-09-01T00:00:00Z" },
+      { id: "v-pend", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "in_review", created_at: "2026-09-20T00:00:00Z" },
+    ],
+  });
+
+  it("REGRESSION: a NEW document through finalize answers exactly as before — the folder asked of the door and the project reference written through it, as the link; installed or absent, the staged object removed", async () => {
+    const before = await run(() => seed({ doc: null }), none, { title: "Skid GA", number: "V-300" });
+    const doorOnly = await run(() => seed({ doc: null }), installDoor, { title: "Skid GA", number: "V-300" });
+    // 20261184 without 20261214: the content writes through the door, today's service-role housekeeping, asked once
+    expect(housekeepCalls()).toEqual(["intake_folder"]);
+    expect(serviceHousekeeping()).toEqual(["project_documents.upsert"]);
+    const after = await run(() => seed({ doc: null }), housekept, { title: "Skid GA", number: "V-300" });
+    expect(after.status).toBe(200);
+    expect(after.body.status).toBe("in_review");
+    for (const w of [doorOnly, after]) expect(answer(w)).toEqual(answer(before));
+    expect(housekeepCalls()).toEqual(["intake_folder", "housekeep:reference"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(serviceContentWrites()).toEqual([]);
+    expect(db.doorSeen.filter((s) => s.fn.startsWith("intake_door_housekeep")).every((s) => s.sub === LINK)).toBe(true);
+    for (const w of [before, doorOnly, after]) {
+      expect(w.tables.project_documents).toEqual([expect.objectContaining({ org_id: ORG, project_id: "p1", document_id: w.body.documentId, source: "manual" })]);
+      expect(w.tables.documents.find((d) => d.id === w.body.documentId)).toMatchObject({ authored_by_link_id: LINK, collection_id: "col1" });
+      expect(w.deleted).toContain(w.staged);
+    }
+  });
+
+  it("REGRESSION: a stale intake folder pointer is re-homed by finalize the same way before and after — through the door as the link once 20261214 is pasted", async () => {
+    const arrange = () => { seed({ doc: null }); db.tables.collections.push({ id: "col-elsewhere", org_id: ORG, library_id: "lib-other", name: "Other" }); db.tables.projects[0].intake_collection_id = "col-elsewhere"; };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const before = await run(arrange, none, { title: "Skid GA" });
+    const after = await run(arrange, housekept, { title: "Skid GA" });
+    spy.mockRestore();
+    expect(answer(after)).toEqual(answer(before));
+    for (const w of [before, after]) {
+      const folder = w.tables.collections.find((c) => c.id === w.tables.projects[0].intake_collection_id);
+      expect(folder).toMatchObject({ library_id: "lib1", name: "Intake — Unit 4" });
+      expect(w.tables.documents.find((d) => d.id === w.body.documentId)?.collection_id).toBe(folder?.id);
+    }
+    expect(db.doorSeen).toContainEqual({ fn: "intake_door_intake_folder", sub: LINK });
+    expect(serviceHousekeeping()).toEqual([]);
+  });
+
+  it("REGRESSION: a trusted replace through finalize answers exactly as before — the displaced draft retired through the door after 20261214, by the service role without it", async () => {
+    const before = await run(withOwnPending, none, { docId: D1, revLabel: "C" });
+    const doorOnly = await run(withOwnPending, installDoor, { docId: D1, revLabel: "C" });
+    expect(housekeepCalls()).toEqual(["housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual(["document_versions.update"]);
+    const after = await run(withOwnPending, housekept, { docId: D1, revLabel: "C" });
+    for (const w of [doorOnly, after]) expect(answer(w)).toEqual(answer(before));
+    expect(after.body.status).toBe("in_review");
+    expect(housekeepCalls()).toEqual(["housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.doorSeen).toContainEqual({ fn: "intake_door_housekeep:retire", sub: LINK });
+    for (const w of [before, doorOnly, after]) {
+      expect(w.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "superseded" });
+      expect(w.tables.documents[0].pending_version_id).toBe(w.body.versionId);
+      expect(w.deleted).toContain(w.staged);
+    }
+  });
+
+  it("REGRESSION: a lost pointer race through finalize answers 409 as before — the replacement withdrawn, then the displaced draft restored, through the door after 20261214", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const before = await run(withOwnPending, none, { docId: D1, revLabel: "C" }, () => { db.errors["documents.update"] = [{ message: "could not serialize access" }]; });
+    const after = await run(withOwnPending, housekept, { docId: D1, revLabel: "C" }, () => { db.rpc.intake_door_point_pending = () => ({ data: 0, error: null }); });
+    spy.mockRestore();
+    expect(before.status).toBe(409);
+    expect(after.status).toBe(409);
+    expect(typeof before.body.error).toBe("string");
+    expect(typeof after.body.error).toBe("string");
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:withdraw", "housekeep:restore"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(after.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review", superseded_at: null });
+    expect(after.tables.document_versions.find((v) => v.id !== "v-pend" && v.id !== "v-cur")).toMatchObject({ review_state: "superseded" });
+    expect(after.deleted).toContain(after.staged);
+  });
+
+  it("a refused submission after a NEW document through finalize discards that document through the door — nothing left behind, never retried as the service role", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const after = await run(() => seed({ doc: null }), housekept, { title: "Skid GA" }, () => {
+      db.rpc.intake_door_submit_version = () => ({ data: null, error: { code: "XX000", message: "boom" } });
+    });
+    spy.mockRestore();
+    expect(after.status).toBe(500);
+    expect(housekeepCalls()).toEqual(["intake_folder", "housekeep:discard"]);
+    expect(after.tables.documents).toEqual([]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(serviceContentWrites()).toEqual([]);
+    expect(after.deleted).toContain(after.staged);
+  });
+
+  it("neither 20261184 nor 20261214 pasted: finalize writes everything as today, each door family asked once", async () => {
+    const w = await run(() => seed({ doc: null }), none, { title: "Skid GA" });
+    expect(w.status).toBe(200);
+    expect(doorCalls()).toEqual(["intake_door_create_document"]);
+    expect(housekeepCalls()).toEqual(["intake_folder"]);
+    expect(serviceContentWrites()).toEqual(["documents.insert", "document_versions.insert", "documents.update"]);
+    expect(serviceHousekeeping()).toEqual(["project_documents.upsert"]);
   });
 });

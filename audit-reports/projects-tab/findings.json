@@ -23,9 +23,10 @@
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 139,
+      "RESOLVED": 141,
       "REFUTED": 2,
-      "OPEN": 11
+      "OPEN": 8,
+      "RESOLVED (2026-10-14, by the integrator's ruling at the J20 integrator fix pass — done-when 1 met as narrowed under DEC-90: the pending pointer, the trusted promote and the redline accepted as documented exceptions; PASTE pending: `20261214`, after `20261184` and `20261205`)": 1
     }
   },
   "status_vocabulary": [
@@ -3939,7 +3940,7 @@
       "id": "SAF-19",
       "title": "A contractor's submission approved from the document's review surface tells the contractor nothing",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (by reading `ReviewGateSection` and the notice route at J14's HEAD; not exercised against a live database)",
       "blast_radius": "process / external communication",
@@ -4056,7 +4057,7 @@
       "id": "SEC-22",
       "title": "Only the contractor door's new documents and quotes run under row-level security; its submission, pointer and promote run under a bound identity, and its housekeeping writes still run as the service role",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-14, by the integrator's ruling at the J20 integrator fix pass — done-when 1 met as narrowed under DEC-90: the pending pointer, the trusted promote and the redline accepted as documented exceptions; PASTE pending: `20261214`, after `20261184` and `20261205`)",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (scratch PostgreSQL 16 carrying the whole sequence, review fix pass 2, recorded on `GAP-401`)",
       "blast_radius": "document-control integrity",
@@ -4081,7 +4082,7 @@
       "id": "UX-17",
       "title": "Transition-in tells nobody when the adopted sheet's equipment links were not recorded",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (base `49cd27e`; the lib half is pinned by `lib/__tests__/transitionIn.test.ts`; the panel was read, not rendered)",
       "blast_radius": "copy-truth / registry integrity",

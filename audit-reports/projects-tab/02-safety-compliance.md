@@ -1015,7 +1015,7 @@ project history for the document will be hidden.
 *Numbered SAF-19 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS as `SAF-9`'s remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control, the owner of `components/documents/ReviewGateSection.tsx`: its next package that edits the review promote. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package at the J14 merge.
 - **Assigned:** document-control P23 DIRECT-WRITE ISSUE RECORD (the next document-control package; ReviewGateSection is document-control's) — by the integrator, 2026-10-07 (J14 merge; fleet plan `document-control.json`).
 - **Assigned (remainder, DEC-31):** the notice route's authority — projects-joint, the owner of `app/api/intake/outcome-notice/route.ts` (SAF-9's route, J12 / J14): **the next projects-joint package not yet built** (after J19 — J19 PROJECTS REMAINDERS is already built with a fixed file set and merging, so it cannot take this). No such package exists in `audit-reports/fleet-plans/projects-joint.json` today, so **the integrator opens or names it at the P23 merge** — this remainder is left to the integrator explicitly, never unassigned. The change: in `app/api/intake/outcome-notice/route.ts:112`–`:113`, admit beside `memberHoldsAny(m, ["Admin", "DocCtrl"])` and the project owner whoever holds publish authority on the version's document — `user_can_publish_doc(<the version's record_id>, orgId)` (`20261037`), asked as the CALLER (the function reads `auth.uid()`, so not through `supabaseAdmin`), so every approver the review surface admits can tell the contractor. Proposed by document-control P23's review fix pass, 2026-10-13 (first proposed as J19; corrected at P23's second review fix).
@@ -1047,6 +1047,16 @@ project history for the document will be hidden.
 2. ✓ A rendered test drives the review surface's approval of an intake-born version (the notice asked and said) and of an ordinary one (no notice).
 
 **Scope / residual.** Stays OPEN for done-when 1's remainder: the notice route refuses an approver who is not Admin, Document Control or the project owner, though the review surface lets any publisher approve — owner above (projects-joint, the next package after J19, opened or named by the integrator at the P23 merge), DEC-31. The route's own claim-once and send are projects-tab SAF-9's (J12 / J14), unchanged. A rejection is not made from this surface (the review panel publishes or not; the Intake tab rejects), so it sends no "not accepted" notice — nothing to wire.
+
+**Resolution (2026-10-14, projects Round G).** Package projects-joint J20 INTAKE DOOR UNDER RLS AND PROJECT REMAINDERS took the remainder (the notice route's authority); P23's review-surface half above is unchanged. Reproduced on base `700f1fc`: `app/api/intake/outcome-notice/route.ts` admitted only `memberHoldsAny(m, ["Admin", "DocCtrl"])` or the project's owner, so a granted publisher (or the document's effective owner) who approved a contractor's submission from `ReviewGateSection` got 403 and the contact was not told (the publisher case below fails against the base route).
+- `app/api/intake/outcome-notice/route.ts` (submission branch only): when the caller is neither, the route asks `user_can_publish_doc(<the version's record_id>, orgId)` (20261037 — controller, the library's publish grant, or the document's effective owner: the authority `ReviewGateSection` publishes with) **as the caller**, through `callerScopedClient` (`lib/serverAuth.ts`, the caller's own bearer — the function reads `auth.uid()`, so never through the service role). `true` admits; `false` answers 403 with the sentence widened to say so ("Only the project owner, a document controller or a publisher of this document can notify a contractor of a decision."). Before 20261037 (42883 / PGRST202) the check admits nobody new — today's authority alone. Any other failure, or no credentials to ask with, sends nothing and answers 503 ("Your authority on this document could not be checked — try again. Nothing was sent.") — never a pass. The claim-once (20261157's index), the send, the outcome read from the database and the quote branch's authority are unchanged; the publish check runs only after the membership, the version, the link and the project are read, so an inactive member is refused before it.
+- Tests: `lib/__tests__/intakeOutcomeNoticeRoute.test.ts` "projects-tab SAF-19 remainder (projects Round G J20)" (6): a publisher who is neither controller nor owner is admitted, the check asked as the caller (`user_can_publish_doc` with `{ p_doc: <record>, p_org }` and the request's own bearer), one claim and one send, and a second call answers `already`; a non-publisher is refused 403 with the new sentence, nothing claimed or sent; regression — a controller and the owner are admitted exactly as before and the check is never asked; before 20261037 (42883, PGRST202) 403; a failed or impossible check 503, nothing sent; an inactive member refused before any check. The existing case "a member who may not decide the submission is refused" now pins the widened sentence. `dcRoundFReviewIntakeNotice` (P23's rendered review-surface cases) passes unchanged — the panel shows the route's sentence in parentheses.
+
+**Done-when.**
+- ✓ A submission approved from the review surface tells the link's contact, through the same route, once — for every approver that surface admits: the route now admits a publisher of the version's document beside Admin, Document Control and the project owner (P23's half: the surface calls the route once per approval; the route's claim makes it once per submission).
+- ✓ A rendered test drives the review surface's approval of an intake-born version and of an ordinary one (no notice) — P23, unchanged.
+
+**Scope / residual.** None owed. A rejection is not made from the review surface (P23's residual stands as recorded). The route's widened authority is exactly `user_can_publish_doc`; if a later package changes who may publish, the notice follows it.
 
 ---
 
@@ -1114,5 +1124,5 @@ project history for the document will be hidden.
 | SAF-16 | MEDIUM | RESOLVED |
 | SAF-17 | MEDIUM | RESOLVED |
 | SAF-18 | MEDIUM | OPEN |
-| SAF-19 | LOW | OPEN |
+| SAF-19 | LOW | RESOLVED |
 | SAF-20 | LOW | RESOLVED |
