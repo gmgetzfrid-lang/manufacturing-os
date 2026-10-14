@@ -246,7 +246,7 @@ describe("NEDGE-22 — a library's follower is told a document's name only while
     expect(h.emails).toHaveLength(4);
   });
 
-  it("someone the producer NAMES (a transmittal's document owner) is not filtered and not asked about", async () => {
+  it("someone the producer NAMES on a notice naming ONE document (involved with the one thing it names) is not filtered and not asked about — unchanged by done-when 2", async () => {
     __registerServerDiscoverCheck(check);
     await emit(libEv({ audience: { involved: ["owner", "f-hidden"], followers: true } }));
     expect(rowFor("f-hidden")[0].title).toBe("PID-4412 → Rev C");
@@ -295,7 +295,7 @@ describe("NEDGE-22 — a library's follower is told a document's name only while
     expect(JSON.stringify(rowFor("f-hidden"))).not.toMatch(/PID-4412|E-9/);
   });
 
-  it("the named documents are asked about AT ONCE — every check starts before any answers — and the three outcomes hold: ruled out by an answered check → unnamed (even beside a failed one); left out only by a failed check → redacted; kept by every answer → in full", async () => {
+  it("the named documents are asked about AT ONCE (three, within the bound of five) — every check starts before any answers — and the three outcomes hold: ruled out by an answered check → unnamed (even beside a failed one); left out only by a failed check → redacted; kept by every answer → in full", async () => {
     const started: string[] = [];
     let release!: () => void;
     const answersMay = new Promise<void>((r) => { release = r; });
