@@ -248,6 +248,16 @@ every issued deliverable, or visibly knows it does not.
 
 **Scope / residual.** (a) `createDocumentWithFile` writes `related_ticket_id` (a `relatedTicketId` input, as `revUpDocument` has) → **document-control** (P23's successor on `lib/revisions.ts`); (b) the ticket page offers "Publish as a new document in <library>" through that path and `/api/tickets/handback` accepts a version of a NEW document in the ticket's library carrying the ticket → **DF-P9 / DF-P10** with (a); (c) a source-less, library-less request → triage sets a library (`DCW-1`).
 
+**Partial (2026-10-14, drafting-flow Round G).** DF-P12 DELIVERABLE FOLLOW-UPS — DCW-4's document-control limb (assigned at the DF-P4 merge). Reproduced on `6f89d39`: `createDocumentWithFile` (`lib/revisions.ts:914` on the base) took no ticket, so no new document's first version could carry the provenance `/api/tickets/handback` checks.
+- `lib/revisions.ts` `createDocumentWithFile` takes an optional `relatedTicketId`. It is checked to be a ticket of the workspace BEFORE anything is written — a malformed id, a ticket of another workspace or an unreadable read refuses, nothing created (`:965-975`) — and recorded on the first version (`document_versions.related_ticket_id`, `:1035`, as `revUpDocument` records a revision's: GAP-6 / DEC-22, provenance only, DEC-23) and on the `DOCUMENT_CREATED` row (`details.relatedTicketId`, `:1068`). Additive: with none — every existing caller (`components/documents/DocumentLinkPicker.tsx`, `lib/outputTemplates.ts`) — the insert payloads and the audit details are exactly as before and no ticket is read. Document-control P26's hunks in the file are untouched.
+- Tests: `lib/__tests__/dfRoundG_P12_dcw4.test.ts` (the regression pin of both payloads' keys with no ticket; the provenance on the version and on the audit row; the three refusals with nothing written; the callers unchanged); `lib/__tests__/dcRoundFLifecycle.test.ts` green.
+
+**Done-when.**
+- ✗ (in part) See `LIFE-1` / `GAP-6` (unchanged).
+- ✗ (in part) "The register knows about every issued deliverable, or visibly knows it does not" — unchanged since DF-P4 (a source document or a library). A new document's first version can now carry the ticket, but no surface publishes one yet.
+
+**Scope / residual.** (b) The ticket page offers "Publish as a new document in <library>" for a ticket with a library and no source document, through `createDocumentWithFile({ …, relatedTicketId })` → owner: the ticket page's owner after drafting-flow DF-P9 (the proposed DF-P13 DELIVERABLE PAGE WIRING, with `EVID-16` done-when 2). (c) `/api/tickets/handback` accepts a version of a NEW document in the ticket's library carrying the ticket (today it requires a version of the ticket's source document, `app/api/tickets/handback/route.ts:48-60`) → owner: the same package (the route is drafting-flow's; no open package lists it). (d) A source-less, library-less request → triage sets a library (`DCW-1`).
+
 ---
 
 ## DCW-5 · A request cannot be filed against a document the requester cannot see

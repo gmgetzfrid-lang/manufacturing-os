@@ -129,6 +129,8 @@ page.tsx:1391 `deliverableRev={ticket?.deliverableRev}`; page.tsx:1360 `const fi
 
 **Scope / residual.** The SUPERSEDED / WITHDRAWN / in-progress words are what the page knew when it stamped (its loaded ticket); the QR stays the live answer. Prints of Finals recorded before this change (no `rev`) answer "cannot confirm", by design (the stated default: no `?r=`). Two files issued under the same label (a pre-Round-E reopen, drafting-flow `SM-5` / `LEAK-7`) still cannot be told apart by label; the QR does not yet carry the attachment's identity — that is `SM-5` done-when 3 (owner: drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS), not this finding. A NEW re-issue of a label can no longer happen: `SM-5` done-when 2's history check re-cycles it (this round; the re-cycle in place of the brief's refusal is ratified by the integrator). Trust boundary: history lines are member-appendable, so they count only at or below `revision_count + 1` AND the bound the live label proves (pass 4) — `revision_count` itself on a row with no label (pass 5). Under an issued label, a forged line cannot stamp the Final in force SUPERSEDED (the label bounds the history at its own number). Under a REVIEW label it still can, wherever the label's bound sits above the real last issue: Rev 1 issued at `revision_count` 0; `reject_final` → 1; `2A` submitted and rejected → 2; `3A` submitted; a member appends "issued Rev 2" (within the `3A` bound of 2) — the real Rev 1 scans `superseded` and its copy is stamped "SUPERSEDED by Rev 2" behind the confirmation. No code-only bound can tell that line from a real one (pinned as today's behaviour by `verifyTicketVerdict.test.ts` "issue 3 (recorded, not closed by code) …"). On a LIVE ticket with NO label whose `revision_count` is above its real last issue (cycles bumped without an issue — a reject or return before any issue, or after a reopen), a forged line at or below `revision_count` can likewise stamp a real Final "SUPERSEDED by Rev k" for a k never issued (fail-safe wording, behind the confirmation; the QR still answers live). A `CLOSED` row with no label answers "cannot confirm" and derives no standing from its history (fix pass 6). *Overstated* in pass 4's form of this sentence ("at or below `revision_count + 1`" on any row with no label): a code-only bound closed the reopened-straight-after-a-real-issue case, which pass 4 had left to the migration. The guard refusing a client-appended `issued Rev` entry closes both — the `ticket_update_guard` limb, owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS (migration number allocated at its launch); drafting-flow `SM-5` states the verdict's share of the same residual. A Final from a rejected round prints "cannot confirm" rather than the next issue's label (pass 4), by design.
 
+*Cross-note (2026-10-14, drafting-flow Round G, DF-P12 DELIVERABLE FOLLOW-UPS): the Scope line's two DF-P12 items have landed; the Status stays RESOLVED.* The QR now names the printed FILE (`?a=<attachment id>` — `lib/verifyTicketVerdict.ts` `ticketVerifyUrl`, passed by `ticketCopyPlan`), checked by `/api/verify-ticket` against the ticket's attachments (one file, carrying the printed revision) and recorded as the scan's `printed_ref`: two prints of one label are told apart, and a print of a label issued twice that carries no such identity answers "cannot confirm" (drafting-flow `SM-5` done-when 3, `LEAK-7` (b)). The guard limb (`20261221`, pending paste) makes "issued Rev N" history lines the workflow's only; for a ticket whose last issue is proven, a forged line can no longer supersede it on the scan or on a copy stamped by the server copy route (`app/api/tickets/copy`, which reads the index); the page's own standing reads as before the paste until it passes the index or uses that route (drafting-flow `EVID-16` done-when 2).
+
 ---
 
 <a id="phys-3"></a>
@@ -417,6 +419,16 @@ schema.sql:789-799 (nine columns, no `source`, no `ticket_id`); share/file/route
 4. ✓ (P2) The share-link test.
 
 **Scope / residual.** Stays OPEN for done-when 3. **The remedy (no migration added — DF-P10's brief reserved none; owner drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS):** a follow-up to `20261068` adding `download_audits.ticket_id UUID` and `attachment_id TEXT` (plain columns, not foreign keys — the record outlives the ticket's archive shed, as `share_id` outlives its share), the `insert_own` policy unchanged, `recordTicketCopy` then writing them (with today's audit row kept), and `lib/staleCopies.ts` gaining a ticket arm keyed on `(ticket_id, attachment_id)` against the ticket's newer issued `rev`. Opened as [`PHYS-17`](#phys-17) (review fix pass 4, DEC-31), owner **drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS**, its migration number allocated at that package's launch (a DEC-30 one-paste, not widening; the app keeps working before it — `42703` / `PGRST204` on the two columns → today's row).
+
+**Partial (2026-10-14, drafting-flow Round G).** DF-P12 DELIVERABLE FOLLOW-UPS — done-when 3's drafting limb, carved out as [`PHYS-17`](#phys-17), has landed: a ticket copy's row names the ticket and the file (`20261223`, pending paste) and `lib/staleCopies.ts` lists and recalls its holders (`getTicketCopyRecall`, `nudgeStaleTicketHolders`) — see `PHYS-17`'s Resolution.
+
+**Done-when.**
+1. ✓ (DF-P10; plus the ticket columns, `20261223`).
+2. ✓ (DF-P10, unchanged; the new server copy route checks both writes and issues nothing on a refusal).
+3. ✗ as written: drafting rows carry no `document_id` / `version_id` — a ticket file is no register version, so there is no true value to write (DF-P10's finding). The criterion's purpose ("so staleCopies can see them") holds through the remedy this record's own Scope line names (`ticket_id` / `attachment_id` and a ticket arm — `PHYS-17`). Closing it on that remedy departs from the wording, which needs the integrator's ruling under DEC-90 (the record's text allows it: "The remedy (no migration added — …; owner drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)").
+4. ✓ (P2).
+
+**Scope / residual.** For the integrator: rule done-when 3 superseded by `PHYS-17`'s remedy (then RESOLVED, pending `20261223`), or keep it OPEN. Nothing else is owed in code; the recall's callers are `PHYS-18`.
 
 ---
 
@@ -1002,7 +1014,7 @@ Done-when, as it stands:
 ## PHYS-17 · `download_audits` has no ticket or attachment column, so a drafting-ticket copy can never be recalled — the stale-copies ledger has no ticket arm
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS (the `download_audits.ticket_id` / `attachment_id` columns, `recordTicketCopy` writing them, and the `lib/staleCopies.ts` ticket arm), its migration number allocated at that package's launch — opened by drafting-flow Round G DF-P10's review fix pass 4, 2026-10-13, from `PHYS-8` done-when 3 (DEC-31).
 - **Verification:** CONFIRMED on DF-P10's branch.
 - **Locations:** `supabase/schema.sql` (`download_audits`), `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` (adds only `source`, `share_id`, `transmittal_id`), `lib/ticketDeliverableCopy.ts` (`recordTicketCopy`), `lib/staleCopies.ts` (keyed on `document_id` / `version_id` only)
@@ -1017,3 +1029,42 @@ Done-when, as it stands:
 - [ ] A `DEC-30` one-paste migration (not widening) adds `download_audits.ticket_id UUID` and `attachment_id TEXT` (plain columns, not foreign keys — the record outlives the ticket's archive shed, as `share_id` outlives its share), the `insert_own` policy unchanged
 - [ ] `recordTicketCopy` writes them (the audit row kept), falling back to today's row on `42703` / `PGRST204` for the two columns
 - [ ] `lib/staleCopies.ts` gains a ticket arm keyed on `(ticket_id, attachment_id)` against the ticket's newer issued `rev`, with a test
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P12 DELIVERABLE FOLLOW-UPS. Reproduced on `6f89d39`: `download_audits` has no ticket or attachment column (`supabase/schema.sql:797-807`; `20261068` adds `source`, `share_id`, `transmittal_id` only); `recordTicketCopy` wrote five columns (`lib/ticketDeliverableCopy.ts:221-227` on the base); `lib/staleCopies.ts` read holders by `document_id` / `version_id` only.
+- `supabase/migrations/20261223_df_roundG_download_audits_ticket_copy.sql` — `ticket_id UUID` and `attachment_id TEXT`, plain nullable columns (no foreign key: the record outlives the ticket's archive shed), a partial index on `(ticket_id, created_at DESC)`, `download_audits_insert_own` unchanged (a member records only their own pull; the probes check the policy set), and the `source` comment restated with the four drafting channels (`drafting_unstamped` / `drafting_print_unstamped` added). Not a widening; refuses without `20261068`; DEC-30 one paste.
+- `recordTicketCopy` writes them (the audit row kept); `42703` / `PGRST204` naming either column → today's row (`isMissingTicketCopyColumn`), and before `20261068` the original shape as before.
+- `lib/staleCopies.ts`, the ticket arm: `getTicketCopyRecall(ticket)` reads the ticket's copies (in its org, by `ticket_id`, the 365-day window, the 1,000-row cap with `capped`) and reads each copy as a scan of that file would answer now — `ticketVerdict` with the file's own revision and id (PHYS-2, drafting-flow `SM-5`): superseded, withdrawn or review draft → outdated, current → current. An unreadable record (before `20261223`, or any failure) is a gap (`unavailable`), never "nobody holds a copy". `nudgeStaleTicketHolders` tells the outdated holders who have not re-taken the current file (the document arm's rule) with `doc_recalled` (the existing recall kind; resource `ticket`, linking to the request) and writes `DISTRIBUTION_RECALL` on the ticket's trail (who, when, which revisions they held); an unavailable record nudges nobody and says so on the trail.
+- Tests: `lib/__tests__/dfRoundG_P12_deliverable.test.ts` "PHYS-17 — recordTicketCopy …" and "PHYS-17 / PHYS-8 dw3 — …"; on PostgreSQL 16, `lib/__tests__/rls/dfP12DeliverableRails.test.ts` "PHYS-17: …" (a member's own row naming the ticket and the file lands; one in another member's name is refused; UPDATE and DELETE touch nothing; the row outlives its ticket). `lib/__tests__/notificationWriteRails.test.ts` lists the new pass-through, and `lib/__tests__/requestAcksClock.test.ts`'s recall-category census counts the ticket arm's recall (a fourth `category: "recall"`).
+
+**Done-when.**
+- ✓ The `DEC-30` one-paste migration adds both columns, not foreign keys, `insert_own` unchanged (pending paste).
+- ✓ `recordTicketCopy` writes them (the audit row kept), falling back to today's row on `42703` / `PGRST204` for the two columns.
+- ✓ `lib/staleCopies.ts` has a ticket arm keyed on `(ticket_id, attachment_id)` against the ticket's newer issue, with tests.
+
+**Pending migration:** `supabase/migrations/20261223_df_roundG_download_audits_ticket_copy.sql` (after `20261068`; either order with the DF-P12 deploy).
+
+**Scope / residual.** Nothing calls the ticket arm yet — no recall control on the ticket page, no recall at a new issue → opened as [`PHYS-18`](#phys-18) (DEC-31).
+
+---
+
+<a id="phys-18"></a>
+
+## PHYS-18 · The ticket copy recall exists but nothing calls it — the holders of a superseded ticket deliverable are never told
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** proposed — the ticket page's owner after drafting-flow DF-P9 (the proposed DF-P13 DELIVERABLE PAGE WIRING, with drafting-flow `EVID-16` done-when 2 and `DCW-4`'s offer), and the workflow route's owner for the recall at a new issue; opened by drafting-flow Round G DF-P12, 2026-10-14 (DEC-31), for the integrator to allocate at the merge.
+- **Verification:** CONFIRMED on DF-P12's branch.
+- **Locations:** `lib/staleCopies.ts` (`getTicketCopyRecall`, `nudgeStaleTicketHolders` — no caller), `app/(protected)/requests/[id]/page.tsx`, `app/api/tickets/workflow-action/route.ts` (the issuing actions)
+- **Independently verified:** — opened 2026-10-14 by DF-P12; not yet challenged by a second party.
+
+**Mechanism.** `PHYS-17`'s ticket arm lists the members holding an outdated copy of a ticket's files and can recall them, as the document arm does. A document's recall runs on publish (`lib/postPublish.ts`, `source: "auto"`) and from the controller's panel; the ticket arm has neither — no control on the ticket page, and no call when an issuing action writes a newer label.
+
+**Failure scenario.** Rev 2 of a drafting ticket issues; three people printed Rev 1's package (each copy now recorded by ticket and file); nobody is told their print is superseded unless they scan it.
+
+**Done when.**
+
+- [ ] The ticket page shows the holders (`getTicketCopyRecall`) to the people who may recall them (the requester, the drafter, a controller) with a "Recall outdated copies" control (`nudgeStaleTicketHolders`, `source: "manual"`), and says when the record could not be read (`unavailable`)
+- [ ] An issuing transition (`approve_draft_ifc`, `approve_minor_correction`, `engineer_approve_final`) recalls the holders of the superseded issue (`source: "auto"`), best-effort after the transition lands
+- [ ] Tests pin both callers
+
