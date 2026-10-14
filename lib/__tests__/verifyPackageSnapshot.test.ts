@@ -104,7 +104,7 @@ function chain(table: string) {
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ from: (t: string) => chain(t) }) }));
 
 const docRow = (over: Record<string, unknown> = {}) => ({
-  id: DOC, document_number: "P-101", title: "P&ID", name: "P-101", rev: "4", current_version_id: "v2", status: "Issued", legal_hold: false, ...over,
+  id: DOC, document_number: "P-101", title: "P&ID", name: "P-101", rev: "4", current_version_id: "v2", status: "Issued", legal_hold: false, visibility: "normal", ...over,
 });
 const printAt = (sheets: Array<Record<string, unknown>>) => ({ id: PRINT, package_id: PKG, printed_at: "2026-08-20T00:00:00Z", sheets });
 const sheetV2 = { documentId: DOC, versionId: "v2", revLabel: "4", label: "P-101" };
@@ -880,5 +880,31 @@ describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing 
     expect(missingSheetWhen({ leftOutAtPrint: "fetch_failed" })).toBe("left out of this printing — its file could not be fetched when printed");
     expect(missingSheetWhen({ leftOutAtPrint: "left_out" })).toBe("left out of this printing");
     expect(packLeftOutText("nonsense")).toBe("left out of this printing");
+  });
+});
+
+describe("VFY-16 (intelligence I-12) — a private or hidden document's sheet is answered without its number or title", () => {
+  it("private, hidden, an unknown value and an unread visibility each label the sheet 'Restricted document' (the printed label too); the verdict is unchanged", async () => {
+    for (const visibility of ["private", "hidden", "secret", undefined]) {
+      state.print = printAt([sheetV2]);
+      const row = docRow({ visibility });
+      if (visibility === undefined) delete (row as Record<string, unknown>).visibility;
+      state.docs = [row];
+      const r = await verify(true);
+      const sheets = r.sheets as Array<Record<string, unknown>>;
+      expect(sheets[0].label, String(visibility)).toBe("Restricted document");
+      expect(JSON.stringify(r), String(visibility)).not.toMatch(/P-101|P&ID/);
+      expect(r.verdict).toBe("current");
+    }
+  });
+  it("a package member left off the paper is listed without its number either; a normal one (and a NULL visibility, the database's 'normal') keeps its label", async () => {
+    state.print = printAt([sheetV2]);
+    state.liveMembers.push({ document_id: DOC2, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1", status: "Draft", visibility: "hidden" }));
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "Restricted document", reason: "not_issued" }]);
+    state.docs = [docRow({ visibility: null })];
+    state.liveMembers = [{ document_id: DOC, pinned_version_id: "v2", pinned_rev_label: "4" }];
+    expect(((await verify(true)).sheets as Array<Record<string, unknown>>)[0].label).toBe("P-101");
   });
 });

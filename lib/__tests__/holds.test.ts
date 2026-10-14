@@ -420,7 +420,7 @@ describe("HLD-7 — publicHoldReason and /api/verify-hold", () => {
   }
   it("a custom reason is published as 'On hold'; heldRev is the rev the hold stopped, docRev the document now; notes and names are withheld", async () => {
     state.rows.document_holds = [openHoldRow({ reason: "Hold per legal — incident, do not distribute", notes: "waiting on legal", held_rev_label: "3" })];
-    state.rows.documents = [{ id: DOC, document_number: "P-2201", title: "Compressor", name: "c", rev: "5" }];
+    state.rows.documents = [{ id: DOC, document_number: "P-2201", title: "Compressor", name: "c", rev: "5", visibility: "normal" }];
     const { status, body } = await verify();
     expect(status).toBe(200);
     expect(body).toMatchObject({ active: true, reason: "On hold", docLabel: "P-2201", docRev: "5", heldRev: "3" });
@@ -436,7 +436,7 @@ describe("HLD-7 — publicHoldReason and /api/verify-hold", () => {
   });
   it("a predefined reason passes through; a pre-migration row (no held_rev_label) reports heldRev null, never the current rev", async () => {
     state.rows.document_holds = [openHoldRow({ released_at: "2026-09-10T00:00:00Z" })];
-    state.rows.documents = [{ id: DOC, document_number: "P-2201", rev: "5" }];
+    state.rows.documents = [{ id: DOC, document_number: "P-2201", rev: "5", visibility: "normal" }];
     const { body } = await verify();
     expect(body).toMatchObject({ active: false, reason: "Client Review", heldRev: null, docRev: "5" });
     expect((await verify("not-a-uuid")).status).toBe(400);

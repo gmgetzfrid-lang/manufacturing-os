@@ -25,6 +25,7 @@ import { isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import type { HoldVerdict } from "@/lib/verifyPresent";
+import { RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
 
 // A hold verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -49,6 +50,7 @@ interface HoldRow {
 }
 interface DocLabelRow {
   document_number: string | null; title: string | null; name: string | null; rev: string | null;
+  visibility?: string | null;
   /** Read for the verdict only — never returned (VFY-14's contract, as on /api/verify). */
   legal_hold: boolean | null;
 }
@@ -112,12 +114,14 @@ export async function GET(req: NextRequest) {
   let legalHold: boolean | null = null;
   const { data: docData, error: docErr } = await sb
     .from("documents")
-    .select("document_number, title, name, rev, legal_hold")
+    .select("document_number, title, name, rev, legal_hold, visibility")
     .eq("id", h.document_id)
     .maybeSingle();
   const d = docErr ? null : (docData as DocLabelRow | null);
   if (d) {
-    docLabel = String(d.document_number || d.title || d.name || "");
+    // VFY-16 (DEC-90 default): a private or hidden document's hold is
+    // answered without its number or title (lib/verifyDisclosure).
+    docLabel = verifyMayNameDocument(d) ? String(d.document_number || d.title || d.name || "") : RESTRICTED_DOCUMENT_LABEL;
     docRev = d.rev ?? null;
     legalHold = d.legal_hold === true;
   }

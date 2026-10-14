@@ -87,7 +87,7 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
   state.holds = [];
-  state.docs = [{ id: DOC, document_number: "V-101", title: "Vessel", name: "v", rev: "5", legal_hold: false }];
+  state.docs = [{ id: DOC, document_number: "V-101", title: "Vessel", name: "v", rev: "5", legal_hold: false, visibility: "normal" }];
   state.failHoldRead = 0;
   state.holdReads = 0;
   state.failDocRead = false;
@@ -168,7 +168,8 @@ describe("VFY-10 / PHYS-10 — green only when no hold at all remains on the doc
   it("the legal hold is read with the label (and never selected into anything returned)", async () => {
     state.holds = [hold({ released_at: "2026-09-20T00:00:00Z" })];
     await verify();
-    expect(state.selects.find((x) => x.table === "documents")!.cols).toBe("document_number, title, name, rev, legal_hold");
+    // VFY-16 (intelligence I-12): visibility is read to decide whether the label may be named.
+    expect(state.selects.find((x) => x.table === "documents")!.cols).toBe("document_number, title, name, rev, legal_hold, visibility");
   });
   it("a document read that FAILS → released_others_unknown (amber), never green", async () => {
     state.holds = [hold({ released_at: "2026-09-20T00:00:00Z" })];
@@ -298,5 +299,22 @@ describe("VFY-12 / VFY-13 — scan record and no-store", () => {
       ["verify-hold", "invalid", null],
       ["verify-hold", "unknown", HOLD],
     ]);
+  });
+});
+
+describe("VFY-16 (intelligence I-12) — a private or hidden document's hold is answered without its number or title", () => {
+  it("private, hidden and an unread visibility label the document 'Restricted document'; the verdict and dates are unchanged; a normal one keeps its label", async () => {
+    for (const visibility of ["private", "hidden", undefined]) {
+      state.holds = [hold()];
+      const doc: Record<string, unknown> = { id: DOC, document_number: "V-101", title: "Vessel", name: "v", rev: "5", legal_hold: false, visibility };
+      if (visibility === undefined) delete doc.visibility;
+      state.docs = [doc as never];
+      const { body } = await verify();
+      expect(body.docLabel, String(visibility)).toBe("Restricted document");
+      expect(JSON.stringify(body)).not.toMatch(/V-101|Vessel/);
+      expect(body.verdict).toBe("active");
+    }
+    state.docs = [{ id: DOC, document_number: "V-101", title: "Vessel", name: "v", rev: "5", legal_hold: false, visibility: "normal" } as never];
+    expect((await verify()).body.docLabel).toBe("V-101");
   });
 });

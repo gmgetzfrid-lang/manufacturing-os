@@ -50,6 +50,7 @@
 // discriminated result the routes turn into responses.
 
 import type { supabase } from "@/lib/supabase";
+import type { AckPolicy } from "@/types/schema";
 import { assertNotOnHold, isHoldBlockedError, type HoldBlockedError } from "@/lib/holdGate";
 import { publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK } from "@/lib/holds";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -173,6 +174,43 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
       return refuseKnown(423, { error: "on_hold", reason: publicShareHoldReason(e), unreadable: e.unreadable, documentStatus: d.status ?? undefined }, "on_hold");
     }
     throw e;
+  }
+
+  // DACL-4 (intelligence I-12): the documents-row LEGAL hold refuses too —
+  // a document preserved for a legal matter does not leave the organisation
+  // through a public link (/api/verify already reads it as held). Read
+  // apart from the row above so a database without the column (42703 /
+  // PGRST204) serves exactly as before; any other read error refuses as
+  // held, as the hold gate above does (fail closed).
+  const extra = await sb
+    .from("documents")
+    .select("legal_hold, collection_id, ack_policy")
+    .eq("id", d.id)
+    .maybeSingle();
+  const extraErr = extra.error as { code?: string; message?: string } | null;
+  const extraMissing = !!extraErr && (extraErr.code === "42703" || extraErr.code === "PGRST204");
+  if (extraErr && !extraMissing) {
+    console.error("[share] legal hold unreadable — share refused as held", { share: s.id, document: d.id, message: extraErr.message });
+    return refuseKnown(423, { error: "on_hold", reason: "This document's hold status could not be confirmed, so it is being treated as on hold.", unreadable: true, documentStatus: d.status ?? undefined }, "on_hold");
+  }
+  const extraRow = (extraMissing ? null : extra.data) as { legal_hold?: boolean | null; collection_id?: string | null; ack_policy?: unknown } | null;
+  if (extraRow?.legal_hold === true) {
+    return refuseKnown(423, { error: "on_hold", reason: "This document is under a legal hold.", documentStatus: d.status ?? undefined }, "legal_hold");
+  }
+  // DACL-4: the hard read-&-understood gate binds the SHARER — a link never
+  // lets out a copy its creator could not download themselves (the member
+  // download rail's rule, lib/downloads ackGateDocuments: a PENDING
+  // acknowledgment assigned to the creator, under an effective policy —
+  // document > folder > library, lib/acknowledgments resolveEffectiveAckPolicy
+  // — that is enabled with hardGate). Read here through this door's own
+  // client. Undecided (a read failed) refuses too: a copy leaving the
+  // organisation fails closed, as the field pack and the book do.
+  if (s.created_by && d.library_id) {
+    const gate = await creatorAckGate(sb, d.id, d.library_id, s.created_by, extraRow?.collection_id ?? null, extraRow?.ack_policy ?? null);
+    if (gate !== "clear") {
+      if (gate === "unknown") console.error("[share] acknowledgment gate unreadable — share refused", { share: s.id, document: d.id });
+      return refuseKnown(410, { error: "revoked" }, "acknowledgment_outstanding");
+    }
   }
 
   // The version — the one rule (lib/shareRules.ts), shared with the modal.
@@ -299,4 +337,46 @@ export async function recordShareAccess(
     return { error: error.message || "access row not written" };
   }
   return { error: null };
+}
+
+/** DACL-4: is the share's creator held by a hard acknowledgment gate on this
+ *  document? "gated" / "clear", or "unknown" when a read failed (the caller
+ *  refuses — fail closed). Every read is checked: supabase-js resolves with
+ *  `{ error }` rather than throwing. */
+async function creatorAckGate(
+  sb: ShareServeClient,
+  documentId: string,
+  libraryId: string,
+  userId: string,
+  collectionId: string | null,
+  docPolicy: unknown,
+): Promise<"gated" | "clear" | "unknown"> {
+  try {
+    const pending = await sb
+      .from("document_acknowledgments")
+      .select("document_id")
+      .eq("document_id", documentId)
+      .eq("assignee_user_id", userId)
+      .eq("status", "pending")
+      .limit(1);
+    if (pending.error) return "unknown";
+    if (((pending.data as unknown[] | null) ?? []).length === 0) return "clear";
+    let folderPolicy: AckPolicy | null = null;
+    if (collectionId) {
+      const f = await sb.from("collections").select("ack_policy").eq("id", collectionId).maybeSingle();
+      if (f.error) return "unknown";
+      folderPolicy = ((f.data as { ack_policy?: AckPolicy | null } | null)?.ack_policy) ?? null;
+    }
+    const l = await sb.from("libraries").select("ack_policy").eq("id", libraryId).maybeSingle();
+    if (l.error) return "unknown";
+    const libraryPolicy = ((l.data as { ack_policy?: AckPolicy | null } | null)?.ack_policy) ?? null;
+    // lib/acknowledgments resolveEffectiveAckPolicy's rule, inlined so this
+    // door does not load that module's notification / signing imports: the
+    // most specific DEFINED level wins; enabled:false there means none.
+    const defined = [(docPolicy as AckPolicy | null) ?? null, folderPolicy, libraryPolicy].find((p) => !!p) ?? null;
+    const policy = defined?.enabled ? defined : null;
+    return policy?.enabled && policy.hardGate ? "gated" : "clear";
+  } catch {
+    return "unknown";
+  }
 }

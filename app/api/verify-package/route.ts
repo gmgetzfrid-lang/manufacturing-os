@@ -45,6 +45,7 @@ import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import { isPackLeftOutCode } from "@/lib/packLeftOut";
 import type { NotPrintableReason, PackVerdict, SheetState } from "@/lib/verifyPresent";
+import { RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
 
 // A pack verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -61,6 +62,7 @@ interface MemberRow { document_id: string; pinned_version_id: string | null; pin
 interface DocRow {
   id: string; document_number: string | null; title: string | null; name: string | null;
   rev: string | null; current_version_id: string | null; status: string | null; legal_hold: boolean | null;
+  visibility?: string | null;
 }
 interface HoldRow { document_id: string; reason: string | null }
 interface VersionDateRow { id: string; effective_date: string | null }
@@ -188,7 +190,7 @@ export async function GET(req: NextRequest) {
   if (docIds.length) {
     const { data: docData, error: docErr } = await sb
       .from("documents")
-      .select("id, document_number, title, name, rev, current_version_id, status, legal_hold")
+      .select("id, document_number, title, name, rev, current_version_id, status, legal_hold, visibility")
       .in("id", docIds)
       .eq("org_id", pkgOrgId);
     if (docErr) return unavailable();
@@ -233,8 +235,13 @@ export async function GET(req: NextRequest) {
     if (!verErr) for (const v of (verData as VersionDateRow[] | null) ?? []) effectiveByVersion.set(String(v.id), v.effective_date ?? null);
   }
 
+  // VFY-16 (DEC-90 default): a private or hidden document's sheet is
+  // answered — its state, its revisions — without its number or title, the
+  // printed label included (lib/verifyDisclosure). A sheet whose document
+  // is gone keeps the label printed on the paper being scanned.
   const labelOf = (id: string, fallback: string | null) => {
     const d = byId.get(id);
+    if (d && !verifyMayNameDocument(d)) return RESTRICTED_DOCUMENT_LABEL;
     return String(d?.document_number || d?.title || d?.name || fallback || "Document");
   };
 
