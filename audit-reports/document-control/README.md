@@ -22,7 +22,7 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 ## Findings
 
-**172 findings** — 19 CRITICAL, 54 HIGH, 73 MEDIUM, 26 LOW.
+**173 findings** — 19 CRITICAL, 55 HIGH, 73 MEDIUM, 26 LOW.
 
 ### Round F wave 1 (2026-09-23 → 2026-09-29) — six packages in parallel
 
@@ -254,7 +254,7 @@ Remaining: XEDGE extensions and the MEDIUM backlog.
 | 02 | [Revisions, publish & supersession](./02-revisions-publish.md) | 30 | `REV-15`, `REV-16`, `REV-17` opened at P3 LIFECYCLE, 2026-09-30; `REV-18` (HIGH) opened at P12 WAVE-2 RESIDUALS, 2026-10-01; `REV-19` (MEDIUM) opened at P13 STATUS-TRANSITION and `REV-20` (LOW) at its merge, 2026-10-01; `REV-21` (MEDIUM) opened at P15 SURFACE REMAINDERS and `REV-22` (LOW) at P14 RECORDS & REVIEW REMAINDERS, 2026-10-01; `REV-23` (LOW) opened at the P18 merge and `REV-24` (LOW) at the P19 merge, 2026-10-02; `REV-25` (LOW) opened at the P20 merge, 2026-10-07; `REV-26`, `REV-27`, `REV-29` (LOW) and `REV-28` (MEDIUM) opened at P16, 2026-10-07; `REV-30` (LOW) opened at P23 DIRECT-WRITE ISSUE RECORD, 2026-10-13 |
 | 03 | [The review gate & e-signatures](./03-review-gate.md) | 14 | `RG-14` (LOW) opened at P14 RECORDS & REVIEW REMAINDERS, 2026-10-01 |
 | 04 | [Holds & stop-work](./04-holds.md) | 14 |  |
-| 05 | [Distribution, acknowledgment & recall](./05-distribution.md) | 15 |  |
+| 05 | [Distribution, acknowledgment & recall](./05-distribution.md) | 17 |  |
 | 06 | [Transmittals & the external portal](./06-transmittals.md) | 17 | `TRX-15` opened at the P7 merge, 2026-10-01; `TRX-16` (LOW) opened at the P8 merge, 2026-10-01; `TRX-17` (LOW) opened at P22, 2026-10-07 |
 | 07 | [Doc packs, work packages & the field bundle](./07-packages.md) | 14 |  |
 | 08 | [Retention, legal hold, archive & restore](./08-retention.md) | 14 |  |

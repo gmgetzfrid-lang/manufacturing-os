@@ -78,7 +78,7 @@ import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToPro
 import BulkEditModal from "@/components/documents/BulkEditModal";
 import CsvImportModal from "@/components/documents/CsvImportModal";
 import { markResourceNotificationsRead } from "@/lib/notificationTrail";
-import { notifyLibraryDocsAdded } from "@/lib/libraryNotify";
+import { notifyLibraryDocsAdded, firstNoticeTarget } from "@/lib/libraryNotify";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
@@ -2457,10 +2457,12 @@ export default function LibraryExplorerPage() {
     // has one call to make. The same words (the uploader named by their
     // email); in-app only (PROD-7 dw3 — a bulk upload is chatty: a follower's
     // bell carries it, their inbox does not). Never throws.
-    const notifyLibrarySubscribers = (count: number, firstName: string) => {
+    // NEDGE-22 (notifications N16): the named document's id rides along, so
+    // a follower who may not discover it reads the notice without its name.
+    const notifyLibrarySubscribers = (count: number, firstName: string, firstDocumentId: string | null) => {
       if (!activeOrgId || !uid || count === 0) return;
       void notifyLibraryDocsAdded({
-        orgId: activeOrgId, libraryId, count, firstLabel: firstName,
+        orgId: activeOrgId, libraryId, count, firstLabel: firstName, firstDocumentId,
         actorUserId: uid, actorName: userEmail ?? null,
       });
     };
@@ -2692,6 +2694,7 @@ export default function LibraryExplorerPage() {
         if (clockProblems.length > 0) {
           landedShortfalls.push(`the review clock / acknowledgment roster of ${docNumber} did not fully start (${clockProblems.join("; ")}) — Document Control can set it from the document`);
         }
+        return String(newDoc.id);
       };
 
       // ── Run in capped-concurrency chunks ──────────────────────────
@@ -2700,6 +2703,8 @@ export default function LibraryExplorerPage() {
       // with no statement of what landed and what didn't. Every file now gets
       // its attempt and the batch reports the truth at the end.
       const failures: Array<{ name: string; reason: string }> = [];
+      // the id each landed file's document got, by the file's index in resolved
+      const landedIds = new Map<number, string>();
       let stoppedAt = -1;
       setUploadProgress({ done: 0, total: resolved.length });
       for (let i = 0; i < resolved.length; i += UPLOAD_CONCURRENCY) {
@@ -2714,6 +2719,8 @@ export default function LibraryExplorerPage() {
               name: chunk[j].item.file.name,
               reason: (r.reason as Error)?.message ?? "unknown error",
             });
+          } else {
+            landedIds.set(i + j, r.value);
           }
         });
         setUploadProgress({ done: Math.min(i + chunk.length, resolved.length), total: resolved.length });
@@ -2724,7 +2731,9 @@ export default function LibraryExplorerPage() {
       const notStarted = resolved.length - attempted;
       const landed = attempted - failures.length;
       if (landed > 0) {
-        notifyLibrarySubscribers(landed, resolved[0]?.docNumber || resolved[0]?.original || "document");
+        // NEDGE-22: the first staged file's label, and its id only if it landed
+        const first = firstNoticeTarget(resolved, landedIds);
+        notifyLibrarySubscribers(landed, first.label, first.id);
       }
 
       const notes: string[] = [];
