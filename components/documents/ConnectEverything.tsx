@@ -21,7 +21,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
   const [status, setStatus] = useState<ConnectStatus | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reading, setReading] = useState<{ done: number; total: number; visionPages: number; visionSkip: string | null } | null>(null);
+  const [reading, setReading] = useState<{ done: number; total: number; visionPages: number; reusedPages: number; visionSkip: string | null } | null>(null);
   const stop = useRef(false);
   const onDoneRef = useRef(onDone); useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
 
@@ -37,9 +37,10 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
         if (st.queuedIds.length) {
           // Read in the browser on the caller's key, three at a time.
           const ids = [...st.queuedIds];
-          let done = 0, visionPages = 0; let visionSkip: string | null = null;
+          let done = 0, visionPages = 0, reusedPages = 0; let visionSkip: string | null = null;
           const perDoc = new Map<string, number>();
-          const report = () => setReading({ done, total: st.queued, visionPages: [...perDoc.values()].reduce((a, b) => a + b, visionPages), visionSkip });
+          const perDocReused = new Map<string, number>();
+          const report = () => setReading({ done, total: st.queued, visionPages: [...perDoc.values()].reduce((a, b) => a + b, visionPages), reusedPages: [...perDocReused.values()].reduce((a, b) => a + b, reusedPages), visionSkip });
           report();
           const worker = async () => {
             for (;;) {
@@ -49,11 +50,13 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
                 await ingestKnowledgeDocument(id, (_i, _t, progress) => {
                   if (!progress) return;
                   perDoc.set(id, progress.visionPages ?? 0);
+                  perDocReused.set(id, progress.reusedPages ?? 0);
                   if (progress.visionSkipReason) visionSkip = progress.visionSkipReason;
                   report();
                 });
               } catch { /* marked on the row; move on */ }
               visionPages += perDoc.get(id) ?? 0; perDoc.delete(id);
+              reusedPages += perDocReused.get(id) ?? 0; perDocReused.delete(id);
               done++; report();
             }
           };
@@ -77,7 +80,7 @@ export function ConnectButton({ running, onClick, disabled, className = "" }: { 
 }
 
 export function ConnectProgress({ status, running, error, reading, onCancel, onClose, onRun }: {
-  status: ConnectStatus | null; running: boolean; error: string | null; reading: { done: number; total: number; visionPages: number; visionSkip: string | null } | null;
+  status: ConnectStatus | null; running: boolean; error: string | null; reading: { done: number; total: number; visionPages: number; reusedPages: number; visionSkip: string | null } | null;
   onCancel: () => void; onClose: () => void;
   /** Run again with options: read every page with vision, or re-read everything. */
   onRun?: (opts: { visionAllPages?: boolean; rereadAll?: boolean }) => void;
@@ -96,7 +99,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
           {status.steps.map((s) => {
             const I = s.state === "done" ? CheckCircle2 : s.state === "working" ? Loader2 : s.state === "waiting" ? Clock : AlertCircle;
             const tone = s.state === "done" ? "text-emerald-600" : s.state === "working" ? "text-sky-600 animate-spin" : s.state === "waiting" ? "text-[var(--color-text-faint)]" : "text-rose-600";
-            const detail = s.key === "index" && reading && running ? `${s.detail} · reading in this browser: ${reading.done} of ${reading.total}${reading.visionPages ? ` · ${reading.visionPages} page${reading.visionPages === 1 ? "" : "s"} read with AI vision` : ""}` : s.detail;
+            const detail = s.key === "index" && reading && running ? `${s.detail} · reading in this browser: ${reading.done} of ${reading.total}${reading.visionPages ? ` · ${reading.visionPages} page${reading.visionPages === 1 ? "" : "s"} read with AI vision` : ""}${reading.reusedPages ? ` · ${reading.reusedPages} reused from earlier reads (not billed)` : ""}` : s.detail;
             return (
               <li key={s.key} className="flex items-start gap-1.5">
                 <I className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${tone}`} />

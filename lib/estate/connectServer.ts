@@ -161,7 +161,8 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
     const stale = readEverything ? ids : ids.filter((id) => !withTags.has(id) && !already.has(id));
     for (let i = 0; i < stale.length; i += 200) {
       const slice = stale.slice(i, i + 200);
-      await admin.from("knowledge_chunks").delete().in("document_id", slice).then(() => undefined, () => undefined);
+      // Transcripts stay: the re-read reuses them page by page instead of
+      // paying vision again. Tags are rewritten from scratch.
       await admin.from("knowledge_page_entities").delete().in("document_id", slice).then(() => undefined, () => undefined);
       const { error } = await admin.from("knowledge_documents").update({ status: "stale", pages_indexed: 0, page_count: null, last_section: null, error: null }).in("id", slice);
       if (!error) { rereads += slice.length; for (const id of slice) already.add(id); }
@@ -236,7 +237,7 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
   if (r.sourcesAdded) readBits.push(`${r.sourcesAdded} source${r.sourcesAdded === 1 ? "" : "s"} linked`);
   if (r.sync.added) readBits.push(`${r.sync.added} new to read`);
   if (r.sync.refreshed) readBits.push(`${r.sync.refreshed} revised, re-reading`);
-  if (r.rereads) readBits.push(`${r.rereads} being read again (the tag reader improved, or vision was turned on)`);
+  if (r.rereads) readBits.push(`${r.rereads} being read again — stored AI transcripts are reused, vision is not paid twice`);
   if (r.sync.errors.length) readBits.push(r.sync.errors[0]);
   steps.push({ key: "read", title: "Drawings watched", state: "done", detail: readBits.join(" · ") });
 

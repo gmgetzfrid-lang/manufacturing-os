@@ -378,6 +378,8 @@ export interface IngestProgress {
   total: number | null;
   /** Pages read by AI vision so far this run (no text layer). */
   visionPages: number;
+  /** Pages whose earlier transcript was reused instead of vision. */
+  reusedPages?: number;
   /** Set when vision couldn't run (no key / cap reached). */
   visionSkipReason?: string | null;
 }
@@ -421,13 +423,14 @@ async function ingestLoop(
   // What we refuse to do is spin: rounds that succeed without indexing a
   // single new page mean something is genuinely wrong, and that gets said.
   let visionPages = 0;
+  let reusedPages = 0;
   let lastIndexed = -1;
   let noProgressRounds = 0;
   let transientFailures = 0;
   for (let i = 0; i < 2000; i++) {
     let out: {
       done: boolean; pageCount: number; pagesIndexed: number;
-      visionPages?: number; visionSkipReason?: string | null;
+      visionPages?: number; reusedPages?: number; visionSkipReason?: string | null;
     };
     try {
       out = await apiPost("/api/knowledge/ingest", { documentId });
@@ -439,9 +442,10 @@ async function ingestLoop(
       continue;
     }
     visionPages += out.visionPages ?? 0;
+    reusedPages += out.reusedPages ?? 0;
     onIndex?.(out.pagesIndexed, out.pageCount, {
       indexed: out.pagesIndexed, total: out.pageCount,
-      visionPages, visionSkipReason: out.visionSkipReason ?? null,
+      visionPages, reusedPages, visionSkipReason: out.visionSkipReason ?? null,
     });
     if (out.done) return;
 

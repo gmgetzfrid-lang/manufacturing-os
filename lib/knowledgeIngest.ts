@@ -11,6 +11,7 @@
 // row (pages_indexed, last_section), so a timeout just picks up where the
 // last batch stopped.
 
+import { createHash } from "node:crypto";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -56,6 +57,9 @@ export interface IngestBatchResult {
   emptyPages: number;
   /** Pages read by AI vision in this batch (no text layer). */
   visionPages: number;
+  /** Pages whose stored transcript (this copy's, or another copy of the
+   *  same bytes) was reused instead of paying vision again. */
+  reusedPages: number;
   /** True when the batch stopped early because the vision budget ran out —
    *  the caller simply calls again to continue. */
   visionBudgetSpent: boolean;
@@ -114,6 +118,40 @@ export async function ingestKnowledgeDocBatch(
   // as "prose" — every tag on it invisible, the registry empty.
   const { data: libFeat } = await supabaseAdmin.from("knowledge_libraries").select("ai_features").eq("id", doc.library_id).maybeSingle();
   const drawingSet = ((libFeat?.ai_features ?? {}) as Record<string, unknown>).drawingIntel === true;
+
+  // ── Bytes read once ──────────────────────────────────────────────────
+  // Every copy carries its hash. What was already read for these bytes —
+  // this copy on an earlier pass, or another copy of the same file in any
+  // library — is reused page by page where vision would otherwise run, so
+  // a transcript is paid for once. The cheap text pass still runs, so
+  // positions and tags come out fresh.
+  let fileHash: string | null = null;
+  {
+    const { data: me } = await supabaseAdmin.from("knowledge_documents").select("file_hash").eq("id", doc.id).maybeSingle();
+    fileHash = ((me as { file_hash?: string | null } | null)?.file_hash) ?? null;
+    if (!fileHash) {
+      fileHash = createHash("sha256").update(bytes).digest("hex");
+      await supabaseAdmin.from("knowledge_documents").update({ file_hash: fileHash }).eq("id", doc.id).then(() => undefined, () => undefined);
+    }
+  }
+  const twinIds: string[] = [doc.id];
+  if (fileHash) {
+    const { data: twins } = await supabaseAdmin.from("knowledge_documents").select("id").eq("org_id", doc.org_id).eq("file_hash", fileHash).neq("id", doc.id).eq("status", "ready").limit(5);
+    for (const t of (twins as Array<{ id: string }> | null) ?? []) twinIds.push(t.id);
+  }
+  const stored = new Map<number, string>();
+  {
+    const { data: prior } = await supabaseAdmin.from("knowledge_chunks").select("document_id, page, seq, content").in("document_id", twinIds).gte("page", from + 1).lte("page", to).order("seq", { ascending: true }).limit(4000);
+    const byDocPage = new Map<string, string[]>();
+    for (const c of (prior as Array<{ document_id: string; page: number; seq: number; content: string }> | null) ?? []) {
+      const k = `${c.document_id}:${c.page}`;
+      byDocPage.set(k, [...(byDocPage.get(k) ?? []), c.content]);
+    }
+    for (let p = from + 1; p <= to; p++) {
+      for (const id of twinIds) { const parts = byDocPage.get(`${id}:${p}`); if (parts?.length) { stored.set(p, parts.join("\n")); break; } }
+    }
+  }
+  let reusedPages = 0;
   let emptyPages = 0;
   let visionPages = 0;
   let visionBudgetSpent = false;
@@ -162,7 +200,14 @@ export async function ingestKnowledgeDocBatch(
       // a 60s function is pure waste, and worse, it takes the whole batch's
       // committed progress down with it.
       const timeForVision = !deadlineMs || Date.now() + VISION_PAGE_RESERVE_MS <= deadlineMs;
-      if (vision && visionLeft > 0 && timeForVision) {
+      const priorText = stored.get(p);
+      if (priorText && priorText.length >= TEXTLESS_PAGE_MAX_CHARS && priorText.length > rawPageText.length) {
+        // Already read for these bytes: the stored transcript stands in for
+        // the model. Nothing is billed.
+        lines = priorText.split("\n").map((l) => sanitizeStorageText(l.trim())).filter(Boolean);
+        visionRead = true;
+        reusedPages++;
+      } else if (vision && visionLeft > 0 && timeForVision) {
         try {
           const img = await renderPageAsImage(pdf, p, {
             width: 1800,                                  // small tags stay legible
@@ -504,7 +549,7 @@ export async function ingestKnowledgeDocBatch(
   }
 
   return {
-    done, pageCount, pagesIndexed: reached, emptyPages, visionPages,
+    done, pageCount, pagesIndexed: reached, emptyPages, visionPages, reusedPages,
     visionBudgetSpent, stoppedForTime,
   };
 }

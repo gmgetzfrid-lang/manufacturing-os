@@ -172,11 +172,11 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
 
   // Current version files for everything wanted.
   const versionIds = [...wanted.values()].map((w) => w.doc.current_version_id as string);
-  const versionById = new Map<string, { file_url: string | null; file_type: string | null; revision_label: string | null; size: number | null }>();
+  const versionById = new Map<string, { file_url: string | null; file_type: string | null; revision_label: string | null; size: number | null; file_hash?: string | null }>();
   for (let i = 0; i < versionIds.length; i += 100) {
     const { data } = await supabaseAdmin
       .from("document_versions")
-      .select("id, file_url, file_type, revision_label, size")
+      .select("id, file_url, file_type, revision_label, size, file_hash")
       .in("id", versionIds.slice(i, i + 100));
     for (const v of data ?? []) {
       versionById.set(v.id as string, {
@@ -184,6 +184,7 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
         file_type: (v.file_type as string | null) ?? null,
         revision_label: (v.revision_label as string | null) ?? null,
         size: (v.size as number | null) ?? null,
+        file_hash: (v.file_hash as string | null) ?? null,
       });
     }
   }
@@ -235,6 +236,8 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
         source_document_id: dcDocId,
         source_version_id: doc.current_version_id,
         source_rev: version.revision_label,
+        // The bytes' identity: what was read for them anywhere is reused.
+        file_hash: version.file_hash ?? null,
       });
     } else if (existing.source_version_id !== doc.current_version_id) {
       // Rev published: drop the old index and queue a re-ingest of the new
@@ -257,6 +260,7 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
         source_id: sourceId,
         source_version_id: doc.current_version_id,
         source_rev: version.revision_label,
+        file_hash: version.file_hash ?? null,
       }).eq("id", existing.id as string);
       if (error) out.errors.push(`refresh ${displayName(doc)}: ${error.message}`);
       else out.refreshed++;
