@@ -50,6 +50,8 @@ export interface ResolveContext {
   folderUnits?: Map<string, string>;
   /** Folder id → project id already linked, so children inherit. */
   folderProjects?: Map<string, string>;
+  /** Folder id → asset id it is the folder for (applied), so documents inherit. */
+  folderAssets?: Map<string, string>;
 }
 
 export interface ProposedEdge {
@@ -213,6 +215,18 @@ export function resolveTarget(t: ResolveTarget, ctx: ResolveContext): ProposedEd
       seen.add(a.id);
       out.push({ a: self, b: nid.asset(a.id), type: "tagged_to", origin: "vision", tier: "provable", confidence: 1,
         summary: `${a.tag} was read on a page of "${t.name}"`, evidence: { tag: a.tag, where: "page" }, versionId: t.versionId ?? null });
+    }
+    // A folder a person marked as this equipment's folder.
+    for (let i = t.pathIds.length - 1; i >= 0; i--) {
+      const id = ctx.folderAssets?.get(t.pathIds[i]);
+      if (!id) continue;
+      if (!seen.has(id)) {
+        seen.add(id);
+        const tag = [...ctx.assets.values()].find((x) => x.id === id)?.tag ?? "its equipment";
+        out.push({ a: self, b: nid.asset(id), type: "tagged_to", origin: "resolver", tier: "provable", confidence: 1,
+          summary: `"${t.name}" is filed in the folder marked for ${tag}`, evidence: { where: "marked folder", folder: nid.folder(t.pathIds[i]) }, versionId: t.versionId ?? null });
+      }
+      break;
     }
     // The equipment folder it sits in.
     for (let i = t.path.length - 1; i >= 0; i--) {

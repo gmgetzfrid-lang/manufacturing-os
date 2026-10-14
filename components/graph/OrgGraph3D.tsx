@@ -39,6 +39,10 @@ interface Props {
   flyTo: { ids: string[]; nonce: number } | null;
   /** A new array here frames every node from above (the 3D estate on open). */
   frameAll?: GraphNode[] | null;
+  /** Positions are a fixed layout (the estate globe): pressing anywhere
+   *  turns the view, a tap selects, nothing is dragged out of place, and the
+   *  view holds still when left alone. */
+  pinned?: boolean;
   onSelect: (n: GraphNode | null) => void;
   onOpen: (n: GraphNode) => void;
   onSettled?: () => void;
@@ -130,7 +134,7 @@ function labelTier(n: GraphNode): 0 | 1 | 2 {
 
 export default function OrgGraph3D({
   nodes, edges, settings, sim, query, selectedId, highlightIds, pathIds,
-  regions, flyTo, onSelect, onOpen, onSettled, frameAll,
+  regions, flyTo, onSelect, onOpen, onSettled, frameAll, pinned = false,
 }: Props) {
   const mountRef = React.useRef<HTMLDivElement | null>(null);
   const [ready, setReady] = React.useState(false);
@@ -139,17 +143,19 @@ export default function OrgGraph3D({
   // Live props for the animation loop, which must not re-subscribe per frame.
   const live = React.useRef({
     nodes, edges, settings, sim, query, selectedId, highlightIds, pathIds,
-    regions, onSelect, onOpen, onSettled,
+    regions, onSelect, onOpen, onSettled, pinned,
   });
   live.current = {
     nodes, edges, settings, sim, query, selectedId, highlightIds, pathIds,
-    regions, onSelect, onOpen, onSettled,
+    regions, onSelect, onOpen, onSettled, pinned,
   };
 
   // Camera commands from React, consumed by the loop.
   const flyRef = React.useRef<{ ids: string[]; nonce: number } | null>(null);
   React.useEffect(() => { flyRef.current = flyTo; }, [flyTo]);
   const frameRef = React.useRef<GraphNode[] | null | undefined>(frameAll);
+  /** Bumped by "Whole site": frame everything again. */
+  const refitRef = React.useRef(0);
   React.useEffect(() => { frameRef.current = frameAll; }, [frameAll]);
 
   React.useEffect(() => {
@@ -243,6 +249,8 @@ export default function OrgGraph3D({
       const desired = { ...spherical };
       let lastInteraction = performance.now();
       const touched = () => { lastInteraction = performance.now(); };
+      // How far out the camera may go: enough to see the whole layout.
+      let maxRadius = 9000;
 
       const applyCamera = () => {
         const { radius, theta, phi } = spherical;
@@ -337,7 +345,7 @@ export default function OrgGraph3D({
           drag = null;
           return;
         }
-        const hitId = pickAt(e.clientX, e.clientY);
+        const hitId = live.current.pinned ? null : pickAt(e.clientX, e.clientY);
         if (hitId && e.button !== 2 && !e.shiftKey) {
           // Grab the node: drag it on the plane facing the camera.
           const n = live.current.sim.get(hitId);
@@ -362,7 +370,7 @@ export default function OrgGraph3D({
           const [p1, p2] = [...pointers.values()];
           const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
           if (pinchDist > 0) {
-            desired.radius = Math.min(9000, Math.max(80, desired.radius * (pinchDist / Math.max(1, d))));
+            desired.radius = Math.min(maxRadius, Math.max(80, desired.radius * (pinchDist / Math.max(1, d))));
           }
           pinchDist = d;
           touched();
@@ -433,7 +441,18 @@ export default function OrgGraph3D({
       const onWheel = (e: WheelEvent) => {
         e.preventDefault();
         touched();
-        desired.radius = Math.min(9000, Math.max(80, desired.radius * Math.exp(e.deltaY * 0.0012)));
+        const before = desired.radius;
+        desired.radius = Math.min(maxRadius, Math.max(80, desired.radius * Math.exp(e.deltaY * 0.0012)));
+        // Zoom toward what is under the pointer, not the middle of the
+        // scene: scroll over an area and you arrive at that area.
+        const k = 1 - desired.radius / before;
+        if (k > 0) {
+          setNdc(e.clientX, e.clientY);
+          raycaster.setFromCamera(ndc, camera);
+          camera.getWorldDirection(camDir);
+          dragPlane.setFromNormalAndCoplanarPoint(camDir, desiredTarget);
+          if (raycaster.ray.intersectPlane(dragPlane, dragHit)) desiredTarget.lerp(dragHit, k);
+        }
       };
 
       const onDouble = (e: MouseEvent) => {
@@ -500,6 +519,7 @@ export default function OrgGraph3D({
       let wasSettled = false;
       let lastFly = 0;
       let lastFrame: GraphNode[] | null = null;
+      let seenRefit = 0;
       let lastGlow = true;
       let dashTimer = 0;
 
@@ -522,6 +542,7 @@ export default function OrgGraph3D({
 
         // Frame the whole estate from above, once per layout.
         const fa = frameRef.current;
+        if (refitRef.current !== seenRefit) { seenRefit = refitRef.current; lastFrame = null; }
         if (fa && fa !== lastFrame && fa.length) {
           const pts = fa.map((n) => s.get(n.id)).filter(Boolean) as Array<{ x: number; y: number; z: number }>;
           if (pts.length) {
@@ -529,9 +550,10 @@ export default function OrgGraph3D({
             let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
             for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
             desiredTarget.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
-            const span = Math.max(200, Math.hypot(maxX - minX, maxZ - minZ));
-            desired.radius = Math.min(9000, span * 0.68);
-            desired.phi = 0.95;
+            const span = Math.max(200, Math.hypot(maxX - minX, maxY - minY, maxZ - minZ));
+            maxRadius = Math.max(9000, span * 2);
+            desired.radius = span * 0.95;
+            desired.phi = 1.15;
             touched();
           }
         }
@@ -561,7 +583,7 @@ export default function OrgGraph3D({
 
         // Ease camera; drift when idle so the scene reads as a space rather
         // than a picture.
-        if (performance.now() - lastInteraction > 2500) desired.theta += 0.0009;
+        if (!live.current.pinned && performance.now() - lastInteraction > 2500) desired.theta += 0.0009;
         spherical.theta += (desired.theta - spherical.theta) * 0.12;
         spherical.phi += (desired.phi - spherical.phi) * 0.12;
         spherical.radius += (desired.radius - spherical.radius) * 0.12;
@@ -718,7 +740,15 @@ export default function OrgGraph3D({
           // documents only up close. Each tier keeps a readable size on
           // screen instead of shrinking to dust.
           const tier = labelTier(n);
-          const near = tier === 0 || (tier === 1 ? spherical.radius < labelRadius * 0.5 : spherical.radius < labelRadius * 0.16 && n.degree >= 0);
+          // In a fixed layout the label follows how close THAT node is to
+          // the camera: fly to one area and its equipment is named, the
+          // areas across the globe stay quiet.
+          let reach = spherical.radius;
+          if (live.current.pinned && tier > 0) {
+            const p = s.get(n.id);
+            if (p) reach = camera.position.distanceTo(new THREE.Vector3(p.x, p.y, p.z));
+          }
+          const near = tier === 0 || (tier === 1 ? reach < labelRadius * (live.current.pinned ? 0.2 : 0.5) : reach < labelRadius * (live.current.pinned ? 0.08 : 0.16) && n.degree >= 0);
           if (spotId === n.id || neighbours.has(n.id) || matches ||
               onPathSet.has(n.id) || gold.has(n.id) || near) {
             want.add(n.id);
@@ -809,6 +839,12 @@ export default function OrgGraph3D({
       {failed && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
           <div className="text-xs text-amber-300 max-w-xs">{failed}</div>
+        </div>
+      )}
+      {pinned && ready && !failed && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/40 backdrop-blur px-2 py-1 max-w-[calc(100%-24px)]">
+          <button onClick={() => { refitRef.current++; }} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold px-2.5 py-0.5">Whole site</button>
+          <span className="text-[10px] text-slate-300 truncate">Drag to turn · scroll toward what you want · right-drag to slide · click to pick</span>
         </div>
       )}
       {!ready && !failed && (

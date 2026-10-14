@@ -9,7 +9,7 @@
 
 import React, { useState } from "react";
 import { Loader2, Sparkles, Cpu, Gauge, ArrowRightLeft, CheckCircle2, XCircle } from "lucide-react";
-import { readDrawing, newRunId, undoRun, type CensusRun } from "@/lib/drawingCensusClient";
+import { readDrawing, newRunId, undoRun, addEquipment, type CensusRun } from "@/lib/drawingCensusClient";
 
 export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId: string; documentId: string; onDone?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
@@ -38,6 +38,7 @@ export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId:
         <span className="text-[11px] text-[var(--color-text-muted)]">{busy ?? "Your model reads the sheet in zoomed tiles and fixes its equipment tags."}</span>
       </div>
       {err && <div className="text-red-700">{err}</div>}
+      <AddMissing orgId={orgId} documentId={documentId} onDone={onDone} />
       {r && (
         <>
           <div>
@@ -77,6 +78,52 @@ export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId:
                   }} className="rounded-full border border-rose-300 bg-rose-50 text-rose-700 px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50">Undo this read</button>}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/** The reader missed one: type the tag (and its name), it goes on the
+ *  drawing and into the registry like a reading would, and can be undone. */
+function AddMissing({ orgId, documentId, onDone }: { orgId: string; documentId: string; onDone?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [tag, setTag] = useState("");
+  const [name, setName] = useState("");
+  const [page, setPage] = useState("1");
+  const [state, setState] = useState<{ busy: boolean; note: string | null; error: string | null; runId: string | null }>({ busy: false, note: null, error: null, runId: null });
+  if (!open) return <button onClick={() => setOpen(true)} className="text-[11px] text-violet-700 hover:underline">Reader missed a piece of equipment? Add it</button>;
+  const add = async () => {
+    if (!tag.trim()) return;
+    const runId = newRunId();
+    setState({ busy: true, note: null, error: null, runId: null });
+    try {
+      const r = await addEquipment(orgId, documentId, { tag, name: name.trim() || undefined, page: Math.max(1, Number(page) || 1), runId });
+      const made = r.correction?.createdAssets ? ", new in the registry" : "";
+      setState({ busy: false, note: `${r.tag} is on this drawing${made}. Later AI reads keep it.`, error: null, runId: r.journaled ? runId : null });
+      setTag(""); setName("");
+      onDone?.();
+    } catch (e) { setState({ busy: false, note: null, error: (e as Error).message, runId: null }); }
+  };
+  return (
+    <div className="rounded-md border border-[var(--color-border)] p-1.5 space-y-1">
+      <div className="text-[11px] font-bold">Add equipment this sheet carries</div>
+      <div className="flex flex-wrap items-center gap-1">
+        <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Tag, e.g. H-2" className="w-24 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[11px] font-mono" onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Crude heater (optional)" className="flex-1 min-w-[10rem] rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[11px]" onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
+        <label className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">page <input value={page} onChange={(e) => setPage(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" className="w-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]" /></label>
+        <button onClick={() => void add()} disabled={state.busy || !tag.trim()} className="rounded-md bg-emerald-600 text-white px-2 py-0.5 text-[11px] font-bold disabled:opacity-50 inline-flex items-center gap-1">{state.busy && <Loader2 className="w-3 h-3 animate-spin" />} Add</button>
+        <button onClick={() => setOpen(false)} className="text-[11px] text-[var(--color-text-muted)] hover:underline">close</button>
+      </div>
+      {state.error && <div className="text-[11px] text-red-700">{state.error}</div>}
+      {state.note && (
+        <div className="text-[11px] text-emerald-700 flex flex-wrap items-center gap-2">{state.note}
+          {state.runId && <button onClick={() => {
+            const id = state.runId!;
+            setState((s) => ({ ...s, busy: true }));
+            void undoRun(orgId, id).then(() => { setState({ busy: false, note: "Taken back off.", error: null, runId: null }); onDone?.(); })
+              .catch((e) => setState((s) => ({ ...s, busy: false, error: (e as Error).message })));
+          }} className="rounded-full border border-rose-300 bg-rose-50 text-rose-700 px-2 py-0.5 text-[11px] font-semibold">Undo</button>}
+        </div>
       )}
     </div>
   );

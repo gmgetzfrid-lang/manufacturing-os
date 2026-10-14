@@ -8,8 +8,8 @@
 // "FROM X-45" or an instrument bubble. This reader:
 //
 //   • uses the person's OWN model (the one the chat uses), not a cheap tier;
-//   • sends the sheet as an overview plus four overlapping zoomed tiles, so
-//     small text is read at full resolution;
+//   • sends the sheet as an overview plus a grid of overlapping zoomed tiles
+//     (about a letter page of paper each), so small text arrives legible;
 //   • asks for STRUCTURE — equipment callouts (tag, site code, name),
 //     instruments, off-sheet references, the title block — not a transcript;
 //   • stores them as separate kinds ("equipment", "instrument", "xref") and
@@ -50,26 +50,35 @@ export interface CensusPageResult {
   journaled: boolean;
 }
 
-const RENDER_WIDTH = 3400;
-const OVERLAP = 120;
+/** Render resolution for the tiles, and its bounds (canvas memory). */
+const DPI = 150;
+const MIN_RENDER = 2400;
+const MAX_RENDER = 6000;
+const MAX_TILES = 16;
+/** How long the equipment reading waits for the transcript once it is done. */
+const TRANSCRIPT_GRACE_MS = 5_000;
 
 const SYSTEM =
   "You read ONE sheet of a piping and instrumentation diagram (P&ID) from an industrial plant. " +
-  "You get an OVERVIEW image of the whole sheet, then four zoomed TILES of it (top-left, top-right, " +
-  "bottom-left, bottom-right) that overlap slightly. Read characters from the tiles; use the overview " +
-  "for layout. Return STRICT JSON and nothing else:\n" +
+  "You get an OVERVIEW image of the whole sheet, then zoomed TILES of it that overlap slightly. Read " +
+  "characters from the tiles; use the overview for layout and to see which tiles show the same item. " +
+  "Work tile by tile and do not stop early: a sheet often carries two or more of the same kind of " +
+  "equipment side by side (two heaters, a pump and its spare), and every one of them counts. " +
+  "Return STRICT JSON and nothing else:\n" +
   '{"equipment":[{"tag":"V-14","code":"6110.14","name":"35# STEAM DRUM","details":"4\'-0\\" I.D. x 10\'-0\\" T/T; DESIGN 75 PSIG @ 650 F"}],' +
   '"instruments":["PIT-130","PSV-21","LV-222"],' +
   '"offSheet":[{"tag":"X-45","direction":"from","drawing":"2002-D 2001","sheet":"12"}],' +
-  '"title":{"drawingNumber":"2002-D 2001","sheet":"5","rev":"42"},' +
-  '"transcript":"every legible line of the sheet, one per line"}\n' +
+  '"title":{"drawingNumber":"2002-D 2001","sheet":"5","rev":"42"}}\n' +
   "Rules:\n" +
   "- equipment: process equipment whose CALLOUT is printed on this sheet — the tag stacked with its " +
   "description, often with a site code in parentheses and design data (e.g. \"V-14 / (6110.14) / 35# STEAM " +
   "DRUM / 4'-0\\\" I.D. x 10'-0\\\" T/T\"). Vessels, drums, columns, exchangers, pumps, compressors, tanks, " +
-  "heaters, filters, packages. One entry per item. code = the parenthesised site code if printed, else null. " +
-  "name = the service description if printed, else null. details = the rest of the callout as printed on one " +
-  "line — size, design pressure and temperature, capacity, head, duty, materials — separated by \"; \", else null.\n" +
+  "fired heaters and furnaces, boilers, filters, packages. One entry per item. code = the parenthesised site code " +
+  "if printed, else null. name = the service description if printed, else null. details = the rest of the " +
+  "callout as printed on one line — size, design pressure and temperature, capacity, head, duty, materials — " +
+  "separated by \"; \", else null.\n" +
+  "- One callout for several items (\"P-101A/B\", \"H-1 & H-2\", \"E-5A,B,C\") is several entries: one per " +
+  "item, each with its full tag.\n" +
   "- instruments: instrument bubbles (function letters over a loop number — PIT over 130 is \"PIT-130\"), " +
   "relief valves (PSV, PRV), control valves (PV, LV, FV, TV), gauges and switches. Join letters and number " +
   "with one dash.\n" +
@@ -77,11 +86,48 @@ const SYSTEM =
   "they are drawn on other sheets. Never put them in equipment. direction = \"from\" or \"to\" as printed.\n" +
   "- Line numbers, pipe sizes and specs, valve sizes, notes, steam pressures and the sheet's own drawing " +
   "number are none of these.\n" +
-  "- transcript: every legible line on the sheet in reading order — callouts, notes, connector text, the " +
-  "title block (as DRAWING NO: …, SHEET: n OF m, REV: …, TITLE: …) — separated by newlines. It makes the " +
-  "sheet searchable; it is not limited to the items above.\n" +
   "- Copy every character exactly as printed. If you cannot read a character with certainty, leave that " +
   "item out. Never invent an item.";
+
+const TRANSCRIPT_SYSTEM =
+  "You transcribe ONE sheet of an engineering drawing so it can be searched. You get an overview and the " +
+  "four quadrants of the sheet. Write every legible line of text on the sheet in reading order — equipment " +
+  "callouts, notes, connector text, the title block (as DRAWING NO: …, SHEET: n OF m, REV: …, TITLE: …) — " +
+  "one per line, as plain text. Copy characters exactly; skip what you cannot read. No commentary.";
+
+/** Pull the JSON object out of a reply, even one cut off by a length limit:
+ *  close what was open and keep every element that was complete. */
+export function salvageJson(text: string): Record<string, unknown> | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  const whole = extractJsonBlock(text);
+  if (whole) { try { return JSON.parse(whole) as Record<string, unknown>; } catch { /* repair below */ } }
+  const s = text.slice(start);
+  const stack: string[] = [];
+  let inString = false, escaped = false;
+  let lastCut = -1, cutStack: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (inString) { if (ch === "\\") escaped = true; else if (ch === '"') inString = false; continue; }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") stack.push(ch === "{" ? "}" : "]");
+    else if (ch === "}" || ch === "]") { stack.pop(); if (!stack.length) break; }
+    else if (ch === ",") { lastCut = i; cutStack = [...stack]; }
+  }
+  if (lastCut < 0) return null;
+  try { return JSON.parse(s.slice(0, lastCut) + cutStack.reverse().join("")) as Record<string, unknown>; } catch { return null; }
+}
+
+/** "P-101A/B" → P-101A, P-101B; "H-1 & H-2" → H-1, H-2; "E-5A,B,C" → E-5A, E-5B, E-5C. */
+export function splitCallout(raw: string): string[] {
+  const t = raw.toUpperCase().replace(/[‐-―−–]/g, "-").trim();
+  const m = t.match(/^([A-Z]{1,5}-?\d{1,6})([A-Z])((?:\s*[\/,&]\s*(?:AND\s+)?[A-Z])+)$/);
+  if (m) return [m[2], ...m[3].split(/[\/,&]|AND/).map((x) => x.trim()).filter(Boolean)].map((suf) => m[1] + suf);
+  const parts = t.split(/\s*(?:[\/,&]|\bAND\b)\s*/).filter(Boolean);
+  if (parts.length > 1 && parts.every((p) => /^[A-Z]{1,5}-?\d/.test(p))) return parts;
+  return [t];
+}
 
 const normTag = (raw: unknown): string | null => {
   const t = String(raw ?? "").toUpperCase().replace(/[‐-―−–]/g, "-").replace(/\s+/g, "").replace(/^([A-Z]+)-?(\d)/, "$1-$2");
@@ -90,18 +136,24 @@ const normTag = (raw: unknown): string | null => {
 const str = (v: unknown, max = 80): string | null => { const s = String(v ?? "").trim(); return s ? s.slice(0, max) : null; };
 
 export function parseCensus(text: string): CensusSheet {
-  const block = extractJsonBlock(text);
-  const raw = block ? (JSON.parse(block) as Record<string, unknown>) : {};
+  // An answer with no readable JSON is a failed read, never "this sheet
+  // carries no equipment" — that would take every tag off the drawing.
+  const raw = salvageJson(text);
+  if (!raw) throw new DrawingReadError("The model's answer could not be read. Nothing was changed; read this sheet again.");
   const eq = new Map<string, CensusSheet["equipment"][number]>();
   for (const e of Array.isArray(raw.equipment) ? raw.equipment : []) {
     const o = (e ?? {}) as Record<string, unknown>;
-    const tag = normTag(o.tag); if (!tag || eq.has(tag)) continue;
-    eq.set(tag, { tag, code: str(o.code, 24), name: str(o.name), details: str(o.details, 240) });
+    for (const part of splitCallout(String(o.tag ?? ""))) {
+      const tag = normTag(part); if (!tag || eq.has(tag)) continue;
+      eq.set(tag, { tag, code: str(o.code, 24), name: str(o.name), details: str(o.details, 240) });
+    }
   }
   const inst = new Set<string>();
   for (const i of Array.isArray(raw.instruments) ? raw.instruments : []) {
-    const tag = normTag(typeof i === "string" ? i : (i as Record<string, unknown>)?.tag);
-    if (tag && !eq.has(tag)) inst.add(tag);
+    for (const part of splitCallout(String(typeof i === "string" ? i : (i as Record<string, unknown>)?.tag ?? ""))) {
+      const tag = normTag(part);
+      if (tag && !eq.has(tag)) inst.add(tag);
+    }
   }
   const off = new Map<string, CensusSheet["offSheet"][number]>();
   for (const r of Array.isArray(raw.offSheet) ? raw.offSheet : []) {
@@ -117,49 +169,83 @@ export function parseCensus(text: string): CensusSheet {
 
 type PdfProxy = Awaited<ReturnType<typeof import("unpdf")["getDocumentProxy"]>>;
 
-/** The sheet as the model sees it: an overview and four overlapping zoomed
- *  tiles, so small text is read at full resolution. */
-export async function renderSheetImages(pdf: PdfProxy, page: number): Promise<{ images: AiCallImage[]; pageCount: number }> {
+/** How a sheet is cut: tiles about a letter page of paper each, so small
+ *  text arrives at ~150 dpi after the provider's own downscaling. An E-size
+ *  P&ID is 4 × 4; a B-size sheet 2 × 2. */
+export function tileGrid(widthPt: number, heightPt: number): { cols: number; rows: number } {
+  const wIn = Math.max(1, widthPt / 72), hIn = Math.max(1, heightPt / 72);
+  const landscape = wIn >= hIn;
+  let cols = Math.max(1, Math.ceil(wIn / (landscape ? 11 : 8.5) - 0.15));
+  let rows = Math.max(1, Math.ceil(hIn / (landscape ? 8.5 : 11) - 0.15));
+  while (cols * rows > MAX_TILES) { if (cols >= rows) cols--; else rows--; }
+  return { cols, rows };
+}
+
+/** The sheet as the model sees it: an overview, then zoomed tiles row by
+ *  row, overlapping so a callout on a seam is whole in one of them. Also the
+ *  2 × 2 quadrants the transcript reads from. */
+export async function renderSheetImages(pdf: PdfProxy, page: number): Promise<{ images: AiCallImage[]; quadrants: AiCallImage[]; grid: { cols: number; rows: number }; pageCount: number }> {
   ensurePdfPolyfills();
   const { renderPageAsImage } = await import("unpdf");
   const pageCount = pdf.numPages;
-  if (page > pageCount) return { images: [], pageCount };
+  if (page > pageCount) return { images: [], quadrants: [], grid: { cols: 0, rows: 0 }, pageCount };
+  const vp = (await pdf.getPage(page)).getViewport({ scale: 1 });
+  const grid = tileGrid(vp.width, vp.height);
+  const width = Math.round(Math.min(MAX_RENDER, Math.max(MIN_RENDER, (vp.width / 72) * DPI)));
   const canvasMod = await import("@napi-rs/canvas");
-  const png = await renderPageAsImage(pdf, page, { width: RENDER_WIDTH, canvasImport: () => import("@napi-rs/canvas") });
+  const png = await renderPageAsImage(pdf, page, { width, canvasImport: () => import("@napi-rs/canvas") });
   const img = await canvasMod.loadImage(Buffer.from(png as ArrayBuffer));
   const W = img.width, H = img.height;
   const cut = (sx: number, sy: number, sw: number, sh: number, outW: number): AiCallImage => {
-    const scale = outW / sw;
+    const scale = Math.min(1, outW / sw);
     const c = canvasMod.createCanvas(Math.round(sw * scale), Math.round(sh * scale));
     const ctx = c.getContext("2d");
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, c.width, c.height);
     ctx.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
-    return { mediaType: "image/jpeg", base64: c.toBuffer("image/jpeg", 90).toString("base64") };
+    return { mediaType: "image/jpeg", base64: c.toBuffer("image/jpeg", 88).toString("base64") };
   };
-  const hw = Math.ceil(W / 2), hh = Math.ceil(H / 2);
-  const tw = Math.min(W, hw + OVERLAP), th = Math.min(H, hh + OVERLAP);
-  const images: AiCallImage[] = [
-    cut(0, 0, W, H, 1500),                                   // overview
-    cut(0, 0, tw, th, tw),                                   // top-left
-    cut(W - tw, 0, tw, th, tw),                              // top-right
-    cut(0, H - th, tw, th, tw),                              // bottom-left
-    cut(W - tw, H - th, tw, th, tw),                         // bottom-right
-  ];
-  return { images, pageCount };
+  const tiles = (cols: number, rows: number, outW: number): AiCallImage[] => {
+    const out: AiCallImage[] = [];
+    const cw = W / cols, ch = H / rows;
+    const ox = Math.round(cw * 0.06), oy = Math.round(ch * 0.06);
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x0 = Math.max(0, Math.round(c * cw) - ox), y0 = Math.max(0, Math.round(r * ch) - oy);
+      const x1 = Math.min(W, Math.round((c + 1) * cw) + ox), y1 = Math.min(H, Math.round((r + 1) * ch) + oy);
+      out.push(cut(x0, y0, x1 - x0, y1 - y0, outW));
+    }
+    return out;
+  };
+  const overview = cut(0, 0, W, H, 1568);
+  const one = grid.cols * grid.rows === 1;
+  return {
+    images: [overview, ...(one ? [cut(0, 0, W, H, 2400)] : tiles(grid.cols, grid.rows, 1700))],
+    quadrants: [overview, ...tiles(2, 2, 1568)],
+    grid, pageCount,
+  };
 }
+
+export class DrawingReadError extends Error {}
+
+type ReaderCall = (args: { system: string; user: string; images: AiCallImage[]; maxTokens: number }) => Promise<string>;
 
 /** THE drawing reader. The indexer and "Read with AI" both call this: same
  *  images, same instructions, same structured answer. `call` is whoever
- *  pays — the person's governed key, or the indexer's vision context. */
-export async function readDrawingSheet(pdf: PdfProxy, page: number, name: string, call: (args: { system: string; user: string; images: AiCallImage[]; maxTokens: number }) => Promise<string>): Promise<{ sheet: CensusSheet; pageCount: number } | null> {
-  const { images, pageCount } = await renderSheetImages(pdf, page);
+ *  pays — the person's governed key, or the indexer's vision context.
+ *  The equipment reading and the transcript are two calls run side by side:
+ *  a long transcript can never crowd out, cut off or slow the equipment. */
+export async function readDrawingSheet(pdf: PdfProxy, page: number, name: string, call: ReaderCall, opts: { transcript?: boolean } = {}): Promise<{ sheet: CensusSheet; pageCount: number } | null> {
+  const { images, quadrants, grid, pageCount } = await renderSheetImages(pdf, page);
   if (!images.length) return null;
-  const text = await call({
-    system: SYSTEM,
-    user: `Sheet: "${name}", page ${page} of ${pageCount}. Images in order: overview, top-left, top-right, bottom-left, bottom-right.`,
-    images, maxTokens: 8000,
-  });
-  return { sheet: parseCensus(text), pageCount };
+  const order = grid.cols * grid.rows === 1 ? "an overview, then the sheet at full resolution" : `an overview, then ${grid.cols * grid.rows} zoomed tiles in a ${grid.cols}-across × ${grid.rows}-down grid, row by row from the top-left`;
+  // The transcript is a bonus: it never holds the equipment reading up by
+  // more than a few seconds, and its failure is not the reading's.
+  const transcript = opts.transcript === false ? Promise.resolve("")
+    : call({ system: TRANSCRIPT_SYSTEM, user: `Sheet: "${name}", page ${page} of ${pageCount}. Images: an overview, then the four quadrants (top-left, top-right, bottom-left, bottom-right).`, images: quadrants, maxTokens: 8_000 }).catch(() => "");
+  const structured = await call({ system: SYSTEM, user: `Sheet: "${name}", page ${page} of ${pageCount}. Images in order: ${order}.`, images, maxTokens: 12_000 });
+  const sheet = parseCensus(structured);
+  const text = await Promise.race([transcript, new Promise<string>((r) => setTimeout(() => r(""), TRANSCRIPT_GRACE_MS))]);
+  if (text.trim()) sheet.transcript = text.trim().slice(0, 20_000);
+  return { sheet, pageCount };
 }
 
 /** The rows a reading becomes, in the one storage format both callers use. */
@@ -205,8 +291,10 @@ export async function censusPage(input: { orgId: string; userId: string; knowled
   // from the old reader go; the census marker says this page is read right.
   const { data: prior } = await supabaseAdmin.from("knowledge_page_entities").select("*").eq("document_id", k.id).eq("page", input.page).in("kind", ["equipment", "instrument", "xref", "census"]);
   let journaled = await recordReading(supabaseAdmin, input.orgId, input.run, k.id, k.source_document_id, input.page, (prior as Array<Record<string, unknown>> | null) ?? []);
-  await supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", k.id).eq("page", input.page).in("kind", ["equipment", "instrument", "xref", "census"]);
-  const rows = sheetEntityRows({ org_id: input.orgId, library_id: k.library_id, document_id: k.id, page: input.page }, sheet);
+  // Equipment a person added by hand survives a new reading.
+  await supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", k.id).eq("page", input.page).in("kind", ["equipment", "instrument", "xref", "census"]).or("pos_source.is.null,pos_source.neq.person");
+  const byHand = new Set(((prior as Array<{ tag: string; pos_source?: string | null; kind: string }> | null) ?? []).filter((r) => r.pos_source === "person" && r.kind === "equipment").map((r) => r.tag));
+  const rows = sheetEntityRows({ org_id: input.orgId, library_id: k.library_id, document_id: k.id, page: input.page }, sheet).filter((r) => !(r.kind === "equipment" && byHand.has(String(r.tag))));
   const { error } = await supabaseAdmin.from("knowledge_page_entities").insert(rows);
   if (error) throw new Error(`Could not store the reading: ${error.message}`);
 
@@ -299,4 +387,33 @@ export async function correctDocument(orgId: string, knowledgeDocId: string, doc
   const after = await snapshotDoc(supabaseAdmin, orgId, documentId);
   const journaled = await recordDocChange(supabaseAdmin, orgId, run, documentId, before, after, { assetsUpdated });
   return { correction: { removed: wrong, kept, added, createdAssets, described: assetsUpdated.length }, journaled };
+}
+
+/** A person adds equipment the reader missed. It is stored with the page's
+ *  reading (marked as theirs, kept through later reads), put on the drawing
+ *  and into the registry, and journaled so it can be undone. */
+export async function addEquipmentByHand(input: { orgId: string; userId: string; userName: string | null; knowledgeDocId: string; page: number; tag: string; name?: string | null; run: RunCtx }): Promise<{ tag: string; correction: NonNullable<CensusPageResult["correction"]> | null; journaled: boolean }> {
+  const tag = normTag(input.tag);
+  if (!tag) throw new DrawingReadError(`"${input.tag}" is not shaped like an equipment tag (letters, a dash, a number — like H-2 or P-101A).`);
+  const { data: kdoc } = await supabaseAdmin.from("knowledge_documents").select("id, library_id, name, page_count, source_document_id").eq("id", input.knowledgeDocId).eq("org_id", input.orgId).maybeSingle();
+  if (!kdoc) throw new DrawingReadError("That drawing has no read copy.");
+  const k = kdoc as { id: string; library_id: string; name: string; page_count: number | null; source_document_id: string | null };
+  const page = Math.max(1, Math.min(input.page, k.page_count ?? input.page));
+  const KINDS = ["equipment", "instrument", "xref", "census"];
+  const { data: prior } = await supabaseAdmin.from("knowledge_page_entities").select("*").eq("document_id", k.id).eq("page", page).in("kind", KINDS);
+  const priorRows = (prior as Array<Record<string, unknown>> | null) ?? [];
+  let journaled = await recordReading(supabaseAdmin, input.orgId, input.run, k.id, k.source_document_id, page, priorRows);
+  // It is equipment, whatever the reading called it on this page.
+  await supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", k.id).eq("page", page).eq("tag", tag).in("kind", ["equipment", "instrument", "xref"]);
+  const base = { org_id: input.orgId, library_id: k.library_id, document_id: k.id, page, x: null, y: null, nx: null, ny: null };
+  const rows: Array<Record<string, unknown>> = [{ ...base, kind: "equipment", tag, raw: [tag, input.name?.trim() || "", `· added by ${input.userName ?? "a person"}`].filter(Boolean).join(" ").slice(0, 400), pos_source: "person" }];
+  // The page counts as read, so a text pass never wipes the addition. A
+  // page the reader has not read yet stays on the "read with AI" list.
+  if (!priorRows.some((r) => r.kind === "census")) rows.push({ ...base, kind: "census", tag: "census-person", raw: "equipment added by hand", pos_source: "person" });
+  const { error } = await supabaseAdmin.from("knowledge_page_entities").insert(rows);
+  if (error) throw new Error(`Could not store it: ${error.message}`);
+  if (!k.source_document_id) return { tag, correction: null, journaled };
+  const c = await correctDocument(input.orgId, k.id, k.source_document_id, input.userId, input.run, k.name);
+  journaled = journaled && c.journaled;
+  return { tag, correction: c.correction, journaled };
 }

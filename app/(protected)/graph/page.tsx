@@ -40,7 +40,7 @@ import GraphControls from "@/components/graph/GraphControls";
 import OrgGraph2D from "@/components/graph/OrgGraph2D";
 import EstateMap from "@/components/graph/EstateMap";
 import { foldLeaves } from "@/lib/graphFold";
-import { layeredEstate } from "@/lib/estate3d";
+import { estateGlobe } from "@/lib/estate3d";
 
 // three.js only downloads when 3D is switched on.
 const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
@@ -217,8 +217,8 @@ function GraphPageInner() {
     return { nodes, edges, ghosts, folded, foldedTotal };
   }, [graph, settings, proposals, focusId, openKey]);
 
-  // ── 3D estate: the Map's tree standing in levels, every position fixed.
-  const layered = React.useMemo(() => (graph && settings.mode === "3d" && settings.layout3d !== "web" ? layeredEstate(graph.nodes, graph.edges) : null), [graph, settings.mode, settings.layout3d]);
+  // ── 3D estate: the Map's tree as a globe, every position fixed.
+  const layered = React.useMemo(() => (graph && settings.mode === "3d" && settings.layout3d !== "web" ? estateGlobe(graph.nodes, graph.edges) : null), [graph, settings.mode, settings.layout3d]);
 
   // ── Feed the simulation ───────────────────────────────────────────────
   React.useEffect(() => {
@@ -616,6 +616,7 @@ function GraphPageInner() {
                   onOpen={open}
                   onSettled={layered ? undefined : persistPositions}
                   frameAll={layered?.nodes ?? null}
+                  pinned={!!layered}
                 />
               </Suspense>
             ) : (

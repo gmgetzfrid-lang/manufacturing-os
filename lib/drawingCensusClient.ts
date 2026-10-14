@@ -34,6 +34,11 @@ export async function readDrawing(orgId: string, target: { documentId?: string; 
   return run;
 }
 
+/** Add equipment the reader missed to one drawing. Undoable by `runId`. */
+export async function addEquipment(orgId: string, documentId: string, input: { tag: string; name?: string; page?: number; runId: string }): Promise<{ tag: string; correction: CensusPageResult["correction"] | null; journaled: boolean }> {
+  return estatePost("/api/drawings/census", { orgId, documentId, action: "addEquipment", tag: input.tag, name: input.name, page: input.page ?? 1, runId: input.runId, runLabel: `Added ${input.tag.toUpperCase()} by hand` });
+}
+
 export async function pendingDrawings(orgId: string, libraryIds?: string[]): Promise<{ pending: Array<{ knowledgeDocumentId: string; name: string }>; total: number }> {
   return estatePost("/api/drawings/census", { orgId, action: "pending", libraryIds });
 }

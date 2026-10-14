@@ -326,8 +326,24 @@ only, not in production as of 2026-10-14). "Done when" is what to test.
 - Uploads hash each file in the browser and warn when the same bytes are
   already in a library or an Intelligence library the person can see. The
   hash is stored on the version (`document_versions.file_hash`).
-- 3D opens as the estate tree (areas standing as layered trees, labels
-  that stay readable at any zoom); the free-form "Web" layout is a switch.
+- 3D opens as the estate globe: the site at the centre, each operating
+  area a cluster around it, equipment and drawings branching outward. Every
+  position is fixed; pressing anywhere turns the view, scrolling zooms
+  toward the pointer, "Whole site" frames everything, and nothing drifts.
+  Labels follow how close each node is. "Web" (free physics) is a switch.
+- The drawing reader cuts a sheet into tiles of about a letter page each
+  (an E-size sheet is 4 × 4), splits callouts for several items (P-101A/B),
+  keeps whatever was complete when an answer is cut off, and treats an
+  unreadable answer as a failed read, never as "no equipment". The
+  transcript is a separate call that can never crowd out the equipment.
+- The map groups equipment by what the sheet calls it ("CRUDE HEATER"),
+  then by a type a person set, then by tag letters.
+- A person can add equipment a read missed to a drawing; it is kept through
+  later reads and undoable.
+- Folders can be marked as an operating area, an equipment type or one
+  piece of equipment (estate edges, origin human); everything filed under
+  inherits. A library can be set up level by level (e.g. area / equipment /
+  documents) with a preview of what each folder becomes.
 
 ## 8. Open questions for the owner
 

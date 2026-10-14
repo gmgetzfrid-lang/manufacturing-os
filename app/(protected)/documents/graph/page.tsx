@@ -27,6 +27,7 @@ import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandl
 import { globalGraphHref } from "@/lib/estate/lenses";
 import EstateReadiness from "@/components/documents/EstateReadiness";
 import SuspectEquipment from "@/components/documents/SuspectEquipment";
+import { FolderMarkBar, LibrarySetup } from "@/components/documents/FolderMarks";
 import ReadDrawingPanel from "@/components/documents/ReadDrawingPanel";
 import { useConnectEverything, ConnectButton, ConnectProgress, UndoRunBox } from "@/components/documents/ConnectEverything";
 import ConnectPreview from "@/components/documents/ConnectPreview";
@@ -130,6 +131,8 @@ function GraphPageInner() {
 
   const connect = useConnectEverything(activeOrgId, () => { void refresh(); });
   const [showConnect, setShowConnect] = useState(true);
+  /** The library being set up as an equipment library. */
+  const [setupLib, setSetupLib] = useState<string | null>(null);
 
   /** Document control runs the resolver over the whole estate on demand. */
   const runResolver = async () => {
@@ -706,6 +709,13 @@ function GraphPageInner() {
                   {(childrenOf.get(focusId) ?? []).filter((n) => n.kind === "file" || n.kind === "extfile").length} files · {(childrenOf.get(focusId) ?? []).filter((n) => n.kind !== "file" && n.kind !== "extfile").length} folders inside
                 </span>
               )}
+              {controller && activeOrgId && focusId?.startsWith("folder:") && !selectedEntry && (
+                <div className="basis-full"><FolderMarkBar orgId={activeOrgId} folderId={focusId.slice(7)} onChanged={() => void refresh()} /></div>
+              )}
+              {controller && activeOrgId && focusId?.startsWith("lib:") && !selectedEntry && (
+                <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is — operating area, equipment type, equipment — and everything filed underneath inherits it"
+                  className="ml-1 rounded-md border border-purple-300 bg-purple-50 text-purple-800 px-2 py-1 font-semibold inline-flex items-center gap-1"><Factory className="w-3 h-3" /> Set up as equipment library</button>
+              )}
               {selectedEntry && (
                 <button onClick={() => { setSelectedId(null); setSelSat(null); }} title="Stop focusing on this file (Esc)"
                   className="ml-2 rounded-md bg-slate-900 text-white px-2 py-1 font-semibold inline-flex items-center gap-1 shadow">
@@ -898,6 +908,9 @@ function GraphPageInner() {
         <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-black/60 text-white text-sm"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening sheet {pageView.page}…</div>}>
           <CitedPageViewer fileKey={pageView.fileKey} page={pageView.page} quote={null} title={pageView.title} orgId={activeOrgId} documentId={pageView.knowledgeDocId} tags={pageView.tags} onClose={() => setPageView(null)} />
         </Suspense>
+      )}
+      {setupLib && activeOrgId && (
+        <LibrarySetup orgId={activeOrgId} libraryId={setupLib} libraryName={data?.libraries.find((l) => l.id === setupLib)?.name ?? "this library"} onDone={() => void refresh()} onClose={() => setSetupLib(null)} />
       )}
       {readAsk && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40" onClick={() => !readAsk.busy && setReadAsk(null)}>

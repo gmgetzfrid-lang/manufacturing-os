@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: {} }));
 vi.mock("@/lib/r2", () => ({ r2: {}, R2_BUCKET: "x" }));
-import { parseCensus } from "@/lib/drawingCensus";
+import { parseCensus, salvageJson, splitCallout, tileGrid, DrawingReadError } from "@/lib/drawingCensus";
 
 describe("drawing census parsing", () => {
   it("keeps callouts, instruments and off-sheet tags apart, normalised", () => {
@@ -24,6 +24,33 @@ describe("drawing census parsing", () => {
     const s = parseCensus('{"equipment":[{"tag":"35# STEAM"},{"tag":""},{"tag":"2002-D 2001"}],"instruments":["130"]}');
     expect(s.equipment).toEqual([]);
     expect(s.instruments).toEqual([]);
-    expect(parseCensus("no json at all").equipment).toEqual([]);
+    // No answer is a failed read, never "no equipment on this sheet".
+    expect(() => parseCensus("no json at all")).toThrow(DrawingReadError);
+  });
+
+  it("keeps what was complete when the answer is cut off", () => {
+    const cut = '{"equipment":[{"tag":"H-1","name":"CRUDE HEATER"},{"tag":"H-2","name":"CRUDE HEATER"},{"tag":"V-1","na';
+    const s = parseCensus(cut);
+    // V-1's tag was closed before the cut; its name was not.
+    expect(s.equipment.map((e) => e.tag)).toEqual(["H-1", "H-2", "V-1"]);
+    expect(parseCensus('{"equipment":[{"tag":"H-1"},{"tag":"V-1').equipment.map((e) => e.tag)).toEqual(["H-1"]);
+    expect(salvageJson('{"a":[1,2,3')).toEqual({ a: [1, 2] });
+  });
+
+  it("splits one callout for several items", () => {
+    expect(splitCallout("P-101A/B")).toEqual(["P-101A", "P-101B"]);
+    expect(splitCallout("E-5A,B,C")).toEqual(["E-5A", "E-5B", "E-5C"]);
+    expect(splitCallout("H-1 & H-2")).toEqual(["H-1", "H-2"]);
+    expect(splitCallout("V-14")).toEqual(["V-14"]);
+    const s = parseCensus('{"equipment":[{"tag":"H-1 & H-2","name":"CRUDE HEATERS"}],"instruments":["PSV-1A/B"]}');
+    expect(s.equipment.map((e) => e.tag)).toEqual(["H-1", "H-2"]);
+    expect(s.instruments).toEqual(["PSV-1A", "PSV-1B"]);
+  });
+
+  it("cuts a sheet into tiles about a letter page each", () => {
+    expect(tileGrid(44 * 72, 34 * 72)).toEqual({ cols: 4, rows: 4 });   // E-size
+    expect(tileGrid(36 * 72, 24 * 72)).toEqual({ cols: 4, rows: 3 });   // ARCH D
+    expect(tileGrid(17 * 72, 11 * 72)).toEqual({ cols: 2, rows: 2 });   // B-size
+    expect(tileGrid(11 * 72, 8.5 * 72)).toEqual({ cols: 1, rows: 1 });  // letter
   });
 });

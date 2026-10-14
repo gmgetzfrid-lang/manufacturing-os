@@ -57,7 +57,7 @@ export async function loadResolveContext(admin: SupabaseClient, orgId: string): 
     admin.from("projects").select("id, name").eq("org_id", orgId).limit(2000),
     admin.from("assets").select("id, tag").eq("org_id", orgId).limit(20000),
     admin.from("collections").select("*").eq("org_id", orgId),
-    admin.from("estate_edges").select("a, b, type").eq("org_id", orgId).eq("status", "applied").in("type", ["belongs_to_unit", "in_project"]).like("a", "folder:%"),
+    admin.from("estate_edges").select("a, b, type").eq("org_id", orgId).eq("status", "applied").in("type", ["belongs_to_unit", "in_project", "about_asset"]).like("a", "folder:%"),
   ]);
   const aliases = ((aliasesRes.data as Record<string, unknown>[] | null) ?? []).map(aliasFromRow);
   const projects = ((projectsRes.data as Array<{ id: string; name: string }> | null) ?? []);
@@ -70,14 +70,16 @@ export async function loadResolveContext(admin: SupabaseClient, orgId: string): 
   }
   const folderUnits = new Map<string, string>();
   const folderProjects = new Map<string, string>();
+  const folderAssets = new Map<string, string>();
   for (const e of (edgesRes.data as Array<{ a: string; b: string; type: string }> | null) ?? []) {
     const fid = e.a.slice("folder:".length);
     if (e.type === "belongs_to_unit" && e.b.startsWith("cbunit:")) folderUnits.set(fid, e.b.slice("cbunit:".length));
     if (e.type === "in_project" && e.b.startsWith("proj:")) folderProjects.set(fid, e.b.slice("proj:".length));
+    if (e.type === "about_asset" && e.b.startsWith("asset:")) folderAssets.set(fid, e.b.slice("asset:".length));
   }
   return {
     units: book.units.map((u) => ({ code: u.code, label: u.label })),
-    aliases, projects, assets, folderUnits, folderProjects, folders,
+    aliases, projects, assets, folderUnits, folderProjects, folderAssets, folders,
     unitFromDrawingNumber: (raw) => {
       const p = parseDrawingNumber(raw, book);
       return p?.unitCode ?? null;

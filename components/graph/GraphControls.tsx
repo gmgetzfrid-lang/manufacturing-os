@@ -139,7 +139,7 @@ export default function GraphControls({
           </button>
         </div>
         {settings.mode === "3d" && (
-          <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm" title="Estate: the Map's tree standing in levels. Web: every link pulling freely.">
+          <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm" title="Estate: the Map's tree as a globe, each operating area its own cluster, nothing moves. Web: every link pulling freely.">
             {(["estate", "web"] as const).map((k) => (
               <button key={k} onClick={() => onChange({ layout3d: k })}
                 className={`px-2 py-1 rounded-full text-[10px] font-black ${settings.layout3d === k ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"}`}>

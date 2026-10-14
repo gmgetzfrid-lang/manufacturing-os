@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireMember } from "@/lib/estate/serverAuth";
-import { censusPage } from "@/lib/drawingCensus";
+import { censusPage, addEquipmentByHand, DrawingReadError } from "@/lib/drawingCensus";
 import { GovernedCallError } from "@/lib/ai/governedCall";
 import { documentAiBlock, excludedLibraryIds } from "@/lib/aiLibraries";
 
@@ -19,7 +19,7 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const t0 = Date.now();
-  let body: { orgId?: string; documentId?: string; knowledgeDocumentId?: string; page?: number; action?: string; runId?: string; runLabel?: string; libraryIds?: string[] };
+  let body: { orgId?: string; documentId?: string; knowledgeDocumentId?: string; page?: number; action?: string; runId?: string; runLabel?: string; libraryIds?: string[]; tag?: string; name?: string };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Expected JSON body" }, { status: 400 }); }
   const orgId = String(body.orgId ?? "");
   const auth = await requireMember(req, orgId, ["Admin", "DocCtrl"]);
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     const uniq = all.filter((d) => { if (seen.has(d.source_document_id)) return false; seen.add(d.source_document_id); return true; });
     const read = new Set<string>();
     for (let i = 0; i < uniq.length; i += 200) {
-      const { data: c } = await supabaseAdmin.from("knowledge_page_entities").select("document_id").eq("kind", "census").in("document_id", uniq.slice(i, i + 200).map((d) => d.id)).limit(20000);
+      const { data: c } = await supabaseAdmin.from("knowledge_page_entities").select("document_id").eq("kind", "census").eq("tag", "census-v1").in("document_id", uniq.slice(i, i + 200).map((d) => d.id)).limit(20000);
       for (const r of (c as Array<{ document_id: string }> | null) ?? []) read.add(r.document_id);
     }
     return NextResponse.json({ pending: uniq.filter((d) => !read.has(d.id)).map((d) => ({ knowledgeDocumentId: d.id, name: d.name })), total: uniq.length });
@@ -73,10 +73,15 @@ export async function POST(req: NextRequest) {
   }
   try {
     const run = { runId: String(body.runId || crypto.randomUUID()).slice(0, 80), label: String(body.runLabel || "Read with AI").slice(0, 120), actor: { userId: auth.caller!.userId, name: auth.caller!.email } };
+    if (body.action === "addEquipment") {
+      const r = await addEquipmentByHand({ orgId, userId: auth.caller!.userId, userName: auth.caller!.email, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), tag: String(body.tag ?? ""), name: body.name ? String(body.name).slice(0, 120) : null, run: { ...run, label: String(body.runLabel || "Equipment added by hand").slice(0, 120) } });
+      return NextResponse.json({ knowledgeDocumentId: kdocId, ...r });
+    }
     const r = await censusPage({ orgId, userId: auth.caller!.userId, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), deadlineMs: t0 + 57_000, run });
     return NextResponse.json({ knowledgeDocumentId: kdocId, ...r });
   } catch (e) {
     if (e instanceof GovernedCallError) return NextResponse.json({ error: e.message }, { status: e.status });
+    if (e instanceof DrawingReadError) return NextResponse.json({ error: e.message }, { status: 422 });
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
 }

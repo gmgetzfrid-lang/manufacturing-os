@@ -32,6 +32,7 @@ export type EdgeType =
   | "in_project"       // folder/doc → proj
   | "project_scope"    // proj → cbunit/asset/doc (declared scope)
   | "about_asset"      // folder → asset (an equipment folder)
+  | "of_type"          // folder → eqtype:LABEL (equipment under it is this type)
   | "tagged_to"        // doc → asset (a filing decision)
   | "filed_under"      // doc → folder, ALSO filed (the symbolic link)
   | "alias_of"

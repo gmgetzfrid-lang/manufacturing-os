@@ -39,5 +39,14 @@ describe("the estate as a tree", () => {
     expect(categoryOf("PSV-21")).toBe("Relief valves (PSV)");
     expect(categoryOf("TK-101")).toBe("Tanks");
     expect(categoryOf("QQ-1")).toBe("Other equipment");
+    // What the sheet calls it wins over the tag's letters: a crude heater
+    // tagged F-2 sits with the H-1 heater, not with the filters.
+    expect(categoryOf("H-1", "CRUDE HEATER")).toBe("Heaters / Furnaces");
+    expect(categoryOf("F-2", "CRUDE HEATER")).toBe("Heaters / Furnaces");
+    expect(categoryOf("H-1")).toBe("Heaters / Furnaces");
+    expect(categoryOf("E-5", "CRUDE PREHEATER")).toBe("Exchangers");
+    expect(categoryOf("P-3", "BOILER FEED PUMP")).toBe("Pumps");
+    // A type a person set wins over both.
+    expect(categoryOf("F-2", "CRUDE HEATER", "Fired heaters")).toBe("Fired heaters");
   });
 });

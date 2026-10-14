@@ -252,7 +252,12 @@ export async function ingestKnowledgeDocBatch(
             visionPages++;
           }
         } catch (e) {
-          if (isTimeoutError(e)) { stoppedForTime = true; break; }
+          // Out of clock part-way through the batch: stop, and a fresh
+          // invocation reads this page with its whole budget. If it already
+          // HAD the whole budget, retrying would only bill the same timeout
+          // again — the page keeps its text and waits in "Read all drawings
+          // with AI", which gives a sheet a call of its own.
+          if (isTimeoutError(e) && p > from + 1) { stoppedForTime = true; break; }
           visionLeft--;
         }
       } else if (vision && visionLeft > 0 && timeForVision) {

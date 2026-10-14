@@ -39,6 +39,8 @@ export interface GraphNode {
   type: GraphNodeType;
   label: string;
   sub?: string;          // secondary line for the info card
+  /** Equipment: its type as a person or the codebook set it ("Heaters"). */
+  category?: string;
   href: string;          // where clicking through lands
   degree: number;        // filled during assembly
 }
@@ -68,7 +70,10 @@ interface DocRow {
 }
 interface AssetRowLite {
   id: string; tag: string; description: string | null;
-  unit_code: string | null; unit_id: string | null;
+  unit_code: string | null; unit_id: string | null; type_id?: string | null;
+  /** "person" when someone chose the type (a folder mark); the codebook's
+   *  automatic guess by tag letters does not group the map. */
+  type_set?: string | null;
 }
 
 /** Page through a join table until exhausted or capped. */
@@ -112,7 +117,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(DOC_CAP),
     supabase.from("assets")
-      .select("id, tag, description, unit_code, unit_id")
+      .select("id, tag, description, unit_code, unit_id, type_id, type_set:metadata->>typeSetBy")
       .eq("org_id", orgId).eq("archived", false)
       .limit(ASSET_CAP),
     pageRows<{ document_id: string; asset_id: string }>(
@@ -157,6 +162,11 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   const docs = (docsRes.data as DocRow[]) ?? [];
   const libs = (libsRes.data as Array<{ id: string; name: string }>) ?? [];
   const assets = optional<AssetRowLite>(assetsRes);
+  const typeNames = new Map<string, string>();
+  if (assets.some((a) => a.type_id && a.type_set === "person")) {
+    const { data: types } = await supabase.from("asset_types").select("id, name").eq("org_id", orgId);
+    for (const t of (types as Array<{ id: string; name: string }> | null) ?? []) typeNames.set(t.id, t.name);
+  }
   const units = optional<{ id: string; name: string; code: string | null; plant_id: string }>(unitsRes);
   const plants = optional<{ id: string; name: string; code: string | null }>(plantsRes);
   const projects = optional<{ id: string; name: string; status: string | null }>(projectsRes);
@@ -222,6 +232,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   for (const a of assets) {
     nodes.set(`asset:${a.id}`, {
       id: `asset:${a.id}`, type: "asset", label: a.tag, sub: a.description ?? undefined,
+      category: a.type_id && a.type_set === "person" ? typeNames.get(a.type_id) : undefined,
       href: `/assets/${encodeURIComponent(a.tag)}`, degree: 0,
     });
   }

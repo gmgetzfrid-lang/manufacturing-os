@@ -17,17 +17,42 @@
 
 import { EQUIPMENT_CATEGORIES } from "@/lib/drawingText";
 
-export interface TreeInNode { id: string; type: string; label: string; sub?: string }
+export interface TreeInNode { id: string; type: string; label: string; sub?: string; category?: string }
 export interface TreeInEdge { a: string; b: string; type: string }
 export interface TreeNode { id: string; label: string; parentId: string | null; kind: "group" | "area" | "category" | "asset" | "project" | "document" | "library"; graphId: string | null }
 
 const SPLIT_AT = 9;
 
-export function categoryOf(tag: string): string {
+/** What the equipment IS, read from its service name ("CRUDE HEATER"),
+ *  before falling back to the tag's letters. Order matters: "REBOILER" is
+ *  an exchanger, "PREHEATER" too, a "BOILER FEED PUMP" a pump. */
+const BY_NAME: Array<[RegExp, string]> = [
+  [/\bPUMPS?\b/, "Pumps"],
+  [/\b(COMPRESSORS?|BLOWERS?|FANS?)\b/, "Compressors / Blowers"],
+  [/\b(EXCHANGERS?|COOLERS?|CONDENSERS?|REBOILERS?|CHILLERS?|PREHEATERS?|AIR FIN|FIN FAN)\b/, "Exchangers"],
+  [/\b(HEATERS?|FURNACES?|FIRED)\b/, "Heaters / Furnaces"],
+  [/\bBOILERS?\b/, "Boilers"],
+  [/\b(TOWERS?|COLUMNS?|STRIPPERS?|FRACTIONATORS?|ABSORBERS?|SCRUBBERS?|SPLITTERS?)\b/, "Towers / Columns"],
+  [/\bTANKS?\b/, "Tanks"],
+  [/\b(DRUMS?|VESSELS?|ACCUMULATORS?|SEPARATORS?|KO POT|KNOCK.?OUT|DESALTERS?|SETTLERS?|RECEIVERS?)\b/, "Vessels / Drums"],
+  [/\b(FILTERS?|STRAINERS?|COALESCERS?)\b/, "Filters / Strainers"],
+  [/\bREACTORS?\b/, "Reactors"],
+  [/\b(MIXERS?|AGITATORS?)\b/, "Mixers / Agitators"],
+];
+/** The tag's letters, where they say one thing. */
+const BY_PREFIX: Record<string, string> = {
+  H: "Heaters / Furnaces", V: "Vessels / Drums", D: "Vessels / Drums", E: "Exchangers", P: "Pumps",
+  K: "Compressors / Blowers", TK: "Tanks", R: "Reactors",
+};
+
+export function categoryOf(tag: string, name?: string | null, setType?: string | null): string {
+  if (setType?.trim()) return setType.trim();
+  const n = (name ?? "").toUpperCase();
+  for (const [re, c] of BY_NAME) if (re.test(n)) return c;
   const m = tag.toUpperCase().match(/^([A-Z]{1,4})-?\d/);
   if (!m) return "Other equipment";
   const p = m[1];
-  for (let n = p.length; n >= 1; n--) { const c = EQUIPMENT_CATEGORIES[p.slice(0, n)]; if (c) return c; }
+  for (let k = p.length; k >= 1; k--) { const c = BY_PREFIX[p.slice(0, k)] ?? EQUIPMENT_CATEGORIES[p.slice(0, k)]; if (c) return c; }
   return "Other equipment";
 }
 
@@ -92,7 +117,7 @@ export function buildEstateTree(nodes: TreeInNode[], edges: TreeInEdge[]): TreeN
   const placeAssets = (parent: string, list: TreeInNode[]) => {
     if (list.length < SPLIT_AT) { for (const a of list) put({ id: a.id, label: a.label, parentId: parent, kind: "asset", graphId: a.id }); return; }
     const cats = new Map<string, TreeInNode[]>();
-    for (const a of list) { const c = categoryOf(a.label); cats.set(c, [...(cats.get(c) ?? []), a]); }
+    for (const a of list) { const c = categoryOf(a.label, a.sub, a.category); cats.set(c, [...(cats.get(c) ?? []), a]); }
     for (const [c, l] of [...cats.entries()].sort((x, y) => y[1].length - x[1].length)) {
       const cid = `cat:${parent}:${c}`;
       put({ id: cid, label: `${c} (${l.length})`, parentId: parent, kind: "category", graphId: null });
