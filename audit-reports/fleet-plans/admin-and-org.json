@@ -500,6 +500,23 @@
     "A&O P3 merged (DEC-87: the destination confirmation)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-13 at the I-01B / A&O P7 merges (DEC-31: I-01B proposed 'admin-and-org export/restore remainders' as a NEW package, items (1)-(7) under ILIFE-11's Scope / residual)."
+  },
+  {
+   "name": "P15 \u2014 Appearance follow-ups: the INSERT door and the colour column (ORG-19, ORG-21)",
+   "findings": [
+    "ORG-19 (LOW, opened by A&O P11 under DEC-31: a library or folder can be CREATED already carrying an external cover image or page background \u2014 extend the appearance rail to INSERT for a signed-in writer outside NODE_CUSTOMIZE_ROLES, exactly as 20261210 judges UPDATE)",
+    "ORG-21 (LOW, opened by the integrator at the A&O P11 merge: colour drawn raw into inline CSS \u2014 validate at render in components/documents/NodeCover.tsx and components/documents/CollectionsStrip.tsx, then add color to the appearance rail or a CHECK)"
+   ],
+   "files": [
+    "supabase/migrations: one DEC-30 file re-creating enforce_node_appearance_columns() from 20261210 (lineDiff-pinned) to judge INSERT and color",
+    "components/documents/NodeCover.tsx, components/documents/CollectionsStrip.tsx",
+    "tests: the INSERT door refused for a Viewer and allowed for a DocCtrl; the colour payload rendered as default and refused; every legitimate colour unchanged"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "A&O P11 merged (2026-10-14; 20261210)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-14 at the A&O P11 merge (DEC-31)."
   }
  ],
  "crossAreaFileOverlaps": [
