@@ -110,7 +110,12 @@ describe("ALOG-11 hand-off (P13) — /api/admin/audit/export-files", () => {
 
   it("the sentences: never 'delivered'; the current member, or the machine, or a former member", () => {
     expect(deliverySentence({ failureRecorded: false })).toBe("No delivery failure recorded. (This is not proof of delivery: a delivery stopped mid-flight records nothing.)");
-    expect(deliverySentence({ failureRecorded: true, error: "Webhook 500", at: null })).toMatch(/^Delivery failed: Webhook 500\. The files below were carried, but nothing reached the other end\.$/);
+    // DEC-87 §1 (P14 correction): a webhook's 500 can come after it received
+    // the whole archive, and the UNDELIVERED row does not say which — so a
+    // recorded failure never says nothing reached the other end.
+    const failed = deliverySentence({ failureRecorded: true, error: "Webhook 500", at: null });
+    expect(failed).toBe("Delivery failure recorded: Webhook 500. The record does not say whether it came before or after the archive was sent. If it came after (a webhook that answered with an error once it had the archive, a bucket read-back that failed), the destination may still hold these files: treat each file below as possibly taken.");
+    expect(failed).not.toMatch(/nothing reached|never left|not delivered|did not leave/i);
     expect(exporterSentence({ kind: "member", userId: "u", email: "ann@acme.com", role: "Admin", status: "suspended" })).toBe("ann@acme.com (Admin) — suspended: this user id's current membership of the workspace, read now.");
     expect(exporterSentence({ kind: "machine", label: null })).toMatch(/scheduled push/);
     expect(exporterSentence({ kind: "former", userId: "u-x" })).toMatch(/no longer in this workspace/);
@@ -124,8 +129,10 @@ describe("ALOG-11 hand-off (P13) — the Files control, rendered", () => {
   let host: HTMLDivElement;
   let root: Root;
   const fetches: string[] = [];
+  let delivery: Record<string, unknown> = { failureRecorded: false };
   beforeEach(() => {
     fetches.length = 0;
+    delivery = { failureRecorded: false };
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       fetches.push(String(url));
       return new Response(JSON.stringify({
@@ -133,7 +140,7 @@ describe("ALOG-11 hand-off (P13) — the Files control, rendered", () => {
         exporter: { kind: "member", userId: "u-ann", email: "ann@acme.com", role: "Admin", status: "active" },
         stored: { email: "stale@old.io", role: "Admin" },
         files: [{ path: "files/P-100.pdf", documentId: "d1111111", versionId: "v1111111" }],
-        delivery: { failureRecorded: false },
+        delivery,
       }), { status: 200 });
     }));
     host = document.createElement("div");
@@ -155,6 +162,18 @@ describe("ALOG-11 hand-off (P13) — the Files control, rendered", () => {
     expect(t).toContain("No delivery failure recorded.");
     expect(t).not.toMatch(/\bDelivered\b/);
     expect(t).toContain("1 file in this export");
+    expect(t).toContain("files/P-100.pdf");
+  });
+
+  it("fix pass (DEC-87 §1): a recorded failure (a webhook's 500) says the destination may hold the files — never that nothing reached it", async () => {
+    delivery = { failureRecorded: true, error: "Webhook 500: Internal Server Error", at: null };
+    await act(async () => { root.render(React.createElement(ExportFilesPanel, { orgId: O1, recordId: "rec-1" })); });
+    await act(async () => { (host.querySelector("button") as HTMLButtonElement).click(); });
+    for (let i = 0; i < 4; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const t = host.textContent ?? "";
+    expect(t).toContain("Delivery failure recorded: Webhook 500: Internal Server Error.");
+    expect(t).toContain("the destination may still hold these files: treat each file below as possibly taken.");
+    expect(t).not.toMatch(/nothing reached/i);
     expect(t).toContain("files/P-100.pdf");
   });
 });

@@ -7,6 +7,12 @@
 // who took it shown as that user id's CURRENT member of the workspace (never
 // the stored email) and the delivery said as the record allows: a recorded
 // failure, or "No delivery failure recorded" — never "delivered".
+// Fix pass (DEC-87 §1, P14 correction): a recorded failure is NOT "nothing
+// reached the other end". lib/dataExport.ts recordExportUndelivered also
+// writes DATA_EXPORT_UNDELIVERED after transmission began (a webhook that
+// answers 500 after receiving the whole ZIP, a bucket put or read-back
+// error — lib/exportRunner.ts pushTransmissionBegan), and the row does not
+// record which, so the sentence says the destination may hold the files.
 
 import React, { useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -34,10 +40,12 @@ export function exporterSentence(e: FilesAnswer["exporter"]): string {
   }
 }
 
-/** The sentence about delivery (exported for the tests). A null record is never "delivered". */
+/** The sentence about delivery (exported for the tests). A null record is
+ *  never "delivered"; a recorded failure is never "nothing reached the other
+ *  end" — the record does not say whether it came before or after sending. */
 export function deliverySentence(d: FilesAnswer["delivery"]): string {
   return d.failureRecorded
-    ? `Delivery failed${d.at ? ` (${new Date(d.at).toLocaleString()})` : ""}: ${d.error ?? "no reason recorded"}. The files below were carried, but nothing reached the other end.`
+    ? `Delivery failure recorded${d.at ? ` (${new Date(d.at).toLocaleString()})` : ""}: ${d.error ?? "no reason recorded"}. The record does not say whether it came before or after the archive was sent. If it came after (a webhook that answered with an error once it had the archive, a bucket read-back that failed), the destination may still hold these files: treat each file below as possibly taken.`
     : "No delivery failure recorded. (This is not proof of delivery: a delivery stopped mid-flight records nothing.)";
 }
 
