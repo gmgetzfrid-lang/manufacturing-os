@@ -64,7 +64,8 @@ describe("LIFE-9 — in-app tickets carry the request form's required fields", (
     // drafting-flow DF-P4 (EDGE-7 / ROUTE-9): the requester's date, else the org's sla_defaults window, else the built-in one.
     expect(route).toContain("target_completion_at: targetCompletionAt,");
     expect(route).toContain("let targetCompletionAt = input.targetCompletionAt;");
-    expect(route).toContain(": defaultSlaTargetDate(input.requestType);");
+    // DF-P4 fix pass: the org's window is bounded (boundedSlaDays) before it is used.
+    expect(route).toContain("targetCompletionAt = fromWindow ?? defaultSlaTargetDate(input.requestType);");
     expect(route).toContain("watchers: [caller.id],");
     expect(src("components/documents/CheckInPanel.tsx")).toMatch(/unit: null,/);
     expect(src("lib/transitionIn.ts")).toMatch(/requestType: "Revision",[\s\S]*?unit: null,/);

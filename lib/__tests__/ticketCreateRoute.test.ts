@@ -1770,6 +1770,27 @@ describe("DF-P4 — EDGE-7 done-when 2 / ROUTE-9 done-when 4: the due date comes
     const builtIn = (Date.parse(String(tickets()[0].target_completion_at)) - Date.now()) / 86_400_000;
     expect(builtIn).toBeGreaterThan(13);
   });
+  it("DF-P4 fix pass: a member-written default_days outside 1..3650 whole days (2e9, 0, negative, fractional, text) is the built-in window — never a 500", async () => {
+    for (const bad of [2_000_000_000, 3651, 0, -5, 2.5, "soon", Number.NaN]) {
+      seed(); s.counter = new Map();
+      s.tables.sla_defaults = [{ org_id: ORG, request_type: "ISO", default_days: bad }];
+      const res = await POST(req(portal()));
+      expect(res.status, String(bad)).toBe(201);
+      const builtIn = (Date.parse(String(tickets()[0].target_completion_at)) - Date.now()) / 86_400_000;
+      expect(builtIn, String(bad)).toBeGreaterThan(13); expect(builtIn, String(bad)).toBeLessThan(15);   // ISO: 14 days
+    }
+    seed(); s.counter = new Map();
+    s.tables.sla_defaults = [{ org_id: ORG, request_type: "ISO", default_days: 3650 }];
+    expect((await POST(req(portal()))).status).toBe(201);
+    const longest = (Date.parse(String(tickets()[0].target_completion_at)) - Date.now()) / 86_400_000;
+    expect(longest).toBeGreaterThan(3648); expect(longest).toBeLessThan(3651);
+  });
+  it("boundedSlaDays: whole days 1..SLA_DEFAULT_DAYS_MAX pass; everything else is null", async () => {
+    const { boundedSlaDays, SLA_DEFAULT_DAYS_MAX } = await import("@/lib/notifications");
+    expect(SLA_DEFAULT_DAYS_MAX).toBe(3650);
+    expect([1, 7, "21", 3650].map(boundedSlaDays)).toEqual([1, 7, 21, 3650]);
+    expect([0, -1, 1.5, 3651, 2e9, Infinity, NaN, null, undefined, "", "x", true].map(boundedSlaDays)).toEqual(Array(12).fill(null));
+  });
   it("the service-role insert never writes sla_breached_at, sla_breach_warned_at or outcome (ticket_insert_integrity does not run for it)", async () => {
     for (const body of [portal(), checkin(), collision()]) {
       seed(); s.counter = new Map();

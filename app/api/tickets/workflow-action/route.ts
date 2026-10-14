@@ -26,6 +26,8 @@ import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor } from "@/lib/ticketOutcome";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
+import { offerableLibraries, libraryLabelForTicket, type LibraryChoiceRow } from "@/lib/ticketLibrary";
+import type { Principal } from "@/lib/permissions";
 
 // POST /api/tickets/workflow-action
 //
@@ -67,7 +69,7 @@ interface Body {
   outcome?: string | null;
   /** DCW-1 / GAP-105 (DF-P4): the library triage records with `assign` /
    *  `request_eng_review` at PENDING_ASSIGNMENT — a library of the ticket's
-   *  org. Never required. */
+   *  org that the caller may discover (the picker's rule). Never required. */
   libraryId?: string | null;
   /** DCW-7 / FRIC-3 (DF-P4): the unit triage records with the same actions,
    *  resolved against the org's unit list (lib/ticketCreate.ts
@@ -560,11 +562,41 @@ export async function POST(req: NextRequest) {
       // as today, without a library, and the answer says so.
       libraryNotStored = true;
     } else {
-      const { data: lib, error: libErr } = await supabaseAdmin
-        .from("libraries").select("id, name").eq("id", libraryId).eq("org_id", ticket.orgId).maybeSingle();
-      if (libErr) return NextResponse.json({ error: "Couldn't check that library right now — try again in a moment." }, { status: 503 });
-      if (!lib) return NextResponse.json({ error: "That library is not one of this workspace's" }, { status: 400 });
-      triage = { ...(triage ?? {}), library: { id: String((lib as { id: string }).id), name: String((lib as { name?: string | null }).name ?? "library") } };
+      // DF-P4 fix pass: the SAME rule the picker offers by
+      // (lib/ticketLibrary.ts offerableLibraries → canDiscover), run here on
+      // the caller's principal built on the server — membership roles (the
+      // full additive collection) and team ids read as the service role — so
+      // a library the assigner cannot discover is refused exactly as one of
+      // another workspace is (same answer: its existence is not confirmed),
+      // whatever the client sends. A read that fails is a 503, never a guess.
+      const [{ data: lib, error: libErr }, { data: teamRows, error: teamErr }] = await Promise.all([
+        supabaseAdmin.from("libraries").select("id, name, visibility, acl, owner_user_id")
+          .eq("id", libraryId).eq("org_id", ticket.orgId).maybeSingle(),
+        supabaseAdmin.from("team_members").select("team_id").eq("uid", caller.id),
+      ]);
+      if (libErr || teamErr) return NextResponse.json({ error: "Couldn't check that library right now — try again in a moment." }, { status: 503 });
+      const libRow = lib as { id: string; name?: string | null; visibility?: string | null; acl?: unknown; owner_user_id?: string | null } | null;
+      const heldByCaller = heldRoles(member as { role?: unknown; roles?: unknown }) as Role[];
+      const principal: Principal | null = heldByCaller.length === 0 ? null : {
+        uid: caller.id,
+        role: heldByCaller[0],
+        roles: heldByCaller,
+        orgId: ticket.orgId,
+        teamIds: ((teamRows ?? []) as Array<{ team_id?: unknown }>).map((t) => String(t.team_id ?? "")).filter(Boolean),
+        isActiveMember: true,
+      };
+      const offered = libRow ? offerableLibraries([{
+        id: String(libRow.id),
+        name: libRow.name ?? null,
+        visibility: libRow.visibility ?? null,
+        acl: (libRow.acl ?? null) as LibraryChoiceRow["acl"],
+        ownerUserId: libRow.owner_user_id ?? null,
+      }], principal) : [];
+      if (!libRow || offered.length === 0) return NextResponse.json({ error: "That library is not one of this workspace's" }, { status: 400 });
+      // The history line names a library only when every reader of the
+      // ticket may know it (libraryLabelForTicket): a hidden / private one
+      // is "the target library".
+      triage = { ...(triage ?? {}), library: { id: String(libRow.id), name: libraryLabelForTicket(libRow) } };
     }
   }
   if (wantsUnit) {
@@ -842,9 +874,12 @@ export async function POST(req: NextRequest) {
         // library is said too — the register visibly knows it does not have
         // it. (Publishing it as a new document of the library is the
         // document-creation path's, not this route's: DEC-22.)
+        // DF-P4 fix pass: the note is read by the requester and every
+        // watcher, so a hidden / private library is "the target library"
+        // (libraryLabelForTicket), never its name.
         const { data: libRow } = await supabaseAdmin
-          .from("libraries").select("name").eq("id", ticket.libraryId).eq("org_id", ticket.orgId).maybeSingle();
-        const libLabel = ((libRow as { name?: string | null } | null)?.name) || "the target library";
+          .from("libraries").select("name, visibility").eq("id", ticket.libraryId).eq("org_id", ticket.orgId).maybeSingle();
+        const libLabel = libraryLabelForTicket(libRow as { name?: string | null; visibility?: string | null } | null);
         const merged = noteDeliverableNotInLibrary(ticket.metadata, { libraryId: ticket.libraryId });
         if (merged) {
           updates.metadata = merged;

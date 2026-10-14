@@ -8,7 +8,8 @@
 // (/api/tickets/workflow-action, body.libraryId). It offers only the
 // libraries the CALLER may discover (lib/ticketLibrary.ts
 // offerableLibraries → lib/permissions canDiscover): a library the assigner
-// cannot see is never offered. "No library — decide later" is always there
+// cannot see is never offered — and the route refuses one by the same rule,
+// on a principal it builds itself, whatever a client sends. "No library — decide later" is always there
 // and is the default when the request has none: a library is never required
 // (99-fix-sequencing Phase 2 item 1).
 //

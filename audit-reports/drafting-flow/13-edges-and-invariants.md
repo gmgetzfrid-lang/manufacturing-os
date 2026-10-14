@@ -505,10 +505,11 @@ vercel.json (only two crons; neither scans tickets)
 - `/api/tickets/create` stamps `target_completion_at` from the requester's date when they gave one, else the org's `sla_defaults` row for the type (`default_days` from now, at 17:00 — the shape every creation path stamps, `lib/notifications.ts` `slaTargetDateInDays`), else the built-in `DEFAULT_SLA_DAYS` (`app/api/tickets/create/route.ts:607-623`). A read that fails falls back to the built-in window and is logged (a due date carries no authority). The "first fallback" comment above `DEFAULT_SLA_DAYS` now says what the code does.
 - The create route (service role — `ticket_insert_integrity` does not run for it) writes none of `sla_breached_at`, `sla_breach_warned_at`, `outcome` (pinned: no row key of that name, and no ticket from any of the three doors carries one).
 - Tests: `lib/__tests__/ticketCreateRoute.test.ts` ("DF-P4 — EDGE-7 done-when 2 / ROUTE-9 done-when 4": the org's window, the requester's own date wins, no row → 14 days for ISO, an unreadable `sla_defaults` → the built-in window; the three columns never written).
+- **DF-P4 fix pass — the value is bounded, and who writes it is recorded.** The bullet above called a failed read fail-safe ("a due date carries no authority") and said nothing of who writes the table: `sla_defaults` is writable by **every active member** (`20260605_rls_policies_new_tables.sql:128-132`, `sla_defaults_member_all` FOR ALL) and `default_days` has no CHECK. Before DF-P4 the create route always stamped the built-in window, so this member-writable value reached no new ticket; now it reaches every request filed without a requester date. A Viewer setting `default_days = 2000000000` made `slaTargetDateInDays` throw a `RangeError` and every request of that type fail with a 500 (portal, intake collision, check-in). Now the create route uses the window only when it is a whole number of days from 1 to `SLA_DEFAULT_DAYS_MAX` (3650) — `lib/notifications.ts` `boundedSlaDays` — else the built-in window (logged), and the date computation is wrapped with the same fallback (`app/api/tickets/create/route.ts:607-631`). Tests: "a member-written default_days outside 1..3650 whole days (2e9, 0, negative, fractional, text) is the built-in window — never a 500", "boundedSlaDays". A member can still set a legal but hostile window (1 day → every new request due tomorrow, and the clock warns the queue for each): that is the table's open write, opened as **[`EDGE-16`](#edge-16)** (owner admin-and-org, with this finding's editor).
 
 **Done-when.**
 1. ✓ Unchanged (DF-P3).
-2. ✗ in part — `sla_defaults` is read at creation (✓) and by the clock (DF-P3 ✓), but no admin UI edits it. **Owner:** admin-and-org (the settings surface), as recorded.
+2. ✗ in part — `sla_defaults` is read at creation (✓, bounded) and by the clock (DF-P3 ✓), but no admin UI edits it, and any active member can write it (`EDGE-16`). **Owner:** admin-and-org (the settings surface and the write policy), as recorded.
 3. ✗ Unchanged — DF-P9.
 
 **Scope / residual.** As above.
@@ -977,6 +978,36 @@ export async function notify(input: NotificationInput): Promise<void> {
 - ✓ A route test: two concurrent writes on a null-token row give one 409.
 
 **Scope / residual.** None for this finding. The same null-leg gap in `app/api/tickets/handback/route.ts:85` is noted on `SM-9` for that route's owner.
+
+---
+
+<a id="edge-16"></a>
+
+## EDGE-16 · Any active member can write `sla_defaults`, which now sets the due date of every new request — and the SLA clock's warnings
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** admin-and-org (the `EDGE-7` done-when 2 editor's owner: the editor and the write policy land together) — opened by drafting-flow DF-P4's fix pass, 2026-10-13, from the adversarial review of DF-P4 (`DEC-31`: a remainder is a new id with an owner).
+- **Verification:** CONFIRMED (by reading; not exercised against a live database)
+- **Blast radius:** availability / notification noise
+- **Locations:**
+  - `supabase/migrations/20260605_rls_policies_new_tables.sql:128-132` — `CREATE POLICY "sla_defaults_member_all" ON sla_defaults FOR ALL USING (EXISTS (… org_members … status = 'active')) WITH CHECK (…)` — the table's only policy: every active member, every verb
+  - `supabase/migrations/20260529_phase_b_notifications.sql:84` — `CREATE TABLE IF NOT EXISTS sla_defaults` — `default_days` carries no CHECK
+  - `app/api/tickets/create/route.ts:607-631` — the create route seeds `target_completion_at` from it (DF-P4, `EDGE-7` / `ROUTE-9`), bounded to 1–3650 whole days at the read (`lib/notifications.ts` `boundedSlaDays`)
+  - `lib/ticketSla.ts:457-464` — the SLA clock gives a ticket with no target its org's window from the same table (any `default_days > 0`)
+- **Related:** `EDGE-7` (the SLA layer; its done-when 2 editor), `ROUTE-9` (done-when 4)
+- **Independently verified:** — (`author`: opened at the DF-P4 fix pass from the review's finding; the cited lines re-read at the fix pass; not yet challenged)
+
+**Mechanism.** `sla_defaults` was written by nobody and read by nobody until Round G; its RLS was the generic member-FOR-ALL shape of `20260605`. DF-P3's clock and DF-P4's create route now read it, so a value any active member can write — a Viewer from the browser console, `supabase.from('sla_defaults').upsert({ org_id, request_type: 'ISO', default_days: 1 })` — sets the due date of every request of that type filed without a requester date, and the window the clock applies to old untargeted ones.
+
+**Failure scenario.** A Viewer sets `default_days = 1` for ISO. Every ISO request filed afterwards is due tomorrow at 17:00; the clock warns its waiting party and the queue at 75 % of the window and sends a breach notice to the queue and the requester the next day, for each one. (The other half of the review's scenario — `default_days = 2000000000` failing every ISO request with a 500 — is closed at the create route's read by the DF-P4 fix pass. The clock is not bounded yet: its `sla_defaults` pass computes `new Date(now - days * DAY_MS).toISOString()` (`lib/ticketSla.ts:474-475`), which throws a `RangeError` on such a value; the cron's step 5b catches it (`app/api/cron/maintenance/route.ts:414`), so the untargeted pass stops for every workspace after the hostile one, that run and every run until the row is fixed. Found by reading at the DF-P4 fix pass; `lib/ticketSla.ts` is DF-P3's merged module, not this package's.)
+
+**Remediation.** Narrow the writes to the people who configure the drafting flow — the `AUTHZ-10` set (`lib/adminSurfaces.ts` `DRAFTING_CONFIG_EDITORS`: Admin, DocCtrl, DraftingSupervisor) through `caller_holds_any_role`, keeping SELECT for members — with a counts-only inventory (workspaces with rows, rows outside 1–3650) before the transaction (`DEC-30`), a CHECK (or a guard) bounding `default_days` to the same 1–3650, and the admin editor `EDGE-7` done-when 2 asks for.
+
+**Done when.**
+- A member who holds none of the configuring roles cannot insert, update or delete an `sla_defaults` row (RLS), and the role set is pinned equal to the registry.
+- `default_days` outside 1–3650 whole days is refused by the database.
+- The clock bounds the value it reads as the create route does (`lib/ticketSla.ts` skips a row outside 1–3650 whole days — `lib/notifications.ts` `boundedSlaDays` is the shared rule — so one workspace's row cannot stop the pass for the others). **Owner of this item:** the SLA clock's owner (DF-P3's successor on `lib/ticketSla.ts`), if it lands before the database bound.
 
 ---
 

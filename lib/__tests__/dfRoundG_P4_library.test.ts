@@ -20,7 +20,7 @@ import { __resetCapabilityPolicyCache } from "@/lib/capabilityPolicy";
 import { computeTransition, rowToTicket, type TransitionInput } from "@/lib/ticketTransitions";
 import { ticketResource } from "@/lib/workflow";
 import { ADMIN_SURFACES, DRAFTING_CONFIG_EDITORS, adminSurfaceAllows } from "@/lib/adminSurfaces";
-import { creationNoticeOwed, missingLibraryColumn, offerableLibraries, linkableDocumentQuery, linkableDocumentFilter } from "@/lib/ticketLibrary";
+import { creationNoticeOwed, missingLibraryColumn, offerableLibraries, linkableDocumentQuery, linkableDocumentFilter, libraryLabelForTicket } from "@/lib/ticketLibrary";
 import { deliverableStateOf, noteDeliverableNotInLibrary } from "@/lib/ticketHandback";
 import type { Ticket, TicketAttachment } from "@/types/schema";
 
@@ -126,11 +126,16 @@ describe("PERS-5 / PERS-6 — rowToTicket has no cast, maps what the server read
   });
 });
 
-describe("GAP-105 — the library joins the capability resource (DEC-13) without changing a ticket that has none", () => {
-  it("ticketResource carries libraryId when known; the resource of a ticket with no library is the same object as before", () => {
-    expect(ticketResource({ requestType: "ISO", unit: "U", libraryId: LIB })).toEqual({ requestType: "ISO", unit: "U", libraryId: LIB });
-    expect(ticketResource({ requestType: "ISO", unit: "U", libraryId: null })).toStrictEqual({ requestType: "ISO", unit: "U" });
+describe("GAP-105 (fix pass) — the library is NOT in the capability resource yet: the page and the badge build Tickets without it", () => {
+  it("ticketResource presents request type and unit only, whether or not the ticket has a library (DF-P5 adds it with the mappers)", () => {
+    const withLib = { requestType: "ISO", unit: "U", libraryId: LIB } as Pick<Ticket, "requestType" | "unit">;
+    expect(ticketResource(withLib)).toStrictEqual({ requestType: "ISO", unit: "U" });
     expect(ticketResource({ requestType: "ISO", unit: "U" })).toStrictEqual({ requestType: "ISO", unit: "U" });
+    expect(readFileSync(join(process.cwd(), "lib", "workflow.ts"), "utf8")).toContain("return { requestType: ticket.requestType || null, unit: ticket.unit || null };");
+  });
+  it("the restore clears a ticket's library that is not in the target workspace (ON DELETE SET NULL's answer), never refuses the ticket", async () => {
+    const { restoreParentRulesFor } = await import("@/lib/dataRestore");
+    expect(restoreParentRulesFor("tickets")).toEqual([{ column: "library_id", parent: "libraries", clearWhenMissing: true }]);
   });
 });
 
@@ -202,6 +207,56 @@ describe("DCW-1 / DCW-7 — the workflow route: triage's library and unit, valid
       expect(ticketUpdates()).toHaveLength(0);
       expect(state.calls.some((c) => c.table === "audit_logs" && c.method === "insert")).toBe(false);
     }
+  });
+  it("fix pass: a PRIVATE / hidden library the assigner cannot discover is refused exactly as a foreign one (400, nothing written, no audit row) — the picker's rule, on the server", async () => {
+    seedQueue();
+    state.rows.org_members = [member("s-1", "Supervisor"), member("req-1", "Requester"), member("d-1", "Drafter")];
+    state.user = { id: "s-1" };
+    state.rows.libraries = [
+      { id: LIB, org_id: "o1", name: "Legal / M&A", visibility: "private", acl: null, owner_user_id: "someone" },
+    ];
+    state.rows.tickets = [ticketRow()];
+    for (const visibility of ["private", "hidden"]) {
+      state.calls = [];
+      state.rows.libraries[0].visibility = visibility;
+      const res = await assign({ libraryId: LIB });
+      expect(res.status, visibility).toBe(400);
+      expect((await res.json()).error).toBe("That library is not one of this workspace's");
+      expect(ticketUpdates()).toHaveLength(0);
+      expect(state.calls.some((c) => c.table === "audit_logs" && c.method === "insert")).toBe(false);
+    }
+  });
+  it("fix pass: the private library's OWNER, a controller (additive DocCtrl too) and an ACL grantee by team are admitted — and the history line says 'the target library', never its name", async () => {
+    const privateLib = (over: Record<string, unknown> = {}) => ({ id: LIB, org_id: "o1", name: "Legal / M&A", visibility: "private", acl: null, owner_user_id: "own-1", ...over });
+    const cases: Array<{ uid: string; members: ReturnType<typeof member>[]; lib: Record<string, unknown>; teams?: Array<Record<string, unknown>> }> = [
+      { uid: "own-1", members: [member("own-1", "Supervisor")], lib: privateLib() },
+      { uid: "a-1", members: [member("a-1", "Admin")], lib: privateLib() },
+      { uid: "s-2", members: [member("s-2", "Supervisor", ["Supervisor", "DocCtrl"])], lib: privateLib() },
+      { uid: "s-3", members: [member("s-3", "Supervisor")], teams: [{ uid: "s-3", team_id: "team-legal" }],
+        lib: privateLib({ acl: { rules: [{ subject: { type: "team", id: "team-legal" }, effect: "allow", actions: ["discover"] }] } }) },
+    ];
+    for (const c of cases) {
+      state.calls = [];
+      state.user = { id: c.uid };
+      state.rows.org_members = [...c.members, member("req-1", "Requester"), member("d-1", "Drafter")];
+      state.rows.team_members = c.teams ?? [];
+      state.rows.libraries = [c.lib];
+      state.rows.tickets = [ticketRow()];
+      const res = await assign({ libraryId: LIB });
+      expect(res.status, c.uid).toBe(200);
+      const u = ticketUpdates()[0];
+      expect(u.library_id, c.uid).toBe(LIB);
+      const line = (u.history as Array<{ action: string; details?: string }>).find((h) => h.action === "Triage details set");
+      expect(line?.details, c.uid).toBe("Library: the target library");
+      expect(JSON.stringify(u.history)).not.toContain("Legal");
+    }
+  });
+  it("fix pass: a membership or team read that fails is a 503 with nothing written — never a guess", async () => {
+    seedQueue();
+    state.rows.tickets = [ticketRow()];
+    state.errors.team_members = { code: "57014", message: "timeout" };
+    expect((await assign({ libraryId: LIB })).status).toBe(503);
+    expect(ticketUpdates()).toHaveLength(0);
   });
   it("a library or unit outside triage (any other action or status) is a 400 with nothing written", async () => {
     seedQueue();
@@ -278,6 +333,23 @@ describe("DCW-4 (DF-P4 limb) — a request with a library but no source document
     state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", assigned_drafter_id: "d-1", attachments: [FINAL] })];
     expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
     expect("metadata" in ticketUpdates()[0]).toBe(false);
+  });
+  it("fix pass: a private library is 'the target library' in the close note and the history — its name never reaches the requester or the watchers", async () => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter"), member("a-1", "Admin")];
+    state.rows.libraries = [{ id: LIB, org_id: "o1", name: "Legal / M&A", visibility: "private" }];
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", assigned_drafter_id: "d-1", attachments: [FINAL], library_id: LIB })];
+    expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
+    const u = ticketUpdates()[0];
+    expect((u.history as Array<{ details?: string }>).at(-1)?.details).toBe("Closed without a register document: the deliverable was not published into the target library.");
+    expect(JSON.stringify(u)).not.toContain("Legal");
+  });
+  it("libraryLabelForTicket: a normal (or unknown-visibility) library keeps its name; hidden / private / missing / blank is 'the target library'", () => {
+    expect(libraryLabelForTicket({ name: "P&IDs", visibility: "normal" })).toBe("P&IDs");
+    expect(libraryLabelForTicket({ name: "P&IDs" })).toBe("P&IDs");
+    for (const v of ["private", "hidden"]) expect(libraryLabelForTicket({ name: "Secret", visibility: v })).toBe("the target library");
+    expect(libraryLabelForTicket(null)).toBe("the target library");
+    expect(libraryLabelForTicket({ name: "  ", visibility: "normal" })).toBe("the target library");
   });
   it("noteDeliverableNotInLibrary never overwrites a published deliverable", () => {
     expect(noteDeliverableNotInLibrary({ deliverable: { state: "published", version_id: "v" } }, { libraryId: LIB })).toBeNull();

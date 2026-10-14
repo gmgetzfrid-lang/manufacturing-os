@@ -9,7 +9,7 @@ import { isSafeStorageKey } from "@/lib/storageKey";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
-import { defaultSlaTargetDate, slaTargetDateInDays } from "@/lib/notifications";
+import { boundedSlaDays, defaultSlaTargetDate, slaTargetDateInDays } from "@/lib/notifications";
 import { missingLibraryColumn } from "@/lib/ticketLibrary";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
@@ -615,10 +615,20 @@ async function create(
     const { data: slaRow, error: slaErr } = await supabaseAdmin
       .from("sla_defaults").select("default_days").eq("org_id", orgId).eq("request_type", input.requestType).maybeSingle();
     if (slaErr) console.warn(`[tickets/create] sla_defaults could not be read for ${orgId}/${input.requestType} (${slaErr.message}); the built-in window is used`);
-    const days = Number((slaRow as { default_days?: unknown } | null)?.default_days);
-    targetCompletionAt = !slaErr && Number.isFinite(days) && days > 0
-      ? slaTargetDateInDays(days)
-      : defaultSlaTargetDate(input.requestType);
+    // DF-P4 fix pass: any active member can write sla_defaults (EDGE-16), so
+    // the window is bounded here — a whole number of days, 1 to
+    // SLA_DEFAULT_DAYS_MAX — and a value outside it (or a date that cannot be
+    // computed) is the built-in window, never a refused request.
+    const rawDays = (slaRow as { default_days?: unknown } | null)?.default_days;
+    const days = slaErr ? null : boundedSlaDays(rawDays);
+    if (!slaErr && days === null && rawDays !== undefined && rawDays !== null) {
+      console.warn(`[tickets/create] sla_defaults.default_days for ${orgId}/${input.requestType} is out of bounds (${String(rawDays).slice(0, 40)}); the built-in window is used`);
+    }
+    let fromWindow: string | null = null;
+    if (days !== null) {
+      try { fromWindow = slaTargetDateInDays(days); } catch { fromWindow = null; }
+    }
+    targetCompletionAt = fromWindow ?? defaultSlaTargetDate(input.requestType);
   }
 
   // 5. The row — 20261038 ticket_insert_integrity, replicated.

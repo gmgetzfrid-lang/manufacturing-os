@@ -75,6 +75,21 @@ export function offerableLibraries(rows: readonly LibraryChoiceRow[], principal:
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** What a ticket's history line and its close notice may call a library
+ *  (DCW-1 / DCW-4, DF-P4 fix pass). Both are read by everyone who can read
+ *  the ticket — the requester and the watchers included — so a library that
+ *  is not open to every member (`hidden` / `private`) is named "the target
+ *  library", never by its name: a library the reader cannot discover must not
+ *  be disclosed through a request about it. A normal library (or one whose
+ *  visibility is unknown, read as normal, as canDiscover does) keeps its name. */
+export const UNNAMED_TARGET_LIBRARY = "the target library";
+export function libraryLabelForTicket(row: { name?: string | null; visibility?: string | null } | null | undefined): string {
+  if (!row) return UNNAMED_TARGET_LIBRARY;
+  const visibility = (row.visibility ?? "normal") as string;
+  if (visibility === "hidden" || visibility === "private") return UNNAMED_TARGET_LIBRARY;
+  return (row.name ?? "").trim() || UNNAMED_TARGET_LIBRARY;
+}
+
 /** DCW-5 (DF-P4): the request form's "link a document by number" search.
  *  The text a requester types, made safe for a PostgREST `or=(…)` filter
  *  (its separators and wildcards removed), or null when too short to
