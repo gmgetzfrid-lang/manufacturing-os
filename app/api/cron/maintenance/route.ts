@@ -47,6 +47,17 @@
 //      reservations; lib/intakeStaging.ts sweepIntakeStaging).
 //   4d. The public verify endpoints' scan record (verify_scans) is pruned to
 //      90 days (VFY-12; prune_verify_scans(), 20261134).
+//   7c. Web Push device registrations (notifications N10 — GAP-205): a
+//      push_subscriptions row whose person is no longer an ACTIVE member of
+//      any workspace, made before the opt-in control existed (the deleted
+//      reminders stack's — PUSH_OPT_IN_SINCE), or naming no browser push
+//      service (lib/push/endpoints.ts — the sender never POSTs to one), or
+//      dated in the future, or past its person's newest PUSH_DEVICE_CAP, is
+//      removed (prunePushSubscriptions). The cron only
+//      prunes: pushes are sent by emit() at the moment of the event
+//      (lib/push/sendPush.ts), and a subscription the push service answers
+//      404 / 410 for is deleted there and then. No time-based prune: a device
+//      nobody has pushed for months is still one its person turned on.
 //   8. (knowledge block) The assistant's write proposals a week past their
 //      15-minute expiry are pruned (ORCH-4; pruneOrchestratorProposals,
 //      lib/orchestrator/proposals.ts; a no-op before 20261147).
@@ -80,10 +91,12 @@ import {
 } from "@/lib/intakeRateLimit";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
-import { emit, type EmitResult } from "@/lib/notify/dispatch";
+import { emit, PUSH_OPT_IN_SINCE, type EmitResult } from "@/lib/notify/dispatch";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { KIND_META } from "@/lib/notificationKinds";
+import { isMissingSchemaError } from "@/lib/checkedWrite";
+import { PUSH_DEVICE_CAP, PUSH_FUTURE_SKEW_MS, pushEndpointAllowed } from "@/lib/push/endpoints";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -158,6 +171,9 @@ async function handler(req: NextRequest) {
     intakeStagingSwept?: number;
     reviewHealthNudges?: number;
     verifyScansPruned?: number;
+    /** N10 (GAP-205): step 7c — device registrations of people with no
+     *  active membership left, removed. */
+    pushSubscriptionsPruned?: number;
     /** GAP-106: the drafting-request SLA step (5b). */
     ticketSla?: Omit<SlaScanReport, "errors">;
     /** EDGE-4 (fix pass 3): the departure backstop (5b(i)). */
@@ -550,6 +566,31 @@ async function handler(req: NextRequest) {
     result.errors.push(`folder-trash: ${(e as Error).message}`);
   }
 
+  // 7c. PUSH SUBSCRIPTIONS (notifications N10 — GAP-205; OS-2 done-when 4's
+  //     cron half). The device registrations of people who are no longer an
+  //     active member of any workspace — they can receive nothing, and the
+  //     row is a device credential — are removed, and so are the deleted
+  //     reminders stack's (made before PUSH_OPT_IN_SINCE: never pushed — OS-10
+  //     done-when 3; their people turn the device on again), and the rows
+  //     naming no browser push service (never sent to — N10 fix pass), and
+  //     (fix pass 2) the rows dated in the future and those past a person's
+  //     newest PUSH_DEVICE_CAP (never read by the sender). Dead endpoints are removed
+  //     by the sender at the first 404 / 410 (lib/push/sendPush.ts). No-op
+  //     before 20260804. N10 fix pass 4: it has its own budget,
+  //     PUSH_PRUNE_MS, never past the run's end, so slow pages here never
+  //     cost the knowledge sync and the steps after it their time. Each run
+  //     pages from the lowest id: what one budget does not reach waits for a
+  //     later run, and rows past what one budget's pages reach are not
+  //     visited (housekeeping only — the sender checks membership, the
+  //     opt-in date, the host, the device cap and the date itself).
+  if (!noTimeFor("push-subscriptions", PUSH_PRUNE_MIN_MS)) {
+    try {
+      result.pushSubscriptionsPruned = await prunePushSubscriptions(sb, result.errors, Math.min(runEnd, Date.now() + PUSH_PRUNE_MS));
+    } catch (e) {
+      result.errors.push(`push-subscriptions: ${(e as Error).message}`);
+    }
+  }
+
   // 8. KNOWLEDGE SOURCES — the live-subscription heartbeat. Reconcile every
   //    knowledge library against its document-control sources (newly filed
   //    docs appear, rev-ups go stale, removed/archived docs drop out), then
@@ -643,6 +684,138 @@ async function handler(req: NextRequest) {
   }
 
   return NextResponse.json(result);
+}
+
+/** Step 7c's floor: it is not started with less than this left. */
+const PUSH_PRUNE_MIN_MS = 5_000;
+/** Step 7c's own budget (N10 fix pass 4): it stops paging after this long,
+ *  and never past the run's end. */
+const PUSH_PRUNE_MS = 20_000;
+/** Registrations read per page. */
+const PUSH_PRUNE_PAGE = 150;
+/** Owners per membership read, and the most rows one such read may answer
+ *  (PostgREST's default max-rows). A read that comes back AT the limit may
+ *  have been cut short without an error, so the owners it did not name are
+ *  asked one by one (fix pass: a cut-short read must never read as "not a
+ *  member" and unsubscribe an active member's device). */
+const PUSH_PRUNE_MEMBER_CHUNK = 50;
+const PUSH_PRUNE_MEMBER_READ_LIMIT = 1000;
+
+/** The owners holding at least one ACTIVE membership, or null when that
+ *  cannot be told (an error is recorded). */
+async function ownersStillMembers(sb: SupabaseClient, owners: string[], errors: string[]): Promise<Set<string> | null> {
+  const active = new Set<string>();
+  const unreadable = (message: string) => {
+    errors.push(`push-subscriptions: memberships unreadable (${message}) — nothing pruned from here`);
+    return null;
+  };
+  for (let i = 0; i < owners.length; i += PUSH_PRUNE_MEMBER_CHUNK) {
+    const part = owners.slice(i, i + PUSH_PRUNE_MEMBER_CHUNK);
+    const { data, error } = await sb
+      .from("org_members").select("uid").eq("status", "active").in("uid", part).limit(PUSH_PRUNE_MEMBER_READ_LIMIT);
+    if (error) return unreadable(error.message);
+    const found = (data as Array<{ uid: string }> | null) ?? [];
+    for (const m of found) active.add(m.uid);
+    if (found.length < PUSH_PRUNE_MEMBER_READ_LIMIT) continue;
+    // possibly cut short: ask each owner it did not name, one by one
+    for (const uid of part) {
+      if (active.has(uid)) continue;
+      const { data: one, error: oneErr } = await sb
+        .from("org_members").select("uid").eq("status", "active").eq("uid", uid).limit(1);
+      if (oneErr) return unreadable(oneErr.message);
+      if (((one as unknown[] | null) ?? []).length > 0) active.add(uid);
+    }
+  }
+  return active;
+}
+
+/** Step 7c (notifications N10 — GAP-205): remove the push_subscriptions rows
+ *  of people with no ACTIVE membership in any workspace (removed, suspended,
+ *  inactive everywhere), the rows made before PUSH_OPT_IN_SINCE (the deleted
+ *  reminders stack's, which the sender never pushes), the rows whose
+ *  endpoint names no browser push service (lib/push/endpoints.ts — never
+ *  sent to; fix pass), and (fix pass 2) the rows dated later than the run's
+ *  clock + PUSH_FUTURE_SKEW_MS (not stamped by the route) and those past a
+ *  person's newest PUSH_DEVICE_CAP (trimDevicesPastCap — the sender reads
+ *  no more; a member who wrote rows by hand before 20261211 keeps only ten).
+ *  Pages by id; stops at `stopBy`. A membership read that fails removes
+ *  nothing from that page on (fail safe: a transient error never
+ *  unsubscribes a member's device). Returns how many rows went. */
+async function prunePushSubscriptions(sb: SupabaseClient, errors: string[], stopBy: number): Promise<number> {
+  let pruned = 0;
+  let after: string | null = null;
+  const optInSince = Date.parse(PUSH_OPT_IN_SINCE);
+  const latest = Date.now() + PUSH_FUTURE_SKEW_MS;
+  /** rows each person still holds after this pass's page deletes */
+  const held = new Map<string, number>();
+  while (Date.now() < stopBy) {
+    let q = sb.from("push_subscriptions").select("id, user_id, endpoint, created_at").order("id", { ascending: true }).limit(PUSH_PRUNE_PAGE);
+    if (after) q = q.gt("id", after);
+    const { data, error } = await q;
+    if (error) {
+      // before 20260804 there is no table and nothing to prune
+      if (!isMissingSchemaError(error)) errors.push(`push-subscriptions: ${error.message}`);
+      return pruned;
+    }
+    const rows = (data as Array<{ id: string; user_id: string; endpoint: string | null; created_at: string | null }> | null) ?? [];
+    if (rows.length === 0) break;
+    after = rows[rows.length - 1].id;
+    const owners = [...new Set(rows.map((r) => r.user_id))];
+    const active = await ownersStillMembers(sb, owners, errors);
+    if (!active) return pruned;
+    const gone = new Set(rows
+      .filter((r) => {
+        const made = r.created_at ? Date.parse(r.created_at) : NaN;
+        return !active.has(r.user_id) || !(made >= optInSince) || !(made <= latest) || !pushEndpointAllowed(r.endpoint);
+      })
+      .map((r) => r.id));
+    if (gone.size > 0) {
+      const { data: removed, error: delErr } = await sb.from("push_subscriptions").delete().in("id", [...gone]).select("id");
+      if (delErr) {
+        errors.push(`push-subscriptions: ${delErr.message}`);
+        return pruned;
+      }
+      pruned += ((removed as unknown[] | null) ?? []).length;
+    }
+    for (const r of rows) if (!gone.has(r.id)) held.set(r.user_id, (held.get(r.user_id) ?? 0) + 1);
+    if (rows.length < PUSH_PRUNE_PAGE) break;
+  }
+  // (fix pass 2) each person keeps only their newest PUSH_DEVICE_CAP — for
+  // whoever this pass saw holding more (a pass cut short by the clock still
+  // trims whom it saw; the next run sees the rest)
+  for (const [uid, n] of held) {
+    if (n <= PUSH_DEVICE_CAP) continue;
+    if (Date.now() >= stopBy) break; // the next run continues
+    const trimmed = await trimDevicesPastCap(sb, uid, new Date(latest).toISOString(), errors, stopBy);
+    if (trimmed === null) return pruned;
+    pruned += trimmed;
+  }
+  return pruned;
+}
+
+/** Remove one person's registrations past their newest PUSH_DEVICE_CAP
+ *  (step 7c, fix pass 2). Reads newest first (created_at, then id), from the
+ *  cap's boundary row on, and deletes the rows after it that are not newer
+ *  than it — so a row the subscribe route stamps as new meanwhile is never
+ *  taken. Returns how many went, or null after an error (recorded). */
+async function trimDevicesPastCap(sb: SupabaseClient, uid: string, latestIso: string, errors: string[], stopBy: number): Promise<number | null> {
+  let trimmed = 0;
+  while (Date.now() < stopBy) {
+    const { data, error } = await sb.from("push_subscriptions").select("id, created_at")
+      .eq("user_id", uid).lte("created_at", latestIso)
+      .order("created_at", { ascending: false }).order("id", { ascending: false })
+      .range(PUSH_DEVICE_CAP - 1, PUSH_DEVICE_CAP - 1 + PUSH_PRUNE_PAGE);
+    if (error) { errors.push(`push-subscriptions: ${error.message}`); return null; }
+    const [boundary, ...past] = (data as Array<{ id: string; created_at: string }> | null) ?? [];
+    if (!boundary || past.length === 0) return trimmed;
+    const { data: removed, error: delErr } = await sb.from("push_subscriptions").delete()
+      .in("id", past.map((r) => r.id)).eq("user_id", uid).lte("created_at", boundary.created_at).select("id");
+    if (delErr) { errors.push(`push-subscriptions: ${delErr.message}`); return null; }
+    const n = ((removed as unknown[] | null) ?? []).length;
+    trimmed += n;
+    if (n === 0 || past.length < PUSH_PRUNE_PAGE) return trimmed;
+  }
+  return trimmed;
 }
 
 /** What one drain pass did (DELIV-11). `queueEmpty` is true only when the

@@ -14,7 +14,14 @@
 //                  bell's KIND_ICON and the feed's attentionVisual from these)
 //   group          the Notification Center's "what is it about" chip (N3
 //                  derives KIND_GROUPS from it)
-//   pushWorthy     set by the push channel (N10, GAP-205); unset = not pushed
+//   pushWorthy     the push channel (N10, GAP-205): true = interrupts the
+//                  person's device (lib/push/sendPush.ts); unset = bell /
+//                  email only. Default SMALL (GAP-205 "decide per kind … and
+//                  default that set to small"; ruled by the integrator under
+//                  DEC-90): checkout_force_released, hold_opened,
+//                  ack_requested, review_requested, ticket_mention,
+//                  ticket_assigned — what cannot wait for the person to open
+//                  the app. The push names only the kind (PUSH_TITLES).
 //   category       which "Pop-up toasts" category switch governs its toast —
 //                  the email toggles' five categories (notification_preferences
 //                  toast_on_<category>, 20261200; RT-10, notifications N4).
@@ -135,9 +142,9 @@ export const KIND_META = {
   // ── Drafting requests (the 'requests' row) ────────────────────────────────
   // Unchanged: these five were 'requests' on b9cdfdc.
   ticket_comment:           { section: "requests", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions", category: "watched_activity" },
-  ticket_mention:           { section: "requests", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "violet", group: "mentions", category: "mention" },
+  ticket_mention:           { section: "requests", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "violet", group: "mentions", category: "mention", pushWorthy: true },
   ticket_status:            { section: "requests", actionRequired: false, compliance: false, icon: "FileText", tone: "slate", group: "requests", category: "status_change" },
-  ticket_assigned:          { section: "requests", actionRequired: false, compliance: false, icon: "UserPlus", tone: "orange", group: "requests", category: "assignment" },
+  ticket_assigned:          { section: "requests", actionRequired: false, compliance: false, icon: "UserPlus", tone: "orange", group: "requests", category: "assignment", pushWorthy: true },
   request_pending_approval: { section: "requests", actionRequired: false, compliance: false, icon: "MailPlus", tone: "orange", group: "requests", category: "assignment" },
 
   // ── Documents (the 'documents' row) ───────────────────────────────────────
@@ -164,7 +171,7 @@ export const KIND_META = {
   //     cron).
   checkout_released:        { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "sla_warning" },
   checkout_stale_escalation: { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "sla_warning" },
-  checkout_force_released:  { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "status_change" },
+  checkout_force_released:  { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "status_change", pushWorthy: true },
   // checkout_force_released_fyi (notifications N15 fix pass — PROD-17): a
   //   document you WATCH was force-released by someone — the watchers' FYI
   //   beside the holder's own checkout_force_released (lib/checkoutEpisodes.ts
@@ -217,7 +224,7 @@ export const KIND_META = {
   // (the checkout thread's markup_ref post, lib/activityThread.ts — PROD-8).
   markup_request:           { section: "documents", actionRequired: false, compliance: false, icon: "FileSignature", tone: "violet", group: "requests", category: "assignment" },
   provenance_flag:          { section: "documents", actionRequired: false, compliance: false, icon: "FileText", tone: "slate", group: "other", category: "status_change" },
-  hold_opened:              { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks", category: "status_change" },
+  hold_opened:              { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks", category: "status_change", pushWorthy: true },
   hold_released:            { section: "documents", actionRequired: false, compliance: false, icon: "Check", tone: "rose", group: "locks", category: "status_change" },
   // Moved from 'other' to 'documents' — each is about a document, folder or
   // library and links into the tree (PROD-1 / TRAIL-2 / DELIV-3 / TAX-2 /
@@ -229,7 +236,7 @@ export const KIND_META = {
   owner_behind:             { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other", category: "sla_warning" },
   deletion_requested:       { section: "documents", actionRequired: false, compliance: true, icon: "Briefcase", tone: "orange", group: "other", category: "assignment" },
   // the acknowledgment family — read & acknowledge an issued revision
-  ack_requested:            { section: "documents", actionRequired: true, compliance: true, icon: "Briefcase", tone: "orange", group: "documents", category: "assignment" },
+  ack_requested:            { section: "documents", actionRequired: true, compliance: true, icon: "Briefcase", tone: "orange", group: "documents", category: "assignment", pushWorthy: true },
   ack_complete:             { section: "documents", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },
   ack_overdue:              { section: "documents", actionRequired: true, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "sla_warning" },
   ack_unsatisfiable:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "sla_warning" },
@@ -240,7 +247,7 @@ export const KIND_META = {
   // three notices that open a project — the overload DEC-81 §3 recorded and
   // DEC-90 A13 ratified as an interim only, the split ordered: those notices
   // now carry intake_quote / intake_submission (section 'projects', below).
-  review_requested:         { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "assignment" },
+  review_requested:         { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "assignment", pushWorthy: true },
   review_signed:            { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "blue", group: "documents", category: "status_change" },
   review_invalidated:       { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "assignment" },
   review_complete:          { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "status_change" },

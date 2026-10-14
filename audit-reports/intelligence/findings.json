@@ -25,17 +25,17 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 271,
+    "findings": 272,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
       "MEDIUM": 150,
-      "LOW": 53
+      "LOW": 54
     },
     "by_status": {
-      "RESOLVED": 225,
-      "OPEN": 39,
+      "RESOLVED": 230,
+      "OPEN": 35,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -4763,7 +4763,7 @@
       "id": "IRLS-6",
       "title": "20260806_intelligence_layer.sql ALTERs a table that is not created until 20260911 — the whole file rolls back on a fresh database",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -4947,7 +4947,7 @@
       "id": "IRLS-17",
       "title": "`supabase/schema.sql` cannot run on an empty database — the documented first step of a fresh install fails at line 328",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness, `npm run test:db`)",
       "blast_radius": null,
@@ -4970,7 +4970,7 @@
       "id": "IRLS-19",
       "title": "`20261075`'s final SELECT names its `check` column bare — a syntax error, so the pasted file changes nothing and the checkout-episode seal never installs",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness; the paste protocol is the editor's single simple-query message)",
       "blast_radius": null,
@@ -6807,7 +6807,7 @@
       "id": "IRLS-18",
       "title": "`20260630_perf_indexes.sql` indexes `team_members` before `20260707` creates it — the whole file rolls back on a fresh replay",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness)",
       "blast_radius": null,
@@ -6823,6 +6823,32 @@
       ],
       "refuted": false,
       "summary": "A fresh install replays the sequence in filename order and gets the RLS hot-path indexes the file was written for (nodevisible()'s per-row lookups) only if the operator notices the error and re-pastes the file later.",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/16-persistence-rls.md"
+    },
+    {
+      "id": "IRLS-20",
+      "title": "The CI workflow's header tells authors to mirror every schema change into `supabase/schema.sql` — the opposite of DB-8 and of `IRLS-17`'s rule",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read on branch `fleet/I-27-fresh-install-replay`; the comment is unchanged since 2026-08-18, before DB-8 resolved on 2026-09-17)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/data-portability/page.tsx:55",
+        "docs/ARCHITECTURE.md:950",
+        "supabase/schema.sql:1-34",
+        "lib/__tests__/schemaBootstrapCensus.test.ts",
+        "lib/__tests__/intelRoundGFreshInstallReplay.test.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An author follows the CI comment and mirrors a new migration into schema.sql. The default suite catches two shapes of mirror: - a mirrored function, policy or trigger, through schemaBootstrapCensus.test.ts's frozen set; - a mirrored table that references a table created further down, through IRLS-17's one-script census in intelRoundGFreshInstallReplay.test.ts.",
       "area": "intelligence",
       "report": "audit-reports/intelligence/16-persistence-rls.md"
     },

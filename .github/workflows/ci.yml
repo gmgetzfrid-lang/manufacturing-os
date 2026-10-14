@@ -13,10 +13,13 @@
 # Recommended: in GitHub → Settings → Branches, protect `master` and require
 # the "verify" check — then a red build physically cannot be merged.
 #
-# Migration discipline (manual until a supabase CLI pipeline is set up):
-# every schema change ships as an idempotent file in supabase/migrations/ AND
-# is mirrored into supabase/schema.sql; apply migrations in the Supabase SQL
-# editor BEFORE merging code that depends on them.
+# Migration discipline (manual until a supabase CLI pipeline is set up; DB-8):
+# every schema change ships as ONE idempotent numbered file in
+# supabase/migrations/ -- the only source of truth -- applied in the Supabase
+# SQL editor BEFORE merging code that depends on it. supabase/schema.sql is the
+# frozen pre-migration baseline: run once on an empty database, then every
+# numbered migration in filename order; it is never edited to copy a migration
+# and never re-run on a live database.
 
 name: CI
 

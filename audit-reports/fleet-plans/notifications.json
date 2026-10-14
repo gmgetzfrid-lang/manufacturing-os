@@ -501,6 +501,28 @@
    "sequencingNotes": [
     "Added by the integrator at the N15 merge, 2026-10-14 (DEC-31)."
    ]
+  },
+  {
+   "name": "N17 PUSH PRODUCERS AND SIGN-OUT — the push-worthy kinds written outside emit() reach the push channel, and signing out of a shared browser stops that person's device notifications there",
+   "findings": [
+    "OS-14 (MEDIUM; opened by N10 PUSH 2026-10-14, assigned by the integrator at the N10 merge, DEC-31): the ticket routes' own fan-out (app/api/tickets/comment/route.ts ticket_mention, app/api/tickets/workflow-action/route.ts ticket_assigned) and the roster requests in lib/acknowledgments.ts (ack_requested) and lib/reviewControl.ts (review_requested) reach the push leg after their bell rows land (sendPushSafe on the server path, or /api/push/notify from a browser writer, as lib/notify/dispatch.ts does); never for a redacted or refused row; the settings card's two lists follow (PUSH_NOT_SENT_YET → PUSH_SENT_TODAY); every recipient's bell row and email exactly as today",
+    "OS-15 (LOW; opened by N10 PUSH 2026-10-14, assigned at the N10 merge): an explicit sign-out removes the signed-out person's push_subscriptions row for this browser's endpoint, best-effort and never blocking the sign-out (POST /api/push/unsubscribe with the still-valid token before SIGN_OUT; DEC-44 §3's worker contract unchanged); a test drives the sign-out path"
+   ],
+   "files": [
+    "app/api/tickets/comment/route.ts, app/api/tickets/workflow-action/route.ts (drafting-flow's files: edit only when no drafting-flow package holding them is in flight)",
+    "lib/acknowledgments.ts, lib/reviewControl.ts (document-control's files: the same rule)",
+    "the sign-out sites (identity-and-session's) and lib/swSession.ts",
+    "components/settings/PushOptIn.tsx (the card's lists), lib/__tests__/pushOptIn.test.ts, lib/__tests__/pushChannel.test.ts",
+    "tests: a push request after each producer's bell row and none for a redacted or refused row; the sign-out unsubscribe precedes the session's end"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "notifications N10 merged (2026-10-14; DEC-108, lib/push/sendPush.ts sendPushSafe, /api/push/notify)",
+    "no running package edits app/api/tickets/comment or workflow-action, lib/acknowledgments.ts, lib/reviewControl.ts or the sign-out sites at launch (check every fleet plan's files list; drafting-flow DF-P5 / DF-P6 / DF-P7 edit the workflow-action route)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the N10 merge, 2026-10-14 (DEC-31). Regression-first: a push is an extra channel — every bell row and email stays exactly as today."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

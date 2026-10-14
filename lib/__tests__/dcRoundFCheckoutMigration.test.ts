@@ -72,12 +72,23 @@ describe("20261075 — checkout_episodes seal guard (DCK-14)", () => {
     expect(literalsStripped.trim().split(";").filter((s) => s.trim()).length).toBe(1);
     expect(tail).toMatch(/SELECT 'guard installed: BEFORE UPDATE ON checkout_episodes, FOR EACH ROW'::text AS check,/);
     expect(tail).toMatch(/AS ok,\s*\n\s*NULL::text AS n/);
-    expect(tail).toMatch(/SELECT check, NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;/);
+    expect(tail).toMatch(/SELECT "check", NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;/);
     expect((tail.match(/UNION ALL/g) ?? []).length).toBe(5);
     // the inventory is aggregate counts only — never a customer row
     const inv = between(body, "CREATE TEMP TABLE _dc_roundf_episode_seal_inventory", "BEGIN;");
     expect(inv.match(/SELECT '/g)?.length).toBe(4);
     expect(inv.match(/COUNT\(\*\)::text/g)?.length).toBe(4);
+  });
+
+  it("IRLS-19: the reserved word `check` is never named bare — only as a column label (AS check) or quoted (\"check\"), so the whole script parses as one paste", () => {
+    // PostgreSQL parses the whole simple-query message before running any of
+    // it, so one bare `check` in a select list (a syntax error) left the file
+    // applying nothing at all. Comments and string literals are stripped first.
+    const code = stripSqlComments(sql).replace(/'(?:[^']|'')*'/g, "''");
+    const bare = [...code.matchAll(/(^|[^"\w])check(?![\w"])/gi)].filter((m) => !/\bAS\s+$/i.test(code.slice(Math.max(0, m.index! - 8), m.index! + m[1].length)));
+    expect(bare.map((m) => code.slice(Math.max(0, m.index! - 30), m.index! + 40).replace(/\s+/g, " "))).toEqual([]);
+    expect(code.match(/AS check\b/g)?.length).toBe(2);
+    expect(code.match(/"check"/g)?.length).toBe(1);
   });
 
   it("probes follow the rules: prosrc is verbatim (an apostrophe inside a literal is ''''); the trigger probe deparses via pg_get_triggerdef", () => {

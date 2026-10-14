@@ -182,7 +182,19 @@ describe("I-17: the replay's recorded defects and decisions are well-formed", ()
     }
     for (const f of Object.keys(OPERATOR_SWITCHES)) expect(migrations, f).toContain(f);
     for (const c of CHECKPOINTS) expect(migrations.some((m) => m.startsWith(c)), c).toBe(true);
-    expect(BASELINE_KNOWN_ERRORS.length).toBeGreaterThan(0);
+    // Empty since intelligence I-27 (IRLS-17 / IRLS-18 / IRLS-19): the fresh
+    // replay — schema.sql as one script, then every file in filename order —
+    // has no known defect left. A new one is listed with its finding and owner.
+    expect(BASELINE_KNOWN_ERRORS).toEqual([]);
+    expect(OUT_OF_ORDER_FILES).toEqual([]);
+  });
+
+  it("the replay sends supabase/schema.sql as ONE simple-query message, the editor's way (IRLS-17), never statement by statement", () => {
+    const replay = read("lib/__tests__/rls/replay.ts");
+    expect(replay).toMatch(/const baseline = runAsPaste\(conn, REPLAY_DB, join\(repoRoot, "supabase", "schema\.sql"\), "supabase\/schema\.sql"\);/);
+    expect(replay).not.toMatch(/"schema\.sql"\), stopOnError/);
+    // runAsPaste is the migrations' transport: -c (one message), with the size stop
+    expect(replay).toMatch(/function runAsPaste\([\s\S]*?if \(bytes > MAX_C_BYTES\) \{\s+throw new Error\([\s\S]*?runPsql\(conn, db, "postgres", \{ sql: body \}, settings\)/);
   });
 
   it("the decision table names each function once, and no function is both a trigger and callable", () => {

@@ -6,7 +6,7 @@
 -- existed before supabase/migrations/ began. Every table, function, policy
 -- and trigger added since — including the RLS policies for every table this
 -- file creates after the baseline block (document_holds, work_packages,
--- distribution_acks, projects, milestones, notifications, export
+-- distribution_acks, projects, notifications, export
 -- destinations, …) — lives ONLY in the numbered migrations, which are the
 -- single source of truth (DB-8; lib/__tests__/migrationSourceOfTruth.test.ts).
 --
@@ -25,6 +25,13 @@
 --
 -- Never re-run this file on a live database: its policy and function bodies
 -- are frozen at the baseline and would restore over later hardening (DB-8).
+--
+-- It runs as ONE script on an empty database — the way the Supabase SQL
+-- editor sends a paste — with zero errors (intelligence IRLS-17; the database
+-- harness, `npm run test:db`, replays it that way, then every numbered
+-- migration). Nothing here may reference a table created further down: the
+-- tables the migrations make that would (project_documents, milestones) live
+-- only in their migrations.
 
 -- ============================================================
 -- TABLES
@@ -315,20 +322,10 @@ RETURNS TEXT LANGUAGE sql IMMUTABLE AS $fn$
   SELECT lower(regexp_replace(COALESCE(t,''), '[^a-zA-Z0-9]+', '', 'g'));
 $fn$;
 
--- project_documents — join table populated by checkout_sessions trigger
-CREATE TABLE IF NOT EXISTS project_documents (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  org_id        UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-  project_id    UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  document_id   UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-  first_seen_at TIMESTAMPTZ DEFAULT NOW(),
-  last_seen_at  TIMESTAMPTZ DEFAULT NOW(),
-  source        TEXT NOT NULL DEFAULT 'checkout' CHECK (source IN ('checkout','manual')),
-  UNIQUE (project_id, document_id)
-);
-CREATE INDEX IF NOT EXISTS project_documents_project_idx  ON project_documents(project_id);
-CREATE INDEX IF NOT EXISTS project_documents_document_idx ON project_documents(document_id);
-CREATE INDEX IF NOT EXISTS project_documents_org_idx      ON project_documents(org_id);
+-- project_documents — the join table the checkout_sessions trigger fills —
+-- lives only in migrations/20260609_phase1_normalization.sql (table, indexes,
+-- RLS, policies, trigger). It references projects, which this file creates
+-- further down, so a copy here stopped the one-script run (IRLS-17).
 
 -- document_assets — depends on `assets` table which lives only in
 -- migrations/20260603_asset_registry.sql. Wrap in an existence check so
@@ -397,7 +394,10 @@ CREATE INDEX IF NOT EXISTS document_versions_record_created_idx ON document_vers
 -- Phase 2 search foundation for revisions (see migrations/20260610_phase2_search_completion.sql)
 ALTER TABLE document_versions ADD COLUMN IF NOT EXISTS search_tsv tsvector;
 CREATE INDEX IF NOT EXISTS document_versions_search_tsv_idx ON document_versions USING GIN(search_tsv);
-CREATE INDEX IF NOT EXISTS document_versions_archived_idx ON document_versions(org_id, archived_at) WHERE archived_at IS NOT NULL;
+-- document_versions.archived_at / archive_id and document_versions_archived_idx
+-- come from migrations/20260808_archive_foundation.sql (this file's
+-- document_versions has no archived_at column, so the index cannot be built
+-- here: IRLS-17).
 
 -- Archive foundation (see migrations/20260808_archive_foundation.sql): where an
 -- org keeps its archives + their storage quota, and a catalog of every archive
@@ -498,7 +498,8 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS search_tsv tsvector;
 CREATE INDEX IF NOT EXISTS tickets_search_tsv_idx ON tickets USING GIN(search_tsv);
 
 -- Request numbering: atomic per-(org, year) counter + fast number search
--- (see migration 20260724_ticket_numbering.sql).CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- (see migration 20260724_ticket_numbering.sql).
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS tickets_ticket_id_trgm_idx ON tickets USING GIN (ticket_id gin_trgm_ops);
 
 CREATE TABLE IF NOT EXISTS ticket_number_counters (
@@ -626,41 +627,10 @@ CREATE INDEX IF NOT EXISTS document_holds_org_released_idx
   ON document_holds(org_id, released_at) WHERE released_at IS NOT NULL;
 
 -- ─── Milestones (Phase 7) ───────────────────────────────────────
--- See migrations/20260614_phase7_milestones.sql for the full design.
-CREATE TABLE IF NOT EXISTS milestones (
-  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  org_id                UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-  project_id            UUID REFERENCES projects(id) ON DELETE SET NULL,
-  document_id           UUID REFERENCES documents(id) ON DELETE SET NULL,
-  name                  TEXT NOT NULL,
-  description           TEXT,
-  weight                NUMERIC NOT NULL DEFAULT 1 CHECK (weight >= 0),
-  planned_at            TIMESTAMPTZ NOT NULL,
-  actual_at             TIMESTAMPTZ,
-  first_completed_at    TIMESTAMPTZ,
-  status                TEXT NOT NULL DEFAULT 'planned'
-                        CHECK (status IN ('planned','in_progress','completed','missed','blocked')),
-  linked_revision_label TEXT,
-  linked_ticket_id      UUID REFERENCES tickets(id) ON DELETE SET NULL,
-  source                TEXT NOT NULL DEFAULT 'manual'
-                        CHECK (source IN ('manual','p6','msproject','csv')),
-  external_ref          TEXT,
-  created_at            TIMESTAMPTZ DEFAULT NOW(),
-  created_by            UUID NOT NULL,
-  created_by_name       TEXT,
-  updated_at            TIMESTAMPTZ DEFAULT NOW(),
-  updated_by            UUID,
-  completed_by          UUID,
-  completed_by_name     TEXT,
-  status_reason         TEXT
-);
-CREATE INDEX IF NOT EXISTS milestones_org_idx         ON milestones(org_id);
-CREATE INDEX IF NOT EXISTS milestones_project_idx     ON milestones(project_id) WHERE project_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS milestones_document_idx    ON milestones(document_id) WHERE document_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS milestones_org_planned_idx ON milestones(org_id, planned_at);
-CREATE INDEX IF NOT EXISTS milestones_org_source_idx  ON milestones(org_id, source);
-CREATE UNIQUE INDEX IF NOT EXISTS milestones_external_ref_uniq
-  ON milestones(org_id, source, external_ref) WHERE external_ref IS NOT NULL;
+-- milestones lives only in migrations/20260614_phase7_milestones.sql and the
+-- milestone migrations after it (columns, indexes, RLS, policies). It
+-- references projects, which this file creates further down, so a copy here
+-- stopped the one-script run (IRLS-17).
 
 -- Phase B email notification queue + user prefs (see migrations/20260529_phase_b_notifications.sql)
 CREATE TABLE IF NOT EXISTS email_notifications (
@@ -1389,10 +1359,8 @@ ALTER TABLE document_supersessions ENABLE ROW LEVEL SECURITY;     -- policies: 2
 ALTER TABLE plants ENABLE ROW LEVEL SECURITY;                     -- policies: 20260606
 ALTER TABLE units ENABLE ROW LEVEL SECURITY;                      -- policies: 20260606
 ALTER TABLE systems ENABLE ROW LEVEL SECURITY;                    -- policies: 20260606
-ALTER TABLE project_documents ENABLE ROW LEVEL SECURITY;          -- policies: 20260609
-ALTER TABLE document_assets ENABLE ROW LEVEL SECURITY;            -- policies: 20260609
+ALTER TABLE IF EXISTS document_assets ENABLE ROW LEVEL SECURITY;  -- policies: 20260609 (made here only when assets exists)
 ALTER TABLE document_holds ENABLE ROW LEVEL SECURITY;             -- policies: 20260612 / 20260901
-ALTER TABLE milestones ENABLE ROW LEVEL SECURITY;                 -- policies: 20260614
 ALTER TABLE email_notifications ENABLE ROW LEVEL SECURITY;        -- policies: 20260605
 ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;   -- policies: 20260605
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;              -- policies: 20260621 / 20260723

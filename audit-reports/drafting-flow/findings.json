@@ -26,9 +26,9 @@
       "LOW": 27
     },
     "by_status": {
-      "RESOLVED": 46,
+      "RESOLVED": 47,
       "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
-      "OPEN": 88,
+      "OPEN": 87,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
       "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)": 1,
       "REFUTED": 4,
@@ -2828,7 +2828,7 @@
       "id": "ROUTE-3",
       "title": "Dead notification plumbing that the code documents as live: the ticket-follower resolver, the engineer-initial routing branch, and the entire web-push channel",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

@@ -21,5 +21,16 @@ CREATE INDEX IF NOT EXISTS collections_org_library_idx
 CREATE INDEX IF NOT EXISTS org_members_uid_org_active_idx
   ON org_members (uid, org_id) WHERE status = 'active';
 
-CREATE INDEX IF NOT EXISTS team_members_uid_idx
-  ON team_members (uid);
+-- team_members is created by 20260707_teams.sql, a week later in filename
+-- order, and 20260707 builds this same index with the table. On a fresh
+-- install the table does not exist yet here, and an unguarded statement
+-- rolled this whole file back (intelligence IRLS-18), so it runs only when the
+-- table exists: on a database that already has team_members it is the
+-- statement it always was (a no-op, the index is there).
+DO $$
+BEGIN
+  IF to_regclass('public.team_members') IS NOT NULL THEN
+    CREATE INDEX IF NOT EXISTS team_members_uid_idx
+      ON team_members (uid);
+  END IF;
+END $$;
