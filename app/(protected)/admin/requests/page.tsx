@@ -27,9 +27,11 @@ import {
   loadSlaDefaults,
   parseSlaDays,
   saveSlaDefault,
+  slaClockState,
   SLA_WARN_PERCENT,
   storedWindowUsable,
   untargetedImpact,
+  untargetedImpactQuestion,
   warnAfterDays,
   type SlaDefaultRow,
 } from '@/lib/slaDefaultsEditor';
@@ -70,6 +72,9 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
 export default function DraftingConfigPage() {
   const { activeOrgId } = useRole();
   const [settings, setSettings] = useState<OrgDraftingSettings | null>(null);
+  // The request types as last loaded or saved (DF-P13): the due-date windows
+  // are listed for these, never for an unsaved edit of the form above.
+  const [savedRequestTypes, setSavedRequestTypes] = useState<SelectOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -92,7 +97,9 @@ export default function DraftingConfigPage() {
           .eq('org_id', activeOrgId)
           .eq('key', 'drafting')
           .single();
-        setSettings(data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS);
+        const loaded = data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS;
+        setSettings(loaded);
+        setSavedRequestTypes(loaded.requestTypes?.options ?? []);
       } catch (e) {
         console.error("Failed to load settings:", e);
       } finally {
@@ -110,6 +117,7 @@ export default function DraftingConfigPage() {
         .from('org_configurations')
         .upsert({ org_id: activeOrgId, key: 'drafting', data: settings }, { onConflict: 'org_id,key' });
       if (error) throw error;
+      setSavedRequestTypes(settings.requestTypes?.options ?? []);
       await appAlert("Configuration saved successfully.");
     } catch (e) {
       console.error("Save failed:", e);
@@ -176,6 +184,14 @@ export default function DraftingConfigPage() {
   }
 
   if (!settings) return null;
+
+  // A request type added, renamed or removed above and not yet saved: the
+  // windows below follow the saved form until Save Changes.
+  const typeValues = (opts: SelectOption[] | undefined) =>
+    new Set((opts ?? []).map((o) => String(o.value ?? '').trim()).filter(Boolean));
+  const editedTypes = typeValues(settings.requestTypes.options);
+  const savedTypes = typeValues(savedRequestTypes);
+  const requestTypesUnsaved = editedTypes.size !== savedTypes.size || [...editedTypes].some((v) => !savedTypes.has(v));
 
   return (
     <PageShell width="work">
@@ -244,7 +260,7 @@ export default function DraftingConfigPage() {
           />
 
           {/* SECTION: DUE-DATE WINDOWS (sla_defaults — drafting-flow DF-P13) */}
-          <SlaDefaultsSection orgId={activeOrgId} requestTypes={settings.requestTypes.options} />
+          <SlaDefaultsSection orgId={activeOrgId} requestTypes={savedRequestTypes} requestTypesUnsaved={requestTypesUnsaved} />
 
           {/* SECTION: UNITS */}
           <ConfigSection 
@@ -357,7 +373,7 @@ type SlaLoadState =
   | { kind: "ready"; rows: SlaDefaultRow[] }
   | { kind: "error"; missing: boolean; error: string };
 
-function SlaDefaultsSection({ orgId, requestTypes }: { orgId: string | null; requestTypes: SelectOption[] }) {
+function SlaDefaultsSection({ orgId, requestTypes, requestTypesUnsaved }: { orgId: string | null; requestTypes: SelectOption[]; requestTypesUnsaved: boolean }) {
   const [load, setLoad] = useState<SlaLoadState>({ kind: "loading" });
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -373,8 +389,9 @@ function SlaDefaultsSection({ orgId, requestTypes }: { orgId: string | null; req
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // The request types on the form (blank values skipped, each once), then any
-  // stored window whose type is no longer on the form, so it can be removed.
+  // The request types on the SAVED form (blank values skipped, each once),
+  // then any stored window whose type is no longer on it, so it can be
+  // removed. An unsaved edit of the form never adds or renames a row here.
   const formTypes: Array<{ value: string; label: string; onForm: boolean }> = [];
   for (const o of requestTypes) {
     const value = String(o.value ?? '').trim();
@@ -394,23 +411,14 @@ function SlaDefaultsSection({ orgId, requestTypes }: { orgId: string | null; req
     setNotice(null);
     try {
       const impact = await untargetedImpact(supabase, orgId, type, parsed.days);
-      if (!impact.ok) {
-        const go = await appConfirm({
-          title: "Save this window?",
-          message: `Whether this window puts open ${label} requests with no due date of their own past due could not be checked (${impact.error}). Any filed more than ${parsed.days} day(s) ago get an "Overdue" notice at the next SLA run (the nightly maintenance job). Save anyway?`,
-          confirmLabel: "Save window",
-          tone: "danger",
-        });
-        if (!go) return;
-      } else if (impact.impact.overdue + impact.impact.dueSoon > 0) {
-        const { overdue, dueSoon } = impact.impact;
-        const go = await appConfirm({
-          title: "Save this window?",
-          message: `${overdue} open ${label} request(s) with no due date of their own were filed more than ${parsed.days} day(s) ago: the next SLA run (the nightly maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester. ${dueSoon} more are past ${warnAfterDays(parsed.days)} day(s) and get a "Due soon" notice. Save anyway?`,
-          confirmLabel: "Save window",
-          tone: "danger",
-        });
-        if (!go) return;
+      if (!impact.ok || impact.impact.overdue + impact.impact.dueSoon > 0) {
+        // What happens to them depends on whether the SLA clock has started
+        // (20261195) — read as the clock's own gate reads it.
+        const message = untargetedImpactQuestion(label, parsed.days, impact, await slaClockState(supabase));
+        if (message) {
+          const go = await appConfirm({ title: "Save this window?", message, confirmLabel: "Save window", tone: "danger" });
+          if (!go) return;
+        }
       }
       const w = await saveSlaDefault(supabase, orgId, type, parsed.days);
       if (!w.ok) {
@@ -418,7 +426,7 @@ function SlaDefaultsSection({ orgId, requestTypes }: { orgId: string | null; req
         return;
       }
       setDrafts((d) => { const next = { ...d }; delete next[type]; return next; });
-      setNotice({ type, tone: "ok", text: `Saved: ${label} requests are due ${parsed.days} day(s) after filing.` });
+      setNotice({ type, tone: "ok", text: `Saved: ${label} requests filed without a requested date are due ${parsed.days} day(s) after filing.` });
       await refresh(true);
     } finally {
       setBusy(null);
@@ -459,6 +467,11 @@ function SlaDefaultsSection({ orgId, requestTypes }: { orgId: string | null; req
           Open requests of a type that have no due date of their own are timed from their filing date with the same window.
           Each type is saved on its own; a type with no window uses the built-in one.
         </p>
+        {requestTypesUnsaved && (
+          <p role="status" className="mt-1 text-xs text-amber-700">
+            The request types above have unsaved changes. These windows follow the saved request form: save it (Save Changes) to set a window for a new or renamed type.
+          </p>
+        )}
       </div>
       <div className="p-6">
         {!orgId || load.kind === "loading" ? (
@@ -525,7 +538,9 @@ function SlaDefaultsSection({ orgId, requestTypes }: { orgId: string | null; req
                     </div>
                     {row && !usable && (
                       <div role="alert" className="text-[11px] text-amber-700">
-                        The stored window ({String(row.defaultDays)}) is outside 1–{SLA_DEFAULT_DAYS_MAX} days: new requests use the built-in {builtInSlaDays(t.value)} day(s). Enter a window, or use the built-in one.
+                        The stored window ({String(row.defaultDays)}) is outside 1–{SLA_DEFAULT_DAYS_MAX} days: new requests use the built-in {builtInSlaDays(t.value)} day(s).
+                        {row.defaultDays > 0 && ` The SLA clock does not apply this bound yet: until the window is corrected, it still reads the stored value for open ${t.label} requests with no due date of their own.`}
+                        {' '}Enter a window, or use the built-in one.
                       </div>
                     )}
                     {notice && notice.type === t.value && (

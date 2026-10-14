@@ -22,7 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkedWrite, isMissingSchemaError, type CheckedWriteFailure } from "@/lib/checkedWrite";
 import { DEFAULT_SLA_DAYS, SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";
 import { DRAFTING_CONFIG_EDITORS } from "@/lib/adminSurfaces";
-import { SLA_WARN_FRACTION } from "@/lib/ticketSla";
+import { SLA_CLOCK_COLUMN, SLA_CLOCK_MIGRATION, SLA_WARN_FRACTION } from "@/lib/ticketSla";
 
 /** The migration that makes the editor set the database's write rule. */
 export const SLA_DEFAULTS_RAIL_MIGRATION = "20261218";
@@ -162,4 +162,67 @@ export async function untargetedImpact(
   const err = over.error ?? soon.error;
   if (err) return { ok: false, error: err.message };
   return { ok: true, impact: { overdue: over.count ?? 0, dueSoon: soon.count ?? 0 } };
+}
+
+/** Whether the SLA clock has started, read exactly as the clock's own gate
+ *  reads it (lib/ticketSla.ts runTicketSlaScan, step 0): SLA_CLOCK_COLUMN on
+ *  tickets exists once SLA_CLOCK_MIGRATION (20261195) is pasted. Before that
+ *  the nightly run sends nothing, and the paste itself records every open
+ *  request then past its window as overdue WITHOUT a notice of its own, with
+ *  ONE summary notice to each workspace's assignment queue (20261195 §5).
+ *  "unknown": the probe failed for another reason. */
+export type SlaClockRead =
+  | { state: "started" }
+  | { state: "not_started" }
+  | { state: "unknown"; error: string };
+
+export async function slaClockState(sb: SupabaseClient): Promise<SlaClockRead> {
+  const { error } = await sb.from("tickets").select(SLA_CLOCK_COLUMN).limit(1);
+  if (!error) return { state: "started" };
+  const code = (error as { code?: string }).code;
+  if ((code === "42703" || code === "PGRST204") && (error.message ?? "").includes(SLA_CLOCK_COLUMN)) return { state: "not_started" };
+  return { state: "unknown", error: error.message };
+}
+
+/** The question the editor asks before saving `days` for a type, or null when
+ *  nothing would fall due (EDGE-7's residual). What happens to the requests
+ *  it counts depends on whether the SLA clock has started (slaClockState):
+ *  once it has, the next nightly run sends each its own notice; before it
+ *  has, nothing is sent until 20261195 is pasted, and that paste records the
+ *  ones then past their window as overdue with one summary notice to the
+ *  queue — never a notice each. */
+export function untargetedImpactQuestion(
+  label: string,
+  days: number,
+  impact: { ok: true; impact: SlaUntargetedImpact } | { ok: false; error: string },
+  clock: SlaClockRead,
+): string | null {
+  const M = SLA_CLOCK_MIGRATION;
+  const started = `the next SLA run (the nightly maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester`;
+  const atClockStart = `recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many`;
+  const notStarted = `The SLA clock has not started yet (migration ${M} is not applied), so nothing is sent for them now`;
+  if (!impact.ok) {
+    const lead = `Whether this window puts open ${label} requests with no due date of their own past due could not be checked (${impact.error}).`;
+    const nightly = `get an "Overdue" notice at the next SLA run (the nightly maintenance job)`;
+    const atPaste = `when ${M} is applied, any filed more than ${days} day(s) before then are ${atClockStart}`;
+    const tail =
+      clock.state === "started"
+        ? `Any filed more than ${days} day(s) ago ${nightly}.`
+        : clock.state === "not_started"
+          ? `${notStarted}: ${atPaste}.`
+          : `Whether the SLA clock has started could not be read either (${clock.error}): if it has, any filed more than ${days} day(s) ago ${nightly}; if it has not, ${atPaste}.`;
+    return `${lead} ${tail} Save anyway?`;
+  }
+  const { overdue, dueSoon } = impact.impact;
+  if (overdue + dueSoon === 0) return null;
+  const lead = `${overdue} open ${label} request(s) with no due date of their own were filed more than ${days} day(s) ago`;
+  if (clock.state === "started") {
+    return `${lead}: ${started}. ${dueSoon} more are past ${warnAfterDays(days)} day(s) and get a "Due soon" notice. Save anyway?`;
+  }
+  const atPaste = `when ${M} is applied, the ones then past this window are ${atClockStart}`;
+  const soon = `${dueSoon} more are past ${warnAfterDays(days)} day(s): once the clock has started, the SLA run sends each one still inside this window a "Due soon" notice.`;
+  if (clock.state === "not_started") {
+    return `${lead}. ${notStarted}: ${atPaste}. ${soon} Save anyway?`;
+  }
+  return `${lead}. Whether the SLA clock has started could not be read (${clock.error}): if it has, ${started}; if it has not, ${atPaste}. ${soon} Save anyway?`;
 }

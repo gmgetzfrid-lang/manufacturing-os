@@ -272,4 +272,29 @@ CREATE POLICY "sla_defaults_member_all" ON sla_defaults
       admin("postgres", `DROP DATABASE ${scratch}`);
     }
   });
+
+  it("the prerequisite refuses without 20260605's sla_defaults_member_all (RLS still on, the policy dropped by hand) and changes nothing", () => {
+    const scratch = "mos_p13_prereq_member";
+    admin("postgres", `CREATE DATABASE ${scratch} TEMPLATE ${db}`);
+    try {
+      toHead(scratch);
+      admin(scratch, `DROP POLICY "sla_defaults_member_all" ON sla_defaults;`);
+      expect(admin(scratch, `SELECT relrowsecurity FROM pg_class WHERE oid = 'public.sla_defaults'::regclass`)).toBe("t");
+      const r = runPsql(mosDb().conn!, scratch, "postgres", { sql: body() });
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/20261218 needs sla_defaults_member_all \(20260605\); nothing was changed/);
+      expect(admin(scratch, `SELECT count(*) FROM pg_policies WHERE tablename = 'sla_defaults'`)).toBe("0");
+      expect(admin(scratch, `SELECT count(*) FROM pg_constraint WHERE conrelid = 'sla_defaults'::regclass AND conname = 'sla_defaults_default_days_bounded'`)).toBe("0");
+      // with the member policy put back (20260605's body), the same paste goes through
+      admin(scratch, `CREATE POLICY "sla_defaults_member_all" ON sla_defaults
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM org_members WHERE org_id = sla_defaults.org_id AND uid = auth.uid() AND status = 'active'))
+  WITH CHECK (EXISTS (SELECT 1 FROM org_members WHERE org_id = sla_defaults.org_id AND uid = auth.uid() AND status = 'active'));`);
+      const ok = runPsql(mosDb().conn!, scratch, "postgres", { sql: body() });
+      expect(ok.errors, ok.stderr).toEqual([]);
+      expect(admin(scratch, `SELECT count(*) FROM pg_policies WHERE tablename = 'sla_defaults'`)).toBe("4");
+    } finally {
+      admin("postgres", `DROP DATABASE ${scratch}`);
+    }
+  });
 });

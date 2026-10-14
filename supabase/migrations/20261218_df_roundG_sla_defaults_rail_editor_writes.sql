@@ -60,9 +60,11 @@
 -- the editor shows.
 -- PASTE ORDER: after 20261209 (recommended — the same editor set; not
 -- required: this file needs only sla_defaults (20260529), its member policy
--- (20260605) and caller_holds_any_role (20261045), and refuses without them,
--- changing nothing). Never re-paste 20260605 to "restore" sla_defaults: it is
--- harmless after this file (point 2) but restores nothing.
+-- sla_defaults_member_all (20260605) and caller_holds_any_role (20261045);
+-- the prerequisite block checks each of the three by name and refuses
+-- without any of them, changing nothing). Never re-paste 20260605 to
+-- "restore" sla_defaults: it is harmless after this file (point 2) but
+-- restores nothing.
 -- Re-runnable (DROP POLICY IF EXISTS / CREATE POLICY; the CHECK is added only
 -- when missing and validated when it can be).
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
@@ -75,6 +77,14 @@ DO $$
 BEGIN
   IF to_regclass('public.sla_defaults') IS NULL THEN
     RAISE EXCEPTION '20261218 needs sla_defaults (20260529); nothing was changed.';
+  END IF;
+  -- The RESTRICTIVE policies below only narrow: without the permissive
+  -- member policy they would admit nobody, and RLS (still on) would refuse
+  -- every member's read and write.
+  IF NOT EXISTS (SELECT 1 FROM pg_policies
+                  WHERE schemaname = 'public' AND tablename = 'sla_defaults'
+                    AND policyname = 'sla_defaults_member_all') THEN
+    RAISE EXCEPTION '20261218 needs sla_defaults_member_all (20260605); nothing was changed.';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'caller_holds_any_role') THEN
     RAISE EXCEPTION '20261218 needs caller_holds_any_role (20261045); nothing was changed.';

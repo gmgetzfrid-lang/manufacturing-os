@@ -11,6 +11,9 @@
 //     and who saves these windows; "Use built-in" is a checked delete;
 //   * saving a window that would put open requests with no due date of their
 //     own past due asks first (EDGE-7's residual), and nothing is written on No;
+//     what the question says happens to them follows whether the SLA clock has
+//     started (tickets.outcome, 20261195 — the clock's own gate);
+//   * the rows follow the SAVED request form, never an unsaved edit of it;
 //   * regression: the page's request-form save is exactly as before.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -29,6 +32,8 @@ const h = vi.hoisted(() => ({
   overdue: 0,
   dueSoon: 0,
   countError: null as null | { message: string },
+  clockError: null as null | { code: string; message: string },
+  clockProbes: [] as string[],
   writes: [] as Array<{ table: string; op: string; row?: Row; opts?: unknown; filters: Filter[]; selected: string | null }>,
   counts: [] as Filter[][],
   confirmAnswer: true,
@@ -43,6 +48,7 @@ vi.mock("@/lib/supabase", () => {
     let row: Row | undefined;
     let opts: unknown;
     let selected: string | null = null;
+    let cols = "";
     let head = false;
     const filters: Filter[] = [];
     const answer = (): Row => {
@@ -50,6 +56,11 @@ vi.mock("@/lib/supabase", () => {
         h.counts.push([...filters]);
         if (h.countError) return { data: null, error: h.countError, count: null };
         return { data: null, error: null, count: filters.some((f) => f[0] === "gt") ? h.dueSoon : h.overdue };
+      }
+      if (op === "select" && table === "tickets") {
+        // the SLA clock's gate: tickets.outcome exists once 20261195 is pasted
+        h.clockProbes.push(cols);
+        return h.clockError ? { data: null, error: h.clockError } : { data: [], error: null };
       }
       if (table === "org_configurations") {
         if (op === "upsert") { h.writes.push({ table, op, row, opts, filters, selected }); return { data: null, error: h.configUpsertError }; }
@@ -82,7 +93,8 @@ vi.mock("@/lib/supabase", () => {
       return { data: null, error: null };
     };
     const b: Record<string, unknown> = {
-      select: (cols: string, o?: { head?: boolean }) => { if (op === "select") { head = !!o?.head; } else { selected = cols; } return b; },
+      select: (c: string, o?: { head?: boolean }) => { if (op === "select") { cols = c; head = !!o?.head; } else { selected = c; } return b; },
+      limit: () => b,
       upsert: (r: Row, o: unknown) => { op = "upsert"; row = r; opts = o; return b; },
       delete: () => { op = "delete"; return b; },
       eq: (k: string, v: unknown) => { filters.push(["eq", k, v]); return b; },
@@ -129,7 +141,7 @@ beforeEach(() => {
     { id: "s-x", org_id: "o2", request_type: "RFI", default_days: 9 },            // another workspace's — never shown
   ];
   h.slaLoadError = null; h.slaUpsertError = null; h.slaDeleteMatchesNothing = false; h.configUpsertError = null;
-  h.overdue = 0; h.dueSoon = 0; h.countError = null;
+  h.overdue = 0; h.dueSoon = 0; h.countError = null; h.clockError = null; h.clockProbes = [];
   h.writes = []; h.counts = []; h.confirmAnswer = true; h.confirms = []; h.alerts = []; h.seq = 0;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
@@ -172,6 +184,18 @@ describe("/admin/requests — the due-date windows editor (rendered)", () => {
     expect(inputOf("ISO").getAttribute("aria-label")).toBe("Due-date window in days for ISO (Isometric)");
   });
 
+  it("a stored positive window outside the bound (pre-paste residue) also says the SLA clock still reads it (EDGE-17); a non-positive one, which the clock skips, does not", async () => {
+    h.sla.find((r) => r.id === "s-moc")!.default_days = 5000;
+    await render();
+    expect(rowOf("MOC").textContent).toContain("The stored window (5000) is outside 1–3650 days: new requests use the built-in 7 day(s). The SLA clock does not apply this bound yet: until the window is corrected, it still reads the stored value for open MOC (Change Mgmt) requests with no due date of their own. Enter a window, or use the built-in one.");
+    act(() => root?.unmount());
+    root = createRoot(host!);
+    h.sla.find((r) => r.id === "s-moc")!.default_days = 0;
+    await render();
+    expect(rowOf("MOC").textContent).toContain("The stored window (0) is outside 1–3650 days: new requests use the built-in 7 day(s). Enter a window, or use the built-in one.");
+    expect(rowOf("MOC").textContent).not.toContain("still reads the stored value");
+  });
+
   it("validation before anything is sent: 0, 3651, 1.5 and text are refused with the reason, and Save stays disabled", async () => {
     await render();
     const cases: Array<[string, RegExp]> = [["0", /Between 1 and 3650 days/], ["3651", /Between 1 and 3650 days/], ["1.5", /Whole days only/], ["two", /Whole days only/], ["", /Enter a number of days/]];
@@ -199,13 +223,15 @@ describe("/admin/requests — the due-date windows editor (rendered)", () => {
     expect(w.opts).toEqual({ onConflict: "org_id,request_type" });
     expect(w.selected).toBe("id");
     expect(h.confirms).toEqual([]);   // nothing would fall due: no question asked
-    expect(rowOf("RFI").textContent).toContain("Saved: RFI (Info Request) requests are due 5 day(s) after filing.");
+    expect(rowOf("RFI").textContent).toContain("Saved: RFI (Info Request) requests filed without a requested date are due 5 day(s) after filing.");
+    expect(rowOf("RFI").textContent).not.toContain("Saved: RFI (Info Request) requests are due");
     expect(inputOf("RFI").value).toBe("5");   // re-read from the database
     // the impact was counted with the clock's filters before the write
     expect(h.counts).toHaveLength(2);
     for (const c of h.counts) {
       expect(c).toEqual(expect.arrayContaining([["eq", "org_id", "o1"], ["eq", "request_type", "RFI"], ["not", "status", "in (CLOSED,CANCELED)"], ["is", "target_completion_at", null], ["is", "sla_breached_at", null], ["is", "archived_at", null]]));
     }
+    expect(h.clockProbes).toEqual([]);   // nothing to ask: the clock is not read
   });
 
   it("a refused save shows the database's own words and who saves these windows (EDGE-16: the refusal is never a generic line)", async () => {
@@ -220,31 +246,79 @@ describe("/admin/requests — the due-date windows editor (rendered)", () => {
     expect(h.sla.find((r) => r.id === "s-iso")!.default_days).toBe(3);
   });
 
-  it("EDGE-7's residual: a window that would put open requests with no due date of their own past due asks first — No writes nothing, Yes saves", async () => {
+  it("EDGE-7's residual, the SLA clock started: a window that would put open requests with no due date of their own past due asks first — No writes nothing, Yes saves", async () => {
     h.overdue = 4; h.dueSoon = 2;
     h.confirmAnswer = false;
     await render();
     await type(inputOf("RFI"), "2");
     await click(button(rowOf("RFI"), /^Save$/));
     expect(h.confirms).toHaveLength(1);
-    const msg = String(h.confirms[0].message);
-    expect(msg).toContain('4 open RFI (Info Request) request(s) with no due date of their own were filed more than 2 day(s) ago');
-    expect(msg).toContain('"Overdue" notice to the person it waits on, the assignment queue and the requester');
-    expect(msg).toContain('2 more are past 1 day(s) and get a "Due soon" notice');
+    expect(h.clockProbes).toEqual(["outcome"]);
+    expect(String(h.confirms[0].message)).toBe(
+      '4 open RFI (Info Request) request(s) with no due date of their own were filed more than 2 day(s) ago: the next SLA run (the nightly maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester. 2 more are past 1 day(s) and get a "Due soon" notice. Save anyway?',
+    );
     expect(slaWrites()).toEqual([]);
     h.confirmAnswer = true;
     await click(button(rowOf("RFI"), /^Save$/));
     expect(slaWrites()).toHaveLength(1);
   });
 
-  it("when the impact cannot be counted, the question says so (fail-safe) before anything is written", async () => {
+  it("EDGE-7's residual, the SLA clock NOT started (20261195 unpasted, tickets.outcome missing): the question says nothing is sent now, and that the paste records them as overdue with one summary notice to the queue", async () => {
+    h.overdue = 4; h.dueSoon = 2;
+    h.clockError = { code: "42703", message: "column tickets.outcome does not exist" };
+    h.confirmAnswer = false;
+    await render();
+    await type(inputOf("RFI"), "2");
+    await click(button(rowOf("RFI"), /^Save$/));
+    const msg = String(h.confirms[0].message);
+    expect(msg).toBe(
+      "4 open RFI (Info Request) request(s) with no due date of their own were filed more than 2 day(s) ago. The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, the ones then past this window are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. 2 more are past 1 day(s): once the clock has started, the SLA run sends each one still inside this window a \"Due soon\" notice. Save anyway?",
+    );
+    expect(msg).not.toContain("to the person it waits on");
+    expect(slaWrites()).toEqual([]);
+  });
+
+  it("when the impact cannot be counted, the question says so (fail-safe) before anything is written — in both clock states", async () => {
     h.countError = { message: "statement timeout" };
     h.confirmAnswer = false;
     await render();
     await type(inputOf("RFI"), "2");
     await click(button(rowOf("RFI"), /^Save$/));
-    expect(String(h.confirms[0].message)).toContain("could not be checked (statement timeout)");
+    expect(String(h.confirms[0].message)).toBe(
+      'Whether this window puts open RFI (Info Request) requests with no due date of their own past due could not be checked (statement timeout). Any filed more than 2 day(s) ago get an "Overdue" notice at the next SLA run (the nightly maintenance job). Save anyway?',
+    );
+    h.clockError = { code: "PGRST204", message: "Could not find the 'outcome' column of 'tickets' in the schema cache" };
+    await click(button(rowOf("RFI"), /^Save$/));
+    expect(String(h.confirms[1].message)).toBe(
+      "Whether this window puts open RFI (Info Request) requests with no due date of their own past due could not be checked (statement timeout). The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, any filed more than 2 day(s) before then are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. Save anyway?",
+    );
     expect(slaWrites()).toEqual([]);
+  });
+
+  it("the rows follow the SAVED request form: a type added or renamed above and not yet saved gets no row (and a note says why) until Save Changes", async () => {
+    await render();
+    const valueInputs = () => [...host!.querySelectorAll('input[placeholder="Value (ID)"]')] as HTMLInputElement[];
+    expect(valueInputs().map((i) => i.value)).toEqual(["ISO", "RFI", "MOC", ""]);
+    expect(section().textContent).not.toContain("unsaved changes");
+    await type(valueInputs()[3], "ISOX");     // a new type, unsaved
+    await type(valueInputs()[0], "ISO2");     // a rename, unsaved
+    const types = () => [...section().querySelectorAll("[data-sla-type]")].map((e) => e.getAttribute("data-sla-type"));
+    expect(types()).toEqual(["ISO", "RFI", "MOC", "LEGACY"]);
+    expect(inputOf("ISO").value).toBe("3");
+    expect(rowOf("ISO").textContent).not.toContain("not on the request form");
+    expect(section().textContent).toContain("The request types above have unsaved changes. These windows follow the saved request form: save it (Save Changes) to set a window for a new or renamed type.");
+    expect(slaWrites()).toEqual([]);
+    // saved: the rows follow, and the ISO window (keyed by the old value) is now a stored window off the form
+    await click(button(host!, /Save Changes/));
+    expect(types()).toEqual(["ISO2", "RFI", "MOC", "ISOX", "ISO", "LEGACY"]);
+    expect(rowOf("ISO").textContent).toContain("not on the request form");
+    expect(section().textContent).not.toContain("unsaved changes");
+    // a refused form save leaves the rows on the last saved form
+    h.configUpsertError = { code: "42501", message: "new row violates row-level security policy" };
+    await type(valueInputs()[3], "ISOY");
+    await click(button(host!, /Save Changes/));
+    expect(types()).toEqual(["ISO2", "RFI", "MOC", "ISOX", "ISO", "LEGACY"]);
+    expect(section().textContent).toContain("unsaved changes");
   });
 
   it("'Use built-in' asks, then removes the type's window with a checked delete; a delete that removed nothing is said as refused", async () => {

@@ -25,11 +25,11 @@ vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 
 import {
   SLA_DEFAULTS_RAIL_MIGRATION, SLA_WARN_PERCENT, builtInSlaDays, clearSlaDefault, loadSlaDefaults, parseSlaDays,
-  saveSlaDefault, slaWriteFailure, storedWindowUsable, untargetedImpact, warnAfterDays,
+  saveSlaDefault, slaClockState, slaWriteFailure, storedWindowUsable, untargetedImpact, untargetedImpactQuestion, warnAfterDays,
 } from "@/lib/slaDefaultsEditor";
 import { DEFAULT_SLA_DAYS, SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";
 import { ADMIN_SURFACES, DRAFTING_CONFIG_EDITORS } from "@/lib/adminSurfaces";
-import { SLA_WARN_FRACTION } from "@/lib/ticketSla";
+import { SLA_CLOCK_COLUMN, SLA_CLOCK_MIGRATION, SLA_WARN_FRACTION } from "@/lib/ticketSla";
 import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -181,6 +181,72 @@ describe("the editor's reads", () => {
   });
 });
 
+describe("EDGE-7's residual question — what happens to the counted requests depends on whether the SLA clock has started (DF-P13 fix pass)", () => {
+  it("slaClockState reads the clock's own gate: tickets.outcome (SLA_CLOCK_COLUMN), missing until 20261195 (SLA_CLOCK_MIGRATION) is pasted", async () => {
+    expect(SLA_CLOCK_COLUMN).toBe("outcome");
+    expect(SLA_CLOCK_MIGRATION).toBe("20261195");
+    const started = client(() => ({ data: [] }));
+    expect(await slaClockState(started.sb)).toEqual({ state: "started" });
+    expect(started.log).toEqual([{ table: "tickets", calls: [["select", "outcome"], ["limit", 1]] }]);
+    const missing = client(() => ({ error: { code: "42703", message: "column tickets.outcome does not exist" } }));
+    expect(await slaClockState(missing.sb)).toEqual({ state: "not_started" });
+    const cache = client(() => ({ error: { code: "PGRST204", message: "Could not find the 'outcome' column of 'tickets' in the schema cache" } }));
+    expect(await slaClockState(cache.sb)).toEqual({ state: "not_started" });
+    // another column missing, or any other failure, is not "not started"
+    const other = client(() => ({ error: { code: "42703", message: "column tickets.archived_at does not exist" } }));
+    expect(await slaClockState(other.sb)).toEqual({ state: "unknown", error: "column tickets.archived_at does not exist" });
+    const down = client(() => ({ error: { code: "57014", message: "statement timeout" } }));
+    expect(await slaClockState(down.sb)).toEqual({ state: "unknown", error: "statement timeout" });
+    // the clock's own source carries the same probe and the same rule (pinned so the two cannot drift)
+    const clock = src("lib/ticketSla.ts");
+    expect(clock).toContain('const { error: clockErr } = await sb.from("tickets").select(SLA_CLOCK_COLUMN).limit(1);');
+    expect(clock).toContain('const missing = (code === "42703" || code === "PGRST204") && (clockErr.message ?? "").includes(SLA_CLOCK_COLUMN);');
+    // and 20261195 records the backlog — untargeted requests past their sla_defaults window included — without a notice each, one summary per queue
+    const m195 = stripComments(mig("20261195_df_roundG_outcome_and_departure.sql"));
+    expect(m195).toContain("AND t.created_at + make_interval(days => d.default_days) < v_at)))");
+    expect(m195).toContain("'SLA clock started · ' || v_n || ' request(s) already overdue',");
+  });
+
+  const counted = (overdue: number, dueSoon: number) => ({ ok: true as const, impact: { overdue, dueSoon } });
+  const uncounted = { ok: false as const, error: "statement timeout" };
+  const STARTED = { state: "started" as const };
+  const NOT_STARTED = { state: "not_started" as const };
+  const UNKNOWN = { state: "unknown" as const, error: "permission denied" };
+
+  it("nothing falls due: no question, whatever the clock", () => {
+    for (const c of [STARTED, NOT_STARTED, UNKNOWN]) expect(untargetedImpactQuestion("RFI", 2, counted(0, 0), c)).toBeNull();
+  });
+  it("clock started: the next nightly run sends each its own notice (the text as before)", () => {
+    expect(untargetedImpactQuestion("RFI", 2, counted(4, 2), STARTED)).toBe(
+      '4 open RFI request(s) with no due date of their own were filed more than 2 day(s) ago: the next SLA run (the nightly maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester. 2 more are past 1 day(s) and get a "Due soon" notice. Save anyway?',
+    );
+    expect(untargetedImpactQuestion("RFI", 2, uncounted, STARTED)).toBe(
+      'Whether this window puts open RFI requests with no due date of their own past due could not be checked (statement timeout). Any filed more than 2 day(s) ago get an "Overdue" notice at the next SLA run (the nightly maintenance job). Save anyway?',
+    );
+  });
+  it("clock not started (20261195 unpasted): nothing is sent now; at the paste they are recorded as overdue with one summary notice to the queue, never a notice each", () => {
+    const q = untargetedImpactQuestion("RFI", 2, counted(4, 2), NOT_STARTED)!;
+    expect(q).toBe(
+      "4 open RFI request(s) with no due date of their own were filed more than 2 day(s) ago. The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, the ones then past this window are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. 2 more are past 1 day(s): once the clock has started, the SLA run sends each one still inside this window a \"Due soon\" notice. Save anyway?",
+    );
+    expect(q).not.toContain("the next SLA run (the nightly maintenance job) records each");
+    expect(q).not.toContain("to the person it waits on");
+    const u = untargetedImpactQuestion("RFI", 2, uncounted, NOT_STARTED)!;
+    expect(u).toBe(
+      "Whether this window puts open RFI requests with no due date of their own past due could not be checked (statement timeout). The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, any filed more than 2 day(s) before then are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. Save anyway?",
+    );
+    expect(u).not.toContain('get an "Overdue" notice');
+  });
+  it("clock state unreadable: both outcomes are said, never one guessed", () => {
+    const q = untargetedImpactQuestion("RFI", 2, counted(4, 0), UNKNOWN)!;
+    expect(q).toContain("Whether the SLA clock has started could not be read (permission denied): if it has, the next SLA run (the nightly maintenance job) records each as overdue and sends an \"Overdue\" notice");
+    expect(q).toContain("if it has not, when 20261195 is applied, the ones then past this window are recorded as overdue without a notice of their own");
+    const u = untargetedImpactQuestion("RFI", 2, uncounted, UNKNOWN)!;
+    expect(u).toContain("could not be checked (statement timeout). Whether the SLA clock has started could not be read either (permission denied): if it has, any filed more than 2 day(s) ago get an \"Overdue\" notice at the next SLA run");
+    expect(u).toContain("if it has not, when 20261195 is applied, any filed more than 2 day(s) before then are recorded as overdue without a notice of their own");
+  });
+});
+
 // ═════════════════════════════════════════════════════════════════════════
 // 20261218 — the migration
 const dir = join(process.cwd(), "supabase", "migrations");
@@ -268,6 +334,17 @@ describe("20261218 — byte-fidelity to 20261209's editor predicate (the newest 
 });
 
 describe("20261218 — DEC-30 shape", () => {
+  it("the prerequisite block checks each of the three things the header says the file needs, by name, before anything is changed", () => {
+    const pre = between(M, "-- ── Prerequisites", "\n$$;\n");
+    const code = stripComments(pre);
+    expect(code).toContain("IF to_regclass('public.sla_defaults') IS NULL THEN\n    RAISE EXCEPTION '20261218 needs sla_defaults (20260529); nothing was changed.';");
+    expect(code).toContain("IF NOT EXISTS (SELECT 1 FROM pg_policies\n                  WHERE schemaname = 'public' AND tablename = 'sla_defaults'\n                    AND policyname = 'sla_defaults_member_all') THEN\n    RAISE EXCEPTION '20261218 needs sla_defaults_member_all (20260605); nothing was changed.';");
+    expect(code).toContain("IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'caller_holds_any_role') THEN\n    RAISE EXCEPTION '20261218 needs caller_holds_any_role (20261045); nothing was changed.';");
+    expect((code.match(/RAISE EXCEPTION/g) ?? []).length).toBe(3);
+    // the header names exactly these three
+    expect(M).toContain("this file needs only sla_defaults (20260529), its member policy\n-- sla_defaults_member_all (20260605) and caller_holds_any_role (20261045);\n-- the prerequisite block checks each of the three by name");
+    expect(M.indexOf("-- ── Prerequisites")).toBeLessThan(M.indexOf("CREATE TEMP TABLE df_round_g_218_before"));
+  });
   it("prerequisite refusal → counts-only inventory BEFORE the transaction → BEGIN/COMMIT → ONE final SELECT (check, ok, n)", () => {
     expect(F.startsWith(`${SLA_DEFAULTS_RAIL_MIGRATION}_df_roundG_sla_defaults_rail_`)).toBe(true);
     expect(M.indexOf("RAISE EXCEPTION '20261218 needs caller_holds_any_role")).toBeLessThan(M.indexOf("CREATE TEMP TABLE df_round_g_218_before"));
