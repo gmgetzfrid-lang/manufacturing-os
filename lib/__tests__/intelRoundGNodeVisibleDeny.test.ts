@@ -4,6 +4,11 @@
 //
 //   · DEC-30 one-paste shape (counts-only TEMP inventory before BEGIN, one
 //     BEGIN / COMMIT, one final (check, ok, n) SELECT).
+//   · DEC-90 ruling R2 (2026-10-14): the KACL-5 index is standalone before
+//     BEGIN (every paste); node_visible/6 is re-created only when the six
+//     drop-box precondition counts are 0 (a DO block EXECUTEs the definition,
+//     else a NOTICE). Both outcomes run on PostgreSQL 16 in
+//     lib/__tests__/rls/intelI12DropBoxGate.test.ts (npm run test:db).
 //   · node_visible/6 re-created from its NEWEST earlier definition — found by
 //     scanning supabase/migrations, so a parallel re-creation folded in at a
 //     merge is diffed against, never skipped — with exactly the lines below
@@ -66,7 +71,9 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(begin).toBeGreaterThan(0);
     expect(code.match(/\nBEGIN;/g)).toHaveLength(1);
     expect(code.match(/\nCOMMIT;/g)).toHaveLength(1);
-    expect(code.indexOf("CREATE TEMP TABLE IF NOT EXISTS intel_i12_20261212_inventory")).toBeLessThan(begin);
+    const tmp = code.indexOf("DROP TABLE IF EXISTS pg_temp.intel_i12_20261212_inventory;\nCREATE TEMP TABLE intel_i12_20261212_inventory (ord int, check_name text, n bigint, pre boolean);");
+    expect(tmp).toBeGreaterThan(0);
+    expect(tmp).toBeLessThan(begin);
     const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), begin);
     expect(inv).toMatch(/COUNT\(\*\)/);
     expect(inv).not.toMatch(/SELECT\s+\*/);
@@ -78,18 +85,49 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(after.trimEnd().endsWith(";")).toBe(true);
   });
 
-  it("KACL-5 (second review fix): the native-source lookup the bytes door makes on every sign is indexed — a partial index inside the transaction, probed in the result set", () => {
+  it("KACL-5 (second review fix; DEC-90 R2 at the I-12 merge): the native-source lookup the bytes door makes on every sign is indexed — a standalone partial index BEFORE the transaction (every paste, whatever the gate decides), after the inventory, probed in the result set", () => {
     const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
     const begin = code.indexOf("\nBEGIN;"), commit = code.indexOf("\nCOMMIT;");
     const idx = code.indexOf("CREATE INDEX IF NOT EXISTS document_versions_source_file_key_idx\n  ON document_versions (source_file_key) WHERE source_file_key IS NOT NULL;");
-    expect(idx).toBeGreaterThan(begin);
-    expect(idx).toBeLessThan(commit);
+    expect(idx).toBeGreaterThan(code.indexOf("INSERT INTO intel_i12_20261212_inventory"));
+    expect(idx).toBeLessThan(begin);
+    expect(code.match(/CREATE INDEX/g)).toHaveLength(1);
     expect(code.slice(commit)).toMatch(/indexname = 'document_versions_source_file_key_idx'/);
     expect(code.slice(commit)).toMatch(/indexdef LIKE '%WHERE \(source_file_key IS NOT NULL\)%'/);
+    const header = SQL.slice(0, SQL.indexOf("-- ── 0. pre-apply inventory"));
+    expect(header).toMatch(/1\. ALWAYS, on every paste — the KACL-5 index/);
+    expect(header).toMatch(/The index is the\s+--\s+I-12 deploy's ONLY prerequisite\./);
     // the route's two lookups are unchanged — the index only changes their cost
     const route = readFileSync(join(process.cwd(), "app/api/storage/download-url/route.ts"), "utf8");
     expect(route).toMatch(/for \(const col of \["file_url", "source_file_key"\] as const\)/);
     expect(route).toMatch(/document_versions_source_file_key_idx/);
+  });
+
+  it("DEC-90 R2 (drop boxes): node_visible/6 is re-created inside a DO block only when every precondition count is 0 — otherwise a NOTICE and nothing changes; the header says what applies when and that lifting the gate is intelligence I-30's", () => {
+    const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    const begin = code.indexOf("\nBEGIN;"), commit = code.indexOf("\nCOMMIT;");
+    const gate = code.slice(begin, commit);
+    expect(gate).toMatch(/DO \$gate\$\nDECLARE\n  v_blockers bigint;\nBEGIN\n  SELECT COALESCE\(SUM\(n\), 0\) INTO v_blockers FROM intel_i12_20261212_inventory WHERE pre;\n  IF v_blockers = 0 THEN\n    EXECUTE \$node_visible\$\nCREATE OR REPLACE FUNCTION node_visible\(/);
+    expect(gate).toMatch(/\n\$\$;\n\$node_visible\$;\n  ELSE\n    RAISE NOTICE '20261212 left node_visible\/6 unchanged: % drop-box precondition row\(s\) are not 0 \(DEC-90 ruling R2\)[^']*(''[^']*)*', v_blockers;\n  END IF;\nEND\n\$gate\$;\n?$/);
+    // the CREATE is the only statement in the transaction, and it is the gated one
+    expect(code.slice(0, begin)).not.toMatch(/CREATE OR REPLACE FUNCTION/);
+    // six precondition rows (pre = true), every other inventory row pre = false
+    const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), code.indexOf("DROP TABLE IF EXISTS pg_temp.intel_i12_20261212_before"));
+    const rows = [...inv.matchAll(/SELECT (\d+), '((?:[^']|'')*)',[\s\S]*?, (true|false)(?: FROM|\n|$)/g)];
+    expect(rows.map((r) => Number(r[1]))).toEqual(Array.from({ length: 23 }, (_, i) => i + 1));
+    expect(rows.filter((r) => r[3] === "true").map((r) => r[2].slice(0, 15))).toEqual(["precondition P1", "precondition P2", "precondition P3", "precondition P4", "precondition P5", "precondition P6"]);
+    // the result: 10 probes + 23 count rows = 33, as the header states
+    const tail = code.slice(commit);
+    expect(tail.match(/\nUNION ALL\n/g)).toHaveLength(10);
+    const header = SQL.slice(0, SQL.indexOf("-- ── 0. pre-apply inventory"));
+    expect(header).toMatch(/EXPECTED RESULT \(one result set, 33 rows: check, ok, n\)/);
+    expect(header).toMatch(/WHAT APPLIES WHEN \(read this first\)/);
+    expect(header).toMatch(/2\. ONLY WHEN every drop-box precondition count is 0/);
+    expect(header).toMatch(/Lifting this gate —[\s\S]*is intelligence I-30's \(NODE_VISIBLE\s+--\s+ALLOW-LIST, DROP BOXES AND INHERITED GRANTS\)/);
+    expect(header).toMatch(/THE GATE IS DECIDED AT PASTE TIME/);
+    expect(tail).toMatch(/'R2 gate \(DEC-90, drop boxes\): every precondition count is 0/);
+    expect(tail).toMatch(/'node_visible\/6 is what the gate decided: applied/);
+    expect(tail).toMatch(/IS NOT DISTINCT FROM \(SELECT b\.body_md5 FROM intel_i12_20261212_before b\)/);
   });
 
   it("DACL-9 (second review fix): the counts-only inventory sizes the inherit-flag change — non-inheriting libraries and folders, those with descendants carrying their own ACL, and those descendants (private / hidden counted apart)", () => {
@@ -107,41 +145,56 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(inv).not.toMatch(/SELECT\s+\*/);
   });
 
-  it("third review fix (WRITES TOO): the header states that the RESTRICTIVE SELECT policy now refuses a named member's INSERT … RETURNING and UPDATE on a read-denied normal row (a drop box's uploads), and the inventory counts what that can touch — before BEGIN, counts only", () => {
+  it("third review fix (WRITES TOO), gated by DEC-90 R2: the header states that the RESTRICTIVE SELECT policy would refuse a named member's INSERT … RETURNING and UPDATE (a drop box's uploads), and the precondition counts every drop-box shape — before BEGIN, counts only", () => {
     const header = SQL.slice(0, SQL.indexOf("-- ── 0. pre-apply inventory"));
-    expect(header).toMatch(/⚠ WRITES TOO/);
+    expect(header).toMatch(/⚠ WRITES TOO — why the binding is gated/);
     expect(header).toMatch(/INSERT \.\.\. RETURNING/);
     expect(header).toMatch(/new\s+(--\s+)?row violates row-level security policy "documents_acl_select"/);
     expect(header).toMatch(/The same insert without RETURNING succeeds\./);
     expect(header).toMatch(/can no longer write it back or upload into\s+-- it \(WRITES TOO, above\)/);
+    expect(header).toMatch(/Ruling R2: a drop box is a legitimate, common pattern and must\s+--\s+keep working/);
+    for (const p of ["P1 normal documents", "P2 private / hidden", "P3 / P4 the same two tests on folders", "P5 libraries whose own ACL", "P6 folders whose own ACL"]) expect(header, p).toContain(p);
     const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
     const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), code.indexOf("\nBEGIN;"));
     for (const label of [
-      "'WRITES TOO: of those normal documents, the ones whose read deny names a subject the same index does not deny UPLOAD",
-      "'WRITES TOO: of those normal folders, the ones whose read deny names a subject the same index does not deny UPLOAD",
+      "'precondition P1 (expect 0 for the binding to apply): normal documents whose acl_index denies READ to a subject (user, role, team or org) the same index does not deny UPLOAD",
+      "'precondition P2 (expect 0): private / hidden documents whose acl_index denies read or discover to a ROLE, TEAM or ORG the same index does not deny UPLOAD",
+      "'precondition P3 (expect 0): normal folders whose acl_index denies READ to a subject the same index does not deny UPLOAD",
+      "'precondition P4 (expect 0): private / hidden folders whose acl_index denies read or discover to a ROLE, TEAM or ORG the same index does not deny UPLOAD'",
+      "'precondition P5 (expect 0): libraries whose own ACL denies read",
+      "'precondition P6 (expect 0): folders whose own ACL denies read",
       "'WRITES TOO: libraries with a default ACL for new documents",
-      "'WRITES TOO: of those, libraries whose own ACL or default ACL has a rule that DENIES read",
     ]) expect(inv, label).toContain(label);
-    // a read-deny id is counted only where the same subject's upload list does not name it
-    expect(inv.match(/WHERE NOT COALESCE\(\(acl_index->'deny'->s\.subj->'upload'\) \? x\.id, false\)\)/g)!.length).toBe(2);
+    // an index read-deny id is counted only where the same subject's upload list does not name it (P1–P4)
+    expect(inv.match(/WHERE NOT COALESCE\(\(acl_index->'deny'->s\.subj->'upload'\) \? x\.id, false\)\)/g)!.length).toBe(4);
+    // an ACL's read deny is excused only by a deny-upload rule of the SAME ACL for the same subject (P5's own ACL, P6); a default ACL's never
+    expect(inv.match(/AND NOT EXISTS \(SELECT 1 FROM jsonb_array_elements\((l|c)\.acl->'rules'\) u/g)!.length).toBe(2);
+    expect(inv).toMatch(/OR EXISTS \(SELECT 1 FROM jsonb_array_elements\(CASE WHEN jsonb_typeof\(l\.default_new_acl->'rules'\) = 'array' THEN l\.default_new_acl->'rules' ELSE '\[\]'::jsonb END\) r\n                WHERE r->>'effect' = 'deny' AND jsonb_typeof\(r->'actions'\) = 'array'\n                  AND \(\(r->'actions'\) \? 'read' OR \(\(r->'actions'\) \? 'discover' AND r->'subject'->>'type' IN \('role', 'team', 'org'\)\)\)\)\n/);
+    // P2 / P4: role, team and org only — a user-scoped deny already bound in 20261203
+    expect(inv.match(/WHERE NOT \(visibility IS NULL OR visibility = 'normal'\) AND acl_index IS NOT NULL\n   AND EXISTS \(SELECT 1 FROM unnest\(ARRAY\['roles', 'teams', 'orgs'\]\) s\(subj\), unnest\(ARRAY\['read', 'discover'\]\) a\(act\)/g)!.length).toBe(2);
     expect(inv).not.toMatch(/SELECT\s+\*/);
   });
 
   it("third review fix: paste BEFORE the I-12 branch deploys (the bytes door's source-key lookup scans until the index exists; the DACL-9 / DACL-10 counts are read before the deploy); DACL-9's labels say the grant half is withheld; DACL-10's ACL-NULL legacy libraries are counted", () => {
     const header = SQL.slice(0, SQL.indexOf("-- ── 0. pre-apply inventory"));
-    expect(header).toMatch(/Paste it BEFORE the I-12\s+-- branch deploys/);
+    expect(header).toMatch(/Paste it BEFORE the I-12\s+--\s+branch deploys\. The prerequisite is the index only/);
     expect(header).not.toMatch(/Independent of every other pending file/);
     expect(header).toMatch(/Its GRANTS are still dropped there \(I-12 third review\s+--\s+fix\)/);
     expect(header).toMatch(/DACL-10 \(inventory only\)/);
     const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
     const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), code.indexOf("\nBEGIN;"));
-    expect(inv).toContain("their grants only after the DEC-90 ruling)'");
-    expect(inv).toContain("upper bound of the rows the withheld grant half would widen");
+    // DEC-90 R3 (2026-10-14): the grant half is carried by intelligence I-30 with the acl_index rebuild
+    expect(header).toMatch(/correct semantics \(DEC-90 ruling R3, 2026-10-14/);
+    expect(header).toMatch(/carried by intelligence I-30\s+--\s+together with the acl_index rebuild/);
+    expect(inv).toContain("their grants are carried by intelligence I-30 with the acl_index rebuild — DEC-90 R3)'");
+    expect(inv).toContain("upper bound of the rows intelligence I-30''s grant half widens");
+    // DEC-90 R1 (2026-10-14): the legacy-list binding stays; the count is informational
+    expect(header).toMatch(/Ruled by the integrator under DEC-90 \(R1,\s+--\s+2026-10-14\): the binding STAYS/);
     for (const label of [
       "'DACL-10: libraries whose ACL is NULL while read_access is restricted",
       "'DACL-10: documents filed in those libraries",
       "'DACL-10: (library, member) pairs where an active non-controller member, not the library''s owner, holds no role",
-      "'DACL-10: of those pairs, distinct members'",
+      "'DACL-10: of those pairs, distinct members — \"members the lists leave out\" (informational; read it before the I-12 deploy, DEC-90 R1)'",
       "'DACL-10: libraries whose ACL has no rule and normal visibility while read_access is restricted",
     ]) expect(inv, label).toContain(label);
     expect(inv).toMatch(/read_access <> '"ALL"'::jsonb/);
@@ -154,7 +207,9 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(SQL).toMatch(/EXECUTE is deliberately left as it is/);
     expect(SQL).not.toMatch(/(REVOKE|GRANT)[^;]*ON FUNCTION node_visible/);
     // no table, policy or trigger is created or changed
-    expect(SQL).not.toMatch(/^\s*(CREATE|ALTER|DROP)\s+(TABLE|POLICY|TRIGGER)\b/m);
+    // (its TEMP tables only: the inventory and the body snapshot)
+    expect(SQL).not.toMatch(/^\s*(CREATE|ALTER|DROP)\s+(TABLE|POLICY|TRIGGER)\b(?! IF EXISTS pg_temp\.intel_i12_20261212_(inventory|before);$)/m);
+    expect(SQL.match(/^CREATE TEMP TABLE (\w+)/gm)).toEqual(["CREATE TEMP TABLE intel_i12_20261212_inventory", "CREATE TEMP TABLE intel_i12_20261212_before"]);
   });
 });
 
