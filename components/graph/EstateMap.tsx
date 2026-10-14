@@ -13,7 +13,8 @@ import { CONTAINER_TYPES, fileTypeOf, type FileTypeInfo } from "@/lib/fileFinder
 import { buildEstateTree, type TreeNode } from "@/lib/estateTree";
 import type { GraphNode, GraphEdge } from "@/lib/orgGraph";
 
-const AUTO_NODES = 120;
+const AUTO_NODES = 60;
+const MAX_DEPTH = 2;
 
 interface Props {
   nodes: GraphNode[];
@@ -75,12 +76,15 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     const vis = new Map<string, FileGraphNode>();
     const roots = focusId && treeById.has(focusId) ? [treeById.get(focusId)!] : tree.filter((t) => !t.parentId);
     for (const r of roots) vis.set(r.id, r);
-    let frontier = roots, count = roots.length, first = true;
-    while (frontier.length) {
-      const kids = frontier.flatMap((n) => (children.get(n.id) ?? []).map((c) => treeById.get(c.id)!));
+    let frontier = roots, count = roots.length, first = true, depth = 0;
+    while (frontier.length && depth < MAX_DEPTH) {
+      depth++;
+      // At the top, open each operating area one level (its equipment types)
+      // but keep big groups ("Not placed yet", Projects) closed with a
+      // count; inside one, open a level or two while it stays readable.
+      const opening = !focusId ? frontier.filter((n) => (children.get(n.id)?.length ?? 0) <= 12) : frontier;
+      const kids = opening.flatMap((n) => (children.get(n.id) ?? []).map((c) => treeById.get(c.id)!));
       if (!kids.length) break;
-      // At the top, show the areas and groups only; inside one, open a level
-      // or two while it stays readable.
       if (!focusId && !first) break;
       if (!first && count + kids.length > AUTO_NODES) break;
       if (first && count + kids.length > AUTO_NODES * 2) break;
@@ -112,10 +116,13 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     const out: Array<[string, string]> = [];
     for (const e of edges) {
       const other: string | null = e.a === selectedId ? e.b : e.b === selectedId ? e.a : null;
-      if (!other || other === parent || !vis.has(other) || treeById.get(other)?.parentId === selectedId) continue;
+      // Only ties that leave what you are looking at: never to its own
+      // contents, never to where it sits.
+      if (!other || other === parent || !vis.has(other) || ancestors(other).includes(selectedId)) continue;
       out.push([selectedId, other]);
     }
     return out.slice(0, 40);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, edges, visible, treeById]);
 
   useEffect(() => {
@@ -142,11 +149,13 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
 
   return (
     <div className="absolute inset-0">
+      <div className="absolute inset-x-0 bottom-0 top-10">
       <FileGraph ref={ref} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={new Map()} lit={lit}
         selectedId={selectedId} onSelect={(id) => onSelect(id ? byId.get(id) ?? null : null)}
         onDrill={(id) => { if (byId.has(id)) onSelect(byId.get(id)!); if ((children.get(id) ?? []).length) setFocusId(id); }}
         onUp={() => setFocusId(focusId ? treeById.get(focusId)?.parentId ?? null : null)}
-        onOpen={(id) => { const n = byId.get(id); if (n) onOpen(n); }} filedLinks={filedLinks} className="absolute inset-0" />
+        onOpen={(id) => { const n = byId.get(id); if (n) onOpen(n); }} filedLinks={filedLinks} />
+      </div>
       <div className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-[11px] pointer-events-auto max-w-[70%] flex-wrap justify-center">
         <button onClick={() => setFocusId(null)} className={`rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-violet-600 text-white border-transparent"}`}>Whole estate</button>
         {crumbs.map((c) => (
@@ -155,7 +164,9 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
             <button onClick={() => setFocusId(c.id)} className={`rounded-md border px-2 py-1 font-semibold ${c.id === focusId ? "bg-violet-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
           </React.Fragment>
         ))}
-        <span className="ml-2 text-[var(--color-text-muted)]">operating area › equipment type › equipment › documents · click to go in · Esc to climb out</span>
+        {!focusId
+          ? <span className="ml-2 text-[var(--color-text-muted)]">operating area › equipment type › equipment › documents · click to go in · Esc to climb out</span>
+          : <span className="ml-2 text-[var(--color-text-muted)]">Esc or ↑ to climb out</span>}
       </div>
     </div>
   );

@@ -160,8 +160,18 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     catch (e) { setUndo({ busy: false, result: null, error: (e as Error).message }); }
   };
 
+  /** "Read new drawings automatically", on the caller's model, capped. */
+  const setAutoRead = async (on: boolean, monthlyPages: number) => {
+    if (!orgId || !status) return;
+    setError(null);
+    try {
+      const r = await estatePost<{ on: boolean; monthlyPages: number; used: number }>("/api/estate/connect", { orgId, action: "autoRead", libraryId: status.readLibraryId, on, monthlyPages });
+      setStatus((s) => s ? { ...s, ai: { ...s.ai, autoRead: { ...s.ai.autoRead, on: r.on, monthlyPages: r.monthlyPages, used: r.used, mine: r.on ? true : s.ai.autoRead.mine } } } : s);
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const cancel = () => { stop.current = true; };
-  return { status, running, error, reading, run, cancel, bulk, readAll, plan, planLoading, openPreview, closePreview, start, runId, journaled, undo, undoLast };
+  return { status, running, error, reading, run, cancel, bulk, readAll, plan, planLoading, openPreview, closePreview, start, runId, journaled, undo, undoLast, setAutoRead };
 }
 
 export function ConnectButton({ running, onClick, disabled, className = "" }: { running: boolean; onClick: () => void; disabled?: boolean; className?: string }) {
@@ -173,7 +183,7 @@ export function ConnectButton({ running, onClick, disabled, className = "" }: { 
   );
 }
 
-export function ConnectProgress({ status, running, error, reading, onCancel, onClose, onRun, bulk, onReadAll, undoBox }: {
+export function ConnectProgress({ status, running, error, reading, onCancel, onClose, onRun, bulk, onReadAll, undoBox, onAutoRead }: {
   status: ConnectStatus | null; running: boolean; error: string | null; reading: { done: number; total: number; visionPages: number; reusedPages: number; visionSkip: string | null } | null;
   onCancel: () => void; onClose: () => void;
   /** Run again with options: read every page with vision, or re-read everything. */
@@ -182,6 +192,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
   onReadAll?: () => void;
   /** Undo the run just finished. */
   undoBox?: React.ReactNode;
+  onAutoRead?: (on: boolean, monthlyPages: number) => void;
 }) {
   if (!status && !running && !error && !bulk) return null;
   return (
@@ -234,7 +245,8 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
               {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="rounded-full border border-violet-300 bg-violet-50 text-violet-800 px-2 py-0.5 font-semibold hover:bg-violet-100 disabled:opacity-50">Read all drawings with AI</button>}
             </div>
           )}
-          {!running && !status.more && <div>Search a tag now. New drawings are picked up nightly, or press the button again.</div>}
+          {!running && onAutoRead && <AutoReadSwitch auto={status.ai.autoRead} hasKey={status.ai.hasKey} onChange={onAutoRead} />}
+          {!running && !status.more && <div>Search a tag now. {status.ai.autoRead.on ? "New drawings are read and tagged on their own." : "New drawings are picked up nightly, or press the button again."}</div>}
         </div>
       )}
     </div>
@@ -255,6 +267,31 @@ export function UndoRunBox({ runId, journaled, undo, onUndo }: {
       {!r && <button onClick={onUndo} disabled={undo?.busy} className="rounded-full border border-rose-300 bg-rose-50 text-rose-700 px-2 py-0.5 font-semibold hover:bg-rose-100 disabled:opacity-50 inline-flex items-center gap-1">{undo?.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Undo this run</button>}
       {undo?.error && <div className="text-red-700">{undo.error}</div>}
       {r && <div className="text-emerald-700">Undone: {r.drawings} drawing{r.drawings === 1 ? "" : "s"} put back · {r.columnsRestored} equipment columns · {r.edgesRestored + r.edgesRemoved} links · {r.readingsRestored} readings · {r.assetsRemoved} registry items removed{r.assetsKept.length ? ` · kept ${r.assetsKept.join(", ")} (someone added to them)` : ""}{r.skipped.length ? ` · ${r.skipped.length} left as a person changed them since` : ""}.</div>}
+    </div>
+  );
+}
+
+/** New drawings read by the drawing reader as they arrive, on the sponsor's
+ *  model, never more than the monthly page cap. */
+function AutoReadSwitch({ auto, hasKey, onChange }: { auto: ConnectStatus["ai"]["autoRead"]; hasKey: boolean; onChange: (on: boolean, monthlyPages: number) => void }) {
+  const [cap, setCap] = useState(String(auto.monthlyPages));
+  const capNum = Math.max(1, Math.min(100_000, Number(cap) || auto.monthlyPages));
+  return (
+    <div className="rounded-md border border-[var(--color-border)] px-2 py-1.5 space-y-1">
+      <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-[var(--color-text)]" title="Every page of a new drawing is read by the drawing reader (the same one as Read with AI) and its equipment tagged. Every automatic change can be undone from Undo a run.">
+        <input type="checkbox" checked={auto.on} disabled={!hasKey && !auto.on} onChange={(e) => onChange(e.target.checked, capNum)} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
+        Read new drawings automatically
+      </label>
+      <div className="flex flex-wrap items-center gap-1">
+        up to
+        <input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9]/g, ""))} onBlur={() => { if (auto.on && capNum !== auto.monthlyPages) onChange(true, capNum); }} inputMode="numeric" className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-[11px]" />
+        pages a month · {auto.used} used this month
+      </div>
+      <div>
+        {auto.on
+          ? <>On {auto.mine ? "your" : `${auto.sponsorName ?? "a colleague"}'s`} AI key{auto.mine ? "" : " — switching it off and on moves it to yours"}. Past the cap, new sheets wait in “Read all drawings with AI”.</>
+          : hasKey ? <>Off. New sheets are indexed from their text and wait for “Read all drawings with AI”.</> : <>Needs your AI key (Intelligence › Setup).</>}
+      </div>
     </div>
   );
 }

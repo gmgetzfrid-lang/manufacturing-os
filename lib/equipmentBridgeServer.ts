@@ -48,7 +48,8 @@ const assetNorm = (tag: string) => tag.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 // ─── Compute ────────────────────────────────────────────────────────────────
 
-export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDocId: string): Promise<{
+/** `autoApply: false` when the caller applies (and journals) itself. */
+export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDocId: string, opts: { autoApply?: boolean } = {}): Promise<{
   documentId: string | null;
   suggestions: BridgeSuggestion[];
   autoApplied: boolean;
@@ -126,10 +127,15 @@ export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDoc
 
   // Auto-apply when the library opted in AND a target column is mapped.
   let autoApplied = false;
-  if (bridge?.autoApply) {
+  if (bridge?.autoApply && opts.autoApply !== false) {
     try {
+      // Journaled like any run, so automatic tagging can be undone from
+      // Documents › Graph › Connect › Undo, a day at a time.
+      const { snapshotDoc, recordDocChange, automaticRun } = await import("@/lib/estate/runJournal");
+      const before = await snapshotDoc(admin, orgId, documentId);
       await applyForDocument(admin, { orgId, documentId, userId: null });
       autoApplied = true;
+      await recordDocChange(admin, orgId, automaticRun(), documentId, before, await snapshotDoc(admin, orgId, documentId)).catch(() => false);
     } catch { /* stays pending for manual review — never breaks ingest */ }
   }
   return { documentId, suggestions, autoApplied };

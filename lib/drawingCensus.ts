@@ -22,7 +22,7 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { ensurePdfPolyfills } from "@/lib/knowledgeText";
+import { ensurePdfPolyfills, chunkPageText, sanitizeStorageText } from "@/lib/knowledgeText";
 import { governedAiCall } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { computeForKnowledgeDoc, applyForDocument } from "@/lib/equipmentBridgeServer";
@@ -35,6 +35,9 @@ export interface CensusSheet {
   instruments: string[];
   offSheet: Array<{ tag: string; direction: "from" | "to" | null; drawing: string | null; sheet: string | null }>;
   title: { drawingNumber: string | null; sheet: string | null; rev: string | null };
+  /** Every legible line of the sheet — notes, callouts, title block — so
+   *  the reading also feeds full-text search. */
+  transcript?: string;
 }
 
 export interface CensusPageResult {
@@ -58,7 +61,8 @@ const SYSTEM =
   '{"equipment":[{"tag":"V-14","code":"6110.14","name":"35# STEAM DRUM","details":"4\'-0\\" I.D. x 10\'-0\\" T/T; DESIGN 75 PSIG @ 650 F"}],' +
   '"instruments":["PIT-130","PSV-21","LV-222"],' +
   '"offSheet":[{"tag":"X-45","direction":"from","drawing":"2002-D 2001","sheet":"12"}],' +
-  '"title":{"drawingNumber":"2002-D 2001","sheet":"5","rev":"42"}}\n' +
+  '"title":{"drawingNumber":"2002-D 2001","sheet":"5","rev":"42"},' +
+  '"transcript":"every legible line of the sheet, one per line"}\n' +
   "Rules:\n" +
   "- equipment: process equipment whose CALLOUT is printed on this sheet — the tag stacked with its " +
   "description, often with a site code in parentheses and design data (e.g. \"V-14 / (6110.14) / 35# STEAM " +
@@ -73,6 +77,9 @@ const SYSTEM =
   "they are drawn on other sheets. Never put them in equipment. direction = \"from\" or \"to\" as printed.\n" +
   "- Line numbers, pipe sizes and specs, valve sizes, notes, steam pressures and the sheet's own drawing " +
   "number are none of these.\n" +
+  "- transcript: every legible line on the sheet in reading order — callouts, notes, connector text, the " +
+  "title block (as DRAWING NO: …, SHEET: n OF m, REV: …, TITLE: …) — separated by newlines. It makes the " +
+  "sheet searchable; it is not limited to the items above.\n" +
   "- Copy every character exactly as printed. If you cannot read a character with certainty, leave that " +
   "item out. Never invent an item.";
 
@@ -104,13 +111,17 @@ export function parseCensus(text: string): CensusSheet {
     off.set(tag, { tag, direction: d === "from" || d === "to" ? d : null, drawing: str(o.drawing, 40), sheet: str(o.sheet, 10) });
   }
   const t = (raw.title ?? {}) as Record<string, unknown>;
-  return { equipment: [...eq.values()], instruments: [...inst], offSheet: [...off.values()], title: { drawingNumber: str(t.drawingNumber, 40), sheet: str(t.sheet, 10), rev: str(t.rev, 10) } };
+  const transcript = typeof raw.transcript === "string" ? raw.transcript.slice(0, 20_000) : undefined;
+  return { equipment: [...eq.values()], instruments: [...inst], offSheet: [...off.values()], title: { drawingNumber: str(t.drawingNumber, 40), sheet: str(t.sheet, 10), rev: str(t.rev, 10) }, transcript };
 }
 
-async function renderTiles(bytes: Uint8Array, page: number): Promise<{ images: AiCallImage[]; pageCount: number }> {
+type PdfProxy = Awaited<ReturnType<typeof import("unpdf")["getDocumentProxy"]>>;
+
+/** The sheet as the model sees it: an overview and four overlapping zoomed
+ *  tiles, so small text is read at full resolution. */
+export async function renderSheetImages(pdf: PdfProxy, page: number): Promise<{ images: AiCallImage[]; pageCount: number }> {
   ensurePdfPolyfills();
-  const { getDocumentProxy, renderPageAsImage } = await import("unpdf");
-  const pdf = await getDocumentProxy(bytes);
+  const { renderPageAsImage } = await import("unpdf");
   const pageCount = pdf.numPages;
   if (page > pageCount) return { images: [], pageCount };
   const canvasMod = await import("@napi-rs/canvas");
@@ -137,6 +148,31 @@ async function renderTiles(bytes: Uint8Array, page: number): Promise<{ images: A
   return { images, pageCount };
 }
 
+/** THE drawing reader. The indexer and "Read with AI" both call this: same
+ *  images, same instructions, same structured answer. `call` is whoever
+ *  pays — the person's governed key, or the indexer's vision context. */
+export async function readDrawingSheet(pdf: PdfProxy, page: number, name: string, call: (args: { system: string; user: string; images: AiCallImage[]; maxTokens: number }) => Promise<string>): Promise<{ sheet: CensusSheet; pageCount: number } | null> {
+  const { images, pageCount } = await renderSheetImages(pdf, page);
+  if (!images.length) return null;
+  const text = await call({
+    system: SYSTEM,
+    user: `Sheet: "${name}", page ${page} of ${pageCount}. Images in order: overview, top-left, top-right, bottom-left, bottom-right.`,
+    images, maxTokens: 8000,
+  });
+  return { sheet: parseCensus(text), pageCount };
+}
+
+/** The rows a reading becomes, in the one storage format both callers use. */
+export function sheetEntityRows(base: { org_id: string; library_id: string; document_id: string; page: number }, sheet: CensusSheet): Array<Record<string, unknown>> {
+  const b = { ...base, x: null, y: null };
+  return [
+    ...sheet.equipment.map((e) => ({ ...b, kind: "equipment", tag: e.tag, raw: [e.tag, e.code ? `(${e.code})` : "", e.name ?? "", e.details ? `· ${e.details}` : ""].filter(Boolean).join(" ").slice(0, 400) })),
+    ...sheet.instruments.map((t) => ({ ...b, kind: "instrument", tag: t, raw: t })),
+    ...sheet.offSheet.map((o) => ({ ...b, kind: "xref", tag: o.tag, raw: [o.direction?.toUpperCase(), o.tag, o.drawing, o.sheet ? `SHT ${o.sheet}` : ""].filter(Boolean).join(" ").slice(0, 160) })),
+    { ...b, kind: "census", tag: "census-v1", raw: `${sheet.equipment.length} equipment, ${sheet.instruments.length} instruments, ${sheet.offSheet.length} off-sheet` },
+  ];
+}
+
 /** Read one page of a knowledge document's drawing and store the result. */
 export async function censusPage(input: { orgId: string; userId: string; knowledgeDocId: string; page: number; deadlineMs: number; run: RunCtx }): Promise<CensusPageResult> {
   const { data: kdoc } = await supabaseAdmin.from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count, source_document_id").eq("id", input.knowledgeDocId).eq("org_id", input.orgId).maybeSingle();
@@ -144,30 +180,33 @@ export async function censusPage(input: { orgId: string; userId: string; knowled
   const k = kdoc as { id: string; library_id: string; name: string; file_key: string; page_count: number | null; source_document_id: string | null };
   const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: k.file_key }));
   const bytes = new Uint8Array(await new Response(obj.Body as ReadableStream).arrayBuffer());
-  const { images, pageCount } = await renderTiles(bytes, input.page);
-  if (!images.length) return { page: input.page, pageCount, done: true, journaled: true, sheet: { equipment: [], instruments: [], offSheet: [], title: { drawingNumber: null, sheet: null, rev: null } } };
-
-  const out = await governedAiCall({
+  ensurePdfPolyfills();
+  const { getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(bytes);
+  const read = await readDrawingSheet(pdf, input.page, k.name, async (a) => (await governedAiCall({
     orgId: input.orgId, userId: input.userId, op: "drawingCensus", instructionScope: "equipment",
-    system: SYSTEM,
-    user: `Sheet: "${k.name}", page ${input.page} of ${pageCount}. Images in order: overview, top-left, top-right, bottom-left, bottom-right.`,
-    images, maxTokens: 4000,
-    timeoutMs: Math.max(15_000, input.deadlineMs - Date.now() - 3_000),
-  });
-  const sheet = parseCensus(out.text);
+    ...a, timeoutMs: Math.max(15_000, input.deadlineMs - Date.now() - 3_000),
+  })).text);
+  if (!read) return { page: input.page, pageCount: pdf.numPages, done: true, journaled: true, sheet: { equipment: [], instruments: [], offSheet: [], title: { drawingNumber: null, sheet: null, rev: null } } };
+  const { sheet, pageCount } = read;
+  // The page's searchable text follows the reading, so search and the tags
+  // agree. Only when the transcript says more than what is stored.
+  if (sheet.transcript && sheet.transcript.length > 200) {
+    const { data: cur } = await supabaseAdmin.from("knowledge_chunks").select("content").eq("document_id", k.id).eq("page", input.page);
+    const have = ((cur as Array<{ content: string }> | null) ?? []).reduce((n, c) => n + c.content.length, 0);
+    if (sheet.transcript.length > have) {
+      await supabaseAdmin.from("knowledge_chunks").delete().eq("document_id", k.id).eq("page", input.page);
+      const parts = chunkPageText(sheet.transcript.split("\n").map((l) => sanitizeStorageText(l.trim())).filter(Boolean).join("\n"));
+      if (parts.length) await supabaseAdmin.from("knowledge_chunks").insert(parts.map((c, i) => ({ org_id: input.orgId, library_id: k.library_id, document_id: k.id, page: input.page, seq: i, content: c }))).then(() => undefined, () => undefined);
+    }
+  }
 
   // Replace this page's reading: equipment, instruments and off-sheet tags
   // from the old reader go; the census marker says this page is read right.
   const { data: prior } = await supabaseAdmin.from("knowledge_page_entities").select("*").eq("document_id", k.id).eq("page", input.page).in("kind", ["equipment", "instrument", "xref", "census"]);
   let journaled = await recordReading(supabaseAdmin, input.orgId, input.run, k.id, k.source_document_id, input.page, (prior as Array<Record<string, unknown>> | null) ?? []);
   await supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", k.id).eq("page", input.page).in("kind", ["equipment", "instrument", "xref", "census"]);
-  const base = { org_id: input.orgId, library_id: k.library_id, document_id: k.id, page: input.page, x: null, y: null };
-  const rows: Array<Record<string, unknown>> = [
-    ...sheet.equipment.map((e) => ({ ...base, kind: "equipment", tag: e.tag, raw: [e.tag, e.code ? `(${e.code})` : "", e.name ?? "", e.details ? `· ${e.details}` : ""].filter(Boolean).join(" ").slice(0, 400) })),
-    ...sheet.instruments.map((t) => ({ ...base, kind: "instrument", tag: t, raw: t })),
-    ...sheet.offSheet.map((o) => ({ ...base, kind: "xref", tag: o.tag, raw: [o.direction?.toUpperCase(), o.tag, o.drawing, o.sheet ? `SHT ${o.sheet}` : ""].filter(Boolean).join(" ").slice(0, 160) })),
-    { ...base, kind: "census", tag: "census-v1", raw: `${sheet.equipment.length} equipment, ${sheet.instruments.length} instruments, ${sheet.offSheet.length} off-sheet` },
-  ];
+  const rows = sheetEntityRows({ org_id: input.orgId, library_id: k.library_id, document_id: k.id, page: input.page }, sheet);
   const { error } = await supabaseAdmin.from("knowledge_page_entities").insert(rows);
   if (error) throw new Error(`Could not store the reading: ${error.message}`);
 
@@ -226,7 +265,7 @@ export async function correctDocument(orgId: string, knowledgeDocId: string, doc
   //    then the links redrawn.
   let added: string[] = [];
   let createdAssets = 0;
-  const comp = await computeForKnowledgeDoc(supabaseAdmin, knowledgeDocId).catch(() => null);
+  const comp = await computeForKnowledgeDoc(supabaseAdmin, knowledgeDocId, { autoApply: false }).catch(() => null);
   if (comp?.suggestions.length) {
     const r = await applyForDocument(supabaseAdmin, { orgId, documentId, userId, byPerson: true }).catch(() => null);
     if (r) { added = r.appliedTags.filter((t) => !kept.some((k) => norm(k) === norm(t))); createdAssets = r.createdAssets; }

@@ -138,6 +138,16 @@ export default function GraphControls({
             <Boxes className="w-3 h-3" /> 3D
           </button>
         </div>
+        {settings.mode === "3d" && (
+          <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm" title="Estate: the Map's tree standing in levels. Web: every link pulling freely.">
+            {(["estate", "web"] as const).map((k) => (
+              <button key={k} onClick={() => onChange({ layout3d: k })}
+                className={`px-2 py-1 rounded-full text-[10px] font-black ${settings.layout3d === k ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"}`}>
+                {k === "estate" ? "Estate" : "Web"}
+              </button>
+            ))}
+          </div>
+        )}
         <button onClick={() => setOpen((v) => !v)}
           className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-black shadow-sm ${
             open ? "border-violet-400 text-violet-700 bg-[var(--color-surface)]"

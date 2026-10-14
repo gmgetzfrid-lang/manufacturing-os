@@ -24,11 +24,12 @@ import {
   parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS, tagKindOf,
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
-import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
+import { isTimeoutError, callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
+import { readAutoRead, pagesLeft, withPagesUsed } from "@/lib/estate/autoRead";
 
 export const PAGE_BATCH = 50;
 
@@ -74,6 +75,8 @@ export interface IngestBatchResult {
  *  dense E-size drawing and transcribing it is tens of seconds, and a page
  *  begun too late is work the platform throws away. */
 const VISION_PAGE_RESERVE_MS = 25_000;
+/** The drawing reader sends five images to the person's own model. */
+const DRAWING_PAGE_RESERVE_MS = 45_000;
 
 type KnowledgeDocRow = {
   id: string;
@@ -199,13 +202,19 @@ export async function ingestKnowledgeDocBatch(
     //    then flows through the SAME pipeline (sections → chunks → tags →
     //    refs), making the sheet fully searchable and citable.
     let visionRead = false;
+    // Set when the drawing reader read this page: its structured reading
+    // stands, and no pattern-matcher second-guesses it.
+    let drawingRows: Array<Record<string, unknown>> | null = null;
     const rawPageText = lines.join("\n");
     const tagsFromText = extractEquipmentTags(rawPageText, { loose: drawingSet, knownPrefixes }).length + extractDrawingRefs(rawPageText).length;
     if (vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText)) {
       // Don't START a vision page we can't finish — a page begun at t=50s on
       // a 60s function is pure waste, and worse, it takes the whole batch's
       // committed progress down with it.
-      const timeForVision = !deadlineMs || Date.now() + VISION_PAGE_RESERVE_MS <= deadlineMs;
+      // A drawing set is read by THE drawing reader (overview + four zoomed
+      // tiles, the person's own model) — slower, so it needs more clock.
+      const reserve = drawingSet ? DRAWING_PAGE_RESERVE_MS : VISION_PAGE_RESERVE_MS;
+      const timeForVision = !deadlineMs || Date.now() + reserve <= deadlineMs;
       const priorText = stored.get(p);
       // Same bytes, same text layer: a stored page that holds far more text
       // than the layer itself can only have come from vision. A stored page
@@ -218,6 +227,34 @@ export async function ingestKnowledgeDocBatch(
         lines = priorText.split("\n").map((l) => sanitizeStorageText(l.trim())).filter(Boolean);
         visionRead = true;
         reusedPages++;
+      } else if (vision && visionLeft > 0 && timeForVision && drawingSet) {
+        // The same reader "Read with AI" uses — one engine, one answer. Its
+        // structured reading replaces pattern-matching for this page.
+        try {
+          const { readDrawingSheet, sheetEntityRows } = await import("@/lib/drawingCensus");
+          const read = await readDrawingSheet(pdf, p, doc.name, async (a) => {
+            const out = await callAiModel({
+              provider: vision.provider, model: vision.model, apiKey: vision.apiKey,
+              system: vision.instructions ? `${a.system}\n\n${vision.instructions}` : a.system,
+              user: a.user, images: a.images, maxTokens: a.maxTokens,
+              timeoutMs: deadlineMs ? Math.max(10_000, deadlineMs - Date.now() - 4_000) : undefined,
+            });
+            vision.onUsage(out.usage, vision.model);
+            return out.text;
+          });
+          visionLeft--;
+          if (read) {
+            drawingRows = sheetEntityRows({ org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id, page: p }, read.sheet)
+              .map((r) => ({ ...r, nx: null, ny: null, pos_source: null }));
+            const transcript = (read.sheet.transcript ?? "").split("\n").map((l) => sanitizeStorageText(l.trim())).filter(Boolean);
+            if (transcript.join("\n").length > rawPageText.length) lines = transcript;
+            visionRead = true;
+            visionPages++;
+          }
+        } catch (e) {
+          if (isTimeoutError(e)) { stoppedForTime = true; break; }
+          visionLeft--;
+        }
       } else if (vision && visionLeft > 0 && timeForVision) {
         try {
           const img = await renderPageAsImage(pdf, p, {
@@ -273,7 +310,18 @@ export async function ingestKnowledgeDocBatch(
     //    Vision-read pages have no positions (the transcript is text), so
     //    they extract from the lines themselves.
     const pageText = lines.join("\n");
-    if (visionRead) {
+    if (drawingRows) {
+      entityRows.push(...drawingRows);
+      for (const line of lines) {
+        for (const ref of extractDrawingRefs(line)) {
+          entityRows.push({
+            org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+            page: p, kind: "ref", tag: ref, raw: truncateSafe(line, 160), x: null, y: null,
+            nx: null, ny: null, pos_source: null,
+          });
+        }
+      }
+    } else if (visionRead) {
       for (const line of lines) {
         for (const hit of extractEquipmentTags(line)) {
           entityRows.push({
@@ -601,20 +649,31 @@ export async function ingestKnowledgeDocBatch(
 async function loadSponsorVision(
   doc: KnowledgeDocRow,
   onUsage: (usage: { inputTokens: number; outputTokens: number }, model: string) => void,
-): Promise<{ ctx?: VisionContext; forceAllPages: boolean }> {
+): Promise<{ ctx?: VisionContext; forceAllPages: boolean; hold: boolean; sponsor?: string; autoRead?: boolean; autoLeft?: number }> {
   const { data: libRow } = await supabaseAdmin
     .from("knowledge_libraries").select("ai_features")
     .eq("id", doc.library_id).maybeSingle();
-  const forceAllPages =
-    ((libRow?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
+  const features = (libRow?.ai_features ?? {}) as Record<string, unknown>;
+  // "Read new drawings automatically": every page of a new sheet goes through
+  // the drawing reader on the sponsor's model, up to the monthly page cap.
+  // Past the cap the sheet is indexed from its text layer and waits in
+  // "Read all drawings with AI".
+  const auto = readAutoRead(features);
+  const autoRead = features.drawingIntel === true && auto.on;
+  const autoLeft = autoRead ? pagesLeft(auto) : Infinity;
+  // Only "read every page with vision" holds a sheet back when no key can
+  // read it; past the auto-read cap it is indexed from its text.
+  const hold = features.visionAllPages === true;
+  if (autoRead && autoLeft <= 0) return { forceAllPages: false, hold: false };
+  const forceAllPages = features.visionAllPages === true || autoRead;
 
-  const sponsor = doc.created_by ?? null;
-  if (!sponsor) return { forceAllPages };
+  const sponsor = autoRead ? auto.sponsor : (doc.created_by ?? null);
+  if (!sponsor) return { forceAllPages, hold };
   const { data: conn } = await supabaseAdmin
     .from("ai_connections").select("provider, model, api_key")
     .eq("org_id", doc.org_id).eq("user_id", sponsor).maybeSingle();
   if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
-    return { forceAllPages };
+    return { forceAllPages, hold };
   }
   {
     const { data: agree, error: agreeError } = await supabaseAdmin
@@ -622,21 +681,21 @@ async function loadSponsorVision(
       .eq("org_id", doc.org_id).eq("user_id", sponsor)
       .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
     const tableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
-    if (!tableMissing && (agree ?? []).length === 0) return { forceAllPages };
+    if (!tableMissing && (agree ?? []).length === 0) return { forceAllPages, hold };
   }
   const [spent, cap] = await Promise.all([
     getMonthUsage(doc.org_id, sponsor),
     getCapUsd(doc.org_id, sponsor),
   ]);
-  if (cap > 0 && spent.spentUsd >= cap) return { forceAllPages };
+  if (cap > 0 && spent.spentUsd >= cap) return { forceAllPages, hold };
 
   return {
-    forceAllPages,
+    forceAllPages, hold, sponsor, autoRead, autoLeft,
     ctx: {
       provider: conn.provider as AiProviderId,
       model: conn.model as string,
       apiKey: openAiKey(conn.api_key as string),
-      budgetPages: 4,                       // per batch — same as interactive
+      budgetPages: Math.min(4, autoLeft),   // per batch — same as interactive
       forceAllPages,
       instructions: await loadOrgInstructionsBlock(supabaseAdmin, doc.org_id, "equipment"),
       onUsage,
@@ -647,12 +706,16 @@ async function loadSponsorVision(
 export async function drainKnowledgeIngestQueue(opts: {
   maxPages: number;
   deadlineMs: number;
+  /** Only these read libraries (an upload's own, read straight away). */
+  libraryIds?: string[];
 }): Promise<{ docsTouched: number; pagesIndexed: number; completed: number; errors: string[] }> {
   const out = { docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] };
-  const { data: queued, error } = await supabaseAdmin
+  let q = supabaseAdmin
     .from("knowledge_documents")
     .select("id, org_id, library_id, name, file_key, status, pages_indexed, page_count, last_section, created_by")
-    .in("status", ["pending", "stale", "indexing"])
+    .in("status", ["pending", "stale", "indexing"]);
+  if (opts.libraryIds?.length) q = q.in("library_id", opts.libraryIds);
+  const { data: queued, error } = await q
     .order("created_at", { ascending: true })
     .limit(20);
   if (error || !queued) return out;
@@ -672,17 +735,22 @@ export async function drainKnowledgeIngestQueue(opts: {
       visionUsage.outputTokens += u.outputTokens;
       visionModel = model;
     });
-    if (!sponsor.ctx && sponsor.forceAllPages) continue;
+    if (!sponsor.ctx && sponsor.hold) continue;
 
     out.docsTouched++;
+    let pagesRead = 0;
     try {
       // Batch until this doc finishes or budget/deadline runs out.
       let row: KnowledgeDocRow = doc;
       for (;;) {
         // Same deadline the drain itself respects: a batch that overruns the
         // cron's window would be killed mid-flight and lose its pages.
-        const res = await ingestKnowledgeDocBatch(row, sponsor.ctx, opts.deadlineMs);
+        // Auto-read never passes its monthly cap, even mid-document.
+        const left = sponsor.autoRead ? (sponsor.autoLeft ?? 0) - pagesRead : Infinity;
+        const ctx = sponsor.ctx && left < Infinity ? (left > 0 ? { ...sponsor.ctx, budgetPages: Math.min(sponsor.ctx.budgetPages, left) } : undefined) : sponsor.ctx;
+        const res = await ingestKnowledgeDocBatch(row, ctx, opts.deadlineMs);
         const processed = res.pagesIndexed - (row.pages_indexed ?? 0);
+        pagesRead += res.visionPages;
         budget -= processed;
         out.pagesIndexed += processed;
         if (res.done) { out.completed++; break; }
@@ -699,9 +767,16 @@ export async function drainKnowledgeIngestQueue(opts: {
         .eq("id", doc.id)
         .then(() => undefined, () => undefined);
     }
-    if (visionUsage.inputTokens + visionUsage.outputTokens > 0 && sponsor.ctx && doc.created_by) {
+    if (sponsor.autoRead && pagesRead > 0) {
+      // Count against the monthly cap. Read fresh: another doc in this
+      // drain may have counted since.
+      const { data: lib } = await supabaseAdmin.from("knowledge_libraries").select("ai_features").eq("id", doc.library_id).maybeSingle();
+      await supabaseAdmin.from("knowledge_libraries").update({ ai_features: withPagesUsed(lib?.ai_features as Record<string, unknown> | null, pagesRead) }).eq("id", doc.library_id)
+        .then(() => undefined, () => undefined);
+    }
+    if (visionUsage.inputTokens + visionUsage.outputTokens > 0 && sponsor.ctx && sponsor.sponsor) {
       await recordAskUsage({
-        orgId: doc.org_id, userId: doc.created_by,
+        orgId: doc.org_id, userId: sponsor.sponsor,
         provider: sponsor.ctx.provider, model: visionModel || sponsor.ctx.model,
         usage: visionUsage, ok: true, op: "knowledgeVision",
       }).catch(() => undefined);

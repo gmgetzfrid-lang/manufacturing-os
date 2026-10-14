@@ -311,6 +311,23 @@ only, not in production as of 2026-10-14). "Done when" is what to test.
 - The org graph opens in Map mode (the estate as a tree, same renderer as
   the Documents map). In 2D and 3D, documents linked only to one hub fold
   into it as a count; clicking the hub opens it.
+- One drawing reader (`lib/drawingCensus.ts` `readDrawingSheet`): the
+  indexer uses it for every drawing-set page that goes to vision, and so
+  do "Read with AI" and Connect. Its structured reading replaces pattern
+  matching on that page, and its transcript becomes the page's search text.
+- "Read new drawings automatically" (Connect panel, per read library): the
+  Admin or document controller who turns it on sponsors it. New sheets are
+  read with the drawing reader on their key, right after upload, up to a
+  monthly page cap. Past the cap, sheets are indexed from text and wait in
+  "Read all drawings with AI".
+- Automatic tagging (after a read, and the nightly pass) is journaled under
+  one run per day ("Automatic tagging · date"), so it can be undone like
+  any run.
+- Uploads hash each file in the browser and warn when the same bytes are
+  already in a library or an Intelligence library the person can see. The
+  hash is stored on the version (`document_versions.file_hash`).
+- 3D opens as the estate tree (areas standing as layered trees, labels
+  that stay readable at any zoom); the free-form "Web" layout is a switch.
 
 ## 8. Open questions for the owner
 

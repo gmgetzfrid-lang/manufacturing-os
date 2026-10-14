@@ -2510,6 +2510,9 @@ export default function LibraryExplorerPage() {
           file_url: uploadResult.url,
           file_type: file.type || "application/octet-stream",
           size: uploadResult.size,
+          // The key every copy is known by: duplicate warnings, the read
+          // copy and the estate all match on it.
+          file_hash: item.fileHash ?? null,
           created_by: uid,
           created_by_name: userEmail || uid,
           created_at: now,
@@ -4581,6 +4584,7 @@ export default function LibraryExplorerPage() {
         onAddColumn={isController ? () => { setWizardInitType("text"); setWizardInitStep(2); setShowCreateColumn(true); } : undefined}
         uniquenessKeys={library?.uniquenessKeys}
         onAddSheetAndUseForUniqueness={isController ? handleAddSheetAndUseForUniqueness : undefined}
+        orgId={activeOrgId ?? undefined}
       />
 
       {/* NEW: Checkout Flow Modal */}

@@ -11,7 +11,15 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export interface RunCtx { runId: string; label: string; actor: { userId: string; name: string | null } }
+/** actor.userId is null for the automatic paths (tagging after a read). */
+export interface RunCtx { runId: string; label: string; actor: { userId: string | null; name: string | null } }
+
+/** One journal entry per day for everything tagged automatically, so a bad
+ *  day of automatic tagging is one Undo. */
+export function automaticRun(now = new Date()): RunCtx {
+  const day = now.toISOString().slice(0, 10);
+  return { runId: `auto-${day}`, label: `Automatic tagging · ${day}`, actor: { userId: null, name: "Automatic" } };
+}
 
 type EdgeRow = Record<string, unknown> & { id: string; b: string };
 export interface DocSnapshot { at: string; key: string | null; column: unknown; applied: string[]; edges: EdgeRow[] }

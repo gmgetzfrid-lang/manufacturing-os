@@ -37,6 +37,8 @@ interface Props {
   regions: Array<{ label: string; ids: string[] }>;
   /** Frame these nodes; bump `nonce` to re-fly to the same set. */
   flyTo: { ids: string[]; nonce: number } | null;
+  /** A new array here frames every node from above (the 3D estate on open). */
+  frameAll?: GraphNode[] | null;
   onSelect: (n: GraphNode | null) => void;
   onOpen: (n: GraphNode) => void;
   onSettled?: () => void;
@@ -118,9 +120,17 @@ function makeLabelSprite(
   return sprite;
 }
 
+/** 0: always named (areas, groups, projects, folded hubs); 1: named from
+ *  mid range (equipment, equipment types); 2: up close (documents). */
+function labelTier(n: GraphNode): 0 | 1 | 2 {
+  if (n.type === "unit" || n.type === "project" || n.type === "library" || / \(\+\d+\)$/.test(n.label) && n.type !== "plant") return 0;
+  if (n.type === "asset" || n.type === "plant" || n.type === "plot") return 1;
+  return 2;
+}
+
 export default function OrgGraph3D({
   nodes, edges, settings, sim, query, selectedId, highlightIds, pathIds,
-  regions, flyTo, onSelect, onOpen, onSettled,
+  regions, flyTo, onSelect, onOpen, onSettled, frameAll,
 }: Props) {
   const mountRef = React.useRef<HTMLDivElement | null>(null);
   const [ready, setReady] = React.useState(false);
@@ -139,6 +149,8 @@ export default function OrgGraph3D({
   // Camera commands from React, consumed by the loop.
   const flyRef = React.useRef<{ ids: string[]; nonce: number } | null>(null);
   React.useEffect(() => { flyRef.current = flyTo; }, [flyTo]);
+  const frameRef = React.useRef<GraphNode[] | null | undefined>(frameAll);
+  React.useEffect(() => { frameRef.current = frameAll; }, [frameAll]);
 
   React.useEffect(() => {
     const mount = mountRef.current;
@@ -487,6 +499,7 @@ export default function OrgGraph3D({
       let raf = 0;
       let wasSettled = false;
       let lastFly = 0;
+      let lastFrame: GraphNode[] | null = null;
       let lastGlow = true;
       let dashTimer = 0;
 
@@ -505,6 +518,22 @@ export default function OrgGraph3D({
           lastGlow = st.glow;
           nodeMat.blending = st.glow ? THREE.AdditiveBlending : THREE.NormalBlending;
           nodeMat.needsUpdate = true;
+        }
+
+        // Frame the whole estate from above, once per layout.
+        const fa = frameRef.current;
+        if (fa && fa !== lastFrame && fa.length) {
+          const pts = fa.map((n) => s.get(n.id)).filter(Boolean) as Array<{ x: number; y: number; z: number }>;
+          if (pts.length) {
+            lastFrame = fa;
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+            for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+            desiredTarget.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+            const span = Math.max(200, Math.hypot(maxX - minX, maxZ - minZ));
+            desired.radius = Math.min(9000, span * 0.68);
+            desired.phi = 0.95;
+            touched();
+          }
         }
 
         // Fly to a set of nodes (insight spotlight, deep link, focus).
@@ -684,8 +713,12 @@ export default function OrgGraph3D({
           // Units, equipment and projects are the landmarks: named from
           // much further out, whatever their degree. Documents are named
           // up close or when they matter to the search.
-          const landmark = n.type === "unit" || n.type === "asset" || n.type === "project" || n.type === "plant" || / \(\+\d+\)$/.test(n.label);
-          const near = spherical.radius < labelRadius * (landmark ? 3 : 1) && (landmark || n.degree >= 3);
+          // Three tiers, by how far away the camera is: areas, groups and
+          // projects always; equipment and equipment types from mid range;
+          // documents only up close. Each tier keeps a readable size on
+          // screen instead of shrinking to dust.
+          const tier = labelTier(n);
+          const near = tier === 0 || (tier === 1 ? spherical.radius < labelRadius * 0.5 : spherical.radius < labelRadius * 0.16 && n.degree >= 0);
           if (spotId === n.id || neighbours.has(n.id) || matches ||
               onPathSet.has(n.id) || gold.has(n.id) || near) {
             want.add(n.id);
@@ -714,15 +747,20 @@ export default function OrgGraph3D({
             labelCache.delete(id);
             sprite = undefined;
           }
+          const tier = labelTier(n);
           if (!sprite) {
-            const landmark = n.type === "unit" || n.type === "asset" || n.type === "project" || n.type === "plant" || / \(\+\d+\)$/.test(n.label);
-            sprite = makeLabelSprite(THREE, text, landmark ? NODE_COLORS[n.type] : "#f1f5f9", maxAniso, { worldHeight: landmark ? 22 : 17 });
-            (sprite.userData as { text?: string }).text = text;
+            sprite = makeLabelSprite(THREE, text, tier < 2 ? NODE_COLORS[n.type] : "#f1f5f9", maxAniso, { worldHeight: 1 });
+            (sprite.userData as { text?: string; aspect?: number }).text = text;
+            (sprite.userData as { aspect?: number }).aspect = sprite.scale.x / sprite.scale.y;
             labelCache.set(id, sprite);
             labelLayer.add(sprite);
           }
+          // Constant size on screen: a fraction of the camera distance.
+          const hgt = Math.max(tier === 0 ? 20 : 12, spherical.radius * (tier === 0 ? 0.024 : tier === 1 ? 0.015 : 0.012));
+          const aspect = (sprite.userData as { aspect?: number }).aspect ?? 4;
+          sprite.scale.set(aspect * hgt, hgt, 1);
           const base = BASE_R[n.type] + Math.min(9, Math.sqrt(n.degree) * 1.1);
-          sprite.position.set(p.x, p.y + base * 2.4 + 8, p.z);
+          sprite.position.set(p.x, p.y + base * 2.4 + hgt * 0.7, p.z);
         }
 
         renderer.render(scene, camera);

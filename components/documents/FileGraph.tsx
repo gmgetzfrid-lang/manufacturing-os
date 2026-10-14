@@ -179,7 +179,11 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     if (n && !isContainer(n.kind)) {
       const p = targetRef.current.get(n.id);
       const canvas = canvasRef.current;
-      if (p && canvas) camTarget.current = { scale: 1.25, x: -p.x * 1.25, y: -p.y * 1.25 };
+      if (p && canvas) {
+        const ring = 125 + 60;
+        const z = Math.min(1.4, Math.max(0.5, Math.min(canvas.clientWidth, canvas.clientHeight) / (2 * ring + 80)));
+        camTarget.current = { scale: z, x: -p.x * z, y: -p.y * z };
+      }
     } else if (!selectedId && was && targetRef.current.size) {
       fitTo(targetRef.current, upPosRef.current);
     }
@@ -255,7 +259,6 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       // Labels are placed most important first; one that would overlap a
       // label already placed is not drawn.
       const placed: Array<[number, number, number, number]> = [];
-      const free = (x: number, y: number, w: number, h: number) => !placed.some(([px, py, pw, ph]) => x < px + pw && px < x + w && y < py + ph && py < y + h);
       const litPath = new Set<string>();
       if (searching) {
         for (const id of litNow.keys()) {
@@ -281,7 +284,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.beginPath(); ctx.moveTo(upP.x, upP.y); ctx.lineTo(rootP.x, rootP.y); ctx.stroke();
         ctx.setLineDash([]);
         const r = RADIUS[up.kind] * 0.8;
-        ctx.globalAlpha = hoverRef.current === "__up__" ? 0.95 : 0.5;
+        ctx.globalAlpha = hoverRef.current === "__up__" ? 0.95 : focusOn ? 0.15 : 0.5;
         ctx.beginPath(); ctx.arc(upP.x, upP.y, r, 0, Math.PI * 2);
         ctx.fillStyle = up.type.color; ctx.fill();
         ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
@@ -356,14 +359,17 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       ctx.font = "800 12px ui-sans-serif, system-ui";
       const arcOf = (sat: FileGraphSatellite) => Math.max(66, ctx.measureText(sat.label).width + 16);
       const total = satsHere.reduce((a, sat) => a + arcOf(sat), 0);
-      const radius = Math.max(reach + 70, total / (2 * Math.PI));
-      const gap = upHere ? Math.atan2(upHere.y - anchor.y, upHere.x - anchor.x) : -Math.PI / 2;
+      const oneAnchor = new Set(satsHere.flatMap((sat) => sat.links.map((l) => l.to))).size === 1;
+      const radius = Math.max(reach + (oneAnchor ? 125 : 90), total / (2 * Math.PI) + 20);
+      // The free arc: under a single file (where its name is), else toward
+      // the "up" button.
+      const gap = oneAnchor ? Math.PI / 2 : upHere ? Math.atan2(upHere.y - anchor.y, upHere.x - anchor.x) : -Math.PI / 2;
       const dirOf = (sat: FileGraphSatellite) => { const c = centroids.get(sat.id) ?? anchor; const a = Math.atan2(c.y - anchor.y, c.x - anchor.x) - gap; return ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI); };
       const ordered = [...satsHere].sort((a, b) => dirOf(a) - dirOf(b));
       const slot = new Map<string, number>();
       {
         // Spread the free arc evenly so the gap at the "up" side stays clear.
-        const free = Math.max(0, 2 * Math.PI * radius - total);
+        const free = Math.max(oneAnchor ? 150 : 0, 2 * Math.PI * radius - total);
         let at = free / 2;
         for (const sat of ordered) { const w = arcOf(sat); slot.set(sat.id, gap + (at + w / 2) / radius); at += w; }
       }
@@ -476,6 +482,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           ctx.fillText(t, bx + w / 2, byy + 6.8);
           ctx.textBaseline = "top";
         }
+        if (!hush) placed.push([p.x - r - 2, p.y - r - 2, 2 * r + 4, 2 * r + 4]);
         // Label: queued, drawn after every node so nothing paints over it.
         const showLabel = !hush && (isContainer(n.kind) || light || n.id === sel || n.id === hov || s > 0.75);
         if (showLabel) labels.push({ n, p, r, light: !!light, dim, pri: n.id === sel ? 0 : n.id === hov ? 1 : active ? 2 : light ? 3 + (ranksRef.current?.get(n.id) ?? 50) / 100 : isContainer(n.kind) ? 4 : 5 });
@@ -490,17 +497,23 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           const label = n.label.length > 28 ? n.label.slice(0, 26) + "…" : n.label;
           const tw = ctx.measureText(label).width;
           const lh = fontPx + 4 + (n.badge ? 15 : 0);
-          if (n.id !== sel && !free(p.x - tw / 2 - 3, p.y + r + 3, tw + 6, lh)) continue;
-          placed.push([p.x - tw / 2 - 3, p.y + r + 3, tw + 6, lh]);
+          // Under the icon if there is room, else over it, else not at all.
+          const own = (rect: [number, number, number, number]) => placed.filter((q) => !(q[0] === p.x - r - 2 && q[1] === p.y - r - 2)).some(([px, py, pw, ph]) => rect[0] < px + pw && px < rect[0] + rect[2] && rect[1] < py + ph && py < rect[1] + rect[3]);
+          const below: [number, number, number, number] = [p.x - tw / 2 - 3, p.y + r + 3, tw + 6, lh];
+          const above: [number, number, number, number] = [p.x - tw / 2 - 3, p.y - r - 3 - lh, tw + 6, lh];
+          const spot = n.id === sel || !own(below) ? below : !own(above) ? above : null;
+          if (!spot) continue;
+          placed.push(spot);
+          const ly = spot[1];
           ctx.globalAlpha = dim ? 0.5 : 1;
           ctx.fillStyle = "rgba(255,255,255,0.85)";
-          ctx.fillRect(p.x - tw / 2 - 3, p.y + r + 3, tw + 6, fontPx + 4);
+          ctx.fillRect(spot[0], ly, tw + 6, fontPx + 4);
           ctx.fillStyle = dim ? "rgba(51,65,85,0.5)" : container ? "#0f172a" : "#334155";
-          ctx.fillText(label, p.x, p.y + r + 5);
+          ctx.fillText(label, p.x, ly + 2);
           if (n.badge) {
             ctx.font = "700 9px ui-sans-serif, system-ui";
             const bw = ctx.measureText(n.badge).width + 8;
-            const by = p.y + r + 5 + fontPx + 5;
+            const by = ly + 2 + fontPx + 5;
             ctx.fillStyle = dim ? "rgba(124,58,237,0.25)" : "#7c3aed";
             ctx.beginPath(); ctx.roundRect(p.x - bw / 2, by, bw, 12, 6); ctx.fill();
             ctx.fillStyle = "#fff"; ctx.fillText(n.badge, p.x, by + 2);

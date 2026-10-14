@@ -40,6 +40,7 @@ import GraphControls from "@/components/graph/GraphControls";
 import OrgGraph2D from "@/components/graph/OrgGraph2D";
 import EstateMap from "@/components/graph/EstateMap";
 import { foldLeaves } from "@/lib/graphFold";
+import { layeredEstate } from "@/lib/estate3d";
 
 // three.js only downloads when 3D is switched on.
 const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
@@ -216,9 +217,22 @@ function GraphPageInner() {
     return { nodes, edges, ghosts, folded, foldedTotal };
   }, [graph, settings, proposals, focusId, openKey]);
 
+  // ── 3D estate: the Map's tree standing in levels, every position fixed.
+  const layered = React.useMemo(() => (graph && settings.mode === "3d" && settings.layout3d !== "web" ? layeredEstate(graph.nodes, graph.edges) : null), [graph, settings.mode, settings.layout3d]);
+
   // ── Feed the simulation ───────────────────────────────────────────────
   React.useEffect(() => {
     if (!view || !activeOrgId) return;
+    if (layered) {
+      sim.configure({ dimensions: 3 });
+      sim.setGraph(layered.nodes.map((n) => ({ id: n.id, mass: 1 })), layered.edges.map((e) => ({ a: e.a, b: e.b, strength: 0 })));
+      for (const n of sim.nodes) {
+        const p = layered.pos[n.id];
+        if (p) { n.x = p[0]; n.y = p[1]; n.z = p[2]; }
+        n.vx = 0; n.vy = 0; n.vz = 0; n.fixed = true;
+      }
+      return;
+    }
     // 2D and 3D keep SEPARATE saved layouts. Restoring a flat disc into the
     // 3D view guarantees a pancake that looks exactly like the 2D map.
     let restore: Record<string, [number, number, number]> | undefined;
@@ -236,7 +250,7 @@ function GraphPageInner() {
       })),
       { restore },
     );
-  }, [view, activeOrgId, sim, posKey]);
+  }, [view, activeOrgId, sim, posKey, layered]);
 
   // Live forces: dragging a slider is answered on the next frame, which is
   // the whole point of having sliders.
@@ -419,6 +433,16 @@ function GraphPageInner() {
       return;
     }
     if (n && view?.folded.has(n.id)) setOpenHubs((s) => new Set([...s, n.id]));
+    // 3D estate: picking an area, a type or a piece of equipment flies to
+    // its whole tree.
+    if (n && layered) {
+      const kids = new Map<string, string[]>();
+      for (const e of layered.edges) kids.set(e.a, [...(kids.get(e.a) ?? []), e.b]);
+      const ids: string[] = [];
+      const walk = (id: string) => { ids.push(id); for (const k of kids.get(id) ?? []) walk(k); };
+      walk(n.id);
+      setHighlight({ ids, nonce: Date.now() });
+    }
     setSelected((prev) => {
       // Only a genuine hop is history — reselecting the same node isn't.
       if (n && prev && prev.id !== n.id) setTrail((t) => [...t.slice(-19), prev]);
@@ -426,7 +450,7 @@ function GraphPageInner() {
       return n;
     });
     if (!n) setHighlight(null);
-  }, [pathMode, connect, completeConnect, view]);
+  }, [pathMode, connect, completeConnect, view, layered]);
 
   const peekBack = React.useCallback(() => {
     setTrail((t) => {
@@ -578,8 +602,8 @@ function GraphPageInner() {
                 </div>
               }>
                 <OrgGraph3D
-                  nodes={view.nodes}
-                  edges={[...view.edges, ...view.ghosts]}
+                  nodes={layered?.nodes ?? view.nodes}
+                  edges={layered?.edges ?? [...view.edges, ...view.ghosts]}
                   sim={sim}
                   settings={settings}
                   query={query}
@@ -590,7 +614,8 @@ function GraphPageInner() {
                   flyTo={highlight}
                   onSelect={handleSelect}
                   onOpen={open}
-                  onSettled={persistPositions}
+                  onSettled={layered ? undefined : persistPositions}
+                  frameAll={layered?.nodes ?? null}
                 />
               </Suspense>
             ) : (

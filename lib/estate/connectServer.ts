@@ -31,8 +31,9 @@ import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { computeForKnowledgeDoc, applyForDocument } from "@/lib/equipmentBridgeServer";
 import { resolveEstate } from "./resolverServer";
 import { computeReadiness, type EstateReadiness } from "./readinessServer";
-import { snapshotDoc, recordDocChange, type RunCtx } from "./runJournal";
+import { snapshotDoc, recordDocChange, automaticRun, type RunCtx } from "./runJournal";
 import { looksLikeDrawings } from "./connectPlan";
+import { readAutoRead } from "./autoRead";
 
 /** Bump when the tag reader learns to see more: every read copy is read
  *  again once, so sheets read by an older reader catch up on their own. */
@@ -49,7 +50,11 @@ export interface ConnectStatus {
   readiness: EstateReadiness;
   libraries: Array<{ id: string; name: string }>;
   /** The caller's AI key, as the reading uses it: vision for pages with no usable text layer. */
-  ai: { hasKey: boolean; provider?: string; model?: string; visionAllPages: boolean };
+  ai: { hasKey: boolean; provider?: string; model?: string; visionAllPages: boolean;
+    /** New drawings read automatically by the drawing reader, up to a monthly page cap. */
+    autoRead: { on: boolean; monthlyPages: number; used: number; sponsorName: string | null; mine: boolean } };
+  /** The read library the drawings are indexed into. */
+  readLibraryId: string;
 }
 
 const UNIT_IN_NAME = /(?:^|[^A-Z0-9])(?:UNIT|U)[\s\-_]?(\d{1,3})(?![0-9])/i;
@@ -203,7 +208,7 @@ async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: st
   for (const m of todo) {
     if (Date.now() > deadline) break;
     try {
-      const c = await computeForKnowledgeDoc(admin, m.id);
+      const c = await computeForKnowledgeDoc(admin, m.id, { autoApply: false });
       out.drawings++;
       if (!c || !c.suggestions.length) { done.add(m.source_document_id); continue; }
       const before = run ? await snapshotDoc(admin, orgId, m.source_document_id) : null;
@@ -291,13 +296,16 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
   // The caller's AI key: the browser reads scanned or line-work pages with it.
   const { data: conn } = await admin.from("ai_connections").select("provider, model").eq("org_id", orgId).eq("user_id", input.actor.userId).maybeSingle();
   const { data: libNow } = await admin.from("knowledge_libraries").select("ai_features").eq("id", r.libraryId).maybeSingle();
-  const ai = { hasKey: !!conn, provider: (conn as { provider?: string } | null)?.provider, model: (conn as { model?: string } | null)?.model, visionAllPages: ((libNow?.ai_features as Record<string, unknown> | null) ?? {}).visionAllPages === true };
+  const feats = (libNow?.ai_features as Record<string, unknown> | null) ?? {};
+  const auto = readAutoRead(feats);
+  const ai = { hasKey: !!conn, provider: (conn as { provider?: string } | null)?.provider, model: (conn as { model?: string } | null)?.model, visionAllPages: feats.visionAllPages === true,
+    autoRead: { on: auto.on, monthlyPages: auto.monthlyPages, used: auto.used, sponsorName: auto.sponsorName, mine: auto.sponsor === input.actor.userId } };
   steps.push({
     key: "links", title: "Links", state: readiness.estateMissing ? "blocked" : "done",
     detail: readiness.estateMissing ? "migration 20261020 is not applied" : `${links.applied} new · ${links.pending} for Review · ${readiness.edges.applied} in place (${readiness.docsWithAsset} documents to equipment, ${readiness.docsWithUnit} to a unit)`,
   });
 
-  return { steps, queuedIds: queued.slice(0, 30).map((q) => q.id), queued: queued.length, more: queued.length > 0 || reg.left > 0, readiness, libraries: dcLibs, ai };
+  return { steps, queuedIds: queued.slice(0, 30).map((q) => q.id), queued: queued.length, more: queued.length > 0 || reg.left > 0, readiness, libraries: dcLibs, ai, readLibraryId: r.libraryId };
 }
 
 /** The nightly pass: every drawing-set library's freshly read copies feed
@@ -311,9 +319,33 @@ export async function registryAllOrgs(admin: SupabaseClient, opts: { deadlineMs:
     if (Date.now() > opts.deadlineMs) break;
     if ((l.ai_features ?? {}).drawingIntel !== true) continue;
     try {
-      const r = await buildRegistry(admin, l.org_id, l.id, null, opts.deadlineMs);
+      const r = await buildRegistry(admin, l.org_id, l.id, null, opts.deadlineMs, automaticRun());
       out.libraries++; out.applied += r.applied; out.assets += r.assets;
     } catch (e) { out.errors.push(`${l.id}: ${(e as Error).message}`); }
   }
   return out;
+}
+
+/** Switch "read new drawings automatically" on or off for a read library.
+ *  The person switching it on becomes the sponsor: their model, their cap. */
+export async function setAutoRead(admin: SupabaseClient, input: { orgId: string; libraryId: string; on: boolean; monthlyPages?: number; actor: { userId: string; name: string | null } }): Promise<{ on: boolean; monthlyPages: number; used: number }> {
+  const { data: lib } = await admin.from("knowledge_libraries").select("id, ai_features").eq("id", input.libraryId).eq("org_id", input.orgId).maybeSingle();
+  if (!lib) throw new Error("That read library is not in this organization.");
+  const feats = ((lib as { ai_features: Record<string, unknown> | null }).ai_features) ?? {};
+  if (feats.drawingIntel !== true) throw new Error("Automatic reading is for drawing libraries.");
+  if (input.on) {
+    const { data: conn } = await admin.from("ai_connections").select("provider").eq("org_id", input.orgId).eq("user_id", input.actor.userId).maybeSingle();
+    if (!conn) throw new Error("Add your AI key in Intelligence › Setup first — new drawings are read on it.");
+  }
+  const cur = readAutoRead(feats);
+  const next = {
+    ...cur,
+    on: input.on,
+    sponsor: input.on ? input.actor.userId : cur.sponsor,
+    sponsorName: input.on ? input.actor.name : cur.sponsorName,
+    monthlyPages: typeof input.monthlyPages === "number" && input.monthlyPages > 0 ? Math.min(Math.round(input.monthlyPages), 100_000) : cur.monthlyPages,
+  };
+  const { error } = await admin.from("knowledge_libraries").update({ ai_features: { ...feats, autoRead: next } }).eq("id", input.libraryId);
+  if (error) throw new Error(error.message);
+  return { on: next.on && !!next.sponsor, monthlyPages: next.monthlyPages, used: next.used };
 }

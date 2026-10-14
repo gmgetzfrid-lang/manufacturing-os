@@ -6,14 +6,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireMember } from "@/lib/estate/serverAuth";
-import { connectEverything } from "@/lib/estate/connectServer";
+import { connectEverything, setAutoRead } from "@/lib/estate/connectServer";
 import { connectPlan } from "@/lib/estate/connectPlan";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  let body: { orgId?: string; libraryIds?: string[]; visionAllPages?: boolean; rereadAll?: boolean; runId?: string; action?: string };
+  let body: { orgId?: string; libraryIds?: string[]; visionAllPages?: boolean; rereadAll?: boolean; runId?: string; action?: string; libraryId?: string; on?: boolean; monthlyPages?: number };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Expected JSON body" }, { status: 400 }); }
   const orgId = String(body.orgId ?? "");
   const auth = await requireMember(req, orgId, ["Admin", "DocCtrl"]);
@@ -21,6 +21,13 @@ export async function POST(req: NextRequest) {
   try {
     if (body.action === "plan") {
       return NextResponse.json(await connectPlan(supabaseAdmin, orgId, auth.caller!.userId, Array.isArray(body.libraryIds) ? body.libraryIds.map(String) : undefined));
+    }
+    if (body.action === "autoRead") {
+      return NextResponse.json(await setAutoRead(supabaseAdmin, {
+        orgId, libraryId: String(body.libraryId ?? ""), on: body.on === true,
+        monthlyPages: typeof body.monthlyPages === "number" ? body.monthlyPages : undefined,
+        actor: { userId: auth.caller!.userId, name: auth.caller!.email },
+      }));
     }
     const status = await connectEverything(supabaseAdmin, {
       orgId, libraryIds: Array.isArray(body.libraryIds) ? body.libraryIds.map(String) : undefined,

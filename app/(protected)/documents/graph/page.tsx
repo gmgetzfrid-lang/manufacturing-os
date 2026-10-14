@@ -766,7 +766,8 @@ function GraphPageInner() {
           {showConnect && (connect.status || connect.running || connect.error || connect.bulk) && (
             <div className="absolute top-12 right-3 pointer-events-auto">
               <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} onRun={(o) => void connect.run(o)} bulk={connect.bulk} onReadAll={() => void connect.readAll()}
-                undoBox={<UndoRunBox runId={connect.runId} journaled={connect.journaled} undo={connect.undo} onUndo={() => void connect.undoLast()} />} />
+                undoBox={<UndoRunBox runId={connect.runId} journaled={connect.journaled} undo={connect.undo} onUndo={() => void connect.undoLast()} />}
+                onAutoRead={(on, cap) => void connect.setAutoRead(on, cap)} />
               {controller && activeOrgId && !connect.running && connect.status && (
                 <div className="mt-2 max-w-md"><SuspectEquipment orgId={activeOrgId} refreshKey={JSON.stringify(connect.status.readiness)} onRemoved={() => void refresh()} /></div>
               )}
