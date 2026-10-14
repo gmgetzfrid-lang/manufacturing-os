@@ -9,11 +9,17 @@
 //            keeps SELECT unchanged and bounds default_days to 1–3650.
 //   EDGE-7   done-when 2's editor: lib/slaDefaultsEditor.ts (validated per
 //            request type to the create route's own bound, checked writes
-//            that carry the database's refusal text).
+//            that carry the database's refusal text); every type the create
+//            route reads sla_defaults for is listed — the saved form's and
+//            the built-in ones (BUILTIN_REQUEST_TYPES).
+//   EDGE-17  the SLA clock's sla_defaults pass skips a stored row outside
+//            boundedSlaDays, exactly as a type with no row (its runtime cases
+//            are in ticketSla.test.ts, beside the clock's other scans).
 //
 // This file: the editor's data layer (unit), the migration's DEC-30 shape and
 // its byte-fidelity to the newest definitions it mirrors (scanned at test
-// time), and the pins on every reader of sla_defaults (unchanged). The
+// time), and the pins on every reader of sla_defaults (the create route
+// unchanged; the clock's one change, EDGE-17). The
 // runtime row-level security per role is lib/__tests__/rls/slaDefaultsRail.test.ts
 // (`npm run test:db`); the rendered editor is dfRoundG_P13_slaDefaultsRendered.test.ts.
 
@@ -24,12 +30,14 @@ import { join } from "node:path";
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 
 import {
-  SLA_DEFAULTS_RAIL_MIGRATION, SLA_WARN_PERCENT, builtInSlaDays, clearSlaDefault, loadSlaDefaults, parseSlaDays,
-  saveSlaDefault, slaClockState, slaWriteFailure, storedWindowUsable, untargetedImpact, untargetedImpactQuestion, warnAfterDays,
+  SLA_DEFAULTS_RAIL_MIGRATION, SLA_WARN_PERCENT, builtInSlaDays, clearSlaDefault, formatSpan, loadSlaDefaults, parseSlaDays,
+  saveSlaDefault, slaClockState, slaEditorTypes, slaWriteFailure, storedWindowUsable, untargetedImpact, untargetedImpactQuestion,
+  warnAfterLabel, warnAfterMs,
 } from "@/lib/slaDefaultsEditor";
 import { DEFAULT_SLA_DAYS, SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";
 import { ADMIN_SURFACES, DRAFTING_CONFIG_EDITORS } from "@/lib/adminSurfaces";
-import { SLA_CLOCK_COLUMN, SLA_CLOCK_MIGRATION, SLA_WARN_FRACTION } from "@/lib/ticketSla";
+import { SLA_CLOCK_COLUMN, SLA_CLOCK_MIGRATION, SLA_WARN_FRACTION, warnAt } from "@/lib/ticketSla";
+import { BUILTIN_REQUEST_TYPES, requestTypeAllowed } from "@/lib/ticketCreate";
 import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -80,11 +88,72 @@ describe("EDGE-7 done-when 2 — the editor's validation is the create route's o
   it("the warning point is the clock's fixed fraction (warn_before_days is read by no code and not offered)", () => {
     expect(SLA_WARN_FRACTION).toBe(0.75);
     expect(SLA_WARN_PERCENT).toBe(75);
-    expect(warnAfterDays(14)).toBe(10);
-    expect(warnAfterDays(1)).toBe(0);
     const code = (f: string) => src(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
     const offenders = ["app", "components", "hooks", "lib"].flatMap(walk).filter((f) => /warn_before_days/.test(code(f)));
     expect(offenders).toEqual([]);
+  });
+  it("re-review: the warning time the page states IS the clock's — warnAt over the clock's own window, never rounded (1 day warns at 18 hours, not '0 day(s)')", () => {
+    expect(warnAfterLabel(1)).toBe("18 hours");
+    expect(warnAfterLabel(2)).toBe("1 day and 12 hours");
+    expect(warnAfterLabel(3)).toBe("2 days and 6 hours");
+    expect(warnAfterLabel(4)).toBe("3 days");
+    expect(warnAfterLabel(14)).toBe("10 days and 12 hours");
+    const back = (label: string) => {
+      const n = (re: RegExp) => Number(re.exec(label)?.[1] ?? 0);
+      return (n(/(\d+) days?/) * 1440 + n(/(\d+) hours?/) * 60 + n(/(\d+) minutes?/)) * 60000;
+    };
+    const DAY = 24 * 3600 * 1000;
+    const filed = Date.parse("2026-03-01T09:30:00.000Z");
+    for (let d = 1; d <= SLA_DEFAULT_DAYS_MAX; d++) {
+      // the clock's warn instant for a ticket timed from its filing date by a d-day window (lib/ticketSla.ts warnAt) …
+      const clock = warnAt({ id: "t", orgId: "o", status: "DRAFTING", createdAt: new Date(filed).toISOString() }, filed + d * DAY) - filed;
+      expect(warnAfterMs(d), String(d)).toBe(clock);
+      // … the instant its sla_defaults pass reads from (now - days * DAY_MS * SLA_WARN_FRACTION) …
+      expect(warnAfterMs(d), String(d)).toBe(d * DAY * SLA_WARN_FRACTION);
+      // … and the words say exactly that span
+      expect(back(warnAfterLabel(d)), String(d)).toBe(clock);
+    }
+    expect(formatSpan(90 * 60000)).toBe("1 hour and 30 minutes");
+    expect(formatSpan(DAY + 61 * 60000)).toBe("1 day, 1 hour and 1 minute");
+    const lib = src("lib/slaDefaultsEditor.ts");
+    expect(lib).not.toMatch(/Math\.floor\(days \* SLA_WARN_FRACTION\)/);
+    expect(lib).toContain("const target = effectiveTarget(t, new Map([[\"window\", days]]));");
+    expect(lib).toContain("return target === null ? 0 : warnAt(t, target) - filed;");
+  });
+});
+
+describe("EDGE-7 done-when 2 (integrator fix pass) — every type the create route reads sla_defaults for is listed", () => {
+  const opt = (value: string, label = value) => ({ label, value });
+  it("the saved form's types, then every built-in type not on it (BUILTIN_REQUEST_TYPES — 'Revision' among them), then stored windows on neither; each once", () => {
+    expect([...BUILTIN_REQUEST_TYPES]).toEqual(["Revision", "ASBUILT", "RFI"]);
+    const rows = [
+      { id: "1", requestType: "ISO", defaultDays: 3 },
+      { id: "2", requestType: "Revision", defaultDays: 9 },
+      { id: "3", requestType: "LEGACY", defaultDays: 5 },
+    ];
+    expect(slaEditorTypes([opt("ISO", "ISO (Isometric)"), opt("RFI", "RFI (Info Request)"), opt(""), opt(" MOC "), opt("ISO")], rows)).toEqual([
+      { value: "ISO", label: "ISO (Isometric)", source: "form" },
+      { value: "RFI", label: "RFI (Info Request)", source: "form" },
+      { value: "MOC", label: " MOC ", source: "form" },
+      { value: "Revision", label: "Revision", source: "builtin" },
+      { value: "ASBUILT", label: "ASBUILT", source: "builtin" },
+      { value: "LEGACY", label: "LEGACY", source: "stored" },
+    ]);
+    // no form at all: the built-ins are still listed
+    expect(slaEditorTypes([], []).map((t) => [t.value, t.source])).toEqual([["Revision", "builtin"], ["ASBUILT", "builtin"], ["RFI", "builtin"]]);
+    // a built-in on the form is the form's row, with the form's label
+    expect(slaEditorTypes([opt("ASBUILT", "As-Built")], []).map((t) => [t.value, t.label, t.source])).toEqual([["ASBUILT", "As-Built", "form"], ["Revision", "Revision", "builtin"], ["RFI", "RFI", "builtin"]]);
+  });
+  it("every type the create route accepts for a workspace (requestTypeAllowed) is a row of the editor — whatever the form lists", () => {
+    const forms = [[opt("ISO"), opt("MOC")], [opt("ASBUILT", "As-Built"), opt("INSPECTION")], []];
+    for (const options of forms) {
+      const listed = new Set(slaEditorTypes(options, []).map((t) => t.value));
+      const cfg = { requestTypes: { label: "Request Type", enabled: true, options } };
+      for (const type of [...options.map((o) => o.value), ...BUILTIN_REQUEST_TYPES]) {
+        expect(requestTypeAllowed(type, cfg), type).toBe(true);
+        expect(listed.has(type), type).toBe(true);
+      }
+    }
   });
 });
 
@@ -216,33 +285,38 @@ describe("EDGE-7's residual question — what happens to the counted requests de
   it("nothing falls due: no question, whatever the clock", () => {
     for (const c of [STARTED, NOT_STARTED, UNKNOWN]) expect(untargetedImpactQuestion("RFI", 2, counted(0, 0), c)).toBeNull();
   });
-  it("clock started: the next nightly run sends each its own notice (the text as before)", () => {
+  it("clock started: the nightly run sends each its own notice, starting with its next run — never promised all in one run (it stops at its read cap or its time), and the warning point is the clock's exact one", () => {
     expect(untargetedImpactQuestion("RFI", 2, counted(4, 2), STARTED)).toBe(
-      '4 open RFI request(s) with no due date of their own were filed more than 2 day(s) ago: the next SLA run (the nightly maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester. 2 more are past 1 day(s) and get a "Due soon" notice. Save anyway?',
+      '4 open RFI request(s) with no due date of their own were filed more than 2 day(s) ago: the nightly SLA run (the maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester, starting with its next run. 2 more are past the warning point (1 day and 12 hours after filing): each gets a "Due soon" notice, or the "Overdue" one if the run reaches it after its due date. Save anyway?',
     );
     expect(untargetedImpactQuestion("RFI", 2, uncounted, STARTED)).toBe(
-      'Whether this window puts open RFI requests with no due date of their own past due could not be checked (statement timeout). Any filed more than 2 day(s) ago get an "Overdue" notice at the next SLA run (the nightly maintenance job). Save anyway?',
+      'Whether this window puts open RFI requests with no due date of their own past due could not be checked (statement timeout). Any filed more than 2 day(s) ago are recorded as overdue with an "Overdue" notice by the nightly SLA run (the maintenance job), starting with its next run. Save anyway?',
     );
+    expect(untargetedImpactQuestion("RFI", 1, counted(0, 3), STARTED)).toContain("3 more are past the warning point (18 hours after filing)");
+    // the run's own caps: what one run reads is bounded, so the question never says "the next run" does it all
+    const clock = src("lib/ticketSla.ts");
+    expect(clock).toContain("const maxTickets = deps.maxTickets ?? 2000;");
+    expect(clock).toContain("if (read2 >= maxTickets) { report.truncated = true; return report; }");
   });
   it("clock not started (20261195 unpasted): nothing is sent now; at the paste they are recorded as overdue with one summary notice to the queue, never a notice each", () => {
     const q = untargetedImpactQuestion("RFI", 2, counted(4, 2), NOT_STARTED)!;
     expect(q).toBe(
-      "4 open RFI request(s) with no due date of their own were filed more than 2 day(s) ago. The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, the ones then past this window are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. 2 more are past 1 day(s): once the clock has started, the SLA run sends each one still inside this window a \"Due soon\" notice. Save anyway?",
+      "4 open RFI request(s) with no due date of their own were filed more than 2 day(s) ago. The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, the ones then past this window are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. 2 more are past the warning point (1 day and 12 hours after filing): once the clock has started, the SLA run sends each one still inside this window a \"Due soon\" notice. Save anyway?",
     );
-    expect(q).not.toContain("the next SLA run (the nightly maintenance job) records each");
+    expect(q).not.toContain("the nightly SLA run (the maintenance job) records each");
     expect(q).not.toContain("to the person it waits on");
     const u = untargetedImpactQuestion("RFI", 2, uncounted, NOT_STARTED)!;
     expect(u).toBe(
       "Whether this window puts open RFI requests with no due date of their own past due could not be checked (statement timeout). The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, any filed more than 2 day(s) before then are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. Save anyway?",
     );
-    expect(u).not.toContain('get an "Overdue" notice');
+    expect(u).not.toContain('with an "Overdue" notice');
   });
   it("clock state unreadable: both outcomes are said, never one guessed", () => {
     const q = untargetedImpactQuestion("RFI", 2, counted(4, 0), UNKNOWN)!;
-    expect(q).toContain("Whether the SLA clock has started could not be read (permission denied): if it has, the next SLA run (the nightly maintenance job) records each as overdue and sends an \"Overdue\" notice");
+    expect(q).toContain("Whether the SLA clock has started could not be read (permission denied): if it has, the nightly SLA run (the maintenance job) records each as overdue and sends an \"Overdue\" notice to the person it waits on, the assignment queue and the requester, starting with its next run;");
     expect(q).toContain("if it has not, when 20261195 is applied, the ones then past this window are recorded as overdue without a notice of their own");
     const u = untargetedImpactQuestion("RFI", 2, uncounted, UNKNOWN)!;
-    expect(u).toContain("could not be checked (statement timeout). Whether the SLA clock has started could not be read either (permission denied): if it has, any filed more than 2 day(s) ago get an \"Overdue\" notice at the next SLA run");
+    expect(u).toContain("could not be checked (statement timeout). Whether the SLA clock has started could not be read either (permission denied): if it has, any filed more than 2 day(s) ago are recorded as overdue with an \"Overdue\" notice by the nightly SLA run (the maintenance job), starting with its next run;");
     expect(u).toContain("if it has not, when 20261195 is applied, any filed more than 2 day(s) before then are recorded as overdue without a notice of their own");
   });
 });

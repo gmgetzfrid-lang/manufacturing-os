@@ -28,11 +28,12 @@ import {
   parseSlaDays,
   saveSlaDefault,
   slaClockState,
+  slaEditorTypes,
   SLA_WARN_PERCENT,
   storedWindowUsable,
   untargetedImpact,
   untargetedImpactQuestion,
-  warnAfterDays,
+  warnAfterLabel,
   type SlaDefaultRow,
 } from '@/lib/slaDefaultsEditor';
 
@@ -362,8 +363,10 @@ export default function DraftingConfigPage() {
 // drafting-flow EDGE-7 done-when 2's editor / EDGE-16 (DF-P13). One window
 // per request type: the days a request filed without a requested date has
 // before it is due (/api/tickets/create), and the window the SLA clock gives
-// an open request of the type that has no due date of its own. Each save is
-// its own checked write (lib/slaDefaultsEditor.ts), validated to the create
+// an open request of the type that has no due date of its own. The types are
+// the saved request form's, the built-in ones the create route accepts
+// whatever the form lists, and any stored window's (slaEditorTypes). Each save
+// is its own checked write (lib/slaDefaultsEditor.ts), validated to the create
 // route's own bound; a refusal shows the database's words. The admin gate
 // holds this page to DRAFTING_CONFIG_EDITORS, and 20261218 makes the same set
 // the database's write rule.
@@ -390,17 +393,12 @@ function SlaDefaultsSection({ orgId, requestTypes, requestTypesUnsaved }: { orgI
   useEffect(() => { void refresh(); }, [refresh]);
 
   // The request types on the SAVED form (blank values skipped, each once),
-  // then any stored window whose type is no longer on it, so it can be
-  // removed. An unsaved edit of the form never adds or renames a row here.
-  const formTypes: Array<{ value: string; label: string; onForm: boolean }> = [];
-  for (const o of requestTypes) {
-    const value = String(o.value ?? '').trim();
-    if (value && !formTypes.some((t) => t.value === value)) formTypes.push({ value, label: o.label || value, onForm: true });
-  }
+  // then the built-in types the create route accepts whatever the form lists
+  // (check-in's "Revision" among them), then any stored window whose type is
+  // on neither, so it can be removed. An unsaved edit of the form never adds
+  // or renames a row here.
   const rows = load.kind === "ready" ? load.rows : [];
-  for (const r of rows) {
-    if (!formTypes.some((t) => t.value === r.requestType)) formTypes.push({ value: r.requestType, label: r.requestType, onForm: false });
-  }
+  const formTypes = slaEditorTypes(requestTypes, rows);
   const rowFor = (type: string) => rows.find((r) => r.requestType === type) ?? null;
 
   const save = async (type: string, label: string) => {
@@ -433,11 +431,15 @@ function SlaDefaultsSection({ orgId, requestTypes, requestTypesUnsaved }: { orgI
     }
   };
 
-  const clear = async (type: string, label: string) => {
+  const clear = async (type: string, label: string, usable: boolean) => {
     if (!orgId) return;
+    // What removing the row changes: a usable window stops; one outside the
+    // bound was already used by neither reader (EDGE-17).
     const go = await appConfirm({
       title: "Use the built-in window?",
-      message: `New ${label} requests will be due ${builtInSlaDays(type)} day(s) after filing (the built-in window), and the SLA clock stops timing open ${label} requests that have no due date of their own.`,
+      message: usable
+        ? `New ${label} requests filed without a requested date will be due ${builtInSlaDays(type)} day(s) after filing (the built-in window), and the SLA clock stops timing open ${label} requests that have no due date of their own.`
+        : `The stored window, outside 1–${SLA_DEFAULT_DAYS_MAX} days, is removed. Nothing else changes: new ${label} requests filed without a requested date already use the built-in window (${builtInSlaDays(type)} day(s)), and the SLA clock already does not time open ${label} requests that have no due date of their own.`,
       confirmLabel: "Use built-in",
     });
     if (!go) return;
@@ -450,7 +452,7 @@ function SlaDefaultsSection({ orgId, requestTypes, requestTypesUnsaved }: { orgI
         return;
       }
       setDrafts((d) => { const next = { ...d }; delete next[type]; return next; });
-      setNotice({ type, tone: "ok", text: `${label} uses the built-in window again (${builtInSlaDays(type)} day(s)).` });
+      setNotice({ type, tone: "ok", text: `Removed: new ${label} requests filed without a requested date use the built-in window (${builtInSlaDays(type)} day(s)).` });
       await refresh(true);
     } finally {
       setBusy(null);
@@ -464,8 +466,8 @@ function SlaDefaultsSection({ orgId, requestTypes, requestTypesUnsaved }: { orgI
         <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
           Per request type: how many days a request filed without a requested date has before it is due (at 17:00 on the last day).
           The SLA clock warns the person a request waits on at {SLA_WARN_PERCENT}% of its window and escalates at the due date.
-          Open requests of a type that have no due date of their own are timed from their filing date with the same window.
-          Each type is saved on its own; a type with no window uses the built-in one.
+          Open requests of a type with a saved window that have no due date of their own are timed from their filing date with that window; without one, they are not timed.
+          Each type is saved on its own; for a type with no window, new requests use the built-in one.
         </p>
         {requestTypesUnsaved && (
           <p role="status" className="mt-1 text-xs text-amber-700">
@@ -502,7 +504,8 @@ function SlaDefaultsSection({ orgId, requestTypes, requestTypesUnsaved }: { orgI
                   <label htmlFor={inputId} className="w-40 shrink-0 pt-2 text-sm text-[var(--color-text)]">
                     <span className="font-bold">{t.label}</span>{' '}
                     <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{t.value}</span>
-                    {!t.onForm && <span className="block text-[11px] text-amber-700">not on the request form</span>}
+                    {t.source === "builtin" && <span className="block text-[11px] text-[var(--color-text-muted)]">built in — accepted whatever the form lists (check-in, transition-in)</span>}
+                    {t.source === "stored" && <span className="block text-[11px] text-amber-700">not on the request form</span>}
                   </label>
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
@@ -521,7 +524,7 @@ function SlaDefaultsSection({ orgId, requestTypes, requestTypesUnsaved }: { orgI
                         Save
                       </Button>
                       {row && (
-                        <Button size="sm" variant="secondary" onClick={() => void clear(t.value, t.label)} disabled={busy !== null}>
+                        <Button size="sm" variant="secondary" onClick={() => void clear(t.value, t.label, usable)} disabled={busy !== null}>
                           Use built-in
                         </Button>
                       )}
@@ -533,13 +536,12 @@ function SlaDefaultsSection({ orgId, requestTypes, requestTypesUnsaved }: { orgI
                       {!row
                         ? `Built-in window: ${builtInSlaDays(t.value)} day(s).`
                         : usable
-                          ? `Saved: ${row.defaultDays} day(s) — the clock warns after ${warnAfterDays(row.defaultDays)} day(s).`
+                          ? `Saved: ${row.defaultDays} day(s) — for an open request with no due date of its own, the SLA clock warns ${warnAfterLabel(row.defaultDays)} after filing.`
                           : null}
                     </div>
                     {row && !usable && (
                       <div role="alert" className="text-[11px] text-amber-700">
-                        The stored window ({String(row.defaultDays)}) is outside 1–{SLA_DEFAULT_DAYS_MAX} days: new requests use the built-in {builtInSlaDays(t.value)} day(s).
-                        {row.defaultDays > 0 && ` The SLA clock does not apply this bound yet: until the window is corrected, it still reads the stored value for open ${t.label} requests with no due date of their own.`}
+                        The stored window ({String(row.defaultDays)}) is outside 1–{SLA_DEFAULT_DAYS_MAX} days and is not used: new requests use the built-in {builtInSlaDays(t.value)} day(s), and the SLA clock does not time open {t.label} requests with no due date of their own, as for a type with no window.
                         {' '}Enter a window, or use the built-in one.
                       </div>
                     )}

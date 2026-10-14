@@ -7,9 +7,10 @@
 // (lib/ticketSla.ts) gives an open request that has no due date of its own.
 // Neither reader changes here: the create route keeps its own bound
 // (lib/notifications.ts boundedSlaDays — the SAME rule the editor validates
-// with) and its built-in fallback (DEFAULT_SLA_DAYS); the clock warns at
-// SLA_WARN_FRACTION of the window, a fixed constant — so the table's
-// warn_before_days column, which no code reads, is not offered.
+// with, and the one the clock skips a stored row by, EDGE-17) and its built-in
+// fallback (DEFAULT_SLA_DAYS); the clock warns at SLA_WARN_FRACTION of the
+// window, a fixed constant — so the table's warn_before_days column, which no
+// code reads, is not offered.
 //
 // Who may write: the drafting-configuration editors (lib/adminSurfaces.ts
 // DRAFTING_CONFIG_EDITORS — Admin, DocCtrl, DraftingSupervisor). The admin
@@ -22,7 +23,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkedWrite, isMissingSchemaError, type CheckedWriteFailure } from "@/lib/checkedWrite";
 import { DEFAULT_SLA_DAYS, SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";
 import { DRAFTING_CONFIG_EDITORS } from "@/lib/adminSurfaces";
-import { SLA_CLOCK_COLUMN, SLA_CLOCK_MIGRATION, SLA_WARN_FRACTION } from "@/lib/ticketSla";
+import { SLA_CLOCK_COLUMN, SLA_CLOCK_MIGRATION, SLA_WARN_FRACTION, effectiveTarget, warnAt } from "@/lib/ticketSla";
+import { BUILTIN_REQUEST_TYPES } from "@/lib/ticketCreate";
+import type { SelectOption } from "@/types/schema";
 
 /** The migration that makes the editor set the database's write rule. */
 export const SLA_DEFAULTS_RAIL_MIGRATION = "20261218";
@@ -71,10 +74,65 @@ export function parseSlaDays(input: string): SlaDaysParse {
  *  (lib/ticketSla.ts SLA_WARN_FRACTION). */
 export const SLA_WARN_PERCENT = Math.round(SLA_WARN_FRACTION * 100);
 
-/** The warning point the clock uses, in whole days after filing (floored),
- *  for the editor's explanation. */
-export function warnAfterDays(days: number): number {
-  return Math.floor(days * SLA_WARN_FRACTION);
+/** How long after filing the SLA clock warns an open request it times by a
+ *  `days` window from its filing date (one with no due date of its own), in
+ *  ms. Computed by the clock's own functions (lib/ticketSla.ts effectiveTarget
+ *  and warnAt) — never rounded — so the page states the instant the clock
+ *  compares against. */
+export function warnAfterMs(days: number): number {
+  const filed = Date.UTC(2026, 0, 1);
+  const t = { id: "window", orgId: "window", status: "DRAFTING", requestType: "window", createdAt: new Date(filed).toISOString() };
+  const target = effectiveTarget(t, new Map([["window", days]]));
+  return target === null ? 0 : warnAt(t, target) - filed;
+}
+
+/** A span as days, hours and minutes ("2 days and 6 hours", "18 hours"). A
+ *  window of whole days at the 75 % warn fraction is always whole hours, so
+ *  nothing is rounded away (pinned for 1–3650). */
+export function formatSpan(ms: number): string {
+  const totalMin = Math.round(ms / 60000);
+  const unit = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const parts = [
+    Math.floor(totalMin / 1440) ? unit(Math.floor(totalMin / 1440), "day") : "",
+    Math.floor((totalMin % 1440) / 60) ? unit(Math.floor((totalMin % 1440) / 60), "hour") : "",
+    totalMin % 60 ? unit(totalMin % 60, "minute") : "",
+  ].filter(Boolean);
+  if (parts.length === 0) return "0 minutes";
+  return parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/** The warning point the clock uses for a `days` window, as the editor says
+ *  it: the exact time after filing (warnAfterMs). */
+export function warnAfterLabel(days: number): string {
+  return formatSpan(warnAfterMs(days));
+}
+
+/** Where a request type in the editor comes from: the SAVED request form, the
+ *  built-in vocabulary the create route accepts whatever the form lists
+ *  (lib/ticketCreate.ts BUILTIN_REQUEST_TYPES — check-in's "Revision" and
+ *  "ASBUILT", and "RFI"), or a stored window for a type on neither. */
+export type SlaTypeSource = "form" | "builtin" | "stored";
+export interface SlaEditorType { value: string; label: string; source: SlaTypeSource }
+
+/** The types the editor lists, each once, in this order: the request types on
+ *  the SAVED form (blank values skipped — never an unsaved edit of it), then
+ *  every built-in type not on it, then any stored window whose type is on
+ *  neither (so it can be removed). Every type the create route reads
+ *  sla_defaults for — a form type or a built-in one — can be configured. */
+export function slaEditorTypes(savedOptions: readonly SelectOption[], rows: readonly SlaDefaultRow[]): SlaEditorType[] {
+  const out: SlaEditorType[] = [];
+  const listed = (value: string) => out.some((t) => t.value === value);
+  for (const o of savedOptions) {
+    const value = String(o.value ?? "").trim();
+    if (value && !listed(value)) out.push({ value, label: o.label || value, source: "form" });
+  }
+  for (const value of BUILTIN_REQUEST_TYPES) {
+    if (!listed(value)) out.push({ value, label: value, source: "builtin" });
+  }
+  for (const r of rows) {
+    if (!listed(r.requestType)) out.push({ value: r.requestType, label: r.requestType, source: "stored" });
+  }
+  return out;
 }
 
 export async function loadSlaDefaults(sb: SupabaseClient, orgId: string): Promise<SlaDefaultsLoad> {
@@ -187,10 +245,12 @@ export async function slaClockState(sb: SupabaseClient): Promise<SlaClockRead> {
 /** The question the editor asks before saving `days` for a type, or null when
  *  nothing would fall due (EDGE-7's residual). What happens to the requests
  *  it counts depends on whether the SLA clock has started (slaClockState):
- *  once it has, the next nightly run sends each its own notice; before it
- *  has, nothing is sent until 20261195 is pasted, and that paste records the
- *  ones then past their window as overdue with one summary notice to the
- *  queue — never a notice each. */
+ *  once it has, the nightly run sends each its own notice, starting with its
+ *  next run (a run that stops at its read cap or its time leaves the rest for
+ *  the runs after it, lib/ticketSla.ts); before it has, nothing is sent until
+ *  20261195 is pasted, and that paste records the ones then past their window
+ *  as overdue with one summary notice to the queue — never a notice each. The
+ *  warning point is said exactly as the clock computes it (warnAfterLabel). */
 export function untargetedImpactQuestion(
   label: string,
   days: number,
@@ -198,12 +258,13 @@ export function untargetedImpactQuestion(
   clock: SlaClockRead,
 ): string | null {
   const M = SLA_CLOCK_MIGRATION;
-  const started = `the next SLA run (the nightly maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester`;
+  const started = `the nightly SLA run (the maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester, starting with its next run`;
   const atClockStart = `recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many`;
   const notStarted = `The SLA clock has not started yet (migration ${M} is not applied), so nothing is sent for them now`;
+  const warnPoint = `the warning point (${warnAfterLabel(days)} after filing)`;
   if (!impact.ok) {
     const lead = `Whether this window puts open ${label} requests with no due date of their own past due could not be checked (${impact.error}).`;
-    const nightly = `get an "Overdue" notice at the next SLA run (the nightly maintenance job)`;
+    const nightly = `are recorded as overdue with an "Overdue" notice by the nightly SLA run (the maintenance job), starting with its next run`;
     const atPaste = `when ${M} is applied, any filed more than ${days} day(s) before then are ${atClockStart}`;
     const tail =
       clock.state === "started"
@@ -217,10 +278,10 @@ export function untargetedImpactQuestion(
   if (overdue + dueSoon === 0) return null;
   const lead = `${overdue} open ${label} request(s) with no due date of their own were filed more than ${days} day(s) ago`;
   if (clock.state === "started") {
-    return `${lead}: ${started}. ${dueSoon} more are past ${warnAfterDays(days)} day(s) and get a "Due soon" notice. Save anyway?`;
+    return `${lead}: ${started}. ${dueSoon} more are past ${warnPoint}: each gets a "Due soon" notice, or the "Overdue" one if the run reaches it after its due date. Save anyway?`;
   }
   const atPaste = `when ${M} is applied, the ones then past this window are ${atClockStart}`;
-  const soon = `${dueSoon} more are past ${warnAfterDays(days)} day(s): once the clock has started, the SLA run sends each one still inside this window a "Due soon" notice.`;
+  const soon = `${dueSoon} more are past ${warnPoint}: once the clock has started, the SLA run sends each one still inside this window a "Due soon" notice.`;
   if (clock.state === "not_started") {
     return `${lead}. ${notStarted}: ${atPaste}. ${soon} Save anyway?`;
   }

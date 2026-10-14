@@ -2,10 +2,13 @@
 //
 // drafting-flow Round G — DF-P13, RENDERED: /admin/requests, the due-date
 // windows (sla_defaults) editor — EDGE-7 done-when 2's editor, EDGE-16.
-//   * one row per request type on the form, each with the built-in window as
-//     its placeholder, the saved window as its value, a stored value outside
-//     1–3650 flagged, and a stored window for a type no longer on the form
-//     listed so it can be removed;
+//   * one row per request type on the SAVED form, then per built-in type the
+//     create route accepts whatever the form lists (BUILTIN_REQUEST_TYPES —
+//     "Revision" among them; EDGE-7 done-when 2, integrator fix pass), each
+//     with the built-in window as its placeholder, the saved window as its
+//     value and the clock's exact warning time, a stored value outside 1–3650
+//     flagged as used by neither reader (EDGE-17), and a stored window for a
+//     type on neither listed so it can be removed;
 //   * validated to the create route's own bound before anything is sent;
 //   * a save is ONE checked upsert; a refusal shows the database's own words
 //     and who saves these windows; "Use built-in" is a checked delete;
@@ -164,36 +167,68 @@ async function click(b: HTMLButtonElement) { await act(async () => { b.click(); 
 const slaWrites = () => h.writes.filter((w) => w.table === "sla_defaults");
 
 describe("/admin/requests — the due-date windows editor (rendered)", () => {
-  it("renders one row per request type on the form (blank values skipped), the saved window, the built-in placeholder, a flagged out-of-range value and a stored window for a removed type — this workspace's only", async () => {
+  it("renders one row per request type on the form (blank values skipped), then the built-in types not on it, the saved window, the built-in placeholder, a flagged out-of-range value and a stored window for a removed type — this workspace's only", async () => {
     await render();
     expect(section()).toBeTruthy();
     expect(section().textContent).toContain("Due-date windows");
     expect(section().textContent).toContain("warns the person a request waits on at 75% of its window");
+    expect(section().textContent).toContain("Open requests of a type with a saved window that have no due date of their own are timed from their filing date with that window; without one, they are not timed.");
     const types = [...section().querySelectorAll("[data-sla-type]")].map((e) => e.getAttribute("data-sla-type"));
-    expect(types).toEqual(["ISO", "RFI", "MOC", "LEGACY"]);
+    expect(types).toEqual(["ISO", "RFI", "MOC", "Revision", "ASBUILT", "LEGACY"]);
     expect(inputOf("ISO").value).toBe("3");
-    expect(rowOf("ISO").textContent).toContain("Saved: 3 day(s) — the clock warns after 2 day(s).");
+    expect(rowOf("ISO").textContent).toContain("Saved: 3 day(s) — for an open request with no due date of its own, the SLA clock warns 2 days and 6 hours after filing.");
     expect(inputOf("RFI").value).toBe("");
     expect(inputOf("RFI").placeholder).toBe("Built-in: 3");
     expect(rowOf("RFI").textContent).toContain("Built-in window: 3 day(s).");
     expect(button(rowOf("RFI"), /Use built-in/)).toBeUndefined();
     expect(inputOf("MOC").value).toBe("");
-    expect(rowOf("MOC").textContent).toContain("The stored window (0) is outside 1–3650 days: new requests use the built-in 7 day(s).");
+    expect(rowOf("MOC").textContent).toContain("The stored window (0) is outside 1–3650 days and is not used: new requests use the built-in 7 day(s)");
     expect(rowOf("LEGACY").textContent).toContain("not on the request form");
+    expect(rowOf("RFI").textContent).not.toContain("built in");   // on the form: the form's row
     expect(button(rowOf("LEGACY"), /Use built-in/)).toBeTruthy();
     expect(inputOf("ISO").getAttribute("aria-label")).toBe("Due-date window in days for ISO (Isometric)");
   });
 
-  it("a stored positive window outside the bound (pre-paste residue) also says the SLA clock still reads it (EDGE-17); a non-positive one, which the clock skips, does not", async () => {
-    h.sla.find((r) => r.id === "s-moc")!.default_days = 5000;
+  it("a stored window outside the bound (pre-paste residue), positive or not, is said as used by neither reader — the create route's built-in window, and no SLA timing (EDGE-17: the clock skips it as a type with no row)", async () => {
+    for (const stored of [5000, 0]) {
+      h.sla.find((r) => r.id === "s-moc")!.default_days = stored;
+      act(() => root?.unmount());
+      root = createRoot(host!);
+      await render();
+      expect(rowOf("MOC").textContent, String(stored)).toContain(`The stored window (${stored}) is outside 1–3650 days and is not used: new requests use the built-in 7 day(s), and the SLA clock does not time open MOC (Change Mgmt) requests with no due date of their own, as for a type with no window. Enter a window, or use the built-in one.`);
+      expect(rowOf("MOC").textContent, String(stored)).not.toContain("still reads the stored value");
+      expect(inputOf("MOC").value, String(stored)).toBe("");
+    }
+    // "Use built-in" on it says nothing else changes (neither reader used it)
+    h.confirmAnswer = false;
+    await click(button(rowOf("MOC"), /Use built-in/));
+    expect(String(h.confirms[0].message)).toBe("The stored window, outside 1–3650 days, is removed. Nothing else changes: new MOC (Change Mgmt) requests filed without a requested date already use the built-in window (7 day(s)), and the SLA clock already does not time open MOC (Change Mgmt) requests that have no due date of their own.");
+    expect(slaWrites()).toEqual([]);
+  });
+
+  it("EDGE-7 done-when 2 (integrator fix pass): the built-in types the create route accepts whatever the form lists are rows too — 'Revision' (check-in's) can be given a window, saved with the same checked upsert", async () => {
     await render();
-    expect(rowOf("MOC").textContent).toContain("The stored window (5000) is outside 1–3650 days: new requests use the built-in 7 day(s). The SLA clock does not apply this bound yet: until the window is corrected, it still reads the stored value for open MOC (Change Mgmt) requests with no due date of their own. Enter a window, or use the built-in one.");
+    expect(rowOf("Revision").textContent).toContain("built in — accepted whatever the form lists (check-in, transition-in)");
+    expect(rowOf("Revision").textContent).not.toContain("not on the request form");
+    expect(inputOf("Revision").placeholder).toBe("Built-in: 14");
+    expect(rowOf("Revision").textContent).toContain("Built-in window: 14 day(s).");
+    expect(inputOf("ASBUILT").placeholder).toBe("Built-in: 21");
+    await type(inputOf("Revision"), "10");
+    await click(button(rowOf("Revision"), /^Save$/));
+    expect(slaWrites()).toHaveLength(1);
+    expect(slaWrites()[0]).toMatchObject({ op: "upsert", row: { org_id: "o1", request_type: "Revision", default_days: 10 }, opts: { onConflict: "org_id,request_type" }, selected: "id" });
+    expect(rowOf("Revision").textContent).toContain("Saved: Revision requests filed without a requested date are due 10 day(s) after filing.");
+    expect(rowOf("Revision").textContent).toContain("Saved: 10 day(s) — for an open request with no due date of its own, the SLA clock warns 7 days and 12 hours after filing.");
+    // listed once, in the built-in place, now that it has a stored window
+    const types = [...section().querySelectorAll("[data-sla-type]")].map((e) => e.getAttribute("data-sla-type"));
+    expect(types).toEqual(["ISO", "RFI", "MOC", "Revision", "ASBUILT", "LEGACY"]);
+    // a workspace whose saved form lists none of the built-ins still gets every one
     act(() => root?.unmount());
     root = createRoot(host!);
-    h.sla.find((r) => r.id === "s-moc")!.default_days = 0;
+    (h.config as { requestTypes: { options: unknown[] } }).requestTypes.options = [{ label: "Pipe stress", value: "STRESS" }];
     await render();
-    expect(rowOf("MOC").textContent).toContain("The stored window (0) is outside 1–3650 days: new requests use the built-in 7 day(s). Enter a window, or use the built-in one.");
-    expect(rowOf("MOC").textContent).not.toContain("still reads the stored value");
+    expect([...section().querySelectorAll("[data-sla-type]")].map((e) => e.getAttribute("data-sla-type")))
+      .toEqual(["STRESS", "Revision", "ASBUILT", "RFI", "ISO", "MOC", "LEGACY"]);
   });
 
   it("validation before anything is sent: 0, 3651, 1.5 and text are refused with the reason, and Save stays disabled", async () => {
@@ -255,7 +290,7 @@ describe("/admin/requests — the due-date windows editor (rendered)", () => {
     expect(h.confirms).toHaveLength(1);
     expect(h.clockProbes).toEqual(["outcome"]);
     expect(String(h.confirms[0].message)).toBe(
-      '4 open RFI (Info Request) request(s) with no due date of their own were filed more than 2 day(s) ago: the next SLA run (the nightly maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester. 2 more are past 1 day(s) and get a "Due soon" notice. Save anyway?',
+      '4 open RFI (Info Request) request(s) with no due date of their own were filed more than 2 day(s) ago: the nightly SLA run (the maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester, starting with its next run. 2 more are past the warning point (1 day and 12 hours after filing): each gets a "Due soon" notice, or the "Overdue" one if the run reaches it after its due date. Save anyway?',
     );
     expect(slaWrites()).toEqual([]);
     h.confirmAnswer = true;
@@ -272,7 +307,7 @@ describe("/admin/requests — the due-date windows editor (rendered)", () => {
     await click(button(rowOf("RFI"), /^Save$/));
     const msg = String(h.confirms[0].message);
     expect(msg).toBe(
-      "4 open RFI (Info Request) request(s) with no due date of their own were filed more than 2 day(s) ago. The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, the ones then past this window are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. 2 more are past 1 day(s): once the clock has started, the SLA run sends each one still inside this window a \"Due soon\" notice. Save anyway?",
+      "4 open RFI (Info Request) request(s) with no due date of their own were filed more than 2 day(s) ago. The SLA clock has not started yet (migration 20261195 is not applied), so nothing is sent for them now: when 20261195 is applied, the ones then past this window are recorded as overdue without a notice of their own, and the workspace's assignment queue gets one summary notice naming how many. 2 more are past the warning point (1 day and 12 hours after filing): once the clock has started, the SLA run sends each one still inside this window a \"Due soon\" notice. Save anyway?",
     );
     expect(msg).not.toContain("to the person it waits on");
     expect(slaWrites()).toEqual([]);
@@ -285,7 +320,7 @@ describe("/admin/requests — the due-date windows editor (rendered)", () => {
     await type(inputOf("RFI"), "2");
     await click(button(rowOf("RFI"), /^Save$/));
     expect(String(h.confirms[0].message)).toBe(
-      'Whether this window puts open RFI (Info Request) requests with no due date of their own past due could not be checked (statement timeout). Any filed more than 2 day(s) ago get an "Overdue" notice at the next SLA run (the nightly maintenance job). Save anyway?',
+      'Whether this window puts open RFI (Info Request) requests with no due date of their own past due could not be checked (statement timeout). Any filed more than 2 day(s) ago are recorded as overdue with an "Overdue" notice by the nightly SLA run (the maintenance job), starting with its next run. Save anyway?',
     );
     h.clockError = { code: "PGRST204", message: "Could not find the 'outcome' column of 'tickets' in the schema cache" };
     await click(button(rowOf("RFI"), /^Save$/));
@@ -295,7 +330,7 @@ describe("/admin/requests — the due-date windows editor (rendered)", () => {
     expect(slaWrites()).toEqual([]);
   });
 
-  it("the rows follow the SAVED request form: a type added or renamed above and not yet saved gets no row (and a note says why) until Save Changes", async () => {
+  it("the rows follow the SAVED request form (then the built-ins, then stored windows): a type added or renamed above and not yet saved gets no row (and a note says why) until Save Changes", async () => {
     await render();
     const valueInputs = () => [...host!.querySelectorAll('input[placeholder="Value (ID)"]')] as HTMLInputElement[];
     expect(valueInputs().map((i) => i.value)).toEqual(["ISO", "RFI", "MOC", ""]);
@@ -303,31 +338,40 @@ describe("/admin/requests — the due-date windows editor (rendered)", () => {
     await type(valueInputs()[3], "ISOX");     // a new type, unsaved
     await type(valueInputs()[0], "ISO2");     // a rename, unsaved
     const types = () => [...section().querySelectorAll("[data-sla-type]")].map((e) => e.getAttribute("data-sla-type"));
-    expect(types()).toEqual(["ISO", "RFI", "MOC", "LEGACY"]);
+    expect(types()).toEqual(["ISO", "RFI", "MOC", "Revision", "ASBUILT", "LEGACY"]);
     expect(inputOf("ISO").value).toBe("3");
     expect(rowOf("ISO").textContent).not.toContain("not on the request form");
     expect(section().textContent).toContain("The request types above have unsaved changes. These windows follow the saved request form: save it (Save Changes) to set a window for a new or renamed type.");
     expect(slaWrites()).toEqual([]);
     // saved: the rows follow, and the ISO window (keyed by the old value) is now a stored window off the form
     await click(button(host!, /Save Changes/));
-    expect(types()).toEqual(["ISO2", "RFI", "MOC", "ISOX", "ISO", "LEGACY"]);
+    expect(types()).toEqual(["ISO2", "RFI", "MOC", "ISOX", "Revision", "ASBUILT", "ISO", "LEGACY"]);
     expect(rowOf("ISO").textContent).toContain("not on the request form");
     expect(section().textContent).not.toContain("unsaved changes");
     // a refused form save leaves the rows on the last saved form
     h.configUpsertError = { code: "42501", message: "new row violates row-level security policy" };
     await type(valueInputs()[3], "ISOY");
     await click(button(host!, /Save Changes/));
-    expect(types()).toEqual(["ISO2", "RFI", "MOC", "ISOX", "ISO", "LEGACY"]);
+    expect(types()).toEqual(["ISO2", "RFI", "MOC", "ISOX", "Revision", "ASBUILT", "ISO", "LEGACY"]);
     expect(section().textContent).toContain("unsaved changes");
   });
 
   it("'Use built-in' asks, then removes the type's window with a checked delete; a delete that removed nothing is said as refused", async () => {
     await render();
     await click(button(rowOf("LEGACY"), /Use built-in/));
-    expect(String(h.confirms[0].message)).toContain("New LEGACY requests will be due 14 day(s) after filing (the built-in window)");
+    expect(String(h.confirms[0].message)).toBe("New LEGACY requests filed without a requested date will be due 14 day(s) after filing (the built-in window), and the SLA clock stops timing open LEGACY requests that have no due date of their own.");
     expect(slaWrites()).toHaveLength(1);
     expect(slaWrites()[0]).toMatchObject({ op: "delete", filters: [["eq", "org_id", "o1"], ["eq", "request_type", "LEGACY"]], selected: "id" });
     expect(rowRemoved("LEGACY")).toBe(true);
+
+    // the success notice says what removing the window does, and no more (ISO, on the form, keeps its row to show it)
+    await click(button(rowOf("ISO"), /Use built-in/));
+    expect(rowOf("ISO").textContent).toContain("Removed: new ISO (Isometric) requests filed without a requested date use the built-in window (14 day(s)).");
+    expect(inputOf("ISO").value).toBe("");
+    h.sla.push({ id: "s-iso2", org_id: "o1", request_type: "ISO", default_days: 3 });
+    act(() => root?.unmount());
+    root = createRoot(host!);
+    await render();
 
     h.slaDeleteMatchesNothing = true;
     await click(button(rowOf("ISO"), /Use built-in/));
