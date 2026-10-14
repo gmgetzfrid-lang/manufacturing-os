@@ -78,7 +78,7 @@ import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToPro
 import BulkEditModal from "@/components/documents/BulkEditModal";
 import CsvImportModal from "@/components/documents/CsvImportModal";
 import { markResourceNotificationsRead } from "@/lib/notificationTrail";
-import { notifyLibraryDocsAdded } from "@/lib/libraryNotify";
+import { notifyLibraryDocsAdded, firstNoticeTarget } from "@/lib/libraryNotify";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
@@ -2703,8 +2703,8 @@ export default function LibraryExplorerPage() {
       // with no statement of what landed and what didn't. Every file now gets
       // its attempt and the batch reports the truth at the end.
       const failures: Array<{ name: string; reason: string }> = [];
-      // the id each landed file's document got, by its (batch-unique) number
-      const landedIds = new Map<string, string>();
+      // the id each landed file's document got, by the file's index in resolved
+      const landedIds = new Map<number, string>();
       let stoppedAt = -1;
       setUploadProgress({ done: 0, total: resolved.length });
       for (let i = 0; i < resolved.length; i += UPLOAD_CONCURRENCY) {
@@ -2720,7 +2720,7 @@ export default function LibraryExplorerPage() {
               reason: (r.reason as Error)?.message ?? "unknown error",
             });
           } else {
-            landedIds.set(chunk[j].docNumber, r.value);
+            landedIds.set(i + j, r.value);
           }
         });
         setUploadProgress({ done: Math.min(i + chunk.length, resolved.length), total: resolved.length });
@@ -2731,7 +2731,9 @@ export default function LibraryExplorerPage() {
       const notStarted = resolved.length - attempted;
       const landed = attempted - failures.length;
       if (landed > 0) {
-        notifyLibrarySubscribers(landed, resolved[0]?.docNumber || resolved[0]?.original || "document", landedIds.get(resolved[0]?.docNumber ?? "") ?? null);
+        // NEDGE-22: the first staged file's label, and its id only if it landed
+        const first = firstNoticeTarget(resolved, landedIds);
+        notifyLibrarySubscribers(landed, first.label, first.id);
       }
 
       const notes: string[] = [];

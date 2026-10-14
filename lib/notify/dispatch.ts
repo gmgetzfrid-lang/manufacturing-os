@@ -305,30 +305,28 @@ export async function resolveAudience(input: EmitInput): Promise<{ full: string[
   // NEDGE-22 (N16): a notice about a LIBRARY (any non-document resource)
   // that NAMES documents tells a follower reached only through the follow
   // list those names only while they may discover every one of them — the
-  // same check, document by document (discoveringAmong). Nobody is dropped:
-  // a follower the check ANSWERED for who may not discover one gets the
-  // notice without the names (unnamedNotice); one a FAILED check could not
-  // settle gets redactedNotice() (DEC-106 item 2); a controller passes the
-  // check, and its failure path keeps them (DEC-43). Asked one named
-  // document at a time, only about the followers still owed the names; a
-  // failure stops the asking (the controllers are all that stay owed them).
+  // same check, for each named document (discoveringAmong). Nobody is
+  // dropped: a follower a check ANSWERED for who may not discover one gets
+  // the notice without the names (unnamedNotice); one a FAILED check could
+  // not settle gets redactedNotice() (DEC-106 item 2); a controller passes
+  // the check, and its failure path keeps them (DEC-43). Every named
+  // document is asked about AT ONCE (one round trip's wait in the browser,
+  // not one per document — the notice is fire-and-forget, and a closed tab
+  // loses whatever is still waiting): told in full only when every answer
+  // keeps them; ruled out by any answer that was given → unnamed; otherwise
+  // left out by a failed check → redacted.
   const unnamed = new Set<string>();
   const named = input.resource.type === "document"
     ? []
     : [...new Set((input.namesDocuments?.ids ?? []).filter((d): d is string => typeof d === "string" && d.length > 0))];
   if (named.length > 0 && followerOnly.length > 0) {
-    let owed = [...followerOnly];
-    for (const documentId of named) {
-      if (owed.length === 0) break;
-      const filter = await discoveringAmong(input.orgId, documentId, owed);
-      const kept = new Set(filter.uids);
-      for (const u of owed) {
-        if (kept.has(u)) continue;
-        (filter.outcome === "failed" ? unsettled : unnamed).add(u);
-        ids.delete(u);
-      }
-      owed = owed.filter((u) => kept.has(u));
-      if (filter.outcome === "failed") break;
+    const answers = await Promise.all(named.map((documentId) => discoveringAmong(input.orgId, documentId, followerOnly)));
+    const keptBy = answers.map((a) => new Set(a.uids));
+    for (const u of followerOnly) {
+      if (keptBy.every((k) => k.has(u))) continue;
+      const ruledOut = answers.some((a, i) => a.outcome !== "failed" && !keptBy[i].has(u));
+      (ruledOut ? unnamed : unsettled).add(u);
+      ids.delete(u);
     }
     if (unsettled.size > 0) {
       console.warn(`[notify] ${unsettled.size} follower(s) of ${input.resource.type} ${input.resource.id} the discover check could not settle get the ${input.kind} notice without its details`);

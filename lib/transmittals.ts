@@ -1398,7 +1398,10 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
     ]);
     const labelOf = new Map((t.items ?? []).map((i) => [i.documentId, `${i.number}${i.rev ? ` Rev ${i.rev}` : ""}`] as const));
     const to = [t.recipientName?.trim(), t.recipientCompany?.trim()].filter(Boolean).join(", ") || "an outside party";
-    let started = 0;
+    // NEDGE-22 (notifications N16): each library's notice is started without
+    // waiting for the previous one (each now waits on its discover check), so
+    // a tab closed after "Issued" loses as few notices as possible.
+    const sends: Array<Promise<number>> = [];
     for (const [libraryId, rows] of byLibrary) {
       const owners = new Set<string>();
       for (const d of rows) {
@@ -1415,7 +1418,7 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
       const labels = rows.map((d) => labelOf.get(d.id as string) ?? "a document");
       const what = labels.length === 1 ? labels[0] : `${labels.length} documents`;
       const by = actor.actorName || "A member of your workspace";
-      await emit({
+      const sent = emit({
         orgId: t.orgId,
         category: "watched",
         kind: "transmittal_issued",
@@ -1442,9 +1445,9 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
           },
         },
       });
-      started += 1;
+      sends.push(sent.then(() => 1, (e) => { console.warn("[transmittals] a library's issue notice failed (non-blocking)", e); return 0; }));
     }
-    return started;
+    return (await Promise.all(sends)).reduce((a, b) => a + b, 0);
   } catch (e) {
     console.warn("[transmittals] the issue notice failed (non-blocking)", e);
     return 0;

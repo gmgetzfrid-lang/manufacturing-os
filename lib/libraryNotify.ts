@@ -97,3 +97,21 @@ export async function notifyLibraryDocsAdded(input: LibraryDocsAddedInput): Prom
     console.warn("[libraryNotify] the library followers' notice was not sent (non-blocking)", e);
   }
 }
+
+/** NEDGE-22 (notifications N16): what a staged upload's notice names — the
+ *  FIRST staged file (`staged[0]`): its label (its document number, else its
+ *  original name, else "document") and, only when THAT file landed, the id
+ *  its document got (`landedIds`, keyed by the file's index in `staged`).
+ *  The label and the id always describe the same file: when the first file
+ *  failed while another landed, the id is null, so the notice names no
+ *  document (notifyLibraryDocsAdded's rule) — never another file's id, which
+ *  would run the discover check against a document the title does not name.
+ *  Pure; the library page's handleStagedUpload calls it. */
+export function firstNoticeTarget(
+  staged: ReadonlyArray<{ docNumber?: string | null; original?: string | null }>,
+  landedIds: ReadonlyMap<number, string>,
+): { label: string; id: string | null } {
+  const first = staged[0];
+  const label = first?.docNumber || first?.original || "document";
+  return { label, id: (first && landedIds.get(0)) || null };
+}
