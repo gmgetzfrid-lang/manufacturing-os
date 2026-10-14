@@ -1,4 +1,4 @@
-// intelligence IRLS-9 done-when 3 (and IEDGE-6): a member without access to a
+// intelligence IRLS-9 done-when 3 (and IEDGE-6, KACL-7): a member without access to a
 // MIRRORED controlled document gets zero mention rows for it — asserted at
 // RUNTIME on the replayed database, each read sent as PostgREST sends a
 // signed-in person's request (role `authenticated`, the JWT's claims).
@@ -76,6 +76,18 @@ describe.skipIf(skip !== null)("IRLS-9 / IEDGE-6: mention rows follow the mirror
     expect(mentionsOf(m.viewer, docs.normalDenyViewer)).toBe("0");
     expect(mentionsOf(m.engineer, docs.normalDenyViewer)).toBe("1");
     expect(mentionsOf(m.docctrl, docs.normalDenyViewer)).toBe("1");
+  });
+
+  it("the mirror row itself (knowledge_documents, 20261120's knowledge_documents_select) follows the same access (intelligence KACL-7)", () => {
+    const mirrorsOf = (who: SeededMember, docId: string) =>
+      selectAs(db, who.caller, `SELECT count(*) FROM knowledge_documents WHERE source_document_id = '${docId}'`)[0];
+    expect(mirrorsOf(m.viewer, docs.privateEngineer)).toBe("0");
+    expect(mirrorsOf(m.viewer, docs.normalDenyViewer)).toBe("0");
+    expect(mirrorsOf(m.viewer, docs.open)).toBe("1");
+    for (const k of ["engineer", "docctrl"]) {
+      expect(mirrorsOf(m[k], docs.privateEngineer), k).toBe("1");
+      expect(mirrorsOf(m[k], docs.normalDenyViewer), k).toBe("1");
+    }
   });
 
   it("the sentence itself is withheld with the row (no context_snippet of a document the reader cannot open)", () => {
