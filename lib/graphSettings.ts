@@ -28,6 +28,9 @@ export interface GraphSettings {
   showLibraryEdges: boolean;
   hideUnlinked: boolean;
   showProposals: boolean;
+  /** A document whose only link is one hub (its unit, its library) is drawn
+   *  inside that hub as a count — the starburst becomes one node. */
+  foldLeaves: boolean;
 
   // ── Groups ──
   groups: ColorGroup[];
@@ -58,6 +61,7 @@ export const DEFAULT_GRAPH_SETTINGS: GraphSettings = {
   showLibraryEdges: false,
   hideUnlinked: false,
   showProposals: true,
+  foldLeaves: true,
   groups: [],
   labelThreshold: 0.55,
   nodeScale: 1,

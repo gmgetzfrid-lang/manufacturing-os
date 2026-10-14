@@ -39,6 +39,7 @@ import { NODE_COLORS, EDGE_LABELS } from "@/components/graph/graphTheme";
 import GraphControls from "@/components/graph/GraphControls";
 import OrgGraph2D from "@/components/graph/OrgGraph2D";
 import EstateMap from "@/components/graph/EstateMap";
+import { foldLeaves } from "@/lib/graphFold";
 
 // three.js only downloads when 3D is switched on.
 const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
@@ -148,6 +149,30 @@ function GraphPageInner() {
   const query = rawQuery.toLowerCase().replace(/[^a-z0-9]+/g, "");
   const posKey = `orgGraph:pos${settings.mode === "3d" ? "3d" : ""}:${activeOrgId ?? ""}`;
 
+  // ── Folding ───────────────────────────────────────────────────────────
+  // Hubs a person opened, plus the hubs holding anything an answer or a
+  // deep link points at. Kept as a string so the view (and the layout)
+  // only changes when the set really changes — never on a keystroke.
+  const [openHubs, setOpenHubs] = React.useState<Set<string>>(new Set());
+  const leafHubOf = React.useMemo(() => {
+    const m = new Map<string, string>();
+    if (!graph) return m;
+    const nb = new Map<string, Set<string>>();
+    for (const e of graph.edges) {
+      if (e.type === "proposed") continue;
+      nb.set(e.a, new Set([...(nb.get(e.a) ?? []), e.b]));
+      nb.set(e.b, new Set([...(nb.get(e.b) ?? []), e.a]));
+    }
+    for (const n of graph.nodes) if (n.type === "document") { const s = nb.get(n.id); if (s && s.size === 1) m.set(n.id, [...s][0]); }
+    return m;
+  }, [graph]);
+  const openKey = React.useMemo(() => {
+    const s = new Set(openHubs);
+    for (const id of highlight?.ids ?? []) { const h = leafHubOf.get(id); if (h) s.add(h); }
+    if (focusParam) { const id = focusParam.includes(":") ? focusParam : `doc:${focusParam}`; const h = leafHubOf.get(id); if (h) s.add(h); }
+    return [...s].sort().join("|");
+  }, [openHubs, highlight, leafHubOf, focusParam]);
+
   // ── The visible slice ─────────────────────────────────────────────────
   const view = React.useMemo(() => {
     if (!graph) return null;
@@ -174,11 +199,22 @@ function GraphPageInner() {
       edges = edges.filter((e) => ids.has(e.a) && ids.has(e.b));
     }
 
+    // Fold: documents whose only tie in this view is one hub go inside it.
+    // Not in focus mode (a neighbourhood is already small) and not in Map
+    // mode (it drills into hubs instead). Only hubs with five or more.
+    let folded = new Map<string, number>();
+    if (settings.foldLeaves && !focusId && settings.mode !== "map") {
+      const f = foldLeaves(nodes, edges, { open: new Set(openKey ? openKey.split("|") : []) });
+      nodes = f.nodes; edges = f.edges; folded = f.folded;
+      ids = new Set(nodes.map((n) => n.id));
+    }
+
     const ghosts = settings.showProposals
       ? proposals.filter((e) => ids.has(e.a) && ids.has(e.b))
       : [];
-    return { nodes, edges, ghosts };
-  }, [graph, settings, proposals, focusId]);
+    const foldedTotal = [...folded.values()].reduce((a, b) => a + b, 0);
+    return { nodes, edges, ghosts, folded, foldedTotal };
+  }, [graph, settings, proposals, focusId, openKey]);
 
   // ── Feed the simulation ───────────────────────────────────────────────
   React.useEffect(() => {
@@ -382,6 +418,7 @@ function GraphPageInner() {
       setPathEnds((prev) => (!prev.from || prev.to ? { from: n, to: null } : { ...prev, to: n }));
       return;
     }
+    if (n && view?.folded.has(n.id)) setOpenHubs((s) => new Set([...s, n.id]));
     setSelected((prev) => {
       // Only a genuine hop is history — reselecting the same node isn't.
       if (n && prev && prev.id !== n.id) setTrail((t) => [...t.slice(-19), prev]);
@@ -389,7 +426,7 @@ function GraphPageInner() {
       return n;
     });
     if (!n) setHighlight(null);
-  }, [pathMode, connect, completeConnect]);
+  }, [pathMode, connect, completeConnect, view]);
 
   const peekBack = React.useCallback(() => {
     setTrail((t) => {
@@ -505,6 +542,13 @@ function GraphPageInner() {
           </button>
         )}
 
+        {view && (view.foldedTotal > 0 || openHubs.size > 0) && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[var(--color-text-muted)]">
+            {view.foldedTotal > 0 && <>{view.foldedTotal} documents folded into {view.folded.size} hub{view.folded.size === 1 ? "" : "s"} — click a hub to open it</>}
+            {openHubs.size > 0 && <button onClick={() => setOpenHubs(new Set())} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Fold again</button>}
+            {view.foldedTotal > 0 && <button onClick={() => patchSettings({ foldLeaves: false })} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Unfold all</button>}
+          </span>
+        )}
         {view && (
           <span className="text-[10px] font-mono text-[var(--color-text-faint)] ml-auto">
             {view.nodes.length} nodes · {view.edges.length} links

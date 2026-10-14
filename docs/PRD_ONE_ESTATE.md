@@ -276,6 +276,20 @@ only, not in production as of 2026-10-14). "Done when" is what to test.
 - Vercel previews build for pull requests and `claude/*` branches.
 - The finder migration (`20261019_file_finder.sql`) must be applied to
   production by the owner; the app degrades to browser storage until then.
+- One page reader for the whole app (`lib/pageReader.ts`): a stored
+  reading of the same bytes first, the PDF's text layer second, an image
+  for the model last. Prose tasks send images only for pages with no text;
+  layout tasks (flow diagrams, quotes and invoices) keep the image and get
+  the text alongside. A page is paid for once, whichever feature read it
+  first. The drawing ingest reuses stored vision transcripts the same way.
+- Equipment is only created automatically when its prefix is known (the
+  codebook's equipment types or the standard table). Anything else stays a
+  suggestion a person applies. Equipment a reader created by mistake is
+  listed with the text it came from and removed only on a person's word;
+  items with photos, files, notes, manual tags or edits are never listed.
+- The org graph opens in Map mode (the estate as a tree, same renderer as
+  the Documents map). In 2D and 3D, documents linked only to one hub fold
+  into it as a count; clicking the hub opens it.
 
 ## 8. Open questions for the owner
 

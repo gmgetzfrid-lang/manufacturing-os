@@ -684,7 +684,7 @@ export default function OrgGraph3D({
           // Units, equipment and projects are the landmarks: named from
           // much further out, whatever their degree. Documents are named
           // up close or when they matter to the search.
-          const landmark = n.type === "unit" || n.type === "asset" || n.type === "project" || n.type === "plant";
+          const landmark = n.type === "unit" || n.type === "asset" || n.type === "project" || n.type === "plant" || / \(\+\d+\)$/.test(n.label);
           const near = spherical.radius < labelRadius * (landmark ? 3 : 1) && (landmark || n.degree >= 3);
           if (spotId === n.id || neighbours.has(n.id) || matches ||
               onPathSet.has(n.id) || gold.has(n.id) || near) {
@@ -705,9 +705,19 @@ export default function OrgGraph3D({
           const p = s.get(id);
           if (!n || !p) continue;
           let sprite = labelCache.get(id);
+          const text = n.label.slice(0, 24);
+          // A hub's label changes when it folds or opens ("Crude (+312)").
+          if (sprite && (sprite.userData as { text?: string }).text !== text) {
+            labelLayer.remove(sprite);
+            sprite.material.map?.dispose();
+            sprite.material.dispose();
+            labelCache.delete(id);
+            sprite = undefined;
+          }
           if (!sprite) {
-            const landmark = n.type === "unit" || n.type === "asset" || n.type === "project" || n.type === "plant";
-            sprite = makeLabelSprite(THREE, n.label.slice(0, 24), landmark ? NODE_COLORS[n.type] : "#f1f5f9", maxAniso, { worldHeight: landmark ? 22 : 17 });
+            const landmark = n.type === "unit" || n.type === "asset" || n.type === "project" || n.type === "plant" || / \(\+\d+\)$/.test(n.label);
+            sprite = makeLabelSprite(THREE, text, landmark ? NODE_COLORS[n.type] : "#f1f5f9", maxAniso, { worldHeight: landmark ? 22 : 17 });
+            (sprite.userData as { text?: string }).text = text;
             labelCache.set(id, sprite);
             labelLayer.add(sprite);
           }

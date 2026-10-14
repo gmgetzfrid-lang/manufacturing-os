@@ -167,6 +167,9 @@ export default function GraphControls({
               <Toggle label="Library links" checked={settings.showLibraryEdges}
                 onChange={(v) => onChange({ showLibraryEdges: v })}
                 hint="Every document links to its library — usually noise." />
+              <Toggle label="Fold lone documents" checked={settings.foldLeaves}
+                onChange={(v) => onChange({ foldLeaves: v })}
+                hint="A document linked only to one hub sits inside it as a count. Click the hub to open it." />
               <Toggle label="Hide unlinked" checked={settings.hideUnlinked}
                 onChange={(v) => onChange({ hideUnlinked: v })}
                 hint="Drop nodes with no connections in this view." />

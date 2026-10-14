@@ -26,6 +26,7 @@ import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
 import { globalGraphHref } from "@/lib/estate/lenses";
 import EstateReadiness from "@/components/documents/EstateReadiness";
+import SuspectEquipment from "@/components/documents/SuspectEquipment";
 import { useConnectEverything, ConnectButton, ConnectProgress } from "@/components/documents/ConnectEverything";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf, CONTAINER_TYPES } from "@/lib/fileFinder/fileTypes";
@@ -719,6 +720,9 @@ function GraphPageInner() {
           {showConnect && (connect.status || connect.running || connect.error) && (
             <div className="absolute top-12 right-3 pointer-events-auto">
               <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} onRun={(o) => void connect.run(o)} />
+              {controller && activeOrgId && !connect.running && connect.status && (
+                <div className="mt-2 max-w-md"><SuspectEquipment orgId={activeOrgId} refreshKey={JSON.stringify(connect.status.readiness)} onRemoved={() => void refresh()} /></div>
+              )}
             </div>
           )}
           {resolveNote && !(showConnect && (connect.status || connect.running)) && (
@@ -1117,6 +1121,7 @@ function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, c
   if (estateMissing) return <div className="space-y-3"><div className="text-xs text-amber-700">Estate links are off until migration 20261020 is applied.</div><EstateReadiness key={readinessKey} orgId={orgId} /></div>;
   return (
     <div className="space-y-3">
+      {onConnect && <SuspectEquipment orgId={orgId} refreshKey={readinessKey} />}
       <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
       <div className="text-xs text-[var(--color-text-muted)]">What the estate knows about where things belong — every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
       <div className="flex flex-wrap gap-1">

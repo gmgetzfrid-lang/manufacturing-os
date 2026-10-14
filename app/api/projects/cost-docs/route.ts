@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
-import { renderKnowledgePages } from "@/lib/knowledgePageRender";
+import { readPages, pagesAsText } from "@/lib/pageReader";
 import { validateParsedQuote } from "@/lib/bidTab";
 
 export const runtime = "nodejs";
@@ -94,7 +94,10 @@ export async function POST(req: NextRequest) {
   const looksPdf = (doc.mime_type ?? "").includes("pdf") || /\.pdf$/i.test(doc.file_name ?? "");
   if (!looksPdf) return bad("Only PDF quotes and invoices can be read for now — ask the vendor for a PDF.", 415);
 
-  const images = await renderKnowledgePages(doc.file_url, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
+  // Tables need the page as printed; the text layer rides along so every
+  // number is read twice and the model can cross-check columns.
+  const read = await readPages({ orgId, fileKey: doc.file_url, pages: Array.from({ length: MAX_PAGES }, (_, i) => i + 1), maxPages: MAX_PAGES, images: "always" });
+  const images = read.images;
   if (images.length === 0) return bad("The pages could not be rendered for reading — the file may be corrupt or password-protected.", 502);
 
   const isQuote = doc.kind === "quote";
@@ -104,7 +107,7 @@ export async function POST(req: NextRequest) {
       orgId, userId,
       op: isQuote ? "quoteParse" : "invoiceParse",
       system: isQuote ? QUOTE_SYSTEM : INVOICE_SYSTEM,
-      user: `File: ${doc.file_name ?? "document"}\nPages attached in order: ${images.map((i) => i.page).join(", ")}${doc.vendor_name ? `\nExpected sender (from the submission channel): ${doc.vendor_name}` : ""}`,
+      user: `File: ${doc.file_name ?? "document"}\nPages attached in order: ${images.map((i) => i.page).join(", ")}${doc.vendor_name ? `\nExpected sender (from the submission channel): ${doc.vendor_name}` : ""}${pagesAsText(read)}`,
       images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })),
       maxTokens: 3000,
       timeoutMs: 90_000,
