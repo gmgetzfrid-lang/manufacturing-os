@@ -302,7 +302,7 @@ components/viewers/SecureDocViewer.tsx:52-59 —
 3. ◐ The two ticket writes are awaited and checked (this pass); `MultiDocViewer` checks its insert (P8); `components/assets/FileReferenceModal.tsx:189` awaits but discards `{ error }`, and `components/viewers/SecureDocViewer.tsx:83-92` still fires the VIEW row with an un-awaited `.catch` — neither is in DF-P10's files.
 4. ◐ `lib/__tests__/downloadAudits.test.ts` pins the policy set by shape; no test runs a member session against a database (none in CI). `20261068`'s own probes check the live policy set at paste.
 
-**Scope / residual.** Each remainder is opened as its own finding with a named owner (DEC-31; review fix pass 4 — the first passes left them "for the integrator to own", which is no owner): the two viewer sites in done-when 3 → [`EVID-15`](#evid-15) (owner: document-control, the viewer surfaces); done-when 1's record in the same server request → [`EVID-16`](#evid-16) (owner: DF-P10 follow-up, a server stamping route for ticket files); the ticket columns the distribution record lacks → public-surfaces [`PHYS-17`](../public-surfaces/03-physical-bridge.md#phys-17) (owner: DF-P10 follow-up, with a migration number from the integrator). Done-when 2 closes on the `20261068` paste. All three are listed for the integrator's scheduling in DF-P10's report.
+**Scope / residual.** Each remainder is opened as its own finding with a named owner (DEC-31; review fix pass 4 — the first passes left them "for the integrator to own", which is no owner): the two viewer sites in done-when 3 → [`EVID-15`](#evid-15) (owner: projects-joint J15 CHECKED-WRITE SWEEP); done-when 1's record in the same server request → [`EVID-16`](#evid-16) (owner: drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS, a server stamping route for ticket files); the ticket columns the distribution record lacks → public-surfaces [`PHYS-17`](../public-surfaces/03-physical-bridge.md#phys-17) (owner: drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS, its migration number allocated at that package's launch). Done-when 2 closes on the `20261068` paste. The owners were named by the integrator at DF-P10's review fix pass 6 (2026-10-13).
 
 ---
 
@@ -827,7 +827,7 @@ lib/drawingAuditLog.ts:141-148 (no audited_at emitted) —
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** document-control (the viewer surfaces, `components/assets/FileReferenceModal.tsx` and `components/viewers/SecureDocViewer.tsx`; no current package lists either file) — named by drafting-flow Round G DF-P10, 2026-10-13, from `EVID-5` done-when 3 (DEC-31); the integrator schedules the package.
+- **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP (`components/assets/FileReferenceModal.tsx` and `components/viewers/SecureDocViewer.tsx`) — by the integrator, 2026-10-13 (DF-P10 review fix pass 6, DEC-31); opened by drafting-flow Round G DF-P10 from `EVID-5` done-when 3.
 - **Verification:** CONFIRMED on `596d34e` and on DF-P10's branch (neither file is changed by it).
 - **Locations:** `components/assets/FileReferenceModal.tsx:189`, `components/viewers/SecureDocViewer.tsx:83-92`
 - **Independently verified:** — opened 2026-10-13 by DF-P10's review fix pass 4 from `EVID-5`'s remainder; not yet challenged by a second party.
@@ -860,7 +860,7 @@ components/viewers/SecureDocViewer.tsx:83-92 —
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** drafting-flow DF-P10 follow-up (DF-P10 owns the copy plan, `lib/ticketDeliverableCopy.ts`, and the ticket page's `FileViewerModal`) — opened by DF-P10's review fix pass 4, 2026-10-13, from `EVID-5` done-when 1 (DEC-31); the integrator schedules it.
+- **Assigned:** drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS (the server-side stamp and record of a ticket copy) — by the integrator, 2026-10-13 (DF-P10 review fix pass 6, DEC-31); opened by DF-P10's review fix pass 4 from `EVID-5` done-when 1.
 - **Verification:** CONFIRMED on DF-P10's branch.
 - **Locations:** `app/(protected)/requests/[id]/page.tsx` (`FileViewerModal`, the print and download paths), `lib/ticketDeliverableCopy.ts` (`recordTicketCopy`)
 - **Independently verified:** — opened 2026-10-13 by DF-P10; not yet challenged by a second party.

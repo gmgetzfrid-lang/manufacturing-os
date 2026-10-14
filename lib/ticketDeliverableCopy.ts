@@ -82,6 +82,9 @@ export interface TicketCopyLiveFacts {
  *  Withdrawn: the verify ladder answers "withdrawn" for it (EDGE-2 — the
  *  request was CANCELED, or ended on a review label with no issue
  *  anywhere); checked first, as the scan answers it whatever the rev.
+ *  None when the ladder answers "cannot confirm" (a CLOSED row with no
+ *  label, or a CLOSED review label with a set-aside issue line): no
+ *  standing is derived from a history line there.
  *  Superseded: a later number is issued — on the row (deliverable_rev) or in
  *  the history's "issued Rev N" lines (only those within revisionCount + 1
  *  and the live label's bound — issueOnRecord, the trust boundary in
@@ -95,6 +98,11 @@ export function ticketCopyStanding(rev: string | null, live: TicketCopyLiveFacts
   if (!live || !isIssuedTicketRev(rev)) return null;
   const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history, revision_count: live.revisionCount }, rev);
   if (v.verdict === "withdrawn") return { kind: "withdrawn" };
+  // The scan cannot confirm this file (a CLOSED row with no label; a CLOSED
+  // review label whose history issue line its bound set aside): the page
+  // derives no standing from the history either — no SUPERSEDED stamp from a
+  // line any member may append (the integrator's ruling, DEC-90 fail-safe).
+  if (v.verdict === "unknown") return null;
   const fromRow = isIssuedTicketRev(live.deliverableRev) ? parseInt(live.deliverableRev, 10) : null;
   const fromHistory = issueOnRecord(live.history, live.revisionCount, live.deliverableRev);
   const latest = Math.max(fromRow ?? 0, fromHistory ? parseInt(fromHistory, 10) : 0);

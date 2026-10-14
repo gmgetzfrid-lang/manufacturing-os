@@ -18,19 +18,28 @@
 //   withdrawn            the request was CANCELED, or it ended (CLOSED) on a
 //                        review label with no issue anywhere — neither on the
 //                        row nor in its history — drafting-flow EDGE-2:
-//                        never current, whatever the rev arithmetic says
+//                        never current, whatever the rev arithmetic says.
+//                        With no ?r= on the QR only CANCELED answers
+//                        withdrawn; a CLOSED row answers "cannot confirm".
 //   unknown              the copy names no revision (a file from before
 //                        per-file revisions, a source file), the ticket
-//                        carries no revision record for it (closed before
-//                        revisions were recorded, an RFI closed with no label), or the ticket is
-//                        an archived stub — "cannot confirm"
+//                        carries no revision record for it (a CLOSED row with
+//                        no label: closed before revisions were recorded, an
+//                        RFI closed with no label, or reopened and closed
+//                        again), a CLOSED review label whose history has an
+//                        issue line the label sets aside (forged, or a
+//                        pre-Round-E collision), or the ticket is an archived
+//                        stub — "cannot confirm"
 //
-// A CLOSED ticket with an issue on it — its issued label, or the history
-// line of one after a reopen or a force close — keeps the ordinary ladder:
-// the last issue reads current, older issues superseded. A live issued label
-// is IN FORCE only where the workflow leaves one on an issued package
-// (PENDING_IFC after an approval, FINAL_DRAFT after submit_final); at every
-// other live status the drawing is being re-worked and the last issue reads
+// A CLOSED ticket closed on its issued label, or force-closed on a review
+// label after an issue the history proves within the label's bound, keeps
+// the ordinary ladder: the last issue reads current, older issues
+// superseded. A CLOSED ticket with NO label answers "cannot confirm" (the
+// integrator's ruling, DEC-90 fail-safe; base behaviour), because a history
+// line is the only evidence it could offer and any member may append one.
+// A live issued label is IN FORCE only where the workflow leaves one on an
+// issued package (PENDING_IFC after an approval, FINAL_DRAFT after
+// submit_final); at every other live status the drawing is being re-worked and the last issue reads
 // revision_in_progress — sent back on its label (reject_final →
 // REVISION_REQ), or a ticket reopened before Round E that kept its label
 // while a new revision is under review (LEAK-7 population (a): an issued
@@ -61,16 +70,27 @@
 // not written by an approval and is ignored. The row's own label proves a
 // tighter bound (issueOnRecord): a review label N<letters> means issue N has
 // not happened, so the last issue is at most N − 1; an issued label N means
-// it is N; NO label means nothing was issued since the row was last
-// reopened (every issue writes a label; only reopen_ticket nulls one, and it
-// bumps revision_count), so the last issue is at most revision_count. A line
-// above that bound is ignored too. What a forged line can still do is a line
-// AT or below the bound, which the row cannot tell from a real issue (on a
-// row with no label: only where revision_count was bumped by cycles that
-// issued nothing — a reject or return before any issue, a reopen of a
-// request closed without one, a reject after a reopen): the guard limb
-// refusing client-appended "issued Rev" entries (proposed under SM-5)
-// closes it.
+// it is N; NO label bounds the last issue at revision_count. That last bound
+// rests on "an issue writes a label, and only reopen_ticket nulls one (and
+// bumps revision_count)", which holds wherever the deliverable_rev column
+// exists. It does not hold on the workflow route's pre-migration retry
+// (app/api/tickets/workflow-action/route.ts, the PGRST204 / 42703 branch
+// before 20260827): that write drops deliverable_rev and draft_iteration but
+// keeps the "issued Rev N" history line and revision_count, so a real issue
+// lands on a row with no label. The bound then sets the real line aside and
+// the answer fails safe — "cannot confirm", never green. A line above the
+// bound is ignored too. What a forged line can still do is a line AT or
+// below the bound, which the row cannot tell from a real issue: under a
+// review label, a member-appended "issued Rev K" at or below the label's
+// bound can supersede a real earlier issue (Rev 1 issued at revision_count
+// 0; reject_final → 1; 2A submitted and rejected → 2; 3A submitted; a member
+// appends "issued Rev 2" → the real Rev 1 reads superseded, its copy
+// stamped SUPERSEDED by Rev 2); on a live row with no label, only where
+// revision_count was bumped by cycles that issued nothing. A CLOSED row with
+// no label answers "cannot confirm" whatever its history says (the
+// integrator's ruling, ticketVerdict below). The ticket_update_guard limb
+// refusing client-appended "issued Rev" entries — owned by drafting-flow
+// DF-P12 DELIVERABLE FOLLOW-UPS — closes the rest.
 
 export type TicketVerdict =
   | "current"
@@ -133,12 +153,16 @@ export function lastIssuedFromHistory(history: unknown, revisionCount?: number |
 
 /** The bound the row's own label puts on the last issue: N − 1 under a
  *  review label N<letters> (0 = nothing can have been issued), N under an
- *  issued label N. With NO label, `revisionCount` itself (when given): every
- *  issue writes a label, and only reopen_ticket nulls one — AND bumps
- *  revision_count after the issue. A real issue N is written at
- *  revision_count N − 1 (or sets it to N − 1 on an SM-5 re-cycle), so every
- *  real issue line on a row with no label has N ≤ revision_count. null with
- *  no label and no count (only the cycle cap, if any, applies). */
+ *  issued label N. With NO label, `revisionCount` itself (when given): where
+ *  the deliverable_rev column exists, an issue writes a label and only
+ *  reopen_ticket nulls one — AND bumps revision_count after the issue. A
+ *  real issue N is written at revision_count N − 1 (or sets it to N − 1 on
+ *  an SM-5 re-cycle), so every real issue line on such a row has
+ *  N ≤ revision_count. The workflow route's pre-migration retry (no
+ *  deliverable_rev column) writes the issue line with no label; the bound
+ *  then sets that real line aside and the verdict fails safe to "cannot
+ *  confirm". null with no label and no count (only the cycle cap, if any,
+ *  applies). */
 export function issueBoundFromLabel(rev: string | null | undefined, revisionCount?: number | null): number | null {
   if (typeof rev !== "string" || !TICKET_REV_RE.test(rev)) {
     return typeof revisionCount === "number" && Number.isFinite(revisionCount) ? revisionCount : null;
@@ -205,19 +229,38 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): Ti
   let noRecord = false; // the ticket holds no revision record to compare against
   let withdrawn = false;
   if (terminal) {
-    // CLOSED. Closed on an issue (issued label), or closed after one (a
-    // reopen nulls the label; a force close can land on a review label): the
-    // last issue is the one in force, an older print superseded.
-    latestIssued = issuedLabel ? currentRev : letterLabel ? issueBeforeLetter : issuedInHistory;
+    // CLOSED. Closed on an issue (issued label), or force-closed on a review
+    // label after one: the last issue is the one in force, an older print
+    // superseded.
+    //
+    // A CLOSED row with NO label answers "cannot confirm", as base did (the
+    // integrator's ruling under DEC-90, fail-safe; EDGE-2 done-when 2's
+    // CLOSED reading): its only evidence of an issue would be a history line,
+    // and any member may append one while revision_count can be bumped by
+    // cycles that issued nothing, so no bound the row carries separates a
+    // real "issued Rev N" from a forged one. This stays until DF-P12's
+    // ticket_update_guard limb makes "issued Rev" history lines server-only.
+    latestIssued = issuedLabel ? currentRev : letterLabel ? issueBeforeLetter : null;
     inReview = false;
-    if (!latestIssued) {
-      // EDGE-2: ended on a review label with no issue anywhere — the request
-      // used the revision scheme and issued nothing: withdrawn. With no label
-      // and no issue line (closed before revisions were recorded —
-      // 20260827 — or an RFI closed by close_rfi with no label) nothing proves either way:
-      // "cannot confirm", never a false "withdrawn".
-      if (letterLabel) withdrawn = true;
-      else noRecord = true;
+    if (!currentRev) {
+      // No label: closed before revisions were recorded (20260827), an RFI
+      // closed by close_rfi, or reopened and closed again — cannot confirm,
+      // naming no issue.
+      noRecord = true;
+      latestIssued = null;
+    } else if (letterLabel && issueLineSetAside) {
+      // A review label with a history issue line its bound set aside: a
+      // forged line, or a real issue of a ticket reopened before Round E
+      // whose Rev N collides with its label N<letters> (LEAK-7 (a)). The row
+      // cannot tell which, so it is neither withdrawn nor current: cannot
+      // confirm, naming no issue.
+      noRecord = true;
+      latestIssued = null;
+    } else if (!latestIssued) {
+      // EDGE-2: ended on a review label with no issue anywhere — neither on
+      // the row nor in its history: the request used the revision scheme
+      // and issued nothing: withdrawn.
+      withdrawn = true;
     }
   } else if (issuedLabel) {
     // A live issued label. In force only at PENDING_IFC / FINAL_DRAFT. Sent
