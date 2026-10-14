@@ -45,13 +45,6 @@ const DEPLOYMENT = {
   freeTier: { r2LimitBytes: 10 * GB, dbLimitBytes: 500 * MB, dbPct: 20, dbBand: "ok", source: "default" },
   dedup: null, ai: { last24h: 1, last30d: 2 }, note: "Deployment-wide figures (every workspace on this server)...",
 };
-const SHARED = {
-  generatedAt: "2026-10-02T10:00:00.000Z", scope: "workspace", platformOperator: false, operatorSql: "INSERT ...;",
-  workspace: { ...workspace, files: { ...workspace.files, segments: [{ label: "Knowledge library files", bytes: 1.5 * GB, objects: 40, newest: null }] } },
-  db: null, r2Estimate: null, r2Real: null, r2Error: null, freeTier: null, dedup: null, ai: { last24h: 0, last30d: 0 },
-  note: "This workspace shares its server with other workspaces...",
-};
-
 
 const EMPTY_SHED = { selectedCount: 0, reclaimableBytes: 0, eligibleCount: 0 };
 const PURGE_PREVIEW = { cutoffDays: 90, targets: [{ table: "notifications", rows: 12, estBytes: 4096, reason: "read notices" }], totalRows: 12, totalEstBytes: 4096, note: "" };
