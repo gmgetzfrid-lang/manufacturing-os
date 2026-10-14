@@ -623,3 +623,91 @@ describe("KACL-9 / KACL-10 — the AI boundary at every door that hands the mode
     expect(src("lib/aiBoundaryServer.ts")).toMatch(/const verdict = aiReadability\(/);
   });
 });
+
+describe("DACL-9 / DACL-10 — the explorer's chains and the one library check (lib/libraryAccess)", () => {
+  const V: Principal = { uid: "u-v", role: "Viewer" as never, roles: ["Viewer" as never], orgId: ORG, teamIds: [], isActiveMember: true };
+  const A = acl([allow("team", "T-a", ["discover", "read"])], "private") as AccessControl;
+  // Folder A (private, granted to team T-a only) → folder B (normal, inherits,
+  // no ACL of its own) → a document. The viewer is not in T-a, so RLS never
+  // sends them A's row: the page's folderMap holds B alone.
+  const folderB = { id: "B", pathIds: ["A"], visibility: "normal" as const, aclIndex: buildAclIndexFromChain([A], Date.now()) ?? undefined };
+  const docInB = { collectionId: "B", aclIndex: buildAclIndexFromChain([A], Date.now()) ?? undefined };
+  const onlyB = new Map([["B", folderB]]);
+
+  it("reproduction → fix: 'hidden ancestor, visible descendant' — the descendant folder and its document are NOT shown (the truncated chain allowed both)", async () => {
+    const { folderAclChain, docAclChain, explorerFolderVisible, explorerDocReadable } = await import("@/lib/libraryAccess");
+    // the truncated chain is empty: today's evaluation defaulted to allow
+    expect(folderAclChain(undefined, folderB, onlyB)).toEqual({ chain: [], complete: false });
+    expect(canWithAclChain({ principal: V, action: "read", aclChain: docAclChain(undefined, docInB, onlyB).chain, defaultAllow: true })).toBe(true);
+    // the fix: the row's chain-resolved acl_index decides
+    expect(explorerFolderVisible(V, undefined, folderB, onlyB, null)).toBe(false);
+    expect(explorerDocReadable(V, undefined, docInB, onlyB, null)).toBe(false);
+    // a member of T-a, or a controller, or the owner, still sees both (regression)
+    const inA = { ...V, teamIds: ["T-a"] };
+    expect(explorerFolderVisible(inA, undefined, folderB, onlyB, null)).toBe(true);
+    expect(explorerDocReadable(inA, undefined, docInB, onlyB, null)).toBe(true);
+    expect(explorerDocReadable({ ...V, roles: ["DocCtrl" as never] }, undefined, docInB, onlyB, null)).toBe(true);
+    expect(explorerDocReadable(V, undefined, docInB, onlyB, "u-v")).toBe(true);
+  });
+  it("a complete chain is evaluated exactly as before; a row with no index under an unresolved ancestor keeps today's evaluation (no new lock-out)", async () => {
+    const { explorerDocReadable, explorerFolderVisible } = await import("@/lib/libraryAccess");
+    const both = new Map<string, { id: string; pathIds: string[]; acl?: AccessControl; visibility: "normal" | "private" }>([
+      ["A", { id: "A", pathIds: [], acl: A, visibility: "private" }],
+      ["B", { id: "B", pathIds: ["A"], visibility: "normal" }],
+    ]);
+    expect(explorerDocReadable(V, undefined, { collectionId: "B" }, both, null)).toBe(false);
+    expect(explorerFolderVisible(V, undefined, both.get("B")!, both, null)).toBe(false);
+    expect(explorerDocReadable(V, undefined, { collectionId: "B" }, onlyB, null)).toBe(true);
+  });
+  it("DACL-9 done-when 2: the document chain carries the library's ACL once", async () => {
+    const { docAclChain } = await import("@/lib/libraryAccess");
+    const lib = acl([allow("role", "Viewer", ["read"])], "normal", false) as AccessControl;
+    const f = { id: "F", pathIds: [], acl: acl([allow("role", "Manager", ["read"])]) as AccessControl };
+    const { chain } = docAclChain(lib, { collectionId: "F" }, new Map([["F", f]]));
+    expect(chain.filter((c) => c === lib)).toHaveLength(1);
+    expect(chain).toEqual([lib, f.acl]);
+    expect(docAclChain(lib, { collectionId: null }, new Map()).chain).toEqual([lib]);
+    // and the page's own buildDocChain no longer pushes it twice
+    const page = readFileSync(join(process.cwd(), "app/(protected)/documents/[libraryId]/page.tsx"), "utf8");
+    const body = page.slice(page.indexOf("const buildDocChain = useCallback("), page.indexOf("const explorerLibraryAcl"));
+    expect((body.match(/library\?\.acl \? \[library\.acl\]|if \(library\?\.acl\) chain\.push\(library\.acl\)/g) ?? []).length).toBe(1);
+  });
+  it("DACL-10: a legacy library whose ACL says nothing while its read list is restricted is evaluated under the ACL that list stands for — a direct URL no longer lists its documents to a role the home page hides it from", async () => {
+    const { effectiveLibraryAcl, libraryReadsByRole, explorerDocReadable } = await import("@/lib/libraryAccess");
+    const legacy = { readAccess: ["HR", "Admin"] as never, visibleTo: [] as never, acl: null, visibility: "normal" as const };
+    expect(libraryReadsByRole(legacy, "Maintenance" as never)).toBe(false);
+    const eff = effectiveLibraryAcl(legacy);
+    const M: Principal = { ...V, role: "Maintenance" as never, roles: ["Maintenance" as never] };
+    expect(explorerDocReadable(M, eff, { collectionId: null }, new Map(), null)).toBe(false);          // was true (no ACL → default allow)
+    expect(explorerDocReadable({ ...M, role: "HR" as never, roles: ["HR" as never] }, eff, { collectionId: null }, new Map(), null)).toBe(true);
+    // a deeper grant still merges in (a folder shared with Maintenance)
+    const shared = { id: "S", pathIds: [], acl: acl([allow("role", "Maintenance", ["discover", "read"])]) as AccessControl };
+    expect(explorerDocReadable(M, eff, { collectionId: "S" }, new Map([["S", shared]]), null)).toBe(true);
+    // "ALL", or a library whose ACL says something, is unchanged
+    expect(effectiveLibraryAcl({ readAccess: "ALL", acl: null })).toBeUndefined();
+    const wizard = acl([allow("role", "HR", ["read"])]) as AccessControl;
+    expect(effectiveLibraryAcl({ readAccess: ["HR"] as never, acl: wizard })).toBe(wizard);
+    expect(effectiveLibraryAcl({ readAccess: ["HR"] as never, acl: acl([]) as AccessControl })?.rules).toHaveLength(1);
+  });
+  it("DACL-10 done-when 2 + 3 / DACL-6 done-when 2: one library check on both pages; the library page says 'no access' / 'restricted' instead of an empty folder", () => {
+    const home = readFileSync(join(process.cwd(), "app/(protected)/documents/page.tsx"), "utf8");
+    const lib = readFileSync(join(process.cwd(), "app/(protected)/documents/[libraryId]/page.tsx"), "utf8");
+    expect(home).not.toMatch(/function computeCanRead/);
+    expect(home).toMatch(/libraryReadsByRole\(normalized, activeRole, roles\)/);
+    expect(lib).toMatch(/libraryReadsByRole\(library, activeRole, roles\)/);
+    expect(lib).toContain("You don't have access to this library");
+    expect(lib).toMatch(/restricted by their access rules\. To request access, ask the library's owner or a document controller\./);
+    expect(lib).toMatch(/\(!libraryReadable \|\| restrictedHere > 0\) \? \(/);
+  });
+});
+
+describe("VFY-7 — the short link's resolver: punctuation-forgiving at the query, a chooser for two exact matches", () => {
+  it("source pins: an in-order character match across separators as the second candidate read, exact normalized matches only, a chooser for more than one, never rows[0]", () => {
+    const home = readFileSync(join(process.cwd(), "app/(protected)/documents/page.tsx"), "utf8");
+    expect(home).toMatch(/\.ilike\("document_number", `%\$\{norm\.split\(""\)\.join\("%"\)\}%`\)/);
+    expect(home).toMatch(/if \(normalizeDocNumber\(r\.document_number\) === norm\) exact\.set\(r\.id, r\);/);
+    expect(home).toMatch(/else if \(hits\.length > 1\) \{[\s\S]*?setShortLinkChoices\(\{ raw, rows: hits \}\);/);
+    expect(home).toContain("data-short-link-chooser");
+    expect(home).not.toMatch(/\?\? \(rows \?\? \[\]\)\[0\]/);
+  });
+});

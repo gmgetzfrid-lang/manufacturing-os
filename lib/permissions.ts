@@ -260,11 +260,16 @@ export function canReadViaIndex(
   if (isControllerPrincipal(p)) return true;
   if (effectiveOwnerUserId && p.uid && effectiveOwnerUserId === p.uid) return true;
   if (!idx || (!idx.allow && !idx.deny)) return null;
+  type Lists = Record<string, string[]> | undefined;
+  // An index that names nobody at all carries no rule (buildAclIndexFromRules
+  // writes none for zero rules) — unknown, not "denied to everyone".
+  const anyEntry = (bucket: Record<string, Lists> | undefined) => !!bucket
+    && Object.values(bucket).some((m) => !!m && Object.values(m).some((l) => Array.isArray(l) && l.length > 0));
+  if (!anyEntry(idx.allow as unknown as Record<string, Lists>) && !anyEntry(idx.deny as unknown as Record<string, Lists>)) return null;
   if (p.isActiveMember === false) return false;
   const roles = heldRoles(p) as string[];
   const teams = p.teamIds ?? [];
   const org = p.orgId ?? null;
-  type Lists = Record<string, string[]> | undefined;
   const has = (m: Lists, act: string, id: string) =>
     Array.isArray(m?.[act]) && (m[act] as string[]).includes(id);
   const names = (bucket: { users?: Lists; roles?: Lists; teams?: Lists; orgs?: Lists } | undefined, act: string) => !!bucket && (

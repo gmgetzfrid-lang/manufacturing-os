@@ -82,7 +82,8 @@ import { notifyLibraryDocsAdded } from "@/lib/libraryNotify";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
-import { canDiscover, canWithAclChain, canPublishOnLibrary, canPublishViaIndex, type Principal } from "@/lib/permissions";
+import { canWithAclChain, canPublishOnLibrary, canPublishViaIndex, type Principal } from "@/lib/permissions";
+import { effectiveLibraryAcl, explorerDocReadable, explorerFolderVisible, libraryReadsByRole } from "@/lib/libraryAccess";
 import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
@@ -168,6 +169,7 @@ import {
   RefreshCw,
   Search,
   Shield,
+  Lock,
   Trash2,
   UploadCloud,
   X,
@@ -1799,19 +1801,25 @@ export default function LibraryExplorerPage() {
     [folderMap, library?.acl]
   );
 
+  // DACL-9: the library's ACL is pushed ONCE — buildFolderChain already
+  // starts with it (a document in no folder takes it here).
   const buildDocChain = useCallback(
     (docRecord?: DocumentRecord | null): AccessControl[] => {
-      const chain: AccessControl[] = [];
-      if (library?.acl) chain.push(library.acl);
-      if (docRecord?.collectionId) {
-        const folder = folderMap.get(docRecord.collectionId);
-        chain.push(...buildFolderChain(folder));
-      }
+      const folder = docRecord?.collectionId ? folderMap.get(docRecord.collectionId) : null;
+      const chain: AccessControl[] = docRecord?.collectionId
+        ? buildFolderChain(folder)
+        : (library?.acl ? [library.acl] : []);
       if (docRecord?.acl) chain.push(docRecord.acl);
       return chain;
     },
     [buildFolderChain, folderMap, library?.acl]
   );
+
+  // DACL-10: the library rung the listing evaluates under — the library's
+  // ACL, or, for a legacy row whose ACL says nothing while read_access is
+  // restricted, the ACL that read_access stands for (lib/libraryAccess), so a
+  // direct URL never lists what the documents home hides.
+  const explorerLibraryAcl = useMemo(() => effectiveLibraryAcl(library), [library]);
 
   // DEL-2: the effective-owner cascade the database applies (document →
   // folder lineage → library) — the client filter must never re-hide a row
@@ -1863,20 +1871,21 @@ export default function LibraryExplorerPage() {
     return folders.filter((f) => f.parentId === currentFolderId);
   }, [folders, currentFolderId]);
 
+  // DACL-9: a folder whose ancestry the browser could not resolve in full
+  // (RLS hid a private ancestor) is decided on its chain-resolved acl_index,
+  // never on the truncated chain (lib/libraryAccess explorerFolderVisible).
   const filteredFolders = useMemo(() => {
     if (!principal) return [];
     return visibleFolders.filter((f) =>
-      canDiscover({
-        principal,
-        visibility: f.visibility ?? "normal",
-        aclChain: buildFolderChain(f),
+      explorerFolderVisible(
+        principal, explorerLibraryAcl, f, folderMap,
         // GAP-15 / DEL-2: ownership carries read access — the folder's own
         // owner, an ancestor folder's owner, or the library's owner must not
         // be re-hidden client-side after the DB deliberately returned the row.
-        effectiveOwnerUserId: f.ownerUserId ?? folderOwnerFor(f.parentId) ?? library?.ownerUserId ?? null,
-      })
+        f.ownerUserId ?? folderOwnerFor(f.parentId) ?? library?.ownerUserId ?? null,
+      )
     );
-  }, [visibleFolders, principal, buildFolderChain, folderOwnerFor, library?.ownerUserId]);
+  }, [visibleFolders, principal, explorerLibraryAcl, folderMap, folderOwnerFor, library?.ownerUserId]);
 
   // useDeferredValue lets typing in the search box stay responsive on
   // large libraries — React keeps the input snappy and re-runs the
@@ -1886,15 +1895,14 @@ export default function LibraryExplorerPage() {
     if (!principal) return [];
     const q = deferredSearch.trim().toLowerCase();
     return documents.filter((docRecord) => {
-      const canRead = canWithAclChain({
-        principal,
-        action: "read",
-        aclChain: buildDocChain(docRecord),
-        defaultAllow: true,
+      // DACL-9: decided on the row's chain-resolved acl_index when its folder
+      // ancestry could not be resolved in full (lib/libraryAccess).
+      const canRead = explorerDocReadable(
+        principal, explorerLibraryAcl, docRecord, folderMap,
         // GAP-15 / DEL-2: ownership carries read access — never re-hide a row
         // the DB's ownership branch deliberately returned (folder rung included).
-        effectiveOwnerUserId: docRecord.ownerUserId ?? folderOwnerFor(docRecord.collectionId) ?? library?.ownerUserId ?? null,
-      });
+        docRecord.ownerUserId ?? folderOwnerFor(docRecord.collectionId) ?? library?.ownerUserId ?? null,
+      );
       if (!canRead) return false;
       if (!q) return true;
       // Search across every field a person might recognize a sheet by — not
@@ -1917,7 +1925,7 @@ export default function LibraryExplorerPage() {
       }
       return false;
     });
-  }, [folderOwnerFor, documents, principal, deferredSearch, buildDocChain, library?.ownerUserId]);
+  }, [folderOwnerFor, documents, principal, deferredSearch, explorerLibraryAcl, folderMap, library?.ownerUserId]);
 
   const sortedDocs = useMemo(() => {
     return [...filteredDocs].sort((a, b) => {
@@ -2844,7 +2852,13 @@ export default function LibraryExplorerPage() {
             ...(outcome.recordError ? [`The issue record could not be written (${outcome.recordError}), so this issue is not on the document's history.`] : []),
           ]
         : outcome.notRecordedBecause === "read_failed" && pageSawIssue
-          ? ["The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and no issue record was written. Check its history and start its clocks from the document."]
+          ? [
+              // REV-30: the bulk editor's wording — since 20261205 the
+              // database writes the issue record itself, so "no issue record
+              // was written" is false once it is pasted, if this was an issue.
+              "The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one). Check its history and start its clocks from the document.",
+              ...(outcome.recordError ? [`The record that no clock was started could not be written (${outcome.recordError}), so the document's history does not say so.`] : []),
+            ]
           : [];
       if (problems.length > 0) {
         const head = `${reissued ? `${reissued} ` : ""}${label} was saved as ${toStatus}, but ${problems.length} follow-up step${problems.length === 1 ? "" : "s"} did not complete. The status change stands and is not rolled back — do not save it again.`;
@@ -2857,8 +2871,11 @@ export default function LibraryExplorerPage() {
       } else if (!outcome.issued && outcome.notRecordedBecause === "read_failed") {
         // This page saw nothing to issue (already issued, or no revision),
         // but the row before the save could not be read: whether the save
-        // issued it is unknown — say so rather than guess.
-        setError(`${label} was saved, but its state just before the save could not be read, so whether this save issued it is unknown: if another change after this page loaded had moved it out of issue (or given it its first revision), it is now issued with no review clock, acknowledgment roster or issue record — check its history.`);
+        // issued it is unknown — say so rather than guess. REV-30: the
+        // bulk editor's wording — this editor wrote no issue record; since
+        // 20261205 the database records the issue itself, if it was one.
+        // A refused follow-up row (recordError) is named too.
+        setError(`${label} was saved, but its state just before the save could not be read, so whether this save issued it is unknown: if another change after this page loaded had moved it out of issue (or given it its first revision), it is now issued with no review clock or acknowledgment roster, and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one) — check its history.${outcome.recordError ? ` The record that no clock was started could not be written (${outcome.recordError}), so the document's history does not say so.` : ""}`);
       }
       return;
     }
@@ -3163,6 +3180,15 @@ export default function LibraryExplorerPage() {
   const isController = hasAnyRole(["Admin", "DocCtrl"]);
   // DEL-6: the library's owner is told to recertify access — they can.
   const isLibraryOwner = !!uid && !!library?.ownerUserId && library.ownerUserId === uid;
+  // DACL-10: the documents home's own rule (lib/libraryAccess — one check,
+  // two screens). SESS-6: no role known reads nothing by role.
+  const libraryReadable = isController || isLibraryOwner
+    || (activeRole !== null && libraryReadsByRole(library, activeRole, roles));
+  // DACL-6 / DACL-10: what the database returned here that the access rules
+  // keep from this reader — said, never shown as an empty folder.
+  const restrictedHere = deferredSearch.trim()
+    ? 0
+    : Math.max(0, documents.length - filteredDocs.length) + Math.max(0, visibleFolders.length - filteredFolders.length);
   // DEL-1 / GAP-3: the Permissions drawer's authority is controller, OR the
   // node's effective owner, OR a managePermissions/admin grant on its chain
   // (canWithAclChain mirrors the DB's can_manage_node). Owners edit in
@@ -4121,7 +4147,24 @@ export default function LibraryExplorerPage() {
                   </div>
                 </div>
 
-                {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (
+                {!loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 && (!libraryReadable || restrictedHere > 0) ? (
+                  /* DACL-10 / DACL-6: a library the reader may not read, or a
+                     folder whose every item the access rules keep from them,
+                     is said as restricted — never as "Nothing here yet". */
+                  <div className="flex-1 flex flex-col items-center justify-center p-12" data-restricted-state={libraryReadable ? "folder" : "library"}>
+                    <div className="w-20 h-20 rounded-2xl bg-[var(--color-surface-2)] border-2 border-dashed border-[var(--color-border)] flex items-center justify-center mb-5">
+                      <Lock className="w-8 h-8 text-slate-300" />
+                    </div>
+                    <h3 className="text-base font-bold text-[var(--color-text)] mb-1">
+                      {libraryReadable ? "Restricted" : "You don't have access to this library"}
+                    </h3>
+                    <p className="text-sm text-[var(--color-text-muted)] text-center max-w-sm">
+                      {libraryReadable
+                        ? `${restrictedHere} item${restrictedHere === 1 ? " here is" : "s here are"} restricted by their access rules. To request access, ask the library's owner or a document controller.`
+                        : "This library's access rules don't include you. To request access, ask the library's owner or a document controller."}
+                    </p>
+                  </div>
+                ) : !loadingDocs && filteredDocs.length === 0 && filteredFolders.length === 0 ? (
                   /* INTERACTIVE EMPTY STATE */
                   <div className="flex-1 flex flex-col items-center justify-center p-12">
                     <div className="w-20 h-20 rounded-2xl bg-[var(--color-surface-2)] border-2 border-dashed border-[var(--color-border)] flex items-center justify-center mb-5">

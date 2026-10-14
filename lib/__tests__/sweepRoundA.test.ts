@@ -118,8 +118,10 @@ describe("DEL-2 residual — the ownership cascade carries read access everywher
   it("the library page's client filter walks the folder lineage for the owner rung", () => {
     const p = src("app/(protected)/documents/[libraryId]/page.tsx");
     expect(p).toMatch(/const folderOwnerFor = useCallback\(/);
-    expect(p).toMatch(/effectiveOwnerUserId: docRecord\.ownerUserId \?\? folderOwnerFor\(docRecord\.collectionId\) \?\? library\?\.ownerUserId \?\? null/);
-    expect(p).toMatch(/effectiveOwnerUserId: f\.ownerUserId \?\? folderOwnerFor\(f\.parentId\) \?\? library\?\.ownerUserId \?\? null/);
+    // DACL-9 (intelligence I-12): the filters go through lib/libraryAccess,
+    // the owner cascade passed positionally — the same expressions.
+    expect(p).toMatch(/explorerDocReadable\([\s\S]*?docRecord\.ownerUserId \?\? folderOwnerFor\(docRecord\.collectionId\) \?\? library\?\.ownerUserId \?\? null,/);
+    expect(p).toMatch(/explorerFolderVisible\([\s\S]*?f\.ownerUserId \?\? folderOwnerFor\(f\.parentId\) \?\? library\?\.ownerUserId \?\? null,/);
   });
 });
 
