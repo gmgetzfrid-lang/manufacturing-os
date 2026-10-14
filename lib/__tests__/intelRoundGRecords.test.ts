@@ -197,9 +197,11 @@ function seed(folderAcl: Row | null, folderVisibility = "normal") {
     }],
     documents: [
       { id: IN_FOLDER, org_id: ORG, library_id: LIB, collection_id: FOLDER, document_number: "INC-0042", title: "Flare KO drum incident report",
-        rev: "A", status: "Issued", ai_excluded: false, acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null, updated_at: "2026-09-01" },
+        rev: "A", status: "Issued", ai_excluded: false, acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null, updated_at: "2026-09-01",
+        archived_at: null, current_version_id: "v-inc" },
       { id: AT_ROOT, org_id: ORG, library_id: LIB, collection_id: null, document_number: "STD-0007", title: "Flare header standard",
-        rev: "C", status: "Issued", ai_excluded: false, acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null, updated_at: "2026-08-01" },
+        rev: "C", status: "Issued", ai_excluded: false, acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null, updated_at: "2026-08-01",
+        archived_at: null, current_version_id: "v-std" },
     ],
     // k1 mirrors the document inside the folder, k2 the one at the root,
     // k3 is an upload-origin knowledge document (no controlled source).

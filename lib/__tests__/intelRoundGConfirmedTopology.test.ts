@@ -209,6 +209,13 @@ vi.mock("@/lib/supabase", () => ({
 vi.mock("@/lib/knowledgeAccess", () => ({
   readableControlledDocIds: vi.fn(async (_p: unknown, ids: string[]) => new Set(ids.filter((id) => db.readable.has(id)))),
 }));
+// intelligence KACL-9 / KACL-10 (I-12): the mirror hop also asks the AI
+// boundary (lib/aiBoundaryServer). Not what this file tests — every
+// document is AI-readable here (lib/__tests__/intelRoundGDocAcl.test.ts
+// drives the boundary through the real tools).
+vi.mock("@/lib/aiBoundaryServer", () => ({
+  aiReadableControlledIds: vi.fn(async (_org: string, ids: readonly string[]) => new Set(ids)),
+}));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => {}) }));
 
 import {

@@ -155,6 +155,10 @@ import { GET as flowsBrowse } from "@/app/api/flows/browse/route";
 import { GET as areaStatus } from "@/app/api/area/knowledge-status/route";
 import { GET as sourcesGET, POST as sourcesPOST } from "@/app/api/knowledge/sources/route";
 import { syncKnowledgeLibrarySources, syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
+import { toolByName, type ToolContext } from "@/lib/orchestrator/tools";
+import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AccessControl } from "@/types/schema";
 
 const ORG = "12345678-1234-1234-1234-123456789abc";
@@ -548,5 +552,74 @@ describe("DACL-9 helper — canReadViaIndex asks the chain-resolved acl_index (t
     const ch = [acl([allow("user", "u1", ["download"])], "private") as AccessControl];
     expect(canServeContent({ principal: P, aclChain: ch, visibility: "private" })).toBe(true);
     expect(canReadNode({ principal: P, aclChain: ch, visibility: "private" })).toBe(false);
+  });
+});
+
+describe("KACL-9 / KACL-10 — the AI boundary at every door that hands the model document content", () => {
+  function seedMirror(docPatch: Row = {}) {
+    seed();
+    Object.assign(db.tables.documents[0], docPatch);
+    db.tables.knowledge_documents = [
+      { id: "k1", org_id: ORG, library_id: "kl-1", source_document_id: DOC },
+      { id: "k3", org_id: ORG, library_id: "kl-1", source_document_id: null },
+    ];
+    db.tables.assets = [{ id: "a1", org_id: ORG, tag: "E-101", archived: false }];
+    db.tables.entity_mentions = [
+      { org_id: ORG, asset_id: "a1", page: 2, context_snippet: "E-101 relief case", mention_count: 3, knowledge_document_id: "k1", document_id: null, knowledge_documents: { name: "HSE-7" } },
+      { org_id: ORG, asset_id: "a1", page: 1, context_snippet: "E-101 direct", mention_count: 2, knowledge_document_id: null, document_id: DOC, knowledge_documents: null },
+      { org_id: ORG, asset_id: "a1", page: 1, context_snippet: "E-101 in the note", mention_count: 1, knowledge_document_id: "k3", document_id: null, knowledge_documents: { name: "Site note" } },
+    ];
+    db.rpc.graph_ask = () => [
+      { knowledge_document_id: "k1", document_name: "HSE-7", page: 2, snippet: "the relief case" },
+      { knowledge_document_id: "k3", document_name: "Site note", page: 1, snippet: "relief valve replaced" },
+    ];
+  }
+  async function ctx(): Promise<ToolContext> {
+    const p = await viewer();
+    return { orgId: ORG, userId: p.uid, role: p.role, principal: p, actorName: "Pat", approved: new Set() };
+  }
+  const passages = async () => ((await toolByName("search_documents")!.run({ query: "relief" }, await ctx())).data as { passages: Array<{ document: string }> }).passages.map((x) => x.document).sort();
+  const mentions = async () => ((await toolByName("equipment_mentions")!.run({ tag: "E-101" }, await ctx())).data as { mentions: Array<{ evidence: string }> }).mentions.map((x) => x.evidence).sort();
+
+  it("aiReadableControlledIds is lib/aiBoundary aiReadability over the documents as they are now; a failed read admits none", async () => {
+    seed();
+    expect([...await aiReadableControlledIds(ORG, [DOC])]).toEqual([DOC]);
+    for (const patch of [{ ai_excluded: true }, { status: "Superseded" }, { status: "Void" }, { archived_at: "2026-10-01" }, { current_version_id: null }]) {
+      seed();
+      Object.assign(db.tables.documents[0], patch);
+      expect([...await aiReadableControlledIds(ORG, [DOC])], JSON.stringify(patch)).toEqual([]);
+    }
+    seed();
+    expect([...await aiReadableControlledIds("another-org", [DOC])]).toEqual([]);
+    db.errors.documents = { message: "timeout" };
+    expect([...await aiReadableControlledIds(ORG, [DOC])]).toEqual([]);
+  });
+  it("orchestrator search_documents: a mirror of a held-back or superseded document gives no passage, whatever a racing sync left (it was a list capped at 2000, open on error)", async () => {
+    seedMirror();
+    expect(await passages()).toEqual(["HSE-7", "Site note"]);
+    seedMirror({ ai_excluded: true });
+    expect(await passages()).toEqual(["Site note"]);
+    seedMirror({ status: "Superseded" });
+    expect(await passages()).toEqual(["Site note"]);
+  });
+  it("orchestrator equipment_mentions: the proving sentence of a held-back document (mirror or direct) is not read back (it applied no AI boundary)", async () => {
+    seedMirror();
+    expect(await mentions()).toEqual(["E-101 direct", "E-101 in the note", "E-101 relief case"]);
+    seedMirror({ ai_excluded: true });
+    expect(await mentions()).toEqual(["E-101 in the note"]);
+  });
+  it("every door that reads mirrors for a model asks the boundary (source pins: ask, sync, flows/browse via aiReadability; the orchestrator's hop, drawing and locate via aiReadableControlledIds)", () => {
+    const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+    expect(src("app/api/knowledge/ask/route.ts")).toMatch(/aiReadability\(/);
+    expect(src("lib/knowledgeSourceSync.ts")).toMatch(/aiReadability\(/);
+    expect(src("app/api/flows/browse/route.ts")).toMatch(/aiReadability\(/);
+    const tools = src("lib/orchestrator/tools.ts");
+    const hop = tools.slice(tools.indexOf("async function unreadableMirrors"), tools.indexOf("/** KACL-9: which of these controlled documents"));
+    expect(hop).toMatch(/aiReadableControlledIds\(ctx\.orgId, sources\)/);
+    expect(tools).not.toMatch(/\.eq\("ai_excluded", true\)\.limit\(2000\)/);
+    expect(src("app/api/knowledge/drawing/route.ts")).toMatch(/aiReadableControlledIds\(orgId, sources\)/);
+    const locate = src("app/api/knowledge/locate/route.ts");
+    expect((locate.match(/aiReadableControlledIds\(orgId, /g) ?? []).length).toBe(2);
+    expect(src("lib/aiBoundaryServer.ts")).toMatch(/const verdict = aiReadability\(/);
   });
 });

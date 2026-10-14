@@ -55,6 +55,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
+import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
 import { resetKnowledgeIndex } from "@/lib/knowledgeIngest";
 import {
   buildEquipmentCensus, auditDrawingRefs, auditOpcBoxes, drawingRefTargets, equipmentRegisterCsv,
@@ -162,13 +163,19 @@ async function loadVisibleDocs(orgId: string, userId: string, libraryId: string)
   let docs = res.rows;
 
   // ACL: drop mirrors of controlled docs the caller can't read (fail closed).
+  // KACL-10: and mirrors whose document the AI may not read NOW (held back,
+  // superseded / void / archived, no current file — lib/aiBoundary, asked at
+  // query time), whatever a racing sync left in place.
   const linked = docs.filter((d) => d.source_document_id);
   if (linked.length > 0) {
     try {
-      const readable = await readableControlledDocIds(
-        principal, [...new Set(linked.map((d) => d.source_document_id as string))],
-      );
-      docs = docs.filter((d) => !d.source_document_id || readable.has(d.source_document_id));
+      const sources = [...new Set(linked.map((d) => d.source_document_id as string))];
+      const [readable, aiOk] = await Promise.all([
+        readableControlledDocIds(principal, sources),
+        aiReadableControlledIds(orgId, sources),
+      ]);
+      docs = docs.filter((d) => !d.source_document_id
+        || (readable.has(d.source_document_id) && aiOk.has(d.source_document_id)));
     } catch {
       docs = docs.filter((d) => !d.source_document_id);
     }
