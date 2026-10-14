@@ -20,6 +20,7 @@ import {
   AlertOctagon, Check, Flag, Split, Merge, Hash, Repeat2, Undo2, Wrench,
 } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
+import { auditActorNote } from "@/lib/auditActions";
 
 interface TimelineFeedProps {
   events: TimelineEvent[];
@@ -150,6 +151,12 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
                 <>
                   <span className="text-slate-300">·</span>
                   <span>{event.userName || event.userEmail}</span>
+                  {/* ALOG-7 (P13): an audit row's identity says whose word it is. */}
+                  {event.actorKind !== undefined && (
+                    <span className={`text-[10px] ${event.actorKind ? "text-[var(--color-text-faint)]" : "text-amber-700"}`} title="ALOG-7: whose word the identity on this row is">
+                      ({auditActorNote(event.actorKind)})
+                    </span>
+                  )}
                 </>
               )}
               <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
