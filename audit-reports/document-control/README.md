@@ -22,7 +22,7 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 ## Findings
 
-**171 findings** — 19 CRITICAL, 54 HIGH, 72 MEDIUM, 26 LOW.
+**172 findings** — 19 CRITICAL, 54 HIGH, 73 MEDIUM, 26 LOW.
 
 ### Round F wave 1 (2026-09-23 → 2026-09-29) — six packages in parallel
 

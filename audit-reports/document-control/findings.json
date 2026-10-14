@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 171,
+    "findings": 172,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
-      "MEDIUM": 72,
+      "MEDIUM": 73,
       "LOW": 26
     },
     "by_status": {
       "RESOLVED": 161,
-      "OPEN": 10
+      "OPEN": 11
     }
   },
   "status_vocabulary": [
@@ -2346,6 +2346,35 @@
       ],
       "refuted": false,
       "summary": "A PSM auditor asks for every external link outstanding on the unit's P&IDs. The controller has to open each document's share modal in turn, or export the org backup (documentshares is in ORGSCOPEDTABLES, tokens redacted per DEC-45) and read the JSON. A contractor's seat is removed: their links already stop serving at the next resolve (shareStillAuthorized), but nothing shows the controller which l",
+      "area": "document-control",
+      "report": "audit-reports/document-control/05-distribution.md"
+    },
+    {
+      "id": "DIST-16",
+      "title": "A retirement recall is never withdrawn when the document is put back in force — un-archiving it, or reversing the split or merge that retired it, leaves \"your copy is dead paper\" standing on a drawing that is in force",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code on `fleet/DC-P26-status-doors` (base `ce5a053` plus P26).",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/revisions.ts:2466",
+        "lib/documentLifecycle/reverse.ts:778",
+        "lib/revisions.ts:2221",
+        "lib/documentLifecycle/split.ts:311",
+        "lib/staleCopies.ts:279",
+        "lib/notificationKinds.ts:202",
+        "lib/revisions.ts:2503",
+        "lib/notificationKinds.ts:209"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A DocCtrl archives P-101 by mistake (a reason is required, but that is no guard) and un-archives it a minute later as Issued. Nine copy holders have already received a bell and a preference-exempt email telling them to destroy their prints and stop work. Their dismiss-only docrecalled rows stay, and the compliance digest keeps listing \"P-101 is now Archived — your copy is dead paper\" for a drawing",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
     },

@@ -764,6 +764,30 @@
    "sequencingNotes": [
     "Added by the integrator at the I-12 merge, 2026-10-14 (DEC-31; rulings under DEC-90 recorded on the DEC-90 I-12 landing line)."
    ]
+  },
+  {
+   "name": "P28 STATUS-DOOR REMAINDERS \u2014 every door that retires a document recalls its copies (when it was issued) and tells its watchers, once; an undo withdraws the recall; a failed recall read is never silent",
+   "findings": [
+    "notifications PROD-17 (remainder assigned at the P26 merge, 2026-10-14): the library page's metadata-editor save into a retired status (route it through changeDocumentStatus \u2014 the save must not also call recallOnRetirement) and handleBulkArchive (through archiveDocument); the bulk editor's Superseded / Archived (designed with the bulk archive); a reversal parking replacements (lib/documentLifecycle/reverse.ts); a retention disposal (lib/retention.ts); skipsRetirementRecall withholding the watchers' FYI for a row an open door already retired; a Void set by a bare write out of an issue; and supersede of a never-issued document sending a copy-holder recall (the DEC-90 R1 rule at the P26 merge: copy holders are recalled only for a document that was issued \u2014 every other door already follows it)",
+    "document-control DIST-16 (MEDIUM; opened by P26, assigned at the P26 merge): a restore (unarchiveDocument, reverseSplit, reverseMerge, a put-back) withdraws or supersedes the copy-holder recall the retirement sent, so a holder is never left told to destroy prints of a document that is current again",
+    "notifications DELIV-17 (MEDIUM; opened by P26, assigned at the P26 merge): a failed download_audits read inside recallRetiredDocument (lib/staleCopies.ts) is logged and leaves an audit row saying the recall could not be computed, instead of dropping the recall silently (the same for supersede's existing recall)",
+    "the UI-7 document-status site components/documents/ImpactPanel.tsx:178 if drafting-flow DF-P9's fix pass records it as a document status (it routes it here)"
+   ],
+   "files": [
+    "app/(protected)/documents/[libraryId]/page.tsx (the metadata-editor save and handleBulkArchive only)",
+    "components/documents/BulkEditModal.tsx",
+    "lib/revisions.ts, lib/documentLifecycle/reverse.ts, lib/retention.ts, lib/staleCopies.ts",
+    "tests: one recall per retirement on every door (issued only), the watchers' FYI once, a restore withdraws, a failed read is logged and audited; every notice sent today still sent"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "document-control P26 merged (2026-10-14; recallOnRetirement, recallsCopyHolders, DEC-106's P26 Landed line)",
+    "intelligence I-12 merged (2026-10-14; it held the library page)",
+    "notifications 20261206 pasted (doc_retired; until then the watchers' FYI is refused and logged)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P26 merge, 2026-10-14 (DEC-31). Regression-first: every notice a door sends today keeps being sent, except the copy-holder recall for a never-issued supersede (R1)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [
