@@ -76,8 +76,8 @@ export interface EmitInput {
    *  letter is sent again by the scan's next run (loadScanRetryPlan). */
   inappRetry?: { retryKey?: string };
   /** notifications N15 (fix pass — TAX-17 / PROD-17 deploy window): email
-   *  only the recipients whose bell row LANDED. For a kind a later paste
-   *  declares (20261206), written from the browser before that paste:
+   *  only the recipients whose bell row LANDED. For a kind a paste declares
+   *  (20261206), written from the browser if that paste is late:
    *  20261160's rail refuses the row as an undeclared kind, and without this
    *  the email would still go — a notice the reader cannot find in the app.
    *  The bell rows are written one per recipient (inappOneStatement is

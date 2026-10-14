@@ -46,15 +46,25 @@
 --     confirm a notice they wrote reached its recipient), so the inventory
 --     counts those rows first.
 --   · the backlog: checkout_released rows the escalation wrote (they carry
---     metadata.staleSessionId) re-filed as checkout_stale_escalation. A
---     checkout_released row without it (a force-release notice written
---     before N9) keeps its kind. Only `kind` changes — read_at, the
---     recipient, the dates and the metadata are untouched.
+--     metadata.staleSessionId) re-filed as checkout_stale_escalation — those
+--     whose checkout session is no longer ACTIVE (fix pass 3). A row whose
+--     session is still active keeps checkout_released for now: the OLD
+--     cron, which may still be running when this is pasted (paste before
+--     the deploy, below), scans only active sessions and dedupes on
+--     checkout_released alone, so re-filing that row would make it escalate
+--     the session a second time. The N15 cron dedupes on BOTH kinds, so the
+--     kept rows are never re-escalated after the deploy either; pasting
+--     this file again after the deploy re-files them. A checkout_released
+--     row without staleSessionId (a force-release notice written before
+--     N9) keeps its kind. Only `kind` changes — read_at, the recipient, the
+--     dates and the metadata are untouched.
 --
 -- Pre-apply inventory (DEC-30, aggregate counts only): the escalation rows
--- to re-file; the checkout_released rows that keep their kind; rows already
--- written of the new kind; the rows written in the last hour by a member to
--- another member (what notification_i_wrote can now confirm to their writers).
+-- to re-file (session no longer active); the escalation rows kept for now
+-- (session still active); the checkout_released rows that keep their kind;
+-- rows already written of the new kind; the rows written in the last hour
+-- by a member to another member (what notification_i_wrote can now confirm
+-- to their writers).
 --
 -- PASTE AND DEPLOY ORDER:
 --   1. 20261160, 20261161 and 20261191 first (this file stops with a message
@@ -63,23 +73,27 @@
 --      doc_recalled, the kinds 20261191 added). Its list is
 --      20261191's plus one, so never re-paste 20261160 / 20261181 / 20261191
 --      after it — their lists are shorter. Paste this file again instead.
---   2. DEPLOY the N15 app FIRST, then paste this file. The escalation is
---      written by the cron on the service role, which 20261160's rail passes
---      untouched, so the new cron writes checkout_stale_escalation before
---      this paste as well; and it reads BOTH kinds for its dedupe. The other
---      way round — this paste first, under the OLD cron — the re-filed rows
---      leave the old cron's dedupe (which reads checkout_released only) and
---      every session already escalated is escalated again on its next run.
---      The cost of deploying first: until this paste, the watchers'
---      retirement FYI (doc_retired, written from the browser by the
---      supersede door) is refused by 20261160's rail as an undeclared kind
---      and only logged — the watchers miss that FYI for retirements in the
---      window; so does their force-release FYI (checkout_force_released_fyi).
---      Both are sent with emailOnlyWithBell, so a watcher whose bell row was
---      refused gets NO email either (never an email the app cannot show).
---      The copy holders' recall (doc_recalled), the checkout holder's and
---      the package owners' notices are declared kinds and unaffected. Keep
---      the window short: paste right after the deploy.
+--   2. PASTE THIS FILE BEFORE THE DEPLOY of the N15 app (fix pass 3 — the
+--      order lib/notificationKinds.ts's header rule asks: a kind is declared
+--      before the deploy that writes it). Under the OLD cron the paste
+--      changes nothing it reads: the rows of still-active sessions keep
+--      checkout_released (above), and nothing old writes the new kinds or
+--      asks notification_i_wrote. After the deploy the browser-written
+--      watcher FYIs (doc_retired from the supersede door,
+--      checkout_force_released_fyi from a force-release) are declared kinds
+--      from their first write, so no watcher misses one. OPTIONAL, after the
+--      deploy: paste this file again — the remaining escalation rows of
+--      sessions that were active at the first paste are re-filed then (the
+--      N15 cron dedupes on both kinds, so nothing depends on it).
+--      If it is pasted after the deploy instead, nothing breaks: the
+--      escalation is written by the cron on the service role, which
+--      20261160's rail passes, and its dedupe reads both kinds. The cost is
+--      that window: until the paste, the two watcher FYIs are refused by
+--      20261160's rail as undeclared kinds and only logged; both are sent
+--      with emailOnlyWithBell, so a watcher whose bell row was refused gets
+--      NO email either (never an email the app cannot show). The copy
+--      holders' recall (doc_recalled), the checkout holder's and the package
+--      owners' notices are declared kinds and unaffected.
 --   3. Before this paste the app keeps today's paths: lib/complianceNotify.ts
 --      asks notification_i_wrote, finds it missing (PGRST202 / 42883) and
 --      does not retry a browser notice to another member (dead-lettered at
@@ -87,7 +101,7 @@
 --      under checkout_released.
 --
 -- ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe (the re-file
--- finds nothing the second time).
+-- finds only the rows whose session has closed since the last paste).
 -- ─────────────────────────────────────────────────────────────────────────────
 
 DO $$
@@ -105,16 +119,21 @@ $$;
 -- ── Pre-apply inventory (aggregate counts only; read BEFORE the change) ─────
 DROP TABLE IF EXISTS notif_round_g_206_before;
 CREATE TEMP TABLE notif_round_g_206_before AS
-SELECT 1 AS ord, 'BEFORE: checkout_released rows with metadata.staleSessionId (the escalation — re-filed as checkout_stale_escalation)' AS inventory,
-       (SELECT COUNT(*) FROM notifications WHERE kind = 'checkout_released' AND metadata ? 'staleSessionId')::text AS n
+SELECT 1 AS ord, 'BEFORE: escalation rows to re-file as checkout_stale_escalation (checkout_released with metadata.staleSessionId, session no longer active)' AS inventory,
+       (SELECT COUNT(*) FROM notifications n WHERE n.kind = 'checkout_released' AND n.metadata ? 'staleSessionId'
+           AND NOT EXISTS (SELECT 1 FROM checkout_sessions s WHERE s.id::text = n.metadata->>'staleSessionId' AND s.status = 'active'))::text AS n
 UNION ALL
-SELECT 2, 'BEFORE: checkout_released rows that keep their kind (no staleSessionId: force-release notices written before N9)',
+SELECT 2, 'BEFORE: escalation rows kept as checkout_released for now (session still active — the old cron dedupes on them; a paste after the deploy re-files them)',
+       (SELECT COUNT(*) FROM notifications n WHERE n.kind = 'checkout_released' AND n.metadata ? 'staleSessionId'
+           AND EXISTS (SELECT 1 FROM checkout_sessions s WHERE s.id::text = n.metadata->>'staleSessionId' AND s.status = 'active'))::text
+UNION ALL
+SELECT 3, 'BEFORE: checkout_released rows that keep their kind (no staleSessionId: force-release notices written before N9)',
        (SELECT COUNT(*) FROM notifications WHERE kind = 'checkout_released' AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'staleSessionId'))::text
 UNION ALL
-SELECT 3, 'BEFORE: rows already written of checkout_stale_escalation (the N15 cron, deployed first; a re-paste counts the rows the first re-filed)',
+SELECT 4, 'BEFORE: rows already written of checkout_stale_escalation (0 before the deploy; a re-paste counts the N15 cron''s rows and the ones re-filed before)',
        (SELECT COUNT(*) FROM notifications WHERE kind = 'checkout_stale_escalation')::text
 UNION ALL
-SELECT 4, 'BEFORE: rows written in the last hour by a member to another member (what notification_i_wrote can confirm to their writers)',
+SELECT 5, 'BEFORE: rows written in the last hour by a member to another member (what notification_i_wrote can confirm to their writers)',
        (SELECT COUNT(*) FROM notifications WHERE actor_user_id IS NOT NULL AND actor_user_id <> user_id AND created_at >= now() - interval '1 hour')::text;
 
 BEGIN;
@@ -226,8 +245,11 @@ REVOKE ALL ON FUNCTION notification_i_wrote(uuid, uuid, text, text, text, timest
 GRANT EXECUTE ON FUNCTION notification_i_wrote(uuid, uuid, text, text, text, timestamptz) TO authenticated;
 
 -- ── 3. the backlog: the escalation's rows under their own kind ─────────────
-UPDATE notifications SET kind = 'checkout_stale_escalation'
- WHERE kind = 'checkout_released' AND metadata ? 'staleSessionId';
+-- (a still-active session's row stays checkout_released: the old cron's dedupe)
+UPDATE notifications n SET kind = 'checkout_stale_escalation'
+ WHERE n.kind = 'checkout_released' AND n.metadata ? 'staleSessionId'
+   AND NOT EXISTS (SELECT 1 FROM checkout_sessions s
+                    WHERE s.id::text = n.metadata->>'staleSessionId' AND s.status = 'active');
 
 COMMIT;
 
@@ -276,8 +298,10 @@ SELECT 'notification_i_wrote(...) is the only one, answers a boolean for the cal
              WHERE ns.nspname = 'public' AND p.proname = 'notification_i_wrote') = 1,
        NULL
 UNION ALL
-SELECT 'AFTER: no checkout_released row carries a staleSessionId (every escalation is under its own kind)',
-       NOT EXISTS (SELECT 1 FROM notifications WHERE kind = 'checkout_released' AND metadata ? 'staleSessionId'),
+SELECT 'AFTER: every escalation row of a session no longer active is under its own kind (a still-active session''s row stays checkout_released for the old cron''s dedupe)',
+       NOT EXISTS (SELECT 1 FROM notifications n WHERE n.kind = 'checkout_released' AND n.metadata ? 'staleSessionId'
+                    AND NOT EXISTS (SELECT 1 FROM checkout_sessions s
+                                     WHERE s.id::text = n.metadata->>'staleSessionId' AND s.status = 'active')),
        NULL
 UNION ALL
 SELECT '20261160''s insert rail is still bound (trg_notifications_enforce_insert) — this paste re-created only the allow-list it reads',

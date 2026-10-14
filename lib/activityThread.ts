@@ -106,12 +106,21 @@ export async function postActivity(input: PostInput): Promise<ActivityMessage | 
   return data ? rowToActivity(data as Record<string, unknown>) : null;
 }
 
+/** TAX-4 (N15 fix pass 3): the thread notice a participant or watcher gets
+ *  when the discover check FAILED — no document label and no snippet (the
+ *  post's text has no useful redacted form), the same kind and link. */
+export const THREAD_REDACTED = {
+  title: "New message in a checkout thread you take part in or follow",
+  body: "Open it to see which document and what was said. The details are left out of this notice because whether you may see the document could not be confirmed when it was sent.",
+} as const;
+
 /**
  * Notify everyone with a stake in THIS checkout's thread when someone posts:
  * the episode's participants (not people from long-closed checkouts), every
  * active session holder, and anyone watching the document — minus the author,
  * and minus anyone who may not discover the document (TAX-4 dw3; when that
- * check fails, the controllers and the active session holders are kept).
+ * check fails, the controllers and the active session holders get the
+ * notice as written and everyone else a redacted one — THREAD_REDACTED).
  * Writes durable rows to the notifications inbox (bell + feed), so a
  * recipient who wasn't online still sees it.
  */
@@ -154,14 +163,20 @@ async function notifyCheckoutActivity(input: PostInput): Promise<void> {
     // active session holders: they hold the checkout this thread is about
     // right now (a checkout needs the document), so a transient failure of
     // the check (a 503, the network) must not cut the person doing the work
-    // off the thread's notice; participants and watchers are withheld.
+    // off the thread's notice. The participants and watchers it could not
+    // settle get one REDACTED row each (fix pass 3, as emit() does —
+    // dispatch.ts redactedNotice): same kind and link, no document label, no
+    // snippet. Nobody who got the notice before the filter loses it.
     const filter = await discoveringAmong(input.orgId, input.documentId, candidates);
     let userIds = filter.uids;
+    let redactedIds: string[] = [];
     if (filter.outcome === "failed") {
       const holding = new Set(((sessRes.data as Array<{ user_id: string }> | null) ?? []).map((r) => r.user_id));
       userIds = [...new Set([...userIds, ...candidates.filter((u) => holding.has(u))])];
+      const full = new Set(userIds);
+      redactedIds = candidates.filter((u) => !full.has(u));
     }
-    if (userIds.length === 0) return;
+    if (userIds.length + redactedIds.length === 0) return;
 
     const doc = docRes.data as { library_id?: string; document_number?: string; title?: string } | null;
     const label = doc?.document_number || doc?.title || "a document";
@@ -185,18 +200,35 @@ async function notifyCheckoutActivity(input: PostInput): Promise<void> {
       input.kind === "markup_ref" ? "markup_request" :
       "checkout_message";
 
-    await notifyMany({
-      orgId: input.orgId,
-      userIds,
-      actorUserId: actor,
-      actorName: input.userName,
-      kind,
-      title: `${input.userName} ${kindWord} ${label}`,
-      body: snippet,
-      link,
-      resourceType: "document",
-      resourceId: input.documentId,
-    });
+    if (userIds.length > 0) {
+      await notifyMany({
+        orgId: input.orgId,
+        userIds,
+        actorUserId: actor,
+        actorName: input.userName,
+        kind,
+        title: `${input.userName} ${kindWord} ${label}`,
+        body: snippet,
+        link,
+        resourceType: "document",
+        resourceId: input.documentId,
+      });
+    }
+    if (redactedIds.length > 0) {
+      await notifyMany({
+        orgId: input.orgId,
+        userIds: redactedIds,
+        actorUserId: actor,
+        actorName: input.userName,
+        kind,
+        title: THREAD_REDACTED.title,
+        body: THREAD_REDACTED.body,
+        link,
+        resourceType: "document",
+        resourceId: input.documentId,
+        metadata: { redacted: true },
+      });
+    }
   } catch (e) {
     console.warn("[activityThread] checkout notify failed (non-blocking)", e);
   }

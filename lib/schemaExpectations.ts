@@ -349,18 +349,6 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261191_notif_roundG_kind_split.sql",
     feature: "The nudges and heads-ups a member sent, read back on every device (lib/sentNotices.ts; OS-6, TAX-16)",
   },
-  // notifications N15 (DELIV-16): a browser confirms its own compliance
-  // notice to another member landed before retrying it; while it is missing
-  // (42883 / PGRST202) lib/complianceNotify.ts does not retry such a notice
-  // (dead-lettered at once, as before). The uuid argument refuses
-  // "schema-health-probe" (22P02): the body never runs.
-  {
-    signature: "notification_i_wrote(uuid, uuid, text, text, text, timestamptz)",
-    fn: "notification_i_wrote",
-    probeArgs: { p_org: "schema-health-probe", p_user: "schema-health-probe", p_kind: "doc_recalled", p_title: "x", p_resource_id: null, p_since: "2026-01-01T00:00:00Z" },
-    migration: "20261206_notif_roundG_stale_escalation_kind.sql",
-    feature: "A compliance notice a member sent to another member is confirmed before it is retried, never written twice (lib/complianceNotify.ts; DELIV-16)",
-  },
   // projects-joint J14 (MON-12 / COST-3): the bid tab asks the award's whole
   // list and its company picker moves a link through the server; both fall
   // back to today's path while missing (42883 / PGRST202). The uuid argument

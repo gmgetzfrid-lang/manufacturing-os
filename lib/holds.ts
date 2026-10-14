@@ -707,9 +707,14 @@ export async function scanStaleHolds(orgId: string, now: Date = new Date()): Pro
   // under this hold's key, loadScanRetryPlan) who still have no row, and to
   // nobody else (a pool member who joined since is not nudged about an old
   // miss — as before). When the dead letters cannot be read (plan.unreadable)
-  // the plan cannot say who was lost, so the hold is not skipped (that would
-  // mark a dead-lettered recipient as sent for good): its bell row goes to
-  // every current recipient who still has no row (fix pass 2).
+  // the plan cannot say who was lost, so a hold someone was already told
+  // about is DEFERRED to the next run, not decided (fix pass 3): re-sending
+  // to everyone without a row would re-nudge whoever deleted their read
+  // nudge (hold_opened is not a compliance kind — 20261161 lets it be
+  // cleared) and pool members who joined since, on every unreadable run;
+  // skipping for good would mark a lost recipient as sent. The dead letters
+  // stay readable for HOLD_RETRY_LOOKBACK_MS, so the next run that can read
+  // them sends the lost row; loadScanRetryPlan logs the unreadable run.
   const plan = await loadScanRetryPlan(orgId, "hold-aging", HOLD_RETRY_LOOKBACK_MS);
   let nudged = 0;
   for (const h of rows.values()) {
@@ -728,13 +733,10 @@ export async function scanStaleHolds(orgId: string, now: Date = new Date()): Pro
     let audience = [h.opened_by, ...pool];
     let retry = false;
     if (told.size > 0) {
-      if (plan.unreadable) {
-        audience = [...new Set(audience)].filter((u) => !!u && !told.has(u));
-      } else {
-        if (!plan.has(retryKey, null)) continue;
-        const lost = plan.only(retryKey, null);
-        audience = [...new Set(audience)].filter((u) => !!u && !told.has(u) && lost("hold_opened", u));
-      }
+      if (plan.unreadable) continue; // deferred: the next readable run decides
+      if (!plan.has(retryKey, null)) continue;
+      const lost = plan.only(retryKey, null);
+      audience = [...new Set(audience)].filter((u) => !!u && !told.has(u) && lost("hold_opened", u));
       if (audience.length === 0) continue;
       retry = true;
     }

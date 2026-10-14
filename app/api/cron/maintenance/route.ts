@@ -750,8 +750,8 @@ async function drainEmailQueue(origin: string, maxBatches: number, label: string
 const STALE_ESCALATION_DAYS = 14;
 /** TAX-17 (notifications N15): the escalation's kind, and the kind it was
  *  written as before the rename — the dedupe reads both, so a session
- *  escalated before the deploy (and before 20261206 re-files the row) is
- *  never escalated twice. */
+ *  escalated before the deploy, whose row 20261206 has not re-filed (it
+ *  keeps a still-active session's row), is never escalated twice. */
 const STALE_ESCALATION_KINDS = ["checkout_stale_escalation", "checkout_released"];
 
 // The escalation writes through the typed sink (notifications N14, TAX-11's
@@ -786,7 +786,8 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[])
   }>) {
     // Dedupe: skip if we've already escalated this session — under its own
     // kind (TAX-17, N15) or, for an escalation written before the rename and
-    // not yet re-filed by 20261206, the old checkout_released.
+    // not re-filed by 20261206 (it keeps a still-active session's row), the
+    // old checkout_released.
     const { data: existing } = await sb
       .from("notifications")
       .select("id")

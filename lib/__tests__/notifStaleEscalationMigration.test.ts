@@ -6,7 +6,9 @@
 //     exactly THREE rows added — checkout_stale_escalation,
 //     checkout_force_released_fyi and doc_retired, in KIND_META order, with the registry's compliance flags — nothing removed
 //     (lineDiff); the escalation's backlog re-filed by its discriminator
-//     (staleSessionId);
+//     (staleSessionId) — fix pass 3: only rows whose session is no longer
+//     active, so the file is pasted BEFORE the deploy (the old cron's
+//     dedupe still finds an active session's row);
 //   · the guard stops without 20261160 AND without 20261191 (its kinds);
 //   · DELIV-16: notification_i_wrote(...) — SECURITY DEFINER, search_path
 //     pinned, EXECUTE to authenticated only (DRLS-16), a boolean about the
@@ -73,7 +75,7 @@ describe("20261206 — one paste for the SQL editor (DEC-30)", () => {
   it("the inventory is aggregate counts only — never a customer row", () => {
     const inv = CODE.slice(CODE.indexOf("CREATE TEMP TABLE"), CODE.indexOf("BEGIN;"));
     const branches = inv.split(/UNION ALL/);
-    expect(branches).toHaveLength(4);
+    expect(branches).toHaveLength(5);
     for (const b of branches) expect(b).toMatch(/COUNT\(\*\)/);
     expect(inv).not.toMatch(/SELECT \*|\btitle\b|\bbody\b|actor_name|display_name|\bemail\b/i);
   });
@@ -96,11 +98,12 @@ describe("20261206 — one paste for the SQL editor (DEC-30)", () => {
     expect(CODE).not.toMatch(/DROP TRIGGER|CREATE TRIGGER/);
   });
 
-  it("states the paste / deploy order: deploy first, then paste (the old cron's dedupe reads checkout_released only), and what that costs the two watcher FYIs — no bell row and no email", () => {
-    expect(SQL).toMatch(/DEPLOY the N15 app FIRST, then paste this file/);
-    expect(SQL).toMatch(/retirement FYI \(doc_retired, written from the browser by the\s*\n--\s+supersede door\) is refused by 20261160's rail/);
-    expect(SQL).toMatch(/so does their force-release FYI \(checkout_force_released_fyi\)/);
-    expect(SQL).toMatch(/emailOnlyWithBell, so a watcher whose bell row was\s*\n--\s+refused gets NO email either/);
+  it("fix pass 3: states the paste / deploy order the brief asks — paste BEFORE the deploy (safe under the old cron: an active session's row is kept), the optional re-paste after it, and what a late paste costs the two watcher FYIs — no bell row and no email", () => {
+    expect(SQL).toMatch(/PASTE THIS FILE BEFORE THE DEPLOY of the N15 app/);
+    expect(SQL).not.toMatch(/DEPLOY the N15 app FIRST/);
+    expect(SQL).toMatch(/OPTIONAL, after the\s*\n--\s+deploy: paste this file again/);
+    expect(SQL).toMatch(/doc_retired from the supersede door,\s*\n--\s+checkout_force_released_fyi from a force-release\) are declared kinds\s*\n--\s+from their first write/);
+    expect(SQL).toMatch(/with emailOnlyWithBell, so a watcher whose bell row was refused gets\s*\n--\s+NO email either/);
   });
 
   it("the guard also stops when 20261191 has not been pasted (its notification_kinds() declares transmittal_issued and doc_recalled)", () => {
@@ -165,9 +168,11 @@ describe("20261206 — notification_kinds() from its NEWEST definition, plus che
     expect(SQL).toContain(`COUNT(*) = ${n} AND COUNT(DISTINCT kind) = ${n} AND COUNT(*) FILTER (WHERE compliance) = ${c}`);
   });
 
-  it("re-files ONLY the escalation's rows (staleSessionId) — a pre-N9 force-release row keeps its kind", () => {
-    expect(CODE).toMatch(/UPDATE notifications SET kind = 'checkout_stale_escalation'\s+WHERE kind = 'checkout_released' AND metadata \? 'staleSessionId';/);
+  it("re-files ONLY the escalation's rows (staleSessionId) of a session no longer ACTIVE (fix pass 3) — a pre-N9 force-release row keeps its kind, and an active session's row stays where the old cron's dedupe reads it", () => {
+    expect(CODE).toMatch(/UPDATE notifications n SET kind = 'checkout_stale_escalation'\s+WHERE n\.kind = 'checkout_released' AND n\.metadata \? 'staleSessionId'\s+AND NOT EXISTS \(SELECT 1 FROM checkout_sessions s\s+WHERE s\.id::text = n\.metadata->>'staleSessionId' AND s\.status = 'active'\);/);
     expect(CODE.match(/UPDATE notifications/g)).toHaveLength(1);
+    // the old cron (app/api/cron/maintenance/route.ts on the base) scans only ACTIVE sessions — the rows it dedupes on are the ones kept
+    expect(readFileSync(join(process.cwd(), "app/api/cron/maintenance/route.ts"), "utf8")).toMatch(/\.from\("checkout_sessions"\)\s*\.select\([^)]*\)\s*\.eq\("status", "active"\)/);
   });
 });
 
@@ -188,12 +193,13 @@ describe("20261206 — notification_i_wrote(): a member confirms only their OWN 
     expect(b).toMatch(/GREATEST\(COALESCE\(p_since, now\(\)\), now\(\) - interval '1 hour'\)/);
     expect(b).not.toMatch(/SELECT\s+n\.\w+\s*,/); // never returns a row's columns
   });
-  it("the schema-health panel probes it (fix pass 2): a uuid argument that refuses the probe value, so the body never runs", async () => {
+  it("the schema-health probe is the INTEGRATOR's to add (fix pass 3: the brief keeps lib/schemaExpectations.ts out of this package; the probe's facts are in the report) — once added, it matches this function", async () => {
     const { EXPECTED_FUNCTIONS } = await import("@/lib/schemaExpectations");
     const f = EXPECTED_FUNCTIONS.find((x) => x.fn === "notification_i_wrote");
+    if (!f) return; // not added on this branch, by design
     expect(f).toMatchObject({ signature: "notification_i_wrote(uuid, uuid, text, text, text, timestamptz)", migration: FILE });
-    expect(f!.probeArgs.p_org).toBe("schema-health-probe");
-    expect(Object.keys(f!.probeArgs).sort()).toEqual(["p_kind", "p_org", "p_resource_id", "p_since", "p_title", "p_user"]);
+    expect(f.probeArgs.p_org).toBe("schema-health-probe");
+    expect(Object.keys(f.probeArgs).sort()).toEqual(["p_kind", "p_org", "p_resource_id", "p_since", "p_title", "p_user"]);
   });
   it("the app asks it with the same argument names", () => {
     const src = readFileSync(join(process.cwd(), "lib/complianceNotify.ts"), "utf8");

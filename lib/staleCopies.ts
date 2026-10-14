@@ -306,11 +306,49 @@ export async function recallRetiredDocument(input: {
         .map((r) => r.user_id)
         .filter((u): u is string => !!u && u !== input.actorUserId),
     )];
+    // The copy holders' recall goes out FIRST, with its DIST-10 audit row
+    // (review fix, N15): it is the safety notice, and it must not wait on
+    // the watchers' FYI below — whose discover check, follower reads and
+    // inserts can be slow or never finish (a closed tab, a stalled route).
+    if (holders.length > 0) {
+      await emit({
+        orgId: input.orgId,
+        category: "recall",
+        // PROD-13 / TAX-13 (N9): a recall is its own kind, not a supersede notice.
+        kind: "doc_recalled",
+        title: `${input.docLabel} is now ${input.newStatus} — your copy is dead paper`,
+        body:
+          `This document was retired (${input.newStatus.toLowerCase()}); there is no current revision to work from. ` +
+          `Stop any work based on your copy and destroy old prints.` +
+          (input.replacementNote ? ` ${input.replacementNote}` : ""),
+        link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
+        resource: { type: "document", id: input.documentId },
+        actorUserId: input.actorUserId,
+        actorName: input.actorName ?? undefined,
+        audience: { involved: holders },
+        metadata: { recall: true, retirement: true, newStatus: input.newStatus },
+      });
+      // DIST-10: the recall goes on the document's audit trail — an incident
+      // investigation must be able to answer "when was it recalled, who was on
+      // the list" from the record, not from cleared bell notifications.
+      try {
+        await logRevisionEvent({
+          orgId: input.orgId,
+          documentId: input.documentId,
+          versionId: "",
+          userId: input.actorUserId,
+          userEmail: input.actorName ?? "",
+          userRole: "",
+          type: "DISTRIBUTION_RECALL",
+          details: { retirement: true, newStatus: input.newStatus, recipientCount: holders.length, recipients: holders },
+        });
+      } catch { /* the recall itself already went out */ }
+    }
     // PROD-17 (notifications N15): the document's WATCHERS are told it was
     // retired, in their own words ("your copy is dead paper" is false for a
     // watcher who holds none), minus everyone a personal notice about this
-    // same retirement already reached: the copy holders the recall below
-    // tells, and (personallyToldElsewhere, both on by default — the
+    // same retirement already reached: the copy holders the recall above
+    // told, and (personallyToldElsewhere, both on by default — the
     // supersede door sends both) the checkout holder
     // (lib/revisions.ts notifyHolderOfRetirement) and the owners of open work
     // packages pinning it (lib/postPublish.ts notifyPackagesOfRetirement).
@@ -318,12 +356,14 @@ export async function recallRetiredDocument(input: {
     // is one): a watcher's notice must not ride the daily compliance digest,
     // be dismiss-only or be retried as an obligation. On the 'watched'
     // category, so the watcher's own email toggle governs its email (the
-    // copy holders' recall below is the safety category). The dispatcher
+    // copy holders' recall above is the safety category). The dispatcher
     // drops a watcher who may not discover the document (NEDGE-6). Sent
-    // whether or not anyone holds a copy. doc_retired is declared by
-    // 20261206, pasted after the deploy: until then 20261160's rail refuses
-    // the bell row, and emailOnlyWithBell keeps the email from going
-    // without it (no notice the watcher cannot find in the app).
+    // whether or not anyone holds a copy, AFTER the recall and its audit
+    // (the supersede door already runs this whole function without awaiting
+    // it — lib/revisions.ts). doc_retired is declared by 20261206, pasted
+    // BEFORE the deploy; if it is late, 20261160's rail refuses the bell
+    // row, and emailOnlyWithBell keeps the email from going without it (no
+    // notice the watcher cannot find in the app).
     try {
       const toldElsewhere = await personallyToldOfRetirement(input);
       await emit({
@@ -341,40 +381,7 @@ export async function recallRetiredDocument(input: {
         metadata: { retirement: true, followerNotice: true, newStatus: input.newStatus },
         emailOnlyWithBell: true,
       });
-    } catch { /* the recall below still goes out */ }
-    if (holders.length === 0) return 0;
-    await emit({
-      orgId: input.orgId,
-      category: "recall",
-      // PROD-13 / TAX-13 (N9): a recall is its own kind, not a supersede notice.
-      kind: "doc_recalled",
-      title: `${input.docLabel} is now ${input.newStatus} — your copy is dead paper`,
-      body:
-        `This document was retired (${input.newStatus.toLowerCase()}); there is no current revision to work from. ` +
-        `Stop any work based on your copy and destroy old prints.` +
-        (input.replacementNote ? ` ${input.replacementNote}` : ""),
-      link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
-      resource: { type: "document", id: input.documentId },
-      actorUserId: input.actorUserId,
-      actorName: input.actorName ?? undefined,
-      audience: { involved: holders },
-      metadata: { recall: true, retirement: true, newStatus: input.newStatus },
-    });
-    // DIST-10: the recall goes on the document's audit trail — an incident
-    // investigation must be able to answer "when was it recalled, who was on
-    // the list" from the record, not from cleared bell notifications.
-    try {
-      await logRevisionEvent({
-        orgId: input.orgId,
-        documentId: input.documentId,
-        versionId: "",
-        userId: input.actorUserId,
-        userEmail: input.actorName ?? "",
-        userRole: "",
-        type: "DISTRIBUTION_RECALL",
-        details: { retirement: true, newStatus: input.newStatus, recipientCount: holders.length, recipients: holders },
-      });
-    } catch { /* the recall itself already went out */ }
+    } catch { /* the recall above already went out */ }
     return holders.length;
   } catch {
     return 0;

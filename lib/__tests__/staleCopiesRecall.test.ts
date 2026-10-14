@@ -101,7 +101,7 @@ describe("recallRetiredDocument (DIST-1)", () => {
       actorUserId: "actor", actorName: "doccontrol",
     });
     expect(n).toBe(2);
-    // PROD-17 (N15): the watchers' FYI first, then the one recall
+    // PROD-17 (N15): the one recall first, then the watchers' FYI (fix pass 3)
     const recalls = state.emits.filter((x) => x.category === "recall");
     expect(recalls).toHaveLength(1);
     const e = recalls[0] as { audience: { involved: string[] }; title: string; body: string };
@@ -138,8 +138,8 @@ describe("recallRetiredDocument (DIST-1)", () => {
       resource: { type: "document", id: "d1" }, actorUserId: "actor",
       audience: { followers: true, exclude: ["u1"] },
       metadata: { retirement: true, followerNotice: true, newStatus: "Void" },
-      // fix pass 2: doc_retired is declared by 20261206, pasted after the
-      // deploy — a refused bell row sends no email either
+      // fix pass 2: doc_retired is declared by 20261206 — if that paste is
+      // late, a refused bell row sends no email either
       emailOnlyWithBell: true,
     });
     expect(String(f.body)).toContain("doccontrol retired P-101 (void)");
@@ -176,6 +176,27 @@ describe("recallRetiredDocument (DIST-1)", () => {
     });
     expect(state.emits).toHaveLength(1);
     expect((state.emits[0] as { audience: { exclude: string[] } }).audience.exclude).toEqual([]);
+  });
+
+  it("fix pass 3 (the review's major): the copy holders' recall and its DIST-10 audit row go out BEFORE the watchers' FYI — an FYI that never finishes (a hung discover check) cannot hold them back", async () => {
+    const { emit } = await import("@/lib/notify/dispatch");
+    vi.mocked(emit).mockImplementation(async (p) => {
+      state.emits.push(p as unknown as Record<string, unknown>);
+      if ((p as { kind?: string }).kind === "doc_retired") await new Promise(() => undefined); // never resolves
+      return { recipients: 1 };
+    });
+    try {
+      state.tables.download_audits = [{ user_id: "u1" }, { user_id: "u2" }];
+      void recallRetiredDocument({
+        orgId: "org1", documentId: "d1", libraryId: "lib1", docLabel: "P-101",
+        newStatus: "Superseded", actorUserId: "actor", actorName: "doccontrol",
+      });
+      await vi.waitFor(() => expect(state.emits.map((e) => e.kind)).toEqual(["doc_recalled", "doc_retired"]));
+      expect(state.audits).toHaveLength(1);
+      expect(state.audits[0]).toMatchObject({ type: "DISTRIBUTION_RECALL", details: { recipientCount: 2 } });
+    } finally {
+      vi.mocked(emit).mockImplementation(async (p) => { state.emits.push(p as unknown as Record<string, unknown>); return { recipients: 1 }; });
+    }
   });
 
   it("puts the retirement recall on the audit trail (DIST-10)", async () => {

@@ -126,8 +126,9 @@ export const KIND_META = {
   // checkout_released: declared for LEGACY rows only (TAX-17, notifications
   // N15). Since N15 the maintenance cron's stale-checkout escalation to the
   // controllers ("Checkout held N days — review needed") writes
-  // checkout_stale_escalation, and 20261206 re-filed the escalations written
-  // before; nothing writes checkout_released any more. The holder's own
+  // checkout_stale_escalation, and 20261206 re-files the escalations written
+  // before (a still-active session's row once its session closes and the
+  // file is pasted again); nothing writes checkout_released any more. The holder's own
   // notices have their own kinds, both actions as before:
   //   checkout_force_released: someone force-released YOUR checkout
   //     (lib/checkoutEpisodes.ts forceReleaseDocument);

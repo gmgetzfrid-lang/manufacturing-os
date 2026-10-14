@@ -242,6 +242,37 @@ describe("NEDGE-6 done-when 3 — a document's follower who may not discover it 
     (h.client.auth as Record<string, unknown>).getSession = async () => ({ data: { session: null } });
   });
 
+  it("fix pass 3 (the review's major): a browser discover route that never answers is aborted after DISCOVER_TIMEOUT_MS — a FAILED check (controllers only), so the emit takes the redacted path instead of hanging", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("window", {});
+      (h.client.auth as Record<string, unknown>).getSession = async () => ({ data: { session: { access_token: "tok-1" } } });
+      const fetchMock = vi.fn((_url: string, init: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+        // a hung route: answers only by honouring the abort, as fetch does
+        init.signal?.addEventListener("abort", () => reject(Object.assign(new Error("The operation was aborted."), { name: "AbortError" })));
+      }));
+      vi.stubGlobal("fetch", fetchMock);
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const { DISCOVER_TIMEOUT_MS } = await import("@/lib/notify/recipients");
+      expect(DISCOVER_TIMEOUT_MS).toBe(5000);
+      const pending = discoveringAmong(ORG, "doc-1", ["w-sees", "w-admin"]);
+      await vi.advanceTimersByTimeAsync(DISCOVER_TIMEOUT_MS);
+      const out = await pending;
+      expect(out).toMatchObject({ uids: ["w-admin"], outcome: "failed", error: "the discover check did not answer within 5000 ms" });
+      expect(fetchMock.mock.calls[0][1].signal).toBeDefined();
+      // through emit(): the hung check ends in one full row (the controller) and one redacted row each for the rest
+      const sent = emit(ev());
+      await vi.advanceTimersByTimeAsync(DISCOVER_TIMEOUT_MS);
+      const r = await sent;
+      expect(r.recipients).toBe(5);
+      const rows = h.state.tables.notifications as Array<Record<string, unknown>>;
+      expect(rows.filter((x) => (x.metadata as { redacted?: boolean } | null)?.redacted).map((x) => x.user_id).sort()).toEqual(["named", "w-hidden", "w-sees"]);
+    } finally {
+      vi.useRealTimers();
+      (h.client.auth as Record<string, unknown>).getSession = async () => ({ data: { session: null } });
+    }
+  });
+
   it("no check in this context (a server entry that did not load lib/documentDiscoverers): everyone kept, as before, logged", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const out = await discoveringAmong(ORG, "doc-1", ["w-hidden"]);
@@ -357,12 +388,24 @@ describe("TAX-4 done-when 3 — the checkout thread's notice (and so its toast) 
     expect(bell()).toEqual(["w-admin", "w-dc", "w-hidden", "w-sees"]);
   });
 
-  it("a check that fails keeps the controllers (and the session holders, here a controller too); participants and watchers are withheld", async () => {
+  it("a check that fails: the controllers (and the session holders, here a controller too) get the notice as written; the participant and the watcher get exactly one REDACTED row — no document, no snippet, same kind and link (fix pass 3)", async () => {
     seedThread();
     __registerServerDiscoverCheck(async () => ({ ok: false, error: "unreadable" }));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await post();
-    expect(bell()).toEqual(["w-admin", "w-dc"]);
+    expect(bell()).toEqual(["w-admin", "w-dc", "w-hidden", "w-sees"]);
+    const rows = h.state.tables.notifications as Array<Record<string, unknown>>;
+    const of = (u: string) => rows.filter((r) => r.user_id === u);
+    for (const u of ["w-admin", "w-dc"]) {
+      expect(of(u)).toHaveLength(1);
+      expect(of(u)[0]).toMatchObject({ title: "Alice posted to P-4412", body: "pressure relief sizing looks wrong on sheet 3" });
+    }
+    const { THREAD_REDACTED } = await import("@/lib/activityThread");
+    for (const u of ["w-hidden", "w-sees"]) {
+      expect(of(u)).toHaveLength(1);
+      expect(of(u)[0]).toMatchObject({ kind: "checkout_message", title: THREAD_REDACTED.title, body: THREAD_REDACTED.body, link: "/documents/lib-1?doc=doc-1" });
+      expect(JSON.stringify(of(u)[0])).not.toMatch(/P-4412|P&ID|pressure relief/);
+    }
   });
 
   it("fix pass: a TRANSIENT failure of the check (a 503) does not cut off the person doing the work — a non-controller session holder still gets the notice", async () => {
@@ -375,8 +418,11 @@ describe("TAX-4 done-when 3 — the checkout thread's notice (and so its toast) 
     __registerServerDiscoverCheck(async () => ({ ok: false, error: "the discover check answered 503" }));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await post();
-    // the session holder and the controllers; the participant (w-hidden) and the watcher (w-sees) withheld
-    expect(bell()).toEqual(["named", "w-admin", "w-dc"]);
+    // the session holder and the controllers in full; the participant (w-hidden) and the watcher (w-sees) redacted (fix pass 3)
+    expect(bell()).toEqual(["named", "w-admin", "w-dc", "w-hidden", "w-sees"]);
+    const rows = h.state.tables.notifications as Array<Record<string, unknown>>;
+    expect(rows.filter((r) => r.title === "Alice posted to P-4412").map((r) => r.user_id).sort()).toEqual(["named", "w-admin", "w-dc"]);
+    expect(rows.filter((r) => (r.metadata as { redacted?: boolean } | null)?.redacted).map((r) => r.user_id).sort()).toEqual(["w-hidden", "w-sees"]);
   });
 
   it("REGRESSION: a check that ANSWERS still drops a session holder who may not discover the document (the session exemption is for a failed check only)", async () => {

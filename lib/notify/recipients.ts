@@ -186,10 +186,19 @@ export function __registerServerDiscoverCheck(fn: DiscoverCheck | null): void {
  *  DISCOVERERS_MAX_UIDS). */
 export const DISCOVER_CHUNK = 500;
 
+/** How long the browser waits for the discover route before the check
+ *  counts as FAILED (review fix): a hung route then takes the failed-check
+ *  path (controllers in full, the others redacted) instead of holding the
+ *  emit — and whatever awaits it — open indefinitely. */
+export const DISCOVER_TIMEOUT_MS = 5000;
+
 /** The BROWSER check: POST /api/documents/discoverers with the member's own
  *  token. The route answers only about a document the caller's session can
- *  read, and only the subset of the people sent. Never throws. */
+ *  read, and only the subset of the people sent. Never throws; aborted after
+ *  DISCOVER_TIMEOUT_MS (a failure). */
 async function browserDiscoverCheck(input: { orgId: string; documentId: string; uids: string[] }): Promise<DiscoverCheckAnswer> {
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = setTimeout(() => ctrl?.abort(), DISCOVER_TIMEOUT_MS);
   try {
     const { data } = await supabase.auth.getSession();
     const token = data?.session?.access_token;
@@ -198,14 +207,19 @@ async function browserDiscoverCheck(input: { orgId: string; documentId: string; 
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify(input),
+      signal: ctrl?.signal,
     });
     const body = (await res.json().catch(() => null)) as { discover?: unknown; error?: unknown } | null;
+    if (ctrl?.signal.aborted) return { ok: false, error: `the discover check did not answer within ${DISCOVER_TIMEOUT_MS} ms` };
     if (!res.ok || !body || !Array.isArray(body.discover)) {
       return { ok: false, error: typeof body?.error === "string" ? body.error : `the discover check answered ${res.status}` };
     }
     return { ok: true, discover: (body.discover as unknown[]).filter((u): u is string => typeof u === "string") };
   } catch (e) {
+    if (ctrl?.signal.aborted) return { ok: false, error: `the discover check did not answer within ${DISCOVER_TIMEOUT_MS} ms` };
     return { ok: false, error: (e as Error)?.message ?? String(e) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
