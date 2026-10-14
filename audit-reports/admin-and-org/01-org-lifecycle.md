@@ -1245,7 +1245,7 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 
 - **Severity:** LOW
 - **Severity rationale:** The author's estimate. A client-side pre-check only: every RLS path, and every server route that re-reads the membership, refuses a non-active member before an ACL is evaluated. Since `20261204` (PASTE pending) a removed member has no user rule left to honour; a suspended member keeps theirs by design.
-- **Status:** OPEN
+- **Status:** RESOLVED *(2026-10-14, admin-and-org Round G P13; the controller / owner shortcut that precedes the gate is opened as `ORG-23`)*
 - **Assigned:** admin-and-org P13 AUDIT FOLLOW-UPS (`lib/principal.ts` `resolveActorPrincipal`: a read that succeeds and finds no ACTIVE row answers `isActiveMember: false`, so `lib/acl.ts:124` refuses before any rule; every active member's decision unchanged) — scheduled by the integrator at the P12 merge, 2026-10-14 (DEC-31); P13 launches after intelligence I-12 merges, which edits `lib/acl.ts` / `lib/permissions.ts` now.
 - **Assigned (superseded):** — Owner: admin-and-org, the integrator to schedule (opened by admin-and-org Round G P12 under `DEC-31` from `ORG-7` done-when 2, the third site P8's Partial named and the DEC-90 ruling for P12 left out).
 - **Verification:** CONFIRMED (by reading, on `e69f353`)
@@ -1260,5 +1260,43 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 **Done when.**
 - When the membership read succeeds for a given workspace and finds no active row, the principal carries `isActiveMember: false`; a failed read keeps today's fallback.
 - A test pins both branches, and the callers' tests that mock an empty membership read are updated deliberately (22 test files import the resolver).
+
+
+**Resolution (2026-10-14, admin-and-org Round G).** Package P13 (audit follow-ups). Reproduced on base `ddc3678` (DEC-29) with `lib/__tests__/aoRoundGP13Principal.test.ts`, which failed before the change: a membership read that succeeded for a named workspace and returned no row produced the caller's headline and teams with no `isActiveMember`, and `lib/acl.ts` then honoured the actor's own personal ALLOW rule in the client pre-check.
+
+Landed — `lib/principal.ts:48-59` (`resolveActorPrincipal`): the one branch is split by what is KNOWN.
+- The read succeeded for a named workspace and found no ACTIVE row (suspended, removed, never added) → `{ ...fallback, teamIds, isActiveMember: false }`; `lib/acl.ts:124` then clears every allow before any decision (deny rules kept) and `lib/permissions.ts:113` / `:278` answer false — the client pre-check now matches what RLS will answer.
+- The read FAILED, or no workspace was named → unchanged: the caller's headline and teams with no `isActiveMember` (status unknown — the documented "never wider" fallback). A read that throws keeps the bare fallback; no uid reads nothing; an active member's principal is unchanged (`isActiveMember: true`).
+
+Tests: `lib/__tests__/aoRoundGP13Principal.test.ts` — reproduced (the empty read now answers `false`, headline and teams kept); `lib/acl.ts` then refuses a suspended member's own ALLOW; regression for each other branch (active member, failed read, no workspace, thrown read, no uid). The 22 other test files that import the resolver were run with the change and pass, unedited (with this package's own file, 23 files and 606 tests): none mocks an empty membership read and asserts its principal, so none needed changing — the "updated deliberately" set is empty, checked rather than assumed.
+
+**Done-when (2026-10-14).**
+- ✓ A successful read with no active row carries `isActiveMember: false`; a failed read keeps today's fallback.
+- ✓ A test pins both branches (and the four other branches); the callers' tests were re-run, none depended on the old shape.
+
+**Scope / residual.** Client pre-checks only, as the severity said: RLS and the routes that re-read the membership were already refusing. One shortcut runs BEFORE the gate: `lib/permissions.ts` answers true for a controller principal (`isControllerPrincipal`, `:65`, `:153`, `:177`, `:237`, `:269`) and for the effective owner (`:270`) before it looks at `isActiveMember`, and the non-member principal carries the caller's headline role, so a suspended DocCtrl / Admin, or a suspended owner, still passes those pre-checks. That ordering is `lib/permissions.ts`'s (not in P13's files, edited by intelligence I-12 this round) — opened as `ORG-23` (LOW) with an owner to route.
+
+---
+
+<a id="org-23"></a>
+
+## ORG-23 · A principal known not to be an active member still passes the controller and effective-owner shortcuts in `lib/permissions.ts`, which run before its `isActiveMember` gate
+
+- **Severity:** LOW
+- **Severity rationale:** The author's estimate. Client-side pre-checks only (the same surface as `ORG-22`): RLS — `is_org_controller`, `user_is_effective_owner` and every node policy read the ACTIVE membership — refuses the write or read, so nothing is granted; the cost is a pre-check that says yes followed by a generic refusal.
+- **Status:** OPEN
+- **Assigned:** — **Owner: the integrator, to route** (DEC-31). Proposed: the next package that lists `lib/permissions.ts` (intelligence I-12 edited it this round; admin-and-org P13's brief listed only `lib/principal.ts`).
+- **Verification:** CONFIRMED (by reading, on `ddc3678` + P13's `lib/principal.ts`)
+- **Locations:** `lib/permissions.ts:65`, `:153`, `:177`, `:237`, `:269` (`if (isControllerPrincipal(…)) return true;`), `:270` (`if (effectiveOwnerUserId && p.uid && effectiveOwnerUserId === p.uid) return true;`), each before the function's `isActiveMember === false` check (`:113`, `:278`) or with none; `lib/principal.ts:58` (the non-member principal keeps the caller's headline role)
+- **Related:** `ORG-22` (resolved; its residual), `ORG-7`
+- **Independently verified:** — (`author`: opened 2026-10-14 by admin-and-org Round G P13 from `ORG-22`'s residual; not yet challenged)
+
+**Mechanism.** Since `ORG-22`, `resolveActorPrincipal` answers `isActiveMember: false` when the membership read succeeds and finds no active row, with the caller's headline role kept (the fallback). `lib/acl.ts` honours the flag; `lib/permissions.ts`'s shortcuts do not: a controller role on the principal, or the caller being the node's effective owner, returns `true` first.
+
+**Failure scenario.** A DocCtrl is suspended while their tab is open. A mutator resolves their principal (`isActiveMember: false`, role `DocCtrl` from the stale client state); `canReadViaIndex` / `canWithAclChain` answer true from the controller shortcut, the UI proceeds, and the write is refused at RLS with a generic message instead of "you are not an active member".
+
+**Done when.**
+- Every `lib/permissions.ts` decision answers false for a principal with `isActiveMember === false` before any controller or owner shortcut (an unknown status — no flag — unchanged).
+- Tests: a suspended controller and a suspended owner are refused by each shortcut; an active controller / owner and an unknown-status principal unchanged.
 
 ---

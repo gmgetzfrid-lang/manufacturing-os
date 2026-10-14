@@ -424,7 +424,7 @@ Tests: `lib/__tests__/auditViewers.test.ts` "ALOG-6 — …" (three keyset pages
 ## ALOG-7 · Audit rows record self-declared identity: `user_email` and `user_role` come from the caller, `timestamp` is client-settable, and the one field `AuditEntry` declares for it is never written
 
 - **Severity:** MEDIUM
-- **Status:** OPEN *(set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form is not met on three readers — the Partial below)*
+- **Status:** RESOLVED *(2026-10-14, admin-and-org Round G P13: the three readers' remainder below. Set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form was not met on three readers — the Partial below)*
 - **Assigned:** admin-and-org P13 AUDIT FOLLOW-UPS (the three readers' actor note: `components/documents/HistoryDrawer.tsx`, `components/documents/InspectorPanel.tsx`, `app/(protected)/activity/page.tsx`) — by the integrator, 2026-10-13 (A&O P7 merge, DEC-31; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/audit.ts:5-14`, `lib/audit.ts:17-31`, `supabase/schema.sql:781-793`, `supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:84-90`, `app/(protected)/admin/audit/page.tsx:403`, `app/(protected)/admin/holds/page.tsx:94`
@@ -479,6 +479,24 @@ Tests: `lib/__tests__/auditEvidencePackActor.test.ts` (second review fix: both e
 
 **Partial (2026-10-13, admin-and-org Round G).** Remainder of done-when 2's labelled form, opened at the P7 second review fix pass (DEC-31: a remainder needs a named owner). Three readers show an audit row's stored `user_email` / `user_role` with no `actor_kind` note: `components/documents/HistoryDrawer.tsx:87` and `components/documents/InspectorPanel.tsx:373` (each maps rows into `AuditEntry`, which has no actor field, then renders the email and role), and the `/activity` feed (names only). P7's file list holds none of the two components, other packages list `InspectorPanel.tsx` this round (DC P6 / P7, identity-and-session IS-P1), and `/activity` is P7's for rule copy only. The fix is the same in each: carry `actor_kind` from the row and render `lib/auditActions.ts auditActorNote` beside the identity (an optional `actorKind` on `AuditEntry` keeps `logAuditAction`'s signature). **Owner: the integrator, to route** — proposed: the A&O follow-up package proposed under ALOG-8 and ALOG-11 (it lists `/admin/audit` already), with `HistoryDrawer.tsx`, `InspectorPanel.tsx` and `app/(protected)/activity/page.tsx` added to its files. Rows a member writes after `20261201` is pasted are resolved by the database whichever reader shows them; this remainder concerns only older rows and the server's rows.
 
+**Resolution (2026-10-14, admin-and-org Round G).** Package P13 (audit follow-ups), the Partial above. Reproduced on base `ddc3678` (DEC-29) with rendered tests that failed before the change: `HistoryDrawer` and `InspectorPanel` mapped each `audit_logs` row into `AuditEntry` without its `actor_kind` and rendered the stored email and role as plain identity; the `/activity` feed rendered the actor's name with no note.
+
+Landed:
+- `lib/audit.ts:22-28`: `AuditEntry.actorKind?: string | null` — the STORED row's `actor_kind`, a reader's field like `timestamp`; `logAuditAction`'s insert never names it (the exported signature is unchanged).
+- `components/documents/HistoryDrawer.tsx:89` maps `actor_kind`, `:455-456` renders `auditActorNote(log.actorKind)` beside the email and role.
+- `components/documents/InspectorPanel.tsx:400` maps it, `:971` renders the note.
+- `app/(protected)/activity/page.tsx:146` maps it, `:328` renders the note beside the actor's name.
+- In each, a row with no `actor_kind` (written before `20261201`, or before it is pasted) reads "as sent by the writer (before identity was resolved by the database)" in amber, as `/admin/audit` does.
+
+Tests: `lib/__tests__/aoRoundGP13InspectorActorNote.test.ts` (rendered `InspectorPanel`: a member, a server, a system and a pre-paste row each carry their note; regression: the email and role still shown) and `lib/__tests__/aoRoundGP13ActorNoteReaders.test.ts` (rendered `HistoryDrawer` and `/activity`, the same four cases).
+
+**Done-when (2026-10-14).**
+1. ✓ (pending the `20261201` paste) as above, unchanged.
+2. ✓ The first form for every row a signed-in caller writes about themself (pending the paste); the labelled form on EVERY reader of an audit row's identity — `/admin/audit`, its CSV, both evidence packs, and now `HistoryDrawer`, `InspectorPanel` and `/activity`.
+3. ✓ as above, unchanged.
+
+**Scope / residual.** None in the readers. The rows themselves are as `20261201` leaves them (existing rows untouched and labelled as sent). Pending migration (P7's): `supabase/migrations/20261201_ao_roundG_audit_identity.sql`.
+
 ---
 
 <a id="alog-8"></a>
@@ -486,7 +504,7 @@ Tests: `lib/__tests__/auditEvidencePackActor.test.ts` (second review fix: both e
 ## ALOG-8 · Every destructive admin operation's audit insert is written so a failure cannot be detected — seven service-role routes plus the two permission-change writers all discard the result
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED *(2026-10-14, admin-and-org Round G P13: the three shed sites and `/admin/storage`'s display — the last of the nine sites; see the Resolution at the end)*
 - **Assigned:** admin-and-org P13 AUDIT FOLLOW-UPS (`app/api/admin/shed/commit`, `ticket-shed/commit`, `ticket-shed/restore` checked writes; `app/(protected)/admin/storage/page.tsx` showing `auditError`) and admin-and-org P14 EXPORT / RESTORE REMAINDERS (`app/api/admin/orphans/route.ts`, beside `ILIFE-1` criterion 3) — by the integrator, 2026-10-13 (A&O P7 merge, DEC-31; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/purge/route.ts:173-184`, `app/api/admin/restore/apply/route.ts:129-139 (deleted by admin-and-org P3, ILIFE-4)`, `app/api/admin/shed/commit/route.ts:113-120`, `app/api/admin/ticket-shed/commit/route.ts:197-204`, `app/api/admin/ticket-shed/restore/route.ts:210-217`, `app/api/admin/archive-cancel/route.ts:64-71`, `app/api/admin/orphans/route.ts:48-53`, `lib/capabilityPolicy.ts:237-246`, `components/permissions/PermissionDrawer.tsx:291-302`
@@ -556,6 +574,22 @@ Tests: `lib/__tests__/auditRoutesP7.test.ts` (purge: a refused DATA_PURGE row is
 3. ✓ — P7, and for the orphans purge this package's test.
 
 **Scope / residual.** The three shed sites and `app/(protected)/admin/storage/page.tsx`'s display of `auditError` (which the orphans answer now carries too, beside the purge's and archive-cancel's) stay with admin-and-org P13. Status stays OPEN for them.
+
+**Resolution (2026-10-14, admin-and-org Round G).** Package P13 (audit follow-ups) — the three remaining sites and the page. Reproduced on base `ddc3678` (DEC-29) with route tests that failed before the change: `app/api/admin/shed/commit/route.ts:204`, `ticket-shed/commit/route.ts:233` and `ticket-shed/restore/route.ts:241` each wrote `try { await sb.from("audit_logs").insert({…}); } catch { … }` — dead against the `{ error }` supabase-js resolves with — and answered 200 with nothing said; `/admin/storage` read no `auditError` from any answer.
+
+Landed:
+- `app/api/admin/shed/commit/route.ts:207-232`: the `DATA_ARCHIVE_RECLAIM` insert is checked (`{ error }` destructured, a throw caught). The reclaim has happened either way, so a refused row is answered 200 with `auditError` ("the reclaim freed N file(s) but its DATA_ARCHIVE_RECLAIM audit row was not written: …") and logged (`[admin/shed/commit] the DATA_ARCHIVE_RECLAIM audit row was not written`) — the purge's rule, never a silent success.
+- `app/api/admin/ticket-shed/commit/route.ts:234-251` (`TICKET_ARCHIVE_RECLAIM`) and `app/api/admin/ticket-shed/restore/route.ts:242-259` (`TICKET_ARCHIVE_RESTORE`): the same, each sentence naming what was moved.
+- `app/(protected)/admin/storage/page.tsx:155-162` (`noteAuditGap`), `:916-925`: a 2xx answer carrying `auditError` adds an amber notice (`data-testid="storage-audit-gaps"`, role alert, with Dismiss) — "<operation> — NOT recorded in the audit log: …". It is read on every destructive call the page makes: the orphans purge (`:463`), the purge (`:494`), both archive commits (`:561`, `:639`), the catalog discard (`:672`, read BEFORE the non-2xx throw, since archive-cancel's partial 500 carries a gap for tickets it already unlinked), the catalog reclaim (`:717`) and the ticket restore (`:759`). The list clears on a workspace switch (`:345`).
+
+Tests: `lib/__tests__/aoRoundGP13ShedAudit.test.ts` (each route: reproduced — a refused row is in the answer and logged; a thrown insert likewise for the shed; regression — a recorded row answers exactly as before, no `auditError`) and `lib/__tests__/aoRoundGP13StorageAuditGaps.test.ts` (rendered `/admin/storage`: purge, catalog discard, archive-cancel's partial 500 and the catalog reclaim each say the gap; regression — recorded ones show no notice).
+
+**Done-when (2026-10-14).**
+1. ✓ Every one of the nine sites now destructures `{ error }` and escalates: `restore/apply` gone (P3); the policy writer checked (R&P `WF-11`); purge, archive-cancel and the drawer (P7); orphans (P14); both sheds and the ticket restore (P13, above) — into the response body, which `/admin/storage` now shows.
+2. ✓ P7 (the drawer).
+3. ✓ P7 (purge, archive cancel, ACL change), P14 (orphans), P13 (both sheds, the restore, and the page showing it).
+
+**Scope / residual.** None among the nine sites. Audit rows written through `lib/audit.ts logAuditAction` are drafting-flow `EVID-6`'s (resolved the same day by this package: a refused row is also kept in the dead-letter outbox).
 
 ---
 
@@ -712,6 +746,12 @@ Tests: `lib/__tests__/auditViewers.test.ts` "ALOG-11 — one registry the viewer
 3. ✓ The KPI counts a stated, reviewable list (`DESTRUCTIVE_AUDIT_ACTIONS`).
 
 **Scope / residual.** None of this finding's criteria. *Corrected at the P7 review fix pass (DEC-31 — a hand-off must not drop out of every plan):* P7's plan entry carries, as a `dependsOn` line, P3's viewer note (`99-fix-sequencing.md` P3 handoff 2 and fix-pass-8 item 2): the viewer's "who took which drawing" for a `DATA_EXPORT` row is `lib/dataExport.ts rebuildExportList(sb, orgId, recordId)` — check `undelivered` (null = "no delivery failure recorded", never "delivered") and show `exporter.userId`'s current member, not the stored email. The registry half landed here (`DATA_EXPORT` / `DATA_EXPORT_FILES` / `DATA_EXPORT_UNDELIVERED` named; the ledgers' machine rows labelled `system` by ALOG-7). **The viewer is NOT built** *(owner: admin-and-org P13 AUDIT FOLLOW-UPS — assigned by the integrator at the A&O P7 merge, 2026-10-13, DEC-31)*. `lib/dataExport.ts` is server-only (`node:crypto`, the R2 client), so the view needs a new server route behind `authorizeAdminSurface(req, orgId, "audit")` that calls `rebuildExportList` and resolves the exporter's current member, plus a "Files" control on `/admin/audit` for a `DATA_EXPORT` row naming a `fileRecord.recordId` — a route P7's file list does not include. **Owner: the integrator, to route** (proposed: an A&O follow-up package listing `app/(protected)/admin/audit/page.tsx` and the new route; the contract above is the whole brief).
+
+*Hand-off landed (2026-10-14, admin-and-org Round G P13).* The viewer the residual above names is built, to the contract stated there:
+- `app/api/admin/audit/export-files/route.ts` (new, GET `?orgId=&recordId=`): `authorizeAdminSurface(req, orgId, "audit")` first (`:41`; a refusal answers the gate's own status and nothing is rebuilt), then `lib/dataExport.ts rebuildExportList(actor.admin, orgId, recordId)` (`:45`; a list that cannot be rebuilt → 422 with the lib's problem; no record id → 400). The exporter is `exporter.userId`'s CURRENT `org_members` row, read now (`member` with email / role / status), or `former` (no row), `unread` (the read failed — said, never guessed), or `machine` for a scheduled push's machine row; the stored email / role are returned apart, labelled as stored. Delivery: `undelivered` null is `failureRecorded: false` — "No delivery failure recorded", never "delivered"; a recorded failure is said with its error and time.
+- `components/audit/ExportFilesPanel.tsx` (new) and `app/(protected)/admin/audit/page.tsx:454` (`exportRecordIdOf`), `:526-527`: a "Files — who took which drawing" control on a `DATA_EXPORT` row that names its file record (and only there); it reads nothing until opened, then shows who took it, the stored identity apart, the delivery sentence and each file with its document and revision.
+- Tests: `lib/__tests__/aoRoundGP13ExportFiles.test.ts` (the route: the gate asked first and its refusal kept; the current member, not the stored email; null undelivered never "delivered"; machine / former / unread exporters; 422 / 400; the sentences; the rendered control) and `lib/__tests__/aoRoundGP13AuditFilesControl.test.ts` (rendered `/admin/audit`: only a `DATA_EXPORT` row naming its record carries the control).
+Nothing of this finding's criteria changes; the hand-off has no remainder.
 
 *Integrator item, recorded at the P7 third review fix pass (2026-10-13).* The registry census (`auditViewers.test.ts` "every action a writer spells is registered" and "the resource filter offers every resource_type a writer uses") fails for any package merged AFTER P7 that writes a new `action: "…"` literal (or SQL `INSERT INTO audit_logs` action) or a new `resource_type`. Packages running in parallel this round write new actions without listing `lib/auditActions.ts` (e.g. DF-P2 / DF-P3, N14, P24 / P25, J19, P8, P10, PS-P8). **At each later merge, register that package's new actions in `lib/auditActions.ts` `BY_CATEGORY` (or `AUDIT_ACTION_FAMILIES` for a dynamic name) and its new resource types in `AUDIT_RESOURCE_TYPES`** — or the merging package lists the file. The census failure message now names the file and the line of each list to add to.
 
@@ -1080,7 +1120,7 @@ Tests: `lib/__tests__/auditExplorerSnapshot.test.ts` — every pin now reads the
 ## ALOG-16 · Node-level authority rows — a node's full ACL before and after a change, its owner assignments, its recertifications — are readable by every active member of the workspace
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED *(2026-10-14, admin-and-org Round G P13 — pending the `20261219` paste; see the Resolution below)*
 - **Assigned:** admin-and-org P13 AUDIT FOLLOW-UPS (`audit_logs_admin_trail` re-created from its newest body, narrowing, with `/activity`'s stated rule updated in the same change) — by the integrator, 2026-10-13 (A&O P7 merge, DEC-31; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** READ (P7's third-review reading of DEC-17's overlay and the action typing; not exercised against a live database)
 - **Blast radius:** confidentiality inside a workspace / access control
@@ -1101,5 +1141,26 @@ Tests: `lib/__tests__/auditExplorerSnapshot.test.ts` — every pin now reads the
 3. Tests: a member who may not manage the node no longer reads the row; the node's manager and an audit viewer still do; every other row reads exactly as before.
 
 **Remediation.** DEC-90 ruling (fail-safe, least privilege): add these actions to the overlay's restricted set with a node-manager limb; re-create `audit_logs_admin_trail` from its newest definition found by scanning (lineDiff-pinned), counts-only inventory first.
+
+**Resolution (2026-10-14, admin-and-org Round G).** Package P13 (audit follow-ups). Reproduced on the replayed database (base `ddc3678`, DEC-29) with the overlay as `20261157` §7 leaves it: a plain Viewer read the library's `NODE_ACL_CHANGED` row (the full before / after ACL), its `OWNER_TEAM_ASSIGNED` and `ACCESS_RECERTIFIED` rows, the document's `OWNER_ASSIGNED` row and the row of a library that no longer exists (`lib/__tests__/rls/aoP13AuditNodeTrail.test.ts`, "reproduced …", which restores that body on a copy). Applied as ruled (DEC-90: fail-safe, least privilege).
+
+Landed — `supabase/migrations/20261219_ao_roundG_audit_node_trail_and_outbox.sql` (DEC-30 one paste; part 1 here, part 2 is drafting-flow `EVID-6`):
+- `public.audit_row_node_manageable(p_type text, p_id text)` (`:158-188`): may the caller manage the node an audit row names? `library` / `collection` / `document` → its org controller (`is_org_controller`), its effective owner (`user_is_effective_owner`, the owner cascade, active members only) or a holder of an admin / managePermissions grant on its `acl_index` (`can_manage_node`, deny wins) — the people the access drawer admits. A non-UUID id, a gone or unreadable node, a NULL, or any other type → false. SECURITY INVOKER with no SET clause (20261142's precedent — no per-row GUC save / restore), names schema-qualified, EXECUTE for anon / authenticated / service_role, PUBLIC revoked. No SECURITY DEFINER anywhere in the file.
+- `audit_logs_admin_trail` re-created from its NEWEST definition, NARROWED by one AND clause with the action test inline (`:190-275`): the paste picks the body by what is applied — `20261157` §7 when `audit_row_project_ref_visible` exists, else `20261142` §2 — and STOPS before any DDL when `20261142` is missing ("Apply 20261142_prj_roundG_project_audit_rows.sql first … Nothing was changed."). Each body is byte-faithful to its source except the clause (lineDiff-pinned against the source found by scanning). A row outside the five actions never calls the function, so it reads exactly as before; an audit viewer reads every row through the overlay's first limb as before.
+- Counts-only inventory before `BEGIN` (node-level rows; of those, node-typed; which of 20261142 / 20261157 is applied; first apply or re-run), and one final result set: eight probes (still RESTRICTIVE SELECT with the org-level trail and the SEC-20 clause; the ALOG-16 clause; the SEC-21 clause carried exactly when 20261157 is applied; one permissive read and one restrictive overlay, INSERT rules untouched; the function's INVOKER / no SET / grants; a self-test; the outbox's two probes) plus the after counts.
+- `app/(protected)/activity/page.tsx:248` (and the header comment): the stated rule now says it — "Permission (access list), ownership and recertification changes made on a library, folder or document are shown only to people with the Audit log permission and to those who may manage that library, folder or document (its document controllers, its owner, and anyone granted Manage Permissions on it). … The database applies this rule, not this page."
+
+**Exercised on PostgreSQL 16.13** (the replayed schema + every migration, `npm run test:db`, `lib/__tests__/rls/aoP13AuditNodeTrail.test.ts`, each read sent as PostgREST sends a signed-in request): the Viewer now reads only the `VIEW` row; the library's owner reads the library's three rows and the document's (the owner cascade); a Manage Permissions grant holder on the library's index reads the library's three rows; a DocCtrl and an Auditor read every row including the gone node's; another workspace's Admin reads nothing; a re-paste is clean (every probe true); with 20261157 removed (20261142 only) the paste takes 20261142's body — no SEC-21 clause — and still narrows; with 20261142 removed the paste stops and creates nothing. The full DB suite (7 files, 77 tests) passes, `freshReplay` and `definerCensus` included.
+
+Tests: `lib/__tests__/rls/aoP13AuditNodeTrail.test.ts` (above, 7); `lib/__tests__/aoRoundGP13AuditTrailMigration.test.ts` (both sources found by scanning; world C and world B lineDiffs — nothing lost, only the clause added; the floor checked before DDL; the helper's shape; no definer; DEC-30 shape; the probes' LIKE patterns; the header's paste order). Pinning tests that named the previous newest overlay definer now name `20261219` deliberately: `prjRoundGJ11Migrations.test.ts`, `prjRoundGJ12Migration.test.ts`, `projectsRls.test.ts` (policy census: last occurrence wins), `auditViewers.test.ts`.
+
+**Paste and deploy order.** AFTER `20261142` (the file stops otherwise). BEFORE the P13 deploy (recommended, so `/activity`'s sentence is true from the deploy; either order is safe otherwise). `20261157` is HOLD: when it is pasted LATER it re-creates the overlay from 20261142's body without this clause — paste `20261219` AGAIN right after it (re-runnable; it then takes 20261157's body). The same after any later re-paste of 20261142 or 20261157. Expect `ok = true` on every probe row. Rollback in the file's header.
+
+**Done-when (2026-10-14).**
+1. ✓ (pending the paste) Readable only by an Audit log holder or a person who may manage that node, enforced by the database: the overlay re-created from its newest body, narrowing.
+2. ✓ `/activity`'s stated rule says so, in the same change.
+3. ✓ Tests: the plain member no longer reads the row; the owner, a Manage Permissions holder, a controller and an audit viewer do; every other row reads as before (the `VIEW` and `CAPABILITY_POLICY_CHANGED` rows unchanged for each reader).
+
+**Scope / residual.** Rows typed to a project, a ticket or anything else are as before (none of the five actions is written with another type today; one would reach audit viewers only). The helper is SECURITY INVOKER, so a node the reader's own read rules hide from them answers false (fail-safe) — the audit viewers still read the row. The re-paste after a later 20261157 is an operator step (header, `MIGRATION-PASTE-ORDER.md` row — the integrator's file). Pending migration: `supabase/migrations/20261219_ao_roundG_audit_node_trail_and_outbox.sql`.
 
 ---
