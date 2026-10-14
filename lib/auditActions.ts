@@ -124,7 +124,10 @@ const BY_CATEGORY: Record<AuditCategory, readonly string[]> = {
     "STRIPE_CHECKOUT_CREATED", "STRIPE_CUSTOMER_SUBSCRIPTION_CREATED", "STRIPE_CUSTOMER_SUBSCRIPTION_UPDATED",
     "STRIPE_CUSTOMER_SUBSCRIPTION_DELETED", "STRIPE_INVOICE_PAYMENT_SUCCEEDED", "STRIPE_INVOICE_PAYMENT_FAILED",
   ],
-  system: [],
+  // EVID-6 (admin-and-org P13): an audit row that could not be written,
+  // recovered from the dead-letter outbox by the maintenance cron (a machine
+  // row typed org — lib/auditOutboxDrain.ts).
+  system: ["AUDIT_DEAD_LETTER"],
 };
 
 export interface AuditActionDef { action: string; category: AuditCategory; label: string; destructive: boolean }

@@ -58,6 +58,12 @@
 //      (lib/push/sendPush.ts), and a subscription the push service answers
 //      404 / 410 for is deleted there and then. No time-based prune: a device
 //      nobody has pushed for months is still one its person turned on.
+//   7d. The audit dead-letter outbox (drafting-flow EVID-6, admin-and-org
+//      P13): audit rows that could not be written (kept by lib/audit.ts
+//      through lib/auditOutbox.ts, 20261219) are drained into the audit log
+//      as AUDIT_DEAD_LETTER machine rows (audit viewers only) and reported in
+//      the run's errors (lib/auditOutboxDrain.ts). Its own budget,
+//      AUDIT_OUTBOX_MS, never past the run's end. A no-op before 20261219.
 //   8. (knowledge block) The assistant's write proposals a week past their
 //      15-minute expiry are pruned (ORCH-4; pruneOrchestratorProposals,
 //      lib/orchestrator/proposals.ts; a no-op before 20261147).
@@ -103,6 +109,7 @@ import { publicOrigin } from "@/lib/publicOrigin";
 import { formatRecordDate, formatRecordTime, orgTimeZone } from "@/lib/recordTime";
 import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";
 import { runDepartureBackstop, type DepartureBackstopReport, type DepartureRpcClient } from "@/lib/ticketDepartureBackstop";
+import { drainAuditDeadLetters, type AuditOutboxReport } from "@/lib/auditOutboxDrain";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -174,6 +181,8 @@ async function handler(req: NextRequest) {
     /** N10 (GAP-205): step 7c — device registrations of people with no
      *  active membership left, removed. */
     pushSubscriptionsPruned?: number;
+    /** EVID-6 (admin-and-org P13): step 7d — the audit dead-letter outbox drained. */
+    auditOutbox?: AuditOutboxReport;
     /** GAP-106: the drafting-request SLA step (5b). */
     ticketSla?: Omit<SlaScanReport, "errors">;
     /** EDGE-4 (fix pass 3): the departure backstop (5b(i)). */
@@ -591,6 +600,24 @@ async function handler(req: NextRequest) {
     }
   }
 
+  // 7d. AUDIT DEAD-LETTER OUTBOX (drafting-flow EVID-6, admin-and-org P13).
+  //     An audit row lib/audit.ts could not write was kept in
+  //     audit_dead_letters (20261219); here each is written into the audit
+  //     log as an AUDIT_DEAD_LETTER machine row typed org (audit viewers
+  //     only — never the lost action itself), stamped drained, and the run's
+  //     errors say how many were recovered and where (the alert: the cron
+  //     log the operator reads and the audit trail an Admin reads, DEC-102's
+  //     precedent). Its own budget, AUDIT_OUTBOX_MS, never past the run's end,
+  //     so a slow outbox never costs the steps after it their time; what one
+  //     budget does not reach waits for the next run. No-op before 20261219.
+  if (!noTimeFor("audit-outbox", AUDIT_OUTBOX_MIN_MS)) {
+    try {
+      result.auditOutbox = await drainAuditDeadLetters(sb, { stopBy: Math.min(runEnd, Date.now() + AUDIT_OUTBOX_MS), errors: result.errors });
+    } catch (e) {
+      result.errors.push(`audit-outbox: ${(e as Error).message}`);
+    }
+  }
+
   // 8. KNOWLEDGE SOURCES — the live-subscription heartbeat. Reconcile every
   //    knowledge library against its document-control sources (newly filed
   //    docs appear, rev-ups go stale, removed/archived docs drop out), then
@@ -685,6 +712,11 @@ async function handler(req: NextRequest) {
 
   return NextResponse.json(result);
 }
+
+/** Step 7d's floor (EVID-6): it is not started with less than this left. */
+const AUDIT_OUTBOX_MIN_MS = 3_000;
+/** Step 7d's own budget (EVID-6): it stops draining after this long, and never past the run's end. */
+const AUDIT_OUTBOX_MS = 15_000;
 
 /** Step 7c's floor: it is not started with less than this left. */
 const PUSH_PRUNE_MIN_MS = 5_000;

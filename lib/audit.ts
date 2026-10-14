@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { deadLetterAuditRow, type DeadLetterRow } from "@/lib/auditOutbox";
 
 export interface AuditEntry {
   action: string;
@@ -44,8 +45,20 @@ const AUDIT_ACTOR_SENTINELS: ReadonlySet<string> = new Set(["", "unknown", "syst
  *  recorded as system in its metadata. Under the service role (the cron,
  *  the routes) that row lands; under a browser session the insert policy
  *  (user_id = auth.uid()) refuses it, and the refusal is returned, not
- *  swallowed. */
+ *  swallowed.
+ *
+ *  drafting-flow EVID-6 (admin-and-org P13): a refused (or thrown) insert
+ *  is also DEAD-LETTERED — kept in public.audit_dead_letters (20261219) via
+ *  lib/auditOutbox.ts (the browser through the verified /api/audit/dead-letter
+ *  route; the server's service-role client directly), which the maintenance
+ *  cron drains into the audit trail and reports. The result is unchanged
+ *  ({ ok: false, error }) and so is its log line; a second line says whether
+ *  the row was kept.
+ *  Before 20261219 is pasted the outbox is missing and the row is not kept —
+ *  today's path. A row with no workspace is refused before any write and is
+ *  not dead-lettered (the outbox, like the trail, needs its workspace). */
 export async function logAuditAction(entry: AuditEntry): Promise<{ error: string | null; ok: boolean }> {
+  let row: DeadLetterRow | null = null;
   try {
     // ALOG-10 (admin-and-org P7): a row with no workspace is readable by no
     // signed-in reader (every SELECT policy and both viewers read org_id), so
@@ -62,7 +75,7 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
     const metadata = uid === null
       ? { ...(entry.metadata ?? {}), actor_kind: "system", ...(entry.userId ? { actor_label: String(entry.userId) } : {}) }
       : (entry.metadata || null);
-    const { error } = await supabase.from("audit_logs").insert({
+    row = {
       action: entry.action,
       resource_id: entry.resourceId,
       resource_type: entry.resourceType,
@@ -72,16 +85,27 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
       user_role: entry.userRole || null,
       details: entry.details || null,
       metadata,
-    });
+    };
+    const { error } = await supabase.from("audit_logs").insert(row);
     if (error) {
       console.error(`Failed to write audit log (${entry.action}):`, error.message);
-      return { error: error.message || "audit insert refused", ok: false };
+      const message = error.message || "audit insert refused";
+      sayKept(entry.action, await deadLetterAuditRow(row, message));
+      return { error: message, ok: false };
     }
     return { error: null, ok: true };
   } catch (error) {
     console.error(`Failed to write audit log (${entry?.action}):`, error);
-    return { error: (error as Error)?.message ?? String(error), ok: false };
+    const message = (error as Error)?.message ?? String(error);
+    sayKept(entry?.action, row ? await deadLetterAuditRow(row, message) : { kept: false, why: "the row was never built" });
+    return { error: message, ok: false };
   }
+}
+
+/** EVID-6: the second log line — whether the refused row was kept in the outbox. */
+function sayKept(action: string | undefined, kept: { kept: boolean; why?: string }): void {
+  if (kept.kept) console.error(`Audit log (${action}): the refused row was kept in the audit dead-letter outbox; the maintenance cron recovers it into the audit trail`);
+  else console.error(`Audit log (${action}): the refused row was NOT kept in the audit dead-letter outbox (${kept.why})`);
 }
 
 export async function logFileView(params: {
