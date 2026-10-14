@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Select as UiSelect } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { logAuditAction } from "@/lib/audit";
+import ExportFilesPanel from "@/components/audit/ExportFilesPanel";
 import {
   AUDIT_RESOURCE_TYPES, auditActionFilterOptions, auditActorNote, isDestructiveAuditAction,
   pairTicketAttempts, prettyAuditAction, ticketAttemptNote, DESTRUCTIVE_AUDIT_ACTIONS, type TicketAttemptOutcome,
@@ -449,6 +450,12 @@ function Select({ value, onChange, options }: SelectProps) {
   );
 }
 
+/** ALOG-11 hand-off (P13): the file record a DATA_EXPORT row names (DEC-87 §3), or null. */
+function exportRecordIdOf(details: Record<string, unknown> | null): string | null {
+  const fr = (details?.fileRecord ?? null) as { recordId?: unknown } | null;
+  return typeof fr?.recordId === "string" && fr.recordId ? fr.recordId : null;
+}
+
 interface AuditRowItemProps {
   row: AuditRow;
   docMeta?: { documentNumber: string | null; title: string | null; libraryId: string };
@@ -515,6 +522,10 @@ function AuditRowItem({ row, docMeta, attempt, namesAttempt }: AuditRowItemProps
           <span className="text-slate-300">·</span>
           <time className="text-[var(--color-text-muted)]" dateTime={row.timestamp}>{formatTime(row.timestamp)}</time>
         </div>
+        {/* ALOG-11 hand-off (P13): a DATA_EXPORT row naming its file record — who took which drawing */}
+        {row.action === "DATA_EXPORT" && row.orgId && exportRecordIdOf(row.details) && (
+          <ExportFilesPanel orgId={row.orgId} recordId={exportRecordIdOf(row.details) as string} />
+        )}
         {(row.details && Object.keys(row.details).length > 0) && (
           <details className="mt-1.5">
             <summary className="text-[10px] font-bold text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] transition-colors">Details</summary>
