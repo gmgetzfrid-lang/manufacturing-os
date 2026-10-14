@@ -52,6 +52,22 @@ describe("extractEquipmentTags", () => {
     expect(loose).toEqual(["V-101", "P-101A", "E-204"]);
   });
 
+  it("never reads the sheet's own drawing number, pipe specs, nameplates or revisions as equipment", () => {
+    const sheet = [
+      "2002-D 2001 SHT 05 REV 42", "DWG NO. 2002-D 2001", "6\" SCH 40 CS 150# RF",
+      "MOTOR 75 HP 460 V", "R39 05-12-23", "FROM 20-E-22 TO 21-D-1105", "LINE 8\"-P-20015-A1A",
+    ];
+    const strict = sheet.flatMap((l) => extractEquipmentTags(l)).map((t) => t.tag);
+    const loose = sheet.flatMap((l) => extractEquipmentTags(l, { loose: true })).map((t) => t.tag);
+    expect(strict).toEqual(["E-22"]);
+    expect(loose).toEqual(["E-22"]);
+  });
+
+  it("accepts a codebook prefix in loose mode", () => {
+    expect(extractEquipmentTags("BA 101", { loose: true })).toEqual([]);
+    expect(extractEquipmentTags("BA 101", { loose: true, knownPrefixes: ["BA"] }).map((t) => t.tag)).toEqual(["BA-101"]);
+  });
+
   it("reports each tag once per call", () => {
     expect(extractEquipmentTags("V-3 V-3 V-3", { loose: true }).length).toBe(1);
   });

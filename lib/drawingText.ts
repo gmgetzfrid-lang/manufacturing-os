@@ -73,13 +73,33 @@ const EQUIPMENT_STOP_PREFIXES = new Set([
   "NO", "DWG", "REV", "PID", "DRW", "SHT", "SH", "PG", "ISO", "API", "ANSI", "NPS",
 ]);
 
-export function extractEquipmentTags(text: string, opts: { loose?: boolean } = {}): EquipmentTagHit[] {
+/** Is this match an inner segment of a drawing or line number? "2002-D 2001"
+ *  (a drawing number: digits, a separator, then our letters) and
+ *  `8"-P-20015` (a line number: pipe size in inches, then a dash). */
+function insideANumber(upper: string, at: number): boolean {
+  const before = upper.slice(Math.max(0, at - 10), at);
+  // Digits standing alone (not the end of a tag like V101): 2002-D…, 2002 D…
+  if (/(?:^|[^A-Z0-9])\d{3,}[-–\s]$/.test(before)) return true;
+  if (/["”]\s*[-–]$/.test(before)) return true;       // 8"-P…
+  return false;
+}
+
+export function extractEquipmentTags(text: string, opts: {
+  /** Drawing pages only: also read "V101", "P 101A", "E.204". Only prefixes
+   *  that are KNOWN equipment (the table above plus the site codebook) are
+   *  accepted this way, so pipe specs (SCH 40), nameplates (HP 460),
+   *  revisions (R39) and words (TO 21) never become equipment. */
+  loose?: boolean;
+  /** Tag prefixes the site codebook teaches, on top of the built-in table. */
+  knownPrefixes?: Iterable<string>;
+} = {}): EquipmentTagHit[] {
   const out: EquipmentTagHit[] = [];
   const seen = new Set<string>();
   const upper = text.toUpperCase();
   for (const m of upper.matchAll(EQUIPMENT_RE)) {
     const prefix = m[1];
     if (EQUIPMENT_STOP_PREFIXES.has(prefix)) continue;
+    if (insideANumber(upper, m.index ?? 0)) continue;
     // "2002-D-2001" is a DRAWING NUMBER — reading D-2001 out of its middle
     // would mint a phantom drum for every sheet in the set. A digit-dash
     // immediately before the prefix means the letters are an inner segment
@@ -104,9 +124,14 @@ export function extractEquipmentTags(text: string, opts: { loose?: boolean } = {
     out.push(unit ? { tag, prefix, unit } : { tag, prefix });
   }
   if (opts.loose) {
+    const known = new Set<string>([...Object.keys(EQUIPMENT_CATEGORIES), ...[...(opts.knownPrefixes ?? [])].map((p) => p.toUpperCase())]);
     for (const m of upper.matchAll(LOOSE_EQUIPMENT_RE)) {
       const prefix = m[1];
-      if (EQUIPMENT_STOP_PREFIXES.has(prefix)) continue;
+      if (EQUIPMENT_STOP_PREFIXES.has(prefix) || !known.has(prefix)) continue;
+      // A single letter with two digits is a revision, a grid square or a
+      // sheet size far more often than a vessel: R39, A10, B12.
+      if (prefix.length === 1 && m[2].length < 3) continue;
+      if (insideANumber(upper, m.index ?? 0)) continue;
       const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
       if (seen.has(tag)) continue;
       seen.add(tag);

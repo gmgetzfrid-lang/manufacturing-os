@@ -28,6 +28,7 @@ import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
+import { loadCodebookAdmin } from "@/lib/codebookServer";
 
 export const PAGE_BATCH = 50;
 
@@ -118,6 +119,11 @@ export async function ingestKnowledgeDocBatch(
   // as "prose" — every tag on it invisible, the registry empty.
   const { data: libFeat } = await supabaseAdmin.from("knowledge_libraries").select("ai_features").eq("id", doc.library_id).maybeSingle();
   const drawingSet = ((libFeat?.ai_features ?? {}) as Record<string, unknown>).drawingIntel === true;
+  // The site's own equipment prefixes (Site codebook › Equipment types)
+  // widen what the dashless reader accepts on a drawing.
+  const knownPrefixes: string[] = drawingSet
+    ? await loadCodebookAdmin(supabaseAdmin, doc.org_id).then((b) => b.equipmentTypes.flatMap((t) => t.meta.tagPrefixes ?? [])).catch(() => [])
+    : [];
 
   // ── Bytes read once ──────────────────────────────────────────────────
   // Every copy carries its hash. What was already read for these bytes —
@@ -194,14 +200,19 @@ export async function ingestKnowledgeDocBatch(
     //    refs), making the sheet fully searchable and citable.
     let visionRead = false;
     const rawPageText = lines.join("\n");
-    const tagsFromText = extractEquipmentTags(rawPageText, { loose: drawingSet }).length + extractDrawingRefs(rawPageText).length;
+    const tagsFromText = extractEquipmentTags(rawPageText, { loose: drawingSet, knownPrefixes }).length + extractDrawingRefs(rawPageText).length;
     if (vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText)) {
       // Don't START a vision page we can't finish — a page begun at t=50s on
       // a 60s function is pure waste, and worse, it takes the whole batch's
       // committed progress down with it.
       const timeForVision = !deadlineMs || Date.now() + VISION_PAGE_RESERVE_MS <= deadlineMs;
       const priorText = stored.get(p);
-      if (priorText && priorText.length >= TEXTLESS_PAGE_MAX_CHARS && priorText.length > rawPageText.length) {
+      // Same bytes, same text layer: a stored page that holds far more text
+      // than the layer itself can only have come from vision. A stored page
+      // that merely echoes the text layer is not a transcript, and reusing
+      // it would stop "read every page with vision" from ever running.
+      const isTranscript = !!priorText && priorText.length >= TEXTLESS_PAGE_MAX_CHARS && priorText.length > rawPageText.length * 1.5 + 200;
+      if (priorText && isTranscript) {
         // Already read for these bytes: the stored transcript stands in for
         // the model. Nothing is billed.
         lines = priorText.split("\n").map((l) => sanitizeStorageText(l.trim())).filter(Boolean);
@@ -297,7 +308,7 @@ export async function ingestKnowledgeDocBatch(
         const x = item.transform?.[4] ?? null;
         const y = item.transform?.[5] ?? null;
         const { nx, ny } = norm(x, y);
-        for (const hit of extractEquipmentTags(str, { loose })) {
+        for (const hit of extractEquipmentTags(str, { loose, knownPrefixes })) {
           onPage.add(hit.tag);
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
@@ -321,7 +332,7 @@ export async function ingestKnowledgeDocBatch(
     if (!visionRead && (drawingSet || isDrawingLikePage(pageText) || tagsFromText >= 8)) {
       const found = new Set(entityRows.filter((r) => r.document_id === doc.id && r.page === p && r.kind === "equipment").map((r) => String(r.tag)));
       for (const line of lines) {
-        for (const hit of extractEquipmentTags(line, { loose: drawingSet })) {
+        for (const hit of extractEquipmentTags(line, { loose: drawingSet, knownPrefixes })) {
           if (found.has(hit.tag)) continue;
           found.add(hit.tag);
           entityRows.push({

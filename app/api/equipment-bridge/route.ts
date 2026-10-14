@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
     const results: Array<{ documentId: string; appliedTags?: string[]; createdAssets?: number; error?: string }> = [];
     for (const documentId of documentIds.slice(0, 500)) {
       try {
-        const r = await applyForDocument(supabaseAdmin, { orgId, documentId, userId: auth.userId, tags });
+        const r = await applyForDocument(supabaseAdmin, { orgId, documentId, userId: auth.userId, tags, byPerson: true });
         results.push({ documentId, ...r });
       } catch (e) {
         results.push({ documentId, error: (e as Error).message });

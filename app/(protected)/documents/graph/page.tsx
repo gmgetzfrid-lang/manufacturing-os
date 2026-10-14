@@ -344,7 +344,11 @@ function GraphPageInner() {
       const out: FileGraphSatellite[] = [];
       for (const [node, links] of unitLinks) {
         const code = node.slice(7); const u = data.units.find((x) => x.code === code);
-        out.push({ id: node, label: u?.label ?? `Unit ${code}`, sub: `Unit ${code} · ${links.length} linked`, color: "#7c3aed", iconKey: "unit", links: links.slice(0, 60) });
+        // A folder that belongs to the unit speaks for everything inside it:
+        // one line to the folder, not one to every sheet.
+        const linked = new Set(links.map((l) => l.to));
+        const lean = links.filter((l) => !ancestorsOf(l.to).some((a) => linked.has(a)));
+        out.push({ id: node, label: u?.label ?? `Unit ${code}`, sub: `Unit ${code} · ${links.length} linked`, color: "#7c3aed", iconKey: "unit", links: lean.slice(0, 60) });
       }
       const ranked = [...assetLinks.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, focusId ? 80 : 40);
       for (const [node, links] of ranked) {
@@ -367,7 +371,7 @@ function GraphPageInner() {
         color: ent.kind === "asset" ? "#059669" : ent.kind === "unit" ? "#7c3aed" : ent.kind === "tag" ? "#64748b" : "#d97706", iconKey: ent.kind === "asset" ? "equipment" : ent.kind === "tag" ? "tag" : ent.kind === "unit" ? "unit" : "project", href: ent.href, links });
     }
     return out;
-  }, [serverFind, nodeById, entryById, showEstate, data, visible, focusId]);
+  }, [serverFind, nodeById, entryById, showEstate, data, visible, focusId, ancestorsOf]);
 
   // Symbolic links ("also filed under") between files and folders on the map.
   const filedLinks = useMemo<Array<[string, string]>>(() => {
@@ -640,7 +644,7 @@ function GraphPageInner() {
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
-            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry}
+            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); if (id) setSelSat(null); }} onDrill={drill} onUp={up} onOpen={openEntry}
               satellites={satellites} onSatellite={(sat) => { setSelSat(sat); setSelectedId(null); }} filedLinks={filedLinks} />
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">

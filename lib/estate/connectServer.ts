@@ -34,7 +34,7 @@ import { computeReadiness, type EstateReadiness } from "./readinessServer";
 
 /** Bump when the tag reader learns to see more: every read copy is read
  *  again once, so sheets read by an older reader catch up on their own. */
-export const TAG_READER_VERSION = 2;
+export const TAG_READER_VERSION = 3;
 
 export interface ConnectStep { key: "units" | "read" | "index" | "registry" | "links"; title: string; state: "done" | "working" | "waiting" | "blocked"; detail: string }
 export interface ConnectStatus {
@@ -79,36 +79,28 @@ async function ensureUnits(admin: SupabaseClient, orgId: string, actor: string |
 
 function looksLikeDrawings(name: string): boolean { return /draw|p&id|p&amp;id|pid|iso|dwg|diagram|schematic|loop/i.test(name); }
 
-async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: Array<{ id: string; name: string }>, actor: { userId: string; name: string | null }, opts: { visionAllPages?: boolean; rereadAll?: boolean }): Promise<{ libraryId: string; libraryName: string; created: boolean; removedDuplicate: boolean; sourcesAdded: number; sync: { added: number; refreshed: number; errors: string[] }; rereads: number }> {
-  // A knowledge library a person already pointed at these drawings wins —
-  // whether it watches the whole library or a folder inside it. A library
-  // this button made earlier, when a person's own exists, is removed so
-  // every sheet has one read copy, not two.
+async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: Array<{ id: string; name: string }>, actor: { userId: string; name: string | null }, opts: { visionAllPages?: boolean; rereadAll?: boolean }): Promise<{ libraryId: string; libraryName: string; created: boolean; partial: Array<{ name: string; count: number }>; sourcesAdded: number; sync: { added: number; refreshed: number; errors: string[] }; rereads: number }> {
+  // Which library reads the drawings. Rules, in order:
+  //  1. A library that already watches EVERY drawing library whole is used
+  //     as it is — a person's or this button's.
+  //  2. Otherwise this button's own library watches them whole. A person's
+  //     library that covers only part (the crude P&ID folder) is left
+  //     exactly as it is: never edited, never deleted. Its readings are not
+  //     wasted — the reader reuses any transcript of the same bytes, so a
+  //     sheet that library already read costs nothing here.
+  // Nothing is ever deleted, and coverage never narrows to one folder.
   const { data: srcRows } = await admin.from("knowledge_sources").select("library_id, source_id, source_type").eq("org_id", orgId).limit(2000);
   const sources = (srcRows as Array<{ library_id: string; source_id: string; source_type: string }> | null) ?? [];
   const dcIds = new Set(dcLibs.map((l) => l.id));
-  const folderIds = sources.filter((s) => s.source_type === "folder").map((s) => s.source_id);
-  const folderLib = new Map<string, string>();
-  if (folderIds.length) {
-    const { data: cols } = await admin.from("collections").select("id, library_id").in("id", folderIds);
-    for (const c of (cols as Array<{ id: string; library_id: string }> | null) ?? []) folderLib.set(c.id, c.library_id);
-  }
-  const covers = (s: { source_id: string; source_type: string }) => (s.source_type === "library" ? dcIds.has(s.source_id) : dcIds.has(folderLib.get(s.source_id) ?? ""));
   const { data: existing } = await admin.from("knowledge_libraries").select("id, name, description").eq("org_id", orgId).limit(200);
   const libs = ((existing as Array<{ id: string; name: string; description: string | null }> | null) ?? []);
   const isAuto = (l: { name: string; description: string | null }) => /drawings — read by the estate/i.test(l.name) && /Made by Connect everything/.test(l.description ?? "");
-  const covering = [...new Set(sources.filter(covers).map((s) => s.library_id))].map((id) => libs.find((l) => l.id === id)).filter((l): l is { id: string; name: string; description: string | null } => !!l);
-  const own = covering.find((l) => !isAuto(l)) ?? null;
+  const wholeBy = new Map<string, Set<string>>();
+  for (const s of sources) if (s.source_type === "library" && dcIds.has(s.source_id)) wholeBy.set(s.library_id, new Set([...(wholeBy.get(s.library_id) ?? []), s.source_id]));
+  const full = [...wholeBy.entries()].find(([, set]) => dcLibs.every((l) => set.has(l.id)))?.[0] ?? null;
   const auto = libs.find(isAuto) ?? null;
-  let libraryId: string | null = own?.id ?? auto?.id ?? null;
+  let libraryId: string | null = full ?? auto?.id ?? null;
   let created = false;
-  let removedDuplicate = false;
-  if (own && auto && own.id !== auto.id) {
-    // One read copy per sheet: the person's library stays, the made one goes.
-    const { error } = await admin.from("knowledge_libraries").delete().eq("id", auto.id).eq("org_id", orgId);
-    removedDuplicate = !error;
-    libraryId = own.id;
-  }
   if (!libraryId) {
     const { data: made, error } = await admin.from("knowledge_libraries").insert({
       org_id: orgId, name: "Drawings — read by the estate",
@@ -119,17 +111,24 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
     libraryId = String((made as { id: string }).id); created = true;
   }
   const libraryName = libs.find((l) => l.id === libraryId)?.name ?? "Drawings — read by the estate";
+  // Other libraries reading part of these drawings: named, so the person
+  // sees their work is counted.
+  const partial: Array<{ name: string; count: number }> = [];
+  {
+    const others = libs.filter((l) => l.id !== libraryId);
+    for (const l of others) {
+      const watchesSome = sources.some((s) => s.library_id === l.id);
+      if (!watchesSome) continue;
+      const { count } = await admin.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("library_id", l.id).eq("status", "ready").not("source_document_id", "is", null);
+      if (count) partial.push({ name: l.name, count });
+    }
+  }
   // Drawing intelligence on, whichever library it is.
   const { data: libRow } = await admin.from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
   const feats = ((libRow?.ai_features as Record<string, unknown> | null) ?? {});
   if (feats.drawingIntel !== true) await admin.from("knowledge_libraries").update({ ai_features: { ...feats, drawingIntel: true } }).eq("id", libraryId).then(() => undefined, () => undefined);
-  // Sources: each drawing library, once.
-  const watched = new Set<string>();
-  for (const s of sources) {
-    if (s.library_id !== libraryId) continue;
-    if (s.source_type === "library") watched.add(s.source_id);
-    else { const lib = folderLib.get(s.source_id); if (lib) watched.add(lib); }
-  }
+  // Sources: each drawing library, whole, once.
+  const watched = new Set(sources.filter((s) => s.library_id === libraryId && s.source_type === "library").map((s) => s.source_id));
   let sourcesAdded = 0;
   for (const l of dcLibs) {
     if (watched.has(l.id)) continue;
@@ -170,7 +169,7 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
     nextFeats.connectReread = [...already].slice(-5000);
   }
   if (JSON.stringify(nextFeats) !== JSON.stringify(feats)) await admin.from("knowledge_libraries").update({ ai_features: nextFeats }).eq("id", libraryId).then(() => undefined, () => undefined);
-  return { libraryId, libraryName, created, removedDuplicate, sourcesAdded, sync, rereads };
+  return { libraryId, libraryName, created, partial, sourcesAdded, sync, rereads };
 }
 
 async function ensureBridge(admin: SupabaseClient, orgId: string, dcLibs: Array<{ id: string; name: string }>): Promise<void> {
@@ -184,7 +183,7 @@ async function ensureBridge(admin: SupabaseClient, orgId: string, dcLibs: Array<
   }
 }
 
-async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: string, actor: string, deadline: number): Promise<{ drawings: number; applied: number; assets: number; left: number }> {
+async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: string, actor: string | null, deadline: number): Promise<{ drawings: number; applied: number; assets: number; left: number }> {
   const out = { drawings: 0, applied: 0, assets: 0, left: 0 };
   const { data: ready } = await admin.from("knowledge_documents").select("id, source_document_id").eq("library_id", libraryId).eq("status", "ready").not("source_document_id", "is", null).limit(3000);
   const mirrors = (ready as Array<{ id: string; source_document_id: string }> | null) ?? [];
@@ -233,7 +232,7 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
   const r = await ensureReadLibrary(admin, orgId, dcLibs, input.actor, { visionAllPages: input.visionAllPages, rereadAll: input.rereadAll });
   const readBits = [`"${r.libraryName}" in Intelligence watches ${dcLibs.map((l) => l.name).join(", ")}`];
   if (r.created) readBits.push("read library made");
-  if (r.removedDuplicate) readBits.push("a duplicate read library this button made earlier was removed");
+  for (const p of r.partial) readBits.push(`your "${p.name}" library already read ${p.count}; those readings are reused, not paid for again`);
   if (r.sourcesAdded) readBits.push(`${r.sourcesAdded} source${r.sourcesAdded === 1 ? "" : "s"} linked`);
   if (r.sync.added) readBits.push(`${r.sync.added} new to read`);
   if (r.sync.refreshed) readBits.push(`${r.sync.refreshed} revised, re-reading`);
@@ -299,7 +298,7 @@ export async function registryAllOrgs(admin: SupabaseClient, opts: { deadlineMs:
     if (Date.now() > opts.deadlineMs) break;
     if ((l.ai_features ?? {}).drawingIntel !== true) continue;
     try {
-      const r = await buildRegistry(admin, l.org_id, l.id, "00000000-0000-0000-0000-000000000000", opts.deadlineMs);
+      const r = await buildRegistry(admin, l.org_id, l.id, null, opts.deadlineMs);
       out.libraries++; out.applied += r.applied; out.assets += r.assets;
     } catch (e) { out.errors.push(`${l.id}: ${(e as Error).message}`); }
   }

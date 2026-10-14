@@ -24,6 +24,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { normalizeTag, splitTag, tagToCode, parseDrawingNumber, typeForTag, type Codebook } from "@/lib/codebook";
+import { EQUIPMENT_CATEGORIES } from "@/lib/drawingText";
 
 export interface BridgeSuggestion {
   tag: string;              // normalized display form ("E-22")
@@ -170,6 +171,10 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   userId: string | null;
   /** Restrict to a subset of suggested tags (review UI); omit = all. */
   tags?: string[];
+  /** A person pressed Apply after seeing the suggestions. The automatic
+   *  paths (after a read, Connect everything, nightly) leave it unset and
+   *  only create equipment whose prefix is known. */
+  byPerson?: boolean;
 }): Promise<{ appliedTags: string[]; createdAssets: number }> {
   const { orgId, documentId } = input;
   const { data: row } = await admin
@@ -202,6 +207,12 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     const typeIdByLabel = await ensureAssetTypes(admin, orgId, book, wanted);
     for (const s of wanted) {
       if (s.assetId) continue;
+      // The automatic path (Connect, after-read, nightly) only CREATES
+      // equipment whose prefix is known — the codebook's equipment types or
+      // the standard table. Anything else stays a suggestion in the
+      // library's Equipment dialog, where a person picks it by hand.
+      const reviewed = !!input.tags || !!input.byPerson;
+      if (!reviewed && !typeForTag(s.tag, book) && !(splitTag(s.tag)?.prefix && splitTag(s.tag)!.prefix in EQUIPMENT_CATEGORIES)) continue;
       const t = typeForTag(s.tag, book);
       const insert = {
         org_id: orgId,
@@ -267,7 +278,11 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       ? current.split(",").map((v) => v.trim()).filter(Boolean)
       : [];
   const existingNorms = new Set(existingTags.map(assetNorm));
-  const additions = wanted.map((s) => s.tag).filter((t) => !existingNorms.has(assetNorm(t)));
+  // What actually landed: everything a person picked, or on the automatic
+  // path only the tags that resolved to registry equipment. The rest stay
+  // suggestions — not written to the column, not marked applied.
+  const landed = input.tags || input.byPerson ? wanted : wanted.filter((s) => !!s.assetId);
+  const additions = landed.map((s) => s.tag).filter((t) => !existingNorms.has(assetNorm(t)));
   if (targetKey && additions.length > 0) {
     const next = [...existingTags, ...additions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
     const { error: updErr } = await admin.from("documents")
@@ -276,11 +291,12 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     if (updErr) throw new Error(updErr.message);
   }
 
-  const appliedNow = wanted.map((s) => s.tag);
+  const appliedNow = landed.map((s) => s.tag);
   const appliedUnion = [...new Set([...alreadyApplied, ...appliedNow])];
+  const leftOver = suggested.some((s) => !appliedUnion.includes(s.tag));
   await admin.from("document_equipment_suggestions").update({
     applied: appliedUnion,
-    status: "applied",
+    status: leftOver ? "pending" : "applied",
     applied_at: new Date().toISOString(),
     applied_by: input.userId,
   }).eq("org_id", orgId).eq("document_id", documentId);

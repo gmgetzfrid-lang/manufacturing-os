@@ -302,13 +302,19 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       // relates to, spread around it so several never overlap.
       const sats = satRef.current;
       const satsHere = sats.filter((sat) => sat.links.some((l) => pos.has(l.to)));
+      // Placed OUTSIDE the ring of what they link to (never on top of a file
+      // or its label), and turned away from the "up" button, which sits above.
+      const upHere = upPosRef.current;
       satsHere.forEach((sat, i) => {
         let cx = 0, cy = 0, n = 0;
         for (const l of sat.links) { const p = pos.get(l.to); if (p) { cx += p.x; cy += p.y; n++; } }
         if (!n) return;
         cx /= n; cy /= n;
-        const ang = -Math.PI / 2 + (i * 2 * Math.PI) / Math.max(1, satsHere.length);
-        const dist = 110 + Math.min(120, n * 6);
+        let reach = 0;
+        for (const l of sat.links) { const p = pos.get(l.to); if (p) reach = Math.max(reach, Math.hypot(p.x - cx, p.y - cy)); }
+        const away = upHere ? Math.atan2(cy - upHere.y, cx - upHere.x) : Math.PI / 2;
+        const ang = away + Math.PI / 4 + (i * 2 * Math.PI) / Math.max(1, satsHere.length);
+        const dist = reach + 90;
         const target = { x: cx + Math.cos(ang) * dist, y: cy + Math.sin(ang) * dist };
         const cur = satPos.current.get(sat.id) ?? target;
         cur.x += (target.x - cur.x) * 0.2; cur.y += (target.y - cur.y) * 0.2;
