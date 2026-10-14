@@ -89,7 +89,7 @@ lib/equipmentBridgeServer.ts:96-100 — `for (const cand of numberCandidates) { 
 ## CB-2 · Any active org member can write or delete the Bridge's proposal and applied ledger
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-17 DATABASE HARNESS (limb 3: the in-suite runtime refusal test) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260928_site_codebook.sql:108-111`, `lib/equipmentBridgeServer.ts:175-180`, `lib/equipmentBridgeServer.ts:278-285`
@@ -134,6 +134,20 @@ supabase/migrations/20260928_site_codebook.sql:108-111 — `CREATE POLICY doc_eq
 3. Not met as written. The done-when asks for a test; no repo test refuses a Viewer's write at runtime, because the vitest suite runs no database. What exists: the static policy census in `lib/__tests__/intelRoundGRegistry.test.ts` (the only write policy is controller-only and nothing later re-opens it) and the scratch PostgreSQL 16 case above (a Viewer's INSERT refused, a controller's landing), which is a manual run, not a test.
 
 **Scope / residual.** Pending migration (unchanged): `supabase/migrations/20261128_intel_roundG_registry_authority.sql`. Limb 2 holds without it. Stays OPEN for limb 3: an in-suite runtime refusal test needs a database in the test suite, which no package in this round provides.
+
+**Resolution (2026-10-14, intelligence Round G).** Limb 3, the in-suite runtime refusal, landed with the database harness (intelligence I-17): `npm run test:db` (`vitest.db.config.ts`, globalSetup `lib/__tests__/rls/globalSetup.ts`) finds a PostgreSQL 16 (`MOS_TEST_PG_BIN`, else PATH, else the usual package directories; `lib/__tests__/rls/pgHarness.ts`), starts it under a scratch directory, replays `supabase/schema.sql` and every numbered migration in filename order onto a Supabase stand-in (`lib/__tests__/rls/supabaseStandIn.sql`: the roles `anon` / `authenticated` / `service_role` / `authenticator`, a non-superuser `postgres` with BYPASSRLS, Supabase's default privileges, `auth.users`, `auth.uid()` / `auth.jwt()` read from `request.jwt.claims`), runs the suites under `lib/__tests__/rls/`, and deletes the cluster afterwards. With no PostgreSQL it prints one line naming the missing binary and the suites skip (exit 0). The default `npx vitest run` excludes `lib/__tests__/rls/**` and CI runs only `npm test`, so neither changes (`lib/__tests__/intelRoundGDbHarness.test.ts` pins it). No npm dependency was added: the harness drives the PostgreSQL binaries through `psql`. `lib/__tests__/rls/registryAuthority.test.ts` ("CB-2: the Bridge's proposal ledger, at runtime") runs on the replayed database, `20261128` included, and sends each statement as PostgREST sends a signed-in request:
+- **Viewer:** a direct INSERT of a forged proposal (`unitCode` 99, `code` 9999.1) is refused with `42501`, and no row exists afterwards. The Viewer's UPDATE (`status` 'applied', `applied` emptied) and DELETE each touch 0 rows, and the row keeps `status = 'pending'`.
+- **Manager:** a Manager's INSERT is refused with `42501`, because a Manager is not a controller.
+- **Controllers:** a DocCtrl's INSERT lands, and an Admin's UPDATE lands. Every member reads the row.
+- **Service role:** the Bridge's own writes, under the service role, are not judged by these policies.
+- **The test is not vacuous.** On a copy carrying `20260928`'s membership-wide `doc_equip_sugg_write`, the same Viewer INSERT lands.
+
+**Done-when.**
+1. ✓ (2026-09-30) Writes are restricted to the controller tier by the role collection, plus the service role (20261128).
+2. ✓ (2026-10-02) `applyForDocument` re-derives the code from the tag and a unit the codebook holds.
+3. ✓ A test asserts that a Viewer's direct write is refused, at runtime on a real PostgreSQL 16 (above), in the opt-in `npm run test:db` suite.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261128_intel_roundG_registry_authority.sql`, unchanged; apply it by hand (DEC-30). Nothing else remains.
 
 ---
 

@@ -287,6 +287,26 @@ Tests: `lib/__tests__/intelRoundGMigrationOrder.test.ts`:
 
 **Scope / residual.** Pending migration: `20261123_intel_roundG_knowledge_questions_order.sql`. On live deployments it is a no-op, and its SELECT confirms the column and indexes. The census only checks ALTER-before-CREATE ordering; other fresh-replay hazards (a function body referencing a later table, say) are outside it. I-07's DWG-9 (`20261009_trace_method.sql`) is the same class, in a separate file. OPEN until someone replays the numbered sequence into an empty project and runs schema-health against it.
 
+**Partial (2026-10-14, intelligence Round G).** The fresh-database replay is now automated in the database harness (intelligence I-17, `npm run test:db`: a real PostgreSQL 16 started under a scratch directory, `supabase/schema.sql` and every numbered migration replayed in filename order onto a Supabase stand-in, the cluster deleted afterwards; with no PostgreSQL the run skips with one line naming the missing binary; the default suite and CI are unchanged). `lib/__tests__/rls/replay.ts` sends each numbered migration as ONE simple-query message, which is how the Supabase SQL editor sends a paste: one implicit transaction unless the file opens its own, the first error stops the rest, and a syntax error anywhere means nothing in the file runs. `lib/__tests__/rls/freshReplay.test.ts` holds the outcome to `lib/__tests__/rls/replayKnownDefects.ts`, in both directions. A failure that is not listed fails the opt-in run, and so does a listed failure that no longer happens, so each entry is removed when its owner lands the fix.
+
+Measured 2026-10-14, PostgreSQL 16.13 with pgvector 0.6.0, 299 numbered files:
+- **This finding's own defect is gone.** `20260806`, `20260807` and `20261123` replay clean. `knowledge_questions.search_tsv` is a STORED generated column, and `org_ai_instructions`, `document_related_resources`, `recently_viewed_docs` and `library_numbering` all exist.
+- **Three files do not replay**, each opened as its own finding (DEC-31, owner: the integrator, to route):
+  - `supabase/schema.sql` cannot run as one script on an empty database. It stops at `:328`, and 16 of its statements fail even when it is run statement by statement → `IRLS-17`.
+  - `20260630_perf_indexes.sql` indexes `team_members` a week before `20260707` creates it, so the whole file rolls back. A re-run after the sequence succeeds → `IRLS-18`.
+  - `20261075_dc_roundF_checkout_episode_seal.sql`'s final SELECT names its `check` column bare, a syntax error. PostgreSQL parses the whole script first, so nothing in the file applies, and its guard is absent from the replay → `IRLS-19`.
+- **One file refuses by design.** `20261141` refuses until its operator switch is set. The harness supplies exactly the documented switch (`app.j11_deployed = 'yes'`) for that file only, and a test proves the file still refuses without it.
+- **How the harness works around them.** `schema.sql` is run statement by statement, with its failing statements held to the recorded set of 16 messages. `20260630` is re-run once after the sequence.
+
+`/api/admin/schema-health` was run against that fresh install. The route's own `GET` handler (`app/api/admin/schema-health/route.ts`) was called with `supabaseAdmin` replaced by a PostgREST stand-in that the replayed database itself answers as `service_role`: a table probe is `SELECT … LIMIT 0`, and an RPC probe is a named-argument call whose untyped literals PostgreSQL resolves against the function's parameters. The answer: `healthy: true`; no missing table, column or function; `migrationsToRun` empty; more than 100 tables checked. A copy with `library_numbering` and `bump_share_access(uuid)` dropped is reported unhealthy and names both, so the stand-in is not vacuous.
+
+**Done-when.**
+- ✓ (2026-09-30) The `knowledge_questions` ALTER is guarded in `20260806` and carried by `20261123`. The replay confirms both run clean.
+- ✗ Not met as written: "a fresh-database replay of migrations in filename order completes with zero errors". The replay now runs on every `npm run test:db`, and it reports two numbered files that fail in filename order (`IRLS-18`, `IRLS-19`) plus the baseline's own failure (`IRLS-17`). None of the three is this finding's defect.
+- ✓ On the harness's fresh install, `/api/admin/schema-health` reports every `EXPECTED_TABLE` (and every expected column and function) present. That install runs `schema.sql` statement by statement (`IRLS-17`) and re-runs `20260630` (`IRLS-18`).
+
+**Scope / residual.** IRLS-6 stays OPEN only for done-when 2. It closes by record once `IRLS-17`, `IRLS-18` and `IRLS-19` land: at that point `replayKnownDefects.ts` lists nothing and `freshReplay.test.ts` reads zero errors. Owner of the remainder: the integrator, routing those three (DEC-31). No migration from this package touches it.
+
 ---
 
 <a id="irls-7"></a>
@@ -791,5 +811,79 @@ No page calls this branch today (the graph posts `{ orgId }` only), so nothing a
 
 - [ ] The `documentId` branch wraps its build like `rebuildDocumentMentions`: `startMentionRun(supabaseAdmin, orgId, "map", documentId)` before the build; after it, `clearStandingFailure` when the standing failure is this document's, then `finishMentionRun(…, { outcome: "succeeded" })`; on a throw, `finishMentionRun(…, { outcome: "failed", error })` before the route answers the error exactly as today.
 - [ ] A route test: a failed per-document rebuild is recorded (source `map`, the document, plain words) and still answers the same 500; a success clears that document's standing failure; with `mention_index_runs` absent the route answers exactly as before.
+
+---
+
+## IRLS-17 · `supabase/schema.sql` cannot run on an empty database — the documented first step of a fresh install fails at line 328
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** — (the integrator, to route; `schema.sql` is the shared pre-migration baseline, last reshaped by document-control `PKG-14` / `HLD-12`). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness, `npm run test:db`)
+- **Locations:** `supabase/schema.sql:319-331`, `:400`, `:501-502`, `:656-663`, `:933`, `:1392-1395`; `lib/__tests__/rls/replayKnownDefects.ts` (`BASELINE_KNOWN_ERRORS`)
+
+**Mechanism.** The file's header says: "To set up a database: run this file FIRST, then EVERY file in supabase/migrations/ whose name starts with a date, in filename order." Sent as one script, the way the SQL editor sends a paste, it stops at `:328`: `project_documents` references `projects(id)`, but `projects` is created at `:933`. The whole paste then rolls back. Run statement by statement, 16 statements still fail:
+- `:328-331`: `project_documents` and its three indexes (`projects` does not exist yet).
+- `:400`: an index on `document_versions(org_id, archived_at)`, but `document_versions` has no `archived_at` column in this file.
+- `:501-502`: the trigram index. Its `CREATE EXTENSION IF NOT EXISTS pg_trgm;` sits at the end of the comment line above it, so it never runs.
+- `:656-663`: `milestones` and its six indexes (`projects` again).
+- `:1392`, `:1393`, `:1395`: `ENABLE ROW LEVEL SECURITY` on `project_documents`, `document_assets` and `milestones`. The first and third were never made; `document_assets` lives only in a migration.
+
+**Failure scenario.** A disaster-recovery or self-host install follows the header. The first paste fails with `relation "projects" does not exist`, and nothing is created. The operator has no documented way forward; the numbered migrations assume the baseline.
+
+**Evidence.**
+
+```
+lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements that fail on an empty database are exactly the recorded IRLS-17 set" (16 messages). psql -f supabase/schema.sql on an empty database: ERROR: relation "projects" does not exist (schema.sql:328).
+```
+
+**Done when.**
+
+- [ ] `supabase/schema.sql` runs as ONE script on an empty Supabase project with zero errors (forward references reordered or moved to their migrations; the `pg_trgm` extension statement on its own line; the `archived_at` index removed or its column added). No live database is touched: the file is never re-run on one (DB-8).
+- [ ] `BASELINE_KNOWN_ERRORS` in `lib/__tests__/rls/replayKnownDefects.ts` is empty, and `npm run test:db` passes.
+
+---
+
+## IRLS-18 · `20260630_perf_indexes.sql` indexes `team_members` before `20260707` creates it — the whole file rolls back on a fresh replay
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** — (the integrator, to route). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness)
+- **Locations:** `supabase/migrations/20260630_perf_indexes.sql:24-25`, `supabase/migrations/20260707_teams.sql` (creates `team_members`)
+
+**Mechanism.** `CREATE INDEX IF NOT EXISTS team_members_uid_idx ON team_members (uid);` at `:24`. The `IF NOT EXISTS` guards the index, not the table, so a missing relation raises `42P01`. As one paste the file rolls back entirely, so none of its indexes exist on a fresh install (`collections_org_library_idx`, `org_members_uid_org_active_idx` and the rest). This is the same class as `IRLS-6`. Existing deployments are not affected: they applied the file after `team_members` existed, or re-pasted it.
+
+**Failure scenario.** A fresh install replays the sequence in filename order and gets the RLS hot-path indexes the file was written for (`node_visible()`'s per-row lookups) only if the operator notices the error and re-pastes the file later.
+
+**Done when.**
+
+- [ ] The `team_members` index is guarded with `to_regclass('public.team_members') IS NOT NULL` in `20260630`, or carried by a migration dated after `20260707`, without changing what a live database ends up with.
+- [ ] The `20260630_perf_indexes.sql` entry leaves `OUT_OF_ORDER_FILES` in `lib/__tests__/rls/replayKnownDefects.ts`, and `npm run test:db` passes.
+
+---
+
+## IRLS-19 · `20261075`'s final SELECT names its `check` column bare — a syntax error, so the pasted file changes nothing and the checkout-episode seal never installs
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** — (the integrator, to route to document-control: `DCK-14`'s file, P6). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness; the paste protocol is the editor's single simple-query message)
+- **Locations:** `supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql:126` (`SELECT check, NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;`), `:43` (the column is created as `AS check`); `audit-reports/MIGRATION-PASTE-ORDER.md` row 70 (PASTE)
+
+**Mechanism.** `check` is a reserved word. `AS check` is legal as a column label, but a bare `check` in the select list is not: `ERROR: syntax error at or near "check"`. PostgreSQL parses the whole query string before running any of it, so a syntax error anywhere means none of the file runs. Its `BEGIN … COMMIT` never runs, so `enforce_checkout_episode_guard()` and `trg_checkout_episode_guard` are never installed. `lib/__tests__/dcRoundFCheckoutMigration.test.ts` checks the file's shape by text and does not parse it.
+
+**Failure scenario.** The operator pastes row 70 and sees a syntax error. DCK-14's seal (closed episodes immutable to signed-in writers; no seal over an active session) is not installed. Re-pasting does not help. `DCK-14`'s done-when 1 cannot be met until the file is fixed.
+
+**Evidence.**
+
+```
+lib/__tests__/rls/freshReplay.test.ts — "20261075 cannot be pasted as written: the editor parses the whole script first, so its final SELECT's syntax error leaves the guard uninstalled (IRLS-19)": pg_trigger has 0 rows named trg_checkout_episode_guard after the replay.
+```
+
+**Done when.**
+
+- [ ] `20261075`'s final SELECT quotes the column (`SELECT "check", NULL::boolean, n …`), and the file parses and applies as one paste.
+- [ ] `20261075` leaves `OUT_OF_ORDER_FILES`, its definer trigger function `enforce_checkout_episode_guard()` joins the census (`TRIGGER_FUNCTIONS` in `lib/__tests__/rls/definerDecisions.ts`), and `npm run test:db` passes.
 
 ---
