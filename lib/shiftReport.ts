@@ -164,6 +164,9 @@ export interface ShiftReport {
      *  (so moving work around can't hide slippage) or, when no baseline
      *  exists, the live planned dates. */
     planBasis: "baseline" | "current";
+    /** When the baseline was captured (latest stamp), for "measured
+     *  against the plan as of …". Null without a baseline. */
+    baselineSetAt: string | null;
   };
   review: {
     scheduled: ShiftRow[];
@@ -265,6 +268,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
 
   // ── 1. Overall standing ──────────────────────────────────────────
   let wsum = 0, wplanned = 0, stepsDone = 0, baselined = 0;
+  let baselineSetAt: string | null = null;
   let plannedStart = Infinity, plannedFinish = -Infinity;
   for (const m of leaves) {
     const s = startMsOf(m), f = finishMsOf(m);
@@ -274,7 +278,11 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     // was captured: dragging a task later must not erase the slip.
     const bs = toMs(m.baselineStartAt), bf = toMs(m.baselineFinishAt);
     const useBase = Number.isFinite(bs) && Number.isFinite(bf);
-    if (useBase) baselined++;
+    if (useBase) {
+      baselined++;
+      const setMs = toMs(m.baselineSetAt);
+      if (Number.isFinite(setMs) && (!baselineSetAt || setMs > Date.parse(baselineSetAt))) baselineSetAt = new Date(setMs).toISOString();
+    }
     const ps = useBase ? bs : s, pf = useBase ? bf : f;
     const frac = pf <= ps ? (now >= pf ? 1 : 0) : Math.max(0, Math.min(1, (now - ps) / (pf - ps)));
     wsum += w; wplanned += w * frac;
@@ -364,6 +372,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       plannedStart: hasSpan ? plannedStart : null, plannedFinish: hasSpan ? plannedFinish : null,
       daysElapsed, daysTotal,
       planBasis: baselined > 0 ? "baseline" : "current",
+      baselineSetAt: baselined > 0 ? baselineSetAt : null,
     },
     review: { scheduled, done, inProgress, notStarted, carryOver },
     goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, stretch, gapHours, backOnTrackAt },

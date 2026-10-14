@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
+import { mergeImportedProgress } from "@/lib/scheduleRules";
 import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock, wallClock } from "@/lib/scheduleTz";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
@@ -142,7 +143,13 @@ export interface CreateMilestoneInput {
   name: string;
   description?: string;
   weight?: number;
-  plannedAt: string;             // ISO
+  plannedAt: string;             // ISO finish
+  /** ISO start; omitted = a point-in-time step on plannedAt. */
+  plannedStartAt?: string | null;
+  /** Real hours of work — what the shift report weighs this step by. */
+  durationHours?: number | null;
+  /** Equipment / step group this belongs under. */
+  parentId?: string | null;
   linkedRevisionLabel?: string;
   linkedTicketId?: string;
   source?: MilestoneSource;
@@ -158,25 +165,34 @@ export async function createMilestone(input: CreateMilestoneInput): Promise<Mile
   if (!input.projectId && !input.documentId) {
     throw new Error("Milestone must belong to a project or document.");
   }
-  const { data, error } = await supabase
-    .from("milestones")
-    .insert({
-      org_id: input.orgId,
-      project_id: input.projectId ?? null,
-      document_id: input.documentId ?? null,
-      name: input.name.trim(),
-      description: input.description?.trim() || null,
-      weight: input.weight ?? 1,
-      planned_at: input.plannedAt,
-      linked_revision_label: input.linkedRevisionLabel?.trim() || null,
-      linked_ticket_id: input.linkedTicketId ?? null,
-      source: input.source ?? "manual",
-      external_ref: input.externalRef ?? null,
-      created_by: input.createdBy,
-      created_by_name: input.createdByName ?? null,
-    })
-    .select("*")
-    .single();
+  if (input.plannedStartAt && Date.parse(input.plannedStartAt) > Date.parse(input.plannedAt)) {
+    throw new Error("Start must be on or before the finish.");
+  }
+  const core: Record<string, unknown> = {
+    org_id: input.orgId,
+    project_id: input.projectId ?? null,
+    document_id: input.documentId ?? null,
+    name: input.name.trim(),
+    description: input.description?.trim() || null,
+    weight: input.weight ?? 1,
+    planned_at: input.plannedAt,
+    linked_revision_label: input.linkedRevisionLabel?.trim() || null,
+    linked_ticket_id: input.linkedTicketId ?? null,
+    source: input.source ?? "manual",
+    external_ref: input.externalRef ?? null,
+    created_by: input.createdBy,
+    created_by_name: input.createdByName ?? null,
+  };
+  const rich: Record<string, unknown> = {};
+  if (input.plannedStartAt) rich.planned_start_at = input.plannedStartAt;
+  if (input.durationHours != null && Number.isFinite(input.durationHours) && input.durationHours > 0) rich.duration_hours = input.durationHours;
+  if (input.parentId) rich.parent_id = input.parentId;
+  let ins = await supabase.from("milestones").insert({ ...core, ...rich }).select("*").single();
+  if (ins.error && Object.keys(rich).length > 0 && looksLikeUnknownColumn(ins.error.message)) {
+    // Pre-hierarchy database: land the step, drop the fields it can't hold.
+    ins = await supabase.from("milestones").insert(core).select("*").single();
+  }
+  const { data, error } = ins;
 
   if (error || !data) throw new Error(error?.message ?? "Failed to create milestone");
   const row = data as MilestoneRow;
@@ -193,7 +209,7 @@ export async function createMilestone(input: CreateMilestoneInput): Promise<Mile
     userRole: input.createdByRole,
     type: "MILESTONE_CREATED",
     name: row.name,
-    details: { plannedAt: row.planned_at, weight: row.weight, source: row.source },
+    details: { plannedAt: row.planned_at, plannedStartAt: row.planned_start_at ?? null, durationHours: row.duration_hours ?? null, parentId: row.parent_id ?? null, weight: row.weight, source: row.source },
   });
 
   return m;
@@ -348,8 +364,9 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   const now = new Date().toISOString();
 
   // Read current timestamps. actual_start_at is stamped once; first_completed_at
-  // is the immutable record of the ORIGINAL completion — so a reopen→complete
-  // cycle restores the original date instead of overwriting it with "now".
+  // is the immutable record of the ORIGINAL completion. actual_at is when it
+  // was LAST signed off: a reopen→complete cycle stamps the new sign-off so
+  // the shift that really finished it gets the credit.
   const { data: cur } = await supabase
     .from("milestones").select("actual_start_at, first_completed_at, percent_complete").eq("id", input.id).maybeSingle();
   const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null; percent_complete: number | null } | null;
@@ -368,10 +385,9 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   // in_progress clamped below 100. blocked/on_hold/missed keep their logged %.
   if (input.status === "completed") {
     update.percent_complete = 100;
-    // Restore the original completion date if this milestone was completed
-    // before; only stamp "now" on the very first completion. Never let a
-    // re-completion silently rewrite earned-value history.
-    update.actual_at = existingFirstCompleted ?? now;
+    // The sign-off time is now; the FIRST completion stays on record in
+    // first_completed_at so the history of a reopen is never lost.
+    update.actual_at = now;
     if (!existingFirstCompleted) update.first_completed_at = now;
     update.completed_by = input.actorUserId;
     update.completed_by_name = input.actorUserName ?? null;
@@ -480,7 +496,7 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
     updated_by: input.actorUserId,
   };
   if (nextStatus === "completed") {
-    update.actual_at = existingFirstCompleted ?? now;
+    update.actual_at = now;
     if (!existingFirstCompleted) update.first_completed_at = now;
     update.completed_by = input.actorUserId;
     update.completed_by_name = input.actorUserName ?? null;
@@ -619,8 +635,10 @@ export async function clearProjectSchedule(input: {
  *  starts clean after a rehearsal: 0 %, status planned, and the actual
  *  start / completion stamps cleared (the first-completion stamp is
  *  sticky, so a test completion would otherwise date a real one). Planned
- *  dates, the baseline, dependencies and free-text notes stay; the
- *  status-change notes written during the rehearsal are removed. */
+ *  dates, dependencies and free-text notes stay; the status-change notes
+ *  written during the rehearsal are removed. The plan as it stands at
+ *  this moment becomes the baseline the report measures against — this
+ *  is the "go-live" button. */
 export async function resetProjectProgress(input: {
   orgId: string; projectId: string;
   actorUserId: string; actorUserEmail?: string; actorUserRole?: string;
@@ -658,6 +676,7 @@ export async function resetProjectProgress(input: {
     userEmail: input.actorUserEmail, userRole: input.actorUserRole,
     details: { reset: ids.length },
   });
+  await setBaseline({ orgId: input.orgId, projectId: input.projectId, actorUserId: input.actorUserId, actorUserEmail: input.actorUserEmail, actorUserRole: input.actorUserRole });
   return { reset: ids.length };
 }
 
@@ -971,6 +990,10 @@ export interface ImportParsedInput {
   /** The project's zone: bare dates and naive times in the rows are
    *  plant wall-clock time. Omitted = UTC. */
   timeZone?: string | null;
+  /** The file IS the plan of record (a fresh or replace import): baseline
+   *  every row from it afterwards. Otherwise only rows that are new to the
+   *  project get a baseline, and only when the project already has one. */
+  baselineAll?: boolean;
 }
 
 /** Bare "2026-08-15" / naive "2026-08-15 08:00" → plant time; anything
@@ -1018,7 +1041,9 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   // batch and may not have ids until they're inserted. Track each
   // row's externalRef → DB id in a map for pass 2.
   const refToId = new Map<string, string>();
+  const insertedIds: string[] = [];
   const tz = normalizeTimeZone(input.timeZone ?? DEFAULT_SCHEDULE_TZ);
+  const nowIso = new Date().toISOString();
 
   // Earlier imports wrote MS Project's project-summary row (UID 0, the
   // file's title) as a childless task spanning the whole schedule. The
@@ -1090,7 +1115,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         // left the new project empty.
         let q = supabase
           .from("milestones")
-          .select("id")
+          .select("id, status, percent_complete, actual_at, actual_start_at")
           .eq("org_id", input.orgId)
           .eq("source", input.source)
           .eq("external_ref", r.externalRef);
@@ -1099,20 +1124,34 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         else q = q.is("project_id", null).is("document_id", null);
         const { data: existing } = await q.maybeSingle();
         if (existing) {
-          const id = (existing as { id: string }).id;
+          const ex = existing as { id: string; status: MilestoneStatus | null; percent_complete: number | null; actual_at: string | null; actual_start_at: string | null };
+          const id = ex.id;
           refToId.set(r.externalRef, id);
+          // A re-import refreshes the PLAN (dates, names, hierarchy, hours)
+          // but never takes progress away: what the crew recorded on the
+          // floor is the truth, the file can only raise it. The baseline
+          // is untouched here too — that is the yardstick.
+          const planFields = { ...baseFields };
+          delete planFields.status; delete planFields.percent_complete;
+          delete planFields.actual_at; delete planFields.actual_start_at;
+          const progressPatch = mergeImportedProgress({
+            status: ex.status ?? "planned",
+            percent: ex.percent_complete != null ? Number(ex.percent_complete) : 0,
+            actualAt: ex.actual_at, actualStartAt: ex.actual_start_at,
+          }, r.percentComplete, nowIso) ?? {};
           let updateRes = await supabase.from("milestones").update({
-            ...baseFields,
-            updated_at: new Date().toISOString(),
+            ...planFields,
+            ...progressPatch,
+            updated_at: nowIso,
             updated_by: input.createdBy,
           }).eq("id", id);
           if (updateRes.error && looksLikeUnknownColumn(updateRes.error.message)) {
             degradeToLegacy = true;
-            const legacyFields = { ...baseFields };
+            const legacyFields: Record<string, unknown> = { ...planFields, ...progressPatch };
             for (const f of NEW_SCHEMA_FIELDS) delete legacyFields[f];
             updateRes = await supabase.from("milestones").update({
               ...legacyFields,
-              updated_at: new Date().toISOString(),
+              updated_at: nowIso,
               updated_by: input.createdBy,
             }).eq("id", id);
           }
@@ -1153,8 +1192,10 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         result.errors.push(`Row ${i + 1}: ${insertRes.error.message}`);
         continue;
       }
-      if (insertRes.data && r.externalRef) {
-        refToId.set(r.externalRef, (insertRes.data as { id: string }).id);
+      if (insertRes.data) {
+        const newId = (insertRes.data as { id: string }).id;
+        insertedIds.push(newId);
+        if (r.externalRef) refToId.set(r.externalRef, newId);
       }
       result.inserted++;
     } catch (e) {
@@ -1210,6 +1251,39 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     );
   }
 
+  // Pass 4: the yardstick. A replace / first import makes the file the plan
+  // of record, so every row is baselined. A refresh import leaves existing
+  // baselines alone and only gives the NEW rows one (at their imported
+  // dates) when the project is already baselined — otherwise they would
+  // never count in "where the plan said we'd be".
+  if (input.projectId && !degradeToLegacy) {
+    try {
+      if (input.baselineAll) {
+        await setBaseline({ orgId: input.orgId, projectId: input.projectId, actorUserId: input.createdBy });
+      } else if (insertedIds.length > 0) {
+        const { data: anyBase } = await supabase
+          .from("milestones").select("id")
+          .eq("org_id", input.orgId).eq("project_id", input.projectId)
+          .not("baseline_set_at", "is", null).limit(1);
+        if (anyBase && anyBase.length > 0) {
+          for (let i = 0; i < insertedIds.length; i += 200) {
+            const { data: fresh } = await supabase
+              .from("milestones").select("id, planned_at, planned_start_at").in("id", insertedIds.slice(i, i + 200));
+            await Promise.all(((fresh ?? []) as Array<{ id: string; planned_at: string; planned_start_at: string | null }>).map((r) =>
+              supabase.from("milestones").update({
+                baseline_start_at: r.planned_start_at ?? r.planned_at,
+                baseline_finish_at: r.planned_at,
+                baseline_set_at: nowIso,
+                baseline_set_by: input.createdBy,
+              }).eq("id", r.id)));
+          }
+        }
+      }
+    } catch (e) {
+      result.errors.push(`Baseline: ${(e as Error).message}`);
+    }
+  }
+
   return result;
 }
 
@@ -1234,6 +1308,9 @@ export interface RebaseScheduleInput {
    *  earliest planned_start_at (or planned_at if start is NULL)
    *  becomes the shift applied to every row. */
   newStartIso: string;
+  /** The shifted dates are the new plan of record: re-capture the
+   *  baseline afterwards so the report measures against them. */
+  resetBaseline?: boolean;
   actorUserId: string;
   actorUserName?: string;
   actorUserEmail?: string;
@@ -1380,8 +1457,14 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
       shiftDays,
       oldAnchor: new Date(earliestMs).toISOString(),
       newAnchor: input.newStartIso,
+      resetBaseline: !!input.resetBaseline,
     },
   });
+
+  if (input.resetBaseline && shifted > 0) {
+    const b = await setBaseline({ orgId: input.orgId, projectId: input.projectId, actorUserId: input.actorUserId, actorUserEmail: input.actorUserEmail, actorUserRole: input.actorUserRole });
+    if (!b.ok && b.error) errors.push(`Baseline: ${b.error}`);
+  }
 
   return {
     shiftedCount: shifted,

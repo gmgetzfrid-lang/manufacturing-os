@@ -40,6 +40,8 @@ const MSPROJECT_XML = `<?xml version="1.0" encoding="UTF-8"?>
       <Finish>2026-06-03T17:00:00</Finish>
       <OutlineLevel>1</OutlineLevel>
       <PercentComplete>50</PercentComplete>
+      <Duration>PT24H0M0S</Duration>
+      <Work>PT36H0M0S</Work>
       <ExtendedAttribute><FieldID>188743731</FieldID><Value>Acme Mechanical</Value></ExtendedAttribute>
       <ExtendedAttribute><FieldID>188743732</FieldID><Value>North flare</Value></ExtendedAttribute>
     </Task>
@@ -50,6 +52,8 @@ const MSPROJECT_XML = `<?xml version="1.0" encoding="UTF-8"?>
       <Finish>2026-06-04T17:00:00</Finish>
       <OutlineLevel>1</OutlineLevel>
       <Milestone>1</Milestone>
+      <Duration>PT4H30M0S</Duration>
+      <Work>PT0H0M0S</Work>
       <Deadline>2026-06-05T17:00:00</Deadline>
       <PredecessorLink><PredecessorUID>1</PredecessorUID></PredecessorLink>
     </Task>
@@ -109,5 +113,10 @@ describe("MS Project XML ingestion", () => {
     expect(t.plannedStartAt).toBeTruthy();
     expect(new Date(t.plannedStartAt as string).getUTCMonth()).toBe(5); // June
     expect(t.externalRef).toBe("msp-uid:1");
+  });
+
+  it("reads real hours: <Work> when resourced, else <Duration>", () => {
+    expect(byName("Mobilize crew")!.durationHours).toBe(36);   // Work wins over Duration
+    expect(byName("Install PSV-201")!.durationHours).toBe(4.5); // zero Work → Duration
   });
 });

@@ -27,6 +27,7 @@ import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as 
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
 import { overdueOpenWork } from "@/lib/openWork";
+import { completionNote, completionNoteShort } from "@/lib/scheduleRules";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -752,7 +753,12 @@ function Chip({
   // the chip starts today, "→14:00" when it only wraps up today,
   // "all day" when it runs straight through, "no work today" on a gap
   // day inside a multi-day span.
+  // A finished step says WHEN it was finished relative to its plan, so a
+  // chip done two days early (or late) never reads like a normal slot.
+  const doneNote = ms.status === "completed" ? completionNoteShort(ms.actualAt, finishMsOf(ms), tz) : null;
+  const doneNoteFull = ms.status === "completed" ? completionNote(ms.actualAt, finishMsOf(ms), tz) : null;
   const clock = (() => {
+    if (doneNote) return `✓ ${doneNote}`;
     if (idleToday) return "no work today";
     if (todayStart == null || todayEnd == null) return dayIndex > 0 ? "cont." : startClock(ms, tz);
     const dayStartMs = startOfDayTz(todayStart, tz);
@@ -782,6 +788,7 @@ function Chip({
     spanDays > 1 ? `Day ${dayIndex + 1} of ${spanDays} (multi-day task)` : null,
     hasSubs ? `${done} of ${leafKids.length} subtasks done` : null,
     time ? `Time: ${time}` : null,
+    doneNoteFull ? `Finished: ${doneNoteFull}` : null,
     ms.workOrderRef ? `WO ${ms.workOrderRef}` : null,
     ms.location ? `Location: ${ms.location}` : null,
     "— Click to open · drag to another day to reschedule",

@@ -44,6 +44,9 @@ import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTile
 import ShiftReportView from "@/components/projects/ShiftReportView";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { addDays as addDaysTz, dayDiff as dayDiffTz, dayOfWeek, fmtInTz, startOfDay as startOfDayTz, wallClock } from "@/lib/scheduleTz";
+import { needsFutureConfirm } from "@/lib/scheduleRules";
+import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
@@ -323,11 +326,37 @@ export default function ExecutionView({
   }, [domain, today, todayX]);
 
   // ── Mutations ────────────────────────────────────────────────
+  // One cheap guard against the wrong-day mis-click: recording progress on
+  // a step planned more than a day out asks first. The system never moves
+  // the step — if the crew really pulled it forward, it lands as "started
+  // early" on today and keeps its planned slot.
+  // Before the schedule's first step starts, every click is a rehearsal
+  // (nothing can be "early" yet), so the guard stays quiet until go-live.
+  const scheduleStartMs = useMemo(() => {
+    let min = Infinity;
+    for (const m of items) { const s = plannedStartMsOf(m); if (Number.isFinite(s)) min = Math.min(min, s); }
+    return min;
+  }, [items]);
+  const confirmFuture = useCallback(async (prev: Milestone | undefined, nextStatus: MilestoneStatus | null, nextPct: number | null) => {
+    if (!prev) return true;
+    const ps = plannedStartMsOf(prev);
+    if (Date.now() < scheduleStartMs) return true;
+    if (!needsFutureConfirm(ps, Date.now(), nextStatus, nextPct)) return true;
+    const days = Math.max(1, dayDiffTz(Date.now(), ps, tz));
+    const what = nextStatus === "completed" || nextPct === 100 ? "done" : nextStatus === "in_progress" || (nextPct != null && nextPct > 0) ? "started" : "changed";
+    return appConfirm({
+      title: `Record it ${what} ${days} day${days === 1 ? "" : "s"} early?`,
+      message: `“${prev.name}” is planned for ${fmtInTz(ps, tz, { weekday: "short", month: "short", day: "numeric" })}. It will stay on that day in the plan and show on today as ahead of plan. If you clicked the wrong row, cancel.`,
+      confirmLabel: `Yes, it is ${what}`,
+    });
+  }, [tz, scheduleStartMs]);
+
   const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string) => {
     if (!canEdit || !onSetStatus) return;
     const prev = byId.get(id);                       // snapshot for undo
     const prevStatus = prev?.status;
     const name = prev?.name ?? "Task";
+    if (!(await confirmFuture(prev, next, null))) return;
     setOptimistic((m) => new Map(m).set(id, next));
     setBusy((s) => new Set(s).add(id));
     try {
@@ -346,7 +375,7 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce]);
+  }, [canEdit, onSetStatus, byId, announce, confirmFuture]);
 
   // Set a leaf task's physical % complete. Optimistically updates BOTH the
   // percent and the derived status (so the fill bar and the status dot move
@@ -363,6 +392,7 @@ export default function ExecutionView({
       : clamped <= 0
         ? (isException ? prevStatus! : "planned")
         : (isException ? prevStatus! : "in_progress");
+    if (clamped > prevPct && !(await confirmFuture(prev, null, clamped))) return;
     setOptimisticPct((m) => new Map(m).set(id, clamped));
     setOptimistic((m) => new Map(m).set(id, nextStatus));
     setBusy((s) => new Set(s).add(id));
@@ -383,7 +413,7 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
-  }, [canEdit, onSetProgress, byId, announce]);
+  }, [canEdit, onSetProgress, byId, announce, confirmFuture]);
 
   // Bulk status across the selection (with one undo that restores each
   // task's prior status).

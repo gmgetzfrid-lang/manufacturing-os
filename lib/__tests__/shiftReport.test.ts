@@ -182,4 +182,10 @@ describe("the plan is held against the baseline once one is captured", () => {
     expect(r.overall.standing).toBe("behind");
     expect(r.goals.gapHours).toBe(8);
   });
+  it("reports when the yardstick was set (latest baseline stamp), none without a baseline", () => {
+    const stamped = { ...slippedWithBase, baselineSetAt: "2026-10-23T12:00:00.000Z" } as Milestone;
+    const later = { ...other, baselineStartAt: other.plannedStartAt, baselineFinishAt: other.plannedAt, baselineSetAt: "2026-10-24T05:30:00.000Z" } as Milestone;
+    expect(buildShiftReport({ milestones: [stamped, later], tz: CHI, shift, now: shift.end }).overall.baselineSetAt).toBe("2026-10-24T05:30:00.000Z");
+    expect(buildShiftReport({ milestones: [slippedNoBase, other], tz: CHI, shift, now: shift.end }).overall.baselineSetAt).toBeNull();
+  });
 });
