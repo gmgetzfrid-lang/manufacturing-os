@@ -409,10 +409,15 @@ describe("the readers of sla_defaults are unchanged (EDGE-16: every reader as be
     expect(r).toContain("    targetCompletionAt = fromWindow ?? defaultSlaTargetDate(input.requestType);");
     expect(r).toContain("  let targetCompletionAt = input.targetCompletionAt;\n  if (!targetCompletionAt) {");
   });
-  it("the SLA clock reads it as before: every row, skipping a non-positive window", () => {
+  it("the SLA clock reads every row as before, and skips one outside boundedSlaDays (EDGE-17 — the create route's rule, the same helper, no new constant)", () => {
     const c = src("lib/ticketSla.ts");
     expect(c).toContain('  const { data: defs, error: defErr } = await sb.from("sla_defaults").select("org_id, request_type, default_days");');
-    expect(c).toContain("    if (!d.org_id || !d.request_type || !(Number(d.default_days) > 0)) continue;");
+    expect(c).toContain('import { SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";');
+    expect(c).toContain("    if (!d.org_id || !d.request_type) continue;\n    const days = boundedSlaDays(d.default_days);\n    if (days === null) { unusable.set(d.org_id, (unusable.get(d.org_id) ?? 0) + 1); continue; }");
+    expect(c).toContain("    m.set(d.request_type, days);");
+    expect(c).not.toContain("Number(d.default_days) > 0");
+    // the bound has one home: no second 3650 in the clock
+    expect(c).not.toMatch(/\b3650\b/);
   });
   it("boundedSlaDays keeps its rule (the shared bound the editor and the CHECK use)", () => {
     expect(boundedSlaDays(1)).toBe(1);
