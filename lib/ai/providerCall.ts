@@ -117,6 +117,10 @@ export interface AiCallInput {
   /** Page images attached to the user turn — lets the model read tables,
    *  formulas, and figures exactly as printed. */
   images?: AiCallImage[];
+  /** Receive the answer as it is generated. When set (and no live web tool
+   *  is in play) the Anthropic and OpenAI calls stream; the resolved result
+   *  is identical either way. Gemini and web-search calls ignore it. */
+  onDelta?: (text: string) => void;
   /** Abort the call after this long. Callers running inside a serverless
    *  invocation use it to guarantee they get control back with time to
    *  commit — an unbounded call that outlives its function loses whatever
@@ -144,6 +148,25 @@ const dedupeSources = (sources: WebSource[]): WebSource[] => {
   }).slice(0, 10);
 };
 
+/** Walk a text/event-stream body, yielding each `data:` payload. */
+async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).replace(/\r$/, "");
+      buf = buf.slice(nl + 1);
+      if (line.startsWith("data:")) yield line.slice(5).trim();
+    }
+  }
+  if (buf.startsWith("data:")) yield buf.slice(5).trim();
+}
+
 /** Run one system+user prompt, return the model's text (+ web sources when
  *  webSearch ran). Throws AiCallError. */
 export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
@@ -151,6 +174,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
   const maxTokens = input.maxTokens ?? 2048;
   const images = input.images ?? [];
   const signal = budgetSignal(input.timeoutMs);
+  const onDelta = input.onDelta;
 
   if (provider === "anthropic") {
     type Block = {
@@ -170,6 +194,60 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
           { type: "text", text: user },
         ];
     const messages: Array<{ role: string; content: unknown }> = [{ role: "user", content: userContent }];
+
+    if (onDelta && !webSearch) {
+      // Streamed variant: same request plus stream:true; text deltas go to
+      // the caller as they arrive, usage comes from message_start/delta.
+      const res = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model, max_tokens: maxTokens, thinking: { type: "disabled" }, system, messages, stream: true,
+        }),
+        signal,
+      });
+      if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
+      if (!res.body) throw new AiCallError("The provider returned no stream.", 502);
+      let text = "";
+      let stopReason: string | undefined;
+      const usage = { inputTokens: 0, outputTokens: 0 };
+      for await (const payload of sseData(res.body)) {
+        if (!payload || payload === "[DONE]") continue;
+        let ev: {
+          type?: string;
+          delta?: { type?: string; text?: string; stop_reason?: string };
+          message?: { usage?: { input_tokens?: number; output_tokens?: number } };
+          usage?: { input_tokens?: number; output_tokens?: number };
+          error?: { message?: string };
+        };
+        try { ev = JSON.parse(payload); } catch { continue; }
+        if (ev.type === "message_start") {
+          usage.inputTokens += ev.message?.usage?.input_tokens ?? 0;
+          usage.outputTokens += ev.message?.usage?.output_tokens ?? 0;
+        } else if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
+          text += ev.delta.text;
+          onDelta(ev.delta.text);
+        } else if (ev.type === "message_delta") {
+          if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+          if (ev.usage?.output_tokens !== undefined) usage.outputTokens = ev.usage.output_tokens;
+        } else if (ev.type === "error") {
+          throw new AiCallError(`Anthropic stream error: ${ev.error?.message ?? "unknown"}`, 502);
+        }
+      }
+      if (stopReason === "refusal") throw new AiCallError("The model declined to answer this question.", 422);
+      if (!text.trim()) {
+        const why = stopReason === "max_tokens"
+          ? "the answer-length budget ran out before any text was produced"
+          : `no text in the response (stop_reason: ${stopReason ?? "unknown"})`;
+        throw new AiCallError(`The model returned an empty answer — ${why}. Try again.`, 502);
+      }
+      return { text, webSources: [], liveWeb: false, usage };
+    }
+
     let data: {
       stop_reason?: string;
       content?: Block[];
@@ -232,27 +310,59 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
   }
 
   if (provider === "openai") {
+    const openAiMessages = [
+      { role: "system", content: system },
+      {
+        role: "user",
+        content: images.length === 0
+          ? user
+          : [
+              ...images.map((img) => ({
+                type: "image_url",
+                image_url: { url: `data:${img.mediaType};base64,${img.base64}` },
+              })),
+              { type: "text", text: user },
+            ],
+      },
+    ];
+    if (onDelta) {
+      const res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          model, max_completion_tokens: maxTokens, messages: openAiMessages,
+          stream: true, stream_options: { include_usage: true },
+        }),
+        signal,
+      });
+      if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
+      if (!res.body) throw new AiCallError("The provider returned no stream.", 502);
+      let text = "";
+      const usage = { inputTokens: 0, outputTokens: 0 };
+      for await (const payload of sseData(res.body)) {
+        if (!payload || payload === "[DONE]") continue;
+        let ev: {
+          choices?: Array<{ delta?: { content?: string } }>;
+          usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+        };
+        try { ev = JSON.parse(payload); } catch { continue; }
+        const piece = ev.choices?.[0]?.delta?.content;
+        if (piece) { text += piece; onDelta(piece); }
+        if (ev.usage) {
+          usage.inputTokens = ev.usage.prompt_tokens ?? usage.inputTokens;
+          usage.outputTokens = ev.usage.completion_tokens ?? usage.outputTokens;
+        }
+      }
+      if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
+      return { text, webSources: [], liveWeb: false, usage };
+    }
     const res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
         model,
         max_completion_tokens: maxTokens,
-        messages: [
-          { role: "system", content: system },
-          {
-            role: "user",
-            content: images.length === 0
-              ? user
-              : [
-                  ...images.map((img) => ({
-                    type: "image_url",
-                    image_url: { url: `data:${img.mediaType};base64,${img.base64}` },
-                  })),
-                  { type: "text", text: user },
-                ],
-          },
-        ],
+        messages: openAiMessages,
       }),
       signal,
     });

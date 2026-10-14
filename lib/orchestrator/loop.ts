@@ -58,6 +58,8 @@ export interface RunOptions {
   budgetMs?: number;
   /** Injectable clock so tests don't sleep. */
   now?: () => number;
+  /** Called as each tool call is about to run — the live status line. */
+  onStep?: (step: { tool: string; parameters: Record<string, unknown> }) => void;
 }
 
 const DEFAULT_MAX_STEPS = 6;
@@ -225,6 +227,7 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
     }
 
     history.push(parsed.call);
+    opts.onStep?.({ tool: def.name, parameters: checked.values });
     try {
       const out = await def.run(checked.values, ctx);
       if (out.pending) pending.set(out.pending.fingerprint, out.pending);

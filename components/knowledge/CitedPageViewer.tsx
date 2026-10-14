@@ -54,8 +54,11 @@ export interface CitedSource {
 export default function CitedPageViewer({
   fileKey: fileKeyProp, page: pageProp, quote: quoteProp, title: titleProp,
   section: sectionProp, onClose, orgId, documentId: documentIdProp,
-  tags: tagsProp, sources, initialIndex,
+  tags: tagsProp, sources, initialIndex, embedded = false,
 }: {
+  /** Docked inside a panel instead of a centered modal: fills its container,
+   *  no backdrop, Escape left to the host. */
+  embedded?: boolean;
   fileKey: string;
   page: number;
   quote: string | null;
@@ -206,10 +209,10 @@ export default function CitedPageViewer({
   };
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !embedded) onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, embedded]);
 
   // Every cited passage of the document CURRENTLY open, grouped by page —
   // not just the citation that was clicked. Paging through the document
@@ -341,10 +344,16 @@ export default function CitedPageViewer({
   );
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-[2px] flex items-center justify-center" onClick={onClose}>
+    <div className={embedded
+      ? "relative h-full w-full flex"
+      : "fixed inset-0 z-[60] bg-black/70 backdrop-blur-[2px] flex items-center justify-center"}
+      onClick={embedded ? undefined : onClose}>
       {/* Centered proof stage: 75% of the viewport each way (full-bleed on
-          phones), so the document reads like a document — not a sidebar. */}
-      <div className="w-[75vw] h-[75vh] max-md:w-[96vw] max-md:h-[92vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-pop"
+          phones), so the document reads like a document — not a sidebar.
+          Docked (embedded) it simply fills the host panel. */}
+      <div className={embedded
+        ? "w-full h-full bg-[var(--color-surface)] flex flex-col overflow-hidden"
+        : "w-[75vw] h-[75vh] max-md:w-[96vw] max-md:h-[92vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-pop"}
         onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="px-3 sm:px-4 py-2.5 sm:py-3 border-b border-[var(--color-border)] flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
