@@ -129,12 +129,14 @@ function GraphPageInner() {
     if (!activeOrgId) return;
     setLoading(true); setError(null);
     try {
-      const [d, a, l] = await Promise.all([
-        loadFinderData(activeOrgId, activeRole, controller),
-        listFinderAliases(activeOrgId),
-        listFinderListings(activeOrgId),
+      // The map first; aliases and drive listings are extras and never hold it up.
+      const d = await loadFinderData(activeOrgId, activeRole, controller);
+      setData(d);
+      const [a, l] = await Promise.all([
+        listFinderAliases(activeOrgId).catch((e) => { console.warn("[finder] aliases:", e); return []; }),
+        listFinderListings(activeOrgId).catch((e) => { console.warn("[finder] listings:", e); return []; }),
       ]);
-      setData(d); setAliases(a); setListings(l);
+      setAliases(a); setListings(l);
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }, [activeOrgId, activeRole, controller]);

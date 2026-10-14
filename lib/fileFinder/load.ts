@@ -39,14 +39,28 @@ function libraryReadable(row: Record<string, unknown>, role: Role, controller: b
 
 type Client = Pick<typeof supabase, "from">;
 
+/** A query that never answers must not hang the page: name it and give up. */
+function withTimeout<T>(p: PromiseLike<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} took longer than ${Math.round(ms / 1000)}s — check the browser console and Supabase status`)), ms);
+    Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+/** Optional data: a failure or a stall degrades to "none", never to a hung page. */
+async function optional<T>(p: PromiseLike<{ data: T | null; error: { message: string } | null }>, ms: number, label: string): Promise<{ data: T | null; error: { message: string } | null }> {
+  try { return await withTimeout(p, ms, label); }
+  catch (e) { console.warn(`[finder] ${label}:`, (e as Error).message); return { data: null, error: { message: (e as Error).message } }; }
+}
+
 export async function loadFinderData(orgId: string, role: Role, controller: boolean, client: Client = supabase): Promise<FinderData> {
   const truncations: string[] = [];
+  const t0 = Date.now();
   const [libsRes, foldersRes, codebook, edgesRes, mirrorsRes] = await Promise.all([
-    client.from("libraries").select("id, name, read_access, visible_to").eq("org_id", orgId),
-    client.from("collections").select("*").eq("org_id", orgId),
-    loadCodebook(orgId, client).catch(() => ({ units: [] as Array<{ code: string; label: string }> })),
-    client.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").limit(20000),
-    client.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed, file_key").eq("org_id", orgId).limit(20000),
+    withTimeout(client.from("libraries").select("id, name, read_access, visible_to").eq("org_id", orgId), 25_000, "Loading libraries"),
+    withTimeout(client.from("collections").select("*").eq("org_id", orgId), 25_000, "Loading folders"),
+    withTimeout(loadCodebook(orgId, client), 15_000, "Loading the codebook").catch(() => ({ units: [] as Array<{ code: string; label: string }> })),
+    optional<Array<{ a: string; b: string; type: string; summary: string }>>(client.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").limit(20000), 15_000, "Loading estate links"),
+    optional<Array<{ id: string; source_document_id: string | null; file_hash: string | null; status: string; pages_indexed: number; file_key?: string | null }>>(client.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed, file_key").eq("org_id", orgId).limit(20000), 15_000, "Loading read copies"),
   ]);
   const estateMissing = !!edgesRes.error;
   const edges = estateMissing ? [] : (((edgesRes.data as Array<{ a: string; b: string; type: string; summary: string }> | null) ?? []));
@@ -95,12 +109,12 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
   // Documents, paged, capped.
   const docs: Array<DocLike & { current_version_id?: string | null }> = [];
   for (let from = 0; from < DOC_CAP; from += PAGE) {
-    const { data, error } = await client
+    const { data, error } = await withTimeout(client
       .from("documents")
       .select("id, library_id, collection_id, name, title, document_number, rev, status, effective_date, created_at, sheet_number, asset_tags, metadata, current_version_id")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
-      .range(from, from + PAGE - 1);
+      .range(from, from + PAGE - 1), 30_000, `Loading documents ${from + 1}–${from + PAGE}`);
     if (error) throw new Error(error.message);
     const rows = (data as Array<DocLike & { current_version_id?: string | null }>) ?? [];
     docs.push(...rows.filter((d) => libIds.has(d.library_id)));
@@ -113,10 +127,10 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
   const versions = new Map<string, VersionMeta>();
   for (let i = 0; i < versionIds.length; i += IN_CHUNK) {
     const chunk = versionIds.slice(i, i + IN_CHUNK);
-    const { data, error } = await client
+    const { data, error } = await optional<Record<string, unknown>[]>(client
       .from("document_versions")
       .select("id, source_file_name, file_hash, effective_date")
-      .in("id", chunk);
+      .in("id", chunk), 15_000, "Loading file facts");
     if (error) break; // a column missing on an older schema is not worth failing the page
     for (const v of (data as Record<string, unknown>[]) ?? []) {
       versions.set(String(v.id), {
@@ -137,5 +151,6 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     return entryFromDocument(d, { folders, libraries: libMap, version: v, links });
   });
   const units: UnitLike[] = (codebook.units ?? []).map((u) => ({ code: u.code, label: u.label }));
+  console.info(`[finder] loaded ${libraries.length} libraries, ${folders.size} folders, ${entries.length} files, ${edges.length} links, ${mirrors.length} read copies in ${Date.now() - t0}ms${estateMissing ? " (estate links off)" : ""}`);
   return { libraries, folders, entries, units, truncations, edges, estateMissing };
 }
