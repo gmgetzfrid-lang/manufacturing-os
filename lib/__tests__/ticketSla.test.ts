@@ -474,3 +474,115 @@ describe("GAP-106 — the cron step (no new cron entry; one hunk in the maintena
     expect(s).toContain("if (!claimed || (claimed as unknown[]).length === 0) return; // another run, or a transition, got there first");
   });
 });
+
+// drafting-flow EDGE-17 (Round G, DF-P13 — built here by the integrator's
+// ruling, DEC-90): the sla_defaults pass skips a stored window outside the
+// create route's bound (lib/notifications.ts boundedSlaDays — whole days, 1 to
+// SLA_DEFAULT_DAYS_MAX; 20261218's CHECK) exactly as it passes over a type with
+// no row, and says so in one line per workspace. Every in-bound row is read
+// exactly as before.
+describe("EDGE-17 — the sla_defaults pass never uses a stored window outside boundedSlaDays, and one workspace's row never stops it for the next", () => {
+  const membersOf = (org: string) => members.map((m) => ({ ...m, org_id: org }));
+  const untargeted = (over: RowT = {}) => row({ target_completion_at: null, request_type: "MOC", created_at: iso(T0), ...over });
+  /** The store's client, every query-builder call recorded as [table, method, ...args]. */
+  function recorded(s: ReturnType<typeof store>) {
+    const calls: Array<[string, string, ...unknown[]]> = [];
+    const base = s.client as unknown as { from: (t: string) => Record<string, unknown> };
+    const from = (table: string) => {
+      const q = base.from(table);
+      const p: Record<string, unknown> = new Proxy(q, {
+        get(target, prop: string) {
+          const v = target[prop];
+          if (typeof v !== "function" || prop === "then" || prop === "maybeSingle") return v;
+          return (...args: unknown[]) => {
+            calls.push([table, prop, ...args]);
+            const out = (v as (...a: unknown[]) => unknown)(...args);
+            return out === target ? p : out;
+          };
+        },
+      });
+      return p;
+    };
+    return { client: { from } as unknown as RoutingClient, calls };
+  }
+
+  it("a 2,000,000,000-day row in one workspace (read first) beside a valid row in another: the second workspace's due ticket is still stamped and notified; the first is one line, never a throw", async () => {
+    const s = store({
+      tickets: [untargeted({ id: "bad1", org_id: "o0" }), untargeted({ id: "ok1", org_id: "o2" })],
+      org_members: [...membersOf("o0"), ...membersOf("o2")], org_configurations: [],
+      sla_defaults: [{ org_id: "o0", request_type: "MOC", default_days: 2000000000 }, { org_id: "o2", request_type: "MOC", default_days: 2 }],
+    });
+    const e = emitter();
+    const r = await runTicketSlaScan({ client: s.client, emit: e.emit, now: T0 + 3 * DAY });
+    expect(e.sent.map((x) => [x.orgId, x.resource.id, x.metadata.sla])).toEqual([["o2", "ok1", "breach"]]);
+    expect(s.db.tickets.find((t) => t.id === "ok1")).toMatchObject({ sla_breached_at: iso(T0 + 3 * DAY), sla_breach_warned_at: iso(T0 + 3 * DAY) });
+    expect(s.db.tickets.find((t) => t.id === "bad1")).toMatchObject({ sla_breached_at: null, sla_breach_warned_at: null });
+    expect(r).toMatchObject({ breached: 1, warned: 0, truncated: false });
+    expect(r.errors).toEqual([
+      "ticket-sla@o0: 1 sla_defaults window(s) outside 1–3650 whole days were not used — the open requests of those types with no due date of their own are not timed, as for a type with no window, until the window is corrected (Admin → Request forms)",
+    ]);
+    // the line carries the workspace id and a count — never the type or the value
+    expect(r.errors[0]).not.toContain("MOC");
+    expect(r.errors[0]).not.toContain("2000000000");
+  });
+
+  it("a row outside the bound — 0, -1, 3651, 5000, 2,000,000,000, a fraction, text, null — is passed over exactly as a type with no row: the same reads, writes and notices; only the one line differs", async () => {
+    const seed = (moc: RowT[]) => ({
+      tickets: [
+        untargeted({ id: "m-old", created_at: iso(T0 - 4000 * DAY) }),   // past any window up to 4000 days
+        untargeted({ id: "m-new" }),
+        untargeted({ id: "i-due", request_type: "ISO" }),
+      ],
+      org_members: members, org_configurations: [],
+      sla_defaults: [...moc, { org_id: "o1", request_type: "ISO", default_days: 2 }],
+    });
+    const run = async (moc: RowT[]) => {
+      const s = store(seed(moc));
+      const rec = recorded(s);
+      const e = emitter();
+      const r = await runTicketSlaScan({ client: rec.client, emit: e.emit, now: T0 + 3 * DAY });
+      return { r, sent: e.sent, tickets: s.db.tickets, ticketCalls: rec.calls.filter((c) => c[0] === "tickets") };
+    };
+    const none = await run([]);
+    expect(none.sent.map((x) => x.resource.id)).toEqual(["i-due"]);
+    expect(none.r.errors).toEqual([]);
+    for (const bad of [0, -1, 3651, 5000, 2000000000, 1.5, "x", null]) {
+      const got = await run([{ org_id: "o1", request_type: "MOC", default_days: bad }]);
+      expect(got.sent, String(bad)).toEqual(none.sent);
+      expect(got.tickets, String(bad)).toEqual(none.tickets);
+      expect(got.ticketCalls, String(bad)).toEqual(none.ticketCalls);
+      expect(got.r, String(bad)).toEqual({ ...none.r, errors: [expect.stringMatching(/^ticket-sla@o1: 1 sla_defaults window\(s\) outside 1–3650 whole days were not used/)] });
+    }
+  });
+
+  it("every in-bound row is read exactly as before: its window as stored (a number, or PostgREST's text for one), the warn and breach filters the clock always computed, and no line", async () => {
+    const now = T0 + 3 * DAY;
+    for (const stored of [1, 2, 4, 14, 3650, "7"] as const) {
+      const days = Number(stored);
+      const s = store({
+        tickets: [untargeted({ created_at: iso(now - days * DAY * 0.8) })],   // past the warning point, inside the window
+        org_members: members, org_configurations: [],
+        sla_defaults: [{ org_id: "o1", request_type: "MOC", default_days: stored }],
+      });
+      const rec = recorded(s);
+      const e = emitter();
+      const r = await runTicketSlaScan({ client: rec.client, emit: e.emit, now });
+      // before EDGE-17 the pass took Number(default_days) for any positive value: the same instants, to the millisecond
+      const warnFrom = new Date(now - days * DAY * SLA_WARN_FRACTION).toISOString();
+      const breachFrom = new Date(now - days * DAY).toISOString();
+      const pass = rec.calls.filter((c) => c[0] === "tickets" && c[1] === "lte" && c[2] === "created_at");
+      expect(pass, String(stored)).toEqual([["tickets", "lte", "created_at", warnFrom]]);
+      expect(rec.calls, String(stored)).toContainEqual(["tickets", "or", `sla_breach_warned_at.is.null,created_at.lte."${breachFrom}"`]);
+      expect(e.sent.map((x) => [x.resource.id, x.metadata.sla, x.metadata.target]), String(stored)).toEqual([["t1", "warn", new Date(T0 + 3 * DAY - days * DAY * 0.8 + days * DAY).toISOString()]]);
+      expect(r.errors, String(stored)).toEqual([]);
+    }
+  });
+
+  it("source: the pass reads every row as before, bounds it with boundedSlaDays (the create route's helper — no second bound in the clock), and its line names a workspace and a count", () => {
+    const c = src("lib/ticketSla.ts");
+    expect(c).toContain('const { data: defs, error: defErr } = await sb.from("sla_defaults").select("org_id, request_type, default_days");');
+    expect(c).toContain("const days = boundedSlaDays(d.default_days);");
+    expect(c).not.toContain("Number(d.default_days) > 0");
+    expect(c).toContain("report.errors.push(`ticket-sla@${orgId}: ${n} sla_defaults window(s) outside 1–${SLA_DEFAULT_DAYS_MAX} whole days were not used");
+  });
+});

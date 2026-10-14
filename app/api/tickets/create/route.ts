@@ -615,10 +615,12 @@ async function create(
     const { data: slaRow, error: slaErr } = await supabaseAdmin
       .from("sla_defaults").select("default_days").eq("org_id", orgId).eq("request_type", input.requestType).maybeSingle();
     if (slaErr) console.warn(`[tickets/create] sla_defaults could not be read for ${orgId}/${input.requestType} (${slaErr.message}); the built-in window is used`);
-    // DF-P4 fix pass: any active member can write sla_defaults (EDGE-16), so
-    // the window is bounded here — a whole number of days, 1 to
-    // SLA_DEFAULT_DAYS_MAX — and a value outside it (or a date that cannot be
-    // computed) is the built-in window, never a refused request.
+    // DF-P4 fix pass: until 20261218 is pasted any active member can write
+    // sla_defaults (EDGE-16), and after it a row stored before the paste may
+    // still be outside the bound (its CHECK is then NOT VALID), so the window
+    // is bounded here — a whole number of days, 1 to SLA_DEFAULT_DAYS_MAX —
+    // and a value outside it (or a date that cannot be computed) is the
+    // built-in window, never a refused request.
     const rawDays = (slaRow as { default_days?: unknown } | null)?.default_days;
     const days = slaErr ? null : boundedSlaDays(rawDays);
     if (!slaErr && days === null && rawDays !== undefined && rawDays !== null) {
