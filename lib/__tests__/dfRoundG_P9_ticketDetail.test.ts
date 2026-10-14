@@ -36,6 +36,14 @@ const s = vi.hoisted(() => ({
   role: { activeRole: "Requester", roles: ["Requester"], activeOrgId: "org-1", uid: "u-req", userEmail: "rita@x.io" } as Record<string, unknown>,
   ticket: {} as Record<string, unknown>,
   members: [] as Array<Record<string, unknown>>,
+  /** PostgREST's max-rows for the stand-in: a page never returns more. */
+  maxRows: 1000,
+  /** The picker's member reads (select of its columns), in order. */
+  pickerReads: [] as Array<Array<{ m: string; a: unknown[] }>>,
+  /** The picker page (1-based) that fails, or 0. */
+  pickerFailPage: 0,
+  noSession: false,
+  traveler: vi.fn(),
   requesterMember: { role: "Requester", roles: ["Requester"] } as Record<string, unknown> | null,
   requesterMemberError: null as null | { message: string },
   postStatus: 200,
@@ -152,6 +160,19 @@ vi.mock("@/lib/supabase", () => {
       const sel = String(calls.find((c) => c.m === "select")?.a[0] ?? "");
       if (sel === "uid" ) return { data: null, error: null, count: 4 };
       if (terminal === "maybeSingle" && has("eq", "uid")) return s.requesterMemberError ? { data: null, error: s.requesterMemberError } : { data: s.requesterMember, error: null };
+      if (sel === "uid, email, role, roles, display_name") {
+        // The drafter picker's keyset pages, served as PostgREST would: in uid
+        // order, after `gt`, at most min(limit, max-rows) rows, the exact count
+        // on request.
+        s.pickerReads.push(calls);
+        if (s.pickerFailPage === s.pickerReads.length) return { data: null, error: { message: "upstream request timeout" } };
+        const after = calls.find((c) => c.m === "gt")?.a[1] as string | undefined;
+        const limit = (calls.find((c) => c.m === "limit")?.a[0] as number | undefined) ?? Infinity;
+        const sorted = [...s.members].sort((x, y) => String(x.uid).localeCompare(String(y.uid)));
+        const rows = sorted.filter((m) => after === undefined || String(m.uid) > after).slice(0, Math.min(limit, s.maxRows));
+        const wantsCount = (calls.find((c) => c.m === "select")?.a[1] as { count?: string } | undefined)?.count === "exact";
+        return { data: rows, error: null, ...(wantsCount ? { count: s.members.length } : {}) };
+      }
       return { data: s.members, error: null };
     }
     if (table === "org_configurations") return { data: s.config ? { data: s.config } : null, error: null };
@@ -163,7 +184,7 @@ vi.mock("@/lib/supabase", () => {
     const calls: Call[] = [];
     let patch: Record<string, unknown> | null = null;
     const api: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "neq", "not", "in", "order", "is", "limit", "range", "or", "gte", "lte", "lt", "contains"]) {
+    for (const m of ["select", "eq", "neq", "not", "in", "order", "is", "limit", "range", "or", "gt", "gte", "lte", "lt", "contains"]) {
       api[m] = (...a: unknown[]) => { calls.push({ m, a }); return api; };
     }
     api.update = (p: Record<string, unknown>) => { patch = p; return api; };
@@ -182,10 +203,12 @@ vi.mock("@/lib/supabase", () => {
       channel: () => channelApi,
       removeChannel: () => {},
       rpc: async () => ({ data: null, error: null }),
-      auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) },
+      auth: { getSession: async () => ({ data: { session: s.noSession ? null : { access_token: "tok" } } }) },
     },
   };
 });
+// UI-7 (integrator fix pass): the traveler generator, to read what the page hands it.
+vi.mock("@/lib/physicalBridge", () => ({ printTicketTraveler: (...a: unknown[]) => s.traveler(...a) }));
 
 import TicketDetailView from "@/app/(protected)/requests/[id]/page";
 
@@ -206,6 +229,8 @@ beforeEach(() => {
   s.role = { activeRole: "Requester", roles: ["Requester"], activeOrgId: "org-1", uid: "u-req", userEmail: "rita@x.io" };
   s.ticket = baseTicket();
   s.members = [];
+  s.maxRows = 1000; s.pickerReads = []; s.pickerFailPage = 0; s.noSession = false;
+  s.traveler.mockReset(); s.traveler.mockResolvedValue(undefined);
   s.requesterMember = { role: "Requester", roles: ["Requester"] };
   s.requesterMemberError = null;
   s.postStatus = 200;
@@ -398,6 +423,59 @@ describe("EDGE-6 / ROUTE-8 / DCW-1 / DCW-7 — the assign modal", () => {
     await click(byText("button", /Assign Drafter/));
     expect(q("[data-testid=no-drafters]")?.textContent).toMatch(/nobody in this workspace holds the Drafter role/);
   });
+  // Integrator fix pass (DEC-90): the member read is keyset-paged, so
+  // PostgREST's max-rows never hides someone the route accepts.
+  const viewers = (n: number) => Array.from({ length: n }, (_, i) => ({ uid: `m-${String(i).padStart(4, "0")}`, email: `m${i}@x.io`, role: "Viewer", roles: ["Viewer"], display_name: `Member ${i}` }));
+  it("integrator fix pass (EDGE-6 / ROUTE-8): more active members than one page — every page is read, and the drafter past the first 1000 is offered", async () => {
+    s.members = [
+      { uid: "a-early", email: "al@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Al Early" },
+      ...viewers(1203),
+      { uid: "z-late", email: "zed@x.io", role: "Engineer-2", roles: ["Engineer-2", "Drafter"], display_name: "Zed Late" },
+    ];
+    await mount();
+    await click(byText("button", /Assign Drafter/));
+    expect(byText("button", /Al Early/)).toBeTruthy();
+    expect(byText("button", /Zed Late/)).toBeTruthy(); // uid-sorted LAST: on the second page
+    expect(byText("button", /Member 7/)).toBeNull(); // Viewers are read, never offered
+    expect(s.pickerReads.length).toBe(2);
+    const [first, second] = s.pickerReads;
+    expect(first).toEqual(expect.arrayContaining([
+      { m: "select", a: ["uid, email, role, roles, display_name", { count: "exact" }] },
+      { m: "eq", a: ["org_id", "org-1"] }, { m: "eq", a: ["status", "active"] },
+      { m: "order", a: ["uid", { ascending: true }] }, { m: "limit", a: [1000] },
+    ]));
+    expect(first.some((c) => c.m === "gt")).toBe(false);
+    expect(second).toEqual(expect.arrayContaining([{ m: "gt", a: ["uid", "m-0998"] }, { m: "order", a: ["uid", { ascending: true }] }]));
+    await click(byText("button", /Zed Late/));
+    expect(s.posts[0]).toMatchObject({ actionType: "assign", assignment: { id: "z-late", name: "Zed Late" } });
+  });
+  it("integrator fix pass: a server whose max-rows is BELOW the page size — the keyset carries on from the last row it returned, skipping no one", async () => {
+    s.maxRows = 7;
+    s.members = [...viewers(19), { uid: "z-late", email: "zed@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Zed Late" }];
+    await mount();
+    await click(byText("button", /Assign Drafter/));
+    expect(byText("button", /Zed Late/)).toBeTruthy();
+    expect(s.pickerReads.length).toBe(3); // 7 + 7 + 6 = the count of 20
+  });
+  it("integrator fix pass: a page that fails fails the read — said, never a partial list shown as whole", async () => {
+    s.members = [...viewers(1100), { uid: "z-late", email: "zed@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Zed Late" }, { uid: "a-early", email: "al@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Al Early" }];
+    s.pickerFailPage = 2;
+    await mount();
+    await click(byText("button", /Assign Drafter/));
+    expect(byText("[role=alert]", /Couldn't load who can draft — upstream request timeout/)).toBeTruthy();
+    expect(byText("button", /Al Early/)).toBeNull();
+  });
+  it("REGRESSION (integrator fix pass): a normal workspace is one read, and the picker's order is by name as before", async () => {
+    s.members = [
+      { uid: "u-1", email: "bea@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Bea" },
+      { uid: "u-2", email: "al@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Al" },
+    ];
+    await mount();
+    await click(byText("button", /Assign Drafter/));
+    expect(s.pickerReads.length).toBe(1);
+    const names = Array.from(host!.querySelectorAll("button")).map((b) => b.textContent ?? "").filter((t) => /^(Al|Bea)/.test(t)).map((t) => (t.startsWith("Bea") ? "Bea" : "Al"));
+    expect(names).toEqual(["Al", "Bea"]);
+  });
   it("a hold the close could not release is said with its own title (holdsNotReleased)", async () => {
     s.members = [{ uid: "d-2", email: "dee@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Dee" }];
     s.postReply = { ok: true, status: "DRAFTING", warning: "A hold could not be released.", holdsNotReleased: ["h-1"] };
@@ -529,5 +607,15 @@ describe("PERS-7 fix pass — the redline: uid before upload, its audit after th
     expect(s.audit.mock.calls.filter((c) => (c[0] as { action?: string }).action === "TICKET_REDLINE_CREATED")).toEqual([]);
     expect(s.toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Redline attached, record not written" }));
     expect(String(s.alert.mock.calls[0]?.[0]?.message)).toMatch(/updated by someone else/);
+  });
+});
+
+describe("UI-7 (integrator fix pass) — the printed traveler states the status in words", () => {
+  it("'Status at printing' is the pill's label, never the stored identifier", async () => {
+    s.ticket = baseTicket({ status: "PENDING_IFC" });
+    await mount();
+    await click(byText("button", /Traveler/));
+    expect(s.traveler).toHaveBeenCalledTimes(1);
+    expect(s.traveler.mock.calls[0][0]).toMatchObject({ ticketRowId: "t1", ticketNumber: "KE-DDRT-26-0007", status: "Ready to issue (IFC)" });
   });
 });

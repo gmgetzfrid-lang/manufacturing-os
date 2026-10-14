@@ -9,10 +9,14 @@
 //
 // DISPLAY LAYER ONLY. The enum values are untouched (99-fix-sequencing,
 // "Do not do these": renaming them ripples into the state machine, the
-// archive and the shed). Every surface that shows a status to a person reads
-// its words from here — the ticket header, the queue's table / cards / board
-// chips and filter, and the workflow map (components/requests/
-// WorkflowDiagramModal.tsx), so the map and the chip never disagree.
+// archive and the shed). The request surfaces read their words from here —
+// the ticket header pill and its printed traveler, the queue's table, cards,
+// status filter, the board's per-request chips and its single-status lane
+// chips, the workflow map (components/requests/WorkflowDiagramModal.tsx), the
+// archived-ticket viewer and a document's impact panel — so the map and the
+// chip never disagree. A surface that still shows the stored value is a
+// drafting-flow UI-7 remainder, listed there with its owner; it is fixed with
+// `ticketStatusLabel`, never a new list.
 //
 // Pure — types and one label constant only — so pages, components and tests
 // share it.

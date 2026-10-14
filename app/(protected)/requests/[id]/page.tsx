@@ -20,6 +20,7 @@ import { flaggedRequestTypes } from '@/lib/requestTypes';
 import { ticketStatusLabel, ticketUnitDisplay } from '@/lib/ticketStatusLabels';
 import { attentionLabel, holdersFor, waitingSince, waitedFor, explainNoActions } from '@/lib/ticketAttention';
 import { drafterCandidates, NO_DRAFTER_CANDIDATES, missingRequiredFile, triagePayload, customCategorySections, projectRefOf, type DrafterCandidate } from '@/lib/ticketPage';
+import { loadPickerMembers } from '@/lib/ticketPickerMembers';
 import { loadRoutingContext, queuePool } from '@/lib/ticketRouting';
 import { unitOptionsFor, type UnitOption } from '@/lib/ticketCreate';
 import { loadCodebookUnitList } from '@/lib/ticketCreateClient';
@@ -315,14 +316,12 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
           setListError(null);
           try {
             // EDGE-6 / ROUTE-8: the role COLLECTION, never the headline alone
-            // (the picker used to filter .eq('role', 'Drafter')).
-            const { data, error } = await supabase
-              .from('org_members')
-              .select('uid, email, role, roles, display_name')
-              .eq('org_id', activeOrgId)
-              .eq('status', 'active');
-            if (error) { setListError(error.message || 'the members list could not be read'); setMembers([]); return; }
-            setMembers((data || []) as Array<Record<string, unknown>>);
+            // (the picker used to filter .eq('role', 'Drafter')) — so every
+            // active member is read, in keyset pages (lib/ticketPickerMembers.ts),
+            // so PostgREST's max-rows never hides someone the route accepts.
+            const read = await loadPickerMembers(activeOrgId);
+            if (!read.ok) { setListError(read.error); setMembers([]); return; }
+            setMembers(read.rows);
           } catch (error) {
             console.error("Error fetching drafters:", error);
             setListError((error as Error)?.message || 'the members list could not be read');
@@ -2155,7 +2154,9 @@ export default function TicketDetailView() {
                   ticketRowId: ticketId,
                   ticketNumber: ticket.ticketId ?? null,
                   title: ticket.title,
-                  status: ticket.status,
+                  // UI-7 (DF-P9 integrator fix pass): "Status at printing" in
+                  // words — the pill's label, never the stored identifier.
+                  status: ticketStatusLabel(ticket.status),
                   requesterName: ticket.requesterName ?? null,
                   drafterName: ticket.assignedDrafterName ?? null,
                   createdAt: ticket.createdAt ? String(ticket.createdAt) : null,

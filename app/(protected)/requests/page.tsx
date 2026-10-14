@@ -143,11 +143,21 @@ const getPriorityColor = (isUrgent: boolean, type: string) => {
 
 // A small count pill used in the supervisor board's column header to summarise
 // how a drafter's load breaks down by stage.
-const StageChip = ({ label, n, className }: { label: string; n: number; className: string }) => (
-  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${className}`}>
+const StageChip = ({ label, n, className, title, lane }: { label: string; n: number; className: string; title?: string; lane: string }) => (
+  <span data-testid={`lane-chip-${lane}`} title={title} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${className}`}>
     {n}<span className="font-medium opacity-80">{label}</span>
   </span>
 );
+
+// UI-7 (DF-P9 integrator fix pass, DEC-90): the board's lane chips. A chip that
+// counts ONE status reads that status's shared label (lib/ticketStatusLabels.ts),
+// the words its cards below carry. The `review` bucket counts FOUR statuses, so
+// it never borrows one of their labels ("In review" is PENDING_REVIEW's alone):
+// it says what it holds, and its tooltip names the four in the shared words.
+// "Overdue" is a due-date count (lib/notifications.ts isPastDue), not a status.
+const REVIEW_BUCKET_STATUSES: readonly TicketStatus[] = ['PENDING_ASSIGNMENT', 'PENDING_ENG_TEAM', 'PENDING_REVIEW', 'PENDING_FINAL_APPROVAL'];
+const REVIEW_BUCKET_LABEL = 'Review or assignment';
+const REVIEW_BUCKET_TITLE = `Waiting at one of: ${REVIEW_BUCKET_STATUSES.map((st) => ticketStatusLabel(st)).join(', ')}`;
 
 // =========================================================================================
 // SECTION 4: MAIN COMPONENT - REQUEST PORTAL
@@ -262,9 +272,12 @@ export default function RequestPortal() {
   // not be read and no last good copy was served (`unreadable`, or a read
   // that threw). The shipped defaults are NOT the org's policy, so the
   // policy-dependent parts of the queue — the "needs you" markers, the
-  // needs-me list, Archive and Force Close (the server refuses both on an
-  // unreadable policy) — are held back with the reason and a Try again. A
-  // `stale` answer is the last good policy and is drawn as is.
+  // needs-me list and its count, the Action Required tile's count (shown as
+  // unknown, never 0), Archive and Force Close (whether the viewer may use
+  // them is the policy's answer) — are held back with the reason and a Try
+  // again. The page claims nothing about the server: the workflow route reads
+  // the policy on its own (DEC-89 item 3). A `stale` answer is the last good
+  // policy and is drawn as is.
   const [policyFault, setPolicyFault] = useState<string | null>(null);
   const [policyAttempt, setPolicyAttempt] = useState(0);
   // GAP-2 / DEC-12: the active member count the ticket page evaluates the
@@ -685,7 +698,7 @@ export default function RequestPortal() {
       drafting: count(g.tickets, (t) => t.status === 'DRAFTING'),
       revision: count(g.tickets, (t) => t.status === 'REVISION_REQ'),
       awaitingIfc: count(g.tickets, (t) => t.status === 'PENDING_IFC'),
-      review: count(g.tickets, (t) => ['PENDING_REVIEW', 'PENDING_FINAL_APPROVAL', 'PENDING_ENG_TEAM', 'PENDING_ASSIGNMENT'].includes(t.status)),
+      review: count(g.tickets, (t) => REVIEW_BUCKET_STATUSES.includes(t.status)),
       actionable: count(g.tickets, (t) => isActionRequired(t)),
       // EDGE-7 done-when 3: one rule for overdue (lib/notifications.ts
       // isPastDue) — a CLOSED or CANCELED ticket past its target is not.
@@ -934,6 +947,15 @@ export default function RequestPortal() {
     setCurrentPage(1);
   };
 
+  // AUTHZ-15 (DF-P9 integrator fix pass, DEC-90): the Action Required count
+  // the page can state. During a policy fault it is UNKNOWN (null), never 0 —
+  // isActionRequired answers false for every row then, which is "not worked
+  // out", not "nothing needs you". The tile says so with the reason; the
+  // banner, which only states a computed count, stays away.
+  const actionItems: number | null = policyFault ? null : metrics.myActionItems;
+  const actionItemCount = actionItems ?? 0;
+  const hasActionItems = actionItems !== null && actionItems > 0;
+
   if (loading && tickets.length === 0) {
     return (
       <div className="h-full w-full flex flex-col items-center justify-center">
@@ -1017,17 +1039,27 @@ export default function RequestPortal() {
 
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             
-            {/* SLOT 1: MY ACTION ITEMS */}
+            {/* SLOT 1: MY ACTION ITEMS — AUTHZ-15: during a policy fault the
+                count is unknown and says why (the Needs-me toggle's "—"), never 0. */}
             <div 
-              className={`border p-3 rounded-xl flex flex-col justify-between cursor-pointer transition-colors group relative overflow-hidden ${metrics.myActionItems > 0 ? 'bg-orange-50 border-orange-300 ring-2 ring-orange-500/20' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}
+              data-testid="tile-action-required"
+              className={`border p-3 rounded-xl flex flex-col justify-between cursor-pointer transition-colors group relative overflow-hidden ${hasActionItems ? 'bg-orange-50 border-orange-300 ring-2 ring-orange-500/20' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}
               onClick={() => { setFilters({ ...filters, status: 'ALL' }); pickAttentionView('needs_me'); }}
+              title={actionItems === null ? `Unknown — permissions could not be read: ${policyFault}` : undefined}
             >
               <div className="flex justify-between items-start z-10">
-                <span className={`text-[10px] font-bold uppercase ${metrics.myActionItems > 0 ? 'text-orange-600' : 'text-[var(--color-text-faint)]'}`}>Action Required</span>
-                <Zap className={`w-4 h-4 ${metrics.myActionItems > 0 ? 'text-orange-500 fill-orange-500 animate-pulse' : 'text-slate-300'}`} />
+                <span className={`text-[10px] font-bold uppercase ${hasActionItems ? 'text-orange-600' : 'text-[var(--color-text-faint)]'}`}>Action Required</span>
+                <Zap className={`w-4 h-4 ${hasActionItems ? 'text-orange-500 fill-orange-500 animate-pulse' : 'text-slate-300'}`} />
               </div>
               <div className="flex items-end justify-between mt-1 z-10">
-                <div className={`text-2xl font-black ${metrics.myActionItems > 0 ? 'text-orange-700' : 'text-[var(--color-text)]'}`}>{metrics.myActionItems}</div>
+                {actionItems === null ? (
+                  <div className="flex flex-col">
+                    <div data-testid="tile-action-required-count" className="text-2xl font-black text-[var(--color-text-muted)]">—</div>
+                    <div data-testid="tile-action-required-unknown" className="text-[10px] font-bold text-amber-700">Unknown — permissions could not be read</div>
+                  </div>
+                ) : (
+                  <div data-testid="tile-action-required-count" className={`text-2xl font-black ${hasActionItems ? 'text-orange-700' : 'text-[var(--color-text)]'}`}>{actionItems}</div>
+                )}
               </div>
             </div>
 
@@ -1076,8 +1108,9 @@ export default function RequestPortal() {
       {/* 2. ADVANCED FILTER BAR */}
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
         
-        {/* URGENT ACTION BANNER */}
-        {metrics.myActionItems > 0 && (
+        {/* URGENT ACTION BANNER — only for a count the page computed (AUTHZ-15:
+            during a policy fault the notice below says why it is unknown). */}
+        {hasActionItems && (
           <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 shadow-sm flex items-center justify-between text-orange-900 animate-in slide-in-from-top-4 mb-6">
             <div className="flex items-center space-x-4">
               <div className="p-2 bg-orange-100 rounded-lg">
@@ -1086,7 +1119,7 @@ export default function RequestPortal() {
               <div>
                 <h3 className="text-sm font-black tracking-tight uppercase text-orange-700">Action Required</h3>
                 <p className="text-sm font-medium text-orange-800">
-                  You have <span className="font-bold underline">{metrics.myActionItems} ticket{metrics.myActionItems > 1 ? 's' : ''}</span> waiting for your review or approval.
+                  You have <span className="font-bold underline">{actionItemCount} ticket{actionItemCount > 1 ? 's' : ''}</span> waiting for your review or approval.
                 </p>
               </div>
             </div>
@@ -1104,7 +1137,7 @@ export default function RequestPortal() {
           <div role="alert" data-testid="requests-policy-fault" className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start gap-3 text-amber-900">
             <ShieldAlert className="w-5 h-5 mt-0.5 shrink-0 text-amber-600" />
             <div className="text-sm flex-1">
-              <span className="font-bold">Permissions could not be read</span> — {policyFault}. Which requests need you, Archive and Force Close are held back until they can be (the server would refuse those actions now).
+              <span className="font-bold">Permissions could not be read</span> — {policyFault}. They decide which requests need you and who may archive or force close, so the Action Required and Needs me counts are unknown, and Archive and Force Close are held back, until they can be read.
             </div>
             <button type="button" onClick={() => setPolicyAttempt((n) => n + 1)} className="px-3 py-1.5 bg-[var(--color-surface)] border border-amber-300 rounded-lg text-xs font-bold text-amber-800 hover:bg-amber-100">Try again</button>
           </div>
@@ -1249,12 +1282,12 @@ export default function RequestPortal() {
                         )}
                       </div>
                       <div className="flex flex-wrap gap-1.5 mt-3">
-                        {b.drafting > 0 && <StageChip className="bg-blue-50 text-blue-700 border-blue-200" label="Drafting" n={b.drafting} />}
-                        {b.revision > 0 && <StageChip className="bg-amber-50 text-amber-700 border-amber-200" label="Revisions" n={b.revision} />}
-                        {b.awaitingIfc > 0 && <StageChip className="bg-teal-50 text-teal-700 border-teal-200" label="Awaiting IFC" n={b.awaitingIfc} />}
-                        {b.review > 0 && <StageChip className="bg-indigo-50 text-indigo-700 border-indigo-200" label="In review" n={b.review} />}
-                        {b.overdue > 0 && <StageChip className="bg-red-50 text-red-700 border-red-200" label="Overdue" n={b.overdue} />}
-                        {b.closed > 0 && <StageChip className="bg-gray-100 text-gray-500 border-gray-200" label="Closed" n={b.closed} />}
+                        {b.drafting > 0 && <StageChip lane="drafting" className="bg-blue-50 text-blue-700 border-blue-200" label={ticketStatusLabel('DRAFTING')} n={b.drafting} />}
+                        {b.revision > 0 && <StageChip lane="revision" className="bg-amber-50 text-amber-700 border-amber-200" label={ticketStatusLabel('REVISION_REQ')} n={b.revision} />}
+                        {b.awaitingIfc > 0 && <StageChip lane="ifc" className="bg-teal-50 text-teal-700 border-teal-200" label={ticketStatusLabel('PENDING_IFC')} n={b.awaitingIfc} />}
+                        {b.review > 0 && <StageChip lane="review" className="bg-indigo-50 text-indigo-700 border-indigo-200" label={REVIEW_BUCKET_LABEL} title={REVIEW_BUCKET_TITLE} n={b.review} />}
+                        {b.overdue > 0 && <StageChip lane="overdue" className="bg-red-50 text-red-700 border-red-200" label="Overdue" n={b.overdue} />}
+                        {b.closed > 0 && <StageChip lane="closed" className="bg-gray-100 text-gray-500 border-gray-200" label={ticketStatusLabel('CLOSED')} n={b.closed} />}
                       </div>
                     </header>
                     <div className="p-2 space-y-1.5 max-h-[60vh] overflow-y-auto">

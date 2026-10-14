@@ -19,6 +19,15 @@
 //   EDGE-8       a request the queue was never told about carries a chip.
 //   UI-7 / FRIC-3 readers   statuses and units in words.
 //   REGRESSION   "All" lists every request the scope returned, as before.
+//   Integrator fix pass (DEC-90):
+//   AUTHZ-15     the Action Required tile shows the count as unknown, with
+//                the reason, during a fault — never a definite 0; the notice
+//                claims nothing about the server; the normal path unchanged.
+//   UI-7         the board's lane chips: single-status chips read the shared
+//                labels; the four-status bucket has its own truthful label.
+//   PERS-3 / PERS-7   a bulk action touches only the selected requests in
+//                the list on screen; the others are said, before and after —
+//                out of view stays selected, no-longer-loaded is dropped.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -218,6 +227,15 @@ describe("AUTHZ-15 — an unreadable policy is said, never guessed under the def
     expect(notice?.textContent).toMatch(/Permissions could not be read/);
     expect(notice?.textContent).toMatch(/permission denied/);
     expect(q("[data-testid=view-needs-me]")?.textContent).toMatch(/Needs me\s*—/);
+    // integrator fix pass: the tile says the count is unknown and why — never a definite 0
+    expect(q("[data-testid=tile-action-required-count]")?.textContent).toBe("—");
+    expect(q("[data-testid=tile-action-required-unknown]")?.textContent).toBe("Unknown — permissions could not be read");
+    expect(q("[data-testid=tile-action-required]")?.getAttribute("title")).toMatch(/permission denied for org_configurations/);
+    expect(q("[data-testid=tile-action-required]")?.textContent).not.toMatch(/\b0\b/);
+    expect(host!.textContent).not.toMatch(/You have \d+ ticket/);
+    // the notice says what is true, and nothing about the server
+    expect(notice?.textContent).toMatch(/the Action Required and Needs me counts are unknown, and Archive and Force Close are held back, until they can be read/);
+    expect(notice?.textContent).not.toMatch(/server would refuse/);
     expect(q("[data-testid=needs-me-empty]")?.textContent).toMatch(/cannot be worked out right now/);
     // All still lists the requests; selecting one offers no Archive, and the row menu no Force Close
     await click(q("[data-testid=view-all]"));
@@ -230,6 +248,23 @@ describe("AUTHZ-15 — an unreadable policy is said, never guessed under the def
     expect(s.policyReads).toBe(reads + 1);
     expect(q("[data-testid=requests-policy-fault]")).toBeNull();
     expect(byText("button", /^\s*Archive\s*$/)).toBeTruthy();
+    expect(q("[data-testid=tile-action-required-count]")?.textContent).toBe("1");
+    expect(q("[data-testid=tile-action-required-unknown]")).toBeNull();
+  });
+  it("REGRESSION (integrator fix pass): with the policy read, the tile and the banner count as before", async () => {
+    await mount();
+    expect(q("[data-testid=tile-action-required-count]")?.textContent).toBe("1");
+    expect(q("[data-testid=tile-action-required]")?.getAttribute("title")).toBeNull();
+    expect(q("[data-testid=tile-action-required-unknown]")).toBeNull();
+    expect(host!.textContent).toMatch(/You have 1 ticket waiting for your review or approval\./);
+  });
+  it("REGRESSION (integrator fix pass): nothing needs me with the policy read — the tile shows a computed 0, no banner", async () => {
+    s.role = { activeRole: "Requester", roles: ["Requester"], activeOrgId: "org-1", uid: "r-1" };
+    s.tickets = [row("t2", { requester_id: "r-1" })];
+    await mount();
+    expect(q("[data-testid=tile-action-required-count]")?.textContent).toBe("0");
+    expect(q("[data-testid=tile-action-required-unknown]")).toBeNull();
+    expect(host!.textContent).not.toMatch(/You have \d+ ticket/);
   });
   it("REGRESSION: a stale (last-good) policy is drawn as is — no notice, the lens counts", async () => {
     s.policyEntries = [{ policy: {}, version: "v1", stale: true, staleError: "timeout" }];
@@ -363,5 +398,36 @@ describe("FRIC-7 — the queue's markers are given the requesters' current roles
     s.tickets = [row("t5", { status: "PENDING_REVIEW", requester_id: "r-gone" }), row("t6", { status: "PENDING_REVIEW", requester_id: "r-1" })];
     await mount();
     expect(rowIds()).toEqual(["/requests/t5"]);
+  });
+});
+
+// ── Integrator fix pass (DEC-90) ─────────────────────────────────────────────
+
+describe("UI-7 (integrator fix pass) — the board's lane chips never reuse one status's label for a bucket", () => {
+  it("single-status chips read the shared labels; the four-status bucket says what it holds and names the four", async () => {
+    s.tickets = [
+      row("t1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, assigned_drafter_name: null }),
+      row("t2"),
+      row("t3", { status: "REVISION_REQ" }),
+      row("t4", { status: "PENDING_REVIEW" }),
+      row("t5", { status: "PENDING_FINAL_APPROVAL" }),
+      row("t6", { status: "PENDING_IFC" }),
+      row("t7", { status: "PENDING_ENG_TEAM" }),
+    ];
+    await mount();
+    await click(host!.querySelector("button[title='By Drafter — supervisor board']"));
+    const lane = (name: RegExp) => Array.from(host!.querySelectorAll("section")).find((sec) => name.test(sec.querySelector("header")?.textContent ?? "")) as HTMLElement;
+    const dan = lane(/Dan/);
+    const chip = (sec: HTMLElement, id: string) => sec.querySelector(`[data-testid=lane-chip-${id}]`) as HTMLElement | null;
+    expect(chip(dan, "drafting")?.textContent).toBe("1Drafting");
+    expect(chip(dan, "revision")?.textContent).toBe("1Revision requested");
+    expect(chip(dan, "ifc")?.textContent).toBe("1Ready to issue (IFC)");
+    expect(chip(dan, "review")?.textContent).toBe("3Review or assignment");
+    expect(chip(dan, "review")?.getAttribute("title")).toBe("Waiting at one of: Awaiting drafter, Engineering review, In review, Engineer sign-off");
+    const pool = lane(/Unassigned · Pool/);
+    expect(chip(pool, "review")?.textContent).toBe("1Review or assignment");
+    // no lane chip borrows "In review" (PENDING_REVIEW's label) — the card below still reads it
+    for (const c of Array.from(host!.querySelectorAll("[data-testid^=lane-chip-]"))) expect(c.textContent).not.toMatch(/In review/);
+    expect(dan.textContent).toMatch(/In review/);
   });
 });
