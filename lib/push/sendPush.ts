@@ -29,8 +29,9 @@
 //     push_enabled = false stops delivery and leaves the device registered.
 //   * Push follows a bell row: a person is pushed only when a bell row of
 //     this kind about this resource landed for them in the last
-//     PUSH_EVIDENCE_WINDOW_MS (for a browser's request, a row that browser's
-//     member wrote — 20261160 stamps every browser row with its writer). A
+//     PUSH_EVIDENCE_WINDOW_MS (for a browser's request, a row naming that
+//     browser's member as its actor — 20261160, once pasted, stamps every
+//     browser row with its writer), to an active member of the workspace. A
 //     follower the discover check could not settle got the REDACTED notice
 //     (metadata.redacted — lib/notify/dispatch.ts redactedNotice); that row
 //     never earns a push (DEC-106 item 2).
@@ -65,6 +66,13 @@
 //     pass 2): a device read that comes back at PostgREST's row limit is
 //     read again person by person, PUSH_DEVICE_CAP rows each; a row dated
 //     later than now (+ PUSH_FUTURE_SKEW_MS) is not read.
+//   * The sender does not lean on 20261160 for what decides a push (fix
+//     pass 3). Until that file is pasted, a browser's bell row carries
+//     whatever created_at and recipient its writer chose. So a bell row
+//     dated later than now (+ PUSH_FUTURE_SKEW_MS) earns nothing (a row
+//     dated 2100 would otherwise become the device's watermark and refuse
+//     every later push), and only an active member of input.orgId is pushed
+//     (org_members, read on the service role; unreadable = nothing sent).
 //
 // Push is best-effort by design and is never a delivery record (GAP-205;
 // drafting-flow GAP-113): nothing reads a push to decide anything.
@@ -261,10 +269,18 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
   const now = Date.now();
   const evidenceSince = now - PUSH_EVIDENCE_WINDOW_MS;
   const windowSince = new Date(now - Math.max(PUSH_WRITER_WINDOW_MS, PUSH_EVIDENCE_WINDOW_MS)).toISOString();
+  // Nothing dated later than now (+ the skew margin) is read: not a bell row
+  // (fix pass 3), not a device row (fix pass 2).
+  const latest = now + PUSH_FUTURE_SKEW_MS;
+  const latestIso = new Date(latest).toISOString();
   const writer = input.writerUid ?? null;
 
   // 1) The bell rows: which recipients got a row of this kind about this
   //    resource just now (and, for a browser's request, from that member).
+  //    Fix pass 3: a row dated later than now (+ PUSH_FUTURE_SKEW_MS) earns
+  //    nothing. Until 20261160 is pasted a browser sets a row's created_at,
+  //    and the device claim stores the row's created_at as the watermark, so
+  //    a row dated 2100 would have every later push to that person refused.
   const rowsByUser = new Map<string, BellRow[]>();
   for (const part of chunks(recipients)) {
     let q = supabaseAdmin
@@ -273,7 +289,8 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
       .eq("org_id", input.orgId)
       .in("user_id", part)
       .in("kind", [...PUSH_KINDS])
-      .gte("created_at", windowSince);
+      .gte("created_at", windowSince)
+      .lte("created_at", latestIso);
     if (writer) q = q.eq("actor_user_id", writer);
     const { data, error } = await q.order("created_at", { ascending: false }).limit(2000);
     if (error) {
@@ -289,6 +306,7 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
     const row = rows.find((r) => r.kind === input.kind
       && r.resource_id === input.resourceId
       && Date.parse(r.created_at) >= evidenceSince
+      && Date.parse(r.created_at) <= latest
       && (r.metadata as { redacted?: unknown } | null)?.redacted !== true);
     if (!row) continue;
     if (writer) {
@@ -298,6 +316,30 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
     evidence.set(uid, row);
   }
   if (capped > 0) console.warn(`[push] ${capped} recipient(s) over the per-writer push cap (${PUSH_WRITER_CAP} per ${PUSH_WRITER_WINDOW_MS / 60_000} min) — the bell has the rows, no push sent`);
+  if (evidence.size === 0) return { ...none(), capped };
+
+  // 1b) Only an active member of this workspace is pushed (fix pass 3). The
+  //     sender checks it itself: until 20261160 is pasted, a member's browser
+  //     can write a bell row naming anyone as its recipient — a person in
+  //     another workspace included. An unreadable membership sends nothing
+  //     (fail closed).
+  const active = new Set<string>();
+  for (const part of chunks([...evidence.keys()])) {
+    const { data, error } = await supabaseAdmin
+      .from("org_members")
+      .select("uid")
+      .eq("org_id", input.orgId)
+      .eq("status", "active")
+      .in("uid", part);
+    if (error) {
+      console.warn(`[push] memberships could not be read (${error.message}) — the ${input.kind} push was not sent`);
+      return { ...none("unreadable"), capped };
+    }
+    for (const m of (data as Array<{ uid: string }> | null) ?? []) active.add(m.uid);
+  }
+  const outsiders = [...evidence.keys()].filter((u) => !active.has(u));
+  for (const u of outsiders) evidence.delete(u);
+  if (outsiders.length > 0) console.warn(`[push] ${outsiders.length} recipient(s) not an active member of the workspace — not pushed`);
   if (evidence.size === 0) return { ...none(), capped };
 
   // 2) push_enabled — an unreadable preference sends nothing (fail closed:
@@ -330,8 +372,6 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
   const offService: string[] = [];
   let cutShort = false;
   const optInSince = Date.parse(PUSH_OPT_IN_SINCE);
-  const latest = now + PUSH_FUTURE_SKEW_MS;
-  const latestIso = new Date(latest).toISOString();
   const readDevices = (uids: string[], limit: number) => {
     const q = supabaseAdmin
       .from("push_subscriptions")

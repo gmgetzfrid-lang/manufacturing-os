@@ -65,6 +65,9 @@ const h = vi.hoisted(() => ({
   after: [] as Array<() => unknown>,
   insertError: null as null | { message: string; code?: string },
   writeBell: false,
+  // fix pass 3: true leaves a bell read's created_at bounds unapplied, so a
+  // test can show the sender's in-code check stands on its own
+  rawBellRead: false,
 }));
 
 /** PostgREST's `or=(…)` for the claim the sender makes — the memory stand-in
@@ -88,7 +91,10 @@ function idsMatchingOr(table: string, cond: string): string[] {
 /** A device read's PostgREST shape (fix pass 2): the memory stand-in ignores
  *  gte / lte / order / limit, so for push_subscriptions reads they are
  *  applied here — a read's shape decides what it returns, as PostgREST's
- *  does (a limit cuts a read short; newest first means newest first). */
+ *  does (a limit cuts a read short; newest first means newest first).
+ *  Fix pass 3: a notifications read's created_at bounds (gte / lte) are
+ *  applied too, so the bell read's own upper bound is what keeps a
+ *  future-dated row out (the sender also checks it in code). */
 type ReadShape = { gte: Array<[string, string]>; lte: Array<[string, string]>; order: [string, boolean] | null; limit: number | null; write: boolean };
 const shaped = (shape: ReadShape, data: Array<Record<string, unknown>>) => {
   let rows = data;
@@ -104,7 +110,7 @@ function withOr(table: string, q: Record<string, unknown>, shape: ReadShape = { 
   return new Proxy(q, {
     get(t, prop: string) {
       const v = (t as Record<string, unknown>)[prop];
-      if (prop === "then" && table === "push_subscriptions" && !shape.write && typeof v === "function") {
+      if (prop === "then" && (table === "push_subscriptions" || table === "notifications") && !shape.write && typeof v === "function") {
         return (resolve: (x: unknown) => unknown, reject?: (e: unknown) => unknown) =>
           (v as (ok: (x: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise<unknown>)(
             (res) => {
@@ -132,6 +138,7 @@ function withOr(table: string, q: Record<string, unknown>, shape: ReadShape = { 
           if (prop === "order") shape.order = [String(args[0]), (args[1] as { ascending?: boolean } | undefined)?.ascending !== false];
           if (prop === "limit") shape.limit = Number(args[0]);
         }
+        if (table === "notifications" && !h.rawBellRead && (prop === "gte" || prop === "lte") && args[0] === "created_at") shape[prop].push(["created_at", String(args[1])]);
         const r = (v as (...a: unknown[]) => unknown)(...args);
         return r && typeof r === "object" && !(r instanceof Promise) ? withOr(table, r as Record<string, unknown>, shape) : r;
       };
@@ -236,7 +243,7 @@ beforeEach(() => {
   resetState(h.state);
   h.order.length = 0; h.many.length = 0; h.emails.length = 0; h.failFor.clear();
   h.sent.length = 0; h.sendError.clear(); h.vapidThrows = false; h.user = null;
-  h.after.length = 0; h.insertError = null; h.writeBell = false;
+  h.after.length = 0; h.insertError = null; h.writeBell = false; h.rawBellRead = false;
   h.state.tables.org_members = members("a", "b", "actor");
   __registerServerDiscoverCheck(null);
   setVapid(false);
@@ -739,6 +746,104 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     expect(PUSH_FUTURE_SKEW_MS).toBe(5 * 60_000);
   });
 
+  // ── fix pass 3: the sender bounds what 20261160 bounds, before it is pasted ──
+  // Until 20261160 is pasted, notifications_org_insert (20260723) checks only that the WRITER is an
+  // active member of org_id: a browser sets a bell row's created_at and its recipient freely.
+  it("fix pass 3 (the third review's major): a bell row dated in the future earns no push and moves no device's watermark — the next real row still pushes", async () => {
+    setVapid(true);
+    const dev = () => (h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0];
+    h.state.tables.push_subscriptions = [device("a")];
+    // the review's row: dated 2100, written by the caller to a colleague
+    h.state.tables.notifications = [bell("a", { created_at: "2100-01-01T00:00:00Z" })];
+    expect(await sendPushSafe(input({ recipients: ["a"], writerUid: "actor" }))).toMatchObject({ eligible: 0, attempted: 0, sent: 0 });
+    expect(h.sent).toHaveLength(0);
+    expect(dev().last_reminded_at).toBeNull();
+    expect(h.state.writes.filter((w) => w.table === "push_subscriptions")).toHaveLength(0);
+    // just past the skew margin: still nothing
+    h.state.tables.notifications = [bell("a", { created_at: new Date(Date.now() + PUSH_FUTURE_SKEW_MS + 60_000).toISOString() })];
+    expect(await sendPushSafe(input({ recipients: ["a"], writerUid: "actor" }))).toMatchObject({ eligible: 0, sent: 0 });
+    expect(dev().last_reminded_at).toBeNull();
+    // a real hold a moment later is pushed: the forged rows took no watermark
+    const real = bell("a");
+    h.state.tables.notifications.push(real);
+    expect(await sendPushSafe(input({ recipients: ["a"], writerUid: "actor" }))).toMatchObject({ eligible: 1, sent: 1 });
+    expect(dev().last_reminded_at).toBe(real.created_at);
+    // the bell read itself carries the bound: created_at <= now + PUSH_FUTURE_SKEW_MS
+    const lte = h.state.calls.filter((c) => c.table === "notifications" && c.method === "lte");
+    expect(lte).toHaveLength(3);
+    for (const c of lte) {
+      expect(c.args[0]).toBe("created_at");
+      expect(Math.abs(Date.parse(String(c.args[1])) - (Date.now() + PUSH_FUTURE_SKEW_MS))).toBeLessThan(30_000);
+    }
+  });
+
+  it("fix pass 3: the in-code check stands on its own — a future-dated row a read lets through still earns nothing; one inside the clock margin still does", async () => {
+    setVapid(true);
+    h.rawBellRead = true; // the stand-in applies no created_at bound to the bell read
+    h.state.tables.push_subscriptions = [device("a")];
+    h.state.tables.notifications = [bell("a", { created_at: "2100-01-01T00:00:00Z" })];
+    expect(await sendPushSafe(input({ recipients: ["a"], writerUid: "actor" }))).toMatchObject({ eligible: 0, sent: 0 });
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0].last_reminded_at).toBeNull();
+    // a database clock a little ahead of the server's is tolerated (PUSH_FUTURE_SKEW_MS)
+    const skewed = bell("a", { created_at: new Date(Date.now() + PUSH_FUTURE_SKEW_MS / 2).toISOString() });
+    h.state.tables.notifications = [skewed];
+    expect(await sendPushSafe(input({ recipients: ["a"], writerUid: "actor" }))).toMatchObject({ eligible: 1, sent: 1 });
+    const src = read("lib/push/sendPush.ts");
+    expect(src).toMatch(/\.gte\("created_at", windowSince\)\s*\.lte\("created_at", latestIso\);/);
+    expect(src).toContain("&& Date.parse(r.created_at) <= latest");
+  });
+
+  it("fix pass 3 (the third review's major): only an active member of the workspace is pushed — a forged row to a person in another workspace, or to a suspended member, earns nothing and claims no device", async () => {
+    setVapid(true);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    h.state.tables.org_members = [
+      ...members("a", "actor"),
+      { org_id: "o-other", uid: "v", status: "active", role: "Engineer", roles: null, email: "v@x.com" }, // another tenant
+      { org_id: ORG, uid: "s", status: "suspended", role: "Engineer", roles: null, email: "s@x.com" },
+    ];
+    h.state.tables.notifications = [bell("a"), bell("v"), bell("s")];
+    h.state.tables.push_subscriptions = [device("a"), device("v"), device("s")];
+    const out = await sendPushSafe(input({ recipients: ["a", "v", "s"], writerUid: "actor" }));
+    expect(out).toMatchObject({ eligible: 1, attempted: 1, sent: 1 });
+    expect(h.sent.map((x) => x.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/a"]);
+    const devices = h.state.tables.push_subscriptions as Array<Record<string, unknown>>;
+    for (const uid of ["v", "s"]) expect(devices.find((d) => d.user_id === uid)).toMatchObject({ last_reminded_at: null });
+    // the outsiders' devices were never even read
+    const deviceReadUids = h.state.calls.filter((c) => c.table === "push_subscriptions" && (c.method === "in" || c.method === "eq") && c.args[0] === "user_id")
+      .flatMap((c) => (Array.isArray(c.args[1]) ? c.args[1] : [c.args[1]]));
+    expect(deviceReadUids).toEqual(["a"]);
+    // the read is this workspace's active members, on the service role
+    const reads = h.state.calls.filter((c) => c.table === "org_members");
+    expect(reads).toContainEqual(expect.objectContaining({ method: "eq", args: ["org_id", ORG] }));
+    expect(reads).toContainEqual(expect.objectContaining({ method: "eq", args: ["status", "active"] }));
+    expect(warn.mock.calls.some((c) => /2 recipient\(s\) not an active member of the workspace/.test(String(c[0])))).toBe(true);
+  });
+
+  it("fix pass 3: an unreadable membership sends nothing (fail closed) and reads no device", async () => {
+    setVapid(true);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    h.state.tables.notifications = [bell("a")];
+    h.state.tables.push_subscriptions = [device("a")];
+    h.state.readError.org_members = { message: "timeout" };
+    expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ skipped: "unreadable", sent: 0 });
+    expect(h.sent).toHaveLength(0);
+    expect(h.state.calls.filter((c) => c.table === "push_subscriptions")).toHaveLength(0);
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0].last_reminded_at).toBeNull();
+  });
+
+  it("fix pass 3: the membership read goes in parts — 400 recipients, every one a member, are all pushed", async () => {
+    setVapid(true);
+    const many = Array.from({ length: 400 }, (_, i) => `m${String(i).padStart(3, "0")}`);
+    h.state.tables.org_members = members("actor", ...many);
+    h.state.tables.notifications = many.map((u) => bell(u));
+    h.state.tables.push_subscriptions = many.map((u) => device(u));
+    const out = await sendPushSafe(input({ recipients: many }));
+    expect(out).toMatchObject({ eligible: 400, sent: 400 });
+    const parts = h.state.calls.filter((c) => c.table === "org_members" && c.method === "in").map((c) => (c.args[1] as string[]).length);
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(400);
+    expect(Math.max(...parts)).toBeLessThanOrEqual(150);
+  });
+
   // ── fix pass 2: the second review's blocker — the two URL parsers ─────────
   it("fix pass 2: every endpoint pushEndpointAllowed accepts is one the REAL web-push (https.request stubbed) addresses to a push service's host — never a host a parser gap names", async () => {
     const realMod = await vi.importActual<Record<string, unknown>>("web-push");
@@ -928,6 +1033,32 @@ describe("POST /api/push/notify — the browser half of the push leg", () => {
     expect(await res.json()).toEqual({ ok: true });
     expect(h.sent).toHaveLength(0); // nothing sent before the answer …
     await runAfter();               // … the sends run after it
+    expect(h.sent.map((s) => s.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/a"]);
+  });
+
+  it("fix pass 3 (the third review's scenario): a member's forged rows — dated 2100, or to a person in another workspace — push nobody and hold back nobody's next push", async () => {
+    setVapid(true);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    h.user = { id: "actor" };
+    h.state.tables.org_members = [...members("a", "actor"), { org_id: "o-other", uid: "v", status: "active", role: "Engineer", roles: null, email: "v@x.com" }];
+    const now = new Date().toISOString();
+    h.state.tables.notifications = [
+      // what a browser may write through PostgREST until 20261160 is pasted
+      { id: "f1", org_id: ORG, user_id: "a", kind: "hold_opened", resource_id: "d-1", link: "/x", actor_user_id: "actor", created_at: "2100-01-01T00:00:00Z", metadata: null },
+      { id: "f2", org_id: ORG, user_id: "v", kind: "hold_opened", resource_id: "d-1", link: "/x", actor_user_id: "actor", created_at: now, metadata: null },
+    ];
+    h.state.tables.push_subscriptions = [
+      { id: "s1", user_id: "a", endpoint: "https://fcm.googleapis.com/fcm/send/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: now },
+      { id: "s2", user_id: "v", endpoint: "https://fcm.googleapis.com/fcm/send/v", p256dh: "p", auth: "k", last_reminded_at: null, created_at: now },
+    ];
+    expect((await post(notifyRoute, "/api/push/notify", { ...body, recipients: ["a", "v"] })).status).toBe(200);
+    await runAfter();
+    expect(h.sent).toHaveLength(0);
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>).map((d) => d.last_reminded_at)).toEqual([null, null]);
+    // a's real hold a moment later is pushed
+    h.state.tables.notifications.push({ id: "n3", org_id: ORG, user_id: "a", kind: "hold_opened", resource_id: "d-1", link: "/x", actor_user_id: "actor", created_at: new Date().toISOString(), metadata: null });
+    expect((await post(notifyRoute, "/api/push/notify", { ...body, recipients: ["a"] })).status).toBe(200);
+    await runAfter();
     expect(h.sent.map((s) => s.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/a"]);
   });
 

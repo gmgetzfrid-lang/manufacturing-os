@@ -11,9 +11,14 @@
 //
 // What the caller can cause is bounded by what it already did: a person is
 // pushed only for a bell row of this push-worthy kind, about this resource,
-// that the CALLER wrote to them in the last two minutes (20261160 stamps
-// every browser row with its writer), never for a redacted notice, at most
-// PUSH_WRITER_CAP times per writer and person in ten minutes, once per row
+// naming the CALLER as its actor, written to them in the last two minutes
+// and dated no later than now plus a five-minute clock margin, and only if
+// they are an active member of this workspace. 20261160, once pasted,
+// stamps every browser row with its writer and the time and skips a
+// recipient who is not a member; the sender checks the date and the
+// membership itself (fix pass 3), so both hold before that paste too. Never
+// for a redacted notice, at most PUSH_WRITER_CAP times per writer and
+// person in ten minutes, once per row
 // per device, and only if that person turned a device on and left
 // push_enabled on. The push says only the kind (PUSH_TITLES), and goes only
 // to a push service's own host (lib/push/endpoints.ts). The answer never

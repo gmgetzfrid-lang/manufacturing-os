@@ -584,8 +584,11 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
   // notifications N10 PUSH (GAP-205): the push sender reads the bell rows an emit() just wrote,
-  // to push only a person whose row landed (for a browser's request, a row that member wrote).
-  "lib/push/sendPush.ts": [{ marks: '.in("kind", [...PUSH_KINDS])', none: "not a dedupe: the push channel sends a device notification only for a push-worthy bell row that landed for that person in the last two minutes (for a browser's request, one whose actor_user_id is the caller — 20261160 stamps every browser row with its writer), never for a redacted notice, at most PUSH_WRITER_CAP per writer and person in ten minutes. A row a member forges can only cause a generic push to its own recipient within those caps; no row stops a notice anyone else sends, and no bell row or email is withheld because one exists" }],
+  // to push only a person whose row landed (for a browser's request, a row naming that member as actor).
+  // N10 fix pass 3 (the third review's major): the note no longer leans on 20261160, which is not pasted
+  // yet — until it is, a browser row carries whatever created_at and recipient its writer chose, so the
+  // sender bounds the date and checks the membership itself.
+  "lib/push/sendPush.ts": [{ marks: '.in("kind", [...PUSH_KINDS])', none: "not a dedupe: the push channel sends a device notification only for a push-worthy bell row that landed for that person in the last two minutes and is dated no later than now plus PUSH_FUTURE_SKEW_MS (for a browser's request, one whose actor_user_id is the caller — 20261160, once pasted, stamps every browser row with its writer and the time), only to an active member of the row's workspace (the sender reads org_members itself, fail closed), never for a redacted notice, at most PUSH_WRITER_CAP per writer and person in ten minutes. A row a member forges can only cause a generic push to an active member of that workspace within those caps. Its date is the device's push watermark, so until 20261160 is pasted a forged row dated up to PUSH_FUTURE_SKEW_MS ahead can hold back that person's next pushes for at most that margin; a row dated further ahead is never read. No bell row or email is withheld because one exists" }],
   "lib/storageAlerts.ts": [
     { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
     // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the quota bell is not sent the
