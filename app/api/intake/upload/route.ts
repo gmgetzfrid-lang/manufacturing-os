@@ -326,6 +326,20 @@ function housekeepVia(door: DoorHousekeeping | undefined, op: HousekeepOp, args:
       }))
     : Promise.resolve({ kind: "absent" } as DoorAnswer<number>);
 }
+/** The door's own refusals: the link went dead (28000), out of its scope
+ *  (42501), an operation the function does not know (22023). */
+const DOOR_REFUSAL_CODES = new Set(["28000", "42501", "22023"]);
+/** 'retire' and 'restore' keep the single retry the service-role path makes
+ *  ("Checked, retried once"): a transient failure (a reset connection, a
+ *  deadlock 40P01, a statement timeout 57014) is asked once more; a door
+ *  refusal is answered at once, never retried. Both are safe to repeat — the
+ *  retire is a compare-and-set, the restore clears only the stamp this
+ *  request wrote. */
+async function housekeepRetried(door: DoorHousekeeping | undefined, op: "retire" | "restore", args: { doc: string; version?: string | null; at?: string | null }) {
+  const first = await housekeepVia(door, op, args);
+  if (first.kind !== "error" || DOOR_REFUSAL_CODES.has(String(first.error.code ?? ""))) return first;
+  return housekeepVia(door, op, args);
+}
 
 /** SEC-16 dw2: a token used from a browser that is ALSO signed in to the
  *  app records that session — an insider driving the contractor's door is
@@ -671,9 +685,10 @@ async function publishThroughContract(input: {
  *  retire-by-superseded_at shape. */
 async function retireDisplacedFirst(input: { displacedId: string; nowIso: string; documentId: string; door?: DoorHousekeeping }): Promise<"retired" | "decided" | { error: string; refused?: DoorError }> {
   // SEC-22 (b): as the link's identity (intake_door_housekeep 'retire',
-  // 20261214), the same compare-and-set; a refusal is answered, never
-  // retried as the service role. Before the paste, below, unchanged.
-  const viaDb = await housekeepVia(input.door, "retire", { doc: input.documentId, version: input.displacedId, at: input.nowIso });
+  // 20261214), the same compare-and-set, retried once on a transient failure
+  // as below; a refusal is answered, never retried as the service role.
+  // Before the paste, below, unchanged.
+  const viaDb = await housekeepRetried(input.door, "retire", { doc: input.documentId, version: input.displacedId, at: input.nowIso });
   if (viaDb.kind === "ok") return Number(viaDb.data ?? 0) > 0 ? "retired" : "decided";
   if (viaDb.kind === "error") return { error: `displaced submission retire: ${viaDb.error.message ?? viaDb.error.code ?? "refused"}`, refused: viaDb.error };
   const attempt = async () => {
@@ -709,9 +724,10 @@ async function restoreDisplaced(ref: string, input: {
 }): Promise<void> {
   // SEC-22 (b): as the link's identity (intake_door_housekeep 'restore',
   // 20261214) — it needs the link to exist, not to be live, so a revocation
-  // mid-request never strands the draft. A refusal is recorded below exactly
-  // as a failed restore is; never retried as the service role.
-  const viaDb = await housekeepVia(input.door, "restore", { doc: input.documentId, version: input.displacedId, at: input.nowIso });
+  // mid-request never strands the draft. Retried once on a transient
+  // failure, as below; a refusal is recorded below exactly as a failed
+  // restore is, and never retried as the service role.
+  const viaDb = await housekeepRetried(input.door, "restore", { doc: input.documentId, version: input.displacedId, at: input.nowIso });
   const attempt = async () => {
     const a = await supabaseAdmin.from("document_versions")
       .update({ superseded_at: null }).eq("id", input.displacedId).eq("superseded_at", input.nowIso);

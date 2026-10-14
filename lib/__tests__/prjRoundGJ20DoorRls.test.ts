@@ -12,8 +12,11 @@
 //   (c) the rail on projects.intake_library_id / intake_collection_id.
 //
 // The SQL ran on a throwaway PostgreSQL 16 carrying schema.sql and the whole
-// sequence (the records name the scenarios, A1–A15, B1–B14, C1–C9); this file
-// pins the text the scratch run exercised.
+// sequence (the records name the scenarios, A1–A19, B1–B17, C1–C9); this file
+// pins the text the scratch run exercised. It also carries the forward scan
+// for document_versions that J16's census (documents, cost_documents) leaves
+// to this file: a later migration may not take the submission off row-level
+// security unannounced.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -232,6 +235,21 @@ describe("limb (a) — the policies TO intake_door and the integrity policy's do
     const tail = M.slice(M.indexOf("\nCOMMIT;"));
     expect(tail.match(/intake_door_version_rls_gaps\('authenticator'\)/g)?.length).toBe(2);
   });
+  it("review fix pass (major): the door's own permissive policy missing is a gap — readiness reads false and the submission keeps the bound identity, filed (dropping the door's policies is a safe reversal, never a refused upload)", () => {
+    const g = fn("intake_door_version_rls_gaps");
+    expect(g).toContain("IF NOT EXISTS (SELECT 1 FROM pg_policy pol\n                  WHERE pol.polrelid = v_table AND pol.polpermissive AND pol.polcmd IN ('a', '*')\n                    AND v_door = ANY (pol.polroles)) THEN\n    v_gaps := v_gaps || 'no permissive policy for intake_door'::text;\n  END IF;\n  RETURN v_gaps;");
+    // read from the catalogs, after every other limb, so ready() (cardinality = 0) sees it
+    expect(g.indexOf("'no permissive policy for intake_door'")).toBeGreaterThan(g.indexOf("SELECT DISTINCT 'policy '"));
+    // the unnamed refusal it prevents is the one the switch re-raises (the door's own boundary)
+    expect(fn("intake_door_submit_version")).toContain("'new row violates row-level security policy for table \"document_versions\"'");
+    // the two "row-level security for the submission" rows together read every gap class: the first now names this one
+    const tail = M.slice(M.indexOf("\nCOMMIT;"));
+    const row = between(tail, "SELECT 'row-level security for the submission: authenticator", "       NULL\nUNION ALL");
+    expect(row).toContain("and the door''s permissive policy is there");
+    expect(row).toContain("WHERE g IN ('role', 'switch', 'no permissive policy for intake_door') OR g LIKE 'execute %' OR g LIKE 'read %'),");
+    expect(M).toContain("''no permissive policy for intake_door'' when no PERMISSIVE INSERT / ALL policy of it names intake_door");
+    expect(prose(M.slice(0, M.indexOf("-- ── Prerequisite")))).toContain("and the door's own permissive policy missing (no row would be admitted as intake_door; Postgres would refuse it naming none).");
+  });
 });
 
 describe("DRLS-16 — every function this migration adds or re-creates", () => {
@@ -277,6 +295,7 @@ describe("limb (b) — the housekeeping as the link's identity", () => {
     expect(h).toContain("RAISE EXCEPTION 'intake_door_housekeep: unknown operation %.', p_op USING ERRCODE = '22023';");
     for (const s of [
       "v.intake_link_id = v_link",
+      "IF p_op = 'retire' AND NOT (v_author IS NOT DISTINCT FROM v_link OR v_assigned) THEN",
       "COALESCE((v_door->>'trusted')::boolean, false) AND v_author IS NOT DISTINCT FROM v_link AND NOT v_assigned",
       "IF v_author IS DISTINCT FROM v_link OR v_current IS NOT NULL THEN",
       "WHERE id = p_version AND record_id = p_doc AND review_state = 'in_review' AND superseded_at IS NULL;",
@@ -287,6 +306,26 @@ describe("limb (b) — the housekeeping as the link's identity", () => {
       "v_prev := intake_door_bind(v_link, v_link, v_org, v_proj);",
     ]) expect(h, s).toContain(s);
     expect(h.match(/PERFORM intake_door_unbind\(v_prev\);/g)).toHaveLength(1);
+  });
+  it("review fix pass: 'restore' and 'withdraw' need only the version to be the link's own submission on the document (an un-assignment mid-request never strands this request's rows); only 'retire' needs the document still the link's own or assigned", () => {
+    const h = fn("intake_door_housekeep");
+    const scope = between(h, "  IF p_op IN ('retire', 'restore', 'withdraw') THEN\n", "  ELSIF p_op = 'discard' THEN");
+    const code_ = scope.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    // the shared check: the version, this link's, on this document, in the link's org — nothing about the document's author or assignment
+    const shared = between(code_, "    IF p_version IS NULL", "    END IF;");
+    expect(shared).toContain("WHERE v.id = p_version AND v.record_id = p_doc AND v.org_id = v_org AND v.intake_link_id = v_link) THEN");
+    expect(shared).not.toMatch(/v_author|v_assigned/);
+    // every use of the author or the assignment in this block is behind p_op = 'retire'
+    for (const l of code_.split("\n").filter((x) => /v_author|v_assigned/.test(x))) {
+      const at = code_.indexOf(l);
+      const head = code_.lastIndexOf("    IF ", at);
+      expect(code_.slice(head, at + l.length), l).toMatch(/^    IF p_op = 'retire'/);
+    }
+    // 'discard' and 'reference' still need the document to be the link's creation (authored_by_link_id never changes — INTK-16)
+    expect(h).toContain("IF v_author IS DISTINCT FROM v_link OR v_current IS NOT NULL THEN");
+    expect(h).toContain("IF v_author IS DISTINCT FROM v_link THEN");
+    const head = prose(M.slice(0, M.indexOf("-- ── Prerequisite")));
+    expect(head).toContain("'restore' and 'withdraw' need only the version to be the link's own submission on the document (not the document still assigned to the link), so an un-assignment mid-request never strands them either");
   });
   it("intake_door_intake_folder: the project's folder when it is one of the intake library's in the link's org; else made there and claimed by compare-and-set; a lost race drops it and answers the winner", () => {
     const f = fn("intake_door_intake_folder");
@@ -356,5 +395,131 @@ describe("limb (c) — the rail on the intake pointers", () => {
     expect(panel).toContain('if (!intakeLibraryId) {\n        const { error: libErr } = await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);');
     // the move limb needs a SET pointer (v_old_lib IS NOT NULL)
     expect(r()).toContain("AND ((v_old_lib IS NOT NULL AND NEW.intake_library_id IS DISTINCT FROM v_old_lib)");
+  });
+});
+
+// ── Review fix pass (minor): the forward scan for document_versions ─────────
+// J16's census covers documents and cost_documents. A later migration that
+// adds a RESTRICTIVE INSERT / ALL policy on document_versions for every role
+// (or intake_door) without saying how intake_door is treated, re-creates
+// document_versions_insert_integrity without the door limb (from 20261205's
+// body, say), or drops the door's own policies without re-creating them,
+// would quietly take the submission off row-level security (fail-safe: it
+// falls back to the bound identity, filed) — this test announces it.
+const DV = String.raw`(?:public\.)?"?document_versions"?`;
+const CREATE_ON_DV = new RegExp(String.raw`\bCREATE POLICY "?(\w+)"? ON ${DV} (.*)$`, "i");
+const ALTER_ON_DV = new RegExp(String.raw`\bALTER POLICY "?(\w+)"? ON ${DV} (.*)$`, "i");
+const POLICY_TAIL = /^(?:AS (PERMISSIVE|RESTRICTIVE)\s*)?(?:FOR (ALL|SELECT|INSERT|UPDATE|DELETE)\s*)?(?:TO ((?:(?!\bUSING\b|\bWITH CHECK\b).)+?)\s*)?((?:USING|WITH CHECK)\b.*)?$/i;
+const ALTER_TAIL = /^(?:TO ((?:(?!\bUSING\b|\bWITH CHECK\b).)+?)\s*)?((?:USING|WITH CHECK)\b.*)?$/i;
+const appliesToDoor = (to: string | undefined) => !to
+  || to.split(",").map((r) => r.trim().replace(/"/g, "").toLowerCase()).some((r) => r === "public" || r === "intake_door");
+const statements = (sql: string) => code(sql).split(";").map((x) => x.replace(/\s+/g, " ").trim());
+/** The restrictive INSERT / ALL policies on document_versions that schema.sql and every migration create (read once). */
+let restrictiveKnown: Set<string> | null = null;
+function restrictiveVersionPolicies(): Set<string> {
+  if (restrictiveKnown) return restrictiveKnown;
+  const out = new Set<string>();
+  for (const sql of [readFileSync(join(root, "supabase", "schema.sql"), "utf8"), ...numbered().map(mig)]) {
+    for (const st of statements(sql)) {
+      const c = /POLICY/i.test(st) ? st.match(CREATE_ON_DV) : null;
+      const t = c?.[2].match(POLICY_TAIL);
+      if (c && t && /RESTRICTIVE/i.test(t[1] ?? "") && /^(ALL|INSERT)$/i.test(t[2] ?? "ALL")) out.add(c[1]);
+    }
+  }
+  restrictiveKnown = out;
+  return out;
+}
+/** What a migration adds that may refuse the door's submission as intake_door, unless the file says how intake_door is
+ *  treated (a predicate naming it, or a comment `-- intake_door: <policy> …`): a RESTRICTIVE policy FOR INSERT or ALL
+ *  (or no FOR) on document_versions with no TO clause or one naming PUBLIC or intake_door — made directly, in a DO
+ *  block, or by format() in a file naming the table — or an ALTER POLICY re-writing one already restrictive. */
+function restrictsSubmission(sql: string, known: ReadonlySet<string> = restrictiveVersionPolicies()): string[] {
+  const stated = (name: string) => new RegExp(String.raw`--\s*intake_door:\s*"?${name}"?\b`, "i").test(sql);
+  const out: string[] = [];
+  const namesTable = /'(?:public\.)?document_versions'/i.test(code(sql));
+  for (const st of statements(sql)) {
+    if (!/POLICY/i.test(st)) continue;
+    const c = st.match(CREATE_ON_DV);
+    if (c) {
+      const t = c[2].match(POLICY_TAIL);
+      const [kind, cmd, to, predicate] = t ? [t[1], t[2], t[3], t[4] ?? ""] : ["RESTRICTIVE", undefined, undefined, c[2]];
+      if (!/RESTRICTIVE/i.test(kind ?? "") || !/^(ALL|INSERT)$/i.test(cmd ?? "ALL") || !appliesToDoor(to)) continue;
+      if (/\bintake_door/i.test(predicate) || stated(c[1])) continue;
+      out.push(`${c[1]}: ${st.slice(0, 140)}`);
+      continue;
+    }
+    const a = st.match(ALTER_ON_DV);
+    if (a) {
+      if (!known.has(a[1]) || /^RENAME\b/i.test(a[2])) continue;
+      const t = a[2].match(ALTER_TAIL);
+      const [to, predicate] = t ? [t[1], t[2] ?? ""] : [undefined, a[2]];
+      if (!appliesToDoor(to) || /\bintake_door/i.test(predicate) || stated(a[1])) continue;
+      out.push(`${a[1]} (altered): ${st.slice(0, 140)}`);
+      continue;
+    }
+    const f = st.match(/\bCREATE POLICY %I\w* ON %I (.*)$/i);
+    if (f && namesTable && !/--\s*intake_door:/i.test(sql)) {
+      const t = f[1].match(POLICY_TAIL);
+      if (t && /RESTRICTIVE/i.test(t[1] ?? "") && /^(ALL|INSERT)$/i.test(t[2] ?? "ALL") && appliesToDoor(t[3])) out.push(`format(): ${st.slice(0, 140)}`);
+    }
+  }
+  return out;
+}
+/** Every statement of the sequence (schema.sql, then the numbered files in order) that defines, re-writes or drops a policy. */
+function policyHistory(name: string): Array<{ file: string; st: string }> {
+  const files: Array<[string, string]> = [["schema.sql", readFileSync(join(root, "supabase", "schema.sql"), "utf8")], ...numbered().map((f) => [f, mig(f)] as [string, string])];
+  const re = new RegExp(String.raw`\b(CREATE|ALTER|DROP) POLICY (IF EXISTS )?"?${name}"? ON ${DV}\b`, "i");
+  return files.flatMap(([file, sql]) => statements(sql).filter((st) => re.test(st)).map((st) => ({ file, st })));
+}
+
+describe("review fix pass — no later migration takes the door's submission off row-level security unannounced (document_versions, J16's census extended)", () => {
+  it("no migration after 20261214 adds or re-writes a restrictive INSERT / ALL policy on document_versions that applies to intake_door without saying how intake_door is treated", () => {
+    for (const f of numbered().filter((x) => x > FILE)) expect(restrictsSubmission(mig(f)), f).toEqual([]);
+  });
+  it("the newest definition of document_versions_insert_integrity still carries the door limb (CURRENT_USER = 'intake_door'); a re-paste of 20261205's body after this file would fail here", () => {
+    const hist = policyHistory("document_versions_insert_integrity").filter((h) => !/^DROP\b/i.test(h.st));
+    const newest = hist[hist.length - 1];
+    expect(newest.file >= FILE, newest.file).toBe(true);
+    expect(newest.st).toMatch(/CURRENT_USER = 'intake_door' AND review_state = 'in_review' AND released_at IS NULL AND provenance = 'external' AND intake_link_id IS NOT NULL AND created_by IS NULL/);
+    // and it is not dropped after its newest definition
+    const last = policyHistory("document_versions_insert_integrity").slice(-1)[0];
+    expect(/^DROP\b/i.test(last.st), last.file).toBe(false);
+  });
+  it("the door's own two policies are last CREATED (never left dropped) by the newest migration that touches them, each still TO intake_door reading intake_door_may_submit", () => {
+    for (const name of ["document_versions_intake_door_insert", "document_versions_intake_door_scope"]) {
+      const hist = policyHistory(name);
+      const last = hist[hist.length - 1];
+      expect(last.st, `${name} in ${last.file}`).toMatch(new RegExp(String.raw`^CREATE POLICY ${name} ON document_versions AS (PERMISSIVE|RESTRICTIVE) FOR INSERT TO intake_door WITH CHECK \(intake_door_may_submit\(`));
+    }
+  });
+  it("its exclusions are what the sequence holds: up to 20261214 the restrictive INSERT / ALL policy for every role on document_versions without a door clause is 20261205's insert-integrity body, and this file's re-creation passes", () => {
+    const upTo = [readFileSync(join(root, "supabase", "schema.sql"), "utf8"), ...numbered().filter((f) => f < FILE).map(mig)];
+    const found = new Set(upTo.flatMap((sql) => restrictsSubmission(sql)).map((x) => x.slice(0, x.indexOf(":"))));
+    expect([...found].every((n) => n === "document_versions_insert_integrity"), [...found].join(", ")).toBe(true);
+    expect(found.has("document_versions_insert_integrity")).toBe(true);
+    expect(restrictsSubmission(M)).toEqual([]);
+  });
+  it("the detector: a membership-shaped restrictive policy is caught, as are ALL / no FOR, TO public / intake_door, one in a DO block, a format() one, 20261205's integrity body and an ALTER of it; a TO clause leaving intake_door out, a predicate or a comment naming it, a permissive or an UPDATE policy, or another table are not", () => {
+    const hardening = "CREATE POLICY dv_member_insert ON document_versions AS RESTRICTIVE FOR INSERT WITH CHECK (org_id IN (SELECT my_org_ids()));";
+    expect(restrictsSubmission(hardening)).toHaveLength(1);
+    expect(restrictsSubmission(hardening.replace("FOR INSERT", "FOR ALL"))).toHaveLength(1);
+    expect(restrictsSubmission(hardening.replace(" FOR INSERT", ""))).toHaveLength(1);
+    expect(restrictsSubmission(hardening.replace("FOR INSERT", "FOR INSERT TO public"))).toHaveLength(1);
+    expect(restrictsSubmission(hardening.replace("FOR INSERT", "FOR INSERT TO authenticated, intake_door"))).toHaveLength(1);
+    expect(restrictsSubmission(hardening.replace("ON document_versions", "ON public.document_versions"))).toHaveLength(1);
+    expect(restrictsSubmission(`DO $$\nBEGIN\n  ${hardening}\nEND $$;`)).toHaveLength(1);
+    expect(restrictsSubmission("DO $$ DECLARE t text := 'document_versions'; BEGIN\n  EXECUTE format('CREATE POLICY %I ON %I AS RESTRICTIVE FOR INSERT WITH CHECK (%s)', t || '_x', t, 'is_org_controller(org_id)');\nEND $$;")).toHaveLength(1);
+    const p23 = between(mig("20261205_dc_roundF_direct_write_issue_record.sql"), "CREATE POLICY document_versions_insert_integrity ON document_versions", "\n);");
+    expect(restrictsSubmission(`${p23};`)).toHaveLength(1);
+    expect(restrictsSubmission("ALTER POLICY document_versions_insert_integrity ON document_versions WITH CHECK (user_can_publish_doc(record_id, org_id));")).toHaveLength(1);
+    // not caught
+    expect(restrictsSubmission(hardening.replace("FOR INSERT", "FOR INSERT TO authenticated"))).toEqual([]);
+    expect(restrictsSubmission(hardening.replace("(org_id IN", "(CURRENT_USER = 'intake_door' OR org_id IN"))).toEqual([]);
+    expect(restrictsSubmission(`-- intake_door: dv_member_insert — the door's submission is admitted by its own scope policy\n${hardening}`)).toEqual([]);
+    expect(restrictsSubmission(hardening.replace("AS RESTRICTIVE ", ""))).toEqual([]);
+    expect(restrictsSubmission(hardening.replace("FOR INSERT WITH CHECK", "FOR UPDATE USING"))).toEqual([]);
+    expect(restrictsSubmission(hardening.replace("ON document_versions", "ON documents"))).toEqual([]);
+    expect(restrictsSubmission("ALTER POLICY document_versions_org_access ON document_versions USING (org_id IN (SELECT my_org_ids()));")).toEqual([]);
+    expect(restrictsSubmission("ALTER POLICY document_versions_insert_integrity ON document_versions RENAME TO document_versions_integrity;")).toEqual([]);
   });
 });

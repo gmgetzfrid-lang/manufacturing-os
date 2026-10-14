@@ -20,6 +20,8 @@
 // columns refuse a NULL. jsdom supplies DOMParser for the XML-driven test.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 type Row = Record<string, unknown>;
 const db = vi.hoisted(() => ({
@@ -1043,18 +1045,51 @@ describe("SEC-21 residual 3 — a matched milestone keeps its project on a re-im
     expect(milestones().every((r) => r.project_id === PROJECT)).toBe(true);
   });
 
-  it("SEC-24 (projects Round G J20): rows put back on their project (20261215's reattach_stranded_milestones) are matched by a re-import onto that project with the document, and updated IN PLACE — no insert beside them", async () => {
+  it("SEC-24 (projects Round G J20): the stranded rows make a re-import onto their project fail on the per-document index; put back as 20261215's reattach_stranded_milestones does (project_id = P on its candidate set only), the same re-import updates them IN PLACE", async () => {
+    // milestones_external_ref_per_document_uniq (20260704) on (org_id, document_id, source, external_ref), emulated
+    const perDocumentIndex = (r: Row) => r.document_id != null && r.external_ref != null
+      && milestones().some((x) => x.org_id === r.org_id && x.document_id === r.document_id && x.source === r.source && x.external_ref === r.external_ref);
+    db.failInsert = (t, r) => (t === "milestones" && perDocumentIndex(r) ? 'duplicate key value violates unique constraint "milestones_external_ref_per_document_uniq"' : null);
     await importMilestonesFromParsed({ ...scope, documentId: DOC, rows: rowsOf(fileA2) });
-    const ids = milestones().map((r) => r.id).sort();
-    // the pre-J19 document-only re-import's move, then the put-back onto the project
-    for (const r of milestones()) r.project_id = null;
-    for (const r of milestones()) r.project_id = PROJECT;
+    const ids = milestones().map((r) => String(r.id)).sort();
+    expect(ids).toHaveLength(3);
+    // rows the put-back must leave alone: the same document's rows of ANOTHER import source, and another document's
+    milestones().push({ id: "other-source", org_id: ORG, project_id: null, document_id: DOC, source: "msproject", external_ref: "UID-1", name: "Other source" });
+    milestones().push({ id: "other-document", org_id: ORG, project_id: null, document_id: "doc-2", source: "csv", external_ref: "UID-1", name: "Other document" });
+    // the pre-J19 document-only re-import's move: the three rows off P, their document kept
+    for (const r of milestones()) if (ids.includes(String(r.id))) r.project_id = null;
+
+    // the defect: a re-import onto P with D reads only project_id = P, so it misses them, and every insert collides
+    const stuck = await importMilestonesFromParsed({ ...scope, documentId: DOC, rows: rowsOf(fileB) });
+    expect(stuck.inserted).toBe(0);
+    expect(stuck.updated).toBe(0);
+    expect(stuck.errors).toHaveLength(3);
+    expect(milestones()).toHaveLength(5);
+    expect(milestones().filter((r) => ids.includes(String(r.id))).every((r) => r.project_id == null)).toBe(true);
+
+    // the put-back, as the function makes it — its candidates (the org's rows of that document and source on no
+    // project, with a reference), refused on a collision with the project's references, then project_id = P on
+    // exactly those rows. The SQL's own predicates, so this model cannot drift from the function:
+    const sql = readFileSync(join(process.cwd(), "supabase/migrations/20261215_prj_roundG_stranded_milestones.sql"), "utf8");
+    expect(sql).toContain("WHERE m.org_id = p_org AND m.project_id IS NULL AND m.document_id = p_document AND m.source = p_source AND m.external_ref IS NOT NULL");
+    expect(sql).toContain("WHERE o.org_id = p_org AND o.project_id = p_project AND o.source = p_source AND o.external_ref = m.external_ref");
+    expect(sql).toContain("UPDATE milestones SET project_id = p_project, updated_at = NOW(), updated_by = v_uid WHERE id = r.id;");
+    const candidates = milestones().filter((m) => m.org_id === ORG && m.project_id == null && m.document_id === DOC && m.source === "csv" && m.external_ref != null);
+    expect(candidates.map((m) => String(m.id)).sort()).toEqual(ids);
+    const collisions = candidates.filter((m) => milestones().some((o) => o.org_id === ORG && o.project_id === PROJECT && o.source === "csv" && o.external_ref === m.external_ref));
+    expect(collisions).toEqual([]);
+    for (const m of candidates) m.project_id = PROJECT;
+    expect(milestones().find((r) => r.id === "other-source")?.project_id).toBeNull();
+    expect(milestones().find((r) => r.id === "other-document")?.project_id).toBeNull();
+
+    // the same re-import now matches them by project and updates them in place — no insert, no collision
     db.writes = [];
     const again = await importMilestonesFromParsed({ ...scope, documentId: DOC, rows: rowsOf(fileB) });
     expect(again.errors).toEqual([]);
     expect(again).toMatchObject({ inserted: 0, updated: 3 });
-    expect(milestones().map((r) => r.id).sort()).toEqual(ids);
-    expect(milestones().every((r) => r.project_id === PROJECT && r.document_id === DOC)).toBe(true);
+    expect(milestones().filter((r) => r.project_id === PROJECT).map((r) => String(r.id)).sort()).toEqual(ids);
+    expect(milestones().filter((r) => r.project_id === PROJECT).every((r) => r.document_id === DOC)).toBe(true);
+    expect(String(byName("Mobilize").planned_at)).toMatch(/^2026-01-09/);
     expect(db.writes.filter((w) => w.table === "milestones" && w.method === "insert")).toEqual([]);
   });
 

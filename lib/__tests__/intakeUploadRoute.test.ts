@@ -2894,8 +2894,10 @@ describe("SAF-20 — the quote door's success sentence follows the link's contac
 // intake_door_housekeep and intake_door_intake_folder, as supabase/migrations/
 // 20261214 defines them, over the same tables: 'retire' needs a live link;
 // 'restore' / 'withdraw' / 'discard' / 'reference' need the link to exist (they
-// undo or record THIS request's own writes); each row must be the link's own;
-// the link's identity is the bound session. Their SQL ran on a scratch
+// undo or record THIS request's own writes); each row must be the link's own —
+// for 'restore' / 'withdraw' the version alone (an un-assignment mid-request
+// never strands them), for 'retire' the document still the link's own or
+// assigned too; the link's identity is the bound session. Their SQL ran on a scratch
 // PostgreSQL 16 with the real guards (B1–B14 on SEC-22); these cases pin what
 // the ROUTE does with each answer — and that every upload answers as before.
 function installHousekeeping() {
@@ -2912,7 +2914,8 @@ function installHousekeeping() {
     const assigned = assignedTo(l, a.p_doc);
     const ver = (db.tables.document_versions ?? []).find((v) => v.id === a.p_version && v.record_id === a.p_doc && v.org_id === l!.org_id && v.intake_link_id === l!.id);
     if (["retire", "restore", "withdraw"].includes(String(a.p_op))) {
-      if (!ver || !(doc.authored_by_link_id === l.id || assigned)) return doorScope("its own submissions only");
+      if (!ver) return doorScope("its own submissions only");
+      if (a.p_op === "retire" && !(doc.authored_by_link_id === l.id || assigned)) return doorScope("its own submissions only");
       if (a.p_op === "retire" && !(l.allow_auto_supersede && doc.authored_by_link_id === l.id && !assigned)) return doorScope("only a trusted link replaces its own");
     } else if (a.p_op === "discard") {
       if (doc.authored_by_link_id !== l.id || doc.current_version_id) return doorScope("only a document it just created");
@@ -3112,6 +3115,89 @@ describe("SEC-22 (b) (J20) — after 20261214: the door's housekeeping runs as t
     expect(serviceHousekeeping()).toEqual([]);
     expect(spy.mock.calls.some((c) => String(c[0]).includes("project reference for"))).toBe(true);
     spy.mockRestore();
+  });
+
+  it("review fix pass: retire and restore keep the single retry the service-role path makes — a transient failure is asked once more and the upload answers as if it had not happened", async () => {
+    // retire: a deadlock (40P01), then the compare-and-set lands — filed in review, the draft displaced, no 503
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const hk = db.rpc.intake_door_housekeep;
+    let retires = 0;
+    db.rpc.intake_door_housekeep = (x) => (x.p_op === "retire" && ++retires === 1 ? { data: null, error: { code: "40P01", message: "deadlock detected" } } : hk(x));
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("in_review");
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "superseded" });
+    // restore: the pointer race lost, the first restore times out (57014), the second lands — the draft back in
+    // review and NO INTAKE_DISPLACE_UNRESOLVED (before this fix pass a controller had to repair it by hand)
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const hk2 = db.rpc.intake_door_housekeep;
+    let restores = 0;
+    db.rpc.intake_door_point_pending = () => ({ data: 0, error: null });
+    db.rpc.intake_door_housekeep = (x) => (x.p_op === "restore" && ++restores === 1 ? { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } } : hk2(x));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res2 = await upload({ docId: D1, revLabel: "C" });
+    spy.mockRestore();
+    expect(res2.status).toBe(409);
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:withdraw", "housekeep:restore", "housekeep:restore"]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review", superseded_at: null });
+    expect((db.tables.audit_logs ?? []).find((a) => a.action === "INTAKE_DISPLACE_UNRESOLVED")).toBeUndefined();
+    expect(serviceHousekeeping()).toEqual([]);
+  });
+
+  it("review fix pass: a transient failure twice is answered as one failure was (retire 503, restore recorded INTAKE_DISPLACE_UNRESOLVED) — two calls, never a third, never the service role; a door refusal is not retried at all", async () => {
+    const transient = { data: null, error: { code: "08006", message: "connection failure" } };
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    db.rpc.intake_door_housekeep = (x) => (x.p_op === "retire" ? transient : { data: 0, error: null });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(503);
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.writes.filter((w) => w.table === "document_versions" && w.method === "insert")).toEqual([]);
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const hk = db.rpc.intake_door_housekeep;
+    db.rpc.intake_door_point_pending = () => ({ data: 0, error: null });
+    db.rpc.intake_door_housekeep = (x) => (x.p_op === "restore" ? transient : hk(x));
+    await upload({ docId: D1, revLabel: "C" });
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:withdraw", "housekeep:restore", "housekeep:restore"]);
+    expect(db.tables.audit_logs.find((a) => a.action === "INTAKE_DISPLACE_UNRESOLVED")).toMatchObject({ details: expect.objectContaining({ displacedVersionId: "v-pend", error: "connection failure" }) });
+    expect(serviceHousekeeping()).toEqual([]);
+    // a door refusal (42501 scope, 28000 the link) is asked once
+    for (const refusal of [doorScope("its own submissions only"), { data: null, error: { code: "28000", message: "intake_door: the link was revoked.", hint: "revoked" } }]) {
+      resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+      const hk3 = db.rpc.intake_door_housekeep;
+      db.rpc.intake_door_point_pending = () => ({ data: 0, error: null });
+      db.rpc.intake_door_housekeep = (x) => (x.p_op === "restore" ? refusal : hk3(x));
+      await upload({ docId: D1, revLabel: "C" });
+      expect(housekeepCalls().filter((c) => c === "housekeep:restore")).toHaveLength(1);
+      expect(db.tables.audit_logs.find((a) => a.action === "INTAKE_DISPLACE_UNRESOLVED")).toBeTruthy();
+    }
+    spy.mockRestore();
+  });
+
+  it("review fix pass: a document taken off an ASSIGNED link's assignments mid-request does not strand this request's own submission — the lost race's withdraw still lands (it needs only the version to be the link's own)", async () => {
+    resetDb();
+    seed({ link: { assigned_doc_ids: [D1], allow_auto_supersede: false }, doc: { authored_by_link_id: null },
+      versions: [{ id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: null, review_state: "approved", created_at: "2026-09-01T00:00:00Z" }] });
+    installDoor(); installHousekeeping();
+    // a controller un-assigns the document while the request runs, and the pointer write loses its race
+    db.rpc.intake_door_point_pending = () => { db.tables.project_intake_links[0].assigned_doc_ids = []; return { data: 0, error: null }; };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ docId: D1, revLabel: "C" });
+    const logged = spy.mock.calls.map((c) => String(c[0]));
+    spy.mockRestore();
+    expect(res.status).toBe(409);
+    expect(housekeepCalls()).toEqual(["housekeep:withdraw"]);
+    const mine = db.tables.document_versions.filter((v) => v.intake_link_id === LINK && v.record_id === D1);
+    expect(mine).toHaveLength(1);
+    // resolved: never left in review with nothing pointing at it (the in-flight index, "already received", the review data)
+    expect(mine[0]).toMatchObject({ review_state: "superseded" });
+    expect(mine[0].superseded_at).toBeTruthy();
+    expect(logged.some((l) => l.includes("not resolved"))).toBe(false);
+    expect(db.doorSeen).toContainEqual({ fn: "intake_door_housekeep:withdraw", sub: LINK });
+    expect(serviceHousekeeping()).toEqual([]);
   });
 
   it("the intake folder the door refuses for configuration answers 409 'not_configured' — never the revision sentence, nothing stored", async () => {

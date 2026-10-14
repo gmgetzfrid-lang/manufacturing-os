@@ -50,7 +50,9 @@
 --          INSERT / ALL policies use, and any RESTRICTIVE INSERT / ALL policy
 --          for every role (or intake_door) the link may fail — any but the
 --          door's own document_versions_intake_door_scope and
---          document_versions_insert_integrity while it carries the door limb.
+--          document_versions_insert_integrity while it carries the door limb
+--          — and the door's own permissive policy missing (no row would be
+--          admitted as intake_door; Postgres would refuse it naming none).
 --          intake_door_version_rls_ready() asks it for session_user.
 --      Not under row-level security, and why (each pinned on SEC-22):
 --        * the pending pointer — an UPDATE whose WHERE reads documents, so
@@ -75,7 +77,14 @@
 --          (project_documents, DO NOTHING on a repeat). 'restore',
 --          'withdraw', 'discard' and 'reference' undo or record THIS
 --          request's own writes, so they need the link to exist, not to be
---          live: a revocation mid-request never strands them.
+--          live: a revocation mid-request never strands them. 'restore' and
+--          'withdraw' need only the version to be the link's own submission
+--          on the document (not the document still assigned to the link), so
+--          an un-assignment mid-request never strands them either; 'discard'
+--          and 'reference' need the document to be one the link created,
+--          which never changes (INTK-16). Only 'retire' — a submission made
+--          before this request — needs the document still the link's own or
+--          assigned.
 --        * intake_door_intake_folder(token) — the project's intake folder:
 --          the current one when it is a folder of the intake library in the
 --          link's org; otherwise a folder made there and claimed with a
@@ -330,12 +339,23 @@ BEGIN
        AND NOT (pol.polname = 'document_versions_insert_integrity' AND pol.polcmd = 'a'
                 AND pg_get_expr(pol.polwithcheck, pol.polrelid) LIKE '%CURRENT_USER = %intake_door%')
      ORDER BY 1);
+  -- The door's own permissive policy (document_versions_intake_door_insert):
+  -- without a PERMISSIVE INSERT or ALL policy TO intake_door, no row the link
+  -- inserts as intake_door is admitted (the members' policies read
+  -- my_org_ids(), empty for a link) and Postgres refuses it naming no policy,
+  -- which the switch re-raises. So its absence is a gap too: the submission
+  -- keeps the bound identity, filed (J20 review fix pass).
+  IF NOT EXISTS (SELECT 1 FROM pg_policy pol
+                  WHERE pol.polrelid = v_table AND pol.polpermissive AND pol.polcmd IN ('a', '*')
+                    AND v_door = ANY (pol.polroles)) THEN
+    v_gaps := v_gaps || 'no permissive policy for intake_door'::text;
+  END IF;
   RETURN v_gaps;
 END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_version_rls_gaps(name) IS
-  'SEC-22 (a) (J20, 20261214): what the door''s submission INSERT as intake_door would lack here — ''role'', ''switch'' (p_login may not SET the role; MEMBER before PG16), ''execute <function>'' and ''read <table.column>'' for what the live INSERT / ALL policies of document_versions call and read, and ''policy <name>'' for a RESTRICTIVE INSERT / ALL policy of it for every role (or intake_door) the link may fail — any but the door''s own scope policy and document_versions_insert_integrity while it carries the door limb. Empty: the submission may switch. Service role only.';
+  'SEC-22 (a) (J20, 20261214): what the door''s submission INSERT as intake_door would lack here — ''role'', ''switch'' (p_login may not SET the role; MEMBER before PG16), ''execute <function>'' and ''read <table.column>'' for what the live INSERT / ALL policies of document_versions call and read, ''policy <name>'' for a RESTRICTIVE INSERT / ALL policy of it for every role (or intake_door) the link may fail — any but the door''s own scope policy and document_versions_insert_integrity while it carries the door limb — and ''no permissive policy for intake_door'' when no PERMISSIVE INSERT / ALL policy of it names intake_door (the door''s own was dropped). Empty: the submission may switch. Service role only.';
 
 CREATE OR REPLACE FUNCTION public.intake_door_version_rls_ready()
 RETURNS boolean
@@ -529,14 +549,22 @@ BEGIN
   END IF;
   v_assigned := p_doc::text IN (SELECT jsonb_array_elements_text(v_door->'assigned'));
   IF p_op IN ('retire', 'restore', 'withdraw') THEN
+    -- The version is this link's own submission on this document. 'restore'
+    -- and 'withdraw' undo THIS request's own rows, so that is all they need:
+    -- a document taken off the link's assignments mid-request never strands
+    -- them, as a revocation does not.
     IF p_version IS NULL
        OR NOT EXISTS (SELECT 1 FROM document_versions v
-                       WHERE v.id = p_version AND v.record_id = p_doc AND v.org_id = v_org AND v.intake_link_id = v_link)
-       OR NOT (v_author IS NOT DISTINCT FROM v_link OR v_assigned) THEN
+                       WHERE v.id = p_version AND v.record_id = p_doc AND v.org_id = v_org AND v.intake_link_id = v_link) THEN
       RAISE EXCEPTION 'intake_door: this link resolves only its own submissions.' USING ERRCODE = '42501', HINT = 'scope';
     END IF;
-    -- INTK-4 dw3: only a TRUSTED link replaces (retires) a pending submission,
-    -- only on its own (unassigned) document.
+    -- 'retire' resolves a submission made BEFORE this request: the document
+    -- must still be the link's own or assigned to it, and (INTK-4 dw3) only a
+    -- TRUSTED link replaces (retires) a pending submission, only on its own
+    -- (unassigned) document.
+    IF p_op = 'retire' AND NOT (v_author IS NOT DISTINCT FROM v_link OR v_assigned) THEN
+      RAISE EXCEPTION 'intake_door: this link resolves only its own submissions.' USING ERRCODE = '42501', HINT = 'scope';
+    END IF;
     IF p_op = 'retire'
        AND NOT (COALESCE((v_door->>'trusted')::boolean, false) AND v_author IS NOT DISTINCT FROM v_link AND NOT v_assigned) THEN
       RAISE EXCEPTION 'intake_door: only a trusted link replaces its own earlier submission.' USING ERRCODE = '42501', HINT = 'scope';
@@ -587,7 +615,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_housekeep(text, text, uuid, uuid, timestamptz) IS
-  'SEC-22 (b) (J20, 20261214): the contractor door''s housekeeping on its own rows, as the door''s identity (auth.uid() = the link; every guard judges it): retire a trusted link''s own displaced in-review submission (compare-and-set; a live link only), restore it, withdraw the request''s own submission, discard the document the request created (its own, never approved), reference it on the project (project_documents). restore / withdraw / discard / reference need the link to exist, not to be live. Answers the rows written. Service role only.';
+  'SEC-22 (b) (J20, 20261214): the contractor door''s housekeeping on its own rows, as the door''s identity (auth.uid() = the link; every guard judges it): retire a trusted link''s own displaced in-review submission (compare-and-set; a live link only; the document still the link''s own), restore it, withdraw the request''s own submission, discard the document the request created (its own, never approved), reference it on the project (project_documents). restore / withdraw / discard / reference need the link to exist, not to be live; restore / withdraw need only the version to be the link''s own submission (an un-assignment mid-request never strands them). Answers the rows written. Service role only.';
 
 CREATE OR REPLACE FUNCTION public.intake_door_intake_folder(p_token_hash text)
 RETURNS uuid
@@ -812,10 +840,10 @@ SELECT 'intake_door holds column INSERT on what the door inserts in document_ver
                                              AND x.privilege_type = 'EXECUTE')),
        NULL
 UNION ALL
-SELECT 'row-level security for the submission: authenticator (the API''s login) may switch to intake_door, and intake_door may EXECUTE and read what the live INSERT policies of document_versions use — false: each submission keeps the bound identity alone, filed as before (SEC-22)',
+SELECT 'row-level security for the submission: authenticator (the API''s login) may switch to intake_door, intake_door may EXECUTE and read what the live INSERT policies of document_versions use, and the door''s permissive policy is there — false: each submission keeps the bound identity alone, filed as before (SEC-22)',
        to_regrole('authenticator') IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM unnest(intake_door_version_rls_gaps('authenticator')) g
-                        WHERE g IN ('role', 'switch') OR g LIKE 'execute %' OR g LIKE 'read %'),
+                        WHERE g IN ('role', 'switch', 'no permissive policy for intake_door') OR g LIKE 'execute %' OR g LIKE 'read %'),
        NULL
 UNION ALL
 SELECT 'row-level security for the submission: no restrictive INSERT or ALL policy for every role (or intake_door) on document_versions that the link may fail, by the door''s own test — false: one is live, and each submission keeps the bound identity alone, filed as before, until it says how it treats intake_door (SEC-22)',
