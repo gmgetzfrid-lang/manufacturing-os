@@ -18,6 +18,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
+import EstatePanel from "@/components/assets/EstatePanel";
 import { stateStyle, documentState } from "@/lib/stateColors";
 
 interface HubDoc {
@@ -220,6 +221,12 @@ export default function AssetHubPage() {
             </ul>
           )}
         </div>
+
+        {/* Everything the estate knows about it, through the one find service:
+            drawn on, mentioned in, tagged, filed, and the work in flight. */}
+        {asset?.id && activeOrgId && (
+          <EstatePanel orgId={activeOrgId} assetId={asset.id} tag={tag} />
+        )}
 
         {/* Every document that TALKS about this equipment, whether or not
             anyone remembered to tag it. Derived from the indexed text, with

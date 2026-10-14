@@ -17,7 +17,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Search, X, Loader2, Waypoints, HardDrive, Sparkles, Plus, Trash2,
-  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye,
+  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye, Activity,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
@@ -42,6 +42,9 @@ import {
   listFinderListings, saveFinderListing, deleteFinderListing, storeState, type FinderListing,
 } from "@/lib/fileFinder/stores";
 import { estatePost } from "@/lib/estate/client";
+import { findEstate } from "@/lib/find/client";
+import type { FindResponse, FindRelation } from "@/lib/find/types";
+import { EntityStrip, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
 
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-green-100 text-green-800 border-green-200",
@@ -92,6 +95,11 @@ function GraphPageInner() {
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
   const [resolveNote, setResolveNote] = useState<string | null>(null);
+  /** The server's answer (tags, drawn-on, mentions, text, activity). The
+   *  browser's own name/folder ranking shows instantly; this replaces it. */
+  const [serverFind, setServerFind] = useState<FindResponse | null>(null);
+  const [finding, setFinding] = useState(false);
+  const findSeq = useRef(0);
 
   /** Document control runs the resolver over the whole estate on demand. */
   const runResolver = async () => {
@@ -181,9 +189,16 @@ function GraphPageInner() {
   // ── Search ────────────────────────────────────────────────────────────
   const runSearch = useCallback((q: string) => {
     const trimmed = q.trim();
-    if (!trimmed) { setParsed(null); return; }
+    if (!trimmed) { setParsed(null); setServerFind(null); return; }
     setParsed(parseQuery(trimmed, { units: data?.units ?? [], aliases }));
-  }, [data, aliases]);
+    if (!activeOrgId) return;
+    const seq = ++findSeq.current;
+    setFinding(true);
+    findEstate({ orgId: activeOrgId, query: trimmed, limit: 200 })
+      .then((r) => { if (seq === findSeq.current) setServerFind(r); })
+      .catch(() => { if (seq === findSeq.current) setServerFind(null); })
+      .finally(() => { if (seq === findSeq.current) setFinding(false); });
+  }, [data, aliases, activeOrgId]);
 
   const ancestorsOf = useCallback((id: string) => {
     const out: string[] = [];
@@ -193,10 +208,25 @@ function GraphPageInner() {
     return out;
   }, [nodeById]);
 
-  const allHits = useMemo<RankedHit[]>(() => {
+  const localHits = useMemo<RankedHit[]>(() => {
     if (!parsed || !parsed.chips.length) return [];
     return rankEntries(entries, parsed, { units: data?.units ?? [], sameBytes: sameBytesByHash });
   }, [parsed, entries, data, sameBytesByHash]);
+  // Server results, mapped onto the entries this browser holds (listing hits
+  // the server does not know about are kept from the local ranking).
+  const serverById = useMemo(() => new Map((serverFind?.results ?? []).map((r) => [r.id, r])), [serverFind]);
+  const allHits = useMemo<RankedHit[]>(() => {
+    if (!serverFind) return localHits;
+    const out: RankedHit[] = [];
+    for (const r of serverFind.results) {
+      const entry = entryById.get(r.id);
+      if (!entry) continue;
+      const same = (entry.hash && sameBytesByHash.get(entry.hash)?.filter((x) => x.id !== entry.id)) || [];
+      out.push({ entry, score: r.score, verdict: r.verdict, evidence: r.evidence, sameBytes: same });
+    }
+    for (const h of localHits) if (h.entry.source === "listing") out.push(h);
+    return out;
+  }, [serverFind, localHits, entryById, sameBytesByHash]);
 
   // Exploring a folder narrows the results to what is inside it.
   const hits = useMemo(() => (focusId ? allHits.filter((h) => ancestorsOf(h.entry.id).includes(focusId)) : allHits), [allHits, focusId, ancestorsOf]);
@@ -329,6 +359,10 @@ function GraphPageInner() {
     setSelectedId(id);
     window.setTimeout(() => graphRef.current?.focus(id), 80);
   };
+  /** Open at a page: for now the viewer opens on the document; phase 7 lands
+   *  on the sheet with the tag ringed. */
+  const openAtPage = (id: string, _page: number) => { void _page; void openEntry(id); };
+
   /** Open a system document right here: fetch its row and current version,
    *  then put the viewer over the map. The library page is never loaded. */
   const openEntry = useCallback(async (id: string) => {
@@ -419,7 +453,7 @@ function GraphPageInner() {
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Find
                     </button>
                     {parsed && (
-                      <button type="button" onClick={() => { setParsed(null); setQuery(""); }} className="rounded-lg border border-[var(--color-border)] px-3 text-sm"><X className="w-4 h-4" /></button>
+                      <button type="button" onClick={() => { setParsed(null); setServerFind(null); setQuery(""); }} className="rounded-lg border border-[var(--color-border)] px-3 text-sm"><X className="w-4 h-4" /></button>
                     )}
                   </div>
                 </form>
@@ -570,17 +604,53 @@ function GraphPageInner() {
                     {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} — show the whole estate
                   </button>
                 )}
-                {hits.length === 0 && hiddenHits === 0 && (
+                {serverFind && serverFind.entities.length > 0 && <div className="mb-2"><EntityStrip entities={serverFind.entities} /></div>}
+                {finding && <div className="mb-2 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
+                {serverFind && serverFind.hidden.count > 0 && (
+                  <div className="mb-2 text-[11px] text-[var(--color-text-muted)]">
+                    {serverFind.hidden.count} hidden because you asked for a different type: {Object.entries(serverFind.hidden.byType).map(([t, n]) => `${n} ${t}`).join(", ")}.
+                  </div>
+                )}
+                {hits.length === 0 && hiddenHits === 0 && !finding && (
                   <div className="text-sm text-[var(--color-text-muted)]">
                     Nothing in the system or on any pasted drive listing matched. Try fewer words, or teach an alias if people call this something else.
                   </div>
                 )}
                 <div className="space-y-2">
-                  {hits.slice(0, 80).map((h, i) => (
-                    <HitCard key={h.entry.id} hit={h} rank={i + 1} active={activeHit?.entry.id === h.entry.id} onReveal={() => jumpTo(i)} onOpen={() => openEntry(h.entry.id)} />
-                  ))}
-                  {hits.length > 80 && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
+                  {(() => {
+                    const idx = new Map(hits.map((h, i) => [h.entry.id, i]));
+                    const card = (h: RankedHit) => (
+                      <HitCard key={h.entry.id} hit={h} rank={(idx.get(h.entry.id) ?? 0) + 1} active={activeHit?.entry.id === h.entry.id}
+                        relations={serverById.get(h.entry.id)?.relations} pages={serverById.get(h.entry.id)?.pages}
+                        onReveal={() => jumpTo(idx.get(h.entry.id) ?? 0)} onOpen={() => openEntry(h.entry.id)} onPage={(r) => openAtPage(h.entry.id, r.page!)} />
+                    );
+                    if (serverFind && serverFind.groups.length > 1) {
+                      const hitById = new Map(hits.map((h) => [h.entry.id, h]));
+                      return serverFind.groups.map((g) => {
+                        const list = g.ids.map((id) => hitById.get(id)).filter((x): x is RankedHit => !!x).slice(0, 40);
+                        if (!list.length) return null;
+                        return (
+                          <div key={g.key}>
+                            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mt-2 mb-1">{g.label} · {g.ids.length}</div>
+                            <div className="space-y-2">{list.map(card)}</div>
+                          </div>
+                        );
+                      });
+                    }
+                    return hits.slice(0, 80).map(card);
+                  })()}
+                  {hits.length > 80 && !(serverFind && serverFind.groups.length > 1) && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
                 </div>
+                {serverFind && (
+                  <div className="mt-4 space-y-3 border-t border-[var(--color-border)] pt-3">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
+                      <ActivityPanel activity={serverFind.activity} compact />
+                    </div>
+                    <CoverageLine coverage={serverFind.coverage} />
+                    {serverFind.notes.map((n, i) => <div key={i} className="text-[11px] text-amber-700">{n}</div>)}
+                  </div>
+                )}
               </>
             ) : (
               <div className="text-sm text-[var(--color-text-muted)] space-y-2">
@@ -648,7 +718,10 @@ function EvidenceList({ hit }: { hit: RankedHit }) {
   );
 }
 
-function HitCard({ hit, rank, active, onReveal, onOpen }: { hit: RankedHit; rank: number; active: boolean; onReveal: () => void; onOpen: () => void }) {
+function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage }: {
+  hit: RankedHit; rank: number; active: boolean; relations?: FindRelation[]; pages?: Array<{ page: number; snippet: string; knowledgeDocId: string }>;
+  onReveal: () => void; onOpen: () => void; onPage?: (r: FindRelation) => void;
+}) {
   const e = hit.entry;
   return (
     <div className={`rounded-lg border p-2.5 ${active ? "border-sky-400 bg-sky-50/40" : "border-[var(--color-border)] bg-[var(--color-canvas)]"}`}>
@@ -663,6 +736,8 @@ function HitCard({ hit, rank, active, onReveal, onOpen }: { hit: RankedHit; rank
           </div>
           {e.title && e.title !== e.name && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
           <PathCrumbs entry={e} />
+          {relations && <RelationChips relations={relations} onPage={onPage} />}
+          {pages && <PageHits pages={pages} />}
         </button>
         {e.href && (
           <button onClick={onOpen} className="shrink-0 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-surface)]" title="Open the drawing here">

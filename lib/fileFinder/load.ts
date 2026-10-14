@@ -37,14 +37,16 @@ function libraryReadable(row: Record<string, unknown>, role: Role, controller: b
   return toRoles(read).includes(role) || toRoles(row.visible_to).includes(role);
 }
 
-export async function loadFinderData(orgId: string, role: Role, controller: boolean): Promise<FinderData> {
+type Client = Pick<typeof supabase, "from">;
+
+export async function loadFinderData(orgId: string, role: Role, controller: boolean, client: Client = supabase): Promise<FinderData> {
   const truncations: string[] = [];
   const [libsRes, foldersRes, codebook, edgesRes, mirrorsRes] = await Promise.all([
-    supabase.from("libraries").select("id, name, read_access, visible_to").eq("org_id", orgId),
-    supabase.from("collections").select("*").eq("org_id", orgId),
-    loadCodebook(orgId).catch(() => ({ units: [] as Array<{ code: string; label: string }> })),
-    supabase.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").limit(20000),
-    supabase.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed").eq("org_id", orgId).limit(20000),
+    client.from("libraries").select("id, name, read_access, visible_to").eq("org_id", orgId),
+    client.from("collections").select("*").eq("org_id", orgId),
+    loadCodebook(orgId, client).catch(() => ({ units: [] as Array<{ code: string; label: string }> })),
+    client.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").limit(20000),
+    client.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed").eq("org_id", orgId).limit(20000),
   ]);
   const estateMissing = !!edgesRes.error;
   const edges = estateMissing ? [] : (((edgesRes.data as Array<{ a: string; b: string; type: string; summary: string }> | null) ?? []));
@@ -93,7 +95,7 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
   // Documents, paged, capped.
   const docs: Array<DocLike & { current_version_id?: string | null }> = [];
   for (let from = 0; from < DOC_CAP; from += PAGE) {
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("documents")
       .select("id, library_id, collection_id, name, title, document_number, rev, status, effective_date, created_at, sheet_number, asset_tags, metadata, current_version_id")
       .eq("org_id", orgId)
@@ -111,7 +113,7 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
   const versions = new Map<string, VersionMeta>();
   for (let i = 0; i < versionIds.length; i += IN_CHUNK) {
     const chunk = versionIds.slice(i, i + IN_CHUNK);
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from("document_versions")
       .select("id, source_file_name, file_hash, effective_date")
       .in("id", chunk);
