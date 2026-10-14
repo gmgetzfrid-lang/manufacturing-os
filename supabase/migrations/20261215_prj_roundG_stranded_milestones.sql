@@ -56,8 +56,16 @@
 -- in the SQL editor; each answers one jsonb row.
 --
 -- NOT a widening: the function moves rows only onto a project of the same
--- workspace and only the rows the caller counted; RLS and every trigger
--- (20261198's rail, the project record rail) still judge a signed-in caller.
+-- workspace and only the rows the caller counted. Row-level security does NOT
+-- judge its UPDATE or its audit INSERT: it runs as its owner, which bypasses
+-- RLS, so its own checks stand in for the policies — for a signed-in caller,
+-- an org controller (is_org_controller(p_org), judged for auth.uid()) and no
+-- private project. Every row trigger on milestones and audit_logs still fires,
+-- and the ones that judge a signed-in caller judge THE CALLER (auth.uid() is
+-- the caller's in a definer, not the owner's): 20261198's rail (schedule
+-- authority on the project, no private project) and the project record rail
+-- (20261103: no write to a completed / cancelled / archived project's
+-- milestones). The operator (auth.uid() NULL) gets those rails' service pass.
 --
 -- HOW TO APPLY: paste the whole file into the Supabase SQL editor and run it
 -- once (idempotent). The final SELECT is the only result set shown — probe

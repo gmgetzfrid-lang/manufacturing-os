@@ -69,9 +69,10 @@
 --          CURRENT_USER limb (as the integrity limb below, which widens
 --          nothing for members), plus SELECT / UPDATE grants and policies on
 --          documents for intake_door — the app's hottest read policy, for one
---          compare-and-set, not taken on here (proposed as an exception on
---          SEC-22). It stays a SECURITY DEFINER door function with the bound
---          identity, every trigger guard judging it;
+--          compare-and-set, not taken on here (accepted as a documented
+--          exception by the integrator, DEC-90 — SEC-22). It stays a SECURITY
+--          DEFINER door function with the bound identity, every trigger guard
+--          judging it;
 --        * the trusted promote — publish_revision is SECURITY DEFINER by
 --          design; judged by the guards as the link's creator (DEC-56 item 2);
 --        * the redline — the ticket rails' service-only append (20261166).

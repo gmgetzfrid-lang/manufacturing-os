@@ -3263,3 +3263,132 @@ describe("SEC-22 (b) (J20) — after 20261214: the door's housekeeping runs as t
     expect(serviceContentWrites()).toEqual(["documents.insert", "document_versions.insert", "documents.update"]);
   });
 });
+
+// SEC-22 done-when 4 (J20 integrator fix pass): the direct door (INTK-15, the portal's path) runs the same
+// housekeeping as the multipart door, so its finalize is pinned before and after 20261214 too — with the
+// housekeeping functions installed, and absent (20261184 alone; neither pasted).
+describe("SEC-22 (b) (J20) on the direct door (INTK-15): a finalize answers as before with 20261214's housekeeping installed and absent", () => {
+  const STAGING = "intake-staging/o1/p1/lnk1/";
+  const json = (step: "begin" | "finalize", payload: Row) => POST(new NextRequest(
+    `http://x/api/intake/upload?step=${step}`,
+    { method: "POST", body: JSON.stringify(payload), headers: { "x-intake-token": TOKEN, "content-type": "application/json" } },
+  ));
+  /** begin, "PUT" the bytes to the staged key the door chose, then finalize with the multipart field names. */
+  const direct = async (fields: Record<string, string>, bytes: Uint8Array = PDF, name = "sheet.pdf", type = "application/pdf") => {
+    const begun = await (await json("begin", { fileName: name, size: bytes.byteLength, contentType: type })).json() as { uploadKey: string };
+    expect(begun.uploadKey.startsWith(STAGING)).toBe(true);
+    db.r2Objects.set(begun.uploadKey, bytes);
+    const res = await json("finalize", { uploadKey: begun.uploadKey, fileName: name, contentType: type, fields });
+    return { res, staged: begun.uploadKey };
+  };
+  type World = { status: number; body: Row; tables: typeof db.tables; staged: string; deleted: string[] };
+  const run = async (arrange: () => void, install: () => void, fields: Record<string, string>, tweak: () => void = () => undefined): Promise<World> => {
+    resetDb(); arrange(); install(); tweak();
+    const { res, staged } = await direct(fields);
+    return { status: res.status, body: await res.json() as Row, tables: structuredClone(db.tables), staged, deleted: db.r2Deletes.map((d) => String(d.Key)) };
+  };
+  const none = () => undefined;
+  const housekept = () => { installDoor(); installHousekeeping(); };
+  const answer = (x: World) => ({ status: x.status, ...without(x.body, "documentId", "versionId", "ref") });
+  const withOwnPending = () => seed({
+    doc: { pending_version_id: "v-pend" },
+    versions: [
+      { id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", created_at: "2026-09-01T00:00:00Z" },
+      { id: "v-pend", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "in_review", created_at: "2026-09-20T00:00:00Z" },
+    ],
+  });
+
+  it("REGRESSION: a NEW document through finalize answers exactly as before — the folder asked of the door and the project reference written through it, as the link; installed or absent, the staged object removed", async () => {
+    const before = await run(() => seed({ doc: null }), none, { title: "Skid GA", number: "V-300" });
+    const doorOnly = await run(() => seed({ doc: null }), installDoor, { title: "Skid GA", number: "V-300" });
+    // 20261184 without 20261214: the content writes through the door, today's service-role housekeeping, asked once
+    expect(housekeepCalls()).toEqual(["intake_folder"]);
+    expect(serviceHousekeeping()).toEqual(["project_documents.upsert"]);
+    const after = await run(() => seed({ doc: null }), housekept, { title: "Skid GA", number: "V-300" });
+    expect(after.status).toBe(200);
+    expect(after.body.status).toBe("in_review");
+    for (const w of [doorOnly, after]) expect(answer(w)).toEqual(answer(before));
+    expect(housekeepCalls()).toEqual(["intake_folder", "housekeep:reference"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(serviceContentWrites()).toEqual([]);
+    expect(db.doorSeen.filter((s) => s.fn.startsWith("intake_door_housekeep")).every((s) => s.sub === LINK)).toBe(true);
+    for (const w of [before, doorOnly, after]) {
+      expect(w.tables.project_documents).toEqual([expect.objectContaining({ org_id: ORG, project_id: "p1", document_id: w.body.documentId, source: "manual" })]);
+      expect(w.tables.documents.find((d) => d.id === w.body.documentId)).toMatchObject({ authored_by_link_id: LINK, collection_id: "col1" });
+      expect(w.deleted).toContain(w.staged);
+    }
+  });
+
+  it("REGRESSION: a stale intake folder pointer is re-homed by finalize the same way before and after — through the door as the link once 20261214 is pasted", async () => {
+    const arrange = () => { seed({ doc: null }); db.tables.collections.push({ id: "col-elsewhere", org_id: ORG, library_id: "lib-other", name: "Other" }); db.tables.projects[0].intake_collection_id = "col-elsewhere"; };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const before = await run(arrange, none, { title: "Skid GA" });
+    const after = await run(arrange, housekept, { title: "Skid GA" });
+    spy.mockRestore();
+    expect(answer(after)).toEqual(answer(before));
+    for (const w of [before, after]) {
+      const folder = w.tables.collections.find((c) => c.id === w.tables.projects[0].intake_collection_id);
+      expect(folder).toMatchObject({ library_id: "lib1", name: "Intake — Unit 4" });
+      expect(w.tables.documents.find((d) => d.id === w.body.documentId)?.collection_id).toBe(folder?.id);
+    }
+    expect(db.doorSeen).toContainEqual({ fn: "intake_door_intake_folder", sub: LINK });
+    expect(serviceHousekeeping()).toEqual([]);
+  });
+
+  it("REGRESSION: a trusted replace through finalize answers exactly as before — the displaced draft retired through the door after 20261214, by the service role without it", async () => {
+    const before = await run(withOwnPending, none, { docId: D1, revLabel: "C" });
+    const doorOnly = await run(withOwnPending, installDoor, { docId: D1, revLabel: "C" });
+    expect(housekeepCalls()).toEqual(["housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual(["document_versions.update"]);
+    const after = await run(withOwnPending, housekept, { docId: D1, revLabel: "C" });
+    for (const w of [doorOnly, after]) expect(answer(w)).toEqual(answer(before));
+    expect(after.body.status).toBe("in_review");
+    expect(housekeepCalls()).toEqual(["housekeep:retire"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.doorSeen).toContainEqual({ fn: "intake_door_housekeep:retire", sub: LINK });
+    for (const w of [before, doorOnly, after]) {
+      expect(w.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "superseded" });
+      expect(w.tables.documents[0].pending_version_id).toBe(w.body.versionId);
+      expect(w.deleted).toContain(w.staged);
+    }
+  });
+
+  it("REGRESSION: a lost pointer race through finalize answers 409 as before — the replacement withdrawn, then the displaced draft restored, through the door after 20261214", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const before = await run(withOwnPending, none, { docId: D1, revLabel: "C" }, () => { db.errors["documents.update"] = [{ message: "could not serialize access" }]; });
+    const after = await run(withOwnPending, housekept, { docId: D1, revLabel: "C" }, () => { db.rpc.intake_door_point_pending = () => ({ data: 0, error: null }); });
+    spy.mockRestore();
+    expect(before.status).toBe(409);
+    expect(after.status).toBe(409);
+    expect(typeof before.body.error).toBe("string");
+    expect(typeof after.body.error).toBe("string");
+    expect(housekeepCalls()).toEqual(["housekeep:retire", "housekeep:withdraw", "housekeep:restore"]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(after.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review", superseded_at: null });
+    expect(after.tables.document_versions.find((v) => v.id !== "v-pend" && v.id !== "v-cur")).toMatchObject({ review_state: "superseded" });
+    expect(after.deleted).toContain(after.staged);
+  });
+
+  it("a refused submission after a NEW document through finalize discards that document through the door — nothing left behind, never retried as the service role", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const after = await run(() => seed({ doc: null }), housekept, { title: "Skid GA" }, () => {
+      db.rpc.intake_door_submit_version = () => ({ data: null, error: { code: "XX000", message: "boom" } });
+    });
+    spy.mockRestore();
+    expect(after.status).toBe(500);
+    expect(housekeepCalls()).toEqual(["intake_folder", "housekeep:discard"]);
+    expect(after.tables.documents).toEqual([]);
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(serviceContentWrites()).toEqual([]);
+    expect(after.deleted).toContain(after.staged);
+  });
+
+  it("neither 20261184 nor 20261214 pasted: finalize writes everything as today, each door family asked once", async () => {
+    const w = await run(() => seed({ doc: null }), none, { title: "Skid GA" });
+    expect(w.status).toBe(200);
+    expect(doorCalls()).toEqual(["intake_door_create_document"]);
+    expect(housekeepCalls()).toEqual(["intake_folder"]);
+    expect(serviceContentWrites()).toEqual(["documents.insert", "document_versions.insert", "documents.update"]);
+    expect(serviceHousekeeping()).toEqual(["project_documents.upsert"]);
+  });
+});
