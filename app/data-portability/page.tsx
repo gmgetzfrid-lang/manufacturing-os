@@ -52,7 +52,7 @@ export default function DataPortabilityPage() {
             <Bullet icon={<FileJson className="w-4 h-4 text-blue-600" />} title="One JSON file" body="Self-describing. Every Postgres column from our schema preserved verbatim, except the credential columns (share, vendor-intake and transmittal-portal link tokens; backup-destination keys), which are exported empty and named in the manifest. Read it with jq, import into Postgres, or open it in any text editor." />
             <Bullet icon={<Layers className="w-4 h-4 text-purple-600" />} title="Every record type" body="Documents, document_versions, tickets, projects, project_activity, audit_logs, checkout sessions, markup requests, comments, history, configuration — every org-scoped table." />
             <Bullet icon={<Inbox className="w-4 h-4 text-emerald-600" />} title="File manifest with presigned URLs" body="Every file your records reference — issued PDFs and their native CAD sources, redlines, knowledge-library PDFs, output templates, vendor quotes, photos — listed with size + a 24-hour signed download URL so you can pull binaries with curl, wget, or any S3 SDK." />
-            <Bullet icon={<Database className="w-4 h-4 text-amber-600" />} title="Schema DDL in the public repo" body="The complete database schema lives at supabase/schema.sql in our source tree. You can reconstruct the data layer in your own Postgres in minutes." />
+            <Bullet icon={<Database className="w-4 h-4 text-amber-600" />} title="Schema DDL in the public repo" body="The complete database schema is in our source tree: supabase/schema.sql (the starting baseline) followed by every numbered file in supabase/migrations, applied in filename order. You can reconstruct the data layer in your own Postgres." />
           </ul>
         </Section>
 
@@ -99,7 +99,7 @@ export default function DataPortabilityPage() {
             The DDL of every table mentioned above is public. Read it, audit it, fork it.
           </p>
           <a
-            href="https://github.com/gmgetzfrid-lang/manufacturing-os/blob/master/supabase/schema.sql"
+            href="https://github.com/gmgetzfrid-lang/manufacturing-os/tree/master/supabase"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-text)] hover:text-[var(--color-text)] underline"

@@ -4,10 +4,11 @@
 //
 // How each file is sent, and why:
 //   * supabaseStandIn.sql — as the superuser, stopping on the first error.
-//   * supabase/schema.sql — as `postgres`, statement by statement in
-//     autocommit. As ONE script (the editor's way) it stops at :328 on a
-//     fresh database (IRLS-17), so the harness takes what does run and holds
-//     the statements that fail to BASELINE_KNOWN_ERRORS.
+//   * supabase/schema.sql — as `postgres`, the whole file as ONE
+//     simple-query message, exactly as the SQL editor sends a paste (since
+//     intelligence I-27, IRLS-17: until then it stopped at :328 on a fresh
+//     database, so the harness ran it statement by statement). Its error, if
+//     any, is held to BASELINE_KNOWN_ERRORS (empty).
 //   * each numbered migration — as `postgres`, the whole file as ONE
 //     simple-query message, exactly as the Supabase SQL editor sends a paste
 //     (one implicit transaction unless the file opens its own; the first error
@@ -22,7 +23,8 @@
 //     that the stop exists. The largest file today, 20261157, is about 99 kB.
 //
 // The replay never edits a file. A file that fails is recorded; the known
-// ones (OUT_OF_ORDER_FILES) are re-run once at the end when they rolled back.
+// ones (OUT_OF_ORDER_FILES, empty since I-27) are re-run once at the end when
+// they rolled back.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -58,10 +60,10 @@ export function numberedMigrations(repoRoot: string): string[] {
     .sort();
 }
 
-function runMigration(conn: PgConn, db: string, path: string, file: string): FileOutcome {
+/** One file as ONE simple-query message (a paste), or a stop naming it when it is too large to send that way. */
+function runAsPaste(conn: PgConn, db: string, path: string, file: string, settings: Record<string, string> = {}): FileOutcome {
   const t0 = Date.now();
   const body = readFileSync(path, "utf8");
-  const settings = OPERATOR_SWITCHES[file] ?? {};
   const bytes = Buffer.byteLength(body);
   if (bytes > MAX_C_BYTES) {
     throw new Error(
@@ -71,6 +73,10 @@ function runMigration(conn: PgConn, db: string, path: string, file: string): Fil
   }
   const r = runPsql(conn, db, "postgres", { sql: body }, settings);
   return { file, ok: r.ok, error: r.ok ? null : (r.error ?? r.stderr.trim().split("\n")[0] ?? "unknown failure"), ms: Date.now() - t0 };
+}
+
+function runMigration(conn: PgConn, db: string, path: string, file: string): FileOutcome {
+  return runAsPaste(conn, db, path, file, OPERATOR_SWITCHES[file] ?? {});
 }
 
 /** The helper schema the RLS tests call through (never part of the census). */
@@ -103,8 +109,11 @@ export function replayFreshInstall(conn: PgConn, repoRoot: string, log: (line: s
   if (!standIn.ok) throw new Error(`the Supabase stand-in failed: ${standIn.error ?? standIn.stderr}`);
   const vector = adminSql(conn, REPLAY_DB, "SELECT extversion FROM pg_extension WHERE extname = 'vector'") || null;
 
-  const baseline = runPsql(conn, REPLAY_DB, "postgres", { file: join(repoRoot, "supabase", "schema.sql"), stopOnError: false });
-  log(`[test:db] baseline supabase/schema.sql: ${baseline.errors.length} statement(s) failed (known: IRLS-17)`);
+  // supabase/schema.sql as ONE script, the editor's way (IRLS-17): an error
+  // anywhere rolls the whole paste back, so its first error is the outcome.
+  const baseline = runAsPaste(conn, REPLAY_DB, join(repoRoot, "supabase", "schema.sql"), "supabase/schema.sql");
+  const baselineErrors = baseline.ok ? [] : [baseline.error ?? "unknown failure"];
+  log(`[test:db] baseline supabase/schema.sql as one script: ${baseline.ok ? "ok" : `FAILED — ${baselineErrors[0]}`}`);
 
   const checkpoints: Record<string, string> = {};
   const files: FileOutcome[] = [];
@@ -137,5 +146,5 @@ export function replayFreshInstall(conn: PgConn, repoRoot: string, log: (line: s
   }
 
   for (const db of [REPLAY_DB, ...Object.values(checkpoints)]) adminSql(conn, db, HARNESS_SCHEMA);
-  return { engine, vector, database: REPLAY_DB, checkpoints, baselineErrors: baseline.errors, files, retries, ms: Date.now() - t0 };
+  return { engine, vector, database: REPLAY_DB, checkpoints, baselineErrors, files, retries, ms: Date.now() - t0 };
 }

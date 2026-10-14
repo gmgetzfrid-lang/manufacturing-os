@@ -162,6 +162,17 @@ SELECT 'workspace-default AI caps stored as $0 (every member on the default is l
 
 Both counts 0: deploy. A non-zero count is a workspace that meant "unlimited". Set a real figure first (AI settings, or an UPDATE of that row), then deploy. (int/99-fix-sequencing.md, "Deploy order — intelligence Round G I-05"; `DEC-73` item 2.)
 
+
+### E. An optional read-only check, any time (intelligence I-27, merged 2026-10-14)
+
+`20260630` (older than this guide) builds four indexes; on a brand-new database its last one failed until I-27 corrected the file. Every live database is expected to have all four. To confirm, paste this read-only query. It changes nothing:
+
+```sql
+SELECT count(*) AS n FROM pg_indexes WHERE schemaname = 'public' AND indexname IN
+  ('documents_folder_listing_idx', 'collections_org_library_idx', 'org_members_uid_org_active_idx', 'team_members_uid_idx');
+```
+
+4: nothing to do. Fewer: paste `supabase/migrations/20260630_perf_indexes.sql` (now safe in any order and on any database; a re-paste changes nothing). (int/16-persistence-rls.md `IRLS-18`.)
 ---
 
 ## 4. Ordered table (numeric order)
@@ -246,7 +257,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
 | 67 PASTE | `20261072`: document `review_control` guard and audit triggers | RG-5 | 20261070 (dc/03-review-gate.md:212, :216) | — | — | Pending (dc/03-review-gate.md:216) |
 | 68 PASTE | `20261073`: `document_holds` integrity | HLD-5, HLD-9, HLD-7 | — | — | — | *"Until pasted the forgery door is open"* (dc/04-holds.md:251). Wrong-org holds must be deleted before any restore from an older backup (h:44-50) |
 | 69 PASTE | `20261074`: held-document label rails | HLD-1 (DB half) | — | — | — | *"the label rails do not exist until pasted"* (dc/04-holds.md:61) |
-| 70 HOLD | `20261075`: checkout episode seal — **DO NOT PASTE YET (IRLS-19, found 2026-10-14 by intelligence I-17's fresh replay): its final verification SELECT reads a column named `check` unquoted, a syntax error. Pasted as one script in the SQL editor it fails and applies nothing; a corrected file comes with intelligence I-27 and this row will then say so.** | DCK-14 | — | — | — | *"done-when 1 holds only once the SQL is applied"* (dc/01-checkout.md:686) |
+| 70 PASTE | `20261075`: checkout episode seal — *corrected in place 2026-10-14 by intelligence I-27 (`IRLS-19`): as first written its final SELECT named the `check` column bare, so a paste failed and applied nothing; that one identifier is now quoted and nothing else changed.* Paste it now, **even though later rows are already pasted**: nothing after it re-creates its function or trigger (proved on the full replay). Not a widening; idempotent, safe to re-paste. Expect ONE result set of 9 rows: 5 probes `ok = true` (guard installed; closed episodes immutable; no seal over an active session; service role passes; search_path pinned) and 4 counts-only inventory rows (ok blank). The app works before and after it. | DCK-14 | — | — | — | *"done-when 1 holds only once the SQL is applied"* (dc/01-checkout.md:686) |
 | 71 PASTE | `20261077`: records rails | HLD-1, RET-4, RET-6, DRLS-4, RET-13 | bodies from **LIVE** 20261043 and 20261036 (h:9-26) | Never re-paste 20261036 or 20261043 after it **(derived)** | — | Pending (dc/08-retention.md:194; dc/10-rls.md:190) |
 | 72 PASTE | `20261080`: share minting tier, durable revocation, 90-day cap. **On apply, never-expiring links older than 90 days expire** (h:52-55). | DIST-6, SHR-4, EGR-5, SHR-3, REV-10, DRLS-5, DRLS-7, SHR-13 | 20261068 (DEC:1997) | Precede 20261081 (20261081:47) and 20261140 (20261140:38). Never re-paste after 20261140 **(derived)**. Re-creates 22/26/37's objects. | §3B | *"not applied"* (dc/10-rls.md:322; ps/02-share-links.md:215) |
 | 73 PASTE | `20261081`: per-access share log; `bump_share_access` pinned | SHR-10, SHR-12 | 20261080 (h:47-49) | — | §3B | *"not applied"* (dc/10-rls.md:323) |
@@ -352,7 +363,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
 1. **20261129**, now.
 2. Settle the ASK rows (1–19) and the STEP 0 gate on row 20 (§5).
 3. Paste in this order:
-   - 20261068, 20261070, 20261071, 20261072, 20261073, 20261074, 20261077, 20261080, 20261081 (20261075 is on HOLD — row 70)
+   - 20261068, 20261070, 20261071, 20261072, 20261073, 20261074, 20261075 (corrected 2026-10-14 — paste it now even if later rows are in), 20261077, 20261080, 20261081
    - 20261091, 20261093, 20261094, 20261095, 20261096, 20261097, 20261098, 20261099, 20261102, 20261103, 20261104, 20261105, 20261106, 20261107
    - 20261120, 20261121, 20261122, 20261123, 20261125, 20261126, 20261127, 20261128
    - 20261130, 20261132, 20261133, 20261134, 20261136, 20261137, 20261138, 20261140, 20261147, 20261148, 20261152, 20261154, 20261150, 20261151, 20261158, 20261155, 20261153, 20261162, 20261160, 20261161, 20261163, 20261172, 20261181, 20261186, 20261183, 20261184 (after 20261141), 20261188, 20261170, 20261171 (after 20261170), 20261194, 20261175, 20261176, 20261177, 20261191 (immediately before the N9 deploy, outside 03:00 UTC), 20261178, 20261197, 20261203, 20261204 (after 20261161), 20261201, 20261200 (after 20261148), 20261216 (supersedes 20261210 — do NOT paste 20261210), 20261217, 20261206 (after 20261191; before the N15 deploy), 20261209 (after 20261203)
