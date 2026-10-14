@@ -11,13 +11,20 @@ async function token(): Promise<string> {
 }
 
 export async function estatePost<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${await token()}` },
-    body: JSON.stringify(body),
-  });
+  const headers = { "content-type": "application/json", authorization: `Bearer ${await token()}` };
+  const once = async () => fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  let res: Response;
+  try { res = await once(); }
+  catch (e) {
+    // "Failed to fetch": the connection dropped (QUIC resets, a flaky
+    // network, the offline worker). One retry after a breath covers nearly
+    // every one of these.
+    await new Promise((r) => setTimeout(r, 1500));
+    try { res = await once(); }
+    catch { throw new Error(`The connection dropped twice talking to the server (${(e as Error).message}). Check the network and try again.`); }
+  }
   const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!res.ok || !data) throw new Error(data?.error ?? `Request failed (${res.status})`);
+  if (!res.ok || !data) throw new Error(data?.error ?? (res.status === 503 ? "The app is offline right now (503). Reconnect and try again." : `Request failed (${res.status})`));
   return data;
 }
 

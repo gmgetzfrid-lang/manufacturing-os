@@ -86,6 +86,7 @@ function GraphPageInner() {
   const controller = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [data, setData] = useState<FinderData | null>(null);
+  const dataRef = useRef<FinderData | null>(null); useEffect(() => { dataRef.current = data; }, [data]);
   const [aliases, setAliases] = useState<FinderAlias[]>([]);
   const [listings, setListings] = useState<FinderListing[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,7 +144,12 @@ function GraphPageInner() {
         listFinderListings(activeOrgId).catch((e) => { console.warn("[finder] listings:", e); return []; }),
       ]);
       setAliases(a); setListings(l);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) {
+      const msg = (e as Error).message;
+      // A dropped connection ("Failed to fetch") mid-refresh must not take a
+      // working map away: keep what is on screen and say so quietly.
+      setError(dataRef.current ? `Couldn't refresh the map (${msg}). Showing the last good one — reload the page to try again.` : msg);
+    }
     finally { setLoading(false); }
   }, [activeOrgId, activeRole, controller]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -496,8 +502,10 @@ function GraphPageInner() {
     <div className="flex flex-col h-[calc(100vh-56px)]">
       <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
       {error && (
-        <div className="mx-4 mt-3 px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4" /> {error}
+        <div className={`mx-4 mt-3 px-3 py-2 rounded-lg border text-sm flex items-center gap-2 ${data ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+          <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="flex-1">{error}</span>
+          <button onClick={() => { setError(null); void refresh(); }} className="font-bold hover:underline">Retry</button>
+          <button onClick={() => setError(null)} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
       )}
       <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr_380px]">
