@@ -19,9 +19,23 @@
 // name and never as "No library". Sent back unchanged it is no change — the
 // route skips its check for the ticket's own library (DF-P4 second fix pass).
 //
+// DF-P4 third fix pass — a library is never CLEARED at triage: the route
+// reads a null / empty libraryId as "no change" and computeTransition can
+// only set library_id. So on a ticket that already has a library
+// (`currentLibraryId`), the picker offers NO "No library" choice — it would
+// be a clear the server silently does not make. It offers the current
+// library (by name when the assigner may discover it, else as "the target
+// library (current)") and the libraries the assigner may switch to; the
+// current option is keyed on `currentLibraryId`, not on the live `value`,
+// so it can be chosen again after the selection moves away. A null `value`
+// on such a ticket shows the current library selected (sending null, or
+// the current id, is the same no-change).
+//
 // Mounted by DF-P9 in the assign modal, one line:
-//   <LibraryPicker orgId={ticket.orgId} value={libraryId} onChange={setLibraryId} />
-// and the modal sends `libraryId` with the action.
+//   <LibraryPicker orgId={ticket.orgId} currentLibraryId={ticket.libraryId ?? null}
+//                  value={libraryId} onChange={setLibraryId} />
+// (`libraryId` may be initialised from ticket.libraryId) and the modal sends
+// `libraryId` with the action.
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -40,9 +54,13 @@ export interface LibraryPickerProps {
   disabled?: boolean;
   /** The label shown above the select. */
   label?: string;
+  /** The ticket's stored library (ticket.libraryId). Set → no "No library"
+   *  choice (triage never clears a library) and the current library stays
+   *  selectable whatever `value` is now. */
+  currentLibraryId?: string | null;
 }
 
-export function LibraryPicker({ orgId, value, onChange, disabled, label = "Target library" }: LibraryPickerProps) {
+export function LibraryPicker({ orgId, value, onChange, disabled, label = "Target library", currentLibraryId = null }: LibraryPickerProps) {
   const { uid, activeRole, roles } = useRole();
   const [rows, setRows] = useState<LibraryChoiceRow[]>([]);
   const [teamIds, setTeamIds] = useState<string[]>([]);
@@ -78,6 +96,12 @@ export function LibraryPicker({ orgId, value, onChange, disabled, label = "Targe
     activeRole === null ? null : { uid: uid ?? "", role: activeRole, roles, orgId, teamIds }
   ), [uid, activeRole, roles, orgId, teamIds]);
   const options = useMemo(() => offerableLibraries(rows, principal), [rows, principal]);
+  const current = currentLibraryId || null;
+  const selected = value ?? current ?? "";
+  // A library id the list does not offer — the ticket's current one, or a
+  // value the modal was given — is shown without its name.
+  const hiddenIds = [current, value].filter((id, i, all): id is string =>
+    !!id && all.indexOf(id) === i && !options.some((o) => o.id === id));
 
   return (
     <label className="block">
@@ -85,14 +109,14 @@ export function LibraryPicker({ orgId, value, onChange, disabled, label = "Targe
       <select
         data-testid="library-picker"
         className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm"
-        value={value ?? ""}
+        value={selected}
         disabled={disabled || state === "loading"}
         onChange={(e) => onChange(e.target.value ? e.target.value : null)}
       >
-        <option value="">{NO_LIBRARY_LABEL}</option>
-        {value && !options.some((o) => o.id === value) && (
-          <option key={`current-${value}`} value={value}>{CURRENT_HIDDEN_LIBRARY_LABEL}</option>
-        )}
+        {!current && <option value="">{NO_LIBRARY_LABEL}</option>}
+        {hiddenIds.map((id) => (
+          <option key={`current-${id}`} value={id}>{CURRENT_HIDDEN_LIBRARY_LABEL}</option>
+        ))}
         {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>
       {state === "error" && (

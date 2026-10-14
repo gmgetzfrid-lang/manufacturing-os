@@ -81,6 +81,12 @@ interface Body {
  *  documents.id). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** GAP-8 (DF-P4 fix pass 3): the intent bridge's slice — one `.in()` read,
+ *  one upsert and one delete per leg cover this many sheets. Equal to
+ *  MAX_SOURCE_DOCUMENTS (lib/ticketCreate.ts), so every ticket the create
+ *  route can make is one slice; a hand-edited longer list is still bounded. */
+const INTENT_BRIDGE_CHUNK = 200;
+
 /** EVID-12: the actions that approve a submitted draft — their audit row
  *  names the drafts the approval was given on. */
 const APPROVING_ACTIONS: ReadonlySet<string> = new Set(["approve_draft_ifc", "engineer_approve_final", "approve_minor_correction"]);
@@ -1108,95 +1114,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
-  // EDIT INTENT on the source document — visible on the coordination surfaces
-  // and feeding overlap advisories, WITHOUT taking a lock (intent decays on
-  // its own; no zombie-lock factory). Ticket closure — or cancellation, the
-  // other terminal exit (WF-17) — clears it. Best-effort: never fails the
-  // transition; no-op on pre-migration envs.
-  // GAP-8 acceptance 2 (DF-P4): every sheet the request names —
-  // parseSourceDocuments: the singular source_document first, then each
-  // entry of metadata.source_documents — not only the primary. Each sheet is
-  // read in the ticket's org (SM-14) and gets its own intent row; a
-  // single-source ticket (every historical row) is a list of one and is
-  // handled exactly as before.
-  try {
-    for (const srcDoc of parseSourceDocuments(ticket.metadata)) {
-      const drafterId =
-        (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
-      const drafterName =
-        (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
-      const isReassign = action.action === "reassign_drafter";
-      // Statuses where the ticket's intents are cleared wholesale (below).
-      const clearsAll = newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT";
-      // WF-18: a reassignment hands the ticket to a different drafter, so
-      // the PREVIOUS drafter's ticket-sourced intent is retired now rather
-      // than lingering on the coordination surfaces until its TTL — two
-      // drafters were shown editing for one ticket. Reassignment never
-      // moves the status, and it is offered at every live status with a
-      // drafter (PENDING_REVIEW, PENDING_FINAL_APPROVAL and PENDING_IFC
-      // included), so the retirement runs for all of them — not only the
-      // two statuses that register an intent.
-      if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
-        await supabaseAdmin
-          .from("document_intents")
-          .delete()
-          .eq("document_id", srcDoc.id)
-          .eq("ticket_id", body.ticketId)
-          .eq("source", "ticket")
-          .eq("user_id", ticket.assignedDrafterId);
-      }
-      // The new drafter is registered where the ticket is on a drafter's
-      // bench: entering DRAFTING / REVISION_REQ (every assignment), and on
-      // reassignment at PENDING_IFC (the package is being issued). A
-      // reassignment while the draft is under review registers nothing —
-      // the next return to REVISION_REQ does.
-      const registersDrafter =
-        newStatus === "DRAFTING" || newStatus === "REVISION_REQ" || (isReassign && newStatus === "PENDING_IFC");
-      if (registersDrafter) {
-        // SM-14: the source document is read IN THE TICKET'S ORG (as the
-        // CLOSED hand-back path reads it); a document id from another
-        // workspace registers nothing.
-        const { data: docRow } = drafterId
-          ? await supabaseAdmin
-              .from("documents")
-              .select("current_version_id, library_id")
-              .eq("id", srcDoc.id)
-              .eq("org_id", ticket.orgId)
-              .maybeSingle()
-          : { data: null };
-        if (drafterId && docRow) {
-          await supabaseAdmin.from("document_intents").upsert(
-            {
-              org_id: ticket.orgId,
-              document_id: srcDoc.id,
-              library_id: (docRow as { library_id?: string | null } | null)?.library_id ?? null,
-              user_id: drafterId,
-              user_name: drafterName ?? null,
-              kind: "edit",
-              source: "ticket",
-              base_version_id:
-                (docRow as { current_version_id?: string | null } | null)?.current_version_id ?? null,
-              ticket_id: body.ticketId,
-              refreshed_at: new Date().toISOString(),
-              expires_at: new Date(Date.now() + TICKET_INTENT_TTL_MS).toISOString(),
-            },
-            { onConflict: "document_id,user_id,kind,source" },
-          );
-        }
-      } else if (clearsAll) {
-        await supabaseAdmin
-          .from("document_intents")
-          .delete()
-          .eq("document_id", srcDoc.id)
-          .eq("ticket_id", body.ticketId)
-          .eq("source", "ticket");
-      }
-    }
-  } catch (e) {
-    console.warn("[workflow-action] intent bridge failed (non-blocking)", e);
-  }
-
   // Fan-out — also server-side, so it survives the client closing the tab.
   // Failures here never fail the action (the transition is already committed);
   // they're logged for the maintenance cron's visibility.
@@ -1226,6 +1143,114 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     console.error("[workflow-action] fan-out failed (transition committed):", e);
+  }
+
+  // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
+  // EDIT INTENT on the source document — visible on the coordination surfaces
+  // and feeding overlap advisories, WITHOUT taking a lock (intent decays on
+  // its own; no zombie-lock factory). Ticket closure — or cancellation, the
+  // other terminal exit (WF-17) — clears it. Best-effort: never fails the
+  // transition; no-op on pre-migration envs.
+  // GAP-8 acceptance 2 (DF-P4): every sheet the request names —
+  // parseSourceDocuments: the singular source_document first, then each
+  // entry of metadata.source_documents — not only the primary. Every sheet is
+  // read in the ticket's org (SM-14) and gets its own intent row; a
+  // single-source ticket (every historical row) is a list of one.
+  // BATCHED (DF-P4 fix pass 3): a book request carries up to
+  // MAX_SOURCE_DOCUMENTS sheets, so the bridge never makes a round trip per
+  // sheet — one read of every sheet, one upsert of every intent row, one
+  // delete per retirement leg, each in INTENT_BRIDGE_CHUNK slices (one slice
+  // for any ticket the create route can make). And it runs AFTER the fan-out
+  // above: the drafter's notice never waits on it.
+  try {
+    const sheetIds = parseSourceDocuments(ticket.metadata).map((d) => d.id);
+    const slices: string[][] = [];
+    for (let i = 0; i < sheetIds.length; i += INTENT_BRIDGE_CHUNK) slices.push(sheetIds.slice(i, i + INTENT_BRIDGE_CHUNK));
+    const drafterId =
+      (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
+    const drafterName =
+      (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
+    const isReassign = action.action === "reassign_drafter";
+    // Statuses where the ticket's intents are cleared wholesale (below).
+    const clearsAll = newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT";
+    // WF-18: a reassignment hands the ticket to a different drafter, so
+    // the PREVIOUS drafter's ticket-sourced intent is retired now rather
+    // than lingering on the coordination surfaces until its TTL — two
+    // drafters were shown editing for one ticket. Reassignment never
+    // moves the status, and it is offered at every live status with a
+    // drafter (PENDING_REVIEW, PENDING_FINAL_APPROVAL and PENDING_IFC
+    // included), so the retirement runs for all of them — not only the
+    // two statuses that register an intent.
+    if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
+      for (const ids of slices) {
+        await supabaseAdmin
+          .from("document_intents")
+          .delete()
+          .in("document_id", ids)
+          .eq("ticket_id", body.ticketId)
+          .eq("source", "ticket")
+          .eq("user_id", ticket.assignedDrafterId);
+      }
+    }
+    // The new drafter is registered where the ticket is on a drafter's
+    // bench: entering DRAFTING / REVISION_REQ (every assignment), and on
+    // reassignment at PENDING_IFC (the package is being issued). A
+    // reassignment while the draft is under review registers nothing —
+    // the next return to REVISION_REQ does.
+    const registersDrafter =
+      newStatus === "DRAFTING" || newStatus === "REVISION_REQ" || (isReassign && newStatus === "PENDING_IFC");
+    if (registersDrafter) {
+      if (drafterId) {
+        // SM-14: the source documents are read IN THE TICKET'S ORG (as the
+        // CLOSED hand-back path reads them); a document id from another
+        // workspace — or one that is gone — registers nothing.
+        const found = new Map<string, { current_version_id?: string | null; library_id?: string | null }>();
+        for (const ids of slices) {
+          const { data: docRows, error: docErr } = await supabaseAdmin
+            .from("documents")
+            .select("id, current_version_id, library_id")
+            .in("id", ids)
+            .eq("org_id", ticket.orgId);
+          if (docErr) {
+            console.warn(`[workflow-action] intent bridge: source documents unreadable for ticket ${body.ticketId} (non-blocking)`, docErr.message);
+            continue;
+          }
+          for (const r of (docRows ?? []) as Array<{ id?: string; current_version_id?: string | null; library_id?: string | null }>) {
+            if (r?.id) found.set(r.id, r);
+          }
+        }
+        const now = Date.now();
+        const rows = sheetIds.filter((id) => found.has(id)).map((id) => ({
+          org_id: ticket.orgId,
+          document_id: id,
+          library_id: found.get(id)?.library_id ?? null,
+          user_id: drafterId,
+          user_name: drafterName ?? null,
+          kind: "edit",
+          source: "ticket",
+          base_version_id: found.get(id)?.current_version_id ?? null,
+          ticket_id: body.ticketId,
+          refreshed_at: new Date(now).toISOString(),
+          expires_at: new Date(now + TICKET_INTENT_TTL_MS).toISOString(),
+        }));
+        for (let i = 0; i < rows.length; i += INTENT_BRIDGE_CHUNK) {
+          await supabaseAdmin
+            .from("document_intents")
+            .upsert(rows.slice(i, i + INTENT_BRIDGE_CHUNK), { onConflict: "document_id,user_id,kind,source" });
+        }
+      }
+    } else if (clearsAll) {
+      for (const ids of slices) {
+        await supabaseAdmin
+          .from("document_intents")
+          .delete()
+          .in("document_id", ids)
+          .eq("ticket_id", body.ticketId)
+          .eq("source", "ticket");
+      }
+    }
+  } catch (e) {
+    console.warn("[workflow-action] intent bridge failed (non-blocking)", e);
   }
 
   return NextResponse.json({

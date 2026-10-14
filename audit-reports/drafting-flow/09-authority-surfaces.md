@@ -144,7 +144,7 @@ supabase/migrations/20260901_db_hard_enforcement.sql:3-4 — `-- Promotes the la
 ## AUTHZ-3 · `requester_role` is free text stamped by the client at INSERT and is the only input to the "must an engineer sign this off" decision
 
 - **Severity:** CRITICAL
-- **Status:** RESOLVED
+- **Status:** RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)
 - **Assigned:** drafting-flow DF-P4 LIBRARY (the narrowing migration AFTER the DF-P2 deploy: drop `tickets_org_insert` (20261166) or stamp `requester_name` / `requester_role` in `ticket_insert_integrity` from `org_members` — never before the deploy) — by the integrator, 2026-10-13 (at the DF-P2 merge, DEC-31: DF-P2 has merged and named these limbs in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2"; fleet plan updated).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/new/page.tsx:309`, `supabase/schema.sql:410`, `lib/ticketTransitions.ts:65`, `lib/workflow.ts:37-43`, `lib/workflow.ts:78`, `lib/workflow.ts:198-218`
@@ -208,7 +208,7 @@ lib/workflow.ts:200 — `          if (needsEngineerApproval && !isEng) {`
 - ✓ Unchanged (`DEC-16`).
 - ✓ Unchanged.
 
-**Scope / residual.** None. Never re-paste `20261166` after `20261208` (it would restore `tickets_org_insert`).
+**Scope / residual.** The database half holds only once `20261208` is pasted (the Status line says so — *corrected at the DF-P4 third fix pass*, which found a plain 'RESOLVED' overstated it under `DEC-29`). Never re-paste `20261166` after `20261208` (it would restore `tickets_org_insert`).
 
 ---
 
@@ -565,7 +565,7 @@ lib/serverAuth.ts:57 — `  if (!allowedRoles.includes(role || "")) return { err
 ## AUTHZ-10 · Drafting-request form configuration: the UI gate and the database gate disagree in both directions
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261209`, after `20261203`; until it is pasted a DocCtrl's save is refused by the database and Manager / Supervisor can still write the key directly)
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/requests/page.tsx:64-69`, `app/(protected)/admin/requests/page.tsx:97-100`, `supabase/migrations/20260818_followups_rls.sql:72-82`, `supabase/migrations/20260818_followups_rls.sql:23-31`, `lib/roleCapabilities.ts:53`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed in both directions: DocCtrl reaches the page but is denied by the RLS restrictive policy on the upsert (page.tsx:97-100 upsert, caught by the generic `catch` that only shows "Failed to save configuration."), while Manager/Supervisor/DraftingSupervisor satisfy the DB policy but are redirected out of the page. No other writer of key='drafting' exists (only lib/ticketRouting.ts:49 reads it), so there is no alternate path that rescues DocCtrl.
@@ -622,7 +622,7 @@ CREATE POLICY org_config_key_writes_upd ON org_configurations
 - ✓ The save surfaces the real RLS error text.
 - ✓ A test asserts the roles that can open the page equal the roles the DB policy accepts.
 
-**Scope / residual.** Paste `20261209` (paste row in DF-P4's report). `lib/roleCapabilities.ts` still lists `assign_drafters` for Manager / Supervisor (the queue's authority, not this configuration's) — unchanged. `DEC-44 (DF-P4)` item 1.
+**Scope / residual.** Paste `20261209` (paste row in DF-P4's report); the database half — DocCtrl's save, Manager / Supervisor narrowed — holds only after it (the Status line says so, *DF-P4 third fix pass*). `lib/roleCapabilities.ts` still lists `assign_drafters` for Manager / Supervisor (the queue's authority, not this configuration's) — unchanged. `DEC-44 (DF-P4)` item 1.
 
 ---
 
