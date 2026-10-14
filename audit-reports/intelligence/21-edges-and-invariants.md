@@ -340,7 +340,16 @@ supabase/migrations/20260929_mention_engine.sql:74-76 — `CREATE POLICY entity_
 
 **Remaining / owner.** Criterion 1's remainder is `DACL-1` criterion 1 and the private-draft rule `KACL-7` names (owner named on `DACL-1`).
 
-**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`).
+**Partial (2026-10-14, intelligence I-12, at the integration merge; `DEC-90` rulings R2 and R5).** `20261212`'s deny binding now self-gates on drop boxes (R2, recorded on `DACL-12`): it applies only where the paste's six precondition counts are 0. Asserted at runtime on PostgreSQL 16 through the I-17 harness (`lib/__tests__/rls/intelMentionRowsAcl.test.ts`, binding applied on the replayed fresh install): a member without access to a mirrored document — private and granted to another role, or normal with an index denying the member's role read — gets zero mention rows and no sentence for it; a member with access and a controller get the row; another workspace's member gets nothing.
+
+**Done-when.**
+1. Partly — ✓ for a READ deny once `20261212` is pasted with its gate open (held back where a drop box exists); ✗ the normal row's allow-list (R5) and the private-draft rule.
+2. ✓ (as recorded).
+
+**Remaining / owner.**
+- **Assigned (2026-10-14, the integrator at the I-12 merge):** intelligence I-30 NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED GRANTS (criterion 1's remainder — the allow-list at the database, R5, the private-draft rule, and lifting the drop-box gate).
+
+**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`, before the I-12 deploy; the deny binding self-gates on drop boxes).
 
 ---
 
@@ -592,12 +601,13 @@ Tests: `lib/__tests__/intelRoundGDocAcl.test.ts` "IEDGE-12 — the AI seam and t
 
 **Done-when.**
 1. ◐ One predicate in the app (`canReadNode`, the private-draft rule included), used by `knowledgeAccess` and the download-url guard alike; `node_visible` is SQL and agrees with it on every deny and zero-rule case, but not on a normal row's allow-list (`DACL-1` criterion 1) — the matrix pins that residual.
-2. ✓ A normal-visibility document carrying an explicit read deny is refused by the AI seam, the bytes door, the library page and (once `20261212` is pasted) a direct PostgREST read and everything reading through it (`doc_is_visible`, the mirror and mention policies).
+2. ✓ A normal-visibility document carrying an explicit read deny is refused by the AI seam, the bytes door, the library page and (once `20261212` is pasted) a direct PostgREST read and everything reading through it (`doc_is_visible`, the mirror and mention policies). *(Qualified at the I-12 merge fix pass, 2026-10-14: "once `20261212` is pasted" now means pasted with its drop-box gate open — `DEC-90` R2; where a drop box exists the database limb is held back until intelligence I-30 lifts the gate, and the app's doors still refuse.)*
 3. ✓ A test proves the ask route's seam and the download endpoint agree on the same document / principal pairs — private drafts and legacy read lists included (review fix: the first matrix omitted the private-draft pair, on which the two doors disagreed).
 
 *Third review fix (2026-10-14, same package): "the bytes door" above is `/api/storage/download-url`, not every door to the bytes.* `/api/storage/resolve` still signs any org key on membership alone (`app/api/storage/resolve/route.ts:55-90` — drafting-flow `AUTHZ-4`, OPEN, owner drafting-flow DF-P11, whose plan entry applies this door's decision there), so a member `documentKeyGate` refuses can get a signed URL for the same key from it; and `download-url`'s gate runs only for a key with the `orgs/<orgId>/` prefix (`if (orgMatch)`), so a key without it keeps its prior behaviour. Criterion 3's agreement holds between the AI seam and `download-url`; it does not reach `/api/storage/resolve` until DF-P11 lands. Also since the third review fix: `readableControlledDocIds` throws on a failed read of the documents' own rows (`KACL-12`), and the inherit fix's grant half is withheld until a `DEC-90` ruling (`DACL-9`) — both doors follow, as they share the predicate.
 
 **Remaining / owner.** Criterion 1's database half is `DACL-1` criterion 1 (owner named there). `/api/storage/resolve` (`AUTHZ-4`) — owner drafting-flow DF-P11. Recorded at the review fix, not a criterion here: the service-role page reader `lib/docFileServer.ts` (`mayReadContent`, the SEC-10 door that hands a linked document's pages to a model) evaluates the same chain rule through `canWithAclChain` but does not apply the private-draft rule — owner: the integrator to route to that door's owner (projects SEC-10), the change being to pass the row's `is_private` / `scope` / `created_by` into `canReadNode`.
+- **Assigned (2026-10-14, the integrator at the I-12 merge):** intelligence I-30 NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED GRANTS (criterion 1's database half — a normal row's allow-list in `node_visible`, `DEC-90` R5 — and lifting `20261212`'s drop-box gate, so criterion 2's database limb applies wherever a drop box exists; at the paste the binding applies only where the six precondition counts are 0, R2, recorded on `DACL-12`).
 
 **Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`). *Second review fix (2026-10-14): on a normal row whose index carries a read deny, `node_visible` now reads the caller's roles and teams first and answers a row the deny does not name at once — the controller check and the ownership cascade only where it names them (same answers; the cost per row is `DACL-12`'s record); the same paste adds `KACL-5`'s source-key index and `DACL-9`'s inventory.*
 

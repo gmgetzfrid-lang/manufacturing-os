@@ -465,6 +465,16 @@ Tests: `lib/__tests__/processFlowsLib.test.ts` ("resolveAssetEndpoints — IRLS-
 
 **Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`).
 
+**Partial (2026-10-14, intelligence I-12, at the integration merge).** The I-17 harness now exists (`npm run test:db`: a real PostgreSQL 16, every migration replayed, statements run as PostgREST runs a request — `SET ROLE` plus `request.jwt.claims`). Criterion 3 asks for exactly this finding's case, not merely a policy run per role, so a new harness suite asserts it: `lib/__tests__/rls/intelMentionRowsAcl.test.ts:62` — a Viewer without access to a mirrored PRIVATE document (granted to Engineer) gets zero `entity_mentions` rows for it (`:64`), the Engineer and a controller (Viewer + DocCtrl) get its row, another workspace's member gets nothing; `:74` — the same for a NORMAL document whose index denies the Viewer's role read (`:76`; `20261212`'s binding applied on the replayed fresh install, which has no drop box); `:81` — the mirror row itself follows the same access; `:93` — the sentence (`context_snippet`) is withheld with the row. `20261212`'s deny binding now self-gates on drop boxes (`DEC-90` R2, recorded on `DACL-12`).
+
+**Done-when.**
+1. Partly — ✓ for a read deny once `20261212` is pasted with its gate open; ✗ a normal row's allow-list and a private draft (as recorded).
+2. Partly — the same split.
+3. ✓ Closed by pointer: `lib/__tests__/rls/intelMentionRowsAcl.test.ts:62` (`:64`) and `:74` (`:76`), run by `npm run test:db`.
+
+**Remaining / owner.**
+- **Assigned (2026-10-14, the integrator at the I-12 merge):** intelligence I-30 NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED GRANTS (criteria 1–2's remainder — the allow-list at the database, `DEC-90` R5, the private-draft rule, and lifting `20261212`'s drop-box gate).
+
 ---
 
 <a id="irls-10"></a>
