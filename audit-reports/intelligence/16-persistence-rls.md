@@ -1,6 +1,6 @@
 # 16 · Persistence & RLS across the layer
 
-**16 findings** — 1 CRITICAL · 4 HIGH · 7 MEDIUM · 4 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30; `IRLS-16` opened by I-23, 2026-10-07).
+**19 findings** — 1 CRITICAL · 4 HIGH · 9 MEDIUM · 5 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30; `IRLS-16` opened by I-23, 2026-10-07; `IRLS-17` (MEDIUM), `IRLS-18` (LOW) and `IRLS-19` (MEDIUM) opened by I-17, 2026-10-14).
 
 Table by table: who can write what, and which writes carry authority.
 
@@ -303,14 +303,14 @@ Measured 2026-10-14, PostgreSQL 16.13 with pgvector 0.6.0, 299 numbered files:
 **Done-when.**
 - ✓ (2026-09-30) The `knowledge_questions` ALTER is guarded in `20260806` and carried by `20261123`. The replay confirms both run clean.
 - ✗ Not met as written: "a fresh-database replay of migrations in filename order completes with zero errors". The replay now runs on every `npm run test:db`, and it reports two numbered files that fail in filename order (`IRLS-18`, `IRLS-19`) plus the baseline's own failure (`IRLS-17`). None of the three is this finding's defect.
-- ✓, on a generous reading (corrected at the review fix pass, 2026-10-14). On the harness's install, `/api/admin/schema-health` reports every `EXPECTED_TABLE`, and every expected column and function, present. That install is not a literal fresh install, in four ways:
-  - It runs `schema.sql` statement by statement (`IRLS-17`).
-  - It re-runs `20260630` after the sequence (`IRLS-18`).
-  - It lacks everything in `20261075`, which cannot be parsed (`IRLS-19`).
-  - The route's `GET` handler is answered through a PostgREST stand-in that the replayed database serves, not a real Supabase project.
-  The integrator may read done-when 3 as met only once `IRLS-17/18/19` land and the replay is clean. IRLS-6 stays OPEN on done-when 2 either way.
+- ✗ Not met (re-checked at the I-17 integrator fix pass, 2026-10-14). On the harness's install, `/api/admin/schema-health` reports every `EXPECTED_TABLE`, and every expected column and function, present (`healthy: true`). The integrator's narrowing (DEC-90) would count that as met if the install differed from a literal fresh install only in ways the route does not read. That is not true. The install differs in four ways, and the route reads two of them:
+  - **Read:** it runs `schema.sql` statement by statement (`IRLS-17`). Sent as one script, the way the editor sends a paste, `schema.sql` stops at `:328` and its one implicit transaction rolls back, so none of its tables exist (measured on PostgreSQL 16.13: 0 tables in `public` afterwards). 16 of the route's `EXPECTED_TABLES` rows, and one `EXPECTED_COLUMNS` row (`org_configurations.data`), name `schema.sql (base schema)` as their source, and the route reads every one of them.
+  - **Read:** the route's `GET` handler is answered through a PostgREST stand-in that the replayed database serves, not a real Supabase project. Every read the route makes goes through it.
+  - Not read: it re-runs `20260630` after the sequence (`IRLS-18`). That file creates four indexes, and the route probes tables, columns and functions only.
+  - Not read: it lacks everything in `20261075`, which cannot be parsed (`IRLS-19`). Its trigger function `enforce_checkout_episode_guard()` and its trigger are in none of `EXPECTED_TABLES`, `EXPECTED_COLUMNS` or `EXPECTED_FUNCTIONS`.
+  Done-when 3 can be met once `IRLS-17` lands and the route is run against that install, through the stand-in only if the integrator accepts it in place of a real Supabase project.
 
-**Scope / residual.** IRLS-6 stays OPEN only for done-when 2. It closes by record once `IRLS-17`, `IRLS-18` and `IRLS-19` land: at that point `replayKnownDefects.ts` lists nothing and `freshReplay.test.ts` reads zero errors. Owner of the remainder: the integrator, routing those three (DEC-31). No migration from this package touches it.
+**Scope / residual.** IRLS-6 stays OPEN on done-when 2 and done-when 3. Done-when 2 closes by record once `IRLS-17`, `IRLS-18` and `IRLS-19` land: at that point `replayKnownDefects.ts` lists nothing and `freshReplay.test.ts` reads zero errors. Done-when 3 closes once `IRLS-17` lands and the route is run as above. Owner of the remainder: intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge), which holds all three findings. No migration from this package touches it.
 
 ---
 
@@ -823,7 +823,7 @@ No page calls this branch today (the graph posts `{ orgId }` only), so nothing a
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** — (the integrator, to route; `schema.sql` is the shared pre-migration baseline, last reshaped by document-control `PKG-14` / `HLD-12`). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). `schema.sql` is the shared pre-migration baseline, last reshaped by document-control `PKG-14` / `HLD-12`. Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
 - **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness, `npm run test:db`)
 - **Locations:** `supabase/schema.sql:319-331`, `:400`, `:501-502`, `:656-663`, `:933`, `:1392-1395`; `lib/__tests__/rls/replayKnownDefects.ts` (`BASELINE_KNOWN_ERRORS`)
 
@@ -853,7 +853,7 @@ lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements t
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** — (the integrator, to route). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
 - **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness)
 - **Locations:** `supabase/migrations/20260630_perf_indexes.sql:24-25`, `supabase/migrations/20260707_teams.sql` (creates `team_members`)
 
@@ -872,7 +872,7 @@ lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements t
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** — (the integrator, to route to document-control: `DCK-14`'s file, P6). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). The file is document-control's (`DCK-14`, P6). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
 - **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness; the paste protocol is the editor's single simple-query message)
 - **Locations:** `supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql:126` (`SELECT check, NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;`), `:43` (the column is created as `AS check`); `audit-reports/MIGRATION-PASTE-ORDER.md` row 70 (PASTE)
 
@@ -886,9 +886,15 @@ lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements t
 lib/__tests__/rls/freshReplay.test.ts — "20261075 cannot be pasted as written: the editor parses the whole script first, so its final SELECT's syntax error leaves the guard uninstalled (IRLS-19)": pg_trigger has 0 rows named trg_checkout_episode_guard after the replay.
 ```
 
+**What a paste does today** (measured 2026-10-14 at the I-17 integrator fix pass, PostgreSQL 16.13, on copies of the replay; `freshReplay.test.ts`, "IRLS-19: 20261075 sent as …"):
+- **As one script**, which is how the Supabase SQL editor sends a paste: the file fails with `syntax error at or near "check"`, and **no statement applies**. PostgreSQL parses the whole message before it runs any statement, so not even the opening inventory TEMP TABLE is made. `enforce_checkout_episode_guard()` and `trg_checkout_episode_guard` are both absent afterwards.
+- **Statement by statement** (`psql -f`, not the editor's way): every statement before the final SELECT applies, and only that verification SELECT fails, with the same error. The inventory is made, and the `BEGIN … COMMIT` installs the guard function (SECURITY DEFINER, `search_path` pinned) and its trigger.
+
+**What this decides: an in-place correction, not a new numbered file.** A paste in the editor has never applied any of the file, on any database. A statement-by-statement run applied exactly the DDL a corrected file applies, and that DDL re-runs cleanly (`DROP TABLE IF EXISTS` before the TEMP TABLE, `CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS` before `CREATE TRIGGER`). So quoting the column in `20261075` itself leaves no database in a state a later file would have to repair, whichever way the file was run.
+
 **Done when.**
 
-- [ ] `20261075`'s final SELECT quotes the column (`SELECT "check", NULL::boolean, n …`), and the file parses and applies as one paste.
+- [ ] `20261075`'s final SELECT quotes the column (`SELECT "check", NULL::boolean, n …`), in place (above), and the file parses and applies as one paste.
 - [ ] `20261075` leaves `OUT_OF_ORDER_FILES`, its definer trigger function `enforce_checkout_episode_guard()` joins the census (`TRIGGER_FUNCTIONS` in `lib/__tests__/rls/definerDecisions.ts`), and `npm run test:db` passes.
 
 ---

@@ -114,6 +114,35 @@ describe.skipIf(skip !== null)("IRLS-6: a fresh install replays in filename orde
     expect(admin(REPLAY_DB, `SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_checkout_episode_guard' AND tgrelid = 'checkout_episodes'::regclass`)).toBe("0");
   });
 
+  // IRLS-19's question — does any statement of 20261075 apply when it is
+  // pasted today? — answered both ways on a copy of the replay.
+  const f75 = "20261075_dc_roundF_checkout_episode_seal.sql";
+  const installed = (db: string) => admin(db, `SELECT (SELECT count(*) FROM pg_proc WHERE proname = 'enforce_checkout_episode_guard') || '/' || (SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_checkout_episode_guard')`);
+  for (const mode of ["one script (the SQL editor's paste)", "statement by statement (psql -f)"] as const) {
+    it(`IRLS-19: 20261075 sent as ${mode}`, () => {
+      const db = "mos_irls19";
+      admin("postgres", `CREATE DATABASE ${db} TEMPLATE ${REPLAY_DB}`);
+      try {
+        const path = join(process.cwd(), "supabase", "migrations", f75);
+        const r = mode.startsWith("one")
+          ? runPsql(mosDb().conn!, db, "postgres", { sql: readFileSync(path, "utf8") })
+          : runPsql(mosDb().conn!, db, "postgres", { file: path, stopOnError: false });
+        // either way the one error is the final SELECT's bare `check`
+        expect(r.errors).toEqual(['syntax error at or near "check"']);
+        if (mode.startsWith("one")) {
+          // nothing applies: not the inventory, not the function, not the trigger
+          expect(installed(db)).toBe("0/0");
+        } else {
+          // every statement before the final SELECT applies: the guard is installed
+          expect(installed(db)).toBe("1/1");
+          expect(admin(db, `SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%' FROM pg_proc WHERE proname = 'enforce_checkout_episode_guard'`)).toBe("t");
+        }
+      } finally {
+        admin("postgres", `DROP DATABASE ${db}`);
+      }
+    });
+  }
+
   it("the operator-gated file refuses without its switch and changes nothing (the harness supplies only the documented switch)", () => {
     const file = "20261141_prj_roundG_intake_token_hash_and_adoption.sql";
     expect(Object.keys(OPERATOR_SWITCHES)).toEqual([file]);

@@ -9,16 +9,16 @@
     "audit-reports/projects-and-cost/05-intake-door.md"
   ],
   "totals": {
-    "findings": 77,
+    "findings": 78,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 22,
       "MEDIUM": 39,
-      "LOW": 14
+      "LOW": 15
     },
     "by_status": {
-      "RESOLVED": 75,
+      "RESOLVED": 76,
       "OPEN": 2
     }
   },
@@ -1861,9 +1861,9 @@
       "id": "INTK-14",
       "title": "`bump_intake_use` is a SECURITY DEFINER function with no REVOKE — PostgREST exposes it and any caller can tamper with any org's intake-link usage record",
       "severity": "LOW",
-      "status": "OPEN",
-      "verification": "SUSPECTED",
-      "verification_note": null,
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (on the database harness's fresh replay, PostgreSQL 16.13: the grant state read with `has_function_privilege`; the live project's grants are reproduced from Supabase's documented default privileges)",
       "blast_radius": null,
       "related": [],
       "locations": [
@@ -1934,6 +1934,28 @@
       ],
       "refuted": false,
       "summary": "After 20261151 is pasted, a vendor's revision of a document with an active hold reaches the Intake tab. The controller who clicks Approve is told to release the hold. If the hold must stay (for example, a quality hold that the revision itself answers), there is no recorded way through from this tab. The same controller would get one from the document's review panel.",
+      "area": "projects-and-cost",
+      "report": "audit-reports/projects-and-cost/05-intake-door.md"
+    },
+    {
+      "id": "INTK-19",
+      "title": "Six SECURITY DEFINER helpers answer questions about ANY person — five to the public anon key, one to any signed-in account — because they take the uid (or project) to judge as a parameter",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (grant state read with `has_function_privilege` on a fresh replay of the whole sequence, PostgreSQL 16.13; `lib/__tests__/rls/definerCensus.test.ts`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/__tests__/rls/definerDecisions.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "- A former contractor who kept workspace uuids from their session calls orgcapabilityallows(org, 'document.publish', <a colleague's uid>) with the anon key and maps who holds which authority, with no session and no audit row. - A user signed into any workspace, a different tenant included, calls rpc/orgcapabilityallowsfor(<org>, 'document.publish', <colleague uid>, '{}') with their own JWT and doe",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
     },

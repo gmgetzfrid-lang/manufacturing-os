@@ -45,17 +45,41 @@ function run(cmd: string, args: string[], opts: { input?: string; env?: NodeJS.P
 /** The major version the harness runs on unless the operator says otherwise. */
 export const PREFERRED_MAJOR = 16;
 
-function candidateDirs(env: NodeJS.ProcessEnv, packageDirs: boolean): string[] {
+/**
+ * What discovery asks of the machine. The real one reads the file system and
+ * runs the binaries; a test of the rule itself passes its own (the default
+ * suite never writes or executes a script — a noexec temp directory must not
+ * fail a CI that passes today).
+ */
+export interface DiscoveryHost {
+  exists(path: string): boolean;
+  listDir(path: string): string[];
+  /** Runs a program and waits; `error` is set when it could not be started. */
+  run(cmd: string, args: string[]): { status: number | null; stdout: string; error?: Error };
+  isRoot(): boolean;
+}
+
+export const REAL_HOST: DiscoveryHost = {
+  exists: (p) => existsSync(p),
+  listDir: (p) => readdirSync(p),
+  run: (cmd, args) => {
+    const r = run(cmd, args);
+    return { status: r.status, stdout: r.stdout ?? "", error: r.error };
+  },
+  isRoot: () => typeof process.getuid === "function" && process.getuid() === 0,
+};
+
+function candidateDirs(env: NodeJS.ProcessEnv, packageDirs: boolean, host: DiscoveryHost): string[] {
   // An explicit bin directory is the operator's choice: only it is tried.
   if (env.MOS_TEST_PG_BIN) return [env.MOS_TEST_PG_BIN];
   const out: string[] = [];
   for (const d of (env.PATH ?? "").split(delimiter)) if (d) out.push(d);
   if (!packageDirs) return out;
   const debian = "/usr/lib/postgresql";
-  if (existsSync(debian)) {
+  if (host.exists(debian)) {
     // 16 first, then the rest newest first (they are refused unless allowed).
     const rank = (v: string) => (Number(v) === PREFERRED_MAJOR ? Number.MAX_SAFE_INTEGER : Number(v));
-    for (const v of readdirSync(debian).filter((x) => /^\d+$/.test(x)).sort((a, b) => rank(b) - rank(a))) {
+    for (const v of host.listDir(debian).filter((x) => /^\d+$/.test(x)).sort((a, b) => rank(b) - rank(a))) {
       out.push(join(debian, v, "bin"));
     }
   }
@@ -73,40 +97,42 @@ function allowedMajors(env: NodeJS.ProcessEnv): Set<number> {
 /**
  * Finds a PostgreSQL 16 the harness can start (or the major the operator
  * allowed), or names what is missing. `packageDirs: false` searches PATH (or
- * $MOS_TEST_PG_BIN) only — for tests of the rule itself.
+ * $MOS_TEST_PG_BIN) only, and `host` replaces the file system and the
+ * binaries — both for tests of the rule itself.
  */
-export function discoverPostgres(env: NodeJS.ProcessEnv = process.env, opts: { packageDirs?: boolean } = {}): Discovery {
+export function discoverPostgres(env: NodeJS.ProcessEnv = process.env, opts: { packageDirs?: boolean; host?: DiscoveryHost } = {}): Discovery {
+  const host = opts.host ?? REAL_HOST;
   let seenOld: string | null = null;
   const seenOther: string[] = [];
   const explicit = Boolean(env.MOS_TEST_PG_BIN);
   const allowed = allowedMajors(env);
-  for (const dir of candidateDirs(env, opts.packageDirs ?? true)) {
+  for (const dir of candidateDirs(env, opts.packageDirs ?? true, host)) {
     const initdb = join(dir, "initdb");
     const pgCtl = join(dir, "pg_ctl");
     const psql = join(dir, "psql");
     const postgres = join(dir, "postgres");
-    if (!existsSync(initdb) || !existsSync(pgCtl) || !existsSync(psql) || !existsSync(postgres)) continue;
-    const v = run(postgres, ["--version"]);
+    if (!host.exists(initdb) || !host.exists(pgCtl) || !host.exists(psql) || !host.exists(postgres)) continue;
+    const v = host.run(postgres, ["--version"]);
     const m = /(\d+)(?:\.(\d+))?/.exec(v.stdout ?? "");
     const major = m ? Number(m[1]) : 0;
     if (major < PREFERRED_MAJOR) { seenOld = `${postgres} is ${String(v.stdout).trim() || "unknown"}`; continue; }
     if (!explicit && !allowed.has(major)) { seenOther.push(`PostgreSQL ${major} at ${dir}`); continue; }
     let runAs: PgBinaries["runAs"] = null;
-    if (typeof process.getuid === "function" && process.getuid() === 0) {
+    if (host.isRoot()) {
       const name = env.MOS_TEST_PG_USER || "postgres";
-      const uid = run("id", ["-u", name]);
-      const gid = run("id", ["-g", name]);
+      const uid = host.run("id", ["-u", name]);
+      const gid = host.run("id", ["-g", name]);
       if (uid.status !== 0 || gid.status !== 0) {
         return { ok: false, missing: `a non-root OS user for initdb (running as root; no user '${name}' — set MOS_TEST_PG_USER)` };
       }
-      if (run("runuser", ["--help"]).error) {
+      if (host.run("runuser", ["--help"]).error) {
         return { ok: false, missing: "runuser (running as root; initdb must run as a non-root user)" };
       }
       runAs = { name, uid: Number(uid.stdout.trim()), gid: Number(gid.stdout.trim()) };
     }
-    const sharedir = run(join(dir, "pg_config"), ["--sharedir"]);
+    const sharedir = host.run(join(dir, "pg_config"), ["--sharedir"]);
     const share = sharedir.status === 0 ? sharedir.stdout.trim() : "";
-    if (share && !existsSync(join(share, "extension", "vector.control"))) {
+    if (share && !host.exists(join(share, "extension", "vector.control"))) {
       return { ok: false, missing: `pgvector (${join(share, "extension", "vector.control")}; 20260930 creates the vector extension — install postgresql-${major}-pgvector)` };
     }
     return { ok: true, bin: { dir, initdb, pgCtl, psql, major, version: String(v.stdout).trim(), runAs } };

@@ -7,11 +7,17 @@
 //     include and the `test` script are what they were;
 //   * the opt-in config includes only lib/__tests__/rls/;
 //   * with no PostgreSQL the discovery names what is missing (the opt-in run
-//     then skips loudly, never fails);
-//   * 20261217's one-paste shape (DEC-30) and its one guarded REVOKE
-//     (DRLS-16), and the three functions DEC-90 ruling 4 leaves recorded;
+//     then skips loudly, never fails), and its rule is tested here as pure
+//     logic over an injected host: this suite never writes or executes a
+//     script (a noexec temp directory must not fail CI); the same three
+//     cases against real executables run in the opt-in suite
+//     (lib/__tests__/rls/discovery.test.ts);
+//   * 20261217's one-paste shape (DEC-30), its live-database precondition
+//     and its one guarded REVOKE (DRLS-16), and the three functions the
+//     integrator's DEC-90 ruling 4 leaves as they are;
 //   * the call sites those decisions were reasoned from, so a new caller
-//     makes someone re-read the decision;
+//     makes someone re-read the decision (a subset check: a caller that goes
+//     away never trips it);
 //   * discovery runs on PostgreSQL 16 unless the operator says otherwise, and
 //     the replay stops on a migration too large to send as one paste (the
 //     size itself is checked by the opt-in run only: a limit of the harness's
@@ -21,12 +27,11 @@
 //     the migrations' text), and a function that takes a person either binds
 //     it or is an oracle with an owner (INTK-19).
 
-import { describe, it, expect, afterAll } from "vitest";
-import { readFileSync, readdirSync, existsSync, statSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { describe, it, expect } from "vitest";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { discoverPostgres } from "./rls/pgHarness";
-import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_OWNER, TRIGGER_FUNCTIONS } from "./rls/definerDecisions";
+import { discoverPostgres, type DiscoveryHost } from "./rls/pgHarness";
+import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_RULED, TRIGGER_FUNCTIONS } from "./rls/definerDecisions";
 import { BASELINE_KNOWN_ERRORS, CHECKPOINTS, OPERATOR_SWITCHES, OUT_OF_ORDER_FILES } from "./rls/replayKnownDefects";
 import { numberedMigrations } from "./rls/replay";
 
@@ -71,43 +76,78 @@ describe("I-17: the database harness is opt-in", () => {
     if (!d.ok) expect(d.missing).toMatch(/initdb .*MOS_TEST_PG_BIN=\/nonexistent-mos-pg-bin/);
   });
 
-  describe("discovery runs on PostgreSQL 16 unless the operator says otherwise", () => {
-    const made: string[] = [];
-    // A stand-in bin directory: initdb / pg_ctl / psql exist, postgres prints a version.
-    const fakeBin = (version: string) => {
-      const dir = mkdtempSync(join(tmpdir(), "mos-fake-pg-"));
-      made.push(dir);
-      for (const f of ["initdb", "pg_ctl", "psql"]) writeFileSync(join(dir, f), "#!/bin/sh\nexit 0\n");
-      writeFileSync(join(dir, "postgres"), `#!/bin/sh\necho "postgres (PostgreSQL) ${version}"\n`);
-      for (const f of ["initdb", "pg_ctl", "psql", "postgres"]) chmodSync(join(dir, f), 0o755);
-      return dir;
+  describe("discovery runs on PostgreSQL 16 unless the operator says otherwise (pure logic: an injected host, nothing executed)", () => {
+    // A machine made of bin directories, each with the version its
+    // `postgres --version` prints. Nothing is written or run.
+    const machine = (dirs: Record<string, string>, o: { root?: boolean; users?: string[]; runuser?: boolean; share?: Record<string, boolean> } = {}): DiscoveryHost & { ran: string[] } => {
+      const ran: string[] = [];
+      const bins = ["initdb", "pg_ctl", "psql", "postgres"];
+      return {
+        ran,
+        exists: (p) => Object.keys(dirs).some((d) => bins.some((b) => p === join(d, b))) || Object.entries(o.share ?? {}).some(([d, has]) => has && p === join(d, "extension", "vector.control")),
+        listDir: () => [],
+        isRoot: () => o.root ?? false,
+        run: (cmd, args) => {
+          ran.push([cmd, ...args].join(" "));
+          const dir = Object.keys(dirs).find((d) => cmd === join(d, "postgres"));
+          if (dir) return { status: 0, stdout: `postgres (PostgreSQL) ${dirs[dir]}\n` };
+          const cfg = Object.keys(dirs).find((d) => cmd === join(d, "pg_config"));
+          if (cfg) return o.share && cfg in o.share ? { status: 0, stdout: `${cfg}\n` } : { status: null, stdout: "", error: new Error("ENOENT") };
+          if (cmd === "id") return (o.users ?? []).includes(args[1]) ? { status: 0, stdout: "1000\n" } : { status: 1, stdout: "" };
+          if (cmd === "runuser") return o.runuser === false ? { status: null, stdout: "", error: new Error("ENOENT") } : { status: 0, stdout: "" };
+          return { status: null, stdout: "", error: new Error(`unexpected ${cmd}`) };
+        },
+      };
     };
-    afterAll(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
-    const base = { ...process.env, MOS_TEST_PG_BIN: "", MOS_TEST_PG_ALLOW_MAJOR: "", MOS_TEST_PG_USER: userInfo().username };
+    // the rest of the environment is irrelevant: the host is injected
+    const base: NodeJS.ProcessEnv = { ...process.env, MOS_TEST_PG_BIN: "", MOS_TEST_PG_ALLOW_MAJOR: "", MOS_TEST_PG_USER: "" };
 
-    it.skipIf(process.platform === "win32")("a host with 17 and 16 runs on 16, whichever comes first", () => {
-      const v17 = fakeBin("17.2");
-      const v16 = fakeBin("16.13");
-      const d = discoverPostgres({ ...base, PATH: [v17, v16].join(delimiter) }, { packageDirs: false });
+    it("a host with 17 and 16 runs on 16, whichever comes first", () => {
+      const host = machine({ "/v17": "17.2", "/v16": "16.13" });
+      const d = discoverPostgres({ ...base, PATH: ["/v17", "/v16"].join(delimiter) }, { packageDirs: false, host });
       expect(d.ok).toBe(true);
-      if (d.ok) { expect(d.bin.major).toBe(16); expect(d.bin.dir).toBe(v16); }
+      if (d.ok) { expect(d.bin.major).toBe(16); expect(d.bin.dir).toBe("/v16"); expect(d.bin.runAs).toBeNull(); }
     });
 
-    it.skipIf(process.platform === "win32")("a host with only 17 skips loudly, naming the two ways to use it", () => {
-      const v17 = fakeBin("17.2");
-      const d = discoverPostgres({ ...base, PATH: v17 }, { packageDirs: false });
+    it("a host with only 17 skips loudly, naming the two ways to use it", () => {
+      const d = discoverPostgres({ ...base, PATH: "/v17" }, { packageDirs: false, host: machine({ "/v17": "17.2" }) });
       expect(d.ok).toBe(false);
       if (!d.ok) expect(d.missing).toMatch(/PostgreSQL 16 initdb \(found only PostgreSQL 17 at .*MOS_TEST_PG_BIN.*MOS_TEST_PG_ALLOW_MAJOR=17\)/);
     });
 
-    it.skipIf(process.platform === "win32")("17 runs only when MOS_TEST_PG_ALLOW_MAJOR names it, or MOS_TEST_PG_BIN points at it", () => {
-      const v17 = fakeBin("17.2");
-      const allowed = discoverPostgres({ ...base, PATH: v17, MOS_TEST_PG_ALLOW_MAJOR: "17" }, { packageDirs: false });
+    it("17 runs only when MOS_TEST_PG_ALLOW_MAJOR names it, or MOS_TEST_PG_BIN points at it; 15 never", () => {
+      const host = machine({ "/v17": "17.2", "/v15": "15.6" });
+      const allowed = discoverPostgres({ ...base, PATH: "/v17", MOS_TEST_PG_ALLOW_MAJOR: "17" }, { packageDirs: false, host });
       expect(allowed.ok && allowed.bin.major).toBe(17);
-      const explicit = discoverPostgres({ ...base, PATH: "", MOS_TEST_PG_BIN: v17 }, { packageDirs: false });
+      const explicit = discoverPostgres({ ...base, PATH: "", MOS_TEST_PG_BIN: "/v17" }, { packageDirs: false, host });
       expect(explicit.ok && explicit.bin.major).toBe(17);
-      const old = discoverPostgres({ ...base, PATH: "", MOS_TEST_PG_BIN: fakeBin("15.6") }, { packageDirs: false });
+      const old = discoverPostgres({ ...base, PATH: "", MOS_TEST_PG_BIN: "/v15" }, { packageDirs: false, host });
       expect(old.ok).toBe(false);
+    });
+
+    it("under root the server runs as MOS_TEST_PG_USER (else postgres), and a missing user or runuser is named", () => {
+      const env = { ...base, PATH: "/v16" };
+      const ok = discoverPostgres(env, { packageDirs: false, host: machine({ "/v16": "16.13" }, { root: true, users: ["postgres"] }) });
+      expect(ok.ok && ok.bin.runAs?.name).toBe("postgres");
+      const noUser = discoverPostgres({ ...env, MOS_TEST_PG_USER: "nobody-here" }, { packageDirs: false, host: machine({ "/v16": "16.13" }, { root: true, users: ["postgres"] }) });
+      expect(!noUser.ok && noUser.missing).toMatch(/non-root OS user .*'nobody-here'.*MOS_TEST_PG_USER/);
+      const noRunuser = discoverPostgres(env, { packageDirs: false, host: machine({ "/v16": "16.13" }, { root: true, users: ["postgres"], runuser: false }) });
+      expect(!noRunuser.ok && noRunuser.missing).toMatch(/^runuser/);
+    });
+
+    it("a server whose share directory lacks pgvector is named, not started", () => {
+      const d = discoverPostgres({ ...base, PATH: "/v16" }, { packageDirs: false, host: machine({ "/v16": "16.13" }, { share: { "/v16": false } }) });
+      expect(!d.ok && d.missing).toMatch(/^pgvector \(\/v16\/extension\/vector\.control/);
+      const withVector = discoverPostgres({ ...base, PATH: "/v16" }, { packageDirs: false, host: machine({ "/v16": "16.13" }, { share: { "/v16": true } }) });
+      expect(withVector.ok).toBe(true);
+    });
+
+    it("the default host is the real machine: the opt-in suite holds the same three cases against real executables", () => {
+      const src = read("lib/__tests__/rls/discovery.test.ts");
+      for (const name of ["a host with 17 and 16 runs on 16", "a host with only 17 skips loudly", "17 runs only when MOS_TEST_PG_ALLOW_MAJOR names it"]) expect(src, name).toContain(name);
+      // and it writes its stand-in executables inside the repository, never in the OS temp directory
+      expect(src).not.toMatch(/\btmpdir\(/);
+      expect(src).toContain('"node_modules", ".cache"');
     });
   });
 
@@ -258,18 +298,68 @@ describe("20261217: the definer-grant narrowing (DEC-30 shape, DRLS-16; DEC-90 r
     }
   });
 
+  it("the REVOKE waits on a live-database precondition: six catalog counts in the TEMP inventory, a REVOKE only when all are 0 (else a NOTICE and no change), and a probe in the final SELECT", () => {
+    const tempAt = code.indexOf("CREATE TEMP TABLE");
+    const beginAt = code.search(/^BEGIN;/m);
+    const inventory = code.slice(tempAt, beginAt);
+    const names = "~ '\\mmember_is_active\\s*\\('";
+    // one row per precondition, each flagged `pre` (true) and naming member_is_active(
+    const rows = inventory.slice(inventory.indexOf("SELECT 1, ")).split(/\nUNION ALL\n/);
+    expect(rows).toHaveLength(9);
+    const pre = rows.filter((r) => /^SELECT \d, 'precondition \(expect 0\): /.test(r));
+    expect(pre).toHaveLength(6);
+    // the `pre` flag: true on exactly the six precondition rows, false on the three others
+    for (const r of rows) expect(/(COUNT\(\*\)|\)\)), true\b/.test(r), r.slice(0, 80)).toBe(pre.includes(r));
+    for (const r of pre) {
+      if (!/proowner <> m\.proowner/.test(r)) expect(r, r.slice(0, 120)).toContain(names);
+    }
+    const bySubject = (needle: RegExp) => pre.filter((r) => needle.test(r));
+    // policies: USING and WITH CHECK, deparsed
+    expect(bySubject(/FROM pg_policy pol/)[0]).toMatch(/pg_get_expr\(pol\.polqual, pol\.polrelid\)[\s\S]*pg_get_expr\(pol\.polwithcheck, pol\.polrelid\)/);
+    // SECURITY INVOKER bodies, SQL-standard bodies included
+    expect(bySubject(/WHERE NOT p\.prosecdef/)[0]).toMatch(/p\.prosrc[\s\S]*pg_get_function_sqlbody\(p\.oid\)/);
+    // views and materialized views
+    expect(bySubject(/FROM pg_views/)[0]).toContain("pg_matviews");
+    // definer functions other than user_is_effective_owner (and member_is_active itself)
+    expect(bySubject(/WHERE p\.prosecdef/)[0]).toMatch(/p\.proname <> 'user_is_effective_owner'[\s\S]*p\.oid IS DISTINCT FROM to_regprocedure\('public\.member_is_active\(uuid,uuid\)'\)/);
+    // user_is_effective_owner keeps the call: same owner as member_is_active, or a superuser
+    expect(bySubject(/proowner <> m\.proowner/)[0]).toContain("NOT r.rolsuper");
+    // defaults, CHECK constraints, trigger definitions
+    expect(bySubject(/pg_attrdef/)[0]).toMatch(/pg_constraint[\s\S]*pg_trigger/);
+    // the DO block: the REVOKE only when the precondition sums to 0
+    const body = code.slice(beginAt, code.search(/^COMMIT;/m));
+    expect(body).toMatch(/SELECT COALESCE\(SUM\(n\), 0\) INTO v_blockers FROM intel_i17_20261217_inventory WHERE pre;\s+IF v_blockers = 0 THEN\s+REVOKE ALL ON FUNCTION public\.member_is_active\(uuid, uuid\)/);
+    const elseBranch = body.slice(body.indexOf("ELSE"), body.lastIndexOf("END IF;"));
+    expect(elseBranch).toMatch(/^ELSE\s+RAISE NOTICE '20261217 changed nothing: /);
+    expect(elseBranch).not.toMatch(/\b(GRANT|REVOKE)\b/);
+    // the final SELECT probes it (NULL only for a database without the function)
+    const tail = code.slice(code.search(/^COMMIT;/m));
+    expect(tail).toMatch(/SELECT 'precondition: [^']*'::text AS "check",\s+CASE WHEN to_regprocedure\('public\.member_is_active\(uuid,uuid\)'\) IS NOT NULL\s+THEN \(SELECT COALESCE\(SUM\(i\.n\), 0\) = 0 FROM intel_i17_20261217_inventory i WHERE i\.pre\) END AS ok,/);
+  });
+
+  it("the header states the paste facts: order, deploy gate, expected rows, rollback", () => {
+    expect(sql).toMatch(/^--\s+ORDER: independent of every other pending file\./m);
+    expect(sql).toMatch(/^--\s+DEPLOY GATE: none/m);
+    expect(sql).toMatch(/^--\s+EXPECTED RESULT \(one result set, 13 rows\): 3 probes with ok = true/m);
+    // 3 probes + the after count + 9 inventory rows (3 counts + 6 preconditions)
+    const tail = code.slice(code.search(/^COMMIT;/m));
+    expect(tail.match(/^SELECT /gm)).toHaveLength(5);
+    expect(code.match(/^SELECT \d, /gm)).toHaveLength(9);
+  });
+
   it("the header's ROLLBACK restores member_is_active's pre-paste ACL, PUBLIC included", () => {
     expect(sql).toMatch(/^--\s+GRANT EXECUTE ON FUNCTION public\.member_is_active\(uuid, uuid\) TO PUBLIC, anon, authenticated;$/m);
   });
 
-  it("the decision table: member_is_active is 20261217's; the other three are recorded with the integrator as owner, anon still executing", () => {
+  it("the decision table: member_is_active is 20261217's; the other three are RULED (DEC-90 ruling 4: no revoke, final, no owner), anon still executing", () => {
     const by = (d: string) => CALLABLE_DEFINERS.filter((x) => x.decision === d).map((x) => x.signature).sort();
     expect(by("revoked-20261217")).toEqual(["member_is_active(uuid,uuid)"]);
     expect(by("anon-refused-by-body")).toEqual(["force_release_document(uuid,text)", "issue_document_number(uuid)", "next_ticket_number(uuid,integer)"]);
+    expect(RULING_4_RULED).toMatch(/^RULED by the integrator \(DEC-90 ruling 4\): no revoke\..*Final; no owner\.$/);
     for (const d of CALLABLE_DEFINERS.filter((x) => x.decision === "anon-refused-by-body")) {
       expect(d.execute, d.signature).toEqual({ anon: true, authenticated: true, service_role: true });
-      expect(d.owner, d.signature).toBe(RULING_4_OWNER);
-      expect(d.reason, d.signature).toMatch(/DEC-90 ruling 4/);
+      expect(d.owner, d.signature).toBeUndefined();
+      expect(d.reason, d.signature).toContain(RULING_4_RULED);
     }
     // the membership answer member_is_active gave stays reachable until INTK-19 lands
     expect(CALLABLE_DEFINERS.find((d) => d.signature === "member_is_active(uuid,uuid)")?.owner).toMatch(/INTK-19/);
@@ -292,10 +382,17 @@ describe("20261217: the definer-grant narrowing (DEC-30 shape, DRLS-16; DEC-90 r
     return hits.sort();
   }
 
-  it("member_is_active is named by no app code; the other three only by the signed-in callers their decisions cite", () => {
+  it("member_is_active is named by no app code; the other three only by the signed-in callers their decisions cite (a NEW caller trips this)", () => {
     expect(namedIn("member_is_active")).toEqual([]);
-    expect(namedIn("next_ticket_number")).toEqual(["app/api/tickets/create/route.ts", "lib/ticketNumber.ts"]);
-    expect(namedIn("issue_document_number")).toEqual(["lib/libraryNumbering.ts"]);
-    expect(namedIn("force_release_document")).toEqual(["lib/checkoutEpisodes.ts"]);
+    // A subset check: every hit must be a caller the decision was reasoned
+    // from. One that goes away is no regression; a new one must be read.
+    const allowed: Record<string, string[]> = {
+      next_ticket_number: ["app/api/tickets/create/route.ts", "lib/ticketNumber.ts"],
+      issue_document_number: ["lib/libraryNumbering.ts"],
+      force_release_document: ["lib/checkoutEpisodes.ts"],
+    };
+    for (const [fn, callers] of Object.entries(allowed)) {
+      expect(namedIn(fn).filter((f) => !callers.includes(f)), `${fn}: a caller the decision was not reasoned from`).toEqual([]);
+    }
   });
 });

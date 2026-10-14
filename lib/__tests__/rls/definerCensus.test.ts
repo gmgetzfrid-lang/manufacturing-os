@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { admin, asCaller, mosDb, seedOrg, selectAs, skipReason, type SeededMember } from "./dbKit";
-import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_OWNER, TRIGGER_FUNCTIONS, type DefinerDecision } from "./definerDecisions";
+import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_RULED, TRIGGER_FUNCTIONS, type DefinerDecision } from "./definerDecisions";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
 
@@ -118,10 +118,11 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
       if (d.decision === "service-only" || d.decision === "revoked-20261217") {
         expect(d.execute, d.signature).toEqual({ anon: false, authenticated: false, service_role: true });
       }
-      // DEC-90 ruling 4's tie-breaker: recorded, not revoked, with its owner
+      // DEC-90 ruling 4, RULED by the integrator: no revoke, final, no owner
       if (d.decision === "anon-refused-by-body") {
         expect(d.execute, d.signature).toEqual({ anon: true, authenticated: true, service_role: true });
-        expect(d.owner, d.signature).toBe(RULING_4_OWNER);
+        expect(d.reason, d.signature).toContain(RULING_4_RULED);
+        expect(d.owner, d.signature).toBeUndefined();
       }
       if (d.person?.binding === "caller-supplied-oracle") expect(d.owner, d.signature).toMatch(/INTK-19/);
     }
@@ -205,6 +206,17 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
     for (const name of new Set(helpers)) {
       const n = admin(REPLAY_DB, `SELECT count(*) FROM pg_policy pol WHERE pg_get_expr(pol.polqual, pol.polrelid) ~ '\\m${name}\\(' OR COALESCE(pg_get_expr(pol.polwithcheck, pol.polrelid), '') ~ '\\m${name}\\('`);
       expect(Number(n), name).toBeGreaterThan(0);
+    }
+  });
+
+  it("an own-scope-unused decision is true to the catalog: no policy and no other function names it", () => {
+    const unused = CALLABLE_DEFINERS.filter((d) => d.decision === "own-scope-unused").map((d) => d.signature.split("(")[0]);
+    expect(unused).toContain("is_org_assign_drafters"); // no longer a policy helper after 20261209
+    for (const name of new Set(unused)) {
+      const re = `'\\m${name}\\s*\\('`;
+      const policies = admin(REPLAY_DB, `SELECT count(*) FROM pg_policy pol WHERE COALESCE(pg_get_expr(pol.polqual, pol.polrelid), '') ~ ${re} OR COALESCE(pg_get_expr(pol.polwithcheck, pol.polrelid), '') ~ ${re}`);
+      const callers = admin(REPLAY_DB, `SELECT count(*) FROM pg_proc p WHERE p.proname <> '${name}' AND p.pronamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace) AND p.prosrc ~ ${re}`);
+      expect({ name, policies: Number(policies), callers: Number(callers) }).toEqual({ name, policies: 0, callers: 0 });
     }
   });
 
@@ -341,4 +353,60 @@ describe.skipIf(skip !== null)("20261217: the app works before and after the pas
     expect(r.stdout).not.toMatch(/\|f\|/);
     expect(sig(after)).toBe(was);
   });
+
+  it("the paste on the replay: the precondition holds (six counts, all 0), 3 probes true, 13 rows", () => {
+    const db = "mos_217_repaste";
+    admin("postgres", `CREATE DATABASE ${db} TEMPLATE ${before()}`);
+    try {
+      const body = readFileSync(join(process.cwd(), "supabase", "migrations", "20261217_intel_roundG_definer_grants.sql"), "utf8");
+      const r = runPsql(mosDb().conn!, db, "postgres", { sql: body });
+      expect(r.ok, r.error ?? "").toBe(true);
+      const rows = r.stdout.split("\n").map((l) => l.split("|"));
+      expect(rows).toHaveLength(13);
+      expect(rows.slice(0, 3).map((x) => x[1])).toEqual(["t", "t", "t"]);
+      const pre = rows.filter((x) => x[0].startsWith("precondition (expect 0)"));
+      expect(pre.map((x) => x[2])).toEqual(["0", "0", "0", "0", "0", "0"]);
+      const n = (label: string) => rows.find((x) => x[0].startsWith(label))?.[2];
+      expect(n("before: member_is_active(uuid, uuid) present")).toBe("1");
+      expect(n("before: roles of anon / authenticated / PUBLIC")).toBe("3");
+      expect(Number(n("before: SECURITY DEFINER functions in public the anon role may execute"))).toBe(Number(n("after: SECURITY DEFINER functions in public the anon role may execute")) + 1);
+    } finally {
+      admin("postgres", `DROP DATABASE ${db}`);
+    }
+  });
+
+  // Each case puts ONE more caller of member_is_active on the pre-paste
+  // snapshot; the paste must then change nothing, say so, and probe false.
+  const blockers: Record<string, string> = {
+    "a row-level-security policy": `CREATE POLICY mos_probe ON public.libraries AS RESTRICTIVE FOR SELECT USING (member_is_active(org_id, auth.uid()) OR true);`,
+    "a SECURITY INVOKER function": `CREATE FUNCTION public.mos_probe(p uuid) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT member_is_active(p, auth.uid()) $$;`,
+    "a SECURITY INVOKER function with a SQL-standard body": `CREATE FUNCTION public.mos_probe(p uuid) RETURNS boolean LANGUAGE sql STABLE BEGIN ATOMIC SELECT member_is_active(p, auth.uid()); END;`,
+    "a view": `CREATE VIEW public.mos_probe AS SELECT member_is_active(o.id, auth.uid()) AS active FROM public.orgs o;`,
+    "a SECURITY DEFINER function other than user_is_effective_owner": `CREATE FUNCTION public.mos_probe(p uuid) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$ BEGIN RETURN member_is_active(p, auth.uid()); END $$;`,
+    "a user_is_effective_owner owned by another non-superuser": `CREATE ROLE mos_probe_owner; GRANT CREATE ON SCHEMA public TO mos_probe_owner; ALTER FUNCTION public.user_is_effective_owner(uuid, uuid, uuid, uuid) OWNER TO mos_probe_owner;`,
+    "a column default": `ALTER TABLE public.orgs ADD COLUMN mos_probe boolean DEFAULT member_is_active(NULL::uuid, NULL::uuid);`,
+  };
+  for (const [what, ddl] of Object.entries(blockers)) {
+    it(`the live-database precondition: with ${what} naming member_is_active, the paste changes nothing, says so, and probes false`, () => {
+      const db = "mos_217_blocked";
+      admin("postgres", `CREATE DATABASE ${db} TEMPLATE ${before()}`);
+      try {
+        const acl = `SELECT COALESCE(array_to_string(proacl, ','), '') FROM pg_proc WHERE oid = 'public.member_is_active(uuid,uuid)'::regprocedure`;
+        admin(db, ddl);
+        const was = admin(db, acl);
+        const body = readFileSync(join(process.cwd(), "supabase", "migrations", "20261217_intel_roundG_definer_grants.sql"), "utf8");
+        const r = runPsql(mosDb().conn!, db, "postgres", { sql: body }, { client_min_messages: "notice" });
+        expect(r.ok, r.error ?? "").toBe(true);
+        expect(r.stderr).toMatch(/NOTICE: {2}20261217 changed nothing: 1 object\(s\)/);
+        const rows = r.stdout.split("\n").map((l) => l.split("|"));
+        expect(rows.slice(0, 2).map((x) => x[1])).toEqual(["f", "f"]);
+        expect(rows.filter((x) => x[0].startsWith("precondition (expect 0)")).map((x) => Number(x[2])).reduce((a, b) => a + b, 0)).toBe(1);
+        expect(admin(db, acl)).toBe(was);
+        expect(asCaller(db, { role: "anon" }, `SELECT member_is_active(NULL::uuid, NULL::uuid)`)).toEqual({ ok: true, rows: 1 });
+      } finally {
+        admin("postgres", `DROP DATABASE ${db}`);
+        admin("postgres", `DROP ROLE IF EXISTS mos_probe_owner`);
+      }
+    });
+  }
 });
