@@ -10,6 +10,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronRight, MoreHorizontal, Home, ChevronDown } from "lucide-react";
 import { NodeIcon } from "@/lib/nodeIcons";
+import { safeNodeColor } from "@/lib/nodeColor";
 
 export interface PathSegment {
   id: string;
@@ -25,7 +26,7 @@ function Tile({ icon, color, className = "w-4 h-4" }: {
   return (
     <span
       className={`${className} rounded grid place-items-center text-white shrink-0`}
-      style={{ background: color || "var(--brand-gradient)" }}
+      style={{ background: safeNodeColor(color) ?? "var(--brand-gradient)" }}
     >
       <NodeIcon name={icon} className="w-2.5 h-2.5" />
     </span>
@@ -103,7 +104,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems }: 
         className={`${chip} ${atRoot ? "text-[var(--color-text)] font-bold" : ""}${dropRing("root")}`}
         title={library.name}
       >
-        {library.color || library.icon
+        {safeNodeColor(library.color) || library.icon
           ? <Tile icon={library.icon} color={library.color} />
           : <Home className="w-3.5 h-3.5 shrink-0" />}
         <span className="truncate max-w-[10rem]">{library.name}</span>
