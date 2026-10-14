@@ -34,6 +34,7 @@ import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { computeNudges } from "@/lib/nudges";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -279,21 +280,27 @@ function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
-// Ticket status → short label + badge classes (mirrors the request portal).
-const TICKET_STATUS: Record<string, { label: string; cls: string }> = {
-  PENDING_ENG_TEAM: { label: "Eng review", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  PENDING_ASSIGNMENT: { label: "Unassigned", cls: "bg-purple-50 text-purple-700 border-purple-200" },
-  DRAFTING: { label: "Drafting", cls: "bg-blue-50 text-blue-700 border-blue-200" },
-  PENDING_REVIEW: { label: "In review", cls: "bg-yellow-50 text-yellow-700 border-yellow-200" },
-  REVISION_REQ: { label: "Revisions", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  PENDING_IFC: { label: "Pending IFC", cls: "bg-teal-50 text-teal-700 border-teal-200" },
-  FINAL_DRAFT: { label: "Final draft", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_FINAL_APPROVAL: { label: "Final appr.", cls: "bg-lime-50 text-lime-700 border-lime-200" },
-  CLOSED: { label: "Closed", cls: "bg-gray-100 text-gray-500 border-gray-200" },
-  CANCELED: { label: "Canceled", cls: "bg-gray-100 text-gray-500 border-gray-200" },
+// Ticket status → badge classes. The WORDS are the request portal's own
+// (lib/ticketStatusLabels.ts ticketStatusLabel — drafting-flow UI-7, DF-P14):
+// this widget kept a third label set ("Final draft" here, "Issued — awaiting
+// acknowledgement" on the ticket) and showed an unknown value raw.
+const TICKET_STATUS_CLS: Record<string, string> = {
+  PENDING_ENG_TEAM: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  PENDING_ASSIGNMENT: "bg-purple-50 text-purple-700 border-purple-200",
+  DRAFTING: "bg-blue-50 text-blue-700 border-blue-200",
+  PENDING_REVIEW: "bg-yellow-50 text-yellow-700 border-yellow-200",
+  REVISION_REQ: "bg-amber-50 text-amber-700 border-amber-200",
+  PENDING_IFC: "bg-teal-50 text-teal-700 border-teal-200",
+  FINAL_DRAFT: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  PENDING_FINAL_APPROVAL: "bg-lime-50 text-lime-700 border-lime-200",
+  CLOSED: "bg-gray-100 text-gray-500 border-gray-200",
+  CANCELED: "bg-gray-100 text-gray-500 border-gray-200",
 };
 function ticketStatus(s: string | null | undefined) {
-  return (s && TICKET_STATUS[s]) || { label: s ?? "—", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" };
+  return {
+    label: s ? ticketStatusLabel(s) : "—",
+    cls: (s && TICKET_STATUS_CLS[s]) || "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  };
 }
 
 // ─── widget bodies ───────────────────────────────────────────────
@@ -457,10 +464,13 @@ function DraftingRequestsBody() {
   const by = (keys: string[]) => keys.reduce((s, k) => s + (data?.byStatus.get(k) ?? 0), 0);
   // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
   const pipeline: Segment[] = [
-    { label: "Eng review", count: by(["PENDING_ENG_TEAM"]) },
-    { label: "Unassigned", count: by(["PENDING_ASSIGNMENT"]) },
-    { label: "Drafting", count: by(["DRAFTING"]) },
-    { label: "In review", count: by(["PENDING_REVIEW", "REVISION_REQ"]) },
+    // UI-7 (DF-P14): a single-status part reads its status's shared label
+    // (the chips' words); a part that counts two statuses has its own name,
+    // never one status's label.
+    { label: ticketStatusLabel("PENDING_ENG_TEAM"), count: by(["PENDING_ENG_TEAM"]) },
+    { label: ticketStatusLabel("PENDING_ASSIGNMENT"), count: by(["PENDING_ASSIGNMENT"]) },
+    { label: ticketStatusLabel("DRAFTING"), count: by(["DRAFTING"]) },
+    { label: "In review or revision", count: by(["PENDING_REVIEW", "REVISION_REQ"]) },
     { label: "Closing out", count: by(["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"]) },
   ];
   const wk = weekSplit(data?.newDates ?? []);

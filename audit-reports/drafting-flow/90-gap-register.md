@@ -664,6 +664,8 @@ first-time requester can see the process before committing to it.
 
 *Assigned (2026-10-14, the integrator at the drafting-flow DF-P9 merge, DEC-31):* acceptance 4 (no raw status identifier as a primary label anywhere) → drafting-flow **DF-P14** (the `UI-7` remaining sites); acceptances 1–3 landed with DF-P9.
 
+*Landed 2026-10-14 (drafting-flow Round G, DF-P14 QUEUE READ AND STATUS-LABEL REMAINDERS): acceptance 4 — the six remaining sites read the one list (`ticketStatusLabel`): `/admin/analytics`'s member ticket-list chip, the workflow route's refusal text, bell body and email (text and HTML; `metadata.status` keeps the stored value, which the bell's reconcile machine-reads), the SLA clock's "Due soon" / "Overdue" bodies, and the dashboard's Drafting Requests widget (its own label set removed, its classes kept). No third label set remains; a repo-wide search on the branch finds no other ticket status shown as a primary label. All four acceptances now hold. See `UI-7` (RESOLVED).*
+
 ---
 
 <a id="gap-109"></a>

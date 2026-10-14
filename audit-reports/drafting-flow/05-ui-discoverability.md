@@ -249,7 +249,7 @@ result is already on screen, and the list does not use it.
 ## UI-7 · Raw status enums are the primary vocabulary
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -301,6 +301,20 @@ primary label.
   Each is the shared `ticketStatusLabel` (`lib/ticketStatusLabels.ts`), never a new list. Not request statuses, so outside this finding: `components/knowledge/DrawingIntelPanel.tsx:327` (a drawing-review verdict), `lib/stripe.ts:161` (a subscription), `components/projects/ProjectDocumentsCard.tsx:215` and `app/(protected)/assets/[tag]/page.tsx:480` (document statuses).
 
 **Scope / residual.** The six sites above (owners named). **Assigned (2026-10-14, the integrator at the DF-P9 merge): drafting-flow DF-P14 QUEUE READ AND STATUS-LABEL REMAINDERS.** — every one of the six sites, the workflow route's four lines and the dashboard widgets included (their earlier owners were a role, not a package). The ticket page's audit-trail tab still shows history *action* names with underscores replaced (`event.action.replace(/_/g, ' ')`) — those are history entries, not statuses, outside this finding.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P14 QUEUE READ AND STATUS-LABEL REMAINDERS — the six remaining sites the DF-P9 Partial listed and owned, under the integrator's ruling (`DEC-90`: every notice, email and chip says `ticketStatusLabel(status)`; a stored value stays only where something machine-reads it). Each is a call to the one list (`lib/ticketStatusLabels.ts` `ticketStatusLabel`), never a new one; the enum values are untouched. **Reproduced first on `9b52f56`**: every assertion below failed there (the raw identifiers, "Unassigned" / "Final draft" on the widget).
+- `app/(protected)/admin/analytics/page.tsx:517` (was `:516`) — a member's ticket-list chip reads `ticketStatusLabel(t.status)`; its classes are unchanged.
+- `app/api/tickets/workflow-action/route.ts` — the refusal a person reads (`:367`, was `:360`): `Action "…" is not available to you at status “In review”` (the 403 unchanged); the bell body with no comment (`:1450`, was `:1407`): `Status: In review`; the email's text (`:1498`, was `:1455`) `Status is now: In review` and HTML (`:1501`, was `:1458`) `Status: <b>In review</b>`. The bell row's and the email row's `metadata.status` keep the stored value — the bell's reconcile machine-reads it — and the audience is unchanged.
+- `lib/ticketSla.ts` `slaNotice` (`:193-205`, was `:192-197`) — "It is waiting at the “In review” stage, on the requester's review." / "…is still waiting at the “Drafting” stage. Reassign it, …"; every other word and both titles unchanged.
+- `components/dashboard/widgets.tsx` — the widget's own label set is gone: `TICKET_STATUS_CLS` keeps the badge classes, `ticketStatus()` takes the words from `ticketStatusLabel` (a status this build does not know is worded, "On hold for vendor"; a missing one is "—", as before); the pipeline bar's single-status parts read the same words as the chips (Engineering review, Awaiting drafter, Drafting) and its two-status part reads "In review or revision" (it borrowed `PENDING_REVIEW`'s "In review" for two statuses — the rule DF-P9 applied to the queue board).
+- **Tests:** `lib/__tests__/dfRoundG_P14_labels.test.ts` (every status × both SLA stages names the label and no identifier, the sentences otherwise byte-for-byte as before; the widget AS RENDERED — each chip's label and class, an unknown value worded, the bar's parts; `/admin/analytics` AS RENDERED — a drafter's list says "Ready to issue (IFC)", "Issued — awaiting acknowledgement", "Closed"); `lib/__tests__/dfRoundG_P14_routeLabelsReasons.test.ts` (the REAL handler: the bell body, the email text and HTML, the refusal; `metadata.status` kept; the bell and mail audience exactly N6's). Existing assertions that pinned the raw value were updated to the label, nothing else in them: `lib/__tests__/ticketSla.test.ts` (seven expectations), `lib/__tests__/sweepRoundD3.test.ts:351`, `lib/__tests__/sweepRoundE_A.test.ts:169`.
+- **Re-derived on this branch** (`DEC-29`): a repo-wide search over `app/`, `components/`, `lib/`, `hooks/` for `.status.replace(/_/g`, `{….status}`, `${….status}` / `${newStatus}` in text and every other ticket-status label map finds no other ticket status shown as a primary label. What remains is log lines, non-ticket statuses (transmittals, Stripe, a drawing-review verdict, document / company / project statuses), `WorkflowDiagramModal current={ticket.status}` (a prop) and `lib/physicalBridge.ts:332` (its one caller hands it the label, DF-P9).
+
+**Done-when.**
+- ✓ A user-facing surface never shows a raw status identifier as the primary label — the request surfaces (DF-P9, evidence in the Partial above) and the six remaining sites (this block), with the re-derivation above.
+
+**Scope / residual.** None for this finding. Outside it, as the Partial said: the ticket page's audit tab shows history *action* names with underscores replaced (actions, not statuses); the email subject and bell title carry the action's label, not a status.
+
 ---
 
 ## The first-run walkthrough

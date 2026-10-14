@@ -348,7 +348,7 @@ describe("/api/tickets/workflow-action — the refusal is server-side, not just 
     state.rows.tickets = [ticketRow({})];
     const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/not available to you at status PENDING_REVIEW/);
+    expect((await res.json()).error).toMatch(/not available to you at status “In review”/); // UI-7 (DF-P14): the stage in words
     expect(state.calls.filter((c) => c.table === "tickets" && c.method === "update")).toHaveLength(0);
     // the same caller on an ISO ticket gets PAST the state-machine gate (the
     // next refusal is the transition's own input check, not authority)

@@ -24,6 +24,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor } from "@/lib/ticketOutcome";
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, type LibraryChoiceRow } from "@/lib/ticketLibrary";
@@ -357,7 +358,7 @@ export async function POST(req: NextRequest) {
   const action = allowed.find((a) => a.action === body.actionType);
   if (!action) {
     return NextResponse.json(
-      { error: `Action "${body.actionType}" is not available to you at status ${ticket.status}` },
+      { error: `Action "${body.actionType}" is not available to you at status “${ticketStatusLabel(ticket.status)}”` },
       { status: 403 },
     );
   }
@@ -1404,7 +1405,7 @@ async function fanOut(params: {
       userId: uid,
       kind: cls.inAppKind,
       title: cls.inAppTitle,
-      body: comment || `Status: ${newStatus}`,
+      body: comment || `Status: ${ticketStatusLabel(newStatus)}`,
       link,
       resourceType: "ticket",
       resourceId: ticketId,
@@ -1452,10 +1453,10 @@ async function fanOut(params: {
   // render layer adds the footer (lib/emailRender.ts — the drain then
   // attaches the one-click unsubscribe header).
   const note = comment ? plainMentions(comment) : null;
-  const composedText = `${actorEmail} performed: ${action.label}\n\nStatus is now: ${newStatus}\n${note ? `\nNote: ${note}\n` : ""}\n${emailLink}`;
+  const composedText = `${actorEmail} performed: ${action.label}\n\nStatus is now: ${ticketStatusLabel(newStatus)}\n${note ? `\nNote: ${note}\n` : ""}\n${emailLink}`;
   const composedHtml = `
         <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>.</p>
-        <p>Status: <b>${escapeHtml(newStatus)}</b></p>
+        <p>Status: <b>${escapeHtml(ticketStatusLabel(newStatus))}</b></p>
         ${note ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(note)}</blockquote>` : ""}
         <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`;
   let body: { bodyText: string; bodyHtml: string } | null = null;

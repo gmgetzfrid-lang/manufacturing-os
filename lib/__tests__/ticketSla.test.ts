@@ -11,6 +11,7 @@
 // window for a ticket with no target.
 
 import { describe, it, expect } from "vitest";
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -87,7 +88,7 @@ describe("ROUTE-9 done-when 2 — who hears: the party the CURRENT status waits 
   it("the notice names the date in the org's zone and says it was due", () => {
     const n = slaNotice(tk(), "breach", T0 + 4 * DAY, "UTC", T0 + 5 * DAY);
     expect(n.title).toBe("Overdue · REQ-1 Pump iso");
-    expect(n.body).toMatch(/was due .*and is still waiting at DRAFTING/);
+    expect(n.body).toMatch(/was due .*and is still waiting at the “Drafting” stage/); // UI-7 (DF-P14): the stage in words
     expect(slaNotice(tk(), "warn", T0 + 4 * DAY, "UTC", T0 + 3 * DAY).title).toBe("Due soon · REQ-1 Pump iso");
   });
 });
@@ -98,19 +99,19 @@ describe("GAP-106 fix pass 2 — the notice's words follow the status family and
     for (const status of ["DRAFTING", "REVISION_REQ", "PENDING_IFC", "PENDING_ENG_TEAM", "PENDING_FINAL_APPROVAL", "PENDING_ASSIGNMENT"]) {
       const n = slaNotice(tk({ status, assignedEngineerId: "e-1" }), "breach", target, "UTC", T0 + 5 * DAY);
       expect(waitsOnRequester(status), status).toBe(false);
-      expect(n.body, status).toContain(`is still waiting at ${status}. Reassign it, or tell the requester when it will be done.`);
+      expect(n.body, status).toContain(`is still waiting at the “${ticketStatusLabel(status)}” stage. Reassign it, or tell the requester when it will be done.`);
     }
   });
   it("a breach waiting on the REQUESTER (their review, their acknowledgement) never asks anyone to reassign it, nor the requester to tell themselves", () => {
     const review = slaNotice(tk({ status: "PENDING_REVIEW" }), "breach", target, "UTC", T0 + 5 * DAY);
-    expect(review.body).toContain("is waiting at PENDING_REVIEW, on the requester's review. Nothing needs reassigning: the requester's review moves it on.");
+    expect(review.body).toContain("is waiting at the “In review” stage, on the requester's review. Nothing needs reassigning: the requester's review moves it on.");
     const ack = slaNotice(tk({ status: "FINAL_DRAFT" }), "breach", target, "UTC", T0 + 5 * DAY);
-    expect(ack.body).toContain("is waiting at FINAL_DRAFT, on the requester's acknowledgement.");
+    expect(ack.body).toContain("is waiting at the “Issued — awaiting acknowledgement” stage, on the requester's acknowledgement.");
     for (const n of [review, ack]) {
       expect(n.body).not.toMatch(/Reassign/);
       expect(n.body).not.toMatch(/tell the requester/);
     }
-    expect(slaNotice(tk({ status: "FINAL_DRAFT" }), "warn", target, "UTC", T0 + 3 * DAY).body).toContain("It is waiting at FINAL_DRAFT, on the requester's acknowledgement.");
+    expect(slaNotice(tk({ status: "FINAL_DRAFT" }), "warn", target, "UTC", T0 + 3 * DAY).body).toContain("It is waiting at the “Issued — awaiting acknowledgement” stage, on the requester's acknowledgement.");
   });
   it("the warning says the share of the window used NOW — 75 % on time, 97 % when found late — never a fixed 75 %", () => {
     expect(slaNotice(tk(), "warn", target, "UTC", T0 + 3 * DAY).body).toContain("has used 75% of its time");
@@ -120,8 +121,8 @@ describe("GAP-106 fix pass 2 — the notice's words follow the status family and
     expect(slaNotice(tk(), "warn", target, "UTC", T0 + 3.9999 * DAY).body).toContain("has used 99% of its time");
     // an unknown or empty window names no share at all
     expect(usedPercent(tk({ createdAt: null }), target, T0 + 3 * DAY)).toBeNull();
-    expect(slaNotice(tk({ createdAt: null }), "warn", target, "UTC", T0 + 3 * DAY).body).toMatch(/^This request is due [^.]+\. It is waiting at DRAFTING\.$/);
-    expect(slaNotice(tk(), "warn", target, "UTC", T0 + 3 * DAY).body).not.toContain(String(Math.round(SLA_WARN_FRACTION * 100)) + "% of its time. It is waiting at DRAFTING. Reassign");
+    expect(slaNotice(tk({ createdAt: null }), "warn", target, "UTC", T0 + 3 * DAY).body).toMatch(/^This request is due [^.]+\. It is waiting at the “Drafting” stage\.$/);
+    expect(slaNotice(tk(), "warn", target, "UTC", T0 + 3 * DAY).body).not.toContain(String(Math.round(SLA_WARN_FRACTION * 100)) + "% of its time. It is waiting at the “Drafting” stage. Reassign");
   });
 });
 

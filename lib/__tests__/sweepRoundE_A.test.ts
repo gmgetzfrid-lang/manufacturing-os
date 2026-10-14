@@ -166,7 +166,7 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     state.rows.tickets = [ticketRow()];
     const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: file });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/not available to you at status DRAFTING/);
+    expect((await res.json()).error).toMatch(/not available to you at status “Drafting”/); // UI-7 (DF-P14): the stage in words
     expect(updateOf("tickets")).toHaveLength(0);
     state.user = { id: "d-1" };
     const missing = await post({ ticketId: "t1", actionType: "attach_file" });
