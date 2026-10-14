@@ -17,7 +17,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Search, X, Loader2, Waypoints, HardDrive, Sparkles, Plus, Trash2,
-  ExternalLink, ChevronRight, Info, AlertTriangle, Tag, Minus, Maximize2,
+  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
@@ -76,6 +76,8 @@ function GraphPageInner() {
   /** The container the view is rooted at; null = the whole estate. */
   const [focusId, setFocusId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** Which result the map is honed in on. */
+  const [activeIdx, setActiveIdx] = useState(0);
   const [panel, setPanel] = useState<"search" | "drives" | "aliases">("search");
   const graphRef = useRef<FileGraphHandle | null>(null);
 
@@ -204,8 +206,11 @@ function GraphPageInner() {
         frontier = kids.filter((k) => k.kind !== "file" && k.kind !== "extfile");
       }
     }
-    // The way to the best hits is always open, inside the focus or across the estate.
-    for (const h of hits.slice(0, AUTO_EXPAND_TOP)) {
+    // The way to the best hits — and to the one being looked at — is always
+    // open, inside the focus or across the estate.
+    const wanted = hits.slice(0, AUTO_EXPAND_TOP);
+    if (hits[activeIdx] && !wanted.includes(hits[activeIdx])) wanted.push(hits[activeIdx]);
+    for (const h of wanted) {
       const chain = ancestorsOf(h.entry.id);
       const cut = focusId ? chain.indexOf(focusId) : chain.length;
       if (focusId && cut < 0) continue;
@@ -221,7 +226,31 @@ function GraphPageInner() {
     const focusNode = focusId ? nodeById.get(focusId) : null;
     const upNode = focusNode ? (focusNode.parentId ? nodeById.get(focusNode.parentId) ?? null : { id: "__all__", kind: "library" as const, label: "Whole estate", parentId: null, childCount: 0, type: { ...CONTAINER_TYPES.library, color: "#475569" } }) : null;
     return { visible: [...vis.values()], collapsed, upNode };
-  }, [nodes, nodeById, childrenOf, focusId, hits, ancestorsOf]);
+  }, [nodes, nodeById, childrenOf, focusId, hits, activeIdx, ancestorsOf]);
+
+  const ranks = useMemo(() => {
+    const m = new Map<string, number>();
+    hits.slice(0, 9).forEach((h, i) => m.set(h.entry.id, i + 1));
+    return m;
+  }, [hits]);
+  const activeHit = hits[activeIdx] ?? null;
+
+  // A new result set hones the map in on its best hit; stepping does the same
+  // for the next one. The camera moves after the layout has the node.
+  const jumpTo = useCallback((i: number) => {
+    if (!hits.length) return;
+    const idx = ((i % hits.length) + hits.length) % hits.length;
+    setActiveIdx(idx);
+    setSelectedId(hits[idx].entry.id);
+    window.setTimeout(() => graphRef.current?.focus(hits[idx].entry.id, 1.6), 90);
+  }, [hits]);
+  const lastHitsKey = useRef("");
+  useEffect(() => {
+    const key = hits.slice(0, 5).map((h) => h.entry.id).join("|");
+    if (key === lastHitsKey.current) return;
+    lastHitsKey.current = key;
+    if (hits.length) jumpTo(0); else { setActiveIdx(0); }
+  }, [hits, jumpTo]);
 
   const crumbs = useMemo(() => {
     if (!focusId) return [];
@@ -267,15 +296,18 @@ function GraphPageInner() {
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" && e.key !== "Backspace") return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (e.key === "ArrowRight" || e.key === "n") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx + 1); } return; }
+      if (e.key === "ArrowLeft" || e.key === "p") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx - 1); } return; }
+      if (e.key === "Enter") { const id = selectedId ?? hits[activeIdx]?.entry.id; if (id) { e.preventDefault(); openEntry(id); } return; }
+      if (e.key !== "Escape" && e.key !== "Backspace") return;
       if (selectedId) { setSelectedId(null); return; }
       if (focusId) { e.preventDefault(); up(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId, focusId, up]);
+  });
 
   const selectedEntry = selectedId ? entryById.get(selectedId) : undefined;
   const selectedHit = selectedId ? hits.find((h) => h.entry.id === selectedId) : undefined;
@@ -376,7 +408,7 @@ function GraphPageInner() {
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
-            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry} />
+            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry} />
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
             <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
@@ -415,7 +447,23 @@ function GraphPageInner() {
             ))}
             <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-red-600" /> Same bytes</span>
           </div>
-          <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · Esc goes up</div>
+          {activeHit && (
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-12 flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 shadow-md px-2 py-1.5 text-xs">
+              <button onClick={() => jumpTo(activeIdx - 1)} className="rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Previous result (←)"><ChevronLeft className="w-4 h-4" /></button>
+              <button onClick={() => jumpTo(activeIdx)} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-[var(--color-canvas)]" title="Centre on this result">
+                <Crosshair className="w-3.5 h-3.5 text-sky-600" />
+                <span className="font-bold tabular-nums">{activeIdx + 1}</span><span className="text-[var(--color-text-muted)]">/ {hits.length}</span>
+                <span className={`rounded-full border px-1.5 py-px text-[10px] font-bold ${VERDICT_STYLE[activeHit.verdict]}`}>{VERDICT_LABEL[activeHit.verdict]} · {activeHit.score}</span>
+                <FileTypeIcon type={fileTypeOf(activeHit.entry.name)} className="w-3.5 h-3.5" />
+                <span className="font-semibold max-w-[260px] truncate">{activeHit.entry.name}</span>
+              </button>
+              <button onClick={() => jumpTo(activeIdx + 1)} className="rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Next result (→)"><ChevronRight className="w-4 h-4" /></button>
+              {activeHit.entry.href && (
+                <Link href={activeHit.entry.href} onClick={onOpenHit} className="ml-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 font-bold" title="Open (Enter)"><ExternalLink className="w-3.5 h-3.5" /> Open</Link>
+              )}
+            </div>
+          )}
+          <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · ← → step results · Esc goes up</div>
         </main>
 
         {/* ── Right: results / selection ──────────────────────────────── */}
@@ -446,8 +494,8 @@ function GraphPageInner() {
                   </div>
                 )}
                 <div className="space-y-2">
-                  {hits.slice(0, 80).map((h) => (
-                    <HitCard key={h.entry.id} hit={h} active={selectedId === h.entry.id} onReveal={() => reveal(h.entry.id)} onOpen={onOpenHit} />
+                  {hits.slice(0, 80).map((h, i) => (
+                    <HitCard key={h.entry.id} hit={h} rank={i + 1} active={activeHit?.entry.id === h.entry.id} onReveal={() => jumpTo(i)} onOpen={onOpenHit} />
                   ))}
                   {hits.length > 80 && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
                 </div>
@@ -495,13 +543,14 @@ function EvidenceList({ hit }: { hit: RankedHit }) {
   );
 }
 
-function HitCard({ hit, active, onReveal, onOpen }: { hit: RankedHit; active: boolean; onReveal: () => void; onOpen: () => void }) {
+function HitCard({ hit, rank, active, onReveal, onOpen }: { hit: RankedHit; rank: number; active: boolean; onReveal: () => void; onOpen: () => void }) {
   const e = hit.entry;
   return (
     <div className={`rounded-lg border p-2.5 ${active ? "border-sky-400 bg-sky-50/40" : "border-[var(--color-border)] bg-[var(--color-canvas)]"}`}>
       <div className="flex items-start gap-2">
         <button onClick={onReveal} className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-1.5">
+            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-[10px] font-extrabold text-white ${active ? "bg-sky-500" : "bg-slate-800"}`}>{rank}</span>
             <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
             <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
             <span className="text-sm font-semibold truncate">{e.name}</span>

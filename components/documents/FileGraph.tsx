@@ -44,7 +44,8 @@ export interface FileGraphLight {
 
 export interface FileGraphHandle {
   fit: () => void;
-  focus: (id: string) => void;
+  /** Fly the camera to a node; `scale` is the zoom to land at. */
+  focus: (id: string, scale?: number) => void;
 }
 
 interface Props {
@@ -56,6 +57,10 @@ interface Props {
   upNode: FileGraphNode | null;
   sameBytes: Map<string, string[]>;
   lit: Map<string, FileGraphLight>;
+  /** Rank numbers to print on the best hits (1 = best). */
+  ranks?: Map<string, number>;
+  /** The result being looked at right now: drawn with the strongest ring. */
+  activeId?: string | null;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   /** A container was clicked: make it the root of the view. */
@@ -75,13 +80,14 @@ const isContainer = (k: FileNodeKind) => k !== "file" && k !== "extfile";
 interface Camera { x: number; y: number; scale: number }
 
 const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
-  { visible, collapsed, upNode, sameBytes, lit, selectedId, onSelect, onDrill, onUp, onOpen, className = "" }, ref,
+  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, className = "" }, ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { images, hostRef } = useIconImages();
   const camRef = useRef<Camera>({ x: 0, y: 0, scale: 1 });
   const camTarget = useRef<Camera | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [hoverAt, setHoverAt] = useState<{ x: number; y: number; w: number; h: number }>({ x: 0, y: 0, w: 0, h: 0 });
   const drag = useRef<{ on: boolean; sx: number; sy: number; cx: number; cy: number; moved: boolean }>({ on: false, sx: 0, sy: 0, cx: 0, cy: 0, moved: false });
 
   // Latest props for the render loop, synced in effects.
@@ -90,6 +96,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   const hoverRef = useRef(hoverId); useEffect(() => { hoverRef.current = hoverId; }, [hoverId]);
   const imagesRef = useRef(images); useEffect(() => { imagesRef.current = images; }, [images]);
   const collapsedRef = useRef(collapsed); useEffect(() => { collapsedRef.current = collapsed; }, [collapsed]);
+  const ranksRef = useRef(ranks); useEffect(() => { ranksRef.current = ranks; }, [ranks]);
+  const activeRef = useRef(activeId); useEffect(() => { activeRef.current = activeId; }, [activeId]);
   const upRef = useRef(upNode); useEffect(() => { upRef.current = upNode; }, [upNode]);
 
   const byId = useMemo(() => new Map(visible.map((n) => [n.id, n])), [visible]);
@@ -155,11 +163,11 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
 
   useImperativeHandle(ref, () => ({
     fit: () => fitTo(targetRef.current, upPosRef.current),
-    focus: (id: string) => {
+    focus: (id: string, scale?: number) => {
       const p = targetRef.current.get(id);
       if (!p) return;
-      const scale = Math.max(camRef.current.scale, 1.1);
-      camTarget.current = { scale, x: -p.x * scale, y: -p.y * scale };
+      const z = scale ?? Math.max(camRef.current.scale, 1.1);
+      camTarget.current = { scale: z, x: -p.x * z, y: -p.y * z };
     },
   }), []);
 
@@ -261,14 +269,19 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         const p = pos.get(n.id);
         if (!p) continue;
         const light = litNow.get(n.id);
+        const active = n.id === activeRef.current;
         const dim = searching && !light && !litPath.has(n.id);
         const r = RADIUS[n.kind];
         ctx.globalAlpha = dim ? 0.22 : 1;
         if (light) {
-          ctx.beginPath(); ctx.arc(p.x, p.y, r + 9, 0, Math.PI * 2);
-          ctx.fillStyle = VERDICT[light.verdict] + "40"; ctx.fill();
+          ctx.beginPath(); ctx.arc(p.x, p.y, r + (active ? 14 : 9), 0, Math.PI * 2);
+          ctx.fillStyle = VERDICT[light.verdict] + (active ? "55" : "40"); ctx.fill();
           ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
-          ctx.strokeStyle = VERDICT[light.verdict]; ctx.lineWidth = 3; ctx.stroke();
+          ctx.strokeStyle = VERDICT[light.verdict]; ctx.lineWidth = active ? 5 : 3; ctx.stroke();
+          if (active) {
+            ctx.beginPath(); ctx.arc(p.x, p.y, r + 10, 0, Math.PI * 2);
+            ctx.strokeStyle = "#0ea5e9"; ctx.lineWidth = 2.5; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+          }
         }
         // Disc.
         ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
@@ -281,6 +294,18 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         const img = imgs.get(key);
         const iconSize = r * 1.15;
         if (img) ctx.drawImage(img, p.x - iconSize / 2, p.y - iconSize / 2, iconSize, iconSize);
+        // Rank badge on the best hits: "1" is what you are after.
+        const rank = ranksRef.current?.get(n.id);
+        if (rank) {
+          const bx = p.x - r * 0.85, by = p.y - r * 0.85, br = Math.max(8, r * 0.5);
+          ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2);
+          ctx.fillStyle = active ? "#0ea5e9" : "#0f172a"; ctx.fill();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = "#fff"; ctx.font = `800 ${Math.max(9, br * 1.2)}px ui-sans-serif, system-ui`;
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(String(rank), bx, by);
+          ctx.textBaseline = "top";
+        }
         // Collapsed count badge.
         if (isContainer(n.kind) && n.childCount > 0 && col.has(n.id)) {
           const bx = p.x + r * 0.75, by = p.y - r * 0.75, br = Math.max(7, r * 0.42);
@@ -360,7 +385,13 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   };
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
-    if (!d.on) { const { x, y } = toWorld(e); setHoverId(hit(x, y)); return; }
+    if (!d.on) {
+      const { x, y } = toWorld(e);
+      const rect = canvasRef.current!.getBoundingClientRect();
+      setHoverAt({ x: e.clientX - rect.left, y: e.clientY - rect.top, w: rect.width, h: rect.height });
+      setHoverId(hit(x, y));
+      return;
+    }
     if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
     camRef.current.x = d.cx + (e.clientX - d.sx);
     camRef.current.y = d.cy + (e.clientY - d.sy);
@@ -400,7 +431,14 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         onPointerLeave={() => setHoverId(null)}
       />
       {hoverNode && (
-        <div className="pointer-events-none absolute top-3 right-3 max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1.5 text-xs shadow-sm">
+        <div
+          className="pointer-events-none absolute max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1.5 text-xs shadow-md z-10"
+          style={{
+            left: hoverAt.x + 16,
+            top: hoverAt.y + 16,
+            transform: `translate(${hoverAt.x > hoverAt.w - 280 ? "calc(-100% - 32px)" : "0"}, ${hoverAt.y > hoverAt.h - 90 ? "calc(-100% - 32px)" : "0"})`,
+          }}
+        >
           <div className="font-bold truncate">{hoverNode.label}</div>
           <div className="text-[var(--color-text-muted)]">
             {hoverId === "__up__" ? "Click to go back up" : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
