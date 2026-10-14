@@ -36,6 +36,19 @@ import {
   warnAfterLabel,
   type SlaDefaultRow,
 } from '@/lib/slaDefaultsEditor';
+import { OUTCOME_LABEL } from '@/lib/ticketOutcome';
+import {
+  OUTCOME_REASON_CATEGORIES,
+  OUTCOME_REASON_LABEL_MAX,
+  OUTCOME_REASONS_MAX,
+  withNormalizedOutcomeReasons,
+  type OutcomeReason,
+} from '@/lib/ticketOutcomeReasons';
+
+/** The request-form settings with the workspace's own reasons for ending a
+ *  request (GAP-13 / GAP-107 acceptance 1, DF-P14) — stored in the same
+ *  `drafting` row, under `outcomeReasons` (lib/ticketOutcomeReasons.ts). */
+type DraftingSettingsWithReasons = OrgDraftingSettings & { outcomeReasons?: OutcomeReason[] };
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {
   requestTypes: {
@@ -114,10 +127,15 @@ export default function DraftingConfigPage() {
     if (!activeOrgId || !settings) return;
     setSaving(true);
     try {
+      // GAP-13 / GAP-107 (DF-P14): the reasons for ending a request are
+      // cleaned on the way out (a blank one dropped, a new one given its id);
+      // settings without them are written exactly as before (the same object).
+      const data = withNormalizedOutcomeReasons(settings);
       const { error } = await supabase
         .from('org_configurations')
-        .upsert({ org_id: activeOrgId, key: 'drafting', data: settings }, { onConflict: 'org_id,key' });
+        .upsert({ org_id: activeOrgId, key: 'drafting', data }, { onConflict: 'org_id,key' });
       if (error) throw error;
+      if (data !== settings) setSettings(data);
       setSavedRequestTypes(settings.requestTypes?.options ?? []);
       await appAlert("Configuration saved successfully.");
     } catch (e) {
@@ -293,6 +311,12 @@ export default function DraftingConfigPage() {
           <CustomCategoriesSection
             categories={settings.customCategories ?? []}
             onChange={(next) => setSettings({ ...settings, customCategories: next })}
+          />
+
+          {/* SECTION: WAYS A REQUEST ENDS — the workspace's own reasons (GAP-13 / GAP-107, DF-P14) */}
+          <OutcomeReasonsSection
+            reasons={(settings as DraftingSettingsWithReasons).outcomeReasons ?? []}
+            onChange={(next) => setSettings({ ...settings, outcomeReasons: next } as DraftingSettingsWithReasons)}
           />
 
           {/* SECTION: PRIORITIES */}
@@ -626,6 +650,89 @@ function ConfigSection({
 // Admin-defined top-level sections beyond Request Type / Unit / Priority.
 // Each category renders as its own card in /requests/new and stores values
 // at ticket.metadata.custom_categories[category.id][field.key].
+
+// ─── Reasons for ending a request ────────────────────────────────────
+// roles-and-permissions GAP-13 acceptance 1 / drafting-flow GAP-107
+// acceptance 1 (DF-P14; the integrator's ruling under DEC-90). OPTIONAL: with
+// none, Cancel Request offers the five ways a request ends (DEC-103) exactly
+// as before. With some, it offers each category's reasons under the category
+// (a category with none of its own is offered as itself), and the workflow
+// route accepts only a configured reason or a bare category. The category
+// list itself (and the tickets.outcome CHECK) never changes. Saved with the
+// rest of the request form — the same row, the same editors (DEC-107 item 1:
+// the admin gate's `requests` surface and 20261209's write rule).
+function OutcomeReasonsSection({
+  reasons,
+  onChange,
+}: {
+  reasons: OutcomeReason[];
+  onChange: (next: OutcomeReason[]) => void;
+}) {
+  const full = reasons.length >= OUTCOME_REASONS_MAX;
+  const add = (category: OutcomeReason['category']) => {
+    if (full) return;
+    // The id is given on save, from the words (a saved id never changes).
+    onChange([...reasons, { id: '', label: '', category }]);
+  };
+  const update = (idx: number, label: string) => onChange(reasons.map((r, i) => (i === idx ? { ...r, label } : r)));
+  const remove = (idx: number) => onChange(reasons.filter((_, i) => i !== idx));
+
+  return (
+    <div data-testid="outcome-reasons-editor" className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
+      <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
+        <h3 className="font-bold text-[var(--color-text)]">Reasons for ending a request</h3>
+        <p className="text-xs text-[var(--color-text-muted)] mt-1">
+          Optional. Your own reasons, under the ways a request can be canceled. With none, <b>Cancel Request</b> asks
+          only how the request ends, as it does today. With some, it offers each category&rsquo;s reasons (a category with
+          none is offered as itself), and the reason is recorded on the request. <i>Completed</i> is recorded by an
+          acknowledgement or an answered RFI, so it takes no reasons here. Saved with <b>Save Changes</b>.
+        </p>
+      </div>
+      <div className="p-6 grid gap-6 md:grid-cols-2">
+        {OUTCOME_REASON_CATEGORIES.map((category) => {
+          const rows = reasons.map((r, idx) => ({ r, idx })).filter(({ r }) => r.category === category);
+          return (
+            <div key={category} data-testid={`outcome-reasons-${category}`}>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-bold text-[var(--color-text)]">{OUTCOME_LABEL[category]}</h4>
+                <button
+                  type="button"
+                  onClick={() => add(category)}
+                  disabled={full}
+                  className="inline-flex items-center px-2 py-1 rounded text-xs font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] disabled:opacity-40"
+                >
+                  <Plus className="w-3 h-3 mr-1" /> Add a reason
+                </button>
+              </div>
+              {rows.length === 0 ? (
+                <p className="text-xs italic text-[var(--color-text-muted)]">No reasons — offered as &ldquo;{OUTCOME_LABEL[category]}&rdquo;.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {rows.map(({ r, idx }) => (
+                    <li key={`${category}-${idx}`} className="flex items-center gap-2">
+                      <input
+                        value={r.label}
+                        maxLength={OUTCOME_REASON_LABEL_MAX}
+                        onChange={(e) => update(idx, e.target.value)}
+                        placeholder="e.g. Not drafting work"
+                        aria-label={`${OUTCOME_LABEL[category]} reason`}
+                        className="flex-1 p-2 border border-[var(--color-border)] rounded text-sm"
+                      />
+                      <button type="button" onClick={() => remove(idx)} aria-label={`Remove reason ${r.label || '(blank)'}`} className="p-2 text-[var(--color-text-faint)] hover:text-red-600">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {full && <p className="px-6 pb-4 text-xs text-amber-700">{OUTCOME_REASONS_MAX} reasons is the most a workspace keeps.</p>}
+    </div>
+  );
+}
 
 function CustomCategoriesSection({
   categories,
