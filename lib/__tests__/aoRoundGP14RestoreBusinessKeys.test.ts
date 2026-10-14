@@ -282,7 +282,7 @@ describe("ILIFE-10 (P14 fix pass) — the business-key read narrows on every key
     const batches = businessKeyReadBatches(rows, cols, 1500, 100);
     expect(batches.length).toBeGreaterThan(2);
     for (const b of batches) {
-      const size = b.reduce((sum, values) => sum + values.reduce((s2, v) => s2 + encodeURIComponent(String(v)).length + 3, 0), 0);
+      const size = b.reduce<number>((sum, values) => sum + values.reduce<number>((s2, v) => s2 + encodeURIComponent(String(v)).length + 3, 0), 0);
       expect(size).toBeLessThanOrEqual(1500);
     }
     for (const r of rows) {
