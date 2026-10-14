@@ -48,7 +48,8 @@
 // intelligence IEDGE-10 / DACL-7): that grace is BOUNDED. Each unconfirmed
 // push is a counted night (lib/exportAlerts.ts unconfirmedGraceTonight, read
 // from the destination's own scheduled run rows — the night this deploys is
-// night 1); nights 1 to 7 run and every Admin's bell names the night; night
+// night 1); nights 1 to 7 run and every Admin's bell names the night (a
+// night whose push failed rings it too, saying nothing left); night
 // 7's push is followed by a pause, said in its bell; from night 8 the sweep
 // skips it with a cancelled run row and the card saying it is paused (no
 // bell), until an Admin opens it and saves it (confirmed: it runs as any
@@ -405,6 +406,21 @@ async function handler(req: NextRequest) {
       const cardError = unconfirmedNote
         ? `${msg.slice(0, Math.max(0, 500 - unconfirmedNote.length - 1))} ${unconfirmedNote}`.slice(0, 500)
         : msg.slice(0, 500);
+      // DEC-87 §1 as amended (P14): a night of the bounded grace is a bell
+      // even when its push failed — every night before the pause, and the
+      // pause itself, reach every Admin. It says nothing left. A confirmed
+      // destination's failed push rings no bell, as before.
+      const graceAlert = grace && confirmation.unconfirmed
+        ? await alertAdminsOfExport(sb, {
+          orgId: dest.org_id, actorUserId: null, actorEmail: SCHEDULED_EXPORT_ACTOR.email,
+          destination: dest.destination_type,
+          scheduled: {
+            destinationName: dest.name || dest.id, configuredBy: dest.updated_by || dest.created_by || null,
+            unconfirmed: confirmation.unconfirmed, grace, failed: msg,
+          },
+        }).catch((err) => ({ ok: false, notified: 0, error: (err as Error).message }))
+        : null;
+      if (graceAlert && !graceAlert.ok) console.error(`[run-scheduled] destination ${dest.id}: the unconfirmed-night alert was not sent: ${graceAlert.error}`);
       // Checked like the success path: a refused write is logged and named on
       // the result, never swallowed (a run row left "running" stays stuck).
       const unrecorded: string[] = [];
@@ -419,6 +435,7 @@ async function handler(req: NextRequest) {
               ...(unconfirmedNote ? [{ ts: startedAt, step: "gate:unconfirmed", detail: unconfirmedNote }] : []),
               ...(graceStep ? [graceStep] : []),
               ...(graceReadNote ? [{ ts: startedAt, step: "gate:notice", detail: graceReadNote }] : []),
+              ...(graceAlert && !graceAlert.ok ? [{ ts: completedAt, step: "alert:unsent", detail: graceAlert.error }] : []),
             ],
           } : {}),
           completed_at: completedAt,
@@ -442,9 +459,10 @@ async function handler(req: NextRequest) {
       }).eq("id", dest.id);
       if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
+      const failWarnings = [...notices, ...(graceAlert && !graceAlert.ok ? [`the unconfirmed-night alert was not sent: ${graceAlert.error}`] : [])];
       results.push({
         destinationId: dest.id, ok: false, error: [msg, ...(unconfirmedNote ? [unconfirmedNote] : []), ...unrecorded].join("; "),
-        ...(notices.length ? { warnings: notices } : {}),
+        ...(failWarnings.length ? { warnings: failWarnings } : {}),
       });
     }
   }

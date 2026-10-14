@@ -1986,7 +1986,7 @@ describe("fifth review fix — an unconfirmed destination's request to confirm s
   // P14: a scheduled push's note also names its night in the bounded grace (DEC-87 §1, amended); Run Now's does not.
   const confirmRequest = /It was last confirmed by dc@acme\.com, who does not hold Admin — which setting up a data export now requires\. An Admin should open it and save it to confirm it, or disable it\.( This is unconfirmed night \d of 7: unless an Admin confirms it, it is paused after night 7's push\.)?$/;
 
-  it("a scheduled push that FAILS carries the request on the run row, on the card after the failure, and on the sweep result (was: the failure only); no bell for an export that did not leave", async () => {
+  it("a scheduled push that FAILS carries the request on the run row, on the card after the failure, and on the sweep result (was: the failure only); its bell never says the workspace left", async () => {
     db.rows.export_destinations = [dueDestination({ updated_by: "u-dc" })];
     state.deliver = async () => { throw new Error("Webhook 500: down"); };
     const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
@@ -2003,7 +2003,16 @@ describe("fifth review fix — an unconfirmed destination's request to confirm s
     });
     expect(rowsOf("export_destinations")[0]).toMatchObject({ last_run_status: "failed", last_run_error: expect.stringMatching(/^Webhook 500: down It was last confirmed by/) });
     expect(String(rowsOf("export_destinations")[0].last_run_error)).toMatch(confirmRequest);
-    expect(bells()).toEqual([]);
+    // admin-and-org Round G P14 (DEC-87 §1 as amended under DEC-90: an Admin
+    // bell each night of the bounded grace): the night still rings — saying
+    // the push failed and nothing left, never that the workspace was pushed.
+    // Was: no bell (an export that did not leave rang none).
+    expect(bells().length).toBeGreaterThan(0);
+    for (const b of bells()) {
+      expect(String(b.body)).toMatch(/^A scheduled export to "[^"]+" \(webhook\) failed tonight, so nothing left the workspace \(Webhook 500: down\)\./);
+      expect(String(b.body)).not.toMatch(/pushed the entire workspace/);
+      expect(b.metadata).toMatchObject({ failed: true, grace: { night: 1, of: 7, pausing: false } });
+    }
   });
 
   it("…a long failure is cut so the request still fits on the card", async () => {
@@ -2932,6 +2941,60 @@ describe("P14 — an unconfirmed legacy destination is paused after 7 consecutiv
     expect(String(adminBells()[0].body)).toMatch(/how many unconfirmed nights it has had could not be read/);
     await night();
     expect(String(adminBells()[0].body)).toContain("This is unconfirmed night 2 of 7"); // the unread night neither counted nor broke the run
+  });
+
+  it("a night whose push FAILS still rings every Admin's bell for the night (saying nothing left) — and a failed night 7 still announces the pause before night 8 is skipped", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 7; n++) {
+      // nights 2, 6 and 7 fail; the others push
+      state.deliver = [2, 6, 7].includes(n) ? async () => { throw new Error("Webhook 503: unavailable"); } : null;
+      const body = await night();
+      expect(body.results[0], `night ${n}`).toMatchObject({ ok: ![2, 6, 7].includes(n) });
+      const b = adminBells();
+      expect(b, `night ${n}`).toHaveLength(2);
+      expect(b[0].metadata, `night ${n}`).toMatchObject({ grace: { night: n, of: 7, pausing: n === 7 } });
+      if ([2, 6, 7].includes(n)) {
+        expect(String(b[0].body), `night ${n}`).toMatch(/^A scheduled export to "Nightly hook" \(webhook\) failed tonight, so nothing left the workspace \(Webhook 503: unavailable\)\./);
+        expect(String(b[0].body), `night ${n}`).not.toMatch(/pushed the entire workspace/);
+        expect(b[0].metadata, `night ${n}`).toMatchObject({ failed: true });
+      } else {
+        expect(String(b[0].body), `night ${n}`).toMatch(/^A scheduled export pushed the entire workspace to "Nightly hook"/);
+        expect(b[0].metadata, `night ${n}`).not.toHaveProperty("failed");
+      }
+    }
+    // night 7 failed, and its bell still says the pause
+    expect(adminBells()[0].title).toBe("Scheduled export paused until an Admin confirms it");
+    expect(String(adminBells()[0].body)).toContain("This was unconfirmed night 7 of 7, so it is now PAUSED");
+    state.deliver = null;
+    const eighth = await night();
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(state.delivered).toHaveLength(7); // seven attempts (four left, three failed); none on night 8
+    expect(bells()).toEqual([]);
+    // the failed nights are counted on their run rows like the others
+    expect(rowsOf("export_runs").filter((r) => r.status === "failed").map((r) => (r.diagnostics as Row[]).find((d) => d.step === "grace:unconfirmed-night")?.detail))
+      .toEqual(["night=2/7", "night=6/7", "night=7/7"]);
+  });
+
+  it("a failed night whose bell is refused says so on the run row and the sweep result (checked), and the push's failure stays the answer", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    state.deliver = async () => { throw new Error("Webhook 500: down"); };
+    db.writeError = (table) => (table === "notifications" ? { code: "42501", message: "permission denied" } : null);
+    const body = await night();
+    db.writeError = null;
+    expect(body.results[0]).toMatchObject({
+      ok: false, error: expect.stringMatching(/^Webhook 500: down/),
+      warnings: expect.arrayContaining([expect.stringMatching(/^the unconfirmed-night alert was not sent: /)]),
+    });
+    expect(rowsOf("export_runs")[0]).toMatchObject({ status: "failed", diagnostics: expect.arrayContaining([expect.objectContaining({ step: "alert:unsent" })]) });
+  });
+
+  it("regression: a confirmed destination's failed push rings no bell, as before", async () => {
+    db.rows.export_destinations = [dueDestination()];
+    state.deliver = async () => { throw new Error("Webhook 500: down"); };
+    const body = await night();
+    expect(body.results[0]).toMatchObject({ ok: false, error: "Webhook 500: down" });
+    expect(body.results[0]).not.toHaveProperty("warnings");
+    expect(bells()).toEqual([]);
   });
 
   it("regression: a destination an Admin confirmed never reads the grace and runs every night as before", async () => {

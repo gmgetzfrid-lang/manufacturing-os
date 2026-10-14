@@ -113,8 +113,11 @@ export async function alertAdminsOfExport(
     /** A scheduled push: the destination's name and its last configurer's
      *  uid; `unconfirmed` when that configurer does not hold the surface's
      *  entry role (`by`: their email, else their uid; `holds`: the role(s)
-     *  it takes, e.g. "Admin"). */
-    scheduled?: { destinationName: string; configuredBy: string | null; unconfirmed?: { by: string; holds: string }; grace?: UnconfirmedGrace };
+     *  it takes, e.g. "Admin"). `failed`: an unconfirmed destination's
+     *  night in the bounded grace whose push FAILED (its error) — the bell
+     *  still rings, because every night of the grace and the pause are said
+     *  (DEC-87 §1, amended), and it says nothing left. */
+    scheduled?: { destinationName: string; configuredBy: string | null; unconfirmed?: { by: string; holds: string }; grace?: UnconfirmedGrace; failed?: string };
   },
 ): Promise<ExportAlertResult> {
   const when = new Date().toISOString();
@@ -123,8 +126,13 @@ export async function alertAdminsOfExport(
   // night's place in the bounded grace, said in every Admin's bell.
   const grace = unconfirmed ? info.scheduled?.grace : undefined;
   const graceText = grace ? ` ${graceSentence(grace)}` : "";
+  // P14: a failed night of the grace is a bell too — it never says the
+  // workspace left (only an unconfirmed destination's grace night passes it).
+  const failed = unconfirmed && grace ? info.scheduled?.failed : undefined;
   const what = info.scheduled
-    ? `A scheduled export pushed the entire workspace to "${info.scheduled.destinationName}" (${info.destination}).`
+    ? (failed !== undefined
+      ? `A scheduled export to "${info.scheduled.destinationName}" (${info.destination}) failed tonight, so nothing left the workspace (${failed.slice(0, 200) || "no error given"}).`
+      : `A scheduled export pushed the entire workspace to "${info.scheduled.destinationName}" (${info.destination}).`)
     : `${info.actorEmail} exported the entire workspace (${info.destination}).`;
   const body = (forAdmin: boolean) => unconfirmed
     ? `${what} ${unconfirmedSentence(unconfirmed)} ${forAdmin
@@ -149,6 +157,7 @@ export async function alertAdminsOfExport(
       ...(info.scheduled ? { scheduled: true, destinationName: info.scheduled.destinationName, configuredBy: info.scheduled.configuredBy } : {}),
       ...(unconfirmed ? { unconfirmed: { by: unconfirmed.by, holds: unconfirmed.holds } } : {}),
       ...(grace ? { grace: { night: grace.night, of: grace.of, pausing: grace.pausing } } : {}),
+      ...(failed !== undefined ? { failed: true } : {}),
     },
   });
 }
@@ -160,8 +169,9 @@ export async function alertAdminsOfExport(
 // but no longer indefinitely. Each such scheduled push is an unconfirmed
 // NIGHT, counted on its run row (diagnostics step GRACE_NIGHT_STEP, detail
 // `night=<n>/<of>`); nights 1 to UNCONFIRMED_GRACE_NIGHTS run and every
-// Admin's bell names the night; the last night's push is followed by a pause
-// (its bell says so); from the next night the sweep skips it with a
+// Admin's bell names the night (a night whose push FAILED rings it too, and
+// says nothing left — `scheduled.failed`); the last night's push is followed
+// by a pause (its bell says so, whether it left or failed); from the next night the sweep skips it with a
 // cancelled run row (GRACE_PAUSED_STEP) and no bell, until an Admin opens it
 // and saves it (which stamps updated_by: confirmed — it runs as any other
 // destination) or disables it. The count reads only rows this rule wrote, so
