@@ -657,7 +657,7 @@ contrast the validation the same route does perform at :121-130 — `      retur
 ## AUTHZ-12 · The public /api/verify-ticket surface returns internal workflow state and unit to anyone holding a ticket UUID, forever, unrated and unarchived-checked
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-ticket/route.ts:37-54`, `app/api/verify-ticket/route.ts:91-103`, `app/api/verify-ticket/route.ts:6-10`, `app/api/verify/route.ts:60-63`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every literal sub-claim checks out: internal workflow status, unit and last-activity timestamp are returned forever to any holder of the ticket UUID, unrated and with no archived/retired check (unlike app/api/verify/route.ts:88 which computes `docRetired` from status). Severity lowered to LOW: exposure is a handful of low-sensitivity fields for one ticket, gated behind an unguessable UUID that the org itself printed on a deliverable it handed to that party — no files, URLs, or people are returned.
@@ -699,6 +699,18 @@ app/api/verify-ticket/route.ts:9-10 (the claim) —
 - [ ] `ticketStatus` and `unit` are dropped, or `ticketStatus` is mapped to the same coarse verdict vocabulary the page renders (current / revision underway / superseded)
 - [ ] A rate limit per IP and per ticket id is applied, and archived/closed-long-ago tickets answer with a generic 'contact the requester' rather than live state
 - [ ] The route comment matches the payload field-for-field
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT, on the integrator's ruling (DEC-90 practice, given in DF-P10's brief, 2026-10-13; recorded at DEC-90): *a scanned QR keeps answering forever, for revision-status facts only; `ticketStatus` and `unit` leave the public payload; scans stay logged and rate-limited on PS-VERIFY's substrate.* Reproduced on `596d34e`: the response returned `unit`, `ticketStatus` and `lastActivityAt` (`app/api/verify-ticket/route.ts:155`, `:160-161`) and answered an archived stub like a live ticket; PS-VERIFY (Round F) had already added the per-IP cap, the `verify_scans` row and `no-store`.
+- `app/api/verify-ticket/route.ts` — the payload is exactly `ticketNumber, title, printedRev, currentRev, latestIssuedRev, inReview, verdict, checkedAt`; the select drops `unit` and `last_modified` and adds `archived_at` (`:68`); the header comment states the payload field for field. An archived ticket answers `unknown` with `currentRev` / `latestIssuedRev` null (`lib/verifyTicketVerdict.ts` `ticketVerdict`).
+- `app/verify-ticket/[ticketId]/page.tsx` — the unit line and the "activity <date>" line are gone (they read fields no longer sent).
+- Tests: `verifyTicketVerdict.test.ts` "AUTHZ-12 / EDGE-2 — /api/verify-ticket answers revision-status facts only" (the exact key set, `no-store`, the select string, scan rows written for every answer, the archived answer, the header) and the page pin; `verifyDoor.test.ts`'s VFY-14 select pin updated.
+
+**Done-when.**
+1. ✓ `ticketStatus` and `unit` are dropped (and `lastActivityAt` — internal activity, not a revision fact).
+2. Amended by the integrator's ruling — not ✓ as written (`DEC-29`): no per-ticket limit exists, and closed-long-ago tickets keep answering. Per-IP: PS-VERIFY's limiter (`lib/verifyRateLimit.ts`, consumed, not forked). Per ticket id: not built — the ruling keeps the limit on PS-VERIFY's per-IP substrate; every scan of a ticket is a `verify_scans` row (target UUID, IP), so a per-ticket poller is visible. Archived tickets answer the generic "cannot confirm" with no live state ✓. Closed-long-ago tickets keep answering revision-status facts — by the ruling ("a scanned QR keeps answering forever"; the field must be able to scan an old print).
+3. ✓ The route comment matches the payload field for field (pinned).
+
+**Scope / residual.** None beyond the ruling's own amendment of done-when 2 (per-ticket limit and closed-long-ago answers, above). Reversal: a stated need for a per-ticket cap adds a target term to `checkVerifyRate` (public-surfaces' file).
 
 ---
 
@@ -805,6 +817,7 @@ and the policy that makes the narrowing optional — supabase/schema.sql:1080-10
     - `components/documents/InspectorPanel.tsx` and `components/documents/CheckoutStatusCell.tsx`: the checkout surfaces of P6 / P23.
 
   P5, P6 and P15 have merged, so the integrator names the document-control remainder package.
+- **Assigned:** document-control P24 TRANSMITTAL ISSUE VERDICT, for the rest of document-control's surfaces: `components/documents/HoldStrip.tsx`, `app/(protected)/admin/holds/page.tsx`, `components/documents/InspectorPanel.tsx` and `components/documents/CheckoutStatusCell.tsx`. Named by the integrator, 2026-10-13 (DEC-31), at P24's integrator fix pass. The work landed at P24's first review fix and was brought under the integrator's ruling at this pass; see the Partial below. Still open: drafting-flow DF-P9 TICKET-PAGE for the request surfaces, as confirmed above.
 - **Verification:** CONFIRMED (by reading)
 - **Blast radius:** UI truth (affordances only)
 - **Locations:** each surface reads `loadCapabilityPolicy` (`lib/capabilityPolicy.ts:615-625`). For a failed read, its contract is "the last good entry, else the shipped defaults", and it carries no marker. None of these surfaces reads `loadCapabilityPolicyEntry`'s `unreadable` / `stale` markers:
@@ -835,5 +848,67 @@ The affordance surfaces read `loadCapabilityPolicy`, which returns the policy al
 **Done when.**
 - Each surface listed above, during a policy-read fault with no last good entry, either labels its policy-dependent controls as the shipped defaults or draws them disabled with the reason.
 - A rendered test per owning package drives the `unreadable` case.
+
+**Integrator ruling (2026-10-13, under the user's delegation, DEC-90 practice; also recorded under DEC-89).** It settles the stale-vs-Remediation conflict that P24's first review fix raised here: "A `stale` policy answer is the last good policy and is drawn as is, with no label, exactly as AUTHZ-15's Remediation says — every action it offers is re-checked by the server and the database; only `unreadable` (no last good copy, the shipped defaults) holds the policy-dependent controls back with a labelled fault state and Try again. The package brief's sentence 'an affordance drawn from a cache during a database fault must fail closed' is narrowed to that." A read that throws gives no policy at all, so it is treated like `unreadable`.
+
+**Partial (2026-10-13, document-control Round F wave 3).** Package P24 TRANSMITTAL ISSUE VERDICT, for document-control's share: all five document-control surfaces. *(Restated at P24's integrator fix pass, 2026-10-13, under the ruling above. P24's first review fix had held the controls back on `stale` too, following the package brief's sentence. The ruling narrows that sentence to `unreadable`, so `stale` is drawn as is again on every surface, the transmittals register included. The register had drawn `stale` as healthy at P24's first landing, flipped it at the first review fix, and reads as first landed again now. As first landed, this block covered the transmittals page only.)*
+
+Each defect was reproduced on `49cd27e` by reading. Each surface read `loadCapabilityPolicy`, which returns no marker and serves the shipped defaults on a failed read with no last good entry:
+- `app/(protected)/transmittals/page.tsx:117`: `.catch(() => setPolicy({}))`.
+- `components/documents/HoldStrip.tsx:107-109`: the same.
+- `app/(protected)/admin/holds/page.tsx:52-54`: the same.
+- `components/documents/InspectorPanel.tsx:185` and `components/documents/CheckoutStatusCell.tsx:66`: `.catch(() => undefined)`, which leaves the policy `null`. A `null` policy evaluates the shipped defaults (`lib/checkoutAffordances.ts`).
+
+Under the defaults, `holds.open` and `holds.release` admit everyone, and `checkout.force_release` admits Admin and DocCtrl. So this finding's failure scenario held as written: a Drafter was offered Release.
+
+What P24 closed. Line numbers are at P24's integrator fix pass.
+- **`lib/checkoutAffordances.ts:75-80` `affordancePolicyFault(entry)`** (pure) says which `loadCapabilityPolicyEntry` answers must hold an affordance back.
+  - `unreadable` returns the fault's words.
+  - `stale` returns null. It is the last good policy, and the surface draws it as is.
+  - A good read returns null.
+- Each surface reads `loadCapabilityPolicyEntry`. On `unreadable`, or a read that throws, it keeps its policy `null` and forces its policy-dependent controls off. It never passes `null` into `policyAllows`, which would evaluate the defaults. It shows a `role="alert"` notice, "Permissions could not be read — …", with a **Try again** that re-reads.
+- **Transmittals register.** Read at `app/(protected)/transmittals/page.tsx:132-145`; notice `transmittal-policy-fault` at `:352`. Held back: Receipt, Revoke, Void, the transmit-authority arm of Edit, and Issue. Issue's footer and refusal say that permissions could not be read.
+- **`components/documents/HoldStrip.tsx`.** Read at `:113-130`; notice `hold-policy-fault` at `:228`. Held back: Place hold, Release and Re-date. The notice shows only where the caller would draw controls (`canEdit`).
+- **`app/(protected)/admin/holds/page.tsx`.** Read at `:57-73`; notice `holds-policy-fault` at `:174`. Held back: Release and Re-date on the queue.
+- **`components/documents/CheckoutStatusCell.tsx`.** `useForceReleasePolicy` (`:63-88`) answers `{ allowed: false, fault }` on a fault. The popover reads it at `:311` and holds Admin Force Release back, with notice `checkout-policy-fault` (`:411`) and its own Try again. Until the first read lands, the shipped default applies, as before (DCK-13).
+- **`components/documents/InspectorPanel.tsx`.** **One read** at `:194-212` decides the hold controls, Force Release Lock and the notice.
+  - On a fault the place-a-first-hold section (`:995`) and the active-hold strip's `canEdit={canReleaseHold}` (`:515`) are forced off.
+  - Force Release Lock (`:881`) is `canForceRelease`, computed from that same read (`:210-212`, `canForceReleaseCheckout`).
+  - The ALERTS zone shows `inspector-policy-fault` (`:523`), with a Try again that re-reads.
+  - *Re-review minor, fixed here:* Force Release Lock used to read a second, separate policy load (`useForceReleaseAllowed`). A fault in that load hid the button while the notice, which saw only the Inspector's own read, showed nothing. The Inspector no longer calls the hook.
+  - Until the first read lands, the shipped defaults apply, as before.
+- Arms that do not come from the policy are unchanged:
+  - On the register, a draft's author still edits and deletes it, and copies the portal link.
+  - On the cell, Check Out, Quick hold and "Release my checkout" are unchanged.
+  - The hold list itself still lists.
+
+Rendered tests (jsdom). Each surface drives `unreadable`, a thrown read, a healthy read, `stale`, and a principal without authority:
+- `lib/__tests__/dcRoundFP24TransmittalsPolicyFault.test.ts`: the real transmittals page.
+  - `unreadable` and thrown hold the DocCtrl's controls back with the notice, and Try again restores them.
+  - Healthy: drawn. A healthy narrowed read hides them with no notice. An Engineer sees nothing.
+  - `stale` with the defaults draws them, with no notice (the pin is restored to its first-landed form and labelled so). A `stale` narrowed copy hides them.
+- `lib/__tests__/dcRoundFP24HoldCheckoutPolicyFault.test.ts`: the real `HoldStrip`, `/admin/holds` and `CheckoutStatusCell` (popover opened), plus `affordancePolicyFault`, which answers null for `stale`.
+  - Each surface: `unreadable` and thrown hold back with the notice; Try again works.
+  - `stale` is drawn from the cached copy, not the defaults: its defaults draw the controls and its narrowing hides them, with no notice.
+  - Healthy regressions: a Drafter under the defaults; a DocCtrl under the narrowed policy; a Drafter under the narrowed policy (no authority, no notice). A Drafter is never offered force release, and a read-only strip explains nothing.
+- `lib/__tests__/dcRoundFP24InspectorPolicyFault.test.ts`: the real `InspectorPanel`, with children stubbed.
+  - `unreadable` and thrown hide the place-a-first-hold section, the active hold's Release and Force Release Lock, with the alert.
+  - Try again restores them.
+  - **One read decides the button and the notice:** reads answering healthy then unreadable give one read, the button and no alert; the reverse gives no button and the alert.
+  - `stale` is drawn as is; a `stale` narrowed copy hides what it narrows.
+  - Healthy regressions for Drafter, DocCtrl, Admin and a widened policy.
+  - No-authority: a Viewer.
+  - Force Release Lock appears only on a checked-out document.
+- Pins changed in place:
+  - `checkoutAffordances.test.ts`: the Inspector derives `canForceRelease` from its own read and calls no `useForceReleaseAllowed`.
+  - `dcRoundFP15InspectorStaleRendered.test.ts`: its mocks.
+
+**Done-when (document-control's share).**
+1. ✓ for all five document-control surfaces (`app/(protected)/transmittals/page.tsx`, `components/documents/HoldStrip.tsx`, `app/(protected)/admin/holds/page.tsx`, `components/documents/InspectorPanel.tsx`, `components/documents/CheckoutStatusCell.tsx`). During a policy-read fault with no last good entry, their policy-dependent controls are withheld, with the reason on screen. This is the stricter of the two options the remediation offers. `stale` is drawn as the last good policy, per the Remediation and the ruling above.
+2. ✓ for document-control: rendered tests drive `unreadable` on every surface.
+
+**Scope / residual.** `lib/capabilityPolicy.ts`'s comment on `loadCapabilityPolicy` still names these five surfaces among its non-authoritative readers. They now read `loadCapabilityPolicyEntry`. The comment is in a shared module P24 does not own, so it is left for the integrator to restate at merge, or for DF-P9 when the request surfaces move. `useForceReleaseAllowed` (`components/documents/CheckoutStatusCell.tsx:94`) has no caller in this tree now. It is kept for its signature.
+
+**Stays OPEN, with its owner:** only the request surfaces (`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, `hooks/useTicketNotifications.ts`), which belong to drafting-flow **DF-P9 TICKET-PAGE**, as assigned. They may reuse `affordancePolicyFault`, and they apply the ruling above: `unreadable` is held back and labelled; `stale` is drawn as is.
 
 ---

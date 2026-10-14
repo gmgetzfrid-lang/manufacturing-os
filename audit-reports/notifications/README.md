@@ -29,13 +29,13 @@ stacking, and what a real OS notification would attach to.
 
 ## Findings
 
-**123 findings** — 2 CRITICAL, 17 HIGH, 77 MEDIUM, 27 LOW — plus **7 gap specs**, all buildable.
+**124 findings** — 2 CRITICAL, 17 HIGH, 77 MEDIUM, 28 LOW — plus **7 gap specs**, all buildable.
 
 > **One finding here carries `Status: REFUTED`** — `NEDGE-1`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
 | # | Report | Findings | Focus |
 |---|---|---|---|
-| 01 | [Producer census](./01-producer-census.md) | 17 | Which subsystems notify, which are silent, which vocabulary is dead; `PROD-15`, `PROD-16` (LOW) opened at N8, 2026-10-07; `PROD-17` (LOW) opened by N9, 2026-10-07 |
+| 01 | [Producer census](./01-producer-census.md) | 18 | Which subsystems notify, which are silent, which vocabulary is dead; `PROD-15`, `PROD-16` (LOW) opened at N8, 2026-10-07; `PROD-17` (LOW) opened by N9, 2026-10-07; `PROD-18` (LOW) opened by N4, 2026-10-13 |
 | 02 | [Delivery integrity](./02-delivery-integrity.md) | 16 | What gets dropped between an event and a person, and whether anything notices — `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01; `DELIV-16` (MEDIUM) by notifications N6, 2026-10-07 |
 | 03 | [Taxonomy](./03-taxonomy.md) | 17 | Alerts vs notifications — every signalling surface, and where they contradict — `TAX-15` and `TAX-16` opened by N7 CORNER, 2026-10-01; `TAX-17` (LOW) opened by N9, 2026-10-07 |
 | 04 | [**The cold trail**](./04-cold-trail.md) | 13 | Badge propagation. The central complaint |

@@ -291,6 +291,19 @@ components/viewers/SecureDocViewer.tsx:52-59 —
 - [ ] No download or print record is written with `void` or a discarded promise
 - [ ] A test proves a member session cannot DELETE a download_audits row
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT — the ticket print / download half (this record's evidence quotes `requests/[id]/page.tsx:592-600`). Reproduced on `596d34e`: `void supabase.from("download_audits").insert({ … ticket_id, attachment_id, attachment_type, filename, watermark_text … }).then(() => {}, () => {})` at `page.tsx:607-614` (print) and `:689-697` (download) — unawaited, outcome discarded, and naming columns no migration adds, so every row was refused (public-surfaces `PHYS-8`).
+- `lib/ticketDeliverableCopy.ts` (new) `recordTicketCopy` writes the distribution row in the table's real columns (with `20261068`'s `source`, retried once in the original shape before that paste) and the row naming the file (`audit_logs` `DOWNLOAD` on the ticket); both are awaited, their `{ error }` read, and the page says a refusal in words after the copy — on both paths the record is awaited only once the copy has left (fix pass 2: the print iframe is created first, as the download records in `finally` after delivery, so a slow or hung insert never delays the print; pinned) — the DEC-44 member-writer rule ("a refused record never blocks the copy — it is said"), as document-control P8 applied it to `lib/downloads.ts`.
+- The policy half is document-control P2 EGRESS by pointer (this plan's `alreadyResolvedElsewhere`): `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` replaces `download_audits_org_access FOR ALL` with `download_audits_select` (SELECT) and `download_audits_insert_own` (INSERT, `user_id = auth.uid()`), and no UPDATE / DELETE policy. **Pending migration** — `MIGRATION-PASTE-ORDER.md` records it as not applied.
+- Tests: `lib/__tests__/verifyTicketVerdict.test.ts` "EVID-5 / PHYS-8 — …" and the page pins.
+
+**Done-when.**
+1. ✗ Not as written. The ticket copy's record is written from the browser in the same click as the copy, after the stamp (the bytes are stamped client-side from a presigned URL; there is no server request that issues the stamped file to write it in). It is no longer silent: a refusal is shown. Moving the stamp and its record server-side is a new route — not built.
+2. ✓ by pointer (document-control P2, `20261068`) — the database half holds only once it is pasted.
+3. ◐ The two ticket writes are awaited and checked (this pass); `MultiDocViewer` checks its insert (P8); `components/assets/FileReferenceModal.tsx:189` awaits but discards `{ error }`, and `components/viewers/SecureDocViewer.tsx:83-92` still fires the VIEW row with an un-awaited `.catch` — neither is in DF-P10's files.
+4. ◐ `lib/__tests__/downloadAudits.test.ts` pins the policy set by shape; no test runs a member session against a database (none in CI). `20261068`'s own probes check the live policy set at paste.
+
+**Scope / residual.** Each remainder is opened as its own finding with a named owner (DEC-31; review fix pass 4 — the first passes left them "for the integrator to own", which is no owner): the two viewer sites in done-when 3 → [`EVID-15`](#evid-15) (owner: projects-joint J15 CHECKED-WRITE SWEEP); done-when 1's record in the same server request → [`EVID-16`](#evid-16) (owner: drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS, a server stamping route for ticket files); the ticket columns the distribution record lacks → public-surfaces [`PHYS-17`](../public-surfaces/03-physical-bridge.md#phys-17) (owner: drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS, its migration number allocated at that package's launch). Done-when 2 closes on the `20261068` paste. The owners were named by the integrator at DF-P10's review fix pass 6 (2026-10-13).
+
 ---
 
 <a id="evid-6"></a>
@@ -299,6 +312,7 @@ components/viewers/SecureDocViewer.tsx:52-59 —
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** admin-and-org P13 AUDIT FOLLOW-UPS (the audit dead-letter outbox: table, verified server route writing as the service role, and a drain-and-alert step on the existing maintenance sweep) — by the integrator, 2026-10-13 (A&O P7 merge, DEC-31: the proposed owner DF-P3 had merged; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/audit.ts:16-32`, `node_modules/@supabase/postgrest-js/src/PostgrestBuilder.ts:82`, `node_modules/@supabase/postgrest-js/src/PostgrestBuilder.ts:371-372`, `node_modules/@supabase/postgrest-js/src/PostgrestBuilder.ts:534-536`
 - **Also surfaced independently as** [`PERS-7`](./07-persistence-and-rls.md#pers-7) — two lenses found this separately, which raises confidence. Fix once.
@@ -352,6 +366,21 @@ lib/reviewControl.ts:386 —
 - ✓ Tests: a `{ error }` insert produces a non-silent outcome (reported and logged); a null-actor cron path produces a durable row.
 
 **Scope / residual.** The dead-letter / outbox and its drain → admin-and-org **P7** (`ALOG-8`); an `actor_kind` column and the audit identity trigger → admin-and-org **P7** (`ALOG-7`, which builds on this `lib/audit.ts` — fleet plan, DF-P1 `dependsOn`). The call-site stand-ins → the owning packages (the ticket-queue sites, DF-P9).
+
+**Partial (2026-10-13, admin-and-org Round G).** Package P7 — the two limbs the DF-P1 merge re-owned to it ("the dead-letter / outbox and its drain (ALOG-8); the actor_kind column and audit identity trigger (ALOG-7)"). Reproduced on base `6503ea7` (DEC-29): `lib/audit.ts` (DF-P1's shape) returns `{ ok, error }` and logs a refusal; a stand-in actor is written `user_id NULL` with `metadata.actor_kind = "system"` (a field in metadata, not a column); nothing dead-letters a refused row.
+
+Landed:
+- **The `actor_kind` column and the identity trigger** — `supabase/migrations/20261201_ao_roundG_audit_identity.sql` (admin-and-org `ALOG-7`, PASTE pending): `audit_logs.actor_kind` (`member` / `server` / `system`) set by a BEFORE INSERT trigger on every new row — `system` for a row naming no person (the stand-in rows `lib/audit.ts` writes, a cron pass, the export ledgers), `server` for the service role's or a database function's row naming a person, `member` for a signed-in caller's own row, whose email / role / time the database stamps from `org_members`. A null-actor cron path still lands its row (the service role passes the trigger untouched — exercised on PostgreSQL 16, ALOG-7's record). `lib/audit.ts` keeps `metadata.actor_kind` for rows written before the paste.
+- `lib/audit.ts` also refuses an entry with no workspace (admin-and-org `ALOG-10`) — returned and logged, never thrown, like a refused insert.
+
+**Not landed: the dead-letter / outbox and its drain.** `logAuditAction` reports a refusal (returned and logged) but neither throws nor writes a durable row the maintenance cron drains. Throwing would change every caller that ignores the result today (a regression the user's first rule forbids); a durable outbox needs a table (an export decision) and a drain step in `app/api/cron/maintenance/route.ts`, a file P7's brief does not list — this round several packages each add ONE step to it (drafting-flow DF-P3 and DF-P7, notifications N6 / N10 / N14 / N15, document-control P5, A&O P5, PS-VERIFY, per the fleet plans). *(Corrected at the P7 review fix pass: this read "which drafting-flow DF-P2 / DF-P3 hold"; DF-P2's plan does not list the file.)* A client-side refusal (RLS) would refuse the outbox write for the same reason, so the outbox has to be a server route's.
+
+**Done-when.**
+- ✗ (in part) `{ error }` is inspected and reported (DF-P1) — no dead-letter / outbox or drain (above).
+- ✓ (pending `20261201`) No stand-in reaches `user_id` (DF-P1), and system-initiated rows are marked by a nullable `actor_kind` COLUMN, set by the database — the criterion's second form.
+- ✓ (DF-P1) tests: a `{ error }` insert is non-silent; a null-actor cron path produces a durable row. P7 adds `lib/__tests__/auditLog.test.ts` (the stand-in rule unchanged; a refused insert still returned).
+
+**Scope / residual.** The outbox and its drain. **Owner: drafting-flow DF-P3 ROUTING, for the integrator to confirm** (named at the P7 review fix pass; DEC-31 — "a DF cron package" named no one) *(Superseded: DF-P3 had merged; the integrator re-owned the outbox to admin-and-org P13 AUDIT FOLLOW-UPS at the A&O P7 merge, 2026-10-13 — the Assigned line above.)*. EVID-6 is a drafting-flow finding and DF-P3 is the drafting-flow package that holds a step in `app/api/cron/maintenance/route.ts` this round (its plan: "ONE step … NO new cron entry"); the integrator adds the outbox to its plan entry, or, if DF-P3 has merged by then, routes it to the next package listing that file. The brief: a table (export decision), a server route that writes the dead-letter row as the service role after verifying the caller (a client-side RLS refusal would refuse the outbox write too), and a drain-and-alert step riding the existing maintenance sweep (no new cron entry, `ALOG-8`'s note). The call-site stand-ins stay with their pages' owners (DF-P9, as DF-P1 recorded). Status stays OPEN.
 
 ---
 
@@ -660,6 +689,18 @@ lib/ticketTransitions.ts:247-252 —
 
 **Scope / residual.** The e-signature bound to the approved attachment → **DF-P5** (`EVID-1`'s same limb). A server-computed content hash (sha256 at upload or at vetting) and the transaction form → unowned in the fleet plan; proposed with DF-P5, which binds the signature to exactly those bytes. Pairing attempt rows with their `_NOT_APPLIED` / `_HOLDS_NOT_RELEASED` rows in the audit viewers → admin-and-org P7 (`99-fix-sequencing.md`, "Hand-offs from DF-P1"). The `HOLD_RELEASED` / `HOLD_KEPT_ON_CLOSE` rows the close writes are still unchecked (`app/api/tickets/workflow-action/route.ts:840-855`); those call sites are the holds owners' (`EVID-6`'s call-site residual).
 
+**Partial (2026-10-13, admin-and-org Round G).** Package P7 — the reading rule handed to it at the DF-P1 merge ("both audit viewers pair a TICKET_<ACTION> attempt row with the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it"). Reproduced on base `6503ea7`: both viewers listed the rows one by one.
+
+Landed: `lib/auditActions.ts pairTicketAttempts` (`:239`) — an attempt row (`TICKET_<ACTION>`, `details.recordedBeforeApply`) is "applied" unless a `_NOT_APPLIED` row in the loaded rows names it in `details.attempt` ("not applied"); a `_HOLDS_NOT_RELEASED` row naming it marks it "applied, but its holds were not released". The viewers load newest first, so a loaded attempt's follow-up (written after it) is loaded too.
+- `/admin/audit`: the attempt row shows its outcome; the follow-up row says which attempt it names; filtering on a ticket action brings its follow-ups with it (`auditActionFilterQuery`), and a `TICKET_…` family filter is offered.
+- `/activity`: the attempt line says the outcome ("… (not applied)", "… (applied — its holds were not released)") and its follow-up line folds into it. *Moved at the P7 second review fix pass:* the fold is `lib/auditActions.ts foldTicketFeed` (`:279`), so the page holds one memo after the day grouping (`const feed = useMemo(() => foldTicketFeed(rows, grouped), …)`), `feed.groups.map` and `+ feed.verbSuffix(r.id)` on the verb line; the SEC-21 `grouped` memo is unchanged. The plan lists `/activity` for "rule copy only" and names both viewers for this reading rule, so the page's logic change is kept to those three expressions.
+
+Tests: `lib/__tests__/auditViewers.test.ts` "drafting-flow EVID-12 — …" (the three outcomes; a pre-DF-P1 row with no marker is not an attempt; both viewers use the pairing; *second review fix:* `foldTicketFeed` folds a loaded attempt's follow-up, drops a day left empty, keeps a follow-up whose attempt is not loaded, and gives each outcome's suffix); `lib/__tests__/auditPageRendered.test.ts` (rendered: the attempt shows "Not applied …", the follow-up names it).
+
+**Done-when.** This package's limb (the viewers' reading rule) holds. The record's four criteria are unchanged by it: the transaction form and the server-computed content hash (unowned, proposed with DF-P5) and the e-signature bound to the approved attachment (DF-P5) remain as DF-P1 recorded.
+
+**Scope / residual.** None for P7. Status stays OPEN for DF-P5. **For the integrator (citation drift):** document-control `DCK-9` (RESOLVED, Round F; `01-checkout.md` Locations, the verifier correction and the Resolution) and `LIFE-*`'s FIELD_VERIFIED resolution in the same file cite `app/(protected)/activity/page.tsx:195` for the pulse's lock bucket. P7's header copy (ALOG-5's rule, this reading rule) and the one import moved that line to `:227` (`:221` at the second review fix pass; the third pass's corrected ALOG-5 comment moved it again); the code there is unchanged (`lib/__tests__/timelineHolds.test.ts` still pins it by content). The citation is the only thing that moved; P7 does not edit DC records (DEC-31).
+
 ---
 
 <a id="evid-13"></a>
@@ -777,5 +818,61 @@ lib/drawingAuditLog.ts:141-148 (no audited_at emitted) —
 - [ ] audited_at (and an actor/source column distinguishing engine-run from orchestrator-tool from human) is written on every upsert
 - [ ] The orchestrator's log_audit_completion cannot downgrade a more severe existing verdict without an explicit human confirmation that is itself recorded in audit_logs
 - [ ] A test proves re-recording the same (sheet, revision) preserves the earlier verdict and its findings
+
+---
+
+<a id="evid-15"></a>
+
+## EVID-15 · Two viewer copy / view records still discard their outcome — the linked-drawings print never reads the insert's `{ error }`, and the secure viewer's VIEW row is fired un-awaited
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP (`components/assets/FileReferenceModal.tsx` and `components/viewers/SecureDocViewer.tsx`) — by the integrator, 2026-10-13 (DF-P10 review fix pass 6, DEC-31); opened by drafting-flow Round G DF-P10 from `EVID-5` done-when 3.
+- **Verification:** CONFIRMED on `596d34e` and on DF-P10's branch (neither file is changed by it).
+- **Locations:** `components/assets/FileReferenceModal.tsx:189`, `components/viewers/SecureDocViewer.tsx:83-92`
+- **Independently verified:** — opened 2026-10-13 by DF-P10's review fix pass 4 from `EVID-5`'s remainder; not yet challenged by a second party.
+
+**Mechanism.** `EVID-5` done-when 3 asks that no download or print record be written with `void` or a discarded promise. DF-P10 closed the ticket copy's two writes. Two sites outside its files remain: the linked-drawings print awaits its `download_audits` insert inside `try { … } catch`, but never destructures `{ error }`, so a refused insert (RLS, a missing column) passes as a success; the secure viewer fires `logAuditAction({ action: 'VIEW', … })` with only a `.catch` (not awaited, and a `{ ok: false }` result is ignored).
+
+**Failure scenario.** Before `20261068` is pasted, or under any policy refusal, a field user prints the linked drawings of a pump from its asset page: the copies leave and the distribution record has no row, with nothing said. A document opened in the secure viewer when the audit insert is refused leaves no VIEW row, again with nothing said.
+
+**Evidence.**
+
+```
+components/assets/FileReferenceModal.tsx:189 —
+  try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+
+components/viewers/SecureDocViewer.tsx:83-92 —
+  logAuditAction({ action: 'VIEW', resourceId: documentId, … }).catch(e => console.error("Audit log failed", e));
+```
+
+**Done when.**
+
+- [ ] `FileReferenceModal`'s print reads the insert's `{ error }` and says a refusal in words after the copy (DEC-44's member-writer rule: a refused record never blocks the copy, it is said)
+- [ ] `SecureDocViewer`'s VIEW row is awaited and its result checked (logged as refused, never a silent success)
+- [ ] A test pins both sites (no un-checked insert, no fire-and-forget audit row)
+
+---
+
+<a id="evid-16"></a>
+
+## EVID-16 · A drafting-ticket copy is stamped and recorded in the browser, not in the server request that issues the stamped file — a client that skips the record still gets the copy
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS (the server-side stamp and record of a ticket copy) — by the integrator, 2026-10-13 (DF-P10 review fix pass 6, DEC-31); opened by DF-P10's review fix pass 4 from `EVID-5` done-when 1.
+- **Verification:** CONFIRMED on DF-P10's branch.
+- **Locations:** `app/(protected)/requests/[id]/page.tsx` (`FileViewerModal`, the print and download paths), `lib/ticketDeliverableCopy.ts` (`recordTicketCopy`)
+- **Independently verified:** — opened 2026-10-13 by DF-P10; not yet challenged by a second party.
+
+**Mechanism.** The ticket file is fetched from a presigned URL, stamped in the browser (`stampPdf`), and only then recorded by `recordTicketCopy` from the same browser session. DF-P10 made the record awaited, checked and said when refused (`EVID-5`'s ticket half), but no server request issues the stamped file, so nothing ties the copy to its record: a modified client, or a direct fetch of the presigned URL, takes the file with no `download_audits` row and no `audit_logs` DOWNLOAD row.
+
+**Failure scenario.** A member with read access to a ticket copies the presigned URL from the network tab and downloads the Final unstamped; no distribution row exists, so a later recall of that revision cannot name the holder.
+
+**Done when.**
+
+- [ ] A server route issues the stamped ticket file (stamp server-side, as `/api/documents/[id]/download` does for register documents) and writes the distribution row and the audit row in the same request, refusing to issue when the record cannot be written, or recording the refusal (DEC-44)
+- [ ] The ticket page's print and download go through it; the presigned URL of a ticket Final is no longer handed to the browser for copying
+- [ ] A route test pins the record written in the same request as the bytes
 
 ---

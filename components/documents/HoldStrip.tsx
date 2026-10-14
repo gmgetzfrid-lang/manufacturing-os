@@ -37,13 +37,14 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  AlertOctagon, Plus, X, Loader2, Clock, AlertTriangle, Lock, Check, Printer, CalendarClock,
+  AlertOctagon, Plus, X, Loader2, Clock, AlertTriangle, Lock, Check, Printer, CalendarClock, RefreshCw,
 } from "lucide-react";
 import {
   listActiveHoldsForDocument, openHold, releaseHold, updateHoldExpectedRelease, holdControlsFor,
   expectedReleaseIso, expectedReleaseDate, PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON, type HoldRecord,
 } from "@/lib/holds";
-import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { affordancePolicyFault } from "@/lib/checkoutAffordances";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -98,17 +99,32 @@ export default function HoldStrip({
   const [releasingId, setReleasingId] = useState<string | null>(null);
   const [releaseReasonDraft, setReleaseReasonDraft] = useState("");
   const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
+  const [policyFault, setPolicyFault] = useState<string | null>(null);
+  const [policyTry, setPolicyTry] = useState(0);
 
   // HLD-8: the controls follow the policy. Until it is read nothing is
-  // offered (fail closed); a read error falls to the shipped defaults, the
-  // same way every other policy consumer does — the database still enforces.
+  // offered (fail closed). AUTHZ-15 (DEC-90 A26; the integrator's ruling of
+  // 2026-10-13, DEC-89): a read with no last good entry (`unreadable`) or a
+  // read that throws keeps the policy null, so Place / Release / Re-date
+  // stay held back instead of being drawn from the shipped defaults, and the
+  // strip says why with a Try again. A `stale` answer (the last good policy,
+  // served because the refresh failed) is drawn as is, with no label. The
+  // database still enforces.
   useEffect(() => {
     let alive = true;
-    void loadCapabilityPolicy(orgId)
-      .then((p) => { if (alive) setPolicy(p); })
-      .catch(() => { if (alive) setPolicy({}); });
+    void loadCapabilityPolicyEntry(orgId)
+      .then((e) => {
+        if (!alive) return;
+        const fault = affordancePolicyFault(e);
+        if (fault) { setPolicy(null); setPolicyFault(fault); return; }
+        setPolicy(e.policy); setPolicyFault(null);
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setPolicy(null); setPolicyFault((err as Error)?.message || "the capability policy could not be read");
+      });
     return () => { alive = false; };
-  }, [orgId]);
+  }, [orgId, policyTry]);
   const { canOpen, canRelease } = policy
     ? holdControlsFor(policy, userRole, heldRoleCollection, userId)
     : { canOpen: false, canRelease: false };
@@ -205,6 +221,18 @@ export default function HoldStrip({
           </span>
         )}
       </div>
+
+      {canEdit && policyFault && (
+        // AUTHZ-15: only where the caller would draw controls — a read-only
+        // strip (canEdit false) offers nothing to explain.
+        <div role="alert" data-testid="hold-policy-fault" className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
+          <Lock className="w-3 h-3 mt-0.5 shrink-0" />
+          <span className="flex-1"><b>Permissions could not be read</b> — placing, releasing and re-dating holds are not offered until they can be.</span>
+          <button onClick={() => setPolicyTry((n) => n + 1)} className="shrink-0 inline-flex items-center gap-1 font-bold hover:underline">
+            <RefreshCw className="w-3 h-3" /> Try again
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>

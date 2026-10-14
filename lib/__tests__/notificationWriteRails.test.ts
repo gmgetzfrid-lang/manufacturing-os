@@ -583,8 +583,18 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue"])', keys: ["ackEscalation"] }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
-  "lib/storageAlerts.ts": [{ marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] }],
-  "lib/storageUsage.ts": [{ marks: '.eq("kind", alert.kind)', kinds: ["storage_platform_r2", "storage_platform_db"] }],
+  "lib/storageAlerts.ts": [
+    { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
+    // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the quota bell is not sent the
+    // same UTC day as an R2 plan bell (storage_platform_r2, server-only) — read by that kind
+    { marks: '.eq("kind", "storage_platform_r2")', kinds: ["storage_platform_r2"] },
+  ],
+  "lib/storageUsage.ts": [
+    // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the R2 bell counts a quota bell
+    // (storage_alert, server-only) that already stated the bucket running hot — read by that kind
+    { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
+    { marks: '.eq("kind", alert.kind)', kinds: ["storage_platform_r2", "storage_platform_db"] },
+  ],
 };
 /** The recipient's own rows, read under RLS — the bell, the inbox count, the dashboard. */
 // components/documents/EditOverlapBanner.tsx (notifications N7, TAX-8 — merged after this
@@ -592,7 +602,11 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
 // viewer's OWN overlap_advisory rows (user_id = the signed-in member) to show "Heads-up
 // sent". Not a server dedupe: 20261160 stamps actor_user_id as the writer, so a row it
 // counts names a member of the overlap who did send one.
-const BELL_READERS = ["components/dashboard/widgets.tsx", "components/documents/EditOverlapBanner.tsx", "lib/inAppNotifications.ts", "lib/inbox.ts"];
+// lib/notificationReconcileServer.ts (notifications N4 — NEDGE-18): the reconcile route reads
+// back the CALLER's own unread, unsuperseded rows by the ids the feed sent, to re-check their
+// condition before marking them superseded. Not a dedupe: no write is withheld because a row
+// exists, and a forged row could only ever be retired, never cause one.
+const BELL_READERS = ["components/dashboard/widgets.tsx", "components/documents/EditOverlapBanner.tsx", "lib/inAppNotifications.ts", "lib/inbox.ts", "lib/notificationReconcileServer.ts"];
 /** Who writes each server-only key / kind, and the function it is written in — called only by
  *  the maintenance cron on the service role (a route file is server-only by itself). */
 const SERVER_WRITERS: Record<string, { file: string; fn?: string }> = {
@@ -686,7 +700,11 @@ describe("20261160 — the server's dedupe watermarks: a browser can neither wri
       // The storage purge (notifications N6, DELIV-8 dw3) names the server-only kinds to
       // KEEP their rows out of a purge — a filter, not a write; maintenanceDrain.test.ts
       // pins its lists to this function's.
-      expect(where.filter((f) => f !== "lib/inAppNotifications.ts" && f !== "app/api/admin/purge/route.ts"), token).toEqual([w.file]);
+      // admin-and-org BILL-15 (Round G, P10): the two storage steps each name the other's kind in one
+      // read (DEDUPE_READS above) — a filter, not a write; each kind's writer is still its one function.
+      const readsOnly = (f: string) =>
+        (token === "storage_alert" && f === "lib/storageUsage.ts") || (token === "storage_platform_r2" && f === "lib/storageAlerts.ts");
+      expect(where.filter((f) => f !== "lib/inAppNotifications.ts" && f !== "app/api/admin/purge/route.ts" && !readsOnly(f)), token).toEqual([w.file]);
       const src = files.find(([f]) => f === w.file)![1];
       if (w.file.startsWith("app/api/")) continue;
       // in a lib file: every occurrence sits inside the named function, and only the cron calls it
@@ -1805,14 +1823,22 @@ describe("REGRESSION census — every app write to notifications fits the read_a
   });
 
   // The two updates that write metadata, not read_at (drafting-flow DF-P1, EVID-13; classified by
-  // the integrator at the DF-P1 merge). The route's runs on the service role, which 20261161's
-  // read_at-only trigger lets through. The attention hook's runs in the recipient's browser on
-  // their own rows: once 20261161 is pasted the trigger refuses it (best-effort there; the feed
-  // already filters the row) — NEDGE-18, owned by notifications N4, moves that mark server-side.
+  // the integrator at the DF-P1 merge). Both run on the service role, which 20261161's read_at-only
+  // trigger lets through. The route's retires a ticket's moot workflow alerts as it transitions;
+  // the reconcile pass's (notifications N4 — NEDGE-18) retires the caller's own rows whose
+  // condition is gone, re-checked on the server (POST /api/notifications/reconcile). The attention
+  // hook's browser-side mark — refused once 20261161 is pasted — is gone: no browser code writes
+  // notifications metadata (NEDGE-18 done-when 3).
   const METADATA_UPDATES: Record<string, { marks: string; why: string }> = {
     "app/api/tickets/workflow-action/route.ts": { marks: "superseded_at: supersededAt, superseded_by: action.type", why: "service role: retires a ticket's moot workflow alerts (EVID-13)" },
-    "hooks/useTicketNotifications.ts": { marks: "superseded_at: supersededAt", why: "browser, own rows: refused once 20261161 is pasted (NEDGE-18, N4)" },
+    "lib/notificationReconcileServer.ts": { marks: "superseded_at: supersededAt } })", why: "service role (the reconcile route): retires the caller's own rows whose condition is gone (NEDGE-18, TRAIL-9, DEC-81 §2)" },
   };
+
+  it("NEDGE-18: the attention hook writes no notifications metadata from the browser — the reconcile pass is a server route", () => {
+    expect(writes.filter((w) => w.file === "hooks/useTicketNotifications.ts" && w.op === "update")).toEqual([]);
+    expect(readFileSync(join(ROOT, "hooks/useTicketNotifications.ts"), "utf8")).toContain("requestReconcile(activeOrgId, ids)");
+    expect(readFileSync(join(ROOT, "app/api/notifications/reconcile/route.ts"), "utf8")).toContain("retireStaleAlerts(supabaseAdmin, { orgId, uid: user.id, ids })");
+  });
 
   it("every UPDATE writes read_at and nothing else (mark one / many / all read, the ticket page's clear) — but the two classified metadata marks", () => {
     const readAtOnly = (t: string) => /^\s*\.update\(\{\s*read_at: new Date\(\)\.toISOString\(\)\s*\}\)/.test(t);

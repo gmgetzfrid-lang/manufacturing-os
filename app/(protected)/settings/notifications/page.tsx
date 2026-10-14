@@ -7,7 +7,11 @@
 // changes, watcher activity, SLA warnings) and pick a delivery cadence.
 // In-app bell notifications are always on — they're the persistent
 // inbox; the email side is the opt-in noise layer. Pop-up toasts (the
-// ephemeral echo of a new bell item) have their own switch, toast_enabled.
+// ephemeral echo of a new bell item) have their own switch, toast_enabled,
+// and — notifications Round G N4, RT-10 — one switch per email category
+// (toast_on_<category>, 20261200), the same five categories as the email
+// toggles, honoured by the toast listener through each kind's category
+// (lib/notificationKinds.ts KIND_META.category).
 //
 // One vocabulary (notifications Round G, N1): the values, defaults and
 // cadence list come from lib/notificationPrefs.ts, which a test pins to the
@@ -24,8 +28,9 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import {
   PREF_DEFAULTS, OFFERED_DIGEST_FREQUENCIES, DIGEST_LABELS, TOAST_PREFERENCE_HONOURED,
-  prefsFromRow, isCheckViolation, isMissingColumnError,
-  type NotificationPrefs,
+  TOAST_CATEGORY_DEFAULTS, TOAST_CATEGORY_COLUMNS,
+  prefsFromRow, toastCategoryPrefsFromRow, isCheckViolation, isMissingColumnError,
+  type NotificationPrefs, type ToastCategoryPrefs,
 } from "@/lib/notificationPrefs";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
@@ -48,6 +53,8 @@ function saveFailure(err: PgError): string {
 export default function NotificationSettingsPage() {
   const { uid } = useRole();
   const [prefs, setPrefs] = useState<Prefs>({ ...PREF_DEFAULTS });
+  // RT-10: the per-category pop-up switches, saved beside the rest.
+  const [toastCats, setToastCats] = useState<ToastCategoryPrefs>({ ...TOAST_CATEGORY_DEFAULTS });
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -77,6 +84,7 @@ export default function NotificationSettingsPage() {
             loaded.digest_frequency = "instant";
           }
           setPrefs(loaded);
+          setToastCats(toastCategoryPrefsFromRow(row));
         }
       } catch (e) {
         // Never fall back to the defaults silently: saving them would
@@ -95,7 +103,17 @@ export default function NotificationSettingsPage() {
     try {
       let { error: upsertErr } = await supabase
         .from("notification_preferences")
-        .upsert({ user_id: uid, ...prefs }, { onConflict: "user_id" });
+        .upsert({ user_id: uid, ...prefs, ...toastCats }, { onConflict: "user_id" });
+      if (upsertErr && TOAST_CATEGORY_COLUMNS.some((c) => isMissingColumnError(upsertErr, c))) {
+        // The database has not had 20261200 pasted yet: save everything but
+        // the per-category pop-up switches (and say so if one was turned off).
+        ({ error: upsertErr } = await supabase
+          .from("notification_preferences")
+          .upsert({ user_id: uid, ...prefs }, { onConflict: "user_id" }));
+        if (!upsertErr && TOAST_CATEGORY_COLUMNS.some((c) => toastCats[c] === false)) {
+          setNotice("Your preferences were saved; the per-category pop-up settings were not saved — the database update that adds them has not been applied yet.");
+        }
+      }
       if (upsertErr && isMissingColumnError(upsertErr, "toast_enabled")) {
         // The database has not had 20261148 pasted yet: save everything else.
         const { toast_enabled, ...rest } = prefs;
@@ -203,6 +221,17 @@ export default function NotificationSettingsPage() {
           </div>
           {TOAST_PREFERENCE_HONOURED && (
             <PrefRow icon={MessageSquare} title="Pop-up toasts" hint="A brief card in the corner when a new bell notification arrives. Off: the bell still counts it." on={prefs.toast_enabled} onChange={(v) => setPrefs({ ...prefs, toast_enabled: v })} />
+          )}
+          {TOAST_PREFERENCE_HONOURED && (
+            // RT-10: one pop-up switch per category — the email toggles'
+            // five. The bell row of every category is still written.
+            <div data-toast-categories className={`divide-y divide-[var(--color-border)] ${prefs.toast_enabled ? "" : "opacity-50 pointer-events-none"}`}>
+              <PrefRow icon={AtSign} title="Pop-ups for mentions" hint="Someone @-mentions you, or a colleague sends you a message through the assistant." on={toastCats.toast_on_mention} onChange={(v) => setToastCats({ ...toastCats, toast_on_mention: v })} />
+              <PrefRow icon={UserPlus} title="Pop-ups for assignments and requests" hint="Something is assigned to you or asks you to act — a request to review, acknowledge, approve or mark up." on={toastCats.toast_on_assignment} onChange={(v) => setToastCats({ ...toastCats, toast_on_assignment: v })} />
+              <PrefRow icon={Briefcase} title="Pop-ups for status changes" hint="Something you are involved in changed — a ticket advanced, a revision was published, a hold was placed or released, a checkout conflicts with yours." on={toastCats.toast_on_status_change} onChange={(v) => setToastCats({ ...toastCats, toast_on_status_change: v })} />
+              <PrefRow icon={Activity} title="Pop-ups for watched activity" hint="Comments, thread messages and new documents on things you follow." on={toastCats.toast_on_watched_activity} onChange={(v) => setToastCats({ ...toastCats, toast_on_watched_activity: v })} />
+              <PrefRow icon={AlertOctagon} title="Pop-ups for overdue and at-risk items" hint="Something is overdue or at risk — a review or acknowledgment past its date, a recertification due, a checkout held too long." on={toastCats.toast_on_sla_warning} onChange={(v) => setToastCats({ ...toastCats, toast_on_sla_warning: v })} />
+            </div>
           )}
         </div>
 

@@ -447,7 +447,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         await logCheckoutEvent({
           orgId: document.orgId, fileId: document.id!,
           userId: currentUser.uid, userEmail: currentUser.email || "unknown",
-          userRole: currentUser.role || "unknown",
+          userRole: currentUser.role ?? "", // SESS-6 residual (P23, DEC-91 §1): no role known is omitted (written NULL)
           type: "CHECK_OUT",
           details: {
             joined: true, documentNumber: document.documentNumber ?? null,
@@ -527,7 +527,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       await logCheckoutEvent({
         orgId: document.orgId, fileId: document.id!,
         userId: currentUser.uid, userEmail: currentUser.email || "unknown",
-        userRole: currentUser.role || "unknown",
+        userRole: currentUser.role ?? "", // SESS-6 residual (P23, DEC-91 §1): no role known is omitted (written NULL)
         type: "CHECK_OUT",
         details: {
           documentNumber: document.documentNumber ?? null,
@@ -566,7 +566,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       await logCheckoutEvent({
         orgId: document.orgId, fileId: document.id,
         userId: currentUser.uid, userEmail: currentUser.email || "unknown",
-        userRole: currentUser.role || "unknown",
+        userRole: currentUser.role ?? "", // SESS-6 residual (P23, DEC-91 §1): no role known is omitted (written NULL)
         type: "CHECK_OUT",
         details: { quickHold: true, autoExpires: "end of day", joined: result === "joined" },
       });

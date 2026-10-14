@@ -18,6 +18,15 @@
 // is REFUSED (named) — never issued unchecked and unarmed — and every issue
 // that relies on a check (the one it ran, or the one the issuer answered) is
 // bound to the draft read, whether or not it writes a mark.
+//
+// document-control Round F wave 3 — P24 (TRX-17): a file the check could not
+// decide (`unchecked`) stops the issue like an unstampable one, and a check
+// that could not run at all stops it naming every file (it no longer issues
+// silently). "Issue anyway" writes the issuer's yes on each accepted item
+// (`stampAccepted: true`) in the same UPDATE, under the updated_at match —
+// the yes the 20261199 issue trigger requires and stamps. The tests below
+// that pinned the old pass-through are rewritten to the new rule (each says
+// so); a decided, stampable issue sends exactly what it sent after P22.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -58,6 +67,7 @@ vi.mock("@/lib/audit", () => ({
 
 import {
   issueTransmittal, describeUnstampable, unstampableItems, UnstampableItemsError, PORTAL_STAMP_MAX_BYTES, armCheckedItems, stampFooterUnprintable,
+  unstampableConfirmTitle, unstampableDeclinedMessage, checkNotRunItems,
   checkTransmittalStampability, STAMP_CHECK_TIME_BUDGET_MS, STAMP_CHECK_CLIENT_TIMEOUT_MS,
   type ItemStampCheck, type IssuePhase,
 } from "@/lib/transmittals";
@@ -128,21 +138,79 @@ describe("TRX-16 — the issuer is warned at issue, before anything is written",
     expect(stampCalls()).toEqual([]);
     expect(db.audits[0]).toMatchObject({ action: "TRANSMITTAL_ISSUED", details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d2", number: "VDS-7", verdict: "unloadable" }] }) });
   });
-  it("REGRESSION: a check that cannot run never blocks an issue — logged, and the issue proceeds (DEC-61 §5 still governs the portal)", async () => {
+  it("TRX-17 (rewritten from P15's \"a check that cannot run never blocks an issue\"): a check that cannot run stops the issue BEFORE anything is written, naming every file — logged, never issued unchecked", async () => {
     for (const a of [{ status: 500, body: { error: "boom" } }, { status: 403, body: { error: "no authority" } }, { status: 200, body: {} }, "throw" as const]) {
       db.calls = []; db.audits = [];
       stampAnswer = a;
       warn.mockClear();
-      const out = await issueTransmittal("t1", actor);
-      expect(out.transmittal.status).toBe("issued");
-      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/issue-time stamp check could not run for TR-0107/), expect.anything());
+      const err = await issueTransmittal("t1", actor).catch((e) => e) as UnstampableItemsError;
+      expect(err).toBeInstanceOf(UnstampableItemsError);
+      expect(err.items.map((c) => [c.documentId, c.number, c.verdict])).toEqual([["d1", "P-101", "unchecked"], ["d2", "VDS-7", "unchecked"]]);
+      // P24 integrator fix pass: the run's reason rides once on the error, never on each file
+      expect(err.items.map((c) => c.detail)).toEqual(["the check could not run", "the check could not run"]);
+      expect(typeof err.notRunReason).toBe("string");
+      expect(err.message).toMatch(/^The issue-time check gave no result this issue can rely on, so none of these 2 files is confirmed/);
+      expect(err.message).toContain("\nNot checked:\n• P-101\n• VDS-7\n");
+      expect(updates()).toEqual([]);
+      expect(db.audits).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/issue-time stamp check could not run for TR-0107 — asking the issuer/), expect.anything());
     }
   });
-  it("not_pdf and unchecked items do not warn (the portal says so up front / nothing is known)", () => {
-    const checks: ItemStampCheck[] = [OK, { documentId: "d4", number: "X", verdict: "not_pdf" }, { documentId: "d5", number: "Y", verdict: "unchecked", detail: "x" }];
+  it("not_pdf items do not warn (the portal says so up front); TRX-17: an unchecked item now warns, in its own paragraph", () => {
+    const checks: ItemStampCheck[] = [OK, { documentId: "d4", number: "X", verdict: "not_pdf" }];
     expect(unstampableItems(checks)).toEqual([]);
     expect(describeUnstampable(checks)).toBeNull();
+    // REGRESSION: when every named file is one the portal cannot mark, the text is as before
     expect(describeUnstampable([ENCRYPTED, BIG])).toMatch(/^The recipient's portal cannot stamp these files as an UNCONTROLLED copy/);
+    expect(describeUnstampable([ENCRYPTED, BIG])).toMatch(/\nFix the files and issue again, or issue anyway\.$/);
+    const UNCHECKED: ItemStampCheck = { documentId: "d5", number: "Y", verdict: "unchecked", detail: "not checked — the check ran out of time" };
+    expect(unstampableItems([...checks, UNCHECKED])).toEqual([UNCHECKED]);
+    expect(describeUnstampable([OK, UNCHECKED])).toBe(
+      "The issue-time check could not confirm that the recipient's portal can stamp this file as an UNCONTROLLED copy. If it cannot, it would be released WITHOUT the marking, the as-issued footer or the verify QR:\n"
+      + "• Y: the check could not tell whether the portal can mark it (not checked — the check ran out of time).\n"
+      + "Issue again later to re-run the check, or issue anyway — your yes is recorded with the transmittal.");
+    const both = describeUnstampable([ENCRYPTED, UNCHECKED])!;
+    expect(both).toMatch(/^The recipient's portal cannot stamp this file as an UNCONTROLLED copy/);
+    expect(both).toContain("\nThe issue-time check could not confirm that the recipient's portal can stamp this file");
+    expect(both).toMatch(/Fix the file\(s\) the portal cannot mark and issue again, or issue anyway — your yes is recorded with the transmittal\.$/);
+    // the composer's words follow
+    expect(unstampableConfirmTitle([ENCRYPTED])).toBe("Files the portal cannot mark");
+    expect(unstampableConfirmTitle([ENCRYPTED, UNCHECKED])).toBe("Files the portal cannot mark");
+    expect(unstampableConfirmTitle([UNCHECKED])).toBe("Files the check could not confirm");
+    expect(unstampableDeclinedMessage([ENCRYPTED])).toBe("Not issued — fix the file(s) the portal cannot mark, then issue again.");
+    expect(unstampableDeclinedMessage([UNCHECKED])).toBe("Not issued — nothing was sent. Issue again to re-run the check.");
+    // the stand-in check names each document once, with no copy of the run's reason (P24 integrator fix pass)
+    expect(checkNotRunItems([{ documentId: "d1", number: "P-101" }, { documentId: "d1", number: "P-101" }, { documentId: "d2", number: "" }]))
+      .toEqual([{ documentId: "d1", number: "P-101", verdict: "unchecked", detail: "the check could not run" }, { documentId: "d2", number: "This document", verdict: "unchecked", detail: "the check could not run" }]);
+  });
+  it("P24 integrator fix pass (re-review minor): when the check could not run, its reason is said ONCE above the files — each file named once, the route's sentence never repeated per file", async () => {
+    const REASON = "The check ran, but its result could not be recorded (the database is unavailable). Issue again to re-run it — if you issue anyway, every file goes out on your yes alone, without the portal's refusal to release an unmarked copy.";
+    const three = [{ documentId: "d1", number: "P-101" }, { documentId: "d2", number: "VDS-7" }, { documentId: "d3", number: "SET-9" }];
+    const msg = describeUnstampable(checkNotRunItems(three), REASON)!;
+    expect(msg.split(REASON).length - 1).toBe(1);
+    expect(msg).toBe(
+      "The issue-time check gave no result this issue can rely on, so none of these 3 files is confirmed: the recipient's portal may not be able to stamp them as an UNCONTROLLED copy, and any it cannot would be released WITHOUT the marking, the as-issued footer or the verify QR.\n"
+      + `What happened: ${REASON}\n`
+      + "Not checked:\n• P-101\n• VDS-7\n• SET-9\n"
+      + "Issue again later to re-run the check, or issue anyway — your yes is recorded with the transmittal.");
+    expect(msg).not.toContain("could not run: The check ran");
+    for (const n of ["P-101", "VDS-7", "SET-9"]) expect(msg.split(n).length - 1).toBe(1);
+    // one file; a reason with no closing stop gets one
+    expect(describeUnstampable(checkNotRunItems([three[0]]), "the check answered 500")).toBe(
+      "The issue-time check gave no result this issue can rely on, so this file is not confirmed: the recipient's portal may not be able to stamp it as an UNCONTROLLED copy, and if it cannot, it would be released WITHOUT the marking, the as-issued footer or the verify QR.\n"
+      + "What happened: the check answered 500.\nNot checked:\n• P-101\n"
+      + "Issue again later to re-run the check, or issue anyway — your yes is recorded with the transmittal.");
+    // through the issue path: the route's 503 sentence appears once in the confirm's text for the 2-file draft
+    stampAnswer = { status: 503, body: { error: REASON } };
+    const err = await issueTransmittal("t1", actor).catch((e) => e) as UnstampableItemsError;
+    expect(err).toBeInstanceOf(UnstampableItemsError);
+    expect(err.notRunReason).toBe(REASON);
+    expect(err.message.split(REASON).length - 1).toBe(1);
+    expect(err.items.every((c) => !String(c.detail).includes(REASON))).toBe(true);
+    expect(unstampableConfirmTitle(err.items)).toBe("Files the check could not confirm");
+    // REGRESSION: a decided check's undecided file still reads its own detail in its line, as before
+    expect(describeUnstampable([{ documentId: "d5", number: "Y", verdict: "unchecked", detail: "not checked — the check ran out of time" }]))
+      .toContain("• Y: the check could not tell whether the portal can mark it (not checked — the check ran out of time).");
   });
   it("REGRESSION (P22): an issuer-accepted re-issue with nothing to arm (no check to carry) sends status / time only, with no draft-version match", async () => {
     await issueTransmittal("t1", actor, { acceptedUnstampable: [ENCRYPTED] });
@@ -157,9 +225,10 @@ describe("TRX-16 — the composer asks the issuer", () => {
   it("an UnstampableItemsError opens a confirm naming the files; Issue anyway re-issues with the accepted items; declining leaves a saved draft, not issued", () => {
     expect(page).toContain("UnstampableItemsError,");
     expect(page).toMatch(/if \(!\(e instanceof UnstampableItemsError\)\) throw e;/);
-    expect(page).toMatch(/appConfirm\(\{ title: "Files the portal cannot mark", message: <span className="whitespace-pre-line">\{e\.message\}<\/span>, confirmLabel: "Issue anyway" \}\)/);
+    // TRX-17: the title and the declined message follow the files named (as before for a file the portal cannot mark)
+    expect(page).toMatch(/appConfirm\(\{ title: unstampableConfirmTitle\(e\.items\), message: <span className="whitespace-pre-line">\{e\.message\}<\/span>, confirmLabel: "Issue anyway" \}\)/);
     expect(page).toContain("outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items, checked: e.checked, onPhase: setIssuePhase });");
-    expect(page).toContain('await onSaved({ kind: "issue-failed", draft, error: "Not issued — fix the file(s) the portal cannot mark, then issue again." });');
+    expect(page).toContain('await onSaved({ kind: "issue-failed", draft, error: unstampableDeclinedMessage(e.items) });');
   });
   it("P15 review fix: the composer says the files are being checked while the check runs, then that it is issuing; the phase clears when it ends", () => {
     expect(page).toContain("outcome = await issueTransmittal(draft.id, actor, { onPhase: setIssuePhase });");
@@ -179,7 +248,7 @@ describe("TRX-16 (P15 review fix) — the issuer's wait for the check is bounded
     expect(server).toMatch(/import \{ PORTAL_STAMP_MAX_BYTES, STAMP_CHECK_TIME_BUDGET_MS, portalKeyAllowed/);
     expect(server).not.toMatch(/STAMP_CHECK_TIME_BUDGET_MS = /);
   });
-  it("a check that does not answer in time is aborted and reads as a check that could not run — the issue proceeds, logged", async () => {
+  it("a check that does not answer in time is aborted and reads as a check that could not run (TRX-17: which now asks the issuer)", async () => {
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (url !== "/api/transmittal/stamp-check") return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
       return new Promise((_res, rej) => {
@@ -238,13 +307,20 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect(db.audits.map((a) => a.action)).toEqual(["TRANSMITTAL_ISSUED"]);
   });
 
-  it("only the items found stampable are marked: a non-PDF and an unchecked file carry no mark (they keep DEC-61 §5's release)", async () => {
+  it("only the items found stampable are marked: a non-PDF carries no mark; TRX-17: an unchecked file stops the issue, and Issue anyway records the yes on it (no mark)", async () => {
     readRow = { ...stored, items: [...rawItems, { documentId: "d3", number: "M-3", versionId: "v3" }] };
     db.handlers.documents = () => ({ data: ["d1", "d2", "d3"].map((d, i) => ({ id: d, status: "Issued", archived_at: null, current_version_id: `v${i + 1}` })), error: null });
-    stampAnswer = { status: 200, body: { items: [OK, { documentId: "d2", number: "VDS-7", verdict: "not_pdf" }, { documentId: "d3", number: "M-3", verdict: "unchecked", detail: "not checked — the check ran out of time" }] } };
-    await issueTransmittal("t1", actor);
-    const { patch } = lastUpdate();
-    expect(patch.items).toEqual([{ ...rawItems[0], stampable: true }, rawItems[1], { documentId: "d3", number: "M-3", versionId: "v3" }]);
+    const UNCHECKED: ItemStampCheck = { documentId: "d3", number: "M-3", verdict: "unchecked", detail: "not checked — the check ran out of time" };
+    stampAnswer = { status: 200, body: { items: [OK, { documentId: "d2", number: "VDS-7", verdict: "not_pdf" }, UNCHECKED] } };
+    const err = await issueTransmittal("t1", actor).catch((e) => e) as UnstampableItemsError;
+    expect(err).toBeInstanceOf(UnstampableItemsError);
+    expect(err.items).toEqual([UNCHECKED]);
+    expect(updates()).toEqual([]);
+    await issueTransmittal("t1", actor, { acceptedUnstampable: err.items, checked: err.checked });
+    const { patch, ops } = lastUpdate();
+    expect(patch.items).toEqual([{ ...rawItems[0], stampable: true }, rawItems[1], { documentId: "d3", number: "M-3", versionId: "v3", stampAccepted: true }]);
+    expect(eqs(ops)).toEqual([["id", "t1"], ["status", "draft"], ["updated_at", READ_AT]]);
+    expect(db.audits[0]).toMatchObject({ details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d3", number: "M-3", verdict: "unchecked" }] }) });
   });
 
   it("a document listed twice is marked on both items (the check answers once per document)", async () => {
@@ -263,7 +339,8 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
   });
 
   it("P22 review fix: a check with nothing to mark, then a draft saved before the UPDATE → REFUSED and named; nothing issued, audited or emailed", async () => {
-    stampAnswer = { status: 200, body: { items: [{ documentId: "d1", number: "P-101", verdict: "not_pdf" }, { documentId: "d2", number: "VDS-7", verdict: "unchecked", detail: "not checked — the check ran out of time" }] } };
+    // (TRX-17: both decided — an unchecked one would now stop the issue before the UPDATE)
+    stampAnswer = { status: 200, body: { items: [{ documentId: "d1", number: "P-101", verdict: "not_pdf" }, { documentId: "d2", number: "VDS-7", verdict: "not_pdf" }] } };
     updateAnswer = { data: null, error: null }; // the updated_at match found no row
     let reads = 0;
     db.handlers.transmittals = (ops) => has(ops, "update") ? updateAnswer : { data: ++reads === 1 ? readRow : { ...readRow, updated_at: "2026-10-07T09:15:40.5+00:00" }, error: null };
@@ -275,13 +352,21 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect(fetchMock.mock.calls.filter(([u]) => u !== "/api/transmittal/stamp-check")).toEqual([]); // no email
   });
 
-  it("REGRESSION: a check that cannot run arms nothing — the issue proceeds as before, status / time only", async () => {
+  it("TRX-17 (rewritten from P22's \"a check that cannot run arms nothing — the issue proceeds\"): it asks; Issue anyway arms nothing and records the yes on every item, bound to the draft read", async () => {
     stampAnswer = { status: 500, body: { error: "boom" } };
-    const out = await issueTransmittal("t1", actor);
+    const err = await issueTransmittal("t1", actor).catch((e) => e) as UnstampableItemsError;
+    expect(err).toBeInstanceOf(UnstampableItemsError);
+    expect(err.checked?.draftUpdatedAt).toBe(READ_AT);
+    expect(updates()).toEqual([]);
+    fetchMock.mockClear();
+    const out = await issueTransmittal("t1", actor, { acceptedUnstampable: err.items, checked: err.checked });
     expect(out.transmittal.status).toBe("issued");
+    expect(stampCalls()).toEqual([]); // no second check
     const { patch, ops } = lastUpdate();
-    expect(Object.keys(patch).sort()).toEqual(["issued_at", "status", "updated_at"]);
-    expect(eqs(ops)).toEqual([["id", "t1"], ["status", "draft"]]);
+    expect(patch.items).toEqual([{ ...rawItems[0], stampAccepted: true }, { ...rawItems[1], stampAccepted: true }]);
+    expect((patch.items as Array<Record<string, unknown>>).some((i) => "stampable" in i)).toBe(false);
+    expect(eqs(ops)).toEqual([["id", "t1"], ["status", "draft"], ["updated_at", READ_AT]]);
+    expect(db.audits[0]).toMatchObject({ details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d1", number: "P-101", verdict: "unchecked" }, { documentId: "d2", number: "VDS-7", verdict: "unchecked" }] }) });
   });
 
   it("the stopped issue carries the WHOLE check, bound to the draft read; Issue anyway arms the stampable item and leaves the accepted one unmarked — no second check", async () => {
@@ -295,7 +380,8 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     await issueTransmittal("t1", actor, { acceptedUnstampable: err.items, checked: err.checked });
     expect(stampCalls()).toEqual([]);
     const { patch, ops } = lastUpdate();
-    expect(patch.items).toEqual([{ ...rawItems[0], stampable: true }, rawItems[1]]);
+    // TRX-17: the accepted item carries the issuer's yes (never a mark)
+    expect(patch.items).toEqual([{ ...rawItems[0], stampable: true }, { ...rawItems[1], stampAccepted: true }]);
     expect((patch.items as Array<Record<string, unknown>>)[1]).not.toHaveProperty("stampable");
     expect(eqs(ops)).toContainEqual(["updated_at", READ_AT]);
     expect(db.audits[0]).toMatchObject({ action: "TRANSMITTAL_ISSUED", details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d2", number: "VDS-7", verdict: "unloadable" }] }) });
@@ -312,12 +398,12 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect(phases).toEqual([]);
   });
 
-  it("P22 review fix: Issue anyway with nothing to arm (every checked PDF accepted) writes no items but is bound to the draft the issuer answered; a save in between is refused and named", async () => {
+  it("P22 review fix: Issue anyway with nothing to arm (every checked PDF accepted) is bound to the draft the issuer answered — TRX-17: it writes the yes on each item (P22 wrote no items); a save in between is refused and named", async () => {
     const checked = { draftUpdatedAt: READ_AT, items: [{ ...ENCRYPTED, documentId: "d1", number: "P-101" }, ENCRYPTED] };
     const accepted = checked.items;
     await issueTransmittal("t1", actor, { acceptedUnstampable: accepted, checked });
     const first = lastUpdate();
-    expect(first.patch).not.toHaveProperty("items");
+    expect(first.patch.items).toEqual([{ ...rawItems[0], stampAccepted: true }, { ...rawItems[1], stampAccepted: true }]);
     expect(eqs(first.ops)).toEqual([["id", "t1"], ["status", "draft"], ["updated_at", READ_AT]]);
     expect(db.audits[0]).toMatchObject({ action: "TRANSMITTAL_ISSUED", details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d1", number: "P-101", verdict: "unloadable" }, { documentId: "d2", number: "VDS-7", verdict: "unloadable" }] }) });
     // the same yes, but the draft is saved between this read and the UPDATE
@@ -330,11 +416,11 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect(fetchMock.mock.calls).toEqual([]);
   });
 
-  it("REGRESSION: a caller with no check to carry (acceptedUnstampable alone) on a draft with an updated_at sends status / time only, with no draft-version match, as before P22", async () => {
+  it("TRX-17 (rewritten from \"a caller with no check to carry sends status / time only\"): acceptedUnstampable alone writes the yes on the accepted item, under the draft read's updated_at — no check, no mark", async () => {
     await issueTransmittal("t1", actor, { acceptedUnstampable: [ENCRYPTED] });
     const { patch, ops } = lastUpdate();
-    expect(Object.keys(patch).sort()).toEqual(["issued_at", "status", "updated_at"]);
-    expect(eqs(ops)).toEqual([["id", "t1"], ["status", "draft"]]);
+    expect(patch.items).toEqual([rawItems[0], { ...rawItems[1], stampAccepted: true }]);
+    expect(eqs(ops)).toEqual([["id", "t1"], ["status", "draft"], ["updated_at", READ_AT]]);
     expect(stampCalls()).toEqual([]);
   });
 
@@ -343,7 +429,7 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     await issueTransmittal("t1", actor, { acceptedUnstampable: [ENCRYPTED], checked: { draftUpdatedAt: READ_AT, items: [OK, ENCRYPTED] } });
     const items = lastUpdate().patch.items as Array<Record<string, unknown>>;
     expect(items[0]).toEqual({ ...rawItems[0], stampable: true });
-    expect(items[1]).toEqual(rawItems[1]);
+    expect(items[1]).toEqual({ ...rawItems[1], stampAccepted: true }); // TRX-17: the yes, never the mark
     expect(items[1]).not.toHaveProperty("stampable");
   });
 
@@ -391,7 +477,7 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     await issueTransmittal("t1", actor, { acceptedUnstampable: err.items, checked: err.checked });
     const items = lastUpdate().patch.items as Array<Record<string, unknown>>;
     expect(items[0]).toEqual({ ...rawItems[0], stampable: true });
-    expect(items[1]).toEqual(rawItems[1]);
+    expect(items[1]).toEqual({ ...rawItems[1], stampAccepted: true }); // TRX-17: the yes is recorded on the item
     expect(db.audits[0]).toMatchObject({ details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d2", number: "VDS-7", verdict: "unloadable" }] }) });
   });
 
@@ -432,6 +518,12 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
       expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...label }], null).armed).toBe(0);
       expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...label }], [{ ...OK, verdict: "unchecked" }]).armed).toBe(0);
     }
+    // TRX-17: the yes goes on an accepted item that is not armed; a stale yes is removed; a document checked stampable is armed, never "accepted"
+    expect(armCheckedItems([{ documentId: "d1" }, { documentId: "d2" }], [OK, ENCRYPTED], [ENCRYPTED])).toEqual({ items: [{ documentId: "d1", stampable: true }, { documentId: "d2", stampAccepted: true }], changed: true, armed: 1 });
+    expect(armCheckedItems([{ documentId: "d2", stampAccepted: true }], [ENCRYPTED], [ENCRYPTED])).toEqual({ items: [{ documentId: "d2", stampAccepted: true }], changed: false, armed: 0 });
+    expect(armCheckedItems([{ documentId: "d2", stampAccepted: true }], [ENCRYPTED], null)).toEqual({ items: [{ documentId: "d2" }], changed: true, armed: 0 });
+    expect(armCheckedItems([{ documentId: "d1", stampAccepted: true }], [OK], [OK])).toEqual({ items: [{ documentId: "d1", stampable: true }], changed: true, armed: 1 });
+    expect(armCheckedItems([{ documentId: "d2", stampable: true }], null, [ENCRYPTED])).toEqual({ items: [{ documentId: "d2", stampAccepted: true }], changed: true, armed: 0 });
     expect(stampFooterUnprintable("P‐01 Δ1 Δ2")).toBe("‐Δ");
     expect(stampFooterUnprintable("Rev A — 1.2 (é, €, “x”)")).toBe("");
     const lib = readFileSync(join(process.cwd(), "lib/transmittals.ts"), "utf8");

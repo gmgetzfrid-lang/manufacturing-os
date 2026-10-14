@@ -6,43 +6,39 @@
 // Exposure is minimal and deliberate:
 //   * The ticket ID is an unguessable UUID that only appears ON a copy the
 //     org itself issued.
-//   * The response contains ONLY revision-status facts (ticket number,
-//     title, printed rev vs current rev) — no files, no URLs, no people.
+//   * The response carries revision-status facts only, field for field:
+//     ticketNumber, title, printedRev, currentRev, latestIssuedRev,
+//     inReview, verdict, checkedAt — no files, no URLs, no people, and
+//     (drafting-flow AUTHZ-12, the integrator's ruling) not the internal
+//     workflow status, the unit or the last-activity time. A QR keeps
+//     answering these facts for as long as the ticket exists; an archived
+//     ticket answers "cannot confirm" with the revision facts withheld.
 //
 // Answers the PM-forgot-to-forward problem: "a revision happened on the
 // ticket behind the scenes — is the deliverable in my hand still the
-// latest issue?"
-//
-// Verdicts:
-//   current              printed rev IS the latest issued deliverable
-//   revision_in_progress printed rev is the latest issue, but a newer
-//                        revision is being drafted/reviewed right now
-//   superseded           a newer revision has been ISSUED — do not use
-//   draft_copy           the printed rev is a review draft (1A/2B) that was
-//                        never an issued deliverable
-//   unknown              ticket predates rev tracking / no rev on the QR
-//
-// WF-21 / DEC-15: a REOPENED ticket starts a new revision cycle — the
-// workflow nulls deliverable_rev and bumps revision_count, so the row no
-// longer carries a label to compare against. The last issued number is then
-// read from the EVIDENCE of an issue — the history line every approval
-// writes ("… — issued Rev N") — and the ticket is back under review: a print
-// of the last issue reads revision_in_progress, an older one superseded —
-// never "current" while the drawing is being re-worked. Only a live
-// (non-terminal) status counts: a ticket closed again without a new issue
-// stays unknown. A cycle count alone is NOT evidence: a reject before any
-// issue bumps revision_count too, and such a ticket never issued anything.
+// latest issue?" The verdict — current / revision_in_progress / superseded /
+// draft_copy / withdrawn / unknown — is drafting-flow's and lives in
+// lib/verifyTicketVerdict.ts (EDGE-2: a canceled request, or one that ended
+// on a review label with no issue anywhere, is "withdrawn", never current; a
+// closed ticket with no issued label answers "cannot confirm"; WF-21 /
+// DEC-15 and EDGE-2: a reopened ticket, or one sent back for rework on its
+// issued label, reads revision_in_progress, never current). The rev on the
+// QR is the printed FILE's own revision (PHYS-2), not the ticket's.
 //
 // The door (public-surfaces PS-VERIFY; the verdict above is drafting-flow's):
 // every answered scan leaves a verify_scans row and counts toward a generous
 // per-IP cap (VFY-12), every answer is Cache-Control: no-store (VFY-13), and
 // the select names only the columns the verdict or the response reads
-// (VFY-14 — revision_count is not one of them: the verdict never reads it).
+// (VFY-14 done-when 3, "used in the verdict": revision_count is selected
+// because the verdict reads it — it caps which history "issued Rev N" lines
+// count as an issue, since any member may append history in their own name
+// — and it is never returned).
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
+import { TICKET_REV_RE, ticketVerdict, type VerifyTicketRowFacts } from "@/lib/verifyTicketVerdict";
 
 // A revision verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -51,23 +47,6 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const REV_RE = /^\d+[A-Z]{0,3}$/;
-
-const cycleOf = (rev: string): number => parseInt(rev, 10);
-const isIssued = (rev: string): boolean => /^\d+$/.test(rev);
-const TERMINAL = new Set(["CLOSED", "CANCELED"]);
-const ISSUED_LINE = /\bissued Rev (\d+)\b/;
-/** The highest issued number the ticket's history records, or null when no
- *  approval ever issued a deliverable (WF-21: the evidence a reopen needs). */
-function lastIssuedFromHistory(history: unknown): string | null {
-  if (!Array.isArray(history)) return null;
-  let best: number | null = null;
-  for (const h of history) {
-    const m = ISSUED_LINE.exec(String((h as { action?: unknown } | null)?.action ?? ""));
-    if (m) { const n = parseInt(m[1], 10); if (best === null || n > best) best = n; }
-  }
-  return best === null ? null : String(best);
-}
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
@@ -84,14 +63,14 @@ export async function GET(req: NextRequest) {
   const rate = await checkVerifyRate(sb, { ip });
   if (rate.limited) return verifyRateLimitedResponse(rate);
 
-  if (!UUID_RE.test(ticketId) || (printedRev && !REV_RE.test(printedRev))) {
+  if (!UUID_RE.test(ticketId) || (printedRev && !TICKET_REV_RE.test(printedRev))) {
     await scan("invalid");
     return verifyJson({ error: "Invalid code" }, 400);
   }
 
   const { data: row, error: rowErr } = await sb
     .from("tickets")
-    .select("id, ticket_id, title, unit, status, deliverable_rev, last_modified, history")
+    .select("id, ticket_id, title, status, deliverable_rev, history, revision_count, archived_at")
     .eq("id", ticketId)
     .maybeSingle();
   if (rowErr) {
@@ -106,60 +85,19 @@ export async function GET(req: NextRequest) {
     return verifyJson({ error: "Unknown ticket" }, 404);
   }
 
-  const t = row as {
-    id: string; ticket_id: string | null; title: string | null; unit: string | null;
-    status: string | null; deliverable_rev: string | null;
-    last_modified: string | null; history: unknown;
-  };
+  const t = row as VerifyTicketRowFacts & { id: string; ticket_id: string | null; title: string | null };
+  const v = ticketVerdict(t, printedRev);
 
-  const currentRev = t.deliverable_rev;
-  // WF-21: reopened = no label on the row, a live status, and EVIDENCE that
-  // a deliverable was once issued (the approval's history line). A bumped
-  // cycle count alone never counts — a rejected, never-issued ticket has one.
-  const issuedBefore = !currentRev ? lastIssuedFromHistory(t.history) : null;
-  const reopened = !currentRev && !!issuedBefore && !!t.status && !TERMINAL.has(t.status);
-  const inReview = (!!currentRev && !isIssued(currentRev)) || reopened;
-  // The latest ISSUED number: the current rev itself when issued, else the
-  // cycle before the one now in review (2A in review → latest issue is 1);
-  // on a reopened ticket, the last issue its history records (see the header).
-  const latestIssued = currentRev
-    ? isIssued(currentRev)
-      ? currentRev
-      : cycleOf(currentRev) > 1 ? String(cycleOf(currentRev) - 1) : null
-    : reopened ? issuedBefore : null;
-
-  let verdict: "current" | "revision_in_progress" | "superseded" | "draft_copy" | "unknown";
-  if (!printedRev || (!currentRev && !reopened)) {
-    verdict = "unknown";
-  } else if (!isIssued(printedRev)) {
-    // A letter rev (1A) on paper was a review draft — never an issued deliverable.
-    verdict = "draft_copy";
-  } else if (latestIssued && cycleOf(printedRev) < cycleOf(latestIssued)) {
-    verdict = "superseded";
-  } else if (inReview && latestIssued && printedRev === latestIssued) {
-    verdict = "revision_in_progress";
-  } else if (latestIssued && printedRev === latestIssued) {
-    verdict = "current";
-  } else if (inReview && !latestIssued) {
-    // Printed an issued number but nothing has ever been issued — stale data.
-    verdict = "draft_copy";
-  } else {
-    verdict = "unknown";
-  }
-
-  await scan(verdict);
+  await scan(v.verdict);
 
   return verifyJson({
     ticketNumber: t.ticket_id ?? null,
     title: t.title ?? null,
-    unit: t.unit ?? null,
     printedRev: printedRev || null,
-    currentRev,
-    latestIssuedRev: latestIssued,
-    inReview,
-    ticketStatus: t.status ?? null,
-    lastActivityAt: t.last_modified ?? null,
-    verdict,
+    currentRev: v.currentRev,
+    latestIssuedRev: v.latestIssuedRev,
+    inReview: v.inReview,
+    verdict: v.verdict,
     checkedAt: new Date().toISOString(),
   });
 }

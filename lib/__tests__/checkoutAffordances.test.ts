@@ -84,8 +84,13 @@ describe("the controller vocabulary is spelled once (DCK-13 done-when 3)", () =>
     expect(guards).toMatch(/lives only in the publish_revision RPC/);
 
     const cell = src("components/documents/CheckoutStatusCell.tsx");
-    expect(cell).toMatch(/useForceReleaseAllowed\(docRecord\.orgId/);
-    expect(cell).toMatch(/canForceReleaseCheckout\(policy, role, roles, uid\)/);
+    // P24 (AUTHZ-15): the popover reads the hook that also carries the fault;
+    // useForceReleaseAllowed is its boolean form (no caller since P24's
+    // integrator fix pass: the Inspector decides from its own single read).
+    expect(cell).toMatch(/useForceReleasePolicy\(docRecord\.orgId/);
+    expect(cell).toMatch(/return useForceReleasePolicy\(orgId, role, roles, uid, retryKey\)\.allowed;/);
+    expect(cell).toMatch(/canForceReleaseCheckout\(mine\?\.policy \?\? null, role, roles, uid\)/);
+    expect(cell).toMatch(/if \(mine\?\.fault\) return \{ allowed: false, fault: mine\.fault \};/);
     expect(cell).not.toMatch(/r === 'Admin' \|\| r === 'DocCtrl'/);
     // DCK-5: no FORCE_RELEASE pre-write on the surface; the reason is collected
     expect(cell).not.toMatch(/type: "FORCE_RELEASE"/);
@@ -94,6 +99,9 @@ describe("the controller vocabulary is spelled once (DCK-13 done-when 3)", () =>
 
     const inspector = src("components/documents/InspectorPanel.tsx");
     expect(inspector).toMatch(/\{canForceRelease && isCheckedOut && onForceUnlock && \(/);
+    // P24 integrator fix pass: one read decides Force Release Lock and the fault notice
+    expect(inspector).toMatch(/const canForceRelease = capFault\s*\n\s*\? false\s*\n\s*: canForceReleaseCheckout\(capPolicy, activeRole \?\? null, activeRoles \?\? null, uid \?\? null\);/);
+    expect(inspector).not.toMatch(/useForceReleaseAllowed\(/);
     expect(inspector).not.toMatch(/\{isController && isCheckedOut && onForceUnlock && \(/);
     // the strip that lists ACTIVE holds (Release buttons) follows holds.release
     // alone — a holds.open-only member is not drawn a Release the DB refuses

@@ -12,6 +12,7 @@ import { X, Check, Loader2, ImageIcon, Upload } from "lucide-react";
 import { NODE_ICON_KEYS, NodeIcon } from "@/lib/nodeIcons";
 import NodeCover, { type NodeAppearanceLike } from "@/components/documents/NodeCover";
 import { uploadToPath } from "@/lib/storage";
+import { nodeImageTypeFor, nodeImageExtensionForType, nodeImageUploadProblem } from "@/lib/storageKey";
 import { Z } from "@/lib/zLayers";
 import { useDockAvoid, useDockRaise } from "@/components/ui/CornerDock";
 
@@ -66,15 +67,36 @@ export default function CustomizeNodeModal({
   const preview: NodeAppearanceLike = { color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint };
   const set = (patch: Partial<CustomizeValue>) => setV((p) => ({ ...p, ...patch }));
 
+  // ORG-16: upload-url signs a cover / background only as an allowed image
+  // type, the PUT carrying exactly that type. The browser's type is used
+  // when it is one; an empty or legacy one (image/jpg, image/pjpeg — some
+  // desktop mime databases) is read from the file's first bytes, so a real
+  // picture is not refused. The key is named after that type, not the file
+  // name. Null (with a toast) when the file is not such an image: nothing
+  // is requested.
+  const pickedImageType = async (file: File): Promise<string | null> => {
+    let type = nodeImageTypeFor(file.type, null);
+    if (!type) {
+      const head = new Uint8Array(await file.slice(0, 12).arrayBuffer().catch(() => new ArrayBuffer(0)));
+      type = nodeImageTypeFor(file.type, head);
+    }
+    if (!type) {
+      showToast({ type: "error", title: "Not an image this can use", message: nodeImageUploadProblem(null)?.error ?? "" });
+    }
+    return type;
+  };
+
   const handleUpload = async (file: File) => {
     if (!storagePrefix) return;
     setStartedUpload(true);
     setUploading(true);
     try {
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const contentType = await pickedImageType(file);
+      if (!contentType) return;
+      const ext = nodeImageExtensionForType(contentType);
       const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
       const path = `${storagePrefix.replace(/\/+$/, "")}/covers/${rand}.${ext}`;
-      await uploadToPath(file, path, { contentType: file.type });
+      await uploadToPath(file, path, { contentType });
       set({ coverImageUrl: path }); // stored as a storage path; NodeCover signs it
     } catch (e) {
       showToast({ type: "error", title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" });
@@ -88,10 +110,12 @@ export default function CustomizeNodeModal({
     setStartedUpload(true);
     setBgUploading(true);
     try {
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const contentType = await pickedImageType(file);
+      if (!contentType) return;
+      const ext = nodeImageExtensionForType(contentType);
       const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
       const path = `${storagePrefix.replace(/\/+$/, "")}/backgrounds/${rand}.${ext}`;
-      await uploadToPath(file, path, { contentType: file.type });
+      await uploadToPath(file, path, { contentType });
       set({ bgImagePath: path, bgType: "image", bgOpacity: v.bgOpacity ?? 0.18, bgTint: v.bgTint ?? "neutral" });
     } catch (e) {
       showToast({ type: "error", title: "Upload failed", message: e instanceof Error ? e.message : "unknown error" });

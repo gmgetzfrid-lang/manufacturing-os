@@ -140,6 +140,7 @@ describe("DEC-9 — team supervision", () => {
     db.singles["teams"] = { data: { id: "t1", name: "Drafting", supervisor_user_id: "old" } };
     db.tables["libraries"] = { data: [{ id: "l1", name: "Drawings" }] };
     db.tables["teams"] = { data: [{ id: "t1" }] };
+    db.singles["org_members"] = { data: { uid: "new" } }; // ORG-13 dw3: the new supervisor is an active member
     const r = await setTeamSupervisor({ teamId: "t1", orgId: "org1", supervisorUserId: "new", actorId: "a" });
     expect(r.affectedLibraries).toEqual([{ id: "l1", name: "Drawings" }]);
     const row = audited.find((e) => e.action === "TEAM_SUPERVISOR_CHANGED");
@@ -153,6 +154,7 @@ describe("DEC-9 — team supervision", () => {
     db.singles["teams"] = { data: { id: "t1", name: "Drafting", supervisor_user_id: "old" } };
     db.tables["libraries"] = { data: [] };
     db.tables["teams"] = { data: [] };
+    db.singles["org_members"] = { data: { uid: "new" } }; // ORG-13 dw3: the new supervisor is an active member
     await expect(setTeamSupervisor({ teamId: "t1", orgId: "org1", supervisorUserId: "new", actorId: "a" })).rejects.toThrow(/NOT changed/);
     expect(audited.find((e) => e.action === "TEAM_SUPERVISOR_CHANGED")).toBeUndefined();
   });

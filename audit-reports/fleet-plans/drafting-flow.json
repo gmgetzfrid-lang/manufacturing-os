@@ -340,7 +340,8 @@
     "DCW-2",
     "TIER-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': MOC applicability through the work-class mechanism, after GAP-101)",
     "AUTHZ-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': rewrite the CAPABILITY_DEFS descriptions of ticket.requester_review / draft_work / direct_approve to state their reach)",
-    "HAND-7 done-when 3 (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): approving a deliverable whose source's captured version_id is no longer current requires an explicit acknowledgement — an engine flag the route checks, the modal states the drift, the history line records it; and DEC-101's seam: TicketCreateInput.declaration is parsed and not written — run the declaration's signature in /api/tickets/create"
+    "HAND-7 done-when 3 (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): approving a deliverable whose source's captured version_id is no longer current requires an explicit acknowledgement — an engine flag the route checks, the modal states the drift, the history line records it; and DEC-101's seam: TicketCreateInput.declaration is parsed and not written — run the declaration's signature in /api/tickets/create",
+    "intelligence GAP-312 and WIRE-7 criterion 1 (assigned by the integrator 2026-10-13 at the I-01B merge, DEC-31; 99-fix-sequencing Phase 5: they ship with GAP-110 / GAP-111 on the same form): the drafting request gets an equipment field — the request form and the ticket page take an equipment tag through the Bridge's relation (GAP-304 / GAP-311, built by I-11/I-10), never a free-text column; optional at intake, like library_id"
    ],
    "severityMix": "2 CRITICAL, 4 HIGH",
    "files": [
@@ -490,7 +491,8 @@
     "drafting-flow AUTHZ-15 (LOW; opened by A&O P9's second review fix 2026-10-07; owner confirmed by the integrator 2026-10-08 at the P9 merge for its drafting-flow surfaces: app/(protected)/requests/page.tsx, app/(protected)/requests/[id]/page.tsx, hooks/useTicketNotifications.ts — during a policy-read fault the affordances draw the shipped defaults with no label; label the fault state and offer nothing the server would refuse)",
     "PROD-4 done-when 3 (notifications; assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: computeTransition's newUnreadBy includes ticket.assignedEngineerId, matching the comment route; a test)",
     "DF-P2 hand-offs (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31 — read drafting-flow 99-fix-sequencing.md 'Hand-offs from DF-P2'): HAND-7 done-when 2 / HAND-3 done-when 3 (mount components/requests/SourceDriftBanner.tsx on the ticket page; the queue's 'source moved' chip from driftedSources; the 'Rev advanced' chip compares version ids); FRIC-3 / FRIC-8 readers (show UNIT_UNKNOWN_LABEL for unit_unknown, mark unit_unlisted and unit_unchecked on the queue chip and the ticket page); PERS-6 the request pages' fromRow stops casting row.unit as string",
-    "DF-P3 hand-offs (assigned by the integrator 2026-10-13 at the DF-P3 merge, DEC-31 — read drafting-flow 99-fix-sequencing.md 'Hand-offs from DF-P3' IN FULL): LEAK-9 done-whens 1-2 (the cancel dialog's category picker from the engine action's outcomes; GAP-107's measured rate); ROUTE-1 done-when 2 (attentionLabel: a revision with a drafter vs one without); EDGE-7 done-when 3 (the workload board's overdue count uses isPastDue) and the bell reconcile in hooks/useTicketNotifications.ts skipping SLA_NOTICE_ACTIONS rows while the ticket is open — AFTER notifications N4 merges (N4 rebuilds that hook)"
+    "DF-P3 hand-offs (assigned by the integrator 2026-10-13 at the DF-P3 merge, DEC-31 — read drafting-flow 99-fix-sequencing.md 'Hand-offs from DF-P3' IN FULL): LEAK-9 done-whens 1-2 (the cancel dialog's category picker from the engine action's outcomes; GAP-107's measured rate); ROUTE-1 done-when 2 (attentionLabel: a revision with a drafter vs one without); EDGE-7 done-when 3 (the workload board's overdue count uses isPastDue) and the bell reconcile in hooks/useTicketNotifications.ts skipping SLA_NOTICE_ACTIONS rows while the ticket is open — AFTER notifications N4 merges (N4 rebuilds that hook)",
+    "notifications RT-4's tickets DELETE companion in app/(protected)/requests/page.tsx (assigned by the integrator 2026-10-13 at the N4 merge, DEC-31): the list drops a deleted ticket on the realtime DELETE event as the feed does"
    ],
    "severityMix": "2 HIGH, 11 MEDIUM",
    "files": [
@@ -580,7 +582,8 @@
     "EVID-2 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': refuse un-acknowledging for non-service callers, bound requested_at writes, write an ACK_* audit row (substrate DC DIST-3))",
     "SM-9 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: the ticket shed's commit and restore carry a last_modified leg captured at produce time, or re-capture the arrays and refuse when they changed, so a comment or attachment written between produce and commit is not lost; 06-state-machine.md SM-9 Scope / residual)",
     "SM-7 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge, the record's proposed owner: a drain for what DF-P1 only logs — a ticket_comments mirror that failed twice (reconcile from tickets.comments) and a _NOT_APPLIED row that failed twice (reconcile from the ticket's history) — or the transition and its audit row as one RPC; 06-state-machine.md SM-7 Scope / residual)",
-    "projects-and-cost QUAL-14 done-when 2 (explicit Partial assigned by the integrator 2026-10-08 at the A&O P9 merge — ruling (B): a per-person, per-project quality.sign_off grant in the console, built where org_capability_allows_for is re-created from its newest body (20261137 is the body to start from; DEC-30 lineDiff proof); the console's View-as and explorer then read the grant)"
+    "projects-and-cost QUAL-14 done-when 2 (explicit Partial assigned by the integrator 2026-10-08 at the A&O P9 merge — ruling (B): a per-person, per-project quality.sign_off grant in the console, built where org_capability_allows_for is re-created from its newest body (20261137 is the body to start from; DEC-30 lineDiff proof); the console's View-as and explorer then read the grant)",
+    "admin-and-org ORG-20 (LOW; assigned by the integrator 2026-10-14 at the A&O P11 merge, DEC-31): app/api/storage/resolve/route.ts answers missing: true only for a NotFound (name NotFound or $metadata.httpStatusCode 404) and a 5xx for any other storage failure; check every caller's handling of the 5xx (the restore's ORG-18 clear treats it as not confirmed)"
    ],
    "severityMix": "9 HIGH, 8 MEDIUM, 2 LOW",
    "files": [
@@ -612,6 +615,29 @@
     "AUTHZ-5 substrate → DC RET-6 (same defect on the document shed; P9) — the ticket-shed commit is what remains",
     "HAND-1, HAND-6, HAND-4, HAND-9, HAND-11, HAND-12, HAND-13, EDGE-5, EDGE-10 → the DC / A&O ids named above (in flight; record-only once merged)"
    ]
+  },
+  {
+   "name": "DF-P12 DELIVERABLE FOLLOW-UPS — the ticket deliverable's remaining trust gaps after DF-P10: history 'issued Rev N' lines server-only, attachment identity on the QR, the LEAK-7 (a) repair, ticket copies visible to staleCopies, and the server-side stamp and record (SM-5, LEAK-7, PHYS-17, PHYS-8 dw3, EVID-16)",
+   "findings": [
+    "drafting-flow SM-5 (residual after DF-P10: a member-appended 'issued Rev N' history line can still mark a real issue superseded under a review label and skip a number on the service-role re-cycle) and the guard limb: ticket_update_guard re-created from its NEWEST body (found by scanning; 20261195 or later) refuses a client-appended history entry matching 'issued Rev N' — only the server's workflow writes it; once landed, the verify verdict may trust history again (record it); SM-5 done-when 3, attachment identity on the QR (?a=), with LEAK-7 (b)",
+    "drafting-flow LEAK-7 (a)-row data repair: a counts-first DEC-30 migration for rows reopened before Round E that kept a label (inventory before, one result set)",
+    "public-surfaces PHYS-17 and PHYS-8 done-when 3: download_audits.ticket_id UUID and attachment_id TEXT (a migration after 20261068's columns; comment the source values drafting / drafting_print / drafting_unstamped / drafting_print_unstamped), and a ticket arm in lib/staleCopies.ts so a superseded ticket deliverable's copies are recalled like a document's",
+    "drafting-flow EVID-16: the drafting-ticket copy is stamped and recorded in the server request that serves it (a stamping route), not in the browser after the copy",
+    "Wording and observation left by DF-P10 (DEC-31): what 'withdrawn' says for an RFI closed on a review label; reject_final then Force Close keeps issued label N, so the package the requester rejected scans green on CLOSED (base did the same) — decide and record (DEC-90: fail-safe)",
+    "drafting-flow EVID-5 (MEDIUM; its ticket half landed in DF-P10): closes by pointer when EVID-16 (here) and EVID-15 (projects-joint J15) are RESOLVED and document-control's 20261068 policy half is pasted — record the pointer"
+   ],
+   "files": [
+    "supabase/migrations: the guard limb, the LEAK-7 (a) repair and the download_audits columns (DEC-30 each, lineDiff-pinned, DRLS-16)",
+    "lib/verifyTicketVerdict.ts, lib/ticketDeliverableCopy.ts, app/api/verify-ticket/route.ts, a new server stamping route",
+    "lib/staleCopies.ts (the ticket arm)",
+    "tests for every limb; regression — a legitimately issued, current deliverable scans current and prints exactly as after DF-P10"
+   ],
+   "migrationsLikely": 3,
+   "dependsOn": [
+    "drafting-flow DF-P10 merged (2026-10-14)",
+    "drafting-flow DF-P4 merged (it re-creates ticket_update_guard — start from its body)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-14 at the DF-P10 merge (DEC-31: DF-P10 named these 'a DF-P10 follow-up'). Migration numbers are allocated at launch."
   }
  ],
  "crossAreaFileOverlaps": [

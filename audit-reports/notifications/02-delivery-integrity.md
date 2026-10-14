@@ -717,7 +717,7 @@ The pre-paste fallback reads the same key: the latest row's subject and `body_te
 ## DELIV-10 · The bell shows at most 50 unread rows and counts only what it fetched — older unread obligations are permanently invisible, and countUnread() is dead code
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:176-177`, `hooks/useTicketNotifications.ts:312`, `lib/inAppNotifications.ts:157-174`, `lib/inAppNotifications.ts:176-185`, `lib/inbox.ts:163-165`, `components/notifications/NotificationCenter.tsx:76-80`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves check out: the cap is a hard 50 with DESC ordering (oldest unread fall off), the bell/NotificationCenter (components/notifications/NotificationCenter.tsx:76-80 `all: items.length`) consume the same truncated array, and countUnread is dead. Worth noting lib/inbox.ts:163-165 does compute a true exact unread count, so the cockpit number and the bell number can disagree once past 50 — which reinforces rather than refutes the finding.
@@ -754,6 +754,24 @@ The pre-paste fallback reads the same key: the latest row's subject and `body_te
 - [ ] Oldest-unread items are reachable (e.g. action-required kinds sorted or filtered ahead of the cap)
 - [ ] lib/inbox.ts's unread count is org-scoped so it agrees with the bell
 - [ ] The `.catch(() => [])` distinguishes "no unread" from "the query failed"
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: the 50-row cap and `count: items.length` (`hooks/useTicketNotifications.ts:231`, `:386`); `.catch(() => [] as NotificationRow[])` (`:232`) turned a failed read into an empty list; `lib/inbox.ts:167-168` counted unread rows with no `org_id`.
+
+What landed:
+- **The count.** The feed's notification total is `countUnread(activeOrgId)` (`lib/inAppNotifications.ts`, an exact head count of my unread, unsuperseded rows in the workspace), read beside the page. When it exceeds the rows loaded, the rows below are tallied by kind (`listUnreadKindsBeyond`, up to `REMAINDER_TALLY_CAP` = 1,000 more; a row about a ticket already in the feed folds in, as on the page) into the section badges and the action count; any beyond the tally count in the total as activity. `count` = `counts.all` (the hook's return shape is unchanged; its value is now the true one).
+- **Paging.** `listMyNotifications` takes a `before` cursor — `(created_at, id)`, ordered `created_at desc, id desc` (review fix: rows written in one statement share `created_at`, and a `created_at`-only cursor dropped the second of two rows at a page boundary); the feed loads the newest 50 and, on "Load older", the next page by cursor (`useAttentionStatus().loadMoreNotifications`). The tally of the rows below reads after the window's last row by the same keyset, never an offset, so no row is both listed and tallied. `components/cockpit/AttentionFeed.tsx` says "Showing the newest N of M unread notifications." with the button — in the center, `/inbox` and the dashboard widget.
+- **A failed read is said.** A refused notifications read no longer becomes `[]`: the feed keeps its last good rows — of the same feed only (review fix: the snapshot is keyed `${uid}:${activeOrgId}`; `RoleContext.setActiveOrgId` changes the workspace without touching `membershipState`, so the first draft carried workspace A's tickets, rows and counts into workspace B when B's first read failed; a switch now clears tickets, rows, hidden set, totals, tally and document links before the first read) — and sets `useAttentionStatus().error`; `AttentionFeed` shows it (`role="alert"`), and with nothing loaded says "Nothing could be loaded — this is not \"all caught up\"" instead of "You're all caught up". A failed count or ticket read is said the same way.
+- **The inbox count is org-scoped** — `lib/inbox.ts:170` adds `.eq("org_id", orgId)` (the filter `countUnread` applies).
+- Tests: `lib/__tests__/attentionProvider.test.ts` (the count / cursor cases above; "a failed notification read is an error the feed says, and keeps the last good rows"; "a workspace switch clears the feed: a failed read in the new workspace shows nothing of the old one" (fails with the reset disabled); "first-load failure: the feed surface says nothing could be loaded…"); `lib/__tests__/dfRoundG_P1_rails.test.ts` "lib/inbox.ts counts unread notifications with the same superseded filter as countUnread" (unchanged, still passes).
+
+**Done-when.**
+- ✓ The badge uses a real count (`countUnread`) independent of the page size.
+- ✓ The feed paginates — a `created_at` cursor with a "Load older" affordance and "Showing the newest N of M".
+- ✓ Oldest unread items are reachable (load older pages).
+- ✓ `lib/inbox.ts`'s unread count is org-scoped.
+- ✓ The read distinguishes "no unread" from "the query failed" — and what it keeps on a failure is never another workspace's.
+
+**Scope / residual.** None.
 
 ---
 

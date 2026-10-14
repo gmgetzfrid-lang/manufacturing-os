@@ -34,6 +34,7 @@ Channels, teardown, multi-tab drift, and what happens to events that fire while 
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** notifications N11 TRAIL (done-when 4 on the persistent surfaces: the header bell and the sidebar badge read `useAttentionStatus().stale` and show the stale state — a line in the bell's panel, a mark on the badge; N11 owns the badge below the sidebar and reads the same provider) — by the integrator, 2026-10-13 (N4 integrator fix pass, DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json` updated at the N4 merge).
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:219-230`, `components/providers/NotificationListener.tsx:73`, `components/providers/NotificationListener.tsx:100`, `components/providers/RoleContext.tsx:343-354`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The underlying gap is real — nothing re-reads on reconnect/refocus for the persistent bell and sidebar (RoleContext.tsx:343-354 only calls `supabase.auth.getSession()`, and the TOKEN_REFRESHED branch at :288-294 re-sets uid to the same value so the hook's deps never change) — but two words of the title are wrong. 'Permanently lost' is false: because every realtime callback runs a complete fetchAll rather than applying a delta, the FIRST event to arrive after the socket rejoins reconciles the entire feed, so the stale window ends at the next org ticket/notification event. 'Nothing reconciles on refocus or visibility change' is also false for /inbox, which polls loadInbox on focus, visibilitychange and a 60s timer. Downgrade to MEDIUM: bounded staleness on the badge surfaces, not permanent data loss.
@@ -67,6 +68,22 @@ void fetchAll();
 - [ ] a `visibilitychange` + `window.focus` listener triggers a background `fetchAll()` when the tab becomes visible (the pattern already written at app/(protected)/inbox/page.tsx:118-127)
 - [ ] a low-frequency safety-net interval (e.g. 60s while `document.visibilityState === 'visible'`) refetches, cleared on unmount
 - [ ] `CHANNEL_ERROR` / `TIMED_OUT` set a visible 'reconnecting — counts may be stale' state rather than failing silently
+
+**Partial (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: `.subscribe()` with no status callback (`hooks/useTicketNotifications.ts:300`), no `visibilitychange` / `focus` / interval on the hook, so the three persistent instances never refetched after a socket drop until the next org event.
+
+What landed (`hooks/useTicketNotifications.ts`, `useAttentionFeedState`):
+- `.subscribe((status) => …)`: every `SUBSCRIBED` after the first schedules a refetch (a rejoin reconciles the whole feed); `CHANNEL_ERROR`, `TIMED_OUT` and `CLOSED` set `stale`; the next `SUBSCRIBED` clears it.
+- `visibilitychange` (when visible) and `window` `focus` schedule a refetch; a `VISIBLE_POLL_MS` (60 s) interval refetches while the tab is visible — the `/inbox` pattern. All three are removed on unmount.
+- The stale state is shown: `useAttentionStatus().stale` → `components/cockpit/AttentionFeed.tsx` renders "Reconnecting — the counts may be out of date until the live connection is back." (`role="status"`) on every surface that uses the feed — the notification center, `/inbox`, the dashboard's Needs-You widget.
+- Tests: `lib/__tests__/attentionProvider.test.ts` "the first join fetches nothing more; an error says stale; the rejoin clears it and reconciles", "the tab coming back (visibilitychange / focus) refetches".
+
+**Done-when.**
+- ✓ The status callback re-runs the fetch on every transition into `SUBSCRIBED` after the first.
+- ✓ `visibilitychange` + `focus` trigger a background refetch.
+- ✓ A 60 s visible-only safety-net interval, cleared on unmount.
+- Partly met: `CHANNEL_ERROR` / `TIMED_OUT` set a visible "Reconnecting — the counts may be out of date" state — in the feed surfaces only (the center, `/inbox`, the dashboard widget). **Not met** on the persistent header bell and sidebar badge, the surfaces of the finding's own failure scenario: they still fail silently (`components/notifications/NotificationBell.tsx`, `components/navigation/Sidebar.tsx` are not this package's files). The state they need is there — `useAttentionStatus().stale`. (The first pass checked this box outright; the second review fix narrowed it and re-opened the finding.)
+
+**Scope / residual.** Stays OPEN for done-when 4 on the bell and the sidebar badge: each reads `useAttentionStatus().stale` and shows the stale state (a line in the bell's panel, a mark on the badge) — owner: notifications N11 TRAIL (assigned by the integrator, 2026-10-13 — the Assigned line above; recorded in `99-fix-sequencing.md`). Done-when 1–3 are met: the bell's NUMBER now reconciles on rejoin, return and every visible minute, so its staleness is bounded by one minute while the tab is visible. `NotificationListener`'s toast channel keeps no status callback: a toast missed while the socket was down is the bell row the reconciled feed now shows (`DEC-74` §7 — the toast is the ephemeral echo).
 
 ---
 
@@ -124,7 +141,7 @@ Tests: `lib/__tests__/notificationListener.test.ts` — "TAX-4 dw4: postActivity
 ## RT-3 · Three-to-six concurrent copies of useTicketNotifications each open their own channel and each run a full 500-ticket refetch on every ticket change in the org
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:141`, `hooks/useTicketNotifications.ts:151-217`, `hooks/useTicketNotifications.ts:221-227`, `components/notifications/NotificationCenter.tsx:42`, `components/notifications/NotificationCenter.tsx:55`, `components/navigation/Sidebar.tsx:124`, `components/navigation/TopBar.tsx:230`, `components/dashboard/widgets.tsx:669`, `components/dashboard/widgets.tsx:1223`, `app/(protected)/inbox/page.tsx:38`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim is accurate as stated. I looked specifically for a shared channel, a memoized/deduped fetch, or a debounce and found none — useId() deliberately makes the channels distinct, and each org-wide tickets event fans out to every mounted instance's unthrottled fetchAll.
@@ -149,6 +166,22 @@ Tests: `lib/__tests__/notificationListener.test.ts` — "TAX-4 dw4: postActivity
 - [ ] `fetchAll` is debounced (e.g. 300-600ms trailing, the pattern already used at components/projects/ScheduleTab.tsx:112-115) so a burst of ticket updates collapses into one refetch
 - [ ] the ticket refetch stops using `select('*')` and selects only the columns the attention rule reads (`id, ticket_id, title, status, requester_id, assigned_drafter_id, assigned_engineer_id, unread_by, last_modified, created_at`)
 
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: `useTicketNotifications` gave each instance its own channel (`useId()`, `hooks/useTicketNotifications.ts:190`, `:294-300`), ran an un-debounced `fetchAll` on every event (`:296-299`) and read `select('*')` for up to 500 tickets (`:211`, `:215-216`, `:225`); three instances were always mounted (Sidebar, the header bell, the always-mounted center panel), five on the default dashboard.
+
+What landed:
+- **One feed per tab.** The state, fetch and channel moved into `useAttentionFeedState` (`hooks/useTicketNotifications.ts`); `components/providers/AttentionProvider.tsx` (new) runs it once, mounted in `app/(protected)/layout.tsx` around `NotificationCenterProvider` (the center's panel is a consumer, so the provider must enclose it — the plan's "inside" would have left it out; `DEC-105` §1). `useTicketNotifications` keeps its export name and return shape and reads `AttentionContext`; outside the provider (a test, a preview) it runs its own copy, as before. No caller changed.
+- **Debounced.** Every trigger goes through `schedule()` — a trailing `FETCH_DEBOUNCE_MS` (400 ms) timer, `components/projects/ScheduleTab.tsx`'s pattern — and one fetch runs at a time (a request during a fetch queues exactly one more).
+- **The attention columns only.** `TICKET_ATTENTION_COLUMNS` (`id, org_id, ticket_id, title, status, unit, request_type, requester_id, requester_role, assigned_drafter_id, assigned_engineer_id, attachments, unread_by, created_at, last_modified`), with an exact count; never `comments` or `history`. The list the finding names omits four columns the engine reads (`request_type`, `unit`, `requester_role`, and `attachments` — a staged Draft offers "Submit Draft", `lib/workflow.ts:348`); dropping them would have changed who must act (`WF-24`), so they are kept. A database missing a column (42703) is read with `*`, as before.
+- Tests: `lib/__tests__/attentionProvider.test.ts` ("five consumers under the provider share ONE channel and ONE fetch; the hook's return shape is unchanged", "a burst of ticket writes is ONE trailing refetch", "the ticket read selects the attention columns only…", "outside the provider each consumer still runs its own feed").
+- Verified: loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,352 passed, 10 expected fail, 4 failed, every one "Test timed out in 5000ms" in a file this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `exportContractRoundTrip`, `notificationDispatchMembership`; load average 18–29 on the shared box), each exit 0 when rerun alone. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ Exactly one subscription and one fetch per tab — the provider; every surface reads the same snapshot.
+- ✓ `fetchAll` is debounced (400 ms trailing).
+- ✓ The ticket refetch selects only the columns the attention rule reads (the finding's list plus the four the engine needs, named above).
+
+**Scope / residual.** None for this finding. The provider is the prerequisite `99-fix-sequencing.md` names for `GAP-202`'s in-page markers.
+
 ---
 
 <a id="rt-4"></a>
@@ -157,6 +190,7 @@ Tests: `lib/__tests__/notificationListener.test.ts` — "TAX-4 dw4: postActivity
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-when 2's tickets limb: the requests portal's tickets channel in `app/(protected)/requests/page.tsx` gains its unfiltered `DELETE` companion, acting only on a ticket the page holds — the attention feed's pattern; remove it from `RT4_PENDING` in `lib/__tests__/realtimePublication.test.ts`) — by the integrator, 2026-10-13 (N4 integrator fix pass, DEC-31; fleet plan `audit-reports/fleet-plans/drafting-flow.json` updated at the N4 merge). The library page's documents channel stays with document-control, as the residual names.
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260727_checkout_activity_fix.sql:58-60`, `supabase/migrations/20260729_checkout_episodes.sql:102`, `lib/libraryCollections.ts:419-427`, `app/(protected)/documents/[libraryId]/page.tsx:1532-1535`, `app/(protected)/requests/page.tsx:315-318`, `hooks/useTicketNotifications.ts:223-224`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the fix was applied once (collections) and never generalised, and a hard-delete path for documents genuinely exists. Small overstatement worth noting: a filter keyed on the PK itself (e.g. `id=eq.`) would still match a DELETE under REPLICA IDENTITY DEFAULT — but the app's only such filters are UPDATE-only (requests/[id]/page.tsx:937, documents/[libraryId]/page.tsx:1491) or on an unpublished table (tableViews.ts:261), so the practical claim holds.
@@ -181,6 +215,24 @@ Tests: `lib/__tests__/notificationListener.test.ts` — "TAX-4 dw4: postActivity
 - [ ] a migration sets `REPLICA IDENTITY FULL` on every table that has a filtered `event: '*'` or `event: 'DELETE'` subscription (`tickets`, `documents`, `checkout_sessions`, `libraries`, `collections`), or
 - [ ] each such subscription gains the unfiltered-DELETE companion listener already modelled at lib/libraryCollections.ts:419-426, or
 - [ ] the app documents that deletes are soft-deletes only (the `deleted_at` filter at lib/libraryCollections.ts:405 suggests this is the intended direction) and the DELETE listeners are removed as dead code
+
+**Partial (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: `documents` (library page, `library_id` filter), `checkout_sessions` (`document_id` filters) and `tickets` (`org_id` filters, the requests portal and the attention feed) are subscribed with `event: '*'` and a filter on a non-key column, and only `collections` (`lib/libraryCollections.ts`) carries an unfiltered DELETE companion.
+
+**The mechanism, corrected (review fix pass).** The finding's premise — FULL would let the filter match — is not what Supabase documents: Postgres Changes do not filter DELETE events, and on a table with row-level security a DELETE's old record carries the primary key alone even under `REPLICA IDENTITY FULL`. So done-when 1 (FULL) would not make a filtered listener hear a DELETE, and it would log the whole old row of every `documents` UPDATE. N4's first draft set FULL on `documents`, `checkout_sessions`, `libraries` and `collections` in `20261200` and called done-when 1 met; it was never tested on a live project. The fix pass removed those four statements: `20261200` changes no replica identity. (Nothing here was tested on a live project either; the route below relies on nothing the documentation contradicts.) The three tables that were already FULL (`checkout_messages`, `notifications`, `checkout_episodes`) are left as they are.
+
+What landed — done-when 2 (companions) and done-when 3 (soft-delete only), per table:
+- **Companions.** `tickets`: the attention feed (`hooks/useTicketNotifications.ts`, the channel in `useAttentionFeedState`) carries the unfiltered tickets `DELETE` companion. Because an unfiltered listener receives every tenant's ticket DELETEs (the primary key alone), it refetches only for a ticket the feed holds (`ticketIdsRef`), so a bulk delete elsewhere is not a refetch for everyone online (`DEC-105` §4 records the id exposure beside §5's). `collections`: `lib/libraryCollections.ts`'s companion, already there.
+- **No DELETE a filtered listener needs (done-when 3).** `checkout_sessions`, `checkout_messages` and `checkout_episodes`: no application path deletes a row (a session ends by status, an episode is sealed — UPDATEs the filtered listeners hear); their rows go only by a parent's cascade. `notifications`: a row is read, superseded or tombstoned (UPDATEs), and the one app path that hard-deletes rows — the admin purge (`app/api/admin/purge/route.ts`, `TARGETS` / `floorOf`, through a dynamic `.from(t.table).delete()`) — deletes only READ, aged rows, which the attention feed's unread-filtered window never holds, so a DELETE it misses changes no number. (Second review fix: the first wording, "the app never hard-deletes notifications", claimed more than the code does — the literal-name tripwire could not see the purge's dynamic delete.) The tripwire fails the moment app code deletes one of these tables directly, a new dynamic delete appears, or a dynamic delete reaches one of them other than the purge's read-rows line.
+- Tripwire: `lib/__tests__/realtimePublication.test.ts` — "every filtered '*' / 'DELETE' subscription has an unfiltered DELETE companion, filters on the key, is on a table the app never hard-deletes, or is a named remainder — REPLICA IDENTITY FULL is not accepted" (`RT4_PENDING` names the two remainders), "the tables named as never hard-deleted are not deleted by any app code", (it also reads every dynamic delete's tables — the purge route's `TARGETS`, the ingest roll-back's, `lib/tableViews.ts`'s `TABLE` — and fails on a new one), "the admin purge reaches a never-hard-deleted table only as a read-rows purge the unread feed never holds" (second review fix), and "the attention feed's tickets companion acts only on a ticket the feed holds"; the census now reads a subscription with a comment before its config (`lib/libraryCollections.ts`'s companion, which the first draft's regex missed and FULL had masked). `lib/__tests__/attentionProvider.test.ts`: a DELETE of another tenant's ticket is no refetch; one the feed holds is.
+- `20261200` re-run on a throwaway PostgreSQL 16 after the fix pass (Supabase-like with a publication, a re-run after a member turned a category off, a plain Postgres with no publication, a database without `notification_preferences`): `ok` true for both probes where a publication exists; no replica identity touched.
+- **Pending migration:** `20261200` (DEC-30), pasted any time — it no longer concerns RT-4.
+
+**Done-when.**
+- Not done, deliberately: done-when 1 (FULL) — it would not make a filtered DELETE listener hear anything (above).
+- Partial: done-when 2 — `tickets` in the attention feed, `collections` (already). **Not done:** the requests portal's tickets channel (`app/(protected)/requests/page.tsx:348`, `org_id` filter) and the library page's documents channel (`app/(protected)/documents/[libraryId]/page.tsx:1605`, `library_id` filter — a document IS hard-deleted from that page, `:1036`, and by the intake route's roll-back): files this package does not hold. The tripwire names both (`RT4_PENDING`).
+- ✓ for four tables: done-when 3 — `checkout_sessions`, `checkout_messages`, `checkout_episodes` are never hard-deleted by the app; `notifications` only by the admin purge, of read rows the unread feed never holds (pinned by the tripwire).
+
+**Scope / residual.** Stays OPEN for two companion listeners, each one `.on('postgres_changes', { event: 'DELETE', schema: 'public', table: … }, …)` beside its filtered one, acting only on a row the page holds: the requests portal's tickets channel — owner: drafting-flow DF-P9 TICKET-PAGE (assigned 2026-10-13, above); the library page's documents channel — owner: document-control (the library page's holder). Until then a document hard-deleted in one session stays on another viewer's library page until reload (the finding's own scenario).
 
 ---
 
@@ -331,7 +383,7 @@ self.addEventListener("push", (event) => {
 ## RT-8 · The attention hook WRITES to the notifications table inside its own fetch, and that write is echoed back through the same channel it is subscribed to — with N instances racing to issue the identical write
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:188-210`, `hooks/useTicketNotifications.ts:225-226`, `lib/inAppNotifications.ts:193-196`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The write-inside-the-subscribed-read and the N-way race are real, but this is bounded, not a feedback loop: listMyNotifications is called with `onlyUnread: true` (:176) and applies `q.is("read_at", null)` (inAppNotifications.ts:170), so the rows just marked read cannot come back on the echo pass, workflowRows is empty, and no second write is issued. The concurrent writes are also idempotent (same UPDATE, same rows). Net effect is one extra round of fetches per instance — a sub-case of RT-3's amplification rather than a MEDIUM defect of its own.
@@ -355,6 +407,25 @@ if (staleIds.length > 0) {
 - [ ] the stale-alert reconcile runs in exactly one place per tab (a consequence of collapsing to a single hook instance), not once per mounted consumer
 - [ ] writes made by the reconcile pass are self-suppressed — e.g. record the ids just written and ignore the echoed realtime event for them, the pattern already used for `processedIds` in NotificationListener.tsx:58-59
 - [ ] the reconcile is separated from the read path so a fetch is never also a write
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7` in its DF-P1 form: the fetch itself wrote `metadata.superseded_at` on stale workflow rows (`hooks/useTicketNotifications.ts:274-281`), inside the read, once per mounted instance, and the write's realtime echo re-ran every instance's fetch (the `markManyRead` of the record became this metadata mark at DF-P1).
+
+What landed:
+- **Once per tab** — the provider (`RT-3`).
+- **Separated from the read** — the fetch writes nothing; after it sets state it starts `reconcile()` (not awaited by the read), which sends the candidates' ids to `POST /api/notifications/reconcile`; the server re-checks and writes (`NEDGE-18`). One pass in flight at a time; a row the server kept is not re-sent for `RECONCILE_KEEP_MS` (60 s).
+- **Self-suppressed** — the ids the pass retired are remembered for `RECONCILE_ECHO_MS` (30 s); a `notifications` UPDATE event for one of them is ignored (`onNotification`), the `processedIds` idea from the old listener. Third review fix: the server writes each mark BEFORE it answers, so an echo could arrive while the POST was still in flight — before the retired ids were known — and still trigger a refetch. *Superseded by the fourth review fix (below):* the third pass registered every candidate as an expected echo before the request, so ANY UPDATE to a candidate during the request was swallowed — most likely the recipient's own mark-read on the row they had just clicked in the bell (`markRead` changes `read_at` only and removes nothing locally), which then stayed on screen, with the red Action count, until the next trigger or the 60 s poll.
+- **Fourth review fix — only the server's own mark is passed over (integrator fix pass, 2026-10-13).** Nothing is pre-registered. `hooks/useTicketNotifications.ts` `reconcile()` (`:463`) keeps the candidates as the feed held them (`inFlightRef`, `:508`); `onNotification` (`:754`) holds an UPDATE back only when `lib/notificationReconcile.ts` `isReconcileMark` (`:245`) reads it as exactly the reconcile's write — `read_at` still null, `metadata.superseded_at` newly set to a `toISOString` stamp within `RECONCILE_MARK_SKEW_MS` (5 min) of the request, every other metadata key and every column the feed held unchanged (the workflow route's mark adds `superseded_by`, so it is not one). When the server answers, a held-back mark on a row it did NOT report retiring refetches (`:525`); the retired rows whose echo has not arrived are registered by id for `RECONCILE_ECHO_MS`, and their echo is passed over once, again only if it is exactly the mark (`:771`). Any `read_at` change, any other field change, an INSERT or a DELETE refetches at once, as before N4. A browser clock more than 5 minutes off costs one extra refetch, never a missed change.
+- Tests: `lib/__tests__/attentionProvider.test.ts` "RT-8 (fourth review fix): the recipient's own mark-read on a candidate while the request is in flight refetches AT ONCE — it is never taken for the server's echo" and "only EXACTLY the reconcile's mark is passed over — the workflow route's mark (superseded_by), a mark with read_at, another field, or a mark on a row the server did not retire all refetch" (both fail on the third-pass code), "a retired row's echo is passed over once; a second UPDATE to it refetches", "RT-8 (third review fix): the server's mark that arrives BEFORE the reconcile answer is not a refetch; a kept candidate's later change is", "a row the server retired leaves the feed and the count; its realtime echo is not a refetch, another row's change is", "a row the server kept is not re-sent on the next fetch", "stale workflow alerts are left out at once and sent… the browser writes nothing"; `lib/__tests__/notificationReconcile.test.ts` "isReconcileMark (RT-8): exactly the reconcile's own superseded_at mark, nothing else".
+
+**Done-when.**
+- ✓ The reconcile runs in exactly one place per tab.
+- ✓ Its writes are self-suppressed, and only its writes: the echo of the server's own mark on a row it retired is ignored whether it arrives before or after the reconcile response; every other UPDATE — the recipient's mark-read above all — refetches at once (fourth review fix; the third pass swallowed any UPDATE to a candidate during the request).
+- Verified (third review fix pass): `npx tsc --noEmit` exit 0; `npx eslint` on the 7 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,376 passed, 10 expected fail, 2 failed, both "Test timed out in 5000ms" in files this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`; load average 19–25 on the shared box), each exit 0 when rerun alone with `--testTimeout=60000` (16 and 18 passed). `next build` is the integrator's.
+- ✓ The reconcile is separated from the read path — a fetch is never also a write.
+
+**Scope / residual.** The ticket page's two writes on open (`app/(protected)/requests/[id]/page.tsx`, drafting-flow's file) still each echo once — now into ONE debounced refetch, not six. Nothing a member does to a row is passed over as an echo (fourth review fix — the third pass's "an unrelated UPDATE to a candidate during the request is absorbed once" understated it: the likeliest such UPDATE was the recipient's own mark-read). What is passed over is one UPDATE per row, shaped exactly like the server's mark: were another server writer to stamp `metadata.superseded_at` alone, in the toISOString form, on a candidate the reconcile then also reported retiring, that one echo would not refetch — and the row is superseded either way, so nothing on screen is wrong.
+
+*Amended 2026-10-13 (notifications Round G, N4 integrator fix pass — the fourth review's minor 1 and gap 1).*
 
 ---
 
@@ -414,7 +485,7 @@ Tests: `lib/__tests__/notificationCenterScope.test.ts` "RT-9: 'N need action' be
 ## RT-10 · There is no user preference that can turn off in-app toasts or bell rows — /settings/notifications governs email only
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N3 SURFACES (the listener reads `toast_enabled` and flips `TOAST_PREFERENCE_HONOURED`; per-category toggles after N2's kind registry) — by the integrator, 2026-10-01 (N1 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/settings/notifications/page.tsx:1-9`, `app/(protected)/settings/notifications/page.tsx:23-41`, `lib/notify/dispatch.ts:87-102`, `lib/notify/dispatch.ts:104-106`, `components/providers/NotificationListener.tsx:92-97`
@@ -477,6 +548,26 @@ Tests: `lib/__tests__/notificationListener.test.ts` "toast_enabled off: no toast
 **Scope / residual.** Stays OPEN for per-category toast toggles only: a `category` column on `KIND_META` (mirroring `email_on_*`: mention, assignment, status change, watched activity, SLA warning), `toast_on_*` columns by a checked-in migration, the settings rows, and the listener's per-kind read. Owner: unassigned — for the integrator (it needs `lib/notificationKinds.ts`, N5's this round). No migration here.
 
 *Third review fix (2026-10-02, N3): a read that rejects or stalls kept nothing — `refreshPreference` cleared the cache and a read not answered within 3 s resolved "on" — so a member who switched pop-ups off got them back after any tab return on Wi-Fi with no route out. Now `createNotificationToaster` keeps the last value a read actually returned (`lastRead`, `NotificationListener.tsx:147`, written only by an answered read of the current generation), a rejected or stalled read resolves to it (`readOnce` :165), and fails open only when nothing has been read yet; a refresh forgets only the cached value's freshness. Tests: `lib/__tests__/notificationListener.test.ts` "a known 'off' survives a re-read that stalls: a tab return on Wi-Fi with no route out does not bring the pop-ups back" and "a stale read is refreshed before the next toast (PREF_FRESH_MS); an unreadable re-read keeps the known value; with nothing known, an unreadable preference shows toasts" (both fail with the fix reverted). Residual: `readToastPreference` (`lib/notificationPrefs.ts:181`, N1's file) folds a read error that answers into `true`, so a fast-failing read (an error rather than a stall) still reads as on — the toaster cannot tell it from a real "on". Handed to that file's holder (return `null` for "unknown", or throw, and let the caller keep the last value). Done-when 2 stays ✓. Verified after the third review fix: `npx tsc --noEmit` exit 0; `npx eslint` on the 19 changed code and test files of the branch `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 407 files, 8522 passed, 7 expected-fail. `next build` is the integrator's.*
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider` — the remaining limb (per-category toast toggles). **Reproduced** on `6503ea7`: `KIND_META` (`lib/notificationKinds.ts`) carried no category; `notification_preferences` had only `toast_enabled` (`20261148`); the listener honoured the master switch alone (`components/providers/NotificationListener.tsx:240-242`).
+
+What landed:
+- **The category on KIND_META.** `category` — one of `TOAST_CATEGORIES` (`mention`, `assignment`, `status_change`, `watched_activity`, `sla_warning`), exactly the `email_on_*` suffixes — on every kind (`satisfies` makes a kind without one a `tsc` error). No seventh classification (`TAX-5`).
+- **The columns.** `20261200` adds `notification_preferences.toast_on_mention / _assignment / _status_change / _watched_activity / _sla_warning BOOLEAN NOT NULL DEFAULT TRUE` (existing rows read TRUE).
+- **The listener.** It reads `readToastPreferences(uid)` (`lib/notificationPrefs.ts`, new: the master switch and the five; before `20261200` the master switch alone; before `20261148` everything on) and toasts a row only when `toastAllowed` — the master switch and the kind's category — says so; a held burst row of a category switched off is dropped. A read that answers with an error throws, so the listener keeps the last value it actually read (the N3 hand-off: `readToastPreference` folds such an error into "on"). The bell row is never governed (`DEC-74` §7).
+- **The settings rows.** Five "Pop-ups for …" switches under "Pop-up toasts" (dimmed while it is off), saved as `toast_on_*`; before the paste the page saves the rest and says the per-category settings were not saved.
+- Tests: `lib/__tests__/toastCategories.test.ts` (the category per kind, `toastAllowed`, `readToastPreferences` across the three databases, the toaster per category, the settings rows and the pre-paste save); `lib/__tests__/notificationListener.test.ts` (the master-switch cases, now through `readToastPreferences`); `lib/__tests__/notificationSettingsPage.test.ts` (the defaults saved include the five, all on); `lib/__tests__/realtimePublication.test.ts` (the five columns, named after the email categories).
+- **Pending migration:** `20261200` (DEC-30). The app works before it.
+- Verified: loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,352 passed, 10 expected fail, 4 failed, every one "Test timed out in 5000ms" in a file this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `exportContractRoundTrip`, `notificationDispatchMembership`; load average 18–29 on the shared box), each exit 0 when rerun alone. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `notification_preferences` has the master `toast_enabled` (`20261148`) and per-category toggles named after the email set (`20261200`, a checked-in migration — pending paste). They mirror the email toggles per KIND, not per send — see the review fix below.
+- ✓ `NotificationListener` reads them before `showToast` and re-reads them when they may have changed (tab return, and any read older than 5 s — N3's rule).
+- ✓ The settings page renders the in-app column beside the email column, now with the five category switches.
+
+*Review fix (2026-10-13, N4): the pop-up switch follows `KIND_META.category`, one category per kind; email routing follows the category each `emit()` call passes, which the bell row does not carry. Where a producer emails a kind under another category the two differ — by the census of `emit()` calls on `fleet/N4-feed-provider`: `hold_opened` (`lib/holds.ts` stale-hold nudge: email `sla`, pop-up status change), `markup_request` (email `status`, pop-up assignment), `milestone_slipped` (email `status`, pop-up SLA warning), `orchestrator_message` (email `watched`, pop-up mention), `doc_superseded` and `package_doc_stale` (email `watched`, pop-up status change), `request_pending_approval` from the check-in panel's PSM alert (email `safety` — never muted — pop-up assignment) and `doc_recalled` (email `recall` — never muted — pop-up status change). So "Pop-ups for overdue and at-risk items" off still pops up a stale-hold nudge. Recorded as the approximation; carrying the emit-time category on the row would need `lib/notify/dispatch.ts` (not N4's file). One change, because a recall is a safety message the email side never mutes (`DIST-13`): `doc_recalled` is exempt from the per-category switches (`lib/notificationPrefs.ts` `TOAST_CATEGORY_EXEMPT_KINDS`, `toastAllowed`); the master switch still governs it. Test: `lib/__tests__/toastCategories.test.ts` "toastAllowed — the master switch, then the kind's category".*
+
+**Scope / residual.** The per-kind approximation above (the emit-time category on the row would close it — `lib/notify/dispatch.ts`'s holder, if wanted). The PSM `request_pending_approval` alert can be muted as a pop-up by "Pop-ups for assignments" (its bell row and email are never governed).
 
 ---
 
@@ -581,6 +672,7 @@ Remaining step (either closes it): (a) the integrator ratifies `DEC-94` item 4's
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** notifications N11 TRAIL (the `table_views` cross-client sync in `lib/tableViews.ts` — a Realtime Broadcast from the saver on its own channel, or an opaque primary key before publishing; N11 holds the library page that is `lib/tableViews.ts`'s one consumer, `app/(protected)/documents/[libraryId]/page.tsx`; the tripwire's `table_views` exception in `lib/__tests__/realtimePublication.test.ts` goes with it) — by the integrator, 2026-10-13 (N4 integrator fix pass, DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json` updated at the N4 merge).
 - **Verification:** SUSPECTED
 - **Locations:** `components/projects/ScheduleTab.tsx:106-120`, `lib/tableViews.ts:259-264`, `supabase/schema.sql:1139-1147`, `supabase/migrations/20260727_checkout_activity_fix.sql:50-54`, `supabase/migrations/20260729_checkout_episodes.sql:97-98`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by exhaustive search of every ALTER PUBLICATION in the repo; there is no CREATE PUBLICATION ... FOR ALL TABLES anywhere either, so both channels subscribe successfully and can never receive an event. ScheduleTab's 600ms debounce (:112-116) and its 'edits stream in' comment are dead code as shipped.
@@ -607,5 +699,20 @@ const channel = supabase
 - [ ] a test (or the existing lib/schemaExpectations.ts tripwire) asserts that every realtime-subscribed table name in the codebase has a corresponding publication statement in supabase/
 
 **Cross-reference (2026-09-30, projects Round G).** The milestones half is addressed by `supabase/migrations/20261106_prj_roundG_milestones_realtime.sql` (J6b SCHEDULE-ENGINE, projects-tab PT SCH-7): it adds `milestones` to `supabase_realtime` idempotently with the 20260727 `IF NOT EXISTS (SELECT 1 FROM pg_publication_tables …)` pattern, and a DEC-30 inventory row records whether it had already been added by hand in the dashboard (done-when 1 for this table is that row). `components/projects/ScheduleTab.tsx` now listens to INSERT / UPDATE only, because Supabase delivers DELETE events without an RLS check. Pinned by `lib/__tests__/scheduleEngineMigration.test.ts`. Not done here: `table_views` (`lib/tableViews.ts`) and the repo-wide tripwire (done-when 3). RT-12 stays OPEN for its owner.
+
+**Partial (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: `table_views` (`lib/tableViews.ts:261`) is in no `ALTER PUBLICATION`; `milestones` is added by `20261106` (projects Round G).
+
+What landed:
+- **The tripwire (done-when 3).** `lib/__tests__/realtimePublication.test.ts` reads every `.on("postgres_changes", { … table: … })` under `app`, `lib`, `components`, `hooks` (a `TABLE` constant resolved in its file) and every `ADD TABLE` to `supabase_realtime` in `supabase/`, and fails on a subscribed table with no publication statement unless it is a named exception with its reason.
+- **milestones** re-asserted in `20261200` with `20261106`'s guard (a no-op where it is already published); the inventory records whether it was.
+- **table_views is NOT added** — `DEC-105` §5: Supabase applies no row-level security to DELETE events, and a `table_views` key is a composite text id naming the workspace, the person and the library (`lib/tableViews.ts:16-31` `tableViewId`), so publishing the table would send those ids, across workspaces, to any DELETE subscriber. It is the tripwire's one exception. `20261200`'s inventory records whether it was added by hand (a row to compare against production — done-when 1).
+- **Pending migration:** `20261200` (DEC-30).
+
+**Done-when.**
+- Not done until the paste: done-when 1 — `20261200`'s inventory rows report the live publication (how many tables; whether `milestones` and `table_views` are in it); comparing them against the subscriptions is the integrator's at the paste.
+- Partial: done-when 2 — `milestones` ✓ (`20261106`, re-asserted); `table_views` deliberately not added (above).
+- ✓ Done-when 3 — the tripwire.
+
+**Scope / residual.** Stays OPEN for `table_views`' cross-client sync. Owner: notifications N11 TRAIL (assigned 2026-10-13, above). The fix that leaks nothing: replace the `postgres_changes` listener with a Realtime Broadcast message the saver sends on its own channel, or give `table_views` an opaque primary key before publishing it.
 
 ---

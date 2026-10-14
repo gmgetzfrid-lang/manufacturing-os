@@ -87,13 +87,21 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
     expect(rows).toHaveLength(2);
     for (const [i, uid] of ["a1", "a2"].entries()) {
       // notify()'s full column set (a raw insert wrote only six of them)
+      // admin-and-org BILL-15 (Round G, P10): this world has ONE workspace
+      // (orgs → [o1]), so the quota bell also states the whole bucket against
+      // the R2 plan ceiling (the 10 GB default here) and carries the band
+      // the platform step reads to count it as its R2 bell (r2PlanTruncated:
+      // whether that plan figure was a floor; this walk finished).
       expect(rows[i]).toEqual({
         table: "notifications", org_id: "o1", user_id: uid, kind: "storage_alert",
-        title: "Storage critical — 95% full",
-        body: "This workspace's files are at 95% of the storage limit an admin set (0 MB of 0 MB, measured under this workspace only). " +
-          "The limit is advisory: uploads are not blocked when it is reached. " +
+        title: "Storage critical — 95% of the set limit, 0% of plan",
+        body: "This workspace's files are at 95% of the storage limit an admin set (0 MB of 0 MB, measured under this workspace only), " +
+          "and the server's file storage is at 0% of its Cloudflare R2 plan ceiling (0 MB of 10.0 GB, every file on the server; this is its only workspace). " +
+          "The limit is advisory: uploads are not blocked when it is reached. This app does not stop uploads at the plan ceiling either: " +
+          "past it, Cloudflare bills the overage, or refuses writes on an account without billing. " +
           "Take a full backup and free up space from Admin → Storage (archive superseded revisions or closed tickets, delete orphaned files).",
-        link: "/admin/storage", resource_type: null, resource_id: null, actor_user_id: null, actor_name: null, metadata: null,
+        link: "/admin/storage", resource_type: null, resource_id: null, actor_user_id: null, actor_name: null,
+        metadata: { r2PlanBand: "ok", r2PlanPct: 0, r2PlanTruncated: false },
       });
     }
     expect(isNotificationKind("storage_alert")).toBe(true);
@@ -148,7 +156,8 @@ describe("runPlatformStorageAlerts — the plan ceilings (lib/storageUsage.ts)",
     expect(alerts).toBe(2);
     const rows = world.inserts.filter((i) => i.table === "notifications");
     expect(rows.map((r) => r.kind)).toEqual(["storage_platform_r2", "storage_platform_r2"]);
-    expect(rows[0]).toMatchObject({ org_id: "o1", user_id: "a1", link: "/admin/storage", title: "File storage critical — 96% of plan", metadata: null });
+    // a single-workspace world: the R2 bell records the band it stated (BILL-15's same-day key, DEC-99 §3)
+    expect(rows[0]).toMatchObject({ org_id: "o1", user_id: "a1", link: "/admin/storage", title: "File storage critical — 96% of plan", metadata: { r2PlanBand: "crit" } });
     expect(world.calls).toContainEqual({ table: "notifications", op: "eq", args: ["kind", "storage_platform_r2"] });
   });
 

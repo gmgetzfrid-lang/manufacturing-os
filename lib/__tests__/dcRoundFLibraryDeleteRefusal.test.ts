@@ -10,6 +10,13 @@
 // never a library dropped from the screen that is still in the database.
 //
 // Driven as rendered (jsdom) against the in-memory PostgREST.
+//
+// admin-and-org ALOG-3 (Round G, P8): the page now deletes through
+// /api/admin/libraries/delete, which counts, deletes AS THE CALLER and
+// records LIBRARY_DELETED. The route is run for real here (fetch is routed
+// to its handler), its service and caller clients both backed by the same
+// in-memory PostgREST, so every assertion below still judges the database's
+// own answer: the guard's sentence, the zero-row refusal, the landed delete.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -29,12 +36,18 @@ vi.mock("@/components/providers/RoleContext", () => ({
 vi.mock("@/components/providers/DialogProvider", () => ({ appAlert: (...a: unknown[]) => s.appAlert(...a) }));
 vi.mock("@/lib/ownership", () => ({ setOwner: vi.fn(async () => undefined) }));
 vi.mock("@/app/(protected)/admin/libraries/LibraryWizard", () => ({ default: () => null }));
+vi.mock("@/lib/adminGate", () => ({
+  authorizeAdminSurface: async () => ({ userId: "ctl1", email: "ctl1@x", orgId: "o1", role: "DocCtrl", roles: ["DocCtrl"], admin: makeFakeSupabase(s.db), surface: {}, admittedRole: "DocCtrl" }),
+}));
+vi.mock("@/lib/serverAuth", () => ({ callerScopedClient: () => makeFakeSupabase(s.db) }));
 vi.mock("@/app/(protected)/admin/libraries/DeleteSafetyModal", () => ({
   default: (p: { isOpen: boolean; onConfirm: () => Promise<void> }) =>
     p.isOpen ? React.createElement("button", { onClick: () => void p.onConfirm() }, "Confirm delete") : null,
 }));
 
 import LibraryAdminPage from "@/app/(protected)/admin/libraries/page";
+import { POST as deleteRoute } from "@/app/api/admin/libraries/delete/route";
+import { NextRequest } from "next/server";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,6 +64,7 @@ beforeEach(() => {
   ];
   s.appAlert.mockClear();
   vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => deleteRoute(new NextRequest(`http://localhost${url}`, init as ConstructorParameters<typeof NextRequest>[1])));
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -59,6 +73,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });

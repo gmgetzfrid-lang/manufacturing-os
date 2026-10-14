@@ -42,9 +42,11 @@ vi.mock("@/lib/supabase", () => {
   return { supabase: { from: q, auth: { getSession: async () => ({ data: { session: null } }) } } };
 });
 vi.mock("@/lib/notifications", () => ({ kickEmailDrain: vi.fn(async () => { db.kicks += 1; return null; }) }));
-vi.mock("@/lib/ticketNumber", () => ({
+vi.mock("@/lib/ticketNumber", async () => ({
   formatTicketNumber: () => "DDRT-2026-0001",
   getTicketNumberConfig: async () => ({ prefix: "", recordCode: "DDRT", pad: 4 }),
+  // admin-and-org P8 fix pass 3: the settings page maps the orgs row it read (checked)
+  ticketNumberConfigFromRow: (await vi.importActual<typeof import("@/lib/ticketNumber")>("@/lib/ticketNumber")).ticketNumberConfigFromRow,
   TICKET_NUMBER_DEFAULTS: { prefix: "", recordCode: "DDRT", pad: 4 },
 }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ activeRole: "Admin", activeOrgId: "o1", roles: ["Admin"] }) }));

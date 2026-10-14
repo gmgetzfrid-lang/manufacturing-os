@@ -57,6 +57,23 @@
 // changeDocumentStatus returns the basis, `notRecordedBecause`).
 // Every other row (a status that issues nothing, a custom field) is written as
 // before.
+//
+// REV-19 (b) (document-control P23): WHICH rows go through
+// changeDocumentStatus is no longer decided from this page's copy. Every row
+// a status change writes to a controlled-issue status (isControlledIssueStatus
+// — Issued, Locked, a library's own) takes it, and the row it reads first
+// decides whether the write issued the document, as the metadata editor's
+// save does since identity IS-P1. So a row this page still shows Issued,
+// which another change has moved back to Draft, is issued by this change
+// WITH its clocks and record (it took the bare write and was issued with
+// neither), and is named after the apply ("issued by this change: another
+// change after this page loaded had moved it out of issue"). The page's view
+// (the rows the notes above list, `pageSawIssue`) only picks the sentence: a
+// row it showed issued that is still issued is a plain success, as before,
+// and a row whose state before the write could not be read is said as
+// unknown ("check its history") rather than given the "start its clocks"
+// advice the page owes only the rows it said it would issue. Every row
+// changed to a status that issues nothing keeps the bare write.
 
 import React, { useState } from "react";
 import {
@@ -64,7 +81,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
-import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
+import { isIssueTransition, isIssueRefusal, isControlledIssueStatus } from "@/lib/issueStatus";
 import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
@@ -105,6 +122,15 @@ export default function BulkEditModal({
     /** REV-19 (P17 integrator fix): rows this change wrote but did not issue
      *  (already issued, or no current revision) — nothing is owed for them. */
     notIssued: Array<{ doc: string; note: string }>;
+    /** REV-19 (b) (P23): rows this page showed issued (or with no revision)
+     *  whose database row this change found otherwise — issued by it. */
+    unseen: Array<{ doc: string; note: string }>;
+    /** REV-19 (b) (P23 review 3): rows this page showed issued (or with no
+     *  revision) whose state just before the write could not be read —
+     *  nobody is known to have changed them; whether this change issued
+     *  them is unknown. Kept apart from `unseen` so neither heading says
+     *  more than the code knows (DEC-29). */
+    unchecked: Array<{ doc: string; note: string }>;
   } | null>(null);
 
   if (!isOpen) return null;
@@ -129,6 +155,8 @@ export default function BulkEditModal({
     const failed: Array<{ doc: string; reason: string; issue: boolean }> = [];
     const followUps: Array<{ doc: string; problems: string[] }> = [];
     const notIssued: Array<{ doc: string; note: string }> = [];
+    const unseen: Array<{ doc: string; note: string }> = [];
+    const unchecked: Array<{ doc: string; note: string }> = [];
     const issuingIds = new Set(issuingRows.map((d) => d.id));
     const enteringForceIds = new Set(enteringForceRows.map((d) => d.id));
     let ok = 0;
@@ -162,7 +190,11 @@ export default function BulkEditModal({
               : (doc.metadata as Record<string, unknown> ?? {}),
           }, library.uniquenessKeys);
         }
-        if (target.kind === "status" && doc.id && (issuingIds.has(doc.id) || enteringForceIds.has(doc.id))) {
+        // REV-19 (b) (P23): every write TO an issue status goes through
+        // changeDocumentStatus — the database row decides whether it issues;
+        // the page's view only picks the sentence.
+        const pageSawIssue = !!doc.id && (issuingIds.has(doc.id) || enteringForceIds.has(doc.id));
+        if (target.kind === "status" && doc.id && (pageSawIssue || isControlledIssueStatus(newValue))) {
           // REV-19: an issuing row — the same checked write, then the clocks
           // and the DOCUMENT_ISSUED record (a refusal throws in the
           // database's words, as the bare write's did). REV-26 (P25): a row
@@ -181,6 +213,33 @@ export default function BulkEditModal({
           // or has no current revision. Nothing is owed for this write, and
           // starting its clocks again would restart a review clock the issuing
           // change owns.
+          // REV-19 (b) (P23): a row this page showed issued (or with no
+          // revision) that is still so — a plain success, as the bare write was.
+          if (!pageSawIssue && !outcome.issued && (outcome.notRecordedBecause === "already_issued" || outcome.notRecordedBecause === "no_current_revision")) {
+            ok += 1;
+            continue;
+          }
+          // REV-19 (b) (P23): the row before the write could not be read, and
+          // this page saw nothing to issue — whether this change issued it is
+          // unknown: said so, never guessed.
+          if (!pageSawIssue && !outcome.issued) {
+            unchecked.push({ doc: label, note: "it was changed, but its state just before the change could not be read, so whether this change issued it is unknown: if another change after this page loaded had moved it out of issue (or given it its first revision), it is now issued and may carry no review clock or acknowledgment roster — check its history." });
+            // P23 fix pass: the follow-up row saying no clock was started could not be written.
+            if (outcome.recordError) followUps.push({ doc: label, problems: [`The record that no clock was started could not be written (${outcome.recordError}), so the document's history does not say so.`] });
+            ok += 1;
+            continue;
+          }
+          // REV-19 (b) (P23): the database row was issuable although this page
+          // showed nothing to issue — this change issued it (recorded, clocks
+          // handled) and Document Control is told.
+          if (!pageSawIssue && outcome.issued) {
+            unseen.push({
+              doc: label,
+              note: outcome.entryIntoForce
+                ? `it was put in force by this change: another change after this page loaded had moved it to a status no gate reads as in force (or given it its first revision), and this change sets ${newValue} — the entry into force is recorded on its history, the acknowledgment roster opened and the review clock left as it was.`
+                : `it was issued by this change: another change after this page loaded had moved it out of issue (or given it its first revision), and this change sets ${newValue} — the issue is recorded on its history like any other.`,
+            });
+          }
           if (!outcome.issued && outcome.notRecordedBecause === "already_issued") {
             notIssued.push({ doc: label, note: "it was already issued when this change reached it (issued by another change after this page loaded), so this change issued nothing: no clock was started and no issue record written for it, and nothing more is owed for this change. Do not start its clocks again from here — they belong to the change that issued it (see its history)." });
             ok += 1;
@@ -200,7 +259,14 @@ export default function BulkEditModal({
             // read the row's status before the write (notRecordedBecause
             // 'read_failed'), so it started no clock and wrote no DOCUMENT_ISSUED
             // (P17 review fix) — whether this write issued it is unknown.
-            : ["The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and no issue record was written. Check its history and start its clocks from the document."];
+            // REV-19 (a) (P23): since 20261205 the database records an issue
+            // itself (it reads the row as it was), so "no issue record" is
+            // said of this editor only.
+            : [
+                "The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one). Check its history and start its clocks from the document.",
+                // P23 fix pass: the follow-up row saying so could not be written.
+                ...(outcome.recordError ? [`The record that no clock was started could not be written (${outcome.recordError}), so the document's history does not say so.`] : []),
+              ];
           if (problems.length > 0) followUps.push({ doc: label, problems });
           ok += 1;
           continue;
@@ -212,10 +278,12 @@ export default function BulkEditModal({
         ok += 1;
       } catch (e) {
         const reason = (e as Error).message;
-        failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: (issuingIds.has(doc.id) || enteringForceIds.has(doc.id)) && isIssueRefusal(reason) });
+        // REV-19 (b) (P23): a write TO an issue status refused in the issue
+        // rule's words is "not issued:" whatever this page showed.
+        failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: (issuingIds.has(doc.id) || enteringForceIds.has(doc.id) || (target.kind === "status" && isControlledIssueStatus(newValue))) && isIssueRefusal(reason) });
       }
     }
-    setResults({ ok, failed, followUps, notIssued });
+    setResults({ ok, failed, followUps, notIssued, unseen, unchecked });
     setBusy(false);
     if (ok > 0) onApplied?.();
   };
@@ -337,6 +405,32 @@ export default function BulkEditModal({
                   <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
                     {results.followUps.map((f, i) => (
                       <li key={i}><span className="font-mono">{f.doc}</span> — {f.problems.join("; ")}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {results.unseen.length > 0 && (
+                // REV-19 (b) (P23): rows this page showed issued whose database row said otherwise.
+                <div data-testid="bulk-unseen-issue-rows" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold mb-1">
+                    {results.unseen.length} row{results.unseen.length === 1 ? " was" : "s were"} changed by someone else after this page loaded
+                  </div>
+                  <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.unseen.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.note}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {results.unchecked.length > 0 && (
+                // REV-19 (b) (P23 review 3): the row's state just before the write could not be read.
+                <div data-testid="bulk-unchecked-issue-rows" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold mb-1">
+                    {results.unchecked.length} row{results.unchecked.length === 1 ? "" : "s"}: whether this change issued {results.unchecked.length === 1 ? "it" : "them"} could not be told
+                  </div>
+                  <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.unchecked.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.note}</li>
                     ))}
                   </ul>
                 </div>

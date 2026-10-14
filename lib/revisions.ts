@@ -2231,6 +2231,10 @@ export async function putBackRetiredIssue(input: {
   reason?: string | null;
   /** Ask for Document Control's recorded pass over an active hold (p_force_hold). */
   forceHold?: boolean;
+  /** REV-19 (a) (P23 fix pass): whether to name this door to the database's
+   *  issue record (20261205) — the caller's own probe answer when it asked
+   *  one (the un-archive); absent, this put-back asks it. */
+  nameDoor?: boolean;
   supersession?: PutBackSupersessionFields;
   /** REV-29 (P25): the status this rollback put back before P25 for a NULL
    *  prior status (`?? "Issued"`). Put back INSTEAD only when the database's
@@ -2241,7 +2245,14 @@ export async function putBackRetiredIssue(input: {
   olderBodyStatus?: string;
 }): Promise<RetiredIssuePutBack> {
   const s = input.supersession;
-  const putBack = (status: string | null) => supabase.rpc("put_back_retired_issue", {
+  // REV-19 (a) (P23): every put-back names its door (p_via: the un-archive,
+  // or the rollback of a failed supersede / split / merge / reversal) to the
+  // database's issue record (20261205) — withIssueDoor — so a rollback's
+  // put-back is never recorded as a direct database write. P23 fix pass:
+  // named only once that record exists (the probe), so a database before the
+  // paste is sent no custom header at all.
+  const nameDoor = input.nameDoor ?? await isStatusIssueRecordedByDatabase();
+  const putBack = (status: string | null) => withIssueDoor(supabase.rpc("put_back_retired_issue", {
     p_document_id: input.documentId,
     p_status: status,
     p_via: input.door,
@@ -2253,7 +2264,7 @@ export async function putBackRetiredIssue(input: {
       p_supersession_reason: s?.supersession_reason ?? null,
       p_supersession_moc: s?.supersession_moc ?? null,
     }),
-  });
+  }), nameDoor ? input.door : null);
   let { data, error } = await putBack(input.status);
   // REV-29 (P25): 20261165's body refuses a NULL status (raised before any
   // write: nothing was changed) — before 20261192 the rollback takes today's
@@ -2403,8 +2414,13 @@ export async function unarchiveDocument(input: ArchiveInput & {
   // a hold the guard refuses it in the new-door sentence, and the dialog
   // offers the Draft restore. Its refusal is this restore's refusal; the
   // direct write below only while the function is absent.
+  // REV-19 (a) (P23 fix pass): asked once, before the write, only for a
+  // restore into an issue status — it decides whether the write names its
+  // door (no custom header before 20261205) and who writes the record.
+  const recordedByDatabase = before ? await isStatusIssueRecordedByDatabase() : false;
   const door = await putBackRetiredIssue({
     documentId: doc.id, status: restoredStatus, door: "unarchive", reason: reason?.trim() || "Restored from archive",
+    nameDoor: recordedByDatabase,
     forceHold: input.forceHold === true,
   });
   if (door.kind === "refused") {
@@ -2414,7 +2430,7 @@ export async function unarchiveDocument(input: ArchiveInput & {
     // P13 third review fix: a checked write, as archiveDocument's — a restore
     // the database filtered to zero rows (no edit access to the row) is a
     // refusal, never a silent success, and writes no un-archive event.
-    const { data: restored, error } = await supabase
+    const { data: restored, error } = await withIssueDoor(supabase
       .from("documents")
       .update({
         status: restoredStatus,
@@ -2425,7 +2441,7 @@ export async function unarchiveDocument(input: ArchiveInput & {
         updated_by: actorUserId,
       })
       .eq("id", doc.id)
-      .select("id");
+      .select("id"), recordedByDatabase ? "unarchive" : null);
 
     if (error) throw new Error(`The document was NOT restored (${error.message}) — nothing was changed.`);
     if (((restored as unknown[] | null) ?? []).length === 0) {
@@ -2457,7 +2473,7 @@ export async function unarchiveDocument(input: ArchiveInput & {
       orgId, documentId: doc.id, fromStatus: before.fromStatus, toStatus: restoredStatus,
       versionId: before.versionId, rev: before.rev, putBack: before.putBack, door: "unarchive",
       actorUserId, actorEmail: actorEmail ?? null, actorRole: actorRole ?? null,
-      entryIntoForce: before.entryIntoForce,
+      entryIntoForce: before.entryIntoForce, recordedByDatabase,
     });
   }
   return NO_STATUS_ISSUE;
@@ -2473,6 +2489,47 @@ export async function unarchiveDocument(input: ArchiveInput & {
 // next owner touches the page: identity IS-P1 / intelligence I-12).
 
 export type StatusIssueDoor = "metadata" | "bulk" | "unarchive";
+
+/** REV-19 (a) (P23 fix pass): every door the database's issue record names
+ *  from the request header — the status editors', the un-archive's, and the
+ *  rollbacks' put-backs (put_back_retired_issue's p_via). */
+export type IssueRecordDoor = StatusIssueDoor | Exclude<RetiredIssuePutBackDoor, "unarchive">;
+
+/** REV-19 (a) (document-control P23, 20261205): the request header an app
+ *  door sends with its status write, naming the door on the record the
+ *  database writes (record_document_status_issue reads it from PostgREST's
+ *  request.headers; any write without it is recorded as door 'direct'). */
+export const ISSUE_DOOR_HEADER = "x-mos-issue-door";
+
+/** REV-19 (a) (P23): name the app's door on a status write. A client (or
+ *  test double) without supabase-js's per-request `setHeader` sends the
+ *  write as before — the database then records the door as 'direct'; the
+ *  record itself is never skipped. `door` null: the write is unchanged. */
+export function withIssueDoor<T>(builder: T, door: IssueRecordDoor | null): T {
+  const b = builder as unknown as { setHeader?: (name: string, value: string) => T };
+  return door && typeof b?.setHeader === "function" ? b.setHeader(ISSUE_DOOR_HEADER, door) : builder;
+}
+
+/** REV-19 (a) (P23, DEC-104): does the database write DOCUMENT_ISSUED for
+ *  a status-change issue itself? True once 20261205's AFTER UPDATE trigger
+ *  is bound and enabled (document_status_issue_recorded_by_database) — the
+ *  ONE writer of that record: the app's doors then write none of their own.
+ *  Missing (PGRST202 / 42883: a database before 20261205), false, or any
+ *  error: the app writes the record, as before 20261205 (a failed probe on a
+ *  database that has the trigger means two rows, never none). Asked on every
+ *  write to an issue status, just BEFORE it (P23 fix pass: the answer also
+ *  decides whether the write names its door — no custom header is sent to a
+ *  database before 20261205) — never cached, so a paste mid-session takes
+ *  effect at once (a paste between the probe and the write: two rows). */
+export async function isStatusIssueRecordedByDatabase(): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc("document_status_issue_recorded_by_database");
+    if (error) return false;
+    return data === true;
+  } catch {
+    return false;
+  }
+}
 
 export interface StatusIssueOutcome {
   /** The write made the document a controlled issue (isIssueTransition). */
@@ -2494,7 +2551,10 @@ export interface StatusIssueOutcome {
   putBack: boolean | null;
   /** What of the review clock / acknowledgment roster did not start. */
   complianceClockErrors: string[];
-  /** The issue record could not be written (the issue itself stands). */
+  /** The issue record could not be written (the issue itself stands). P23
+   *  fix pass: also set, on an outcome that issued nothing, when a
+   *  read-failed write's follow-up row (the database recorded it; this door
+   *  started no clock) could not be written. */
   recordError: string | null;
   /** REV-26 / REV-27 (document-control P25): set (true) only when the
    *  issue put the current revision in force for the FIRST time — out of an
@@ -2622,11 +2682,32 @@ async function readStatusIssueBasis(documentId: string, held?: Pick<DocumentReco
 
 /** What a landed status-change issue did to its compliance clocks, by the
  *  put-back's three states — the sentence DOCUMENT_ISSUED records. */
-const STATUS_ISSUE_CLOCKS_NOTE = {
+export const STATUS_ISSUE_CLOCKS_NOTE = {
   putBack: "the put-back of the issue its retirement took away (the retirement stamp names this revision): the review clock and the acknowledgment roster it had keep running, not restarted",
   newIssue: "a new issue: the review clock and the acknowledgment roster were started",
   unknown: "no evidence whether this puts back the issue its retirement took away (the retirement carries no stamp — retired before 20261144 or by the service role — names another revision, or could not be read): the review clock was NOT reset (a reset would mark the document reviewed today and could hide a review already due); only the acknowledgment roster was opened for this revision",
   entryIntoForce: "a first entry into force out of a status no gate reads as in force (IFC, an empty status, a variant, a library's own, or no status — directly, or out of a retirement stamped with it): nothing in force was taken away, so it is no put-back, and nothing records that this revision was reviewed now, so the review clock was NOT reset (a reset would mark the document reviewed today and could hide a review already due); the acknowledgment roster was opened for this revision (DEC-77, REV-26)",
+} as const;
+
+/** REV-19 (a) (P23 fix pass): the follow-up rows an app door writes after the
+ *  database's DOCUMENT_ISSUED (20261205) — what it started, or what did not
+ *  start. Absence of both reads as "nothing was started". */
+export const CLOCKS_STARTED_ACTION = "COMPLIANCE_CLOCKS_STARTED";
+export const CLOCKS_NOT_STARTED_ACTION = "COMPLIANCE_CLOCKS_NOT_STARTED";
+const OWED_FOLLOW_UP = "This record was written with the status change, before any clock could start: an app door that starts them records the outcome on the row that follows (COMPLIANCE_CLOCKS_STARTED, or COMPLIANCE_CLOCKS_NOT_STARTED for what did not start); with neither row, nothing was started";
+/** REV-19 (a) (P23 fix pass): the sentence the DATABASE's DOCUMENT_ISSUED
+ *  records (20261205 record_document_status_issue — pinned to its body by
+ *  test), by the put-back's three states: what the issue OWES its compliance
+ *  clocks, never that a clock started — the row is written in the status
+ *  change's own transaction, before any door could start one, and whatever
+ *  header the write carried (a header is the caller's claim). A put-back owes
+ *  nothing and is never told to restart the review clock, whichever door
+ *  (or none) made it. */
+export const STATUS_ISSUE_CLOCKS_OWED_NOTE = {
+  putBack: "the put-back of the issue its retirement took away (the retirement stamp names this revision): nothing is owed — the review clock and the acknowledgment roster it had keep running and are not to be restarted (a restart would mark the document reviewed today and could hide a review already due)",
+  newIssue: `a new issue: it owes the review clock and the acknowledgment roster for this revision. ${OWED_FOLLOW_UP} — Document Control then starts both from the document`,
+  unknown: `no evidence whether this puts back the issue its retirement took away (the retirement carries no stamp — retired before 20261144 or by the service role — or names another revision): it owes the acknowledgment roster for this revision only — the review clock is not to be reset (a reset would mark the document reviewed today and could hide a review already due). ${OWED_FOLLOW_UP} — Document Control then opens the roster from the document and leaves the review clock as it is`,
+  entryIntoForce: `a first entry into force out of a status no gate reads as in force (IFC, an empty status, a variant, a library's own, or no status — directly, or out of a retirement stamped with it): it owes the acknowledgment roster for this revision only — the review clock is not to be reset (nothing records that this revision was reviewed now; a reset would mark the document reviewed today and could hide a review already due). ${OWED_FOLLOW_UP} — Document Control then opens the roster from the document and leaves the review clock as it is`,
 } as const;
 
 /** REV-19: what a landed status-change issue owes. A NEW issue (putBack
@@ -2654,6 +2735,9 @@ export async function recordStatusIssue(input: {
    *  recorded as an issue, the acknowledgment roster opened, the review
    *  clock NOT reset (no evidence the revision was reviewed now). */
   entryIntoForce?: boolean;
+  /** REV-19 (a) (P23 fix pass): the door's own probe answer, asked before its
+   *  write (isStatusIssueRecordedByDatabase); absent, asked here. */
+  recordedByDatabase?: boolean;
 }): Promise<StatusIssueOutcome> {
   const complianceClockErrors: string[] = [];
   const entryIntoForce = input.entryIntoForce === true;
@@ -2671,6 +2755,55 @@ export async function recordStatusIssue(input: {
     } catch (e) {
       complianceClockErrors.push(`the start failed (${(e as Error).message})`);
     }
+  }
+  // REV-19 (a) (P23, DEC-104): since 20261205 the database writes
+  // DOCUMENT_ISSUED itself, in the write's own transaction, in this shape
+  // (the door this caller named — withIssueDoor —, the statuses, the
+  // revision, putBack, entryIntoForce, the policy decision, the clock
+  // fields) — the ONE writer, which a direct write cannot skip. The door
+  // then writes no second row. P23 fix pass: the database's row says what
+  // the issue OWES (STATUS_ISSUE_CLOCKS_OWED_NOTE), never that a clock
+  // started — so whenever something was owed (not a put-back) the door
+  // records the outcome on a follow-up row: COMPLIANCE_CLOCKS_STARTED when
+  // everything owed started, COMPLIANCE_CLOCKS_NOT_STARTED with what did not
+  // (REV-15's precedent, lib/documentLifecycle/common.ts) — so the absence
+  // of both reads as "nothing was started", never as success. Before
+  // 20261205 (or when the probe cannot tell) the door writes the record
+  // below, exactly as it did.
+  if (input.recordedByDatabase ?? await isStatusIssueRecordedByDatabase()) {
+    if (input.putBack !== true) {
+      const notStarted = complianceClockErrors.length > 0;
+      const { error: followErr } = await logAuditAction({
+        action: notStarted ? CLOCKS_NOT_STARTED_ACTION : CLOCKS_STARTED_ACTION,
+        resourceType: "document",
+        resourceId: input.documentId,
+        orgId: input.orgId,
+        userId: input.actorUserId,
+        userEmail: input.actorEmail ?? undefined,
+        userRole: input.actorRole ?? undefined,
+        details: {
+          followsUp: "DOCUMENT_ISSUED",
+          door: input.door,
+          versionId: input.versionId,
+          putBack: input.putBack,
+          ...(entryIntoForce ? { entryIntoForce: true } : {}),
+          ...(notStarted
+            ? { complianceClockErrors: [...complianceClockErrors] }
+            : { reviewClockReset: reviewClock, acknowledgmentRosterOpened: true }),
+        },
+      });
+      // The issue's record stands (the database wrote it); only this
+      // follow-up is missing from the history — said with the clocks.
+      if (followErr) {
+        complianceClockErrors.push(notStarted
+          ? `the record of what did not start could not be written (${followErr}), so it is not on the document's history`
+          : `the clocks started, but the record that they did could not be written (${followErr}), so the document's history reads as if they had not — do not start them again`);
+      }
+      if (complianceClockErrors.length > 0) {
+        console.warn(`[revisions] REV-19: the review clock / acknowledgment roster of document ${input.documentId} did not fully start or record (${complianceClockErrors.join("; ")})`);
+      }
+    }
+    return { issued: true, putBack: input.putBack, ...(entryIntoForce ? { entryIntoForce: true as const } : {}), complianceClockErrors, recordError: null };
   }
   // The policy decision, best-effort: an unreadable policy or roster is
   // recorded as unknown (null), never guessed. P14 final review: the roster
@@ -2757,10 +2890,16 @@ export async function changeDocumentStatus(input: {
 }): Promise<StatusIssueOutcome> {
   const before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
   const now = new Date().toISOString();
-  const { data: rows, error } = await supabase.from("documents")
+  // REV-19 (a) (P23): a write to an issue status names its door to the
+  // database's issue record (20261205), which decides from the row whether
+  // it issued. P23 fix pass: the probe is asked first, and the header sent
+  // only when the database records — a database before 20261205 is sent no
+  // custom header.
+  const recordedByDatabase = isControlledIssueStatus(input.toStatus) ? await isStatusIssueRecordedByDatabase() : false;
+  const { data: rows, error } = await withIssueDoor(supabase.from("documents")
     .update({ ...(input.patch ?? {}), status: input.toStatus, updated_at: now, updated_by: input.actorUserId })
     .eq("id", input.documentId)
-    .select("id");
+    .select("id"), recordedByDatabase ? input.door : null);
   if (error) throw new Error(error.message);
   if (((rows as unknown[] | null) ?? []).length === 0) {
     throw new Error("The status was NOT changed — you don't have authority to change this document, or it is no longer visible to you. Nothing was changed.");
@@ -2776,13 +2915,43 @@ export async function changeDocumentStatus(input: {
     const notRecordedBecause: StatusIssueNotRecorded = before.readFailed ? "read_failed"
       : isControlledIssueStatus(before.fromStatus) ? "already_issued"
       : "no_current_revision";
+    // REV-19 (a) (P23): since 20261205 the database recorded this write if
+    // it was an issue (it reads the row as it was — OLD — which this read
+    // could not), with the clocks this door owes; this door, not knowing,
+    // started none — said on the follow-up row the database's record
+    // points to. Before 20261205: nothing is written, as before.
+    if (notRecordedBecause === "read_failed" && recordedByDatabase) {
+      // P23 fix pass: checked — a follow-up that cannot be written is
+      // returned (recordError), never a silent success.
+      const { error: followErr } = await logAuditAction({
+        action: CLOCKS_NOT_STARTED_ACTION,
+        resourceType: "document",
+        resourceId: input.documentId,
+        orgId: input.orgId,
+        userId: input.actorUserId,
+        userEmail: input.actorEmail ?? undefined,
+        userRole: input.actorRole ?? undefined,
+        details: {
+          followsUp: "DOCUMENT_ISSUED",
+          door: input.door,
+          toStatus: input.toStatus,
+          readFailed: true,
+          complianceClockErrors: ["the document could not be read just before this write, so whether it issued the document was unknown to the app and no review clock or acknowledgment roster was started; if the database recorded this write as an issue (DOCUMENT_ISSUED just before this row), start what it owes from the document"],
+        },
+      });
+      if (followErr) {
+        // The database's refusal, as recordError always carries it; the
+        // editors say what it means (the record that no clock was started).
+        return { ...NO_STATUS_ISSUE, notRecordedBecause, recordError: followErr };
+      }
+    }
     return { ...NO_STATUS_ISSUE, notRecordedBecause };
   }
   return await recordStatusIssue({
     orgId: input.orgId, documentId: input.documentId, fromStatus: before.fromStatus, toStatus: input.toStatus,
     versionId: before.versionId, rev: before.rev, putBack: before.putBack, door: input.door,
     actorUserId: input.actorUserId, actorEmail: input.actorEmail ?? null, actorRole: input.actorRole ?? null,
-    entryIntoForce: before.entryIntoForce,
+    entryIntoForce: before.entryIntoForce, recordedByDatabase,
   });
 }
 

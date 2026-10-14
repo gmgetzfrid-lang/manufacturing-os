@@ -15,16 +15,16 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 170,
+    "findings": 171,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
       "MEDIUM": 72,
-      "LOW": 25
+      "LOW": 26
     },
     "by_status": {
-      "RESOLVED": 159,
+      "RESOLVED": 160,
       "OPEN": 11
     }
   },
@@ -4340,6 +4340,31 @@
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
     {
+      "id": "REV-30",
+      "title": "After 20261205 the metadata editor's two read-failed sentences say no issue record was written, though the database wrote one",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (the sentence at `app/(protected)/documents/[libraryId]/page.tsx:2847` on `596d34e`; 20261205's trigger driven on PostgreSQL 16 — `REV-19`'s record)",
+      "blast_radius": null,
+      "related": [
+        "REV-19",
+        "DEC-104"
+      ],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx:2847"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Document Control saves a Draft drawing as Issued in the metadata editor while the network drops the read just before the write. The page says no issue record was written; the history shows the database's DOCUMENTISSUED. The advice that follows (check its history, start its clocks) is still right; only the clause is wrong.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
       "id": "RG-10",
       "title": "The external intake route repoints pending_version_id and can publish over a live review under service role, orphaning the sign-off roster",
       "severity": "LOW",
@@ -4555,9 +4580,9 @@
       "id": "TRX-17",
       "title": "A PDF can still leave the portal unmarked with no warning at issue and no recorded yes: one the issue-time check could not decide, and any issue made outside the app's issue path",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
-      "verification_note": "CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue)",
+      "verification_note": "CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue). *(This is the pre-fix state, reproduced on `49cd27e`. P24 rewrote those pins to the new rule: an unchecked file now warns, and a check that cannot run now stops the issue. See the Resolution.)*",
       "blast_radius": "document-control integrity (an uncontrolled copy without its marking, and no recorded yes for it)",
       "related": [
         "TRX-15",

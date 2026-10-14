@@ -8,17 +8,18 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 61,
+    "findings": 67,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
-      "MEDIUM": 28,
-      "LOW": 11
+      "MEDIUM": 29,
+      "LOW": 16
     },
     "by_status": {
-      "RESOLVED": 38,
-      "OPEN": 23
+      "RESOLVED": 54,
+      "OPEN *(set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form is not met on three readers — the Partial below)*": 1,
+      "OPEN": 12
     }
   },
   "status_vocabulary": [
@@ -207,7 +208,7 @@
       "id": "ALOG-3",
       "title": "Deleting a library cascades away every document and revision in it, writes no audit row, and its \"safety\" modal previews nothing — the confirmation asks the admin to type a name against a hedge, not a count",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -234,7 +235,7 @@
       "id": "ALOG-4",
       "title": "The entire user and role administration surface writes no audit row at all: granting a role, removing a role, adding a member and removing a member are all unrecorded",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -262,7 +263,7 @@
       "id": "ALOG-5",
       "title": "`/activity` renders the entire org audit log to every role with no gate of any kind, sitting in the same tab strip as /admin/audit's \"Admin-class roles only\" banner",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -648,7 +649,7 @@
       "id": "ALOG-7",
       "title": "Audit rows record self-declared identity: `user_email` and `user_role` come from the caller, `timestamp` is client-settable, and the one field `AuditEntry` declares for it is never written",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "OPEN *(set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form is not met on three readers — the Partial below)*",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -733,7 +734,7 @@
       "id": "ALOG-10",
       "title": "The audit INSERT policy explicitly admits `org_id IS NULL`, but the SELECT policy and both viewers can never return such a row — a write-only sink for audit evidence, reachable through optional-orgId signatures",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -761,7 +762,7 @@
       "id": "ALOG-11",
       "title": "The audit viewer can filter 36 action types out of the 110 the app writes; every admin-authority action — permission changes, ACL changes, recertifications, purges, restores, e-signatures, folder deletes — is unreachable through any filter, and the compliance KPI miscounts in both directions",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -866,6 +867,36 @@
       ],
       "refuted": false,
       "summary": "An IT auditor is asked to produce the workspace's access-control matrix. They open /admin/permissions, screenshot the top panel, and hand it over. It says the audit log is restricted to five roles — a Drafter or a Safety staffer can read every row of it — and it says Doc Control cannot manage users, release stale checkouts, edit operational scope or edit the equipment registry, all four of which D",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/03-audit-log.md"
+    },
+    {
+      "id": "ALOG-16",
+      "title": "Node-level authority rows — a node's full ACL before and after a change, its owner assignments, its recertifications — are readable by every active member of the workspace",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (P7's third-review reading of DEC-17's overlay and the action typing; not exercised against a live database)",
+      "blast_radius": "confidentiality inside a workspace / access control",
+      "related": [
+        "ALOG-5",
+        "DEC-17",
+        "SURF-9",
+        "ROLE-5"
+      ],
+      "locations": [
+        "components/permissions/PermissionDrawer.tsx",
+        "lib/ownership.ts",
+        "lib/accessRecert.ts",
+        "app/(protected)/activity/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Document Control narrows a restricted library's ACL to three named engineers. Any other member of the workspace opens /activity (or queries auditlogs through the API) and reads the NODEACLCHANGED row, whose details carry the full before and after ACL: who held access, who keeps it, who was removed — for a library they cannot open.",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
@@ -1223,7 +1254,7 @@
       "id": "ORG-4",
       "title": "A DocCtrl can edit Request Numbering in /admin/settings and be told \"Saved\" — the orgs RLS policy admits only Admin, so the write matches zero rows and returns no error",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1352,7 +1383,7 @@
       "id": "ORG-11",
       "title": "The org-enforced palette is applied straight from the database with no hex validation, while every other palette entry point validates",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -1410,7 +1441,7 @@
       "id": "ALOG-6",
       "title": "\"Export CSV\" exports only the rows currently on screen — by default the last 7 days capped at 200 — with no truncation notice, and drops the `metadata` column entirely from the evidence file",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1437,7 +1468,7 @@
       "id": "ALOG-15",
       "title": "The capability-policy route's compare-and-set cannot see `revoke_member`'s grant strip, so a concurrent save can write a removed member's grant back",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
       "blast_radius": "access control / audit integrity",
@@ -1463,7 +1494,7 @@
       "id": "BILL-15",
       "title": "On a single-workspace server the quota alert and the platform R2 alert can both fire on the same day, with two different percentages for nearly the same bytes",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by construction: `BILL-12`'s resolution describes both paths)",
       "blast_radius": null,
@@ -1543,7 +1574,7 @@
       "id": "ORG-6",
       "title": "Every org-authority SECURITY DEFINER helper — the functions all RLS policies call — is missing SET search_path, while the guards written later all set it",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1624,7 +1655,7 @@
       "id": "ORG-13",
       "title": "team_members rows are not constrained to the team's own org, and my_team_ids()/node_visible() read team membership with no org scope",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -1650,7 +1681,7 @@
       "id": "ORG-15",
       "title": "`/admin/users` ignores the error on its members and pending-requests reads, so a failed read draws an empty roster and hides every pending request",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading)",
       "blast_radius": "admin visibility",
@@ -1676,7 +1707,7 @@
       "id": "ORG-16",
       "title": "Any member can replace a folder's or library's cover image and page background: `branding/covers/` and `branding/backgrounds/` keys are signed for any member, any Content-Type",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading)",
       "blast_radius": null,
@@ -1699,6 +1730,145 @@
       ],
       "refuted": false,
       "summary": "A Viewer or Contractor reads a library's coverImageUrl (or bgImagePath) key (orgs/<org>/branding/covers/<key>), posts it to /api/storage/upload-url with any contentType, and PUTs any image (or an HTML document) to the signed URL. Every member sees the replaced cover on the library's card the next time it loads. No audit row is written, and the node's customize authority is never consulted, because",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-17",
+      "title": "Any member can repoint a library's cover image and page background: the appearance columns sit under the membership-wide `libraries_org_access`, and only the UI holds the node editor's authority",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": null,
+      "related": [
+        "ORG-16",
+        "ORG-5",
+        "OWN-1"
+      ],
+      "locations": [
+        "supabase/schema.sql:1098",
+        "supabase/migrations/20261077_dc_roundF_records_rails.sql",
+        "app/(protected)/documents/page.tsx:123-142",
+        "components/documents/NodeCover.tsx:29"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Viewer sends PATCH /rest/v1/libraries?id=eq.<lib> with { \"coverimageurl\": \"https://example.net/pixel.png\" } (or another library's cover key, or pageconfig with a new background.imagePath). The update passes RLS and the trigger. Every member who opens the documents list now sees that image on the library's card, and their browser fetches the external URL. No audit row names who changed it.",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-18",
+      "title": "A folder's or library's cover or background in a legacy format (SVG, HEIC, TIFF) can no longer be uploaded or restored, and the node keeps pointing at the missing image",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading and by test: `lib/__tests__/aoRoundGStorageFollowups.test.ts` \"review fix (issue 3): a legacy SVG / HEIC / TIFF cover or background is not asked for …\")",
+      "blast_radius": null,
+      "related": [
+        "ORG-16",
+        "ORG-5",
+        "ORG-17"
+      ],
+      "locations": [
+        "lib/storageKey.ts",
+        "app/(protected)/admin/restore/page.tsx",
+        "components/documents/NodeCover.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An Admin restores a Full ZIP into a fresh workspace. A library's cover is orgs/<org>/branding/covers/<uuid>.svg, uploaded before ORG-16. The files panel says \"1 folder or library cover / background image(s) in this backup were not put back (covers/<uuid>.svg) …\". The library card renders without a cover, and the panel does not say which library, because the page knows only the key.",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-19",
+      "title": "Any member can create a library born with an external cover image or page background — `libraries_org_access` admits the INSERT and the birth rail does not hold the appearance columns",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": null,
+      "related": [
+        "ORG-17",
+        "ORG-16",
+        "OWN-22"
+      ],
+      "locations": [
+        "supabase/schema.sql:1098",
+        "supabase/migrations/20261062_rp_roundE_library_insert_ownership_rail.sql",
+        "supabase/migrations/20261210_ao_roundG_node_appearance_rail.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Viewer sends POST /rest/v1/libraries with { \"orgid\": \"<their org>\", \"name\": \"Read me\", \"coverimageurl\": \"https://example.net/pixel.png\" }. RLS passes on membership and the birth rail passes (no owner, ACL or policy set). Every member who can see the new library draws its card, and their browsers fetch the URL. Once it exists, only a controller can change that cover (ORG-17).",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-20",
+      "title": "`/api/storage/resolve` answers `missing: true` for a storage failure of ANY kind, so its callers cannot tell an absent file from an outage",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; pinned in `lib/__tests__/aoRoundGP11AppearanceRails.test.ts` \"DEC-29: the helper's comments do not claim more than the route gives\")",
+      "blast_radius": null,
+      "related": [
+        "ORG-18",
+        "DEC-90",
+        "DEC-75"
+      ],
+      "locations": [
+        "app/api/storage/resolve/route.ts:105-108",
+        "app/(protected)/admin/restore/page.tsx:352"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "R2 throttles or times out on one HEAD during a restore's \"Put the files back\". The route answers missing: true for a file that is present. Before ORG-18 fix pass 2, that cleared the cover of every library naming the key, including live ones. Now it can clear only a node the restore just added, in a run where storage otherwise answered. A viewer opening the same key meanwhile is shown the \"this fil",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-21",
+      "title": "A library's or folder's colour is drawn raw into inline CSS, so any member can make every viewer's browser fetch an external URL",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (P11's third review; the failure scenario traced by reading the two render sites and the 20261210 rail; not exercised in a browser)",
+      "blast_radius": "decoration / privacy (an external fetch from every viewer's browser); no record changes, no other workspace reached",
+      "related": [
+        "ORG-17",
+        "ORG-19"
+      ],
+      "locations": [
+        "components/documents/NodeCover.tsx:95",
+        "components/documents/CollectionsStrip.tsx:51",
+        "supabase/migrations/20261210_ao_roundG_node_appearance_rail.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Viewer PATCHes a library with {\"color\": \"red, red), url(https://example.net/p.png) /\"}. On libraries with no cover image the card's background becomes linear-gradient(135deg, red, red), url(https://example.net/p.png) / …, and every member who opens the library list fetches the external image.",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
     }

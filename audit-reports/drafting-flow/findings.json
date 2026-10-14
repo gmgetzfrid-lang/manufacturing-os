@@ -17,17 +17,19 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 144,
+    "findings": 146,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 47,
       "MEDIUM": 63,
-      "LOW": 25
+      "LOW": 27
     },
     "by_status": {
-      "RESOLVED": 42,
-      "OPEN": 94,
+      "RESOLVED": 43,
+      "OPEN": 93,
+      "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
+      "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)": 1,
       "REFUTED": 4,
       "RESOLVED (2026-10-13, by the integrator's ruling at the DF-P2 merge — below)": 1,
       "BLOCKED": 1,
@@ -159,7 +161,7 @@
       "id": "EDGE-2",
       "title": "Public field QR verification computes its verdict from `deliverable_rev` alone and never reads the ticket's status, so a reopened or withdrawn deliverable still scans green as \"LATEST ISSUE\"",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -516,7 +518,7 @@
       "id": "EDGE-4",
       "title": "Removing a member hard-deletes their org_members row with no check for in-flight drafting requests, stranding tickets on a non-member that nothing escalates and nobody is notified about",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2527,12 +2529,14 @@
       "related": [],
       "locations": [
         "lib/ticketTransitions.ts:354-363",
-        "app/api/verify-ticket/route.ts:120",
+        "app/api/verify-ticket/route.ts",
+        "lib/verifyTicketVerdict.ts:189",
         "lib/__tests__/sweepRoundE_A.test.ts:710",
         "lib/ticketTransitions.ts:285",
-        "app/api/verify-ticket/route.ts:125-142",
+        "app/api/verify-ticket/route.ts:89",
         "app/api/admin/ticket-shed/commit/route.ts:173",
-        "app/api/verify-ticket/route.ts:59"
+        "app/api/verify-ticket/route.ts:59",
+        "lib/ticketTransitions.ts"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
@@ -3364,7 +3368,7 @@
       "id": "AUTHZ-12",
       "title": "The public /api/verify-ticket surface returns internal workflow state and unit to anyone holding a ticket UUID, forever, unrated and unarchived-checked",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3472,6 +3476,52 @@
       ],
       "refuted": false,
       "summary": "An engineer is notified 'Final approval needed — DWG-1042'. They never open it. Eight days later a coordinator advances the ticket by another route; fanOut stamps readat on the engineer's untouched row. An Admin/DocCtrl runs the purge with days=7 and the row is deleted. The regulator asks 'show me that the engineer was notified and whether they ever looked at it' and the system can produce nothing",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/10-audit-evidence.md"
+    },
+    {
+      "id": "EVID-15",
+      "title": "Two viewer copy / view records still discard their outcome — the linked-drawings print never reads the insert's `{ error }`, and the secure viewer's VIEW row is fired un-awaited",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED on `596d34e` and on DF-P10's branch (neither file is changed by it).",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/assets/FileReferenceModal.tsx:189",
+        "components/viewers/SecureDocViewer.tsx:83-92"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Before 20261068 is pasted, or under any policy refusal, a field user prints the linked drawings of a pump from its asset page: the copies leave and the distribution record has no row, with nothing said. A document opened in the secure viewer when the audit insert is refused leaves no VIEW row, again with nothing said.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/10-audit-evidence.md"
+    },
+    {
+      "id": "EVID-16",
+      "title": "A drafting-ticket copy is stamped and recorded in the browser, not in the server request that issues the stamped file — a client that skips the record still gets the copy",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED on DF-P10's branch.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/(protected)/requests/[id]/page.tsx",
+        "lib/ticketDeliverableCopy.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A member with read access to a ticket copies the presigned URL from the network tab and downloads the Final unstamped; no distribution row exists, so a later recall of that revision cannot name the holder.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
     },

@@ -124,7 +124,9 @@ const row = (id: string, kind: string, extra: Record<string, unknown> = {}) => (
 });
 // Documents 3 (one action: red), Drafting Requests 2, Projects 1, one bell-only.
 const FEED = [
-  row("n1", "checkout_conflict"), row("n2", "library_doc_revised"), row("n3", "ack_requested"),
+  // n3: an FYI Documents row (ack_complete; ack_requested became an action
+  // in notifications N4 — DEC-81 §2 — and this feed pins ONE red row)
+  row("n1", "checkout_conflict"), row("n2", "library_doc_revised"), row("n3", "ack_complete"),
   row("n4", "ticket_comment"), row("n5", "ticket_mention"),
   row("n6", "project_member"),
   row("n7", "security_export"),
@@ -192,7 +194,7 @@ describe("TAX-1 / TRAIL-3 / TAX-2 dw4 — a section badge opens its own section,
     expect(headline()).toBe(`${badgeSeen.documents} items in Documents`);
     expect(headline()).toBe("3 items in Documents");
     // every item the badge counts — the red one included — and nothing else
-    expect(listedTitles().sort()).toEqual(["t ack_requested n3", "t checkout_conflict n1", "t library_doc_revised n2"]);
+    expect(listedTitles().sort()).toEqual(["t ack_complete n3", "t checkout_conflict n1", "t library_doc_revised n2"]);
     // the scope clears in one tap: the whole feed, the bell's count
     const all = [...panel().querySelectorAll("button")].find((b) => /Show every section/.test(b.textContent ?? ""))!;
     expect(all.textContent).toBe("Show every section (7)");

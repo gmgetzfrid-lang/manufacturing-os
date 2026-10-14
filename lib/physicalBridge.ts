@@ -67,6 +67,35 @@ function fit(text: string, font: PDFFont, size: number, maxWidth: number): strin
   return `${t}…`;
 }
 
+/** PHYS-15 / PHYS-16: one artifact's text, in characters its fonts (WinAnsi
+ *  Helvetica and Helvetica-Bold) print, through the stamp's own helper
+ *  (lib/stamping.ts stampText). Text they print comes back as the same
+ *  string, so an artifact that printed before is drawn exactly as before;
+ *  any other character is drawn in a plain form ("P‐101" as "P-101", "Δ1" as
+ *  "Delta1") or as a visible "?" — it used to throw ("WinAnsi cannot encode
+ *  …") and fail the whole print. `mapped` collects every replacement, once,
+ *  in the order met, for the artifact's note (stampTextNote). Map
+ *  everything up front, then draw, so the note names every replacement. */
+function textMapper(): { drawable: (text: string) => string; mapped: StampTextMapping[] } {
+  const mapped: StampTextMapping[] = [];
+  const drawable = (text: string): string => {
+    const out = stampText(text);
+    for (const m of out.mapped) if (!mapped.some((x) => x.char === m.char)) mapped.push(m);
+    return out.text;
+  };
+  return { drawable, mapped };
+}
+
+/** PHYS-15 / PHYS-16: an artifact's note wrapped to `width` at 8 pt — at
+ *  most `maxLines` lines, the last cut with "…" should it run over
+ *  (stampTextNote names at most twelve replacements). */
+function plainNoteLines(note: string, font: PDFFont, width: number, maxLines: number): string[] {
+  const lines = wrapToWidth(note, width, (s) => font.widthOfTextAtSize(s, 8));
+  return lines.length > maxLines
+    ? [...lines.slice(0, maxLines - 1), fit(lines.slice(maxLines - 1).join(" "), font, 8, width)]
+    : lines;
+}
+
 // ─── Equipment QR labels ─────────────────────────────────────────────────
 
 /** PHYS-7 / HLD-13 (option (b), 2026-09-17): the label keeps its
@@ -81,6 +110,13 @@ export const LABEL_CAPTION_LINES: readonly string[] = [
   "drawings · holds ·",
   "report a problem",
 ];
+
+/** PHYS-16 (integrator ruling, 2026-10-13): the equipment label's marker,
+ *  drawn only when a character of its tag, description or location was
+ *  replaced or removed, with a trailing "*" on the tag line. It fits the
+ *  narrowest label's text column (100 pt on the 3.5" sticker). */
+export const LABEL_PLAIN_MARK = "* plain characters — scan for exact tag";
+export const LABEL_PLAIN_MARK_SIZE = 5.5;
 
 /** The equipment label's QR target. Exported for tests: the path shape
  *  /assets/<tag> must survive (existing stickers). */
@@ -113,12 +149,33 @@ export async function printEquipmentLabels(assets: LabelAsset[]): Promise<void> 
     if (qr) page.drawImage(qr, { x: x + pad, y: y + pad, width: qrSize, height: qrSize });
     const tx = x + pad + qrSize + pad;
     const maxW = w - (tx - x) - pad;
-    page.drawText(fit(asset.tag, bold, 20, maxW), { x: tx, y: y + h - pad - 20, size: 20, font: bold, color: INK });
-    if (asset.description) {
-      page.drawText(fit(asset.description, regular, 9, maxW), { x: tx, y: y + h - pad - 34, size: 9, font: regular, color: INK });
+    // PHYS-16: the tag, description and location in characters the fonts
+    // print (textMapper) — mapped once, up front. The QR above still targets
+    // the tag on record.
+    const { drawable, mapped } = textMapper();
+    const tag = drawable(asset.tag);
+    const description = asset.description ? drawable(asset.description) : null;
+    const location = asset.location ? drawable(asset.location) : null;
+    // PHYS-16 (integrator ruling, 2026-10-13): a tag printed with a
+    // substituted character must never look like the exact tag ("P‐101" and
+    // "P-101" would otherwise print the same sticker). Only when something on
+    // this label was replaced or removed: a trailing "*" on the tag line —
+    // after the cut, so it always shows — and LABEL_PLAIN_MARK under the
+    // location, inside the text column. A label in characters the fonts print
+    // is drawn exactly as before.
+    const marked = mapped.length > 0;
+    const tagLine = marked
+      ? `${fit(tag, bold, 20, maxW - bold.widthOfTextAtSize("*", 20))}*`
+      : fit(tag, bold, 20, maxW);
+    page.drawText(tagLine, { x: tx, y: y + h - pad - 20, size: 20, font: bold, color: INK });
+    if (description !== null) {
+      page.drawText(fit(description, regular, 9, maxW), { x: tx, y: y + h - pad - 34, size: 9, font: regular, color: INK });
     }
-    if (asset.location) {
-      page.drawText(fit(asset.location, regular, 8, maxW), { x: tx, y: y + h - pad - 46, size: 8, font: regular, color: MUTED });
+    if (location !== null) {
+      page.drawText(fit(location, regular, 8, maxW), { x: tx, y: y + h - pad - 46, size: 8, font: regular, color: MUTED });
+    }
+    if (marked) {
+      page.drawText(LABEL_PLAIN_MARK, { x: tx, y: y + h - pad - 56, size: LABEL_PLAIN_MARK_SIZE, font: regular, color: AMBER });
     }
     // Bottom-up: the last caption line sits on the label's bottom margin.
     LABEL_CAPTION_LINES.forEach((line, i) => {
@@ -164,6 +221,9 @@ export const HOLD_CARD_SCAN_LINES: readonly string[] = [
 ];
 /** The text column left of the QR plate (x 32 → 452). */
 export const HOLD_CARD_TEXT_WIDTH = 410;
+/** PHYS-16: the hold card's note of what it drew in another form — at most
+ *  this many lines under the placed-by line, above the QR plate's top. */
+export const HOLD_NOTE_LINES = 2;
 
 export interface HoldCardInput {
   holdId: string;
@@ -187,17 +247,36 @@ export async function printHoldCard(input: HoldCardInput): Promise<void> {
   page.drawRectangle({ x: 10, y: 316, width: 592, height: 70, color: RED });
   page.drawText("HOLD — DO NOT ADVANCE", { x: 32, y: 338, size: 30, font: bold, color: rgb(1, 1, 1) });
 
-  page.drawText(fit(`${input.docLabel}${input.docRev ? `  ·  Rev ${input.docRev}` : ""}`, bold, 18, 380), {
+  // PHYS-16: the document's number and revision, the reason, the notes and
+  // the placed-by line in characters the fonts print (textMapper) — mapped
+  // once, up front, so the note names every replacement. A drawing numbered
+  // "P‐101" or at "Δ1" used to throw here, and the red tag was never made.
+  const { drawable, mapped } = textMapper();
+  const docLine = drawable(`${input.docLabel}${input.docRev ? `  ·  Rev ${input.docRev}` : ""}`);
+  const reasonLine = drawable(`Reason: ${input.reason}`);
+  const notes = input.notes ? drawable(input.notes) : null;
+  const placedBy = drawable(
+    `Placed by ${input.openedByName || "Document Control"} on ${new Date(input.openedAt).toLocaleDateString()}`,
+  );
+  const note = stampTextNote(mapped);
+
+  page.drawText(fit(docLine, bold, 18, 380), {
     x: 32, y: 280, size: 18, font: bold, color: INK,
   });
-  page.drawText(fit(`Reason: ${input.reason}`, bold, 13, 380), { x: 32, y: 252, size: 13, font: bold, color: RED });
-  if (input.notes) {
-    page.drawText(fit(input.notes, regular, 10, 380), { x: 32, y: 232, size: 10, font: regular, color: INK });
+  page.drawText(fit(reasonLine, bold, 13, 380), { x: 32, y: 252, size: 13, font: bold, color: RED });
+  if (notes !== null) {
+    page.drawText(fit(notes, regular, 10, 380), { x: 32, y: 232, size: 10, font: regular, color: INK });
   }
-  page.drawText(
-    `Placed by ${input.openedByName || "Document Control"} on ${new Date(input.openedAt).toLocaleDateString()}`,
-    { x: 32, y: 208, size: 10, font: regular, color: MUTED },
-  );
+  page.drawText(placedBy, { x: 32, y: 208, size: 10, font: regular, color: MUTED });
+  // PHYS-16: only when a character was replaced — the card names every
+  // replacement on it (document line, reason, notes, placed-by line:
+  // "Printed in plain characters: U+2010 as "-", …"); the QR verifies the
+  // hold itself.
+  if (note) {
+    plainNoteLines(note, regular, HOLD_CARD_TEXT_WIDTH, HOLD_NOTE_LINES).forEach((line, i) => {
+      page.drawText(line, { x: 32, y: 194 - i * 9, size: 8, font: regular, color: AMBER });
+    });
+  }
 
   const qr = await qrPng(doc, `${origin()}/verify-hold/${input.holdId}`);
   if (qr) {
@@ -229,6 +308,10 @@ export interface TravelerInput {
   deliverableRev?: string | null;
 }
 
+/** PHYS-16: the traveler's note of what it drew in another form — at most
+ *  this many lines under the scan paragraph. */
+export const TRAVELER_NOTE_LINES = 2;
+
 /** One-pager that rides the paper folder. Scan → live ticket status. */
 export async function printTicketTraveler(input: TravelerInput): Promise<void> {
   const doc = await PDFDocument.create();
@@ -236,18 +319,29 @@ export async function printTicketTraveler(input: TravelerInput): Promise<void> {
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const page = doc.addPage([612, 792]);
 
-  page.drawRectangle({ x: 36, y: 700, width: 540, height: 56, color: INK });
-  page.drawText("DRAFTING TRAVELER", { x: 52, y: 728, size: 20, font: bold, color: rgb(1, 1, 1) });
-  page.drawText(input.ticketNumber ?? "", { x: 52, y: 710, size: 11, font: regular, color: rgb(0.8, 0.85, 0.9) });
-
-  page.drawText(fit(input.title, bold, 15, 400), { x: 52, y: 660, size: 15, font: bold, color: INK });
-  const lines: Array<[string, string]> = [
+  // PHYS-16: the ticket's number, title, status, revision, people and date
+  // in characters the fonts print (textMapper) — mapped once, up front, so
+  // the note names every replacement on the page: the number, the title and
+  // every row value (status, revision, requester, drafter, opened date). A
+  // number such as "KE‐0001" used to throw here and nothing downloaded. The
+  // QR and the file name keep the values on record.
+  const { drawable, mapped } = textMapper();
+  const ticketNumber = drawable(input.ticketNumber ?? "");
+  const title = drawable(input.title);
+  const lines: Array<[string, string]> = ([
     ["Status at printing", input.status.replace(/_/g, " ")],
     ["Deliverable rev", input.deliverableRev ? `Rev ${input.deliverableRev}` : "— (none issued yet)"],
     ["Requested by", input.requesterName || "—"],
     ["Drafter", input.drafterName || "—"],
     ["Opened", input.createdAt ? new Date(input.createdAt).toLocaleDateString() : "—"],
-  ];
+  ] as Array<[string, string]>).map(([k, v]) => [k, drawable(v)]);
+  const note = stampTextNote(mapped);
+
+  page.drawRectangle({ x: 36, y: 700, width: 540, height: 56, color: INK });
+  page.drawText("DRAFTING TRAVELER", { x: 52, y: 728, size: 20, font: bold, color: rgb(1, 1, 1) });
+  page.drawText(ticketNumber, { x: 52, y: 710, size: 11, font: regular, color: rgb(0.8, 0.85, 0.9) });
+
+  page.drawText(fit(title, bold, 15, 400), { x: 52, y: 660, size: 15, font: bold, color: INK });
   lines.forEach(([k, v], i) => {
     const y = 620 - i * 22;
     page.drawText(`${k}:`, { x: 52, y, size: 10, font: bold, color: MUTED });
@@ -256,6 +350,13 @@ export async function printTicketTraveler(input: TravelerInput): Promise<void> {
   page.drawText("Paper goes stale — the QR doesn't. Anyone can scan it, no", { x: 52, y: 500, size: 10, font: regular, color: MUTED });
   page.drawText("login: it answers whether this ticket's deliverable is still", { x: 52, y: 487, size: 10, font: regular, color: MUTED });
   page.drawText("the latest issued revision.", { x: 52, y: 474, size: 10, font: regular, color: MUTED });
+  // PHYS-16: only when a character was replaced — the traveler names every
+  // replacement on the page (its number, its title and the row values).
+  if (note) {
+    plainNoteLines(note, regular, 520, TRAVELER_NOTE_LINES).forEach((line, i) => {
+      page.drawText(line, { x: 52, y: 456 - i * 9, size: 8, font: regular, color: AMBER });
+    });
+  }
 
   // PUBLIC verify page — the person holding the folder in the field has no
   // account; sending them to the protected app was a login wall.
@@ -331,10 +432,7 @@ export const COVER_NOTE_LINES = 2;
  *  (stampTextNote names at most twelve replacements, which fits two).
  *  Exported for tests. */
 export function coverNoteLines(note: string, font: PDFFont): string[] {
-  const lines = wrapToWidth(note, 520, (s) => font.widthOfTextAtSize(s, 8));
-  return lines.length > COVER_NOTE_LINES
-    ? [...lines.slice(0, COVER_NOTE_LINES - 1), fit(lines.slice(COVER_NOTE_LINES - 1).join(" "), font, 8, 520)]
-    : lines;
+  return plainNoteLines(note, font, 520, COVER_NOTE_LINES);
 }
 
 /** Cover page (returned as a PDFDocument so callers can prepend it to the
@@ -354,12 +452,7 @@ export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDo
   // as "Delta1") or as a visible "?". It used to throw ("WinAnsi cannot
   // encode …") and fail the whole /packages print once its sheets stamped.
   // Mapped once, up front, so the first page's note names every replacement.
-  const mapped: StampTextMapping[] = [];
-  const drawable = (text: string): string => {
-    const out = stampText(text);
-    for (const m of out.mapped) if (!mapped.some((x) => x.char === m.char)) mapped.push(m);
-    return out.text;
-  };
+  const { drawable, mapped } = textMapper();
   const name = drawable(input.name);
   const description = input.description ? drawable(input.description) : null;
   const byLine = drawable(
