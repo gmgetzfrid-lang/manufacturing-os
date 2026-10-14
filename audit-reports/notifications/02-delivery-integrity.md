@@ -1039,13 +1039,13 @@ The chain reaction held too: the `CRON_SECRET` comment named `reminders/run`.
   - `"push"` added to `NotifChannel` and honoured against `push_enabled` ✓.
   - "A sender in the drain/cron" is met as the integrator ruled. The sender runs inside `emit()` at event time and the cron only prunes (`DEC-90`, the plan's `decisionsNeeded` item 3 for N10), so the sender is `lib/push/sendPush.ts`, reached from `emit()`. The maintenance cron's part is step 7c, the prune.
 - Not applicable: the removal arm ("Or the dead scaffolding is removed …") — the channel was built.
-- ✓ The notifications settings page states honestly what channels exist:
+- ✓ The notifications settings page states honestly what channels exist (as corrected at the fix pass):
   - The subtitle reads "Control which events email you or reach your devices. In-app bell notifications are always on."
-  - The Device notifications card says what it sends.
+  - The Device notifications card says what it sends. Fix pass (the review's major 3): the first pass's list named request mentions and assignments, which no producer pushes, and broader acknowledgment and sign-off lines than are pushed. That overstated this criterion. The card now lists only what is pushed today (`components/settings/PushOptIn.tsx` `PUSH_SENT_TODAY`, one line per producer that reaches `emit()`'s push leg). It then says what is not sent to devices yet (`PUSH_NOT_YET_NOTE`: mentions and assignments on requests, read-and-understood requests, sign-off requests from a review roster — "the bell and email still bring them").
   - The card says so when the browser cannot show notifications, and when the server is not set up ("Device notifications are not set up on this server yet.").
-  - Pinned by `lib/__tests__/pushOptIn.test.ts`.
+  - Pinned by `lib/__tests__/pushOptIn.test.ts`, including "major 3: the card's two lists split the push-worthy set exactly …", which checks from source that each listed kind has an `emit()` producer and each "not yet" kind has none.
 
-**Scope / residual.** Push reaches the producers that write through `emit()`. The ticket routes and the two rosters write their own bell rows outside it — `OS-14` (new). A shared browser stays subscribed after sign-out — `OS-15` (new).
+**Scope / residual.** Push reaches the producers that write through `emit()`. The ticket routes and the two rosters write their own bell rows outside it — `OS-14` (new), which also owns moving their lines onto the card when they are pushed. A shared browser stays subscribed after sign-out — `OS-15` (new). The fix pass's other changes (push only to a push service's host, `20261211`, explicit `serverPush`) are recorded on `OS-2` / `OS-9` / `OS-10`.
 
 ---
 

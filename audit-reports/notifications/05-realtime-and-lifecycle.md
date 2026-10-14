@@ -389,14 +389,14 @@ self.addEventListener("push", (event) => {
 - Verified (loop on `fleet/N10-push` at `669afad`, 2026-10-14): `npx tsc --noEmit` exit 0; `npx eslint` on the changed files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` in four shards (`--shard=N/4`), each exit 0 — 568 files, 12532 passed, 8 expected fail. `next build` is the integrator's.
 
 **Done-when.**
-- ✓ A VAPID keypair exists in env and is documented in `.env.example` beside the existing entries. It uses the brief's names, which are `OS-2` done-when 2's: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
-  - The public half reaches the browser through `GET /api/push/subscribe`, rather than a `NEXT_PUBLIC_` build-time variable. A VAPID public key is public by design, and a key inlined at build would need a rebuild to rotate.
+- Met in substance — a **recorded deviation** for the integrator to ratify (corrected at the fix pass, which found it marked a plain ✓; DEC-29). As written, the criterion asks for the public key "exposed as NEXT_PUBLIC_". The build serves it from a route instead. A VAPID keypair exists in env and is documented in `.env.example` beside the existing entries, under the brief's names, which are `OS-2` done-when 2's: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
+  - Deviation: the public half reaches the browser through `GET /api/push/subscribe`. No `NEXT_PUBLIC_VAPID_PUBLIC_KEY` exists — do not look for one in the build env. A VAPID public key is public by design, and a key inlined at build would need a rebuild to rotate.
   - The private key is read only by `lib/push/sendPush.ts` on the server. The route returns the public key only (pinned: `pushChannel.test.ts` "GET says whether push is configured and gives the PUBLIC key only").
 - ✓ A client surface calls `Notification.requestPermission()` at a deliberate moment (not on load) and, on grant, `registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`, persisting the result to `push_subscriptions` keyed by user and endpoint (`pushOptIn.test.ts`; `pushChannel.test.ts`).
-- ✓ A server sender, alongside `emit()`'s in-app branch, posts to the stored endpoints, and 404 / 410 responses prune dead subscriptions.
+- ✓ A server sender, alongside `emit()`'s in-app branch, posts to the stored endpoints, and 404 / 410 responses prune dead subscriptions. Fix pass: it posts only to an endpoint on a browser push service's host (`lib/push/endpoints.ts`), and deletes any other row unsent (`OS-2`).
 - ✓ (by record) `task_reminder` is deleted from the union. It was removed before this package: `lib/inAppNotifications.ts:47` records it, and `lib/__tests__/notificationKinds.test.ts`'s `RETIRED` list pins it gone.
 
-**Scope / residual.** None in this finding (the producers outside `emit()`: `OS-14`).
+**Scope / residual.** Done-when 1 is a recorded deviation: the public key is served by `GET /api/push/subscribe`, not a `NEXT_PUBLIC_` variable. The integrator ratifies it (`DEC-44 (N10-push)`, "For the integrator to ratify"). The producers outside `emit()` are `OS-14`.
 
 ---
 
