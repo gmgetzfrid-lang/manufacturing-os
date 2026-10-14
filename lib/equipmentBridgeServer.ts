@@ -187,10 +187,11 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     .eq("id", documentId).eq("org_id", orgId).maybeSingle();
   if (!doc) throw new Error("Document not found");
   const bridge = await loadBridgeConfig(admin, String(doc.library_id ?? ""));
-  const targetKey = bridge?.targetColumnKey;
-  if (!targetKey) {
-    throw new Error("No equipment column mapped for this library — pick one in the sweep dialog first.");
-  }
+  // A column is optional: without one the registry is still built and the
+  // drawing still tagged to it, the column just stays as it was. The old
+  // behaviour (refuse without a column) was the single biggest reason a
+  // registry stayed empty.
+  const targetKey = bridge?.targetColumnKey ?? null;
 
   // ── Registry reconcile with DISCOVERY: unmatched tags become real assets,
   //    filed under the right unit + type, provenance attached. The drawings
@@ -259,7 +260,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
 
   // ── Populate the column: array-union merge, never clobbering manual tags.
   const metadata = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
-  const current = metadata[targetKey];
+  const current = targetKey ? metadata[targetKey] : undefined;
   const existingTags: string[] = Array.isArray(current)
     ? current.map((v) => String(v).trim()).filter(Boolean)
     : typeof current === "string" && current.trim()
@@ -267,7 +268,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       : [];
   const existingNorms = new Set(existingTags.map(assetNorm));
   const additions = wanted.map((s) => s.tag).filter((t) => !existingNorms.has(assetNorm(t)));
-  if (additions.length > 0) {
+  if (targetKey && additions.length > 0) {
     const next = [...existingTags, ...additions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
     const { error: updErr } = await admin.from("documents")
       .update({ metadata: { ...metadata, [targetKey]: next }, updated_at: new Date().toISOString() })

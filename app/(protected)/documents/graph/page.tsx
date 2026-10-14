@@ -24,6 +24,7 @@ import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
 import { globalGraphHref } from "@/lib/estate/lenses";
 import EstateReadiness from "@/components/documents/EstateReadiness";
+import { useConnectEverything, ConnectButton, ConnectProgress } from "@/components/documents/ConnectEverything";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf, CONTAINER_TYPES } from "@/lib/fileFinder/fileTypes";
 import {
@@ -112,6 +113,9 @@ function GraphPageInner() {
   const [readAsk, setReadAsk] = useState<{ folder: FindCoverage["unreadFolders"][number]; libs: KnowledgeLibrary[]; pick: string; busy: boolean; note: string | null } | null>(null);
   const [finding, setFinding] = useState(false);
   const findSeq = useRef(0);
+
+  const connect = useConnectEverything(activeOrgId, () => { void refresh(); });
+  const [showConnect, setShowConnect] = useState(true);
 
   /** Document control runs the resolver over the whole estate on demand. */
   const runResolver = async () => {
@@ -567,7 +571,7 @@ function GraphPageInner() {
             )}
 
             {panel === "links" && data && (
-              <LinksPanel orgId={activeOrgId} edges={data.edges} units={data.units} estateMissing={data.estateMissing} onReveal={(id) => { const n = nodeById.get(id); if (!n) return; if (n.kind === "file" || n.kind === "extfile") reveal(id); else drill(id); }} />
+              <LinksPanel orgId={activeOrgId} edges={data.edges} units={data.units} estateMissing={data.estateMissing} onConnect={controller ? () => { setShowConnect(true); void connect.run(); } : undefined} connecting={connect.running} readinessKey={connect.status ? JSON.stringify(connect.status.readiness) : ""} onReveal={(id) => { const n = nodeById.get(id); if (!n) return; if (n.kind === "file" || n.kind === "extfile") reveal(id); else drill(id); }} />
             )}
             {panel === "drives" && (
               <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail} systemHashes={systemHashes}
@@ -609,6 +613,7 @@ function GraphPageInner() {
               )}
             </div>
             <div className="flex items-center gap-1 pointer-events-auto">
+              {controller && <ConnectButton running={connect.running} disabled={data?.estateMissing} onClick={() => { setShowConnect(true); void connect.run(); }} />}
               {controller && (
                 <button onClick={runResolver} disabled={resolving || data?.estateMissing} title={data?.estateMissing ? "Apply migration 20261020 first" : "Link every folder and file to its unit, project and equipment from names and ancestry"}
                   className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 disabled:opacity-50">
@@ -653,7 +658,12 @@ function GraphPageInner() {
               )}
             </div>
           )}
-          {resolveNote && (
+          {showConnect && (connect.status || connect.running || connect.error) && (
+            <div className="absolute top-12 right-3 pointer-events-auto">
+              <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} />
+            </div>
+          )}
+          {resolveNote && !(showConnect && (connect.status || connect.running)) && (
             <div className="absolute top-12 right-3 max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-xs shadow-md flex items-start gap-2">
               <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{resolveNote}</span>
               <button onClick={() => setResolveNote(null)} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
@@ -744,6 +754,7 @@ function GraphPageInner() {
                 <div className="font-bold text-[var(--color-text)]">Nothing searched yet</div>
                 <div>Type what you would ask a colleague. Tags in any spelling, the words on the drawing, the unit as people call it, the year.</div>
                 <div>Or just explore: click a library or folder on the map and it becomes the whole view. Esc climbs back out.</div>
+                {controller && <div className="mt-2"><b>First time here?</b> Press <b>Connect everything</b> above the map. It teaches the units, reads the drawings, builds the equipment registry and links it all. One button, safe to press again.</div>}
               </div>
             )}
           </div>
@@ -915,8 +926,9 @@ const EDGE_WORDS: Record<string, string> = {
   tagged_to: "is about", filed_under: "is also filed under", alias_of: "is a nickname for", related: "is related to",
 };
 
-function LinksPanel({ orgId, edges, units, estateMissing, onReveal }: {
+function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, connecting, readinessKey }: {
   orgId: string; edges: Array<{ a: string; b: string; type: string; summary: string }>; units: Array<{ code: string; label: string }>; estateMissing: boolean; onReveal: (id: string) => void;
+  onConnect?: () => void; connecting?: boolean; readinessKey?: string;
 }) {
   const [labels, setLabels] = useState<Map<string, NodeLabel>>(new Map());
   const [filter, setFilter] = useState<string>("all");
@@ -932,10 +944,10 @@ function LinksPanel({ orgId, edges, units, estateMissing, onReveal }: {
     if (id.startsWith("term:")) return { label: `"${id.slice(5).toLowerCase()}"` };
     return labels.get(id) ?? { label: "…" };
   };
-  if (estateMissing) return <div className="space-y-3"><div className="text-xs text-amber-700">Estate links are off until migration 20261020 is applied.</div><EstateReadiness orgId={orgId} /></div>;
+  if (estateMissing) return <div className="space-y-3"><div className="text-xs text-amber-700">Estate links are off until migration 20261020 is applied.</div><EstateReadiness key={readinessKey} orgId={orgId} /></div>;
   return (
     <div className="space-y-3">
-      <EstateReadiness orgId={orgId} />
+      <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
       <div className="text-xs text-[var(--color-text-muted)]">What the estate knows about where things belong — every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
       <div className="flex flex-wrap gap-1">
         <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === "all" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>

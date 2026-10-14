@@ -76,10 +76,11 @@ function steps(r: Readiness): Step[] {
   return out;
 }
 
-export default function EstateReadiness({ orgId }: { orgId: string }) {
+export default function EstateReadiness({ orgId, onConnect, connecting }: { orgId: string; onConnect?: () => void; connecting?: boolean }) {
   const [r, setR] = useState<Readiness | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [byHand, setByHand] = useState(false);
   useEffect(() => {
     let alive = true;
     estatePost<Readiness>("/api/estate/readiness", { orgId })
@@ -98,7 +99,17 @@ export default function EstateReadiness({ orgId }: { orgId: string }) {
         <button onClick={() => setTick((t) => t + 1)} className="text-[11px] inline-flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><RefreshCw className="w-3 h-3" /> recheck</button>
       </div>
       {next
-        ? <div className="text-xs"><span className="font-bold">Do this next:</span> {next.title.toLowerCase()}. {next.fix}</div>
+        ? (
+          <div className="text-xs space-y-1.5">
+            <div><span className="font-bold">Missing:</span> {next.title.toLowerCase()}.</div>
+            {onConnect && (
+              <button onClick={onConnect} disabled={connecting} className="w-full rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-xs font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-60">
+                {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} {connecting ? "Connecting…" : "Connect everything — do all of it for me"}
+              </button>
+            )}
+            <button onClick={() => setByHand((v) => !v)} className="text-[11px] text-[var(--color-text-muted)] hover:underline">{byHand ? "Hide the by-hand steps" : "Or see the by-hand steps"}</button>
+          </div>
+        )
         : <div className="text-xs text-emerald-700 font-semibold">Every step is in place. Search a tag and the unit, equipment, sheets and photos come together.</div>}
       <ol className="space-y-1.5">
         {list.map((s, i) => {
@@ -110,8 +121,8 @@ export default function EstateReadiness({ orgId }: { orgId: string }) {
                 <I className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${tone}`} />
                 <div className="min-w-0">
                   <div><span className="font-bold">{i + 1}. {s.title}</span> <span className="text-[var(--color-text-muted)]">· {s.count}</span></div>
-                  {s.state !== "done" && <div className="text-[11px] text-[var(--color-text-muted)]">{s.why}</div>}
-                  {s.state !== "done" && <div className="text-[11px]">{s.fix}</div>}
+                  {s.state !== "done" && byHand && <div className="text-[11px] text-[var(--color-text-muted)]">{s.why}</div>}
+                  {s.state !== "done" && byHand && <div className="text-[11px]">{s.fix}</div>}
                 </div>
               </div>
             </li>
