@@ -1285,7 +1285,7 @@ Tests: `lib/__tests__/aoRoundGP13Principal.test.ts` — reproduced (the empty re
 - **Severity:** LOW
 - **Severity rationale:** The author's estimate. Client-side pre-checks only (the same surface as `ORG-22`): RLS — `is_org_controller`, `user_is_effective_owner` and every node policy read the ACTIVE membership — refuses the write or read, so nothing is granted; the cost is a pre-check that says yes followed by a generic refusal.
 - **Status:** OPEN
-- **Assigned:** — **Owner: the integrator, to route** (DEC-31). Proposed: the next package that lists `lib/permissions.ts` (intelligence I-12 edited it this round; admin-and-org P13's brief listed only `lib/principal.ts`).
+- **Assigned:** intelligence I-30 NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED GRANTS (it edits `lib/permissions.ts` / `lib/acl.ts`) — by the integrator, 2026-10-14 (at the admin-and-org P13 merge, DEC-31). *(First written "— Owner: the integrator, to route. Proposed: the next package that lists `lib/permissions.ts` (intelligence I-12 edited it this round; admin-and-org P13's brief listed only `lib/principal.ts`).")*
 - **Verification:** CONFIRMED (by reading, on `ddc3678` + P13's `lib/principal.ts`)
 - **Locations:** `lib/permissions.ts:65`, `:153`, `:177`, `:237`, `:269` (`if (isControllerPrincipal(…)) return true;`), `:270` (`if (effectiveOwnerUserId && p.uid && effectiveOwnerUserId === p.uid) return true;`), each before the function's `isActiveMember === false` check (`:113`, `:278`) or with none; `lib/principal.ts:58` (the non-member principal keeps the caller's headline role)
 - **Related:** `ORG-22` (resolved; its residual), `ORG-7`
