@@ -4,16 +4,19 @@ import React, { useState } from "react";
 import { Home, FolderPlus, ChevronRight, Folder, PanelLeftOpen } from "lucide-react";
 import type { LibraryCollection } from "@/types/schema";
 import { NodeIcon } from "@/lib/nodeIcons";
+import { safeNodeColor } from "@/lib/nodeColor";
 
 /** A folder's icon, honoring its customization everywhere — a customized
  *  folder shows its own colored tile; a plain one keeps the classic folder
  *  glyph so long trees stay calm. */
 function FolderGlyph({ folder, active }: { folder: LibraryCollection; active: boolean }) {
-  if (folder.color || folder.icon) {
+  // ORG-21: only a hex colour is drawn; any other stored value is no colour.
+  const color = safeNodeColor(folder.color);
+  if (color || folder.icon) {
     return (
       <span
         className="w-4 h-4 rounded grid place-items-center text-white shrink-0"
-        style={{ background: folder.color || "var(--brand-gradient)" }}
+        style={{ background: color ?? "var(--brand-gradient)" }}
       >
         <NodeIcon name={folder.icon} className="w-2.5 h-2.5" />
       </span>
@@ -205,7 +208,7 @@ export default function FolderRail({
               }`}
               title={folder.name}
             >
-              {folder.color || folder.icon ? <FolderGlyph folder={folder} active={isActive} /> : <Folder className="w-3.5 h-3.5" />}
+              {safeNodeColor(folder.color) || folder.icon ? <FolderGlyph folder={folder} active={isActive} /> : <Folder className="w-3.5 h-3.5" />}
               {isActive && (
                 <span className="absolute -left-0.5 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-[var(--color-accent)] rounded-r-full" />
               )}

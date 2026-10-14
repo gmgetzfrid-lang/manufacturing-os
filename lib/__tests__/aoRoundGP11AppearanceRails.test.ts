@@ -185,12 +185,17 @@ describe("20261210 — coexists with every trigger already on libraries and coll
   });
 
   it("only this file attaches trg_node_appearance_columns, and no other trigger uses its function", () => {
+    // admin-and-org P15 (20261216, ORG-19 / ORG-21) re-attaches the same
+    // trigger as BEFORE INSERT OR UPDATE from the function's re-created body;
+    // its own test (aoRoundGP15AppearanceFollowups) line-diffs that body
+    // against this file's and pins the attachment.
+    const P15 = "20261216_ao_roundG_appearance_insert_and_colour.sql";
     for (const t of [...lib, ...col]) {
       if (t.name === "trg_node_appearance_columns" || t.fn === "enforce_node_appearance_columns") {
-        expect(t.file).toBe(FILE);
+        expect([FILE, P15]).toContain(t.file);
         expect(t.name).toBe("trg_node_appearance_columns");
         expect(t.fn).toBe("enforce_node_appearance_columns");
-        expect(t.timing).toBe("BEFORE UPDATE");
+        expect(t.timing).toBe(t.file === P15 ? "BEFORE INSERT OR UPDATE" : "BEFORE UPDATE");
       }
     }
   });
