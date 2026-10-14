@@ -144,7 +144,7 @@ supabase/migrations/20260901_db_hard_enforcement.sql:3-4 — `-- Promotes the la
 ## AUTHZ-3 · `requester_role` is free text stamped by the client at INSERT and is the only input to the "must an engineer sign this off" decision
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)
 - **Assigned:** drafting-flow DF-P4 LIBRARY (the narrowing migration AFTER the DF-P2 deploy: drop `tickets_org_insert` (20261166) or stamp `requester_name` / `requester_role` in `ticket_insert_integrity` from `org_members` — never before the deploy) — by the integrator, 2026-10-13 (at the DF-P2 merge, DEC-31: DF-P2 has merged and named these limbs in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2"; fleet plan updated).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/new/page.tsx:309`, `supabase/schema.sql:410`, `lib/ticketTransitions.ts:65`, `lib/workflow.ts:37-43`, `lib/workflow.ts:78`, `lib/workflow.ts:198-218`
@@ -196,6 +196,19 @@ lib/workflow.ts:200 — `          if (needsEngineerApproval && !isEng) {`
 - ✓ Unchanged.
 
 **Scope / residual.** No app path inserts `tickets` from the browser any more (the route's insert is the only one in `app/`, `components/`, `lib/` and `hooks/`). A narrowing migration after the DF-P2 deploy — drop `tickets_org_insert`, or stamp `requester_name` in `ticket_insert_integrity` from `org_members.display_name` — closes it; no package brief carries it (`99-fix-sequencing.md`, "Hand-offs from DF-P2").
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — the narrowing migration after the DF-P2 deploy (the integrator's re-owned limb). **Pending migration:** `supabase/migrations/20261208_df_roundG_ticket_library.sql` §5 — paste after `20261195` and after the DF-P2 app deploy, never before it (until then the browser creators insert directly and would be refused).
+- `tickets_org_insert` (`20261166`) is **dropped** (`20261208:374`) — the fail-safe of the two options (DEC-90): since DF-P2 no app path inserts a ticket from a browser (`/api/tickets/create` inserts as the service role, which RLS does not govern; the restore runs as the service role too, `app/api/admin/restore/apply-table/route.ts`), and there is no other INSERT policy on `tickets` (`20261166` split `FOR ALL` per verb), so a member's hand-written PostgREST insert — the only way left to choose a `requester_name` — is refused. The final probe checks no INSERT (or ALL) policy remains.
+- Defence in depth: `ticket_insert_integrity` (re-created from `20261195`, lineDiff-pinned) also stamps `requester_name` from the membership — display name, else the email's local part, else "Unknown" (the create route's `stampedRequesterName` rule) — so a re-paste of `20261166` that brought the policy back could not reopen it.
+- Exercised on a throwaway PostgreSQL 16 (recorded on `DCW-1`): a member's insert refused by RLS after the paste; with the policy put back by hand, a forged name landed as the member's own. Inventory row 6 counts (does not rewrite) tickets whose stored `requester_name` is not their requester's membership name.
+- Tests: `lib/__tests__/dfRoundG_P4_library.test.ts` ("AUTHZ-3: tickets_org_insert is dropped inside the transaction…", the insert-integrity lineDiff).
+
+**Done-when.**
+- ✓ (after the paste) `requester_role`, `requester_id`, `requester_name`, `requester_email` are stamped server-side from the authenticated membership on every path: the create route stamps all four (DF-P2), and no client insert is admitted (the trigger stamps them too if one ever were).
+- ✓ Unchanged (`DEC-16`).
+- ✓ Unchanged.
+
+**Scope / residual.** The database half holds only once `20261208` is pasted (the Status line says so — *corrected at the DF-P4 third fix pass*, which found a plain 'RESOLVED' overstated it under `DEC-29`). Never re-paste `20261166` after `20261208` (it would restore `tickets_org_insert`).
 
 ---
 
@@ -552,7 +565,7 @@ lib/serverAuth.ts:57 — `  if (!allowedRoles.includes(role || "")) return { err
 ## AUTHZ-10 · Drafting-request form configuration: the UI gate and the database gate disagree in both directions
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261209`, after `20261203`; until it is pasted a DocCtrl's save is refused by the database and Manager / Supervisor can still write the key directly)
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/requests/page.tsx:64-69`, `app/(protected)/admin/requests/page.tsx:97-100`, `supabase/migrations/20260818_followups_rls.sql:72-82`, `supabase/migrations/20260818_followups_rls.sql:23-31`, `lib/roleCapabilities.ts:53`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed in both directions: DocCtrl reaches the page but is denied by the RLS restrictive policy on the upsert (page.tsx:97-100 upsert, caught by the generic `catch` that only shows "Failed to save configuration."), while Manager/Supervisor/DraftingSupervisor satisfy the DB policy but are redirected out of the page. No other writer of key='drafting' exists (only lib/ticketRouting.ts:49 reads it), so there is no alternate path that rescues DocCtrl.
@@ -595,6 +608,21 @@ CREATE POLICY org_config_key_writes_upd ON org_configurations
 - [ ] One predicate defines who may edit drafting config — ideally a capability id in CAPABILITY_DEFS — and the page guard, the save, and the RLS policy all derive from it
 - [ ] The save surfaces the real RLS error text instead of a generic 'Failed to save configuration.'
 - [ ] A test asserts the set of roles that can open the page equals the set the DB policy accepts
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY. Ruled by the integrator under the user's delegation (DEC-90, fail-safe): the drafting request-form configuration is edited by **Admin, DocCtrl and DraftingSupervisor** — the same set in the registry and in the RLS policy. Manager and Supervisor (holding none of the three) lose a database write they could never reach through the app. Reproduced first: the page admitted Admin / DocCtrl (`lib/adminSurfaces.ts` requests entry `CONTROLLERS`, and the page's own `hasAnyRole(['Admin', 'DocCtrl'])` redirect), the policy `is_org_assign_drafters` (Admin / Manager / Supervisor / DraftingSupervisor, `20261203:264`, `:273`, `:278`, `:287`); the save's catch showed "Failed to save configuration.".
+- `lib/adminSurfaces.ts:64` `DRAFTING_CONFIG_EDITORS = ["Admin", "DocCtrl", "DraftingSupervisor"]`; the `requests` surface's `entry` and `writes` are that constant (`:76`). The admin layout's server gate (`lib/adminGate.ts`) is the page's only gate: the client `useEffect` redirect is gone (`app/(protected)/admin/requests/page.tsx`).
+- The save says the database's own reason: a refusal reads "Not saved: the database refused the change (<reason>). Request forms are saved by Admin, DocCtrl, DraftingSupervisor."; any other failure "Not saved: <reason>".
+- **The navigation offers the page to the same set** (*added at the DF-P4 second fix pass*: the sidebar gated its whole Admin section, Request forms included, on Admin / DocCtrl, so a DraftingSupervisor reached the page only by typing its URL). `components/navigation/Sidebar.tsx` now builds one `requestsEntry` used in the controllers' section, and a member holding `DRAFTING_CONFIG_EDITORS` without Admin or DocCtrl gets exactly that entry — `hasAnyRole(DRAFTING_CONFIG_EDITORS)`, imported from the registry, the pattern CHAIN-7 set for Manager's Users entry (whose pinned lines are unchanged). Test: "fix pass 2 (CHAIN-7 / SURF-9 census)" in `lib/__tests__/dfRoundG_P4_library.test.ts`. File outside DF-P4's brief list, one entry; recorded in the package report.
+- **Pending migration:** `supabase/migrations/20261209_df_roundG_drafting_config_writes.sql` — the three RESTRICTIVE `org_config_key_writes_*` policies re-created from their NEWEST body (`20261203`, admin-and-org P8, found by scanning; lineDiff-pinned: the only line changed is the `'drafting'` predicate, now `caller_holds_any_role(org_id, ARRAY['Admin','DocCtrl','DraftingSupervisor']::text[])` — `20261045`'s SECURITY DEFINER helper with `search_path` pinned, reading role OR roles). A widening for DocCtrl and a narrowing for Manager / Supervisor, so the counts-only inventory (gainers, losers, configured workspaces) is captured before the transaction (`DEC-30`). After `20261203` (refuses otherwise); either order with the deploy: before the paste a DraftingSupervisor can open the page and save (the old policy admits them) and a DocCtrl sees the database's refusal text; after it all three save.
+- Exercised on a throwaway PostgreSQL 16: first paste 2 × true (inventory 0 / 2 / 2), re-paste 2 × true; UPDATE and INSERT of key `drafting` admitted for Admin, DocCtrl, DraftingSupervisor and a Requester holding DocCtrl additively, refused for Manager and Supervisor; `branding` still Admin-only; without `20261203` the file raised "20261209 needs 20261203 … nothing was changed".
+- Tests: `lib/__tests__/dfRoundG_P4_library.test.ts` ("AUTHZ-10 — the page's entry set equals the database's write set": the registry set, every `'drafting'` branch of the migration parsed and compared to it, the lineDiff against the newest earlier policies, the DEC-30 shape, the page pins).
+
+**Done-when.**
+- ✓ One predicate defines who may edit drafting config — a role set (not a capability: the ruling names roles, and the RLS side reads the collection with `caller_holds_any_role`): `DRAFTING_CONFIG_EDITORS` drives the page's gate (the registry's entry) and is pinned equal, by test, to the set the database policy names; the save is the policy; the sidebar's Request forms entry reads the same constant.
+- ✓ The save surfaces the real RLS error text.
+- ✓ A test asserts the roles that can open the page equal the roles the DB policy accepts.
+
+**Scope / residual.** Paste `20261209` (paste row in DF-P4's report); the database half — DocCtrl's save, Manager / Supervisor narrowed — holds only after it (the Status line says so, *DF-P4 third fix pass*). `lib/roleCapabilities.ts` still lists `assign_drafters` for Manager / Supervisor (the queue's authority, not this configuration's) — unchanged. `DEC-107` item 1.
 
 ---
 

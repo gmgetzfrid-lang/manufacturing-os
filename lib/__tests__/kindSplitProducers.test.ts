@@ -64,7 +64,10 @@ describe("PROD-13 / TAX-13 — each producer writes its own kind", () => {
   });
 
   it("checkout_released keeps one meaning — the stale-checkout escalation to the controllers (the maintenance cron)", () => {
-    expect(writersOf("checkout_released")).toEqual(["app/api/cron/maintenance/route.ts"]);
+    // TAX-17 (notifications N15): the escalation writes its own kind now;
+    // checkout_released is declared for legacy rows only and nothing writes it
+    expect(writersOf("checkout_released")).toEqual([]);
+    expect(writersOf("checkout_stale_escalation")).toEqual(["app/api/cron/maintenance/route.ts"]);
   });
 
   it("review_requested keeps one meaning — a document's sign-off request", () => {

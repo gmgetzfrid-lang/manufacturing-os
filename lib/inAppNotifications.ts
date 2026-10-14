@@ -31,11 +31,14 @@ export type NotificationKind =
   | "markup_request"          // a markup request on a document: you were asked for markups, or markups were shared to its thread
   | "doc_superseded"          // a doc the user has open / follows was superseded: a new revision was published (one meaning since N9 — PROD-13 / TAX-13)
   | "doc_recalled"            // your downloaded copy of a document is out of date, or the document was retired — destroy old prints (lib/staleCopies.ts; was doc_superseded + metadata.recall)
+  | "doc_retired"             // a document you WATCH was retired (superseded / voided / archived) — an FYI, not a recall: the copy holders get doc_recalled (lib/staleCopies.ts recallRetiredDocument — PROD-17, N15)
   | "doc_upstream_changed"    // a document connected to work you have checked out was revised (lib/revisionImpact.ts; was doc_superseded)
   | "package_doc_stale"       // a document pinned in your work package moved past its pin (lib/workPackages.ts; was doc_superseded + metadata.workPackageId)
   | "package_doc_retired"     // a document pinned in your work package was superseded / voided (lib/postPublish.ts; was doc_superseded + metadata.retirement)
-  | "checkout_released"       // (to Admin/DocCtrl) a checkout has been held for weeks — review it (the maintenance cron's stale-checkout escalation; until N9 it also meant the two below)
+  | "checkout_released"       // LEGACY rows only (TAX-17, N15): what the stale-checkout escalation was written as before N15 (20261206 re-files those rows); nothing writes it now
+  | "checkout_stale_escalation" // (to Admin/DocCtrl) a checkout has been held for weeks — review it (the maintenance cron's stale-checkout escalation; was checkout_released — TAX-17)
   | "checkout_force_released" // your checkout was force-released by someone else (lib/checkoutEpisodes.ts; was checkout_released)
+  | "checkout_force_released_fyi" // a document you WATCH was force-released — the watchers' FYI beside the holder's notice (lib/checkoutEpisodes.ts — PROD-17, N15)
   | "checkout_auto_released"  // your ad-hoc checkout expired and was released automatically (lib/projects.ts; was checkout_released + metadata.autoReleasedSessionId)
   | "overlap_advisory"        // two people hold live edit intents on the same doc
   | "branch_open"             // an unreconciled revision branch was opened

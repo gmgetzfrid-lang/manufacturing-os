@@ -161,7 +161,7 @@ export default function RegisterPage() {
                     </span>
                   </td>
                   <td className="px-3 py-2 text-[var(--color-text-muted)]">{r.rev || "—"}</td>
-                  <td className="px-3 py-2">{r.effectivePending ? <EffectivePill effectiveDate={r.effectiveDate} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
+                  <td className="px-3 py-2">{r.effectivePending ? <EffectivePill effectiveDate={r.effectiveDate} orgId={activeOrgId} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
                   <td className="px-3 py-2">{r.reviewStatus === "none" ? <span className="text-[var(--color-text-faint)]">—</span> : <ReviewPill nextReviewDate={r.nextReviewDate} compact />}</td>
                   <td className="px-3 py-2">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
                   <td className="px-3 py-2">{r.fieldVerification ? <VerificationPill verification={r.fieldVerification} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>

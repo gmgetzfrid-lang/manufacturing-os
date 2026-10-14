@@ -1370,7 +1370,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     // get a badge + a "now in effect" notice when they arrive). Best-effort:
     // a hiccup here must not skip the audit row below.
     try {
-      await applyEffectiveDate({ documentId: doc.id, versionId: newVersion.id ?? "", effectiveDate: input.effectiveDate ?? null });
+      await applyEffectiveDate({ documentId: doc.id, versionId: newVersion.id ?? "", effectiveDate: input.effectiveDate ?? null, orgId });
     } catch { /* best-effort */ }
   }
 

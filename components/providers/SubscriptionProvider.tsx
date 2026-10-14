@@ -10,7 +10,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
-import type { SubscriptionInfo } from "@/lib/subscription";
+import type { SubscriptionInfo } from "@/lib/billing";
 
 interface Ctx {
   info: SubscriptionInfo | null;
