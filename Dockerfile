@@ -40,12 +40,17 @@ ARG NEXT_PUBLIC_FACILITY_TIME_ZONE
 # document-control PKG-12): off unless "on". Set it only once Document
 # Control has ratified the budget; the browser reads it from the bundle.
 ARG NEXT_PUBLIC_FIELD_PACK_BUDGET
+# The workspace-zone switch for effective dates (lib/effectiveDate.ts
+# workspaceEffectiveZoneHonoured, VFY-15): honoured only when it is exactly
+# "20261203", set after that paste; the browser reads it from the bundle.
+ARG NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
     NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
     NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} \
     NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL} \
     NEXT_PUBLIC_FACILITY_TIME_ZONE=${NEXT_PUBLIC_FACILITY_TIME_ZONE} \
     NEXT_PUBLIC_FIELD_PACK_BUDGET=${NEXT_PUBLIC_FIELD_PACK_BUDGET} \
+    NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE=${NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE} \
     # Placeholder only so module-load Supabase clients don't throw during the
     # build's page-data collection; the real key is supplied at runtime.
     SUPABASE_SERVICE_ROLE_KEY=build-time-placeholder \

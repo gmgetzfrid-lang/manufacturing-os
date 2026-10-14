@@ -1007,7 +1007,7 @@ export async function finalizeReviewedRevision(input: {
 
   // Carry the draft's effective date onto the now-controlled document —
   // best-effort so a hiccup here can't skip the audit row below.
-  try { await applyEffectiveDate({ documentId: input.documentId, versionId: pendingId, effectiveDate }); } catch { /* best-effort */ }
+  try { await applyEffectiveDate({ documentId: input.documentId, versionId: pendingId, effectiveDate, orgId: input.orgId }); } catch { /* best-effort */ }
 
   await logAuditAction({
     action: "REVISION_PUBLISHED_AFTER_REVIEW", resourceType: "document", resourceId: input.documentId,

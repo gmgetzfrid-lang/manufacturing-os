@@ -211,7 +211,8 @@ describe("OWN-10 — the simulator (source pins; the component reaches the live 
   });
 
   it("evaluates the same principal shape the mutators build: roles collection + teams + library owner", () => {
-    expect(sim).toMatch(/roles: who\.roles as Role\[\], orgId: activeOrgId \?\? undefined, teamIds, isActiveMember: true/);
+    // ORG-7 (admin-and-org P12): the SIMULATED member's real status, never a hard-coded true.
+    expect(sim).toMatch(/roles: who\.roles as Role\[\], orgId: activeOrgId \?\? undefined, teamIds, isActiveMember: who\.status === "active"/);
     expect(sim).toMatch(/isControllerPrincipal\(principal\)/);
     expect(sim).toMatch(/effectiveOwnerUserId: l\.ownerUserId/);
     expect(sim).toMatch(/select\("id, name, acl, acl_index, visibility, owner_user_id"\)/);

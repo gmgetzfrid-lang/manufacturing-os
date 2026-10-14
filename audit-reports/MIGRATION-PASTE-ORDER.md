@@ -144,6 +144,7 @@ The other order is tolerated: the app degrades or fails closed until the paste l
 
 - Set `NEXT_PUBLIC_FACILITY_TIME_ZONE` before the wave-2 app ships (SEQ:149-156).
 - Self-hosted deployments only: set `NEXT_PUBLIC_SITE_URL` (a Docker build argument) before deploying the app that carries P12 (SEQ:237-247).
+- Workspace time zone for effective dates (admin-and-org P12, `VFY-15`, merged 2026-10-14): only AFTER 20261203 is pasted, set `NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE=20261203` (a build-time variable; a Docker build argument when self-hosted) and redeploy. Until then every effective date is decided in `NEXT_PUBLIC_FACILITY_TIME_ZONE`, as today. After the redeploy, each workspace's Admin re-confirms the zone on `/admin/settings` if the card asks (a zone row no Admin is shown to have written is not honoured). User-held; `VFY-15` stays OPEN until it is done.
 
 ### D. A read-only check BEFORE the next deploy (intelligence I-05, merged 2026-10-01)
 

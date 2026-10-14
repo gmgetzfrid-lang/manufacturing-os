@@ -8,16 +8,16 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 67,
+    "findings": 68,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
       "MEDIUM": 29,
-      "LOW": 16
+      "LOW": 17
     },
     "by_status": {
-      "RESOLVED": 54,
+      "RESOLVED": 55,
       "OPEN *(set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form is not met on three readers — the Partial below)*": 1,
       "OPEN": 12
     }
@@ -1602,7 +1602,7 @@
       "id": "ORG-7",
       "title": "Member removal orphans everything hung off the member — no team_members prune, no ACL prune, no ownership reassignment, and the recertification snapshot degrades to raw UUIDs for exactly the departed people",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1869,6 +1869,32 @@
       ],
       "refuted": false,
       "summary": "A Viewer PATCHes a library with {\"color\": \"red, red), url(https://example.net/p.png) /\"}. On libraries with no cover image the card's background becomes linear-gradient(135deg, red, red), url(https://example.net/p.png) / …, and every member who opens the library list fetches the external image.",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-22",
+      "title": "The shared actor resolver hands an ACL decision the caller's headline with no membership status when the read succeeds and finds no ACTIVE row",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading, on `e69f353`)",
+      "blast_radius": null,
+      "related": [
+        "ORG-7"
+      ],
+      "locations": [
+        "lib/principal.ts:48",
+        "lib/acl.ts:124",
+        "lib/permissions.ts:113"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A suspended member whose browser tab is still open on a library page (the role context has not re-resolved) triggers a mutator that calls resolveActorPrincipal. Their own personal ALLOW rule is still on the library (suspension keeps grants). The client pre-check says yes; the write then fails at RLS with a generic refusal instead of the pre-check's plain \"you are not an active member\".",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
     }

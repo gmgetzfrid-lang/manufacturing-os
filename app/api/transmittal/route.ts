@@ -68,7 +68,7 @@ import { PDFDocument } from "pdf-lib";
 import { applyStampToPdfDoc, type StampTextMapping } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { portalKeyAllowed, portalRowRefusal, portalStampText } from "@/lib/transmittals";
-import { effectiveStatusFor } from "@/lib/effectiveDate";
+import { effectiveStatusFor, workspaceEffectiveDateTimeZone } from "@/lib/effectiveDate";
 import { isPdfFile } from "@/lib/verifyVerdict";
 import { notifyWithReason } from "@/lib/inAppNotifications";
 import { tellIssuerOfReceipt } from "@/lib/transmittalReceiptNotice";
@@ -706,6 +706,9 @@ export async function GET(req: NextRequest) {
     if (known === null && copiesUnread) return { releasedUnmarked: null, unmarkedReason: null };
     return { releasedUnmarked: known !== null, unmarkedReason: known };
   };
+  // VFY-15 (admin-and-org P12): "not yet in force" in the issuing
+  // workspace's calendar (its Admin's zone), else the deployment's.
+  const effectiveZone = items.some((i) => !!i.effectiveDate) ? await workspaceEffectiveDateTimeZone(supabaseAdmin, orgId) : undefined;
   return NextResponse.json({
     number: t.number,
     subject: t.subject,
@@ -728,7 +731,7 @@ export async function GET(req: NextRequest) {
         statusAsSent: i.statusAsSent ?? null, effectiveDate: i.effectiveDate ?? null, fileHash: i.fileHash ?? null,
         // REV-9: "not yet in force" decided in the facility's calendar (the one
         // shared "today"), not in the recipient's browser or in UTC.
-        notYetInForce: effectiveStatusFor(i.effectiveDate ?? null) === "pending",
+        notYetInForce: effectiveStatusFor(i.effectiveDate ?? null, new Date(), effectiveZone) === "pending",
         // TRX-15: not a PDF, a PDF over the stamping bound, or a copy the
         // record shows already left unmarked (a stamper refusal included —
         // DEC-61 §5) → released as issued, without the marking (null = unknown).

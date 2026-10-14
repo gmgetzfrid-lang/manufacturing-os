@@ -446,7 +446,7 @@ export default function InspectorPanel({
               <b className="block mt-1">Void</b> — explicitly nullified.
             </HelpTooltip>
           </span>
-          {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
+          {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} orgId={selectedDoc.orgId ?? orgId ?? null} />}
         </div>
         {folderPath && (
           <div className="mt-2 text-[11px] text-[var(--color-text-muted)] truncate" title={folderPath}>{folderPath}</div>

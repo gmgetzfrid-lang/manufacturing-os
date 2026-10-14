@@ -17,7 +17,7 @@ import {
 } from "@/lib/reviewCycles";
 import { getAckSummaries, ackStatusFor, type AckSummary, type AckStatus } from "@/lib/acknowledgments";
 import { getReviewSummaries, type ReviewSummary } from "@/lib/reviewControl";
-import { effectiveStatusFor } from "@/lib/effectiveDate";
+import { effectiveStatusFor, cachedWorkspaceEffectiveDateTimeZone } from "@/lib/effectiveDate";
 import { retentionStatusFor } from "@/lib/retention";
 import { resolveEffectiveRetentionPolicy, scheduledActionFor, scheduledActionLabel, describeRetentionPolicy, type ScheduledAction } from "@/lib/retentionPolicy";
 import type { RetentionPolicy, ReviewPolicy } from "@/types/schema";
@@ -168,6 +168,9 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   const teamSupervisors = ((libs ?? []) as Array<Record<string, unknown>>).some((l) => !!l.owner_team_id)
     ? await teamSupervisorMap(orgId)
     : new Map();
+  // VFY-15 (admin-and-org P12): "not yet in effect" in the workspace's
+  // calendar (its Admin's zone), the one the badge and the daily scan use.
+  const effectiveZone = docs.some((d) => !!d.effective_date) ? await cachedWorkspaceEffectiveDateTimeZone(supabase, orgId) : undefined;
 
   const rows: RegisterRow[] = docs.map((d) => {
     const libraryId = d.library_id as string;
@@ -230,7 +233,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       distributionAcksOutstanding: distAckOutstanding.get(d.id as string) ?? 0,
       review,
       effectiveDate: (d.effective_date as string | null) ?? null,
-      effectivePending: effectiveStatusFor((d.effective_date as string | null) ?? null) === "pending",
+      effectivePending: effectiveStatusFor((d.effective_date as string | null) ?? null, new Date(), effectiveZone) === "pending",
       retentionUntil: (d.retention_until as string | null) ?? null,
       legalHold: !!d.legal_hold,
       dispositionEligible: retentionStatusFor({ retentionUntil: (d.retention_until as string | null) ?? null, dispositionState: (d.disposition_state as string | null) ?? null, legalHold: !!d.legal_hold }) === "eligible",
