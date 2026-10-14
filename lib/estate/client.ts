@@ -65,3 +65,12 @@ export async function removeEdge(id: string): Promise<void> {
   const { error } = await supabase.from("estate_edges").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
+
+/** Remember a "no" so the same suggestion is never made again. */
+export async function dismissEdge(input: { orgId: string; a: string; b: string; type: string; summary: string; actor: { userId: string | null; name: string | null } }): Promise<void> {
+  const { error } = await supabase.from("estate_edges").upsert({
+    org_id: input.orgId, a: input.a, b: input.b, type: input.type, origin: "resolver", tier: "inferred", confidence: 0.5,
+    status: "dismissed", summary: input.summary, evidence: {}, decided_by: input.actor.userId, decided_by_name: input.actor.name, decided_at: new Date().toISOString(),
+  }, { onConflict: "org_id,a,b,type" });
+  if (error) throw new Error(error.message);
+}

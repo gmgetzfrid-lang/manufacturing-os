@@ -82,6 +82,8 @@ interface Props {
   onOpen: (id: string) => void;
   satellites?: FileGraphSatellite[];
   onSatellite?: (s: FileGraphSatellite) => void;
+  /** Symbolic links: [document id, folder id] pairs ("also filed under"). */
+  filedLinks?: Array<[string, string]>;
   className?: string;
 }
 
@@ -94,7 +96,7 @@ const isContainer = (k: FileNodeKind) => k !== "file" && k !== "extfile";
 interface Camera { x: number; y: number; scale: number }
 
 const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
-  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, satellites = [], onSatellite, className = "" }, ref,
+  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, satellites = [], onSatellite, filedLinks = [], className = "" }, ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { images, hostRef } = useIconImages();
@@ -113,6 +115,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   const ranksRef = useRef(ranks); useEffect(() => { ranksRef.current = ranks; }, [ranks]);
   const activeRef = useRef(activeId); useEffect(() => { activeRef.current = activeId; }, [activeId]);
   const satRef = useRef(satellites); useEffect(() => { satRef.current = satellites; }, [satellites]);
+  const filedRef = useRef(filedLinks); useEffect(() => { filedRef.current = filedLinks; }, [filedLinks]);
   /** Satellite positions, recomputed each frame from the files they link to. */
   const satPos = useRef<Map<string, Placed>>(new Map());
   const upRef = useRef(upNode); useEffect(() => { upRef.current = upNode; }, [upNode]);
@@ -276,6 +279,19 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.beginPath(); ctx.moveTo(a.x, a.y);
         ctx.quadraticCurveTo(mx - (dy / len) * off, my + (dx / len) * off, b.x, b.y);
         ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      // Also-filed-under: amber dashed arcs from a file to its other home.
+      ctx.setLineDash([3 / s, 4 / s]); ctx.lineWidth = Math.max(1, 1.4 / s);
+      for (const [docId, folderId] of filedRef.current) {
+        const a = pos.get(docId), b = pos.get(folderId);
+        if (!a || !b) continue;
+        const bright = !searching || litNow.has(docId);
+        ctx.strokeStyle = bright ? "rgba(217,119,6,0.8)" : "rgba(217,119,6,0.15)";
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+        const off = Math.min(100, len * 0.2);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(mx + (dy / len) * off, my - (dx / len) * off, b.x, b.y); ctx.stroke();
       }
       ctx.setLineDash([]);
 

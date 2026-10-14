@@ -301,6 +301,12 @@ function GraphPageInner() {
     return out;
   }, [serverFind, nodeById, entryById]);
 
+  // Symbolic links ("also filed under") between files and folders on the map.
+  const filedLinks = useMemo<Array<[string, string]>>(() => {
+    if (!data) return [];
+    return data.edges.filter((e) => e.type === "filed_under" && e.a.startsWith("doc:") && e.b.startsWith("folder:")).map((e) => [e.a, e.b] as [string, string]);
+  }, [data]);
+
   const ranks = useMemo(() => {
     const m = new Map<string, number>();
     hits.slice(0, 9).forEach((h, i) => m.set(h.entry.id, i + 1));
@@ -533,7 +539,7 @@ function GraphPageInner() {
             </div>
           ) : (
             <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry}
-              satellites={satellites} onSatellite={(sat) => { if (sat.href) window.location.assign(sat.href); else window.location.assign(globalGraphHref(sat.id)); }} />
+              satellites={satellites} onSatellite={(sat) => { if (sat.href) window.location.assign(sat.href); else window.location.assign(globalGraphHref(sat.id)); }} filedLinks={filedLinks} />
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
             <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
@@ -579,6 +585,7 @@ function GraphPageInner() {
               <span key={l} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-2.5 h-2.5 rounded-full border-2" style={{ borderColor: c }} /> {l}</span>
             ))}
             <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-red-600" /> Same bytes</span>
+            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-amber-600" /> Also filed under</span>
           </div>
           {activeHit && (
             <div className="absolute left-1/2 -translate-x-1/2 bottom-12 flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 shadow-md px-2 py-1.5 text-xs">
