@@ -22,7 +22,8 @@ interface FilesAnswer {
   exportedAt: string | null;
   exporter:
     | { kind: "machine"; label: string | null }
-    | { kind: "member"; userId: string; email: string | null; role: string | null; status: string | null }
+    // `roles`: every role held now (headline ∪ additive); absent on an older answer.
+    | { kind: "member"; userId: string; email: string | null; role: string | null; roles?: string[]; status: string | null }
     | { kind: "former"; userId: string }
     | { kind: "unread"; userId: string; error: string };
   stored: { email: string | null; role: string | null };
@@ -30,11 +31,17 @@ interface FilesAnswer {
   delivery: { failureRecorded: true; error: string | null; at: string | null } | { failureRecorded: false };
 }
 
-/** The sentence naming who took the export (exported for the tests). */
+/** The sentence naming who took the export (exported for the tests). A
+ *  member's roles are every role they hold now — the headline and the
+ *  additive collection (P13 integrator fix pass, ADD-1) — never the headline
+ *  alone; an answer without `roles` shows the headline as before. */
 export function exporterSentence(e: FilesAnswer["exporter"]): string {
   switch (e.kind) {
     case "machine": return "A scheduled push — no person took it (a machine row).";
-    case "member": return `${e.email ?? e.userId}${e.role ? ` (${e.role})` : ""}${e.status && e.status !== "active" ? ` — ${e.status}` : ""}: this user id's current membership of the workspace, read now.`;
+    case "member": {
+      const roles = e.roles && e.roles.length > 0 ? e.roles.join(", ") : e.role;
+      return `${e.email ?? e.userId}${roles ? ` (${roles})` : ""}${e.status && e.status !== "active" ? ` — ${e.status}` : ""}: this user id's current membership of the workspace, read now.`;
+    }
     case "former": return `A person no longer in this workspace (user id ${e.userId}).`;
     case "unread": return `User id ${e.userId} — their current membership could not be read (${e.error}).`;
   }

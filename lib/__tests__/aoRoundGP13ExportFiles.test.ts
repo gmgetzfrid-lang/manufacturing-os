@@ -23,6 +23,7 @@ const s = vi.hoisted(() => ({
   rebuilt: null as unknown,
   rebuildCalls: [] as unknown[][],
   member: { data: null as unknown, error: null as null | { message: string } },
+  memberSelects: [] as string[],
 }));
 
 vi.mock("@/lib/adminGate", () => ({
@@ -30,7 +31,10 @@ vi.mock("@/lib/adminGate", () => ({
     s.gateCalls.push(args);
     if (s.gate) return s.gate;
     const chain: Row = {};
-    const h: ProxyHandler<Row> = { get: (_t, p: string) => (p === "maybeSingle" ? async () => s.member : () => new Proxy(chain, h)) };
+    const h: ProxyHandler<Row> = {
+      get: (_t, p: string) => (p === "maybeSingle" ? async () => s.member
+        : (...a: unknown[]) => { if (p === "select") s.memberSelects.push(String(a[0])); return new Proxy(chain, h); }),
+    };
     return { userId: "u-aud", email: "aud@x.io", orgId: args[1], roles: ["Auditor"], admittedRole: "Auditor", admin: { from: () => new Proxy(chain, h) } };
   }),
 }));
@@ -55,7 +59,7 @@ const LIST = (over: Row = {}) => ({
 });
 
 beforeEach(() => {
-  s.gate = null; s.gateCalls = []; s.rebuilt = LIST(); s.rebuildCalls = [];
+  s.gate = null; s.gateCalls = []; s.rebuilt = LIST(); s.rebuildCalls = []; s.memberSelects = [];
   s.member = { data: { email: "ann@acme.com", role: "Admin", status: "active" }, error: null };
 });
 
@@ -76,9 +80,25 @@ describe("ALOG-11 hand-off (P13) — /api/admin/audit/export-files", () => {
 
   it("the exporter is the user id's CURRENT member, not the stored email; the stored email is returned apart", async () => {
     const body = await (await GET(get("&recordId=rec-1"))).json() as Row;
-    expect(body.exporter).toEqual({ kind: "member", userId: "u-ann", email: "ann@acme.com", role: "Admin", status: "active" });
+    expect(body.exporter).toEqual({ kind: "member", userId: "u-ann", email: "ann@acme.com", role: "Admin", roles: ["Admin"], status: "active" });
     expect(body.stored).toEqual({ email: "stale@old.io", role: "Admin" });
     expect(body.files).toHaveLength(2);
+  });
+
+  it("integrator fix pass: the exporter's roles are role ∪ roles (headline and additive), read now — never the headline alone", async () => {
+    s.member = { data: { email: "ann@acme.com", role: "Engineer-2", roles: ["Engineer-2", "DocCtrl", " ", 7, "DocCtrl"], status: "active" }, error: null };
+    const body = await (await GET(get("&recordId=rec-1"))).json() as Row;
+    expect(s.memberSelects).toEqual(["email, role, roles, status"]);
+    expect(body.exporter).toEqual({ kind: "member", userId: "u-ann", email: "ann@acme.com", role: "Engineer-2", roles: ["Engineer-2", "DocCtrl"], status: "active" });
+    expect(exporterSentence(body.exporter as Parameters<typeof exporterSentence>[0]))
+      .toBe("ann@acme.com (Engineer-2, DocCtrl): this user id's current membership of the workspace, read now.");
+    // a membership with no collection (an older row) is its headline, as before
+    s.member = { data: { email: "ann@acme.com", role: "Admin", roles: null, status: "active" }, error: null };
+    expect(((await (await GET(get("&recordId=rec-1"))).json()) as Row).exporter).toMatchObject({ role: "Admin", roles: ["Admin"] });
+    // an additive role with no headline is still shown
+    s.member = { data: { email: "ann@acme.com", role: null, roles: ["Auditor"], status: "active" }, error: null };
+    const add = ((await (await GET(get("&recordId=rec-1"))).json()) as Row).exporter as Parameters<typeof exporterSentence>[0];
+    expect(exporterSentence(add)).toBe("ann@acme.com (Auditor): this user id's current membership of the workspace, read now.");
   });
 
   it("undelivered null is 'no delivery failure recorded' (failureRecorded false) — never 'delivered'; a recorded failure is said", async () => {
@@ -137,7 +157,7 @@ describe("ALOG-11 hand-off (P13) — the Files control, rendered", () => {
       fetches.push(String(url));
       return new Response(JSON.stringify({
         recordId: "rec-1", exportedAt: null,
-        exporter: { kind: "member", userId: "u-ann", email: "ann@acme.com", role: "Admin", status: "active" },
+        exporter: { kind: "member", userId: "u-ann", email: "ann@acme.com", role: "Admin", roles: ["Admin", "Auditor"], status: "active" },
         stored: { email: "stale@old.io", role: "Admin" },
         files: [{ path: "files/P-100.pdf", documentId: "d1111111", versionId: "v1111111" }],
         delivery,
@@ -157,7 +177,7 @@ describe("ALOG-11 hand-off (P13) — the Files control, rendered", () => {
     for (let i = 0; i < 4; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(fetches[0]).toBe(`/api/admin/audit/export-files?orgId=${O1}&recordId=rec-1`);
     const t = host.textContent ?? "";
-    expect(t).toContain("Taken by: ann@acme.com (Admin): this user id's current membership");
+    expect(t).toContain("Taken by: ann@acme.com (Admin, Auditor): this user id's current membership");
     expect(t).toContain("Stored on the row: stale@old.io (Admin)");
     expect(t).toContain("No delivery failure recorded.");
     expect(t).not.toMatch(/\bDelivered\b/);

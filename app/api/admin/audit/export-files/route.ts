@@ -22,16 +22,21 @@
 //     row, which a member's insert could set before 20261201; the stored email
 //     and role are returned apart, labelled as stored. A machine row (user_id
 //     NULL) is the scheduled push.
+//   * (P13 integrator fix pass) the exporter's roles are every role they hold
+//     now — the headline `role` and the additive `roles` collection
+//     (lib/roleHeld.ts heldRoles, ADD-1) — never the headline alone, which
+//     hides an additive role. `role` stays the headline, as before.
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { rebuildExportList } from "@/lib/dataExport";
+import { heldRoles } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 
 export type ExportFilesExporter =
   | { kind: "machine"; label: string | null }
-  | { kind: "member"; userId: string; email: string | null; role: string | null; status: string | null }
+  | { kind: "member"; userId: string; email: string | null; role: string | null; roles: string[]; status: string | null }
   | { kind: "former"; userId: string }
   | { kind: "unread"; userId: string; error: string };
 
@@ -53,17 +58,18 @@ export async function GET(req: NextRequest) {
     exporter = { kind: "machine", label: list.exporter.email };
   } else {
     const { data, error } = await actor.admin
-      .from("org_members").select("email, role, status")
+      .from("org_members").select("email, role, roles, status")
       .eq("org_id", orgId).eq("uid", uid)
       .maybeSingle();
     if (error) exporter = { kind: "unread", userId: uid, error: error.message };
     else if (!data) exporter = { kind: "former", userId: uid };
     else {
-      const m = data as { email?: unknown; role?: unknown; status?: unknown };
+      const m = data as { email?: unknown; role?: unknown; roles?: unknown; status?: unknown };
       exporter = {
         kind: "member", userId: uid,
         email: typeof m.email === "string" ? m.email : null,
         role: typeof m.role === "string" ? m.role : null,
+        roles: heldRoles(m),
         status: typeof m.status === "string" ? m.status : null,
       };
     }
