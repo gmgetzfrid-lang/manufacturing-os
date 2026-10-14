@@ -36,6 +36,7 @@ import {
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead, clearSkippedNodeImagePointers, nodeImagePointerLabel, overflowLines, type SkippedNodeImage,
   restoreEnvelopeNodeIds, nodeIdsPresentBeforeRestore, addRestoredNodeIds, storageAnsweredInRun, RESTORE_FILES_POINTER_NOTE,
+  meaningIndexRebuildList, MEANING_INDEX_REBUILD_NOTE,
 } from "@/lib/dataRestore";
 import { restoreUploadRequest, isWorkspaceLogoKey, isNodeImageKey } from "@/lib/storageKey";
 import { withRestoreMembershipCheck, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
@@ -586,7 +587,10 @@ export default function RestorePage() {
 
           {/* Apply / result */}
           {applyResult ? (
-            <RestoreResultPanel result={applyResult} />
+            <>
+              <RestoreResultPanel result={applyResult} />
+              <MeaningIndexRebuildPrompt result={applyResult} envelope={envelopeRef.current} />
+            </>
           ) : !applying && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-start gap-3">
@@ -813,6 +817,16 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
             {Array.from(new Set(t.cleared.map((r) => restoreRefusalLabel(r.code)))).join("; ")}).
           </div>
         ))}
+        {result.tables.filter((t) => (t.notApplied ?? []).length > 0).map((t) => (
+          <div key={`not-applied-${t.name}`} data-testid="restore-not-applied">
+            <span className="font-mono">{t.name}</span>: {t.notApplied.length} backup decision(s) not applied — this workspace holds the same{" "}
+            {t.name === "entity_mentions" ? "link" : "row"} under its key, and the live row was kept exactly as it is.
+            {t.notApplied.slice(0, 5).map((r, i) => (
+              <div key={`${t.name}-${r.id ?? i}`} className="ml-3">Backup row <span className="font-mono">{r.id ?? "(no id)"}</span>: {r.message}</div>
+            ))}
+            {t.notApplied.length > 5 && <div className="ml-3">…and {t.notApplied.length - 5} more (each is in the audit log&apos;s RESTORE_CHUNK rows).</div>}
+          </div>
+        ))}
         {result.unmappedMembers > 0 && (
           <div>
             <b>{fmtNum(result.unmappedMembers)}</b> backup member(s) have no email address and no membership here, so no person here could be found for them — every record naming one was refused (above). Add their address to the backup&apos;s org_members and restore again.
@@ -825,6 +839,42 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
         )}
         <div>Restored users are inactive — re-invite them to grant access.</div>
       </div>
+    </div>
+  );
+}
+
+/** intelligence ILIFE-11 (admin-and-org Round G, P14; DEC-90): after a
+ *  restore, each restored library whose passages had meaning-index vectors
+ *  in the backup — and hold none here, since an export leaves them out — is
+ *  named, with a link to the library, where a person starts the Build on
+ *  their own embedding key. Nothing is started from here. */
+function MeaningIndexRebuildPrompt({ result, envelope }: { result: ChunkedRestoreResult; envelope: RestoreEnvelopeLike | null }) {
+  const libraries = meaningIndexRebuildList(result, envelope);
+  const unchecked = result.meaningIndexUnchecked ?? [];
+  if (libraries.length === 0 && unchecked.length === 0) return null;
+  return (
+    <div role="status" data-testid="restore-meaning-index-rebuild" className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[11px] leading-relaxed text-amber-900">
+      <div className="flex items-center gap-2 text-sm font-black mb-1">
+        <AlertTriangle className="w-4 h-4" /> Meaning index needs a rebuild
+      </div>
+      {libraries.length > 0 && (
+        <>
+          <div>{MEANING_INDEX_REBUILD_NOTE}</div>
+          <ul className="mt-1 list-disc ml-5">
+            {libraries.map((l) => (
+              <li key={l.libraryId}>
+                <Link href={`/knowledge/${encodeURIComponent(l.libraryId)}`} className="font-bold underline">{l.name}</Link>
+                {" "}— {fmtNum(l.passages)} restored passage(s) without their vectors. Open it and start a meaning-index Build.
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {unchecked.length > 0 && (
+        <div className="mt-1">
+          Which libraries need a meaning-index Build could not be checked ({unchecked[0]}). If meaning search is off for a restored library, open it and start a Build.
+        </div>
+      )}
     </div>
   );
 }
