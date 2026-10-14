@@ -431,3 +431,82 @@ describe("UI-7 (integrator fix pass) — the board's lane chips never reuse one 
     expect(dan.textContent).toMatch(/In review/);
   });
 });
+
+describe("PERS-3 / PERS-7 (integrator fix pass) — a bulk action touches only what is in the list on screen", () => {
+  const selectRow = async (id: string) => {
+    const link = host!.querySelector(`tbody a[href='/requests/${id}']`)!;
+    await click(link.closest("tr")!.querySelector("input[type=checkbox]"));
+  };
+  const writes = () => s.queries.filter((x) => x.table === "tickets" && x.update);
+  it("a selected request the Needs-me lens hides is neither marked nor dropped: said before and after, and it stays selected", async () => {
+    await mount();
+    await click(q("[data-testid=view-all]"));
+    await selectRow("t1");
+    await selectRow("t2");
+    await click(q("[data-testid=view-needs-me]")); // t2 needs nobody here — out of the list on screen
+    expect(host!.textContent).toMatch(/2 Selected/);
+    expect(q("[data-testid=bulk-out-of-view]")?.textContent).toMatch(/1 of them is not in the list on screen — bulk actions act only on the 1 that is/);
+    await click(byText("button", /Mark Urgent/));
+    expect(writes().length).toBe(1);
+    expect(writes()[0].calls).toEqual(expect.arrayContaining([{ m: "eq", a: ["id", "t1"] }]));
+    expect(s.audit).toHaveBeenCalledTimes(1);
+    expect(s.audit.mock.calls[0][0]).toMatchObject({ action: "TICKET_BULK_URGENT", details: { count: 1, ticketIds: ["t1"] } });
+    expect(String(s.alert.mock.calls[0]?.[0]?.message)).toMatch(/1 selected request is not in the list on screen, so it was not marked urgent — it stays selected/);
+    expect(host!.textContent).toMatch(/1 Selected/); // t2, still picked
+    await click(q("[data-testid=view-all]"));
+    expect(q("[data-testid=bulk-out-of-view]")).toBeNull();
+    expect((host!.querySelector("tbody a[href='/requests/t2']")!.closest("tr")!.querySelector("input[type=checkbox]") as HTMLInputElement).checked).toBe(true);
+  });
+  it("a selected request no longer loaded (the DELETE companion dropped it) is said and dropped — nothing written, no audit row", async () => {
+    await mount();
+    await click(q("[data-testid=view-all]"));
+    await selectRow("t2");
+    const companion = s.channels[0].ons.find((o) => o.cfg.table === "tickets" && o.cfg.event === "DELETE")!;
+    await act(async () => { companion.cb({ eventType: "DELETE", old: { id: "t2" } }); });
+    await flush();
+    expect(q("[data-testid=bulk-out-of-view]")?.textContent).toMatch(/1 of them is not in the list on screen — bulk actions act only on the 0 that are/);
+    await click(byText("button", /Mark Urgent/));
+    expect(writes().length).toBe(0);
+    expect(s.audit).not.toHaveBeenCalled();
+    expect(String(s.alert.mock.calls[0]?.[0]?.message)).toMatch(/1 selected request is no longer loaded in this list \(hidden as closed, deleted, or no longer visible to you\), so it was not marked urgent\./);
+    expect(host!.textContent).not.toMatch(/\d+ Selected/);
+  });
+  it("Archive: the confirm names only what is in view and says what will not be archived; only that is closed, the rest stays selected", async () => {
+    s.role = { activeRole: "Admin", roles: ["Admin"], activeOrgId: "org-1", uid: "a-1" };
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: { body?: string }) => { posts.push(JSON.parse(init?.body ?? "{}")); return new Response("{}", { status: 200 }); }));
+    try {
+      await mount();
+      await click(q("[data-testid=view-all]"));
+      await selectRow("t1");
+      await selectRow("t2");
+      const status = Array.from(host!.querySelectorAll("select")).find((el) => el.textContent?.includes("Status: Any")) as HTMLSelectElement;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(status, "DRAFTING");
+        status.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await flush();
+      await click(byText("button", /^\s*Archive\s*$/));
+      expect(String(s.confirm.mock.calls[0]?.[0]?.message)).toBe("Are you sure you want to archive 1 tickets? 1 selected request is not in the list on screen, so it will not be archived — it stays selected; show it (change the filters or the view) to include it.");
+      expect(posts).toEqual([{ ticketId: "t2", actionType: "close_ticket" }]);
+      expect(s.audit.mock.calls[0][0]).toMatchObject({ action: "TICKET_BULK_ARCHIVE", details: { count: 1, ticketIds: ["t2"] } });
+      expect(host!.textContent).toMatch(/1 Selected/);
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it("REGRESSION: everything selected is in view — Archive asks as before, closes each, and clears the selection", async () => {
+    s.role = { activeRole: "Admin", roles: ["Admin"], activeOrgId: "org-1", uid: "a-1" };
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: { body?: string }) => { posts.push(JSON.parse(init?.body ?? "{}")); return new Response("{}", { status: 200 }); }));
+    try {
+      await mount();
+      await click(q("[data-testid=view-all]"));
+      await selectRow("t1");
+      await selectRow("t2");
+      expect(host!.textContent).toMatch(/Bulk actions active/);
+      await click(byText("button", /^\s*Archive\s*$/));
+      expect(String(s.confirm.mock.calls[0]?.[0]?.message)).toBe("Are you sure you want to archive 2 tickets?");
+      expect(posts.map((p) => p.ticketId).sort()).toEqual(["t1", "t2"]);
+      expect(host!.textContent).not.toMatch(/\d+ Selected/);
+    } finally { vi.unstubAllGlobals(); }
+  });
+});

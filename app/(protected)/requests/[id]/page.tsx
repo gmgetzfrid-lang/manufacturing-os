@@ -941,10 +941,13 @@ export default function TicketDetailView() {
   const [capPolicy, setCapPolicy] = useState<CapabilityPolicy | undefined>(undefined);
   // AUTHZ-15 (DF-P9; the integrator's ruling under DEC-89): the policy could
   // not be read and no last good copy was served (`unreadable`, or a read
-  // that threw). The workflow route refuses every action on an unreadable
-  // policy (DEC-89 item 3), so the page offers none — it says why and offers
-  // Try again — instead of drawing the shipped defaults as if they were the
-  // org's. A `stale` answer is the last good policy and is drawn as is.
+  // that threw). Which actions this viewer may take is the policy's answer,
+  // so the page offers none — it says why and offers Try again — instead of
+  // drawing the shipped defaults as if they were the org's. (The workflow
+  // route reads the policy on its own, through the service role, and refuses
+  // every action when ITS read fails — DEC-89 item 3; the page cannot know
+  // whether that read fails too, so it claims nothing about it.) A `stale`
+  // answer is the last good policy and is drawn as is.
   const [policyFault, setPolicyFault] = useState<string | null>(null);
   const [policyAttempt, setPolicyAttempt] = useState(0);
   // DCW-7 (DF-P9): the unit list triage picks from — the list the request
@@ -1568,6 +1571,12 @@ export default function TicketDetailView() {
       let finalComment = comment;
       let redlineAttachment: TicketAttachment | null = null;
 
+      // PERS-7 (DF-P9; integrator fix pass): the session the action is sent
+      // with is read FIRST — before any redline goes to storage — so an action
+      // that cannot be sent leaves no orphaned file behind.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error(pendingRedlineBlob && fileToRedline ? "Not authenticated, so the redline was not uploaded." : "Not authenticated");
+
       if (pendingRedlineBlob && fileToRedline) {
          // PERS-7 (DF-P9): no workspace or signed-in member, no action — and
          // checked BEFORE the redline goes to storage, so a refused action
@@ -1597,9 +1606,8 @@ export default function TicketDetailView() {
       // action against the state machine for our role and the ticket's CURRENT
       // status, recomputes the update server-side, applies it compare-and-set,
       // writes the audit row, and fans out notifications + emails — none of
-      // which a tampered client or a closed tab can skip.
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error("Not authenticated");
+      // which a tampered client or a closed tab can skip. (The session was
+      // read above, before the redline upload.)
       // LIFE-6 / DEC-25: a close over a hold this ticket opened comes back
       // 409 holds_open; the closer chooses — release now, or keep with a
       // stated reason — and the action is re-sent with that resolution.
@@ -2231,7 +2239,7 @@ export default function TicketDetailView() {
                // AUTHZ-15: held back, said, retryable — never the defaults.
                <div role="alert" data-testid="ticket-policy-fault" className="flex items-center gap-2 px-4 py-2 bg-amber-50 rounded-lg border border-amber-300 text-xs text-amber-900 max-w-md">
                  <ShieldAlert className="w-4 h-4 shrink-0 text-amber-600" />
-                 <span><span className="font-bold">Permissions could not be read</span> — {policyFault}. Actions are held back until they can be (the server would refuse them now).</span>
+                 <span><span className="font-bold">Permissions could not be read</span> — {policyFault}. They decide which actions you may take here, so none is offered until they can be read.</span>
                  <button type="button" onClick={() => setPolicyAttempt((n) => n + 1)} className="shrink-0 px-2 py-1 rounded border border-amber-300 bg-[var(--color-surface)] font-bold text-amber-800 hover:bg-amber-100">Try again</button>
                </div>
             ) : buttonActions.length === 0 ? (

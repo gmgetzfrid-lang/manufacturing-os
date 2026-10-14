@@ -159,6 +159,20 @@ const REVIEW_BUCKET_STATUSES: readonly TicketStatus[] = ['PENDING_ASSIGNMENT', '
 const REVIEW_BUCKET_LABEL = 'Review or assignment';
 const REVIEW_BUCKET_TITLE = `Waiting at one of: ${REVIEW_BUCKET_STATUSES.map((st) => ticketStatusLabel(st)).join(', ')}`;
 
+/** PERS-3 / PERS-7 (DF-P9 integrator fix pass): what a bulk action does not
+ *  touch, in words — the selected requests outside the list on screen (kept
+ *  selected) and those no longer loaded (dropped) — said before the action
+ *  (`when: 'before'`, a confirm) or after it. Empty when it touches every
+ *  selected request. */
+const untouchedNote = (outOfView: number, gone: number, verb: string, when: 'before' | 'after' = 'after'): string[] => {
+  const out: string[] = [];
+  const one = (n: number) => n === 1;
+  const not = (n: number) => (when === 'before' ? `${one(n) ? 'it' : 'they'} will not be ${verb}` : `${one(n) ? 'it was' : 'they were'} not ${verb}`);
+  if (outOfView > 0) out.push(`${outOfView} selected request${one(outOfView) ? ' is' : 's are'} not in the list on screen, so ${not(outOfView)} — ${one(outOfView) ? 'it stays' : 'they stay'} selected; show ${one(outOfView) ? 'it' : 'them'} (change the filters or the view) to include ${one(outOfView) ? 'it' : 'them'}.`);
+  if (gone > 0) out.push(`${gone} selected request${one(gone) ? ' is' : 's are'} no longer loaded in this list (hidden as closed, deleted, or no longer visible to you), so ${not(gone)}.`);
+  return out;
+};
+
 // =========================================================================================
 // SECTION 4: MAIN COMPONENT - REQUEST PORTAL
 // =========================================================================================
@@ -782,36 +796,70 @@ export default function RequestPortal() {
     }
   }, []);
 
+  // PERS-3 / PERS-7 (DF-P9 integrator fix pass, DEC-90 — fail-safe: never act
+  // on a request the person cannot see): what a bulk action may touch. A
+  // selection outlives the view it was made in — a filter, the Needs-me lens,
+  // Show Closed, a refetch or the DELETE companion can move a selected request
+  // out of the list on screen. So the selection splits three ways: `inView`
+  // (in the list as currently filtered — every page of it — or on the board in
+  // the board view), acted on; `outOfView` (still loaded, not in that list),
+  // NOT acted on and kept selected, said before and after; `gone` (no longer
+  // loaded at all), not acted on, said, and dropped from the selection.
+  const viewTicketIds = useMemo(() => {
+    const shown = viewMode === 'team' ? teamBoard.flatMap((b) => b.tickets) : listTickets;
+    return new Set(shown.map((t) => t.id).filter((id): id is string => !!id));
+  }, [viewMode, teamBoard, listTickets]);
+  const selection = useMemo(() => {
+    const loaded = new Set(tickets.map((t) => t.id).filter((id): id is string => !!id));
+    const inView = tickets.filter((t) => !!t.id && selectedTicketIds.has(t.id) && viewTicketIds.has(t.id));
+    const outOfView: string[] = [];
+    const gone: string[] = [];
+    for (const id of selectedTicketIds) {
+      if (!loaded.has(id)) gone.push(id);
+      else if (!viewTicketIds.has(id)) outOfView.push(id);
+    }
+    return { inView, outOfView, gone };
+  }, [tickets, selectedTicketIds, viewTicketIds]);
+
   const handleBulkArchive = useCallback(async () => {
     if (selectedTicketIds.size === 0) return;
     // PERS-7 (DF-P9): no signed-in member, no action — never an 'unknown'
     // stand-in on the audit row.
     if (!uid || !activeOrgId) { await appAlert({ message: "You're not signed in to a workspace, so nothing was archived.", tone: 'danger' }); return; }
-    if (!(await appConfirm({ message: `Are you sure you want to archive ${selectedTicketIds.size} tickets?`, tone: 'danger' }))) return;
+    const { inView, outOfView, gone } = selection;
+    if (inView.length === 0) {
+      await appAlert({ message: `Nothing was archived. ${untouchedNote(outOfView.length, gone.length, 'archived').join(' ')}`, tone: 'danger' });
+      setSelectedTicketIds(new Set(outOfView));
+      return;
+    }
+    const ids = inView.map((t) => t.id as string);
+    const untouched = untouchedNote(outOfView.length, gone.length, 'archived', 'before');
+    if (!(await appConfirm({ message: `Are you sure you want to archive ${ids.length} tickets?${untouched.length > 0 ? ` ${untouched.join(' ')}` : ''}`, tone: 'danger' }))) return;
 
     setProcessingBulk(true);
     try {
       // Per-ticket through the enforced route: state-machine validation,
       // server audit, and fan-out — a non-management caller gets a 403.
-      await Promise.all(Array.from(selectedTicketIds).map(id => callWorkflowAction(id, 'close_ticket')));
+      await Promise.all(ids.map(id => callWorkflowAction(id, 'close_ticket')));
 
       const audit = await logAuditAction({
         action: 'TICKET_BULK_ARCHIVE', resourceId: 'bulk', resourceType: 'ticket',
         orgId: activeOrgId, userId: uid, userRole: activeRole ?? undefined,
-        details: { count: selectedTicketIds.size, ticketIds: Array.from(selectedTicketIds) }
+        details: { count: ids.length, ticketIds: ids }
       });
       // PERS-7: the closes landed (each with the route's own audit row); a
       // refused bulk summary row is said, never passed over.
       if (!audit.ok) await appAlert({ message: `The tickets were archived, but the bulk record of it could not be written: ${audit.error}`, tone: 'danger' });
 
-      setSelectedTicketIds(new Set());
+      // What was not in view stays selected (said in the confirm above).
+      setSelectedTicketIds(new Set(outOfView));
     } catch (error) {
       console.error("Bulk Archive Failed:", error);
       await appAlert({ message: "Failed to process bulk archive.", tone: 'danger' });
     } finally {
       setProcessingBulk(false);
     }
-  }, [selectedTicketIds, activeOrgId, activeRole, uid, callWorkflowAction]);
+  }, [selectedTicketIds, selection, activeOrgId, activeRole, uid, callWorkflowAction]);
 
   // "Urgent" is a PRIORITY, not a workflow state. This used to set
   // status=REVISION_REQ, which hijacked the revision stage as an urgency flag
@@ -861,7 +909,9 @@ export default function RequestPortal() {
     if (!uid || !activeOrgId) { await appAlert({ message: "You're not signed in to a workspace, so nothing was marked urgent.", tone: 'danger' }); return; }
     setProcessingBulk(true);
     try {
-      const chosen = tickets.filter((t) => !!t.id && selectedTicketIds.has(t.id));
+      // Fail-safe (DEC-90): only the selected requests in the list on screen
+      // are written; the rest are said, never dropped in silence (`selection`).
+      const { inView: chosen, outOfView, gone } = selection;
       const results = await Promise.all(chosen.map(async (t) => ({ id: t.id as string, ...(await markUrgentChecked(t)) })));
       // Only the rows THIS write changed are recorded; one already urgent is done, not ours.
       const done = results.filter((r) => !r.err && r.wrote).map((r) => r.id);
@@ -869,6 +919,7 @@ export default function RequestPortal() {
       if (results.some((r) => r.stale)) refetchTicketsRef.current?.();
       const problems: string[] = [];
       if (failed.length > 0) problems.push(`${failed.length} of ${chosen.length} were not marked urgent: ${failed[0].err}.`);
+      problems.push(...untouchedNote(outOfView.length, gone.length, 'marked urgent'));
       if (done.length > 0) {
         const audit = await logAuditAction({
           action: 'TICKET_BULK_URGENT', resourceId: 'bulk', resourceType: 'ticket',
@@ -877,8 +928,9 @@ export default function RequestPortal() {
         });
         if (!audit.ok) problems.push(`${done.length} were marked urgent, but the record of it could not be written: ${audit.error}`);
       }
-      // Only what failed stays selected, so a retry touches nothing twice.
-      setSelectedTicketIds(new Set(failed.map((r) => r.id)));
+      // Only what failed, and what was not in view, stays selected — so a
+      // retry touches nothing twice and nothing unseen is lost from the pick.
+      setSelectedTicketIds(new Set([...failed.map((r) => r.id), ...outOfView]));
       if (problems.length > 0) await appAlert({ message: problems.join(' '), tone: 'danger' });
     } catch (error) {
       console.error("Bulk Update Failed:", error);
@@ -886,7 +938,7 @@ export default function RequestPortal() {
     } finally {
       setProcessingBulk(false);
     }
-  }, [selectedTicketIds, tickets, markUrgentChecked, activeOrgId, activeRole, uid]);
+  }, [selectedTicketIds, selection, markUrgentChecked, activeOrgId, activeRole, uid]);
 
   const handleQuickMarkUrgent = async (ticketId: string) => {
     if (!uid || !activeOrgId) { await appAlert({ message: "You're not signed in to a workspace, so it was not marked urgent.", tone: 'danger' }); return; }
@@ -1148,7 +1200,15 @@ export default function RequestPortal() {
           <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-center justify-between animate-in fade-in slide-in-from-top-2">
             <div className="flex items-center space-x-3">
               <span className="bg-orange-600 text-white text-xs font-bold px-2 py-1 rounded-md">{selectedTicketIds.size} Selected</span>
-              <span className="text-sm font-medium text-orange-900">Bulk actions active</span>
+              {selection.outOfView.length + selection.gone.length > 0 ? (
+                // Fail-safe (DEC-90): said BEFORE the action — a bulk action
+                // touches only what is in the list on screen.
+                <span data-testid="bulk-out-of-view" className="text-sm font-medium text-orange-900">
+                  {selection.outOfView.length + selection.gone.length} of them {selection.outOfView.length + selection.gone.length === 1 ? 'is' : 'are'} not in the list on screen — bulk actions act only on the {selection.inView.length} that {selection.inView.length === 1 ? 'is' : 'are'}
+                </span>
+              ) : (
+                <span className="text-sm font-medium text-orange-900">Bulk actions active</span>
+              )}
             </div>
             <div className="flex items-center space-x-2">
               <button onClick={handleExportCSV} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100"><Download className="w-4 h-4 mr-2" /> Export</button>

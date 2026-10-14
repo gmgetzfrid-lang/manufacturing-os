@@ -983,26 +983,43 @@ export default function FullScreenViewer({
       let markupNotAttached = false;
       if (hasMarkup) {
         let bakeFailure: string | null = null;
+        // What "Download w/ Markup" can promise after this failure (DF-P9
+        // integrator fix pass — say only what is true): it fetches the same
+        // file and bakes the same way (lib/markupExport.ts), so after a failed
+        // fetch or bake it is only something to try; after a failed hand-off
+        // store it may still work.
+        let downloadHint = "";
         const bytes = await ensureBytes();
         if (!bytes) {
           bakeFailure = "the sheet's file could not be fetched to bake them in";
+          downloadHint = `"Download w/ Markup" needs the same file, so it may not work either until the file can be fetched`;
         } else {
+          let baked: Uint8Array | null = null;
           try {
-            const baked = await bakeMarkupIntoPdf(bytes, states);
-            const stem = `${docNum || docTitle || "sheet"}${docRev ? `_Rev${docRev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
-            draftKey = await stashDraft([{ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: d.id, docNumber: docNum }]);
+            baked = await bakeMarkupIntoPdf(bytes, states);
           } catch (e) {
             console.error("bake markup for drafting failed", e);
             bakeFailure = "they could not be baked into this PDF";
+            downloadHint = `"Download w/ Markup" bakes them the same way, so it may fail too`;
+          }
+          if (baked) {
+            try {
+              const stem = `${docNum || docTitle || "sheet"}${docRev ? `_Rev${docRev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
+              draftKey = await stashDraft([{ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: d.id, docNumber: docNum }]);
+            } catch (e) {
+              console.error("stash marked-up sheet for drafting failed", e);
+              bakeFailure = "the marked-up copy could not be kept for the request form";
+              downloadHint = `"Download w/ Markup" may still save a copy you can attach to the request`;
+            }
           }
         }
         if (bakeFailure) {
           const leaving = markupsPersist
             ? "Sending saves your markups to this document as you leave the viewer (as closing it does)."
-            : "Nothing is saving your markups in this viewer — sending leaves it and they are lost, so download them first if you need them.";
+            : "Nothing is saving your markups in this viewer — sending leaves it and they are lost, so try to download them first if you need them.";
           const sendClean = await appConfirm({
             title: "Your markups could not be attached",
-            message: `Your markups stay on this sheet while it is open, but ${bakeFailure}. Cancel to stay — "Download w/ Markup" saves a copy you can attach to the request. Or send the request with the clean sheet (it will say the markups are not attached). ${leaving}`,
+            message: `Your markups stay on this sheet while it is open, but ${bakeFailure}. Cancel to stay — ${downloadHint}. Or send the request with the clean sheet (it will say the markups are not attached). ${leaving}`,
             confirmLabel: "Send the clean sheet",
             cancelLabel: "Cancel",
             tone: "danger",

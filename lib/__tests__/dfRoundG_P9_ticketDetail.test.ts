@@ -353,6 +353,16 @@ describe("AUTHZ-15 — an unreadable policy offers nothing, says why, and retrie
     expect(q("[data-testid=ticket-policy-fault]")).toBeNull();
     expect(byText("button", /Assign Drafter/)).toBeTruthy();
   });
+  it("integrator fix pass: the notice says what is true — the policy decides the actions — and claims nothing about the server", async () => {
+    s.ticket = baseTicket({ status: "FINAL_DRAFT" });
+    s.policyEntries = [{ policy: {}, version: null, unreadable: "JWT expired" }];
+    await mount();
+    const notice = q("[data-testid=ticket-policy-fault]")?.textContent ?? "";
+    expect(notice).toMatch(/Permissions could not be read — JWT expired\./);
+    expect(notice).toMatch(/They decide which actions you may take here, so none is offered until they can be read\./);
+    expect(notice).not.toMatch(/server would refuse/);
+    expect(byText("button", /Acknowledge/)).toBeNull();
+  });
   it("REGRESSION: a stale (last-good) policy draws the actions as is", async () => {
     s.role = { activeRole: "DraftingSupervisor", roles: ["DraftingSupervisor"], activeOrgId: "org-1", uid: "s-1", userEmail: "sam@x.io" };
     s.ticket = baseTicket({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, assigned_drafter_name: null });
@@ -617,5 +627,22 @@ describe("UI-7 (integrator fix pass) — the printed traveler states the status 
     await click(byText("button", /Traveler/));
     expect(s.traveler).toHaveBeenCalledTimes(1);
     expect(s.traveler.mock.calls[0][0]).toMatchObject({ ticketRowId: "t1", ticketNumber: "KE-DDRT-26-0007", status: "Ready to issue (IFC)" });
+  });
+});
+
+describe("PERS-7 (integrator fix pass) — no session, no redline upload", () => {
+  it("the session is read before the redline goes to storage: without one nothing is uploaded or sent, and it is said", async () => {
+    const draft = { id: "a-1", name: "draft.pdf", url: "https://files.example/draft.pdf", type: "Draft", status: "submitted", size: "1 KB", uploadedBy: "hector@x.io", uploadedAt: "2026-10-10T00:00:00.000Z" };
+    s.ticket = baseTicket({ status: "PENDING_REVIEW", attachments: [draft] });
+    await mount();
+    await click(byText("button", /^\s*Redline\s*$/));
+    await click(q("[data-testid=redline-save]"));
+    const textarea = host!.querySelector("textarea") as HTMLTextAreaElement;
+    await setValue(textarea, "Dimension 4 is wrong — see the redline.");
+    s.noSession = true;
+    await click(byText("button", /^\s*Confirm\s*$/));
+    expect(s.upload).not.toHaveBeenCalled();
+    expect(s.posts.length).toBe(0);
+    expect(s.toast).toHaveBeenCalledWith(expect.objectContaining({ type: "error", message: expect.stringMatching(/Not authenticated, so the redline was not uploaded/) }));
   });
 });

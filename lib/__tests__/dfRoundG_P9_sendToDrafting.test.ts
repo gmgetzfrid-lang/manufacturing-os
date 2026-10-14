@@ -19,6 +19,11 @@
 // words leaving from what the viewer can do: with a persisting parent the
 // sheet's states are handed to it before leaving; without one it says they
 // are lost and to download them first.
+//
+// Integrator fix pass (DEC-90 — say only what is true): "Download w/ Markup"
+// fetches the same file and bakes the same way, so after a failed fetch or
+// bake the dialog offers it only as something that may fail too; after a
+// failed hand-off store it may still save a copy.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -169,6 +174,9 @@ describe("HAND-8 — a markup that cannot be attached is said, never dropped in 
     expect(ask.message).toMatch(/stay on this sheet while it is open/);
     expect(ask.message).toMatch(/Nothing is saving your markups in this viewer/);
     expect(ask.message).toMatch(/download them first/);
+    // integrator fix pass: no promise the download cannot keep — it needs the same file
+    expect(ask.message).not.toMatch(/saves a copy/);
+    expect(ask.message).toMatch(/"Download w\/ Markup" needs the same file, so it may not work either until the file can be fetched/);
     expect(ask.confirmLabel).toBe("Send the clean sheet");
     expect(s.push).not.toHaveBeenCalled();
     expect(btn.disabled).toBe(false); // not stuck "sending"
@@ -179,11 +187,23 @@ describe("HAND-8 — a markup that cannot be attached is said, never dropped in 
     await send(MARKED);
     expect(s.confirm).toHaveBeenCalledTimes(1);
     expect((s.confirm.mock.calls[0][0] as { message: string }).message).toMatch(/could not be baked/);
+    expect((s.confirm.mock.calls[0][0] as { message: string }).message).toMatch(/"Download w\/ Markup" bakes them the same way, so it may fail too/);
+    expect((s.confirm.mock.calls[0][0] as { message: string }).message).not.toMatch(/saves a copy/);
     const p = pushedParams();
     expect(p.get("draft")).toBeNull();
     expect(p.get("sourceFileUrl")).toBe("https://files.example/p101.pdf");
     expect(p.get("description")).toMatch(/markups could NOT be attached — the clean sheet is attached/);
     expect(p.get("description")).not.toMatch(/saved on the document/);
+  });
+  it("integrator fix pass: the bake works but the hand-off store fails → asked, and only then is the download offered as a way to keep a copy", async () => {
+    s.stash.mockRejectedValue(new Error("IndexedDB unavailable"));
+    s.confirm.mockResolvedValue(false);
+    await send(MARKED);
+    expect(s.bake).toHaveBeenCalledTimes(1);
+    const ask = s.confirm.mock.calls[0][0] as { message: string };
+    expect(ask.message).toMatch(/the marked-up copy could not be kept for the request form/);
+    expect(ask.message).toMatch(/"Download w\/ Markup" may still save a copy you can attach to the request/);
+    expect(s.push).not.toHaveBeenCalled();
   });
   it("fix pass: with a parent that persists markups, the dialog says leaving saves them — and the sheet's states ARE handed over after the choice, before the hand-off", async () => {
     s.bake.mockRejectedValue(new Error("pdf-lib: invalid object ref"));
