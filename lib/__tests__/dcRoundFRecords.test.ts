@@ -329,8 +329,10 @@ describe("RET-3 — the recertification attests the EFFECTIVE population", () =>
     state.resolve = resolver({ visibility: null, acl: null, acl_index: null, owner_user_id: null }, { memberError: "timeout" });
     const eff = await listAccessGrantsDetailed("org1", "l1", now);
     expect(eff.complete).toBe(false);
-    expect(eff.issues).toEqual(["members: timeout"]);
+    // ORG-7 (admin-and-org P12): the non-active members' read fails with it
+    // here (one mocked table) and is named too — either refuses.
+    expect(eff.issues).toEqual(["members: timeout", "suspended members: timeout"]);
     await expect(recertifyAccess({ libraryId: "l1", orgId: "org1", actorId: "admin" }))
-      .rejects.toThrow(/Recertification refused: the library's effective access list could not be resolved \(members: timeout\)/);
+      .rejects.toThrow(/Recertification refused: the library's effective access list could not be resolved \(members: timeout; suspended members: timeout\)/);
   });
 });

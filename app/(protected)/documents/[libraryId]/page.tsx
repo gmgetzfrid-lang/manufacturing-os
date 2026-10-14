@@ -1734,6 +1734,12 @@ export default function LibraryExplorerPage() {
       roles,
       orgId: activeOrgId ?? undefined,
       teamIds: myTeamIds,
+      // ORG-7 (admin-and-org P12): what the page knows, passed to every
+      // ACL decision (lib/acl.ts refuses a stale user rule for a
+      // non-member). A principal exists only while activeRole is known, and
+      // RoleContext sets activeRole only for an ACTIVE membership
+      // (RoleContext.tsx: `setActiveRole(active ? headline : null)`).
+      isActiveMember: true,
     };
   }, [uid, activeRole, roles, activeOrgId, myTeamIds]);
 

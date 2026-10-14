@@ -839,7 +839,8 @@ describe("integrator fix pass — pre-paste truth on the explorer, no placeholde
     // no CODE line names the placeholder (comments may say what is not done)
     expect(v.split("\n").filter((l) => !/^\s*\/\//.test(l)).some((l) => l.includes('"Viewer"'))).toBe(false);
     expect(v).toContain('role: typeof r.role === "string" && r.role.trim() ? r.role : null,');
-    expect(v).toContain("interface Member { uid: string; name: string; role: string | null; roles: string[] }");
+    // ORG-7 (admin-and-org P12) adds the member's real status (isActiveMember).
+    expect(v).toContain("interface Member { uid: string; name: string; role: string | null; roles: string[]; status: string | null }");
     expect(v).toContain('const NO_ROLE_KNOWN = "no role known";');
     expect(v).toContain('import { heldRoles } from "@/lib/roleHeld";');
   });

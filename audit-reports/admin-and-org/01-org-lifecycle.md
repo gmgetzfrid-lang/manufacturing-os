@@ -465,7 +465,7 @@ schema.sql:1031-1034 — `CREATE OR REPLACE FUNCTION my_org_ids() RETURNS SETOF 
 ## ORG-7 · Member removal orphans everything hung off the member — no team_members prune, no ACL prune, no ownership reassignment, and the recertification snapshot degrades to raw UUIDs for exactly the departed people
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P12 MEMBER-REMOVAL AND WORKSPACE TIME-ZONE FOLLOW-UPS (the remainder P8 named: done-when 2's `isActiveMember` at the documents page and the View-as simulator, done-when 3 for a suspended member's grant, done-when 4's `org_id` filter, and the re-add residual) — by the integrator, 2026-10-13 (at the admin-and-org P8 merge, DEC-31; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/users/page.tsx:164-187`, `supabase/migrations/20260707_teams.sql:19-28`, `lib/accessRecert.ts:59-78`, `lib/ownership.ts:44-57`, `lib/acl.ts:26-34`, `supabase/schema.sql:33-48`
@@ -541,6 +541,32 @@ users/page.tsx:178 — the entire removal: `const { error } = await supabase.fro
 **Residual of the prune split (second review fix).** Until the chunk loop finishes (or, if the Admin's tab closes mid-run or a call fails, until the nightly rebuild), descendants inheriting the grant still list the person in `acl_index`. While they are not a member nothing reads it. If they are **re-added** in that window, the stale entries count again until the loop is re-run or the nightly rebuild passes. `/api/admin/create-user` does not clear them before a re-add. Doing so touches the route's shared test mocks (`createUserRoute.test.ts`, `producersRoutes.test.ts`, not this package's) and needs a time budget inside a request, so it was left out (DEC-31). The RPC already admits service_role for that caller.
 
 **Owner of the remainder:** admin-and-org. It is a P8 follow-up the integrator schedules once notifications N14 (`lib/accessRecert.ts`, `lib/ownership.ts`), document-control P25 (the documents page) and admin-and-org P7 (`ViewAsSimulator.tsx`) have merged those files; this package may not edit them. Each fix is one line, as named above. The finding stays OPEN. *(Fix pass 3, 2026-10-13: N14 and P25 have merged on the integration branch — `0cb6409`, `dd49a18`, merged into this branch at `e18cdd9` — and the lines still read as named: `lib/ownership.ts:190` (was `:187`) has no `org_id` filter, `lib/accessRecert.ts` `nameOf` resolves from active members only, and the documents page's principal (`app/(protected)/documents/[libraryId]/page.tsx:1727`) passes no `isActiveMember`. P7 has not merged; `components/permissions/ViewAsSimulator.tsx:450` is unchanged. The same owner holds them.)*
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P12 MEMBER-REMOVAL AND WORKSPACE TIME-ZONE FOLLOW-UPS, under the integrator's DEC-90 rulings for this package. Reproduced on `e69f353` (DEC-29), each at the line P8's Partial named: the documents page's principal (`app/(protected)/documents/[libraryId]/page.tsx:1727`) passed no `isActiveMember`; `components/permissions/ViewAsSimulator.tsx:450` passed `isActiveMember: true` whatever the simulated member's status; `lib/accessRecert.ts` `listAccessGrantsDetailed` read only ACTIVE members, so `admit` dropped a suspended member's personal grant from the list (hidden) and `nameOf` named an expired rule of theirs by the bare uid; `lib/ownership.ts:190` read the team rung's name with no `org_id`, and a test with the supervisor in two workspaces got the team's name (`maybeSingle` errored). No migration.
+- **Done-when 2, `isActiveMember`.**
+  - `app/(protected)/documents/[libraryId]/page.tsx:1742`: the signed-in principal passes `isActiveMember: true`. It is what the page knows: the principal exists only while `activeRole` is known, and `RoleContext` sets `activeRole` only for an ACTIVE membership (`components/providers/RoleContext.tsx`: `setActiveRole(active ? headline : null)`). No decision changes for anyone the page admits today.
+  - `components/permissions/ViewAsSimulator.tsx`: the member read adds `status`, the `Member` row carries it, and the ACL principal passes `isActiveMember: who.status === "active"` (`:454`) — the simulated member's real status, never a hard-coded true (DEC-90: a simulation shows what the server would decide). The member list is still active members only (`.eq("status", "active")`), so every row shown today simulates exactly as before.
+  - The prune half is P8's (`20261204`, PASTE pending; unchanged here).
+- **Done-when 3, a suspended member's grant.** `lib/accessRecert.ts`:
+  - `listAccessGrantsDetailed` also reads the workspace's members who are NOT active (`org_members … .neq("status", "active")`, a read that fails refuses the attestation like the other four: `suspended members: <error>`).
+  - A user rule in the index that names one of them is no longer dropped: it is returned in the new `EffectiveAccess.suspended` list, under the person's name (display name, else email) with `status: "suspended"` and `memberStatus` (`suspended`, `invited` or `inactive`, as read), its actions, and why ("membership <status>: no access while it lasts; the grant returns with them"). A deny naming them removes it, as it removes a live grant. It is never counted as current access (`live` is unchanged).
+  - `nameOf` resolves a non-active member too, so an expired rule naming a suspended member is named.
+  - `recertifyAccess` writes `grants_snapshot` = the live population plus the suspended grants, each entry marked by `status`; `grant_count` stays the live population. So the record says what the reviewer saw, and never holds a bare uid: a live entry is an active member, a suspended entry a member read by name.
+  - `components/documents/AccessRecertModal.tsx` (outside the plan's file list, the list's only reader) shows them under "Personal grants of members who are not active", each with the status mark, above the "use the library's Permissions panel" line, so the reviewer can revoke them before attesting.
+- **Done-when 4.** `lib/ownership.ts:190-194`: the team rung's name read is `.eq("org_id", orgId)` whenever the org is known (from the caller or the library row); with no org at all it reads as before.
+- **The re-add residual (P8's, ruled here).** `app/api/admin/create-user/route.ts` `clearStaleInheritedAclIndex`: on the INSERT path only (no membership row: the person was removed, or never a member), before the row is created, it reads the person's latest `MEMBER_REMOVED` audit row in the workspace. Only when it says the removal pruned a grant (`details.prunedAclGrants > 0`, written only by `20261204`'s `revoke_member`) does it walk the workspace's libraries (paged, `order("id")`) through `lib/memberAclIndexPrune.ts` `pruneRemovedMemberAclIndex` → `prune_removed_member_acl_index` (service role; the RPC refuses once any membership row exists, so this is the only moment it can run), in chunks of 2,000 within `READD_ACL_INDEX_BUDGET_MS` (5 s). Any failure (the removal record or the libraries unreadable, an RPC error) or a walk cut short by the budget is logged, returned as `aclIndexCleanup { done, pruned, calls, error? }`, and never blocks the add: what is left is the nightly `acl_index` rebuild's (DEC-10). Before `20261204` the RPC is missing and the answer is unchanged. A suspended member re-activated through the UPDATE path is not touched: suspension keeps the grants by design (P8).
+- **Tests.** `lib/__tests__/aoRoundGP12MemberRemoval.test.ts` (17): the suspended and invited members' grants listed by name and status, never their uid; an expired rule of theirs named; a deny outranks; the non-active read failing refuses; the record keeps them marked with `grant_count` the live population; REGRESSION with no non-active member (list and record exactly the live population); the modal renders the mark; a supervisor in two workspaces named (fails on `e69f353`: the team's name), REGRESSION for one workspace; the two `isActiveMember` sites pinned; the re-add walk runs before the insert with no membership row, follows the RPC's cursor and reports; a failing call and an unreadable removal record do not block the add; no call for a person never removed or whose removal pruned nothing, and none before `20261204`. Updated pins: `lib/__tests__/rpPhase5Additive.test.ts`, `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` (the simulator's member shape), `lib/__tests__/dcRoundFRecords.test.ts` (the refusal now also names the non-active read, which fails with the one mocked table).
+
+**Done-when.**
+1. ✓ By pointer (P8's Partial): `revoke_member` REMOVE clears teams, the supervisor pointer and owner pointers in one audited transaction (`20261042` → `20261161` → `20261204`).
+2. ✓ The removed member's ALLOW rules are pruned (P8, `20261204`, PASTE pending), and `isActiveMember` is passed at the two sites that held the status and did not pass it (the documents page; the simulator, with the real status). The third site P8 named, `lib/principal.ts` `resolveActorPrincipal`'s fallback, is not changed here (DEC-90 named the two sites): when the membership read errors it does not know the status (by design, "never wider"); when the read succeeds with no ACTIVE row it does know and still omits the flag. That sub-case is opened as `ORG-19` (DEC-31), not ticked here.
+3. ✓ A recert snapshot never holds a bare uid: live entries are active members, suspended entries are named members, and an unknown uid enters neither. A suspended member's personal grant is listed, named and marked, never hidden. A removed member's grant no longer exists once `20261204` is pasted (P8); until then it stays out of the snapshot as before (hidden from the list, a bare uid only in the expired list, which is not snapshotted).
+4. ✓ `lib/ownership.ts:194`.
+
+**Scope / residual.**
+- `ORG-19` (LOW, opened below): `resolveActorPrincipal`'s fallback when the membership read returns no active row. A client-side pre-check only; every RLS path already refuses a non-active member.
+- The re-add walk is bounded by 5 s; a large workspace (roughly 20,000+ nodes at 2,000 per call) is finished by the nightly rebuild, as the ruling allows. `/admin/users` (P8's page) does not yet show `aclIndexCleanup`; the route logs it.
+- The re-add walk takes every library of the workspace as the scope (the carriers `revoke_member` returned are not stored), so it reads more than the members page's walk does — once, only for a person whose removal pruned a grant.
 
 ---
 
@@ -1039,5 +1065,26 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 **Done when.**
 - After a restore, no folder or library points at a cover or background key the restore skipped, or the restore names the node (not only the key) that needs a new image.
 - A test drives a restore with a legacy-format cover and shows the pointer cleared or the node named.
+
+---
+
+## ORG-19 · The shared actor resolver hands an ACL decision the caller's headline with no membership status when the read succeeds and finds no ACTIVE row
+
+- **Severity:** LOW
+- **Severity rationale:** The author's estimate. A client-side pre-check only: every RLS path, and every server route that re-reads the membership, refuses a non-active member before an ACL is evaluated. Since `20261204` (PASTE pending) a removed member has no user rule left to honour; a suspended member keeps theirs by design.
+- **Status:** OPEN
+- **Assigned:** — Owner: admin-and-org, the integrator to schedule (opened by admin-and-org Round G P12 under `DEC-31` from `ORG-7` done-when 2, the third site P8's Partial named and the DEC-90 ruling for P12 left out).
+- **Verification:** CONFIRMED (by reading, on `e69f353`)
+- **Locations:** `lib/principal.ts:48` (`resolveActorPrincipal`: `if (memberRes.error || !memberRes.data) return { ...fallback, teamIds };`), `lib/acl.ts:124` (`if (ctx.isActiveMember === false)`), `lib/permissions.ts:113`
+- **Related:** `ORG-7` (resolved; this is its done-when 2 remainder)
+- **Independently verified:** — (`author`: opened 2026-10-13 at admin-and-org Round G P12; not yet challenged)
+
+**Mechanism.** `resolveActorPrincipal` reads the actor's row with `.eq("status", "active")`. Two different outcomes fall into one branch: the read FAILED (status unknown — the caller's headline is the documented "never wider" fallback) and the read SUCCEEDED with no active row (the actor is known not to be an active member of that workspace). Both return the caller's headline and team ids with no `isActiveMember`, which `lib/acl.ts` treats as "unchanged behaviour", so a stale user rule naming a suspended member can still read as a grant in the client's pre-check.
+
+**Failure scenario.** A suspended member whose browser tab is still open on a library page (the role context has not re-resolved) triggers a mutator that calls `resolveActorPrincipal`. Their own personal ALLOW rule is still on the library (suspension keeps grants). The client pre-check says yes; the write then fails at RLS with a generic refusal instead of the pre-check's plain "you are not an active member".
+
+**Done when.**
+- When the membership read succeeds for a given workspace and finds no active row, the principal carries `isActiveMember: false`; a failed read keeps today's fallback.
+- A test pins both branches, and the callers' tests that mock an empty membership read are updated deliberately (22 test files import the resolver).
 
 ---

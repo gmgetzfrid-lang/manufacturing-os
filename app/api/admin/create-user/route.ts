@@ -5,6 +5,7 @@ import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import { assertOrgHasAccess } from "@/lib/serverAuth";
 import { clearAccessRequestNotices, queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
+import { pruneRemovedMemberAclIndex, type RpcClient } from "@/lib/memberAclIndexPrune";
 
 // Bounded lookup of auth users by email. Only used in the rare path where the
 // auth account already exists (e.g. they signed in with Microsoft first) but
@@ -63,6 +64,75 @@ async function resolvePendingAccessRequests(orgId: string, email: string, member
   // The requests are closed: the pool's notices about them stop waiting on
   // anyone (N8's review fix — the PROD-3 rule). Best-effort.
   await clearAccessRequestNotices(supabaseAdmin, orgId, rows.map((r) => String(r.id)));
+}
+
+/** ORG-7 (admin-and-org Round G, P12): how long a re-add may spend clearing
+ *  the person's stale inherited acl_index entries before the membership is
+ *  re-created. What is left is the nightly acl_index rebuild's (DEC-10). */
+const READD_ACL_INDEX_BUDGET_MS = 5_000;
+const READD_ACL_INDEX_CHUNK = 2_000;
+
+type ReAddAclIndexCleanup = { done: boolean; pruned: number; calls: number; error?: string };
+
+/** ORG-7 — the re-add residual of the member-removal prune. A removal
+ *  (revoke_member, 20261204) strips the person's own grant rules at once,
+ *  and the members page strips what descendants INHERITED from them in
+ *  bounded chunks afterwards (prune_removed_member_acl_index). If that walk
+ *  was cut short (the Admin's tab closed, a call failed, a 2-minute
+ *  deadline) the inherited entries still list the person until the nightly
+ *  rebuild — harmless while they are not a member, but a re-add inside that
+ *  window would make them count again. So before the membership row is
+ *  created again, the same RPC (it admits the service role, and refuses
+ *  while any membership row exists) walks the workspace's libraries within
+ *  READD_ACL_INDEX_BUDGET_MS. It runs only when the person's latest
+ *  MEMBER_REMOVED row says the removal pruned a grant (`prunedAclGrants`,
+ *  written only by 20261204's revoke_member): no pruned grant, nothing
+ *  inherited one. Never blocks the re-add: a read or call that fails, or a
+ *  walk the budget cuts short, is logged and returned, and the rest is the
+ *  nightly rebuild's. Returns null when there was nothing to clear. */
+async function clearStaleInheritedAclIndex(orgId: string, uid: string): Promise<ReAddAclIndexCleanup | null> {
+  try {
+    const { data: removed, error: remErr } = await supabaseAdmin
+      .from("audit_logs")
+      .select("details")
+      .eq("org_id", orgId)
+      .eq("action", "MEMBER_REMOVED")
+      .eq("resource_id", uid)
+      .order("timestamp", { ascending: false })
+      .limit(1);
+    if (remErr) {
+      console.warn(`[create-user] ORG-7: the removal record of ${uid} could not be read (${remErr.message}) — any stale index entries are left to the nightly rebuild.`);
+      return { done: false, pruned: 0, calls: 0, error: remErr.message };
+    }
+    const last = (Array.isArray(removed) ? removed[0] : null) as { details?: { prunedAclGrants?: unknown } | null } | null;
+    const prunedGrants = Number(last?.details?.prunedAclGrants ?? 0);
+    if (!last || !(prunedGrants > 0)) return null;
+    const libraries: string[] = [];
+    for (let from = 0; from < 50_000; from += 1000) {
+      const { data: libs, error: libErr } = await supabaseAdmin
+        .from("libraries").select("id").eq("org_id", orgId).order("id", { ascending: true }).range(from, from + 999);
+      if (libErr) {
+        console.warn(`[create-user] ORG-7: the workspace's libraries could not be read (${libErr.message}) — stale index entries of ${uid} are left to the nightly rebuild.`);
+        return { done: false, pruned: 0, calls: 0, error: libErr.message };
+      }
+      const page = (Array.isArray(libs) ? libs : []) as Array<{ id: string }>;
+      libraries.push(...page.map((l) => String(l.id)));
+      if (page.length < 1000) break;
+    }
+    if (libraries.length === 0) return null;
+    const out = await pruneRemovedMemberAclIndex(supabaseAdmin as unknown as RpcClient, orgId, uid, { libraries, collections: [] }, {
+      chunk: READD_ACL_INDEX_CHUNK, deadlineMs: READD_ACL_INDEX_BUDGET_MS,
+    });
+    if (out.unavailable) return null;
+    if (!out.ok || !out.done) {
+      console.warn(`[create-user] ORG-7: stale index entries of ${uid} were not all cleared before the re-add (${out.error ?? `budget of ${READD_ACL_INDEX_BUDGET_MS} ms reached after ${out.calls} call(s)`}) — the nightly rebuild finishes the clean-up.`);
+    }
+    return { done: out.ok && out.done, pruned: out.pruned, calls: out.calls, ...(out.error ? { error: out.error } : {}) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[create-user] ORG-7: clearing stale index entries of ${uid} failed (${msg}) — left to the nightly rebuild.`);
+    return { done: false, pruned: 0, calls: 0, error: msg };
+  }
 }
 
 /** The refusal every ambiguous-identity path lands on. Copies the pattern the
@@ -319,6 +389,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ uid: userId, roles: merged, merged: true, ...(auditError ? { auditError } : {}) });
   }
 
+  // ORG-7: a person removed earlier whose inherited index entries were not
+  // all stripped is cleared BEFORE the membership exists again (the RPC
+  // refuses once it does), within a time budget; the rest is the nightly
+  // rebuild's. Never blocks the add.
+  const aclIndexCleanup = userId ? await clearStaleInheritedAclIndex(orgId, userId) : null;
+
   const { error: memberError } = await supabaseAdmin
     .from("org_members")
     .insert({
@@ -403,5 +479,5 @@ export async function POST(req: NextRequest) {
 
   await resolvePendingAccessRequests(orgId, email, userId);
 
-  return NextResponse.json({ uid: userId, ...(createdAuditError ? { auditError: createdAuditError } : {}) });
+  return NextResponse.json({ uid: userId, ...(createdAuditError ? { auditError: createdAuditError } : {}), ...(aclIndexCleanup ? { aclIndexCleanup } : {}) });
 }
