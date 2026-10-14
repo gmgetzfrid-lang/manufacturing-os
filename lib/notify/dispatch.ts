@@ -26,7 +26,10 @@
 // follower the name only while they may discover the document — the same
 // check a document's follower gets (DEC-106); a follower who may not gets the
 // notice without the name (unnamedNotice), so nobody who follows the library
-// stops hearing about it.
+// stops hearing about it. Someone the producer names (a transmittal's
+// document owner) is spared the check only for the document(s) they are
+// involved with; every other document the notice names is checked for them
+// too (NEDGE-22 done-when 2, DEC-90).
 //
 // It wraps the existing notifyMany()/queueEmail() helpers rather than replacing
 // them, so producers can migrate to emit() one at a time with zero regression.
@@ -133,9 +136,13 @@ export interface EmitInput {
    *  dropped: they follow the library, not the document); a check that FAILS
    *  sends the follower it could not settle redactedNotice(), as DEC-106 does
    *  for a document; controllers are never dropped (DEC-43). Someone the
-   *  producer names in `involved` is not filtered. Ignored on a document
-   *  resource (the document's own check runs). At most a handful of ids —
-   *  only the ones the title and body actually name. */
+   *  producer names in `involved` is exempt from the check only for the
+   *  named document(s) they are involved with (`involved` below — NEDGE-22
+   *  done-when 2, the integrator's ruling under DEC-90, 2026-10-14); every
+   *  OTHER named document is checked for them as for a follower, with the
+   *  same three outcomes. A role pool and a project roster are not filtered.
+   *  Ignored on a document resource (the document's own check runs). At most
+   *  a handful of ids — only the ones the title and body actually name. */
   namesDocuments?: {
     ids: string[];
     /** What a follower who may not discover every named document reads: a
@@ -143,6 +150,16 @@ export interface EmitInput {
      *  a document either). Absent: the category's generic subject, a generic
      *  body and the producer's link. */
     unnamed?: { title: string; body?: string; link?: string };
+    /** NEDGE-22 done-when 2 (DEC-90, 2026-10-14): who in `audience.involved`
+     *  is involved with each named document — document id → uids (a
+     *  transmittal's document → its accountable owner). A person is exempt
+     *  from the check for the documents listed for them and checked for
+     *  every other named document. Absent: a notice that names ONE document
+     *  exempts every involved person (they are involved with the one thing
+     *  it names — unchanged); a notice that names several checks an involved
+     *  person for every named document (fail safe: the notice without the
+     *  names, never a name unchecked; nobody dropped). */
+    involved?: Record<string, string[]>;
   };
 }
 
@@ -243,6 +260,48 @@ export function emailSubjectFor(
   };
 }
 
+/** NEDGE-22 (notifications N16): how many of one notice's named documents
+ *  are asked about at once — a transmittal names at most five. The checks of
+ *  one notice run side by side up to this bound (each is a round trip in the
+ *  browser), and every outcome is the same as asking one after another.
+ *  Exported for the test. */
+export const NAMED_DOCUMENT_CHECKS_AT_ONCE = 5;
+
+/** `fn` over `items`, at most `limit` running at once, answers in input
+ *  order. Started in input order: with no more items than `limit`, every
+ *  call starts before any answers. */
+async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next;
+      next += 1;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
+}
+
+/** NEDGE-22 done-when 2 (DEC-90, 2026-10-14): whether `uid` (named in
+ *  `audience.involved`) is involved with named document `documentId` — and
+ *  so not asked about it. The producer's `namesDocuments.involved` decides;
+ *  without it, a notice that names ONE document is about the thing every
+ *  involved person is involved with (unchanged), and a notice that names
+ *  several leaves every named document to the check (fail safe). Only
+ *  people in `audience.involved` are ever involved. */
+function involvementOf(input: EmitInput, named: readonly string[]): (uid: string, documentId: string) => boolean {
+  const involved = new Set((input.audience.involved ?? []).filter(Boolean));
+  const map = input.namesDocuments?.involved;
+  if (map) {
+    const by = new Map(Object.entries(map).map(([d, us]) => [d, new Set((Array.isArray(us) ? us : []).filter(Boolean))] as const));
+    return (uid, documentId) => involved.has(uid) && (by.get(documentId)?.has(uid) ?? false);
+  }
+  const one = named.length === 1;
+  return (uid) => one && involved.has(uid);
+}
+
 /** Resolve the deduped recipient set for an event: the union of every
  *  audience source, minus the actor, limited to ACTIVE members of the org
  *  (NEDGE-3 — once, centrally, involved[] included). emit() reads the same
@@ -277,7 +336,9 @@ export async function resolveAudience(input: EmitInput): Promise<{ full: string[
     input.audience.followers ? resolveFollowers(input.resource, input.orgId) : Promise.resolve([] as string[]),
     ...tasks,
   ]);
-  for (const list of lists) list.forEach((u) => u && ids.add(u));
+  // the people a role pool or a project roster reached (never filtered here)
+  const pooled = new Set<string>();
+  for (const list of lists) list.forEach((u) => { if (u) { ids.add(u); pooled.add(u); } });
 
   // NEDGE-6 done-when 3 (N15): a follower reached ONLY through the follow
   // list of a DOCUMENT is kept only while they may discover it — a hidden or
@@ -309,22 +370,41 @@ export async function resolveAudience(input: EmitInput): Promise<{ full: string[
   // dropped: a follower a check ANSWERED for who may not discover one gets
   // the notice without the names (unnamedNotice); one a FAILED check could
   // not settle gets redactedNotice() (DEC-106 item 2); a controller passes
-  // the check, and its failure path keeps them (DEC-43). Every named
-  // document is asked about AT ONCE (one round trip's wait in the browser,
-  // not one per document — the notice is fire-and-forget, and a closed tab
-  // loses whatever is still waiting): told in full only when every answer
-  // keeps them; ruled out by any answer that was given → unnamed; otherwise
-  // left out by a failed check → redacted.
+  // the check, and its failure path keeps them (DEC-43). The named
+  // documents are asked about side by side, up to
+  // NAMED_DOCUMENT_CHECKS_AT_ONCE at a time (in the browser, one round
+  // trip's wait for up to five documents, not one per document — the notice
+  // is fire-and-forget, and a closed tab loses whatever is still waiting):
+  // told in full only when every answer keeps them; ruled out by any answer
+  // that was given → unnamed; otherwise left out by a failed check →
+  // redacted.
+  //
+  // NEDGE-22 done-when 2 (the integrator's ruling under DEC-90, 2026-10-14):
+  // someone the producer names in `involved` (a transmittal's document
+  // owner) is exempt only for the named document(s) they are involved with
+  // (involvementOf); every OTHER named document is asked about them in the
+  // same request as the followers, with the same three outcomes. A notice
+  // that names one document asks nothing about the people involved with it
+  // (unchanged). A role pool and a project roster are not filtered.
   const unnamed = new Set<string>();
   const named = input.resource.type === "document"
     ? []
     : [...new Set((input.namesDocuments?.ids ?? []).filter((d): d is string => typeof d === "string" && d.length > 0))];
-  if (named.length > 0 && followerOnly.length > 0) {
-    const answers = await Promise.all(named.map((documentId) => discoveringAmong(input.orgId, documentId, followerOnly)));
+  const involvedWith = involvementOf(input, named);
+  const involvedChecked = named.length === 0 ? [] : [...new Set(input.audience.involved ?? [])]
+    .filter((u) => !!u && u !== input.actorUserId && !pooled.has(u) && named.some((d) => !involvedWith(u, d)));
+  const subjects = [...followerOnly, ...involvedChecked];
+  if (named.length > 0 && subjects.length > 0) {
+    // asked about each named document: every follower-only recipient, and
+    // each involved person who is not involved with that document
+    const asked = named.map((d) => subjects.filter((u) => !involvedWith(u, d)));
+    const answers = await mapBounded(named, NAMED_DOCUMENT_CHECKS_AT_ONCE, (documentId, i) => discoveringAmong(input.orgId, documentId, asked[i]));
     const keptBy = answers.map((a) => new Set(a.uids));
-    for (const u of followerOnly) {
-      if (keptBy.every((k) => k.has(u))) continue;
-      const ruledOut = answers.some((a, i) => a.outcome !== "failed" && !keptBy[i].has(u));
+    const askedAbout = asked.map((a) => new Set(a));
+    for (const u of subjects) {
+      const mine = named.map((_, i) => i).filter((i) => askedAbout[i].has(u));
+      if (mine.every((i) => keptBy[i].has(u))) continue;
+      const ruledOut = mine.some((i) => answers[i].outcome !== "failed" && !keptBy[i].has(u));
       (ruledOut ? unnamed : unsettled).add(u);
       ids.delete(u);
     }

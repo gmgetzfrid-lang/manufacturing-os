@@ -1404,6 +1404,9 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
     const sends: Array<Promise<number>> = [];
     for (const [libraryId, rows] of byLibrary) {
       const owners = new Set<string>();
+      // NEDGE-22 done-when 2 (DEC-90): each owner is involved with their own
+      // document only — the dispatcher checks the other named documents for them
+      const ownerOf: Record<string, string[]> = {};
       for (const d of rows) {
         try {
           const eff = await effectiveOwnerForDocument({
@@ -1412,7 +1415,7 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
             collectionId: (d.collection_id as string | null) ?? null,
             libraryId, orgId: t.orgId,
           });
-          if (eff.userId) owners.add(eff.userId);
+          if (eff.userId) { owners.add(eff.userId); ownerOf[d.id as string] = [eff.userId]; }
         } catch { /* an unresolved owner leaves the followers' notice standing */ }
       }
       const labels = rows.map((d) => labelOf.get(d.id as string) ?? "a document");
@@ -1435,9 +1438,13 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
         // NEDGE-22 (notifications N16): the title and body name up to five of
         // the library's documents. A follower who may not discover every one
         // of THOSE reads the issue without the names (the dispatcher's check,
-        // DEC-106); the owners named above are not filtered.
+        // DEC-106). An owner named above is not checked for their own
+        // document, and is checked for every other one the notice names
+        // (done-when 2, the integrator's ruling under DEC-90): an owner who
+        // may not discover one reads the issue without the names too.
         namesDocuments: {
           ids: rows.slice(0, 5).map((d) => d.id as string),
+          involved: ownerOf,
           unnamed: {
             title: `Transmittal ${t.number} issued to ${to}`,
             body: `${by} issued transmittal ${t.number}${t.purpose ? ` (${t.purpose})` : ""} to ${to}, with documents from a library you follow. ` +

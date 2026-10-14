@@ -22,9 +22,19 @@
 // inserts after it still wait on a stalled session read, like every request
 // the shared client makes — NEDGE-6's residual, pinned end to end below.
 //
-// Also pinned: the staged upload's notice target (lib/libraryNotify
-// firstNoticeTarget) and a transmittal's per-library notices started side by
-// side (lib/transmittals notifyTransmittalIssued).
+// NEDGE-22 done-when 2 (the integrator's ruling under DEC-90, 2026-10-14):
+// someone the producer names (a transmittal's document owner) is spared the
+// check only for the document(s) they are involved with; every other named
+// document is checked for them, with the same three outcomes. A notice naming
+// one document to the person involved with it is unchanged.
+//
+// Also pinned: the named documents of one notice checked side by side, at
+// most NAMED_DOCUMENT_CHECKS_AT_ONCE at a time, with the outcomes asking one
+// at a time gives; notifySuperseded's library notice not held behind the
+// document notice's check; the staged upload's notice target (lib/libraryNotify
+// firstNoticeTarget, and the page's own chunk loop, run); and a transmittal's
+// per-library notices started side by side (lib/transmittals
+// notifyTransmittalIssued).
 //
 // Driven through the REAL dispatcher, recipients and inAppNotifications over
 // the in-memory PostgREST stand-in (helpers/memoryDb), as
@@ -33,6 +43,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import { resetState, type MemoryState } from "./helpers/memoryDb";
 
 const h = vi.hoisted(() => ({
@@ -128,7 +139,7 @@ vi.mock("@/lib/ownership", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => ({ error: null })) }));
 
-import { emit, resolveRecipients, unnamedNotice, redactedNotice, UNNAMED_BODY, type EmitInput } from "@/lib/notify/dispatch";
+import { emit, resolveRecipients, unnamedNotice, redactedNotice, UNNAMED_BODY, NAMED_DOCUMENT_CHECKS_AT_ONCE, type EmitInput } from "@/lib/notify/dispatch";
 import {
   __registerServerDiscoverCheck, controllersAmong, discoveringAmong,
   CONTROLLERS_LOOKUP_MAX_ROWS, CONTROLLERS_LOOKUP_TIMEOUT_MS, DISCOVER_TIMEOUT_MS,
@@ -411,8 +422,11 @@ describe("NEDGE-22 — the three producers name their document to the dispatcher
     expect(bell()).toEqual(["f-admin", "f-dc", "f-hidden", "f-sees"]);
   });
 
-  it("lib/transmittals.ts notifyTransmittalIssued: the library's followers who may not discover a listed document read the issue without the names; the owners and the discovering followers as before", async () => {
-    __registerServerDiscoverCheck(check);
+  it("lib/transmittals.ts notifyTransmittalIssued: the library's followers who may not discover a listed document read the issue without the names; the discovering followers, and an owner who may discover every listed document, as before", async () => {
+    // the owner of doc-2 may discover doc-1 too (the reviewer's case, where they may not, is pinned under "done-when 2" below)
+    __registerServerDiscoverCheck(async (a) => (a.documentId === "doc-1" && a.uids.includes("owner")
+      ? (calls.push({ documentId: a.documentId, uids: [...a.uids] }), { ok: true, discover: a.uids.filter((u) => ["f-sees", "f-admin", "f-dc", "owner"].includes(u)) })
+      : check(a)));
     h.state.tables.documents = [
       { id: "doc-2", org_id: ORG, library_id: "lib-1", collection_id: null, owner_user_id: "owner", owner_name: null },
       { id: "doc-1", org_id: ORG, library_id: "lib-1", collection_id: null, owner_user_id: null, owner_name: null },
@@ -423,7 +437,11 @@ describe("NEDGE-22 — the three producers name their document to the dispatcher
       items: [{ documentId: "doc-2", number: "E-9", rev: "A" }, { documentId: "doc-1", number: "PID-4412", rev: "C" }],
     } as never;
     expect(await notifyTransmittalIssued(t, { orgId: ORG, actorUserId: "actor", actorName: "Dana" } as never)).toBe(1);
-    expect(calls.map((c) => c.documentId)).toEqual(["doc-2", "doc-1"]);
+    // the owner is asked about the OTHER listed document only (done-when 2), in the followers' request
+    expect(calls).toEqual([
+      { documentId: "doc-2", uids: ["f-sees", "f-hidden", "f-admin", "f-dc"] },
+      { documentId: "doc-1", uids: ["f-sees", "f-hidden", "f-admin", "f-dc", "owner"] },
+    ]);
     for (const u of ["owner", "f-sees", "f-admin", "f-dc"]) {
       expect(rowFor(u)[0], u).toMatchObject({ title: "Transmittal TR-0007 issued: 2 documents to Jane Doe, BuildCo", kind: "transmittal_issued" });
     }
@@ -476,6 +494,285 @@ describe("NEDGE-22 — the three producers name their document to the dispatcher
     expect(run).toMatch(/const first = firstNoticeTarget\(resolved, landedIds\);\s*notifyLibrarySubscribers\(landed, first\.label, first\.id\);/);
     // uploadOne answers the new document's id — the value landedIds holds
     expect(page).toContain("return String(newDoc.id);");
+  });
+});
+
+/** Let the started work run up to its next wait (real timers). */
+const settle = async (n = 5) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
+
+describe("NEDGE-22 done-when 2 (the integrator's ruling under DEC-90, 2026-10-14) — someone the producer names is spared the check only for the document(s) they are involved with", () => {
+  // The reviewer's case: a two-document transmittal from lib-1 — doc-2 (E-9) owned by "owner", doc-1
+  // (PID-4412) hidden: only f-sees and the controllers may discover it (`check`).
+  const actor = { orgId: ORG, actorUserId: "actor", actorName: "Dana" } as never;
+  const twoDocs = () => {
+    h.state.tables.documents = [
+      { id: "doc-2", org_id: ORG, library_id: "lib-1", collection_id: null, owner_user_id: "owner", owner_name: null },
+      { id: "doc-1", org_id: ORG, library_id: "lib-1", collection_id: null, owner_user_id: null, owner_name: null },
+    ];
+    return {
+      id: "t1", orgId: ORG, number: "TR-0007", purpose: "For Construction", recipientName: "Jane Doe", recipientCompany: "BuildCo",
+      items: [{ documentId: "doc-2", number: "E-9", rev: "A" }, { documentId: "doc-1", number: "PID-4412", rev: "C" }],
+    } as never;
+  };
+  const FULL = "Transmittal TR-0007 issued: 2 documents to Jane Doe, BuildCo";
+  const UNNAMED = "Transmittal TR-0007 issued to Jane Doe, BuildCo";
+
+  it("reproduced (HEAD told every involved person in full): the owner of ONE document, who also follows the library, read the other document's name — now asked about that document only, and told without the names (one row, one email); everyone else exactly as before", async () => {
+    __registerServerDiscoverCheck(check);
+    h.state.tables.subscriptions.push({ org_id: ORG, user_id: "owner", resource_type: "library", resource_id: "lib-1" });
+    const t = twoDocs();
+    const { notifyTransmittalIssued } = await import("@/lib/transmittals");
+    expect(await notifyTransmittalIssued(t, actor)).toBe(1);
+    // never asked about their own document; asked about the other one in the followers' request
+    expect(calls).toEqual([
+      { documentId: "doc-2", uids: ["f-sees", "f-hidden", "f-admin", "f-dc"] },
+      { documentId: "doc-1", uids: ["f-sees", "f-hidden", "f-admin", "f-dc", "owner"] },
+    ]);
+    expect(rowFor("owner")).toHaveLength(1);
+    expect(rowFor("owner")[0]).toMatchObject({ title: UNNAMED, link: "/transmittals", kind: "transmittal_issued", resource_id: "lib-1", metadata: { redacted: true } });
+    expect(JSON.stringify(rowFor("owner"))).not.toMatch(/PID-4412|E-9/);
+    expect(mailFor("owner")).toHaveLength(1);
+    expect(JSON.stringify(mailFor("owner"))).not.toMatch(/PID-4412|E-9/);
+    for (const u of ["f-sees", "f-admin", "f-dc"]) expect(rowFor(u)[0], u).toMatchObject({ title: FULL });
+    expect(rowFor("f-hidden")[0]).toMatchObject({ title: UNNAMED });
+    expect(rows()).toHaveLength(5); // nobody dropped, nobody told twice
+  });
+
+  it("an owner who does not follow the library is held to the same rule: their own document unchecked, the other checked — told without the names", async () => {
+    __registerServerDiscoverCheck(check);
+    const { notifyTransmittalIssued } = await import("@/lib/transmittals");
+    await notifyTransmittalIssued(twoDocs(), actor);
+    expect(calls.find((c) => c.documentId === "doc-2")?.uids).not.toContain("owner");
+    expect(calls.find((c) => c.documentId === "doc-1")?.uids).toContain("owner");
+    expect(rowFor("owner")).toHaveLength(1);
+    expect(rowFor("owner")[0]).toMatchObject({ title: UNNAMED, metadata: { redacted: true } });
+  });
+
+  it("a check of the other document that FAILS sends the owner the redacted notice (fail safe): never the names, never dropped", async () => {
+    __registerServerDiscoverCheck(async ({ documentId, uids }) => (documentId === "doc-1" ? { ok: false, error: "the discover check answered 503" } : { ok: true, discover: [...uids] }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { notifyTransmittalIssued } = await import("@/lib/transmittals");
+    await notifyTransmittalIssued(twoDocs(), actor);
+    const [row] = rowFor("owner");
+    expect(rowFor("owner")).toHaveLength(1);
+    expect(row).toMatchObject({ link: "/transmittals", metadata: { redacted: true } });
+    expect(String(row.body)).toMatch(/could not be confirmed/);
+    expect(JSON.stringify(row)).not.toMatch(/PID-4412|E-9/);
+    // the controllers are confirmed by the lookup and told in full, as before
+    for (const u of ["f-admin", "f-dc"]) expect(rowFor(u)[0].title, u).toBe(FULL);
+  });
+
+  it("REGRESSION: a one-document transmittal to its owner asks nothing about the owner and tells them in full — exactly as before", async () => {
+    __registerServerDiscoverCheck(check);
+    h.state.tables.subscriptions.push({ org_id: ORG, user_id: "owner", resource_type: "library", resource_id: "lib-1" });
+    h.state.tables.documents = [{ id: "doc-2", org_id: ORG, library_id: "lib-1", collection_id: null, owner_user_id: "owner", owner_name: null }];
+    const { notifyTransmittalIssued } = await import("@/lib/transmittals");
+    const t = { id: "t3", orgId: ORG, number: "TR-0009", purpose: null, recipientName: "Jane Doe", recipientCompany: null, items: [{ documentId: "doc-2", number: "E-9", rev: "A" }] } as never;
+    expect(await notifyTransmittalIssued(t, actor)).toBe(1);
+    expect(calls).toEqual([{ documentId: "doc-2", uids: ["f-sees", "f-hidden", "f-admin", "f-dc"] }]);
+    expect(rowFor("owner")).toHaveLength(1);
+    expect(rowFor("owner")[0]).toMatchObject({ title: "Transmittal TR-0009 issued: E-9 Rev A to Jane Doe", link: "/transmittals" });
+    expect(rowFor("owner")[0].metadata).toEqual({ transmittalId: "t3" });
+    expect(mailFor("owner")).toHaveLength(1);
+  });
+
+  it("through emit(): without an involvement map a notice naming ONE document spares every involved person (unchanged), one naming several checks them for every named document (fail safe); with a map only the mapped document is spared; the actor is never asked", async () => {
+    __registerServerDiscoverCheck(check);
+    // several documents, no map: the owner is asked about both and ruled out by doc-1 → without the names
+    await emit(libEv({ audience: { involved: ["owner", "actor"], followers: true }, namesDocuments: { ids: ["doc-2", "doc-1"] } }));
+    expect(calls).toEqual([
+      { documentId: "doc-2", uids: ["f-sees", "f-hidden", "f-admin", "f-dc", "owner"] },
+      { documentId: "doc-1", uids: ["f-sees", "f-hidden", "f-admin", "f-dc", "owner"] },
+    ]);
+    expect(rowFor("owner")[0]).toMatchObject({ title: "New activity on a library", metadata: { redacted: true } });
+    expect(rowFor("actor")).toEqual([]);
+    // the same with the owner mapped to doc-1: asked about doc-2 only (open to everyone) → in full
+    h.state.tables.notifications = [];
+    calls.length = 0;
+    await emit(libEv({ audience: { involved: ["owner"], followers: true }, namesDocuments: { ids: ["doc-2", "doc-1"], involved: { "doc-1": ["owner"] } } }));
+    expect(calls.map((c) => [c.documentId, c.uids.includes("owner")])).toEqual([["doc-2", true], ["doc-1", false]]);
+    expect(rowFor("owner")[0]).toMatchObject({ title: "PID-4412 → Rev C" });
+    // one document, no map: not asked, in full (the case pinned above under "someone the producer NAMES")
+    h.state.tables.notifications = [];
+    calls.length = 0;
+    await emit(libEv({ audience: { involved: ["owner"], followers: true } }));
+    expect(calls).toEqual([{ documentId: "doc-1", uids: ["f-sees", "f-hidden", "f-admin", "f-dc"] }]);
+    expect(rowFor("owner")[0]).toMatchObject({ title: "PID-4412 → Rev C" });
+  });
+
+  it("the map spares only people the producer named in `involved` — a follower listed in it is still checked", async () => {
+    __registerServerDiscoverCheck(check);
+    await emit(libEv({ namesDocuments: { ids: ["doc-1"], involved: { "doc-1": ["f-hidden"] } } }));
+    expect(calls).toEqual([{ documentId: "doc-1", uids: ["f-sees", "f-hidden", "f-admin", "f-dc"] }]);
+    expect(rowFor("f-hidden")[0]).toMatchObject({ title: "New activity on a library", body: UNNAMED_BODY, metadata: { redacted: true } });
+  });
+});
+
+describe("NEDGE-22 — one notice's named documents are checked side by side, at most five at a time", () => {
+  it(`at most NAMED_DOCUMENT_CHECKS_AT_ONCE (${NAMED_DOCUMENT_CHECKS_AT_ONCE}) checks in flight: seven named documents — the first five start before any answers, the sixth only when one has answered — and the outcomes are the ones asking one at a time gives`, async () => {
+    expect(NAMED_DOCUMENT_CHECKS_AT_ONCE).toBe(5);
+    const ids = ["d1", "d2", "d3", "d4", "d5", "d6", "d7"];
+    const started: string[] = [];
+    const release = new Map<string, () => void>();
+    let inFlight = 0;
+    let peak = 0;
+    const answer = (documentId: string, uids: string[]) => {
+      if (documentId === "d6") return { ok: true as const, discover: uids.filter((u) => u !== "f-hidden") };
+      if (documentId === "d7") return { ok: false as const, error: "timeout" };
+      return { ok: true as const, discover: [...uids] };
+    };
+    __registerServerDiscoverCheck(async ({ documentId, uids }) => {
+      started.push(documentId);
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise<void>((r) => release.set(documentId, r));
+      inFlight -= 1;
+      return answer(documentId, uids);
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const sent = emit(libEv({ namesDocuments: { ids } }));
+    await settle();
+    expect(started).toEqual(["d1", "d2", "d3", "d4", "d5"]);
+    release.get("d3")!();
+    await settle();
+    expect(started).toEqual(["d1", "d2", "d3", "d4", "d5", "d6"]);
+    for (const d of ["d1", "d2", "d4", "d5", "d6"]) release.get(d)!();
+    await settle();
+    expect(started).toEqual(ids);
+    release.get("d7")!();
+    const r = await sent;
+    expect(peak).toBe(5);
+    expect(r.recipients).toBe(4);
+    // the reference: the same answers, asked one at a time
+    const seq: Record<string, string> = {};
+    for (const u of ["f-sees", "f-hidden", "f-admin", "f-dc"]) {
+      const per = ids.map((d) => answer(d, [u]));
+      const keptByAll = per.every((a) => a.ok && a.discover.includes(u));
+      const ruledOut = per.some((a) => a.ok && !a.discover.includes(u));
+      seq[u] = keptByAll ? "full" : ruledOut ? "unnamed" : "redacted";
+    }
+    // the controllers are confirmed by d7's failed check's lookup — told in full
+    seq["f-admin"] = "full";
+    seq["f-dc"] = "full";
+    const got = (u: string) => {
+      const [row] = rowFor(u);
+      if (!(row.metadata as { redacted?: boolean } | null)?.redacted) return "full";
+      return String(row.body).includes("could not be confirmed") ? "redacted" : "unnamed";
+    };
+    for (const u of ["f-sees", "f-hidden", "f-admin", "f-dc"]) expect(got(u), u).toBe(seq[u]);
+    expect(seq).toEqual({ "f-sees": "redacted", "f-hidden": "unnamed", "f-admin": "full", "f-dc": "full" });
+    expect(rows()).toHaveLength(4);
+  });
+});
+
+describe("NEDGE-22 — lib/postPublish.ts notifySuperseded does not hold the library notice behind the document notice", () => {
+  it("the library notice's check is asked, and its rows land, while the document notice's check is still unanswered; both notices are exactly as before", async () => {
+    // the document's own followers (N15's check drops f-hidden from the document notice, as before)
+    h.state.tables.subscriptions.push(...["f-sees", "f-hidden"].map((u) => ({ org_id: ORG, user_id: u, resource_type: "document", resource_id: "doc-1" })));
+    let answerDocument!: () => void;
+    const documentAnswers = new Promise<void>((r) => { answerDocument = r; });
+    const asked: string[] = [];
+    __registerServerDiscoverCheck(async (a) => {
+      const which = a.uids.length === 2 ? "document notice" : "library notice";
+      asked.push(which);
+      if (which === "document notice") await documentAnswers;
+      return check(a);
+    });
+    const { notifySuperseded } = await import("@/lib/postPublish");
+    const sent = notifySuperseded({ orgId: ORG, documentId: "doc-1", libraryId: "lib-1", docLabel: "PID-4412", newRev: "C", actorUserId: "actor", actorName: "Dana" });
+    await settle(10);
+    expect(asked).toEqual(["document notice", "library notice"]); // started in the same order as before
+    const lib = () => rows().filter((x) => x.kind === "library_doc_revised");
+    expect(lib().map((x) => x.user_id).sort()).toEqual(["f-admin", "f-dc", "f-hidden", "f-sees"]); // landed already
+    expect(rows().filter((x) => x.kind === "doc_superseded")).toEqual([]); // still waiting on its check
+    answerDocument();
+    await sent;
+    const doc = rows().filter((x) => x.kind === "doc_superseded");
+    expect(doc.map((x) => x.user_id)).toEqual(["f-sees"]);
+    expect(doc[0]).toMatchObject({ title: "PID-4412 advanced to Rev C", link: "/documents/lib-1?doc=doc-1", resource_type: "document", resource_id: "doc-1" });
+    for (const u of ["f-sees", "f-admin", "f-dc"]) expect(lib().find((x) => x.user_id === u), u).toMatchObject({ title: "PID-4412 → Rev C", link: "/documents/lib-1?doc=doc-1" });
+    expect(lib().find((x) => x.user_id === "f-hidden")).toMatchObject({ title: "New revision in a library you follow", link: "/documents/lib-1" });
+    expect(rows()).toHaveLength(5);
+  });
+
+  it("pinned against the source: both emits are started before either is awaited, the document notice first, and awaited together", () => {
+    const src = readFileSync(join(__dirname, "..", "postPublish.ts"), "utf8");
+    const fn = src.slice(src.indexOf("export async function notifySuperseded"), src.indexOf("export interface PostPublishInput"));
+    expect(fn).toMatch(/const docNotice = emit\(\{[\s\S]*kind: "doc_superseded"[\s\S]*const libraryNotice = emit\(\{[\s\S]*kind: "library_doc_revised"/);
+    expect(fn).toContain("await Promise.allSettled([docNotice, libraryNotice])");
+    expect(fn).not.toMatch(/await emit\(/);
+  });
+});
+
+describe("NEDGE-22 — which document id the library page's staged upload hands the notice (the page's own loop, run)", () => {
+  // The page's chunk loop and notice call, lifted from the source and run (as isP1LibraryPage.test.ts
+  // runs page handlers): from `const failures` to the notice, with uploadOne and the notice stubbed.
+  const PAGE = readFileSync(join(__dirname, "..", "..", "app", "(protected)", "documents", "[libraryId]", "page.tsx"), "utf8");
+  const lifted = (() => {
+    const from = PAGE.indexOf("const failures: Array<{ name: string; reason: string }> = [];", PAGE.indexOf("const handleStagedUpload = async"));
+    const to = PAGE.indexOf("const notes: string[] = [];", from);
+    expect(from).toBeGreaterThan(0);
+    expect(to).toBeGreaterThan(from);
+    const js = ts.transpileModule(
+      `async function run({ resolved, signal, setUploadProgress, uploadOne, firstNoticeTarget, notifyLibrarySubscribers, UPLOAD_CONCURRENCY }) {${PAGE.slice(from, to)}\nreturn { failures, landedIds, landed };\n}`,
+      { compilerOptions: { target: ts.ScriptTarget.ES2020 } },
+    ).outputText;
+    return new Function(`${js}\nreturn run;`)() as (d: Record<string, unknown>) => Promise<{ failures: unknown[]; landedIds: Map<number, string>; landed: number }>;
+  })();
+  const concurrency = Number(/const UPLOAD_CONCURRENCY = (\d+);/.exec(PAGE)?.[1]);
+  const staged = (n: number) => Array.from({ length: n }, (_, i) => ({ docNumber: `P-${101 + i}`, original: `P-${101 + i}.pdf`, item: { file: { name: `P-${101 + i}.pdf` } } }));
+  async function upload(n: number, fails: number[], delays: number[] = []) {
+    const { firstNoticeTarget } = await import("@/lib/libraryNotify");
+    const notices: Array<[number, string, string | null]> = [];
+    const out = await lifted({
+      resolved: staged(n), signal: undefined, setUploadProgress: () => undefined, UPLOAD_CONCURRENCY: concurrency, firstNoticeTarget,
+      notifyLibrarySubscribers: (count: number, label: string, id: string | null) => { notices.push([count, label, id]); },
+      // each file's document id is d-<number>; later files answer FIRST, so a map filled in finishing order would differ
+      uploadOne: async (e: { docNumber: string }) => {
+        const i = Number(e.docNumber.slice(2)) - 101;
+        await new Promise((r) => setTimeout(r, delays[i] ?? (n - i)));
+        if (fails.includes(i)) throw new Error(`refused ${e.docNumber}`);
+        return `d-${e.docNumber}`;
+      },
+    });
+    return { ...out, notices };
+  }
+
+  it("the first file landed: the notice gets ITS id (d-P-101) and label, across chunks and out-of-order finishes", async () => {
+    expect(concurrency).toBe(4);
+    const r = await upload(6, []);
+    expect(r.notices).toEqual([[6, "P-101", "d-P-101"]]);
+    expect([...r.landedIds.entries()]).toEqual([[0, "d-P-101"], [1, "d-P-102"], [2, "d-P-103"], [3, "d-P-104"], [4, "d-P-105"], [5, "d-P-106"]]);
+  });
+
+  it("one file staged and landed: the notice names it with its own id — so the dispatcher checks THAT document, and a follower who may not discover it reads the notice without the name", async () => {
+    const r = await upload(1, []);
+    expect(r.notices).toEqual([[1, "P-101", "d-P-101"]]);
+    __registerServerDiscoverCheck(async ({ documentId, uids }) => { calls.push({ documentId, uids: [...uids] }); return { ok: true, discover: uids.filter((u) => u !== "f-hidden") }; });
+    const { notifyLibraryDocsAdded } = await import("@/lib/libraryNotify");
+    const [count, label, id] = r.notices[0];
+    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib-1", count, firstLabel: label, firstDocumentId: id, actorUserId: "actor", actorName: "Dana" });
+    expect(calls.map((c) => c.documentId)).toEqual(["d-P-101"]);
+    expect(rowFor("f-sees")[0]).toMatchObject({ title: "New document: P-101" });
+    expect(rowFor("f-hidden")[0]).toMatchObject({ title: "New document added" });
+  });
+
+  it("the first file failed and the second landed: no id (the notice names no document), never the second file's", async () => {
+    const r = await upload(2, [0]);
+    expect(r.notices).toEqual([[1, "P-101", null]]);
+    expect(r.failures).toHaveLength(1);
+  });
+
+  it("a file in the second chunk is keyed by its own index (i + j), not its chunk position", async () => {
+    const r = await upload(6, [1, 4]);
+    expect([...r.landedIds.keys()]).toEqual([0, 2, 3, 5]);
+    expect(r.landedIds.get(5)).toBe("d-P-106");
+    expect(r.notices).toEqual([[4, "P-101", "d-P-101"]]);
+  });
+
+  it("nothing landed: no notice", async () => {
+    const r = await upload(2, [0, 1]);
+    expect(r.notices).toEqual([]);
   });
 });
 
@@ -554,14 +851,21 @@ describe("NEDGE-6 remainder — a FAILED check's controllers lookup is bounded",
     }
   });
 
-  it("the browser scenario the integrator named, end to end: the session read stalls while the check runs and EVERY request then waits on it — the check fails at DISCOVER_TIMEOUT_MS, the lookup answers at its own bound with nobody confirmed (logged), and the emit STAYS PENDING on the membership read and the inserts behind the same session (NEDGE-6's residual) until the session answers", async () => {
+  it("NEDGE-6's residual as the browser can produce it — the access token's refresh hangs after the follow list was read: the shared client's session read, which the check and every later request await, stalls; the check fails at DISCOVER_TIMEOUT_MS without sending, the controllers lookup gives up at its own bound (logged), and the bell rows wait on that session read; when the refresh completes every follower, the unconfirmed controllers included, gets exactly one redacted row and one email", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("window", {});
-    let answerSession!: () => void;
-    const session = new Promise<void>((r) => { answerSession = r; });
-    // from the check's session read on, every request through the client waits on the same read
-    (h.client.auth as Record<string, unknown>).getSession = vi.fn(() => { h.gate = session; return session.then(() => ({ data: { session: null } })); });
-    vi.stubGlobal("fetch", vi.fn());
+    // supabase-js: every request awaits auth.getSession() (fetchWithAuth), and every caller of
+    // getSession() waits on the one refresh in flight. The follow list was read with a valid token;
+    // the token then passes its expiry margin and the refresh request hangs (it has no timeout of its
+    // own) — modelled as: from the check's session read on, every request waits on the refresh (h.gate).
+    let completeRefresh!: () => void;
+    const refresh = new Promise<void>((r) => { completeRefresh = r; });
+    (h.client.auth as Record<string, unknown>).getSession = vi.fn(() => {
+      h.gate = refresh;
+      return refresh.then(() => ({ data: { session: { access_token: "tok-refreshed" } } }));
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const lookupGaveUp = () => warn.mock.calls.some((c) => String(c[0]).includes(`the controllers lookup for document doc-1 did not answer within ${CONTROLLERS_LOOKUP_TIMEOUT_MS} ms`));
     try {
@@ -572,12 +876,16 @@ describe("NEDGE-6 remainder — a FAILED check's controllers lookup is bounded",
       await vi.advanceTimersByTimeAsync(CONTROLLERS_LOOKUP_TIMEOUT_MS);
       expect(lookupGaveUp()).toBe(true); // the lookup's own bound held
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(done).toBe(false); // …but the emit is still waiting on the stalled session
+      expect(done).toBe(false); // …but the membership read and the inserts wait on the hung refresh
       expect(rows()).toEqual([]);
-      answerSession();
+      completeRefresh(); // the refresh comes back with a new token: the queued requests go out with it
       const r = await sent;
       expect(r.recipients).toBe(4);
+      expect(bell()).toEqual(["f-admin", "f-dc", "f-hidden", "f-sees"]);
       expect(rows().every((x) => (x.metadata as { redacted?: boolean }).redacted === true)).toBe(true); // the unconfirmed controllers included
+      expect(h.emails).toHaveLength(4);
+      // the timed-out check never sent its request (it gave up before it had a token)
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       h.gate = null;
       (h.client.auth as Record<string, unknown>).getSession = async () => ({ data: { session: null } });
