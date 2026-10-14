@@ -38,8 +38,12 @@ const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "
 export async function POST(req: NextRequest) {
   const raw = await req.text().catch(() => "");
   if (raw.length > DEAD_LETTER_MAX_BODY) return NextResponse.json({ error: "Dead letter too large" }, { status: 413 });
-  let body: { orgId?: unknown; entry?: unknown; error?: unknown };
-  try { body = JSON.parse(raw || "{}"); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw || "{}"); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+  // Fix pass: `null`, an array or a primitive parses too — answered 400, never
+  // a TypeError on `body.orgId` (an unhandled 500).
+  const body = obj(parsed) as { orgId?: unknown; entry?: unknown; error?: unknown } | null;
+  if (!body) return NextResponse.json({ error: "The body must be a JSON object" }, { status: 400 });
 
   const orgId = typeof body.orgId === "string" ? body.orgId : "";
   const actor = await authorizeOrgRole(req, orgId, ALL_ROLES as string[]);
@@ -83,17 +87,20 @@ export async function POST(req: NextRequest) {
     details: obj(entry.details),
     metadata: obj(entry.metadata),
   };
-  const { data, error } = await sb.from("audit_dead_letters").insert({
+  // Fix pass: the outbox id is not returned — the drain writes the recovered
+  // audit row under that id (lib/auditOutboxDrain.ts), so the browser never
+  // learns a key it could pre-empt with an audit row of its own.
+  const { error } = await sb.from("audit_dead_letters").insert({
     org_id: orgId,
     action,
     entry: { row, reporter: { uid: actor.userId, email: actor.email, role: actor.role, roles: actor.roles } },
     error: str(body.error, 2000),
     source: "browser",
     reported_by: actor.userId,
-  }).select("id").single();
+  });
   if (error) {
     const missing = isMissingSchemaError(error);
     return NextResponse.json({ error: missing ? NOT_INSTALLED : `the dead letter was not kept: ${error.message}` }, { status: missing ? 503 : 500 });
   }
-  return NextResponse.json({ ok: true, id: (data as { id?: string } | null)?.id ?? null }, { status: 201 });
+  return NextResponse.json({ ok: true }, { status: 201 });
 }

@@ -62,8 +62,11 @@
 //      P13): audit rows that could not be written (kept by lib/audit.ts
 //      through lib/auditOutbox.ts, 20261219) are drained into the audit log
 //      as AUDIT_DEAD_LETTER machine rows (audit viewers only) and reported in
-//      the run's errors (lib/auditOutboxDrain.ts). Its own budget,
-//      AUDIT_OUTBOX_MS, never past the run's end. A no-op before 20261219.
+//      the run's errors (lib/auditOutboxDrain.ts: each row claimed first and
+//      written under its own id, so overlapping runs never write it twice;
+//      parked after 5 failed attempts and reported; drained rows pruned after
+//      30 days). Its own budget, AUDIT_OUTBOX_MS, never past the run's end. A
+//      no-op before 20261219.
 //   8. (knowledge block) The assistant's write proposals a week past their
 //      15-minute expiry are pruned (ORCH-4; pruneOrchestratorProposals,
 //      lib/orchestrator/proposals.ts; a no-op before 20261147).

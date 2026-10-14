@@ -155,4 +155,27 @@ describe.skipIf(skip !== null)("ALOG-16: node-level authority rows reach only au
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.code).toBe("23514");
   });
+
+  it("EVID-6 fix pass: the drain's claim is a compare-and-set, its write is keyed by the outbox id, and only the service role may prune", () => {
+    const id = randomUUID();
+    const svc = { role: "service_role" } as const;
+    expect(asCaller(db, svc, `INSERT INTO audit_dead_letters (id, org_id, action, entry, source) VALUES ('${id}', '${orgId}', 'VIEW', '{}'::jsonb, 'server')`)).toEqual({ ok: true, rows: 1 });
+    // two runs claiming the same read: the first wins, the second updates nothing
+    const claim = `UPDATE audit_dead_letters SET drain_attempts = 1 WHERE id = '${id}' AND drained_at IS NULL AND drain_attempts = 0`;
+    expect(asCaller(db, svc, claim)).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, svc, claim)).toEqual({ ok: true, rows: 0 });
+    // the recovered row under the outbox id: a second write is refused by the primary key
+    const write = `INSERT INTO audit_logs (id, action, resource_type, resource_id, org_id, user_id, user_email, user_role, details) VALUES ('${id}', 'AUDIT_DEAD_LETTER', 'org', '${orgId}', '${orgId}', NULL, 'system:audit-outbox', 'system', jsonb_build_object('outboxId', '${id}'))`;
+    expect(asCaller(db, svc, write)).toEqual({ ok: true, rows: 1 });
+    const again = asCaller(db, svc, write);
+    expect(again.ok).toBe(false);
+    if (!again.ok) expect(again.code).toBe("23505");
+    expect(admin(db, `SELECT count(*) FROM audit_logs WHERE id = '${id}' AND action = 'AUDIT_DEAD_LETTER' AND details->>'outboxId' = '${id}'`)).toBe("1");
+    // the prune: a signed-in member may not delete; the service role may
+    admin(db, `UPDATE audit_dead_letters SET drained_at = now() - interval '31 days', audit_log_id = '${id}' WHERE id = '${id}'`);
+    const del = asCaller(db, m.docctrl.caller, `DELETE FROM audit_dead_letters WHERE id = '${id}'`);
+    expect(del.ok).toBe(false);
+    if (!del.ok) expect(del.code).toBe("42501");
+    expect(asCaller(db, svc, `DELETE FROM audit_dead_letters WHERE id = '${id}' AND drained_at <= now() - interval '30 days'`)).toEqual({ ok: true, rows: 1 });
+  });
 });

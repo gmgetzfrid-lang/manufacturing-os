@@ -12,7 +12,10 @@
 //     AUDIT_DEAD_LETTER machine row typed org (audit viewers only), stamped
 //     drained; a refused write stays undrained with its attempt and error; a
 //     row already written is only stamped; the run's errors say what was
-//     recovered; nothing before the paste;
+//     recovered; nothing before the paste. Fix pass: claimed by a
+//     compare-and-set before the write (an overlapping run skips it), written
+//     under the outbox id (the primary key is the duplicate check), parked
+//     after AUDIT_OUTBOX_MAX_ATTEMPTS and reported, drained rows pruned;
 //   * app/api/cron/maintenance: ONE step (7d) with its own bounded budget.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -54,7 +57,7 @@ vi.mock("@/lib/serverAuth", async () => {
 
 import { logAuditAction } from "@/lib/audit";
 import { DEAD_LETTER_HOURLY_CAP } from "@/lib/auditOutbox";
-import { drainAuditDeadLetters, AUDIT_OUTBOX_ACTOR, AUDIT_DEAD_LETTER_ACTION } from "@/lib/auditOutboxDrain";
+import { drainAuditDeadLetters, AUDIT_OUTBOX_ACTOR, AUDIT_DEAD_LETTER_ACTION, AUDIT_OUTBOX_MAX_ATTEMPTS, AUDIT_OUTBOX_KEEP_DAYS } from "@/lib/auditOutboxDrain";
 import { POST as deadLetterPOST } from "@/app/api/audit/dead-letter/route";
 import { AUDIT_ACTIONS } from "@/lib/auditActions";
 
@@ -158,6 +161,24 @@ describe("EVID-6 (P13) — /api/audit/dead-letter verifies the caller before it 
     expect((await deadLetterPOST(post({ orgId: ORG, entry: entry() }))).status).toBe(429);
   });
 
+  it("fix pass: a JSON body of null, an array, a number or a string is 400 — never an unhandled TypeError; nothing kept", async () => {
+    s.actor = me;
+    for (const raw of ["null", "[]", "[1,2]", "42", '"text"', "true"]) {
+      const res = await deadLetterPOST(post(null, raw));
+      expect(res.status, raw).toBe(400);
+      expect(((await res.json()) as { error: string }).error, raw).toBe("The body must be a JSON object");
+    }
+    expect((await deadLetterPOST(post(null, "{not json"))).status).toBe(400);
+    expect(db.rows.audit_dead_letters).toEqual([]);
+  });
+
+  it("fix pass: the answer does not carry the outbox id (the drain writes the recovered row under it)", async () => {
+    s.actor = me;
+    const res = await deadLetterPOST(post({ orgId: ORG, entry: entry() }));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
   it("before 20261219 (the table missing) it answers 503 — the caller keeps today's path", async () => {
     s.actor = me;
     db.readError = { audit_dead_letters: 'relation "public.audit_dead_letters" does not exist' };
@@ -180,7 +201,7 @@ describe("EVID-6 (P13) — the drain writes each lost row as an AUDIT_DEAD_LETTE
     db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z"), outbox("o2", "2026-10-14T02:00:00.000Z", { action: "VIEW", source: "server", reported_by: null })];
     const errors: string[] = [];
     const r = await drainAuditDeadLetters(sb, { stopBy: later(), errors });
-    expect(r).toEqual({ drained: 2, failed: 0, orgs: 1 });
+    expect(r).toEqual({ drained: 2, failed: 0, orgs: 1, skipped: 0, parked: 0 });
     const written = db.rows.audit_logs;
     expect(written).toHaveLength(2);
     expect(written[0]).toMatchObject({
@@ -201,35 +222,109 @@ describe("EVID-6 (P13) — the drain writes each lost row as an AUDIT_DEAD_LETTE
     db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z")];
     db.writeError = (table, op) => (table === "audit_logs" && op === "insert" ? { code: "23514", message: "check violation" } : null);
     const errors: string[] = [];
-    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors })).toEqual({ drained: 0, failed: 1, orgs: 0 });
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors })).toEqual({ drained: 0, failed: 1, orgs: 0, skipped: 0, parked: 0 });
     expect(db.rows.audit_dead_letters[0]).toMatchObject({ drained_at: null, drain_attempts: 1, drain_error: "check violation" });
     expect(errors[0]).toMatch(/could not be written to the audit log \(check violation\); it stays in the outbox/);
     db.writeError = null;
-    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] })).toEqual({ drained: 1, failed: 0, orgs: 1 });
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] })).toEqual({ drained: 1, failed: 0, orgs: 1, skipped: 0, parked: 0 });
+    expect(db.rows.audit_dead_letters[0]).toMatchObject({ drain_attempts: 2, drain_error: null });
   });
 
-  it("a row already written (its drained stamp refused last run) is stamped, never written twice", async () => {
+  it("a row already written (its drained stamp refused last run): the keyed write is refused by the primary key and the row is only stamped, never written twice", async () => {
     db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z")];
-    db.rows.audit_logs = [{ id: "a-prior", org_id: ORG, action: AUDIT_DEAD_LETTER_ACTION, resource_type: "org", resource_id: ORG, user_id: null, details: { outboxId: "o1" } }];
-    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] })).toEqual({ drained: 1, failed: 0, orgs: 1 });
+    db.rows.audit_logs = [{ id: "o1", org_id: ORG, action: AUDIT_DEAD_LETTER_ACTION, resource_type: "org", resource_id: ORG, user_id: null, details: { outboxId: "o1" } }];
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] })).toEqual({ drained: 1, failed: 0, orgs: 1, skipped: 0, parked: 0 });
     expect(db.rows.audit_logs).toHaveLength(1);
-    expect(db.rows.audit_dead_letters[0].audit_log_id).toBe("a-prior");
+    expect(db.rows.audit_dead_letters[0]).toMatchObject({ audit_log_id: "o1", drained_at: expect.any(String) });
+  });
+
+  it("fix pass: the recovered row is written under the outbox id (the primary key is the duplicate check — no scan of the audit log)", async () => {
+    db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z")];
+    await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] });
+    expect(db.rows.audit_logs.map((r) => r.id)).toEqual(["o1"]);
+    expect(db.rows.audit_dead_letters[0].audit_log_id).toBe("o1");
+  });
+
+  it("fix pass: an id held by a row that is NOT this outbox row's recovery is never taken for it — the row is written under a fresh id", async () => {
+    db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z")];
+    db.rows.audit_logs = [{ id: "o1", org_id: ORG, action: "VIEW", resource_type: "document", resource_id: "d1", user_id: UID, details: {} }];
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] })).toMatchObject({ drained: 1, failed: 0 });
+    expect(db.rows.audit_logs).toHaveLength(2);
+    const recovered = db.rows.audit_logs.find((r) => r.action === AUDIT_DEAD_LETTER_ACTION)!;
+    expect(recovered.id).not.toBe("o1");
+    expect(db.rows.audit_dead_letters[0].audit_log_id).toBe(recovered.id);
+  });
+
+  it("fix pass: a row another run claimed after this run read it (an overlapping manual run) is skipped — nothing written by this run", async () => {
+    db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z")];
+    let raced = false;
+    const racing = { from: (t: string) => {
+      const b = memFrom(t) as Record<string, unknown>;
+      if (t === "audit_dead_letters") {
+        const update = b.update as (p: Row) => unknown;
+        b.update = (p: Row) => {
+          // the other run's claim lands between this run's read and its claim
+          if ("drain_attempts" in p && !raced) { raced = true; db.rows.audit_dead_letters[0].drain_attempts = 1; }
+          return update(p);
+        };
+      }
+      return b;
+    } } as unknown as Parameters<typeof drainAuditDeadLetters>[0];
+    expect(await drainAuditDeadLetters(racing, { stopBy: later(), errors: [] })).toEqual({ drained: 0, failed: 0, orgs: 0, skipped: 1, parked: 0 });
+    expect(db.rows.audit_logs).toEqual([]);
+    expect(db.rows.audit_dead_letters[0]).toMatchObject({ drain_attempts: 1, drained_at: null });
+  });
+
+  it(`fix pass: a row that keeps failing is parked after ${AUDIT_OUTBOX_MAX_ATTEMPTS} attempts — no longer read ahead of newer rows, and reported every run`, async () => {
+    db.rows.audit_dead_letters = [
+      outbox("o-bad", "2026-10-01T01:00:00.000Z", { drain_attempts: AUDIT_OUTBOX_MAX_ATTEMPTS - 1 }),
+      outbox("o-new", "2026-10-14T01:00:00.000Z"),
+    ];
+    db.writeError = (table, op, rows) => (table === "audit_logs" && op === "insert" && (rows[0]?.details as Row | undefined)?.outboxId === "o-bad" ? { code: "23514", message: "check violation" } : null);
+    const errors: string[] = [];
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors })).toEqual({ drained: 1, failed: 1, orgs: 1, skipped: 0, parked: 1 });
+    expect(errors.some((e) => /could not be written to the audit log \(check violation\); it stays in the outbox and, after 5 attempts, is no longer retried/.test(e))).toBe(true);
+    expect(errors.some((e) => /^audit-outbox: 1 audit row\(s\) in the outbox failed 5 times and are no longer retried/.test(e))).toBe(true);
+    // the next run does not read it (no attempt, no write), and still says it
+    const again: string[] = [];
+    const attemptsBefore = db.attempts.filter((a) => a.table === "audit_logs").length;
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors: again })).toEqual({ drained: 0, failed: 0, orgs: 0, skipped: 0, parked: 1 });
+    expect(db.attempts.filter((a) => a.table === "audit_logs").length).toBe(attemptsBefore);
+    expect(db.rows.audit_dead_letters.find((o) => o.id === "o-bad")).toMatchObject({ drain_attempts: AUDIT_OUTBOX_MAX_ATTEMPTS, drained_at: null, drain_error: "check violation" });
+    expect(again).toEqual([expect.stringMatching(/failed 5 times and are no longer retried/)]);
+  });
+
+  it(`fix pass: drained rows ${AUDIT_OUTBOX_KEEP_DAYS} days old are pruned; younger drained rows and undrained rows are kept`, async () => {
+    const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+    db.rows.audit_dead_letters = [
+      outbox("o-old", "2026-08-01T01:00:00.000Z", { drained_at: daysAgo(AUDIT_OUTBOX_KEEP_DAYS + 1), audit_log_id: "o-old" }),
+      outbox("o-recent", "2026-10-01T01:00:00.000Z", { drained_at: daysAgo(2), audit_log_id: "o-recent" }),
+      outbox("o-parked", "2026-08-01T01:00:00.000Z", { drain_attempts: AUDIT_OUTBOX_MAX_ATTEMPTS }),
+    ];
+    await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] });
+    expect(db.rows.audit_dead_letters.map((o) => o.id).sort()).toEqual(["o-parked", "o-recent"]);
+    // a refused prune is said, never thrown
+    db.writeError = (table, op) => (table === "audit_dead_letters" && op === "delete" ? { code: "42501", message: "permission denied for table audit_dead_letters" } : null);
+    const errors: string[] = [];
+    await drainAuditDeadLetters(sb, { stopBy: later(), errors });
+    expect(errors.some((e) => /could not be pruned \(permission denied/.test(e))).toBe(true);
   });
 
   it("drained rows are not read again; a past deadline drains nothing; before 20261219 nothing is done and nothing said", async () => {
     db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z", { drained_at: "2026-10-14T03:00:00.000Z" })];
     const errors: string[] = [];
-    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors })).toEqual({ drained: 0, failed: 0, orgs: 0 });
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors })).toEqual({ drained: 0, failed: 0, orgs: 0, skipped: 0, parked: 0 });
     db.rows.audit_dead_letters = [outbox("o2", "2026-10-14T01:00:00.000Z")];
-    expect(await drainAuditDeadLetters(sb, { stopBy: Date.now() - 1, errors })).toEqual({ drained: 0, failed: 0, orgs: 0 });
+    expect(await drainAuditDeadLetters(sb, { stopBy: Date.now() - 1, errors })).toEqual({ drained: 0, failed: 0, orgs: 0, skipped: 0, parked: 0 });
     db.readError = { audit_dead_letters: 'relation "public.audit_dead_letters" does not exist' };
-    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors })).toEqual({ drained: 0, failed: 0, orgs: 0 });
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors })).toEqual({ drained: 0, failed: 0, orgs: 0, skipped: 0, parked: 0 });
+    expect(await drainAuditDeadLetters(sb, { stopBy: Date.now() - 1, errors })).toEqual({ drained: 0, failed: 0, orgs: 0, skipped: 0, parked: 0 });
     expect(errors).toEqual([]);
   });
 
   it("pages past a full page (keyset on reported_at, id)", async () => {
     db.rows.audit_dead_letters = Array.from({ length: 120 }, (_, i) => outbox(`o${String(i).padStart(3, "0")}`, "2026-10-14T01:00:00.000Z"));
-    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] })).toEqual({ drained: 120, failed: 0, orgs: 1 });
+    expect(await drainAuditDeadLetters(sb, { stopBy: later(), errors: [] })).toEqual({ drained: 120, failed: 0, orgs: 1, skipped: 0, parked: 0 });
     expect(db.rows.audit_logs).toHaveLength(120);
   });
 });

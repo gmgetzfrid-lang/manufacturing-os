@@ -128,7 +128,9 @@ describe("EVID-6 — the audit dead-letter outbox table", () => {
     expect(c).toContain("ALTER TABLE public.audit_dead_letters ENABLE ROW LEVEL SECURITY;");
     expect(c).not.toMatch(/CREATE POLICY\s+\w+\s+ON\s+(public\.)?audit_dead_letters/i);
     expect(c).toContain("REVOKE ALL ON public.audit_dead_letters FROM PUBLIC, anon, authenticated;");
-    expect(c).toContain("GRANT SELECT, INSERT, UPDATE ON public.audit_dead_letters TO service_role;");
+    // fix pass: DELETE too — the drain prunes rows drained 30 days ago
+    expect(c).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON public.audit_dead_letters TO service_role;");
+    expect(c).toContain("has_table_privilege('service_role', 'public.audit_dead_letters', 'DELETE')");
     // no foreign key: the restore / FK census needs no new edge
     expect(t).not.toMatch(/REFERENCES/i);
   });
@@ -161,9 +163,10 @@ describe("DEC-30 — one paste, counts-only inventory first, one result set", ()
     expect(tail).toContain("public.audit_row_node_manageable('library', 'not-a-uuid') IS FALSE");
   });
 
-  it("the header states the paste order: after 20261142, before the P13 deploy, and AGAIN after a later 20261157 paste", () => {
+  it("the header states the paste order: after 20261142, before the P13 deploy as a HARD gate, and AGAIN after a later 20261157 paste in the same window", () => {
     expect(M).toMatch(/AFTER 20261142 \(the file stops otherwise\)/);
-    expect(M).toMatch(/BEFORE the admin-and-org P13 deploy/);
-    expect(M).toMatch(/PASTE THIS FILE AGAIN right\s*\n--\s+after 20261157/);
+    expect(M).toMatch(/BEFORE the admin-and-org P13 deploy — a HARD GATE, not a\s*\n--\s+recommendation/);
+    expect(M).not.toMatch(/\(recommended/);
+    expect(M).toMatch(/PASTE THIS FILE AGAIN right\s*\n--\s+after 20261157, IN THE SAME SQL-EDITOR WINDOW/);
   });
 });

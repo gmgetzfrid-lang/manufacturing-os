@@ -73,15 +73,21 @@
 --      (the verified caller), when, and the drain's state (attempts, last
 --      error, drained_at, the audit_logs row it became). RLS ON with NO
 --      policy, and nothing granted to anon / authenticated: only the service
---      role reads or writes it (the route and the cron).
+--      role reads or writes it (the route and the cron) — SELECT, INSERT,
+--      UPDATE, and DELETE for the drain's prune of drained rows.
 --      The drain (app/api/cron/maintenance/route.ts, one step with its own
---      budget) writes each row into audit_logs as an AUDIT_DEAD_LETTER
---      MACHINE row (user_id NULL, resource_type 'org' — inside the overlay's
---      org-level set, so audit viewers only) carrying the lost row and the
---      verified reporter in details, and reports what it drained in the run's
---      errors. It never re-inserts the lost action itself: a refusal the
---      database meant (a forged consent row, a signed-in INTAKE_ action)
---      cannot be laundered through the service role into the real action.
+--      budget) claims each row (a compare-and-set on drain_attempts, so an
+--      overlapping run skips it), writes it into audit_logs as an
+--      AUDIT_DEAD_LETTER MACHINE row UNDER THE OUTBOX ROW'S OWN ID (the
+--      primary key makes a second write impossible; user_id NULL,
+--      resource_type 'org' — inside the overlay's org-level set, so audit
+--      viewers only) carrying the lost row and the verified reporter in
+--      details, and reports what it drained in the run's errors; a row that
+--      fails 5 times is parked (no longer read, reported every run), and rows
+--      drained 30 days ago are pruned. It never re-inserts the lost action
+--      itself: a refusal the database meant (a forged consent row, a
+--      signed-in INTAKE_ action) cannot be laundered through the service role
+--      into the real action. No index on audit_logs is added.
 --
 -- WHAT DOES NOT CHANGE: who may insert audit rows (audit_logs_insert and
 -- 20261163's restrictive INSERT rule untouched), the permissive member read
@@ -89,9 +95,9 @@
 -- other table.
 --
 -- APP BEFORE AND AFTER THE PASTE:
---   Part 1 needs no app change; /activity's stated rule says the narrowed
---   rule (deploy after the paste so the sentence is true from the deploy;
---   deployed first, the sentence is ahead of the database until the paste).
+--   Part 1 needs no app change, but the P13 app's /activity states the
+--   narrowed rule, so that app is deployed only AFTER this paste (the deploy
+--   gate below) — the page never says more than the database enforces.
 --   Part 2: before the paste the dead-letter route answers 503 (42P01 /
 --   PGRST205, "the outbox is not installed") and logAuditAction keeps today's
 --   path (the refusal returned and logged); the drain step finds no table and
@@ -99,12 +105,18 @@
 --
 -- PASTE AND DEPLOY ORDER:
 --   * AFTER 20261142 (the file stops otherwise).
---   * BEFORE the admin-and-org P13 deploy (recommended: /activity's sentence
---     is then true from the deploy); either order is safe for everything else.
+--   * BEFORE the admin-and-org P13 deploy — a HARD GATE, not a
+--     recommendation: deploy the app carrying admin-and-org P13 only once
+--     20261142 and then this file are pasted (expect ok = true on every
+--     probe). That app's /activity states that node-level permission,
+--     ownership and recertification rows are restricted; deployed first, it
+--     would state a confidentiality rule the database does not yet enforce.
 --   * 20261157 is HOLD: when it is pasted LATER, it re-creates the overlay
---     from 20261142's body without this clause — PASTE THIS FILE AGAIN right
---     after 20261157 (re-runnable; it then takes 20261157's body). The same
---     for any later re-paste of 20261142 or 20261157.
+--     from 20261142's body without this clause, re-opening those rows to
+--     every member — PASTE THIS FILE AGAIN right
+--     after 20261157, IN THE SAME SQL-EDITOR WINDOW (re-runnable; it then
+--     takes 20261157's body). The same for any later re-paste of 20261142 or
+--     20261157.
 --
 -- ROLLBACK:
 --   Part 1 — re-paste the overlay's previous definition (20261157 §7 when
@@ -299,10 +311,10 @@ ALTER TABLE public.audit_dead_letters ENABLE ROW LEVEL SECURITY;
 -- No policy: the service role (the dead-letter route, the maintenance cron)
 -- is the only reader and writer.
 REVOKE ALL ON public.audit_dead_letters FROM PUBLIC, anon, authenticated;
-GRANT SELECT, INSERT, UPDATE ON public.audit_dead_letters TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.audit_dead_letters TO service_role;
 
 COMMENT ON TABLE public.audit_dead_letters IS
-  'EVID-6 (20261219): audit rows that could not be written — the workspace, the action, the row as its writer sent it (entry; never trusted as identity), the refusal, its source (browser via /api/audit/dead-letter, which verifies the caller; or server), the verified reporter, and the drain''s state. Service role only (RLS on, no policy). The maintenance cron drains each row into audit_logs as an AUDIT_DEAD_LETTER machine row typed org (audit viewers only) and reports it; it never re-inserts the lost action itself.';
+  'EVID-6 (20261219): audit rows that could not be written — the workspace, the action, the row as its writer sent it (entry; never trusted as identity), the refusal, its source (browser via /api/audit/dead-letter, which verifies the caller; or server), the verified reporter, and the drain''s state. Service role only (RLS on, no policy). The maintenance cron claims each row (compare-and-set on drain_attempts) and drains it into audit_logs as an AUDIT_DEAD_LETTER machine row typed org (audit viewers only) under this row''s id, and reports it; it never re-inserts the lost action itself. Parked after 5 failed attempts; pruned 30 days after it is drained.';
 
 COMMIT;
 
@@ -358,15 +370,17 @@ SELECT 'self-test: the function answers false for a non-UUID id and for a type o
        AND public.audit_row_node_manageable(NULL, NULL) IS FALSE,
        NULL::text
 UNION ALL
-SELECT 'EVID-6: audit_dead_letters exists with RLS on and no policy; anon and authenticated hold no privilege on it; the service role may select, insert and update',
+SELECT 'EVID-6: audit_dead_letters exists with RLS on and no policy; anon and authenticated hold no privilege on it; the service role may select, insert, update and delete (the prune)',
        to_regclass('public.audit_dead_letters') IS NOT NULL
        AND (SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.audit_dead_letters'))
        AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'audit_dead_letters')
        AND NOT has_table_privilege('anon', 'public.audit_dead_letters', 'SELECT')
        AND NOT has_table_privilege('authenticated', 'public.audit_dead_letters', 'SELECT')
        AND NOT has_table_privilege('authenticated', 'public.audit_dead_letters', 'INSERT')
+       AND NOT has_table_privilege('authenticated', 'public.audit_dead_letters', 'DELETE')
        AND has_table_privilege('service_role', 'public.audit_dead_letters', 'INSERT')
-       AND has_table_privilege('service_role', 'public.audit_dead_letters', 'UPDATE'),
+       AND has_table_privilege('service_role', 'public.audit_dead_letters', 'UPDATE')
+       AND has_table_privilege('service_role', 'public.audit_dead_letters', 'DELETE'),
        NULL::text
 UNION ALL
 SELECT 'EVID-6: the outbox keeps the drain''s state (drained_at, drain_attempts, drain_error, audit_log_id) and its source is browser or server only',

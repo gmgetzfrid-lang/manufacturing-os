@@ -24,7 +24,12 @@
 // document are readable only by Audit log holders and by those who may
 // manage that node (audit_row_node_manageable: its controllers, its effective
 // owner, a Manage Permissions / admin grant on it); every member reads the
-// rest of the document-level history. Project scoping (SEC-20 / SEC-21: a project's rows only to those who
+// rest of the document-level history. Stated from the deploy because the
+// P13 deploy is HARD-GATED on the paste (20261142, then 20261219, pasted
+// before this app is deployed — 20261219's header and MIGRATION-PASTE-ORDER),
+// and a later 20261157 paste is followed by a 20261219 re-paste in the same
+// SQL-editor window, so the sentence never runs ahead of the database (this
+// header's "only what the database enforces" rule). Project scoping (SEC-20 / SEC-21: a project's rows only to those who
 // can see it) lives in 20261142 and 20261157, neither confirmed pasted when
 // P7 landed, so the page neither claims nor denies it; add it to the stated
 // rule once MIGRATION-PASTE-ORDER.md marks both live. The DATABASE applies the rule
