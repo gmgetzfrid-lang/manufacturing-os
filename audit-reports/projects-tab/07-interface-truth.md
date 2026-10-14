@@ -816,7 +816,7 @@ Tests — new `lib/__tests__/ux16EvidenceSweepOnArrival.test.ts`: "accepting an 
 *Numbered UX-17 on this branch (opened by projects-joint J19 PROJECTS REMAINDERS, 2026-10-13, from intelligence `AREA-2`'s fix-pass-3 residual, which handed the panel to projects with no finding, per `DEC-31`). If the number collides at merge the integrator renumbers.*
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint, the owner of `components/projects/**`. Proposed by projects-joint J19 PROJECTS REMAINDERS, 2026-10-13 (DEC-31). It runs after projects J17, which is editing `components/projects/**` now. The integrator names the package at the J19 merge.
 - **Assigned:** projects-joint J20 INTAKE DOOR UNDER RLS AND PROJECT REMAINDERS (TransitionInPanel shows `equipmentNote`) — by the integrator, 2026-10-13 (at the J19 merge, DEC-31; fleet plan `projects-joint.json`).
 - **Verification:** READ (base `49cd27e`; the lib half is pinned by `lib/__tests__/transitionIn.test.ts`; the panel was read, not rendered)
@@ -837,6 +837,17 @@ Tests — new `lib/__tests__/ux16EvidenceSweepOnArrival.test.ts`: "accepting an 
 - A single adopt whose result carries `equipmentNote` shows it.
 - A bulk adopt names the sheets whose equipment links need attention, apart from the unkeyed list.
 - A rendered test covers both, and a result without the note renders exactly as today.
+
+**Resolution (2026-10-14, projects Round G).** Package projects-joint J20 INTAKE DOOR UNDER RLS AND PROJECT REMAINDERS. Reproduced on base `700f1fc` first: `components/projects/TransitionInPanel.tsx` `adoptOne` set only `res.note ?? "<label> adopted into the controlled register."` and `adoptAllClean` counted `res.note` alone; neither read `equipmentNote` (`lib/transitionIn.ts:601`, `linkAdoptedEquipment` `:618`). The rendered cases below fail against the base panel (4 of 6).
+- `components/projects/TransitionInPanel.tsx`: a second status line, `equipMsg` (`data-testid="transition-equipment-note"`, `role="status"`, inside the same `aria-live` region, under the adopt sentence). A single adopt sets it to the result's `equipmentNote` exactly as the lib words it (refused link write, unreadable sweep check, or "… is still the equipment sweep's reading, not your link — Link it from the equipment registry …"). A bulk adopt collects the labels whose result carries one and says them in their own line: "N adopted sheet(s)' equipment links need attention — they were not recorded, or are still the equipment sweep's reading rather than your link. Open each sheet's tags in the equipment registry and Link them: <labels>." — never folded into the unkeyed count, which keeps its sentence. Every new adopt (or "pick the library first") clears the line. A result without the note renders exactly as before: one status line, the same text.
+- Tests: `lib/__tests__/prjRoundGJ20TransitionEquipmentNote.test.ts` (6, rendered with the real panel helpers): a single adopt with the note shows it after the adopt sentence; with a uniqueness note and an equipment note, both, the uniqueness note first as before; a bulk adopt names the sheet whose equipment links need attention apart from the unkeyed list (which names only its own sheet); the next action clears the line; two regressions — a single and a bulk adopt without the note render exactly as before.
+
+**Done-when.**
+- ✓ A single adopt whose result carries `equipmentNote` shows it.
+- ✓ A bulk adopt names the sheets whose equipment links need attention, apart from the unkeyed list.
+- ✓ A rendered test covers both, and a result without the note renders exactly as today.
+
+**Scope / residual.** None. `lib/transitionIn.ts` (the note's wording and when it is set) is unchanged.
 
 ---
 
@@ -860,4 +871,4 @@ Tests — new `lib/__tests__/ux16EvidenceSweepOnArrival.test.ts`: "accepting an 
 | UX-14 | MEDIUM | RESOLVED |
 | UX-15 | MEDIUM | OPEN |
 | UX-16 | MEDIUM | RESOLVED |
-| UX-17 | LOW | OPEN |
+| UX-17 | LOW | RESOLVED |
