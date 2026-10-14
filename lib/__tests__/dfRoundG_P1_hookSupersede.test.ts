@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
 //
 // Drafting-flow Round G, DF-P1 RAILS fix pass — EVID-13: the badge hook
-// (hooks/useTicketNotifications.ts) retires a stale workflow alert the route
-// never superseded (a ticket the shed archived, a status reached by a path
-// that does not fan out) with metadata.superseded_at, in the recipient's own
-// session on their own unread row. It never stamps read_at (the recipient's
-// own act), and it marks nothing when the ticket read fails (a failed read
-// proves nothing about the ticket's status).
+// (hooks/useTicketNotifications.ts) leaves out a stale workflow alert the
+// route never superseded (a ticket the shed archived, a status reached by a
+// path that does not fan out), and has it retired with metadata.superseded_at.
+// It never stamps read_at (the recipient's own act), and it marks and leaves
+// out nothing when the ticket read fails (a failed read proves nothing about
+// the ticket's status).
+//
+// notifications Round G, N4 — NEDGE-18: the mark is no longer written from
+// the browser (since 20261161 a recipient may change only read_at, so it was
+// refused). The hook sends the stale rows' ids to the reconcile route
+// (lib/notificationReconcile.ts requestReconcile), which re-checks each on the
+// server and writes the mark there (lib/__tests__/notificationReconcile.test.ts).
+// What the feed shows is unchanged.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -18,6 +25,7 @@ const fixture = vi.hoisted(() => ({
   ticketsError: null as null | { message: string },
   updates: [] as Array<{ table: string; values: Record<string, unknown>; filters: Array<[string, string, unknown]> }>,
   role: { roles: ["Requester"], activeOrgId: "o1", uid: "u1", membershipState: "member" },
+  reconciled: [] as string[][],
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -57,6 +65,11 @@ vi.mock("@/lib/inAppNotifications", async (importOriginal) => ({
   markAllRead: async () => {},
 }));
 
+vi.mock("@/lib/notificationReconcile", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  requestReconcile: async (_orgId: string, ids: string[]) => { fixture.reconciled.push(ids); return { retired: [], kept: ids.length, failed: 0 }; },
+}));
+
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -83,35 +96,33 @@ beforeEach(() => {
   seen.length = 0;
   fixture.updates = [];
   fixture.ticketsError = null;
+  fixture.reconciled = [];
 });
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
 });
 
-describe("EVID-13 — the badge hook retires stale workflow alerts with the marker", () => {
-  it("a stale alert (ticket moved on, or no longer live) is marked superseded on the recipient's own unread row and left out; a live one is untouched", async () => {
+describe("EVID-13 / NEDGE-18 — the badge hook leaves stale workflow alerts out and has the server mark them", () => {
+  it("a stale alert (ticket moved on, or no longer live) is left out and sent to the server; a live one is kept and not sent; the browser writes nothing", async () => {
     fixture.rows = [alert("n-live", "t-live", "DRAFTING"), alert("n-moved", "t-moved", "DRAFTING"), alert("n-gone", "t-gone", "PENDING_REVIEW")];
     fixture.tickets = [{ id: "t-live", status: "DRAFTING" }, { id: "t-moved", status: "PENDING_REVIEW" }];
     await act(async () => { root.render(React.createElement(Probe)); });
     await flush();
-    const marks = fixture.updates.filter((u) => u.table === "notifications");
-    expect(marks.map((u) => u.filters.find(([op, k]) => op === "eq" && k === "id")?.[2]).sort()).toEqual(["n-gone", "n-moved"]);
-    for (const m of marks) {
-      expect(m.values).not.toHaveProperty("read_at");
-      expect(m.values.metadata).toMatchObject({ action: "assign", extra: "kept" });
-      expect(typeof (m.values.metadata as Record<string, unknown>).superseded_at).toBe("string");
-      expect(m.filters).toEqual(expect.arrayContaining([["eq", "user_id", "u1"], ["is", "read_at", null]]));
-    }
-    expect(fixture.updates.filter((u) => u.table !== "notifications")).toEqual([]);
+    expect(fixture.reconciled).toEqual([["n-moved", "n-gone"]]);
+    expect(seen[seen.length - 1].items.filter((i) => i.source === "notification").map((i) => i.notificationId)).toEqual(["n-live"]);
+    // NEDGE-18 done-when 1 / 3: no browser UPDATE of notifications at all
+    expect(fixture.updates).toEqual([]);
   });
 
-  it("a ticket read that fails marks nothing (and leaves nothing out)", async () => {
+  it("a ticket read that fails leaves nothing out and sends nothing", async () => {
     fixture.rows = [alert("n-moved", "t-moved", "DRAFTING")];
     fixture.tickets = [];
     fixture.ticketsError = { message: "connection reset" };
     await act(async () => { root.render(React.createElement(Probe)); });
     await flush();
     expect(fixture.updates).toEqual([]);
+    expect(fixture.reconciled).toEqual([]);
+    expect(seen[seen.length - 1].items.filter((i) => i.source === "notification").map((i) => i.notificationId)).toEqual(["n-moved"]);
   });
 });

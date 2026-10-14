@@ -814,6 +814,8 @@ Note `lib/globalSearch.ts:79` sends an asset hit to
 
 **Verdict: BUILD** · Effort: **M** · Depends on: `GAP-304`, `GAP-311`
 
+*Assigned: drafting-flow DF-P6 REVIEW-MODEL (with `WIRE-7` criterion 1; 99-fix-sequencing Phase 5 ships it with `GAP-110` / `GAP-111` on the same form) — by the integrator, 2026-10-13 (I-01B merge, DEC-31; fleet plan `audit-reports/fleet-plans/drafting-flow.json`). Prerequisites `GAP-304` and `GAP-311` are built (I-11).*
+
 > **Why he did not ask:** he was auditing the Intelligence tab, so he inspected
 > the Intelligence tab. The request form is Document Control furniture he built
 > early and stopped seeing.

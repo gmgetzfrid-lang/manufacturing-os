@@ -26,7 +26,10 @@ import {
   REDACT_COLUMNS,
   EXPORT_KEYED_BY,
   EXPORT_ORDER_KEYS,
+  EXPORT_OMITTED_COLUMNS,
   exportOrderKey,
+  exportSelectFor,
+  omitExportColumns,
   redactRow,
 } from "@/lib/exportTables";
 import { RESTORE_TABLE_ORDER, CONFLICT_TARGETS, planRestore, isBearerColumn, ORG_LESS_RESTORE_PARENTS } from "@/lib/dataRestore";
@@ -298,5 +301,90 @@ describe("export paging order tripwire (ILIFE-6): every exported table pages by 
     expect(exportOrderKey("documents")).toEqual(["id"]);
     expect(exportOrderKey("curated_collection_items")).toEqual(["collection_id", "document_id"]);
     expect(exportOrderKey("notification_preferences")).toEqual(["user_id"]);
+  });
+});
+
+// intelligence ILIFE-11: a table the export reads by an explicit column list
+// (to leave a derived column out) is a DECLARED exception, never a silent
+// one. The list must be exactly the table's columns in the census less the
+// omitted ones: a column a later migration adds fails here until it is
+// listed, so the explicit list can never drop a column nobody decided on.
+describe("export column-list exception (ILIFE-11): an omitted column is declared, and the list is every other column", () => {
+  const census = censusSchema();
+  const exported = [...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES] as readonly string[];
+
+  it("knowledge_chunks is exported WITHOUT its embedding, for a written reason that says what a restore leaves", () => {
+    expect(Object.keys(EXPORT_OMITTED_COLUMNS)).toEqual(["knowledge_chunks"]);
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.omit).toEqual(["embedding"]);
+    expect(census.get("knowledge_chunks")?.columns.has("embedding")).toBe(true); // 20260930_semantic_layer.sql
+    // The meaning index does not rebuild by itself after a restore (the
+    // embed drain spends only on a stamped consent): the reason says that a
+    // person must start a Build on their own key, and promises no drain.
+    const reason = EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason;
+    expect(reason).toMatch(/keyword search works at once/);
+    expect(reason).toMatch(/meaning-index Build on each library/);
+    expect(reason).toMatch(/own embedding key/);
+    expect(reason).toMatch(/Nothing re-embeds them automatically/);
+    expect(reason).not.toMatch(/drain/);
+  });
+
+  it("every entry names an exported table; each omitted column is real; the select list is exactly the census columns less the omitted ones", () => {
+    for (const [table, o] of Object.entries(EXPORT_OMITTED_COLUMNS)) {
+      expect(exported.includes(table), `${table} is not exported`).toBe(true);
+      const cols = census.get(table)?.columns ?? new Set<string>();
+      for (const c of o.omit) expect(cols.has(c), `${table}.${c} is not a column`).toBe(true);
+      expect(new Set(o.select).size, `${table}: duplicate in select`).toBe(o.select.length);
+      expect(o.select.filter((c) => o.omit.includes(c)), `${table}: an omitted column is selected`).toEqual([]);
+      const expected = [...cols].filter((c) => !o.omit.includes(c)).sort();
+      expect([...o.select].sort(), `${table}: the explicit column list must be every column but the omitted ones (a new column? list it)`).toEqual(expected);
+      for (const k of exportOrderKey(table)) expect(o.select, `${table}: the paging key ${k} must be read`).toContain(k);
+      for (const c of Object.keys(o.reset)) {
+        expect(o.select, `${table}.${c}: a reset column must be one the export reads`).toContain(c);
+        expect(o.omit.includes(c), `${table}.${c}: a reset column is not an omitted one`).toBe(false);
+      }
+      if (Object.keys(o.reset).length > 0) expect(o.resetWhenAny.length, `${table}: a reset needs the columns that say the row carried the omitted value`).toBeGreaterThan(0);
+      for (const c of o.resetWhenAny) expect(cols.has(c), `${table}.${c} (resetWhenAny) is not a column`).toBe(true);
+      expect(o.reason.length, `${table}: write the reason`).toBeGreaterThan(20);
+    }
+  });
+
+  it("the read list: explicit for knowledge_chunks, \"*\" for every other table", () => {
+    expect(exportSelectFor("knowledge_chunks")).toBe(EXPORT_OMITTED_COLUMNS.knowledge_chunks.select.join(", "));
+    expect(exportSelectFor("knowledge_chunks")).not.toMatch(/\bembedding\b(?!_)/);
+    for (const t of exported.filter((x) => x !== "knowledge_chunks")) expect(exportSelectFor(t), t).toBe("*");
+  });
+
+  it("knowledge_chunks' embed-drain state is exported at the column defaults, and the reason says so", () => {
+    // Defaults from 20261121_intel_roundG_semantic_layer.sql: embed_attempts
+    // INTEGER NOT NULL DEFAULT 0; the other three are nullable with no default.
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reset).toEqual({
+      embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null,
+    });
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason).toMatch(/retry state .* is exported reset to its default/);
+    // Only on a row that carried a vector: the writer sets embedding and
+    // embedding_model together, and the Rebuild clears them together.
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.resetWhenAny).toEqual(["embedding_model", "embedding"]);
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason).toMatch(/never had a vector keeps its state/);
+  });
+
+  it("omitExportColumns drops exactly the omitted columns, and leaves other tables' rows byte-identical", () => {
+    const chunk = { id: "c1", content: "Pump P-101A", embedding: "[0.1,0.2]", embedding_model: "m" };
+    expect(omitExportColumns("knowledge_chunks", chunk)).toEqual({ id: "c1", content: "Pump P-101A", embedding_model: "m" });
+    expect(chunk.embedding).toBe("[0.1,0.2]"); // pure
+    // the drain state the dropped vector left behind is reset; a column the
+    // row does not have is not added
+    const spent = { id: "c2", embedding: "[0.3]", embed_attempts: 4, embed_error: "provider 503", embed_claimed_until: "2099-01-01T00:00:00Z", embed_retry_after: "2099-01-01T00:00:00Z" };
+    expect(omitExportColumns("knowledge_chunks", spent)).toEqual({ id: "c2", embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null });
+    expect(spent.embed_attempts).toBe(4); // pure
+    // read by the explicit list (no embedding column): embedding_model says it carried one
+    expect(omitExportColumns("knowledge_chunks", { id: "c4", embedding_model: "m", embed_attempts: 4, embed_error: "x" }))
+      .toEqual({ id: "c4", embedding_model: "m", embed_attempts: 0, embed_error: null });
+    // never embedded (both NULL), at the attempt cap: kept as it is, refusal and reason
+    const refused = { id: "c5", embedding: null, embedding_model: null, embed_attempts: 5, embed_error: "input too long", embed_claimed_until: null, embed_retry_after: null };
+    expect(omitExportColumns("knowledge_chunks", refused)).toEqual({ id: "c5", embedding_model: null, embed_attempts: 5, embed_error: "input too long", embed_claimed_until: null, embed_retry_after: null });
+    expect(omitExportColumns("knowledge_chunks", { id: "c6", embedding_model: null, embed_attempts: 2 })).toEqual({ id: "c6", embedding_model: null, embed_attempts: 2 });
+    expect(omitExportColumns("knowledge_chunks", { id: "c3", embedding: null })).toEqual({ id: "c3" });
+    const doc = { id: "d1", embedding: "kept" };
+    expect(omitExportColumns("documents", doc)).toBe(doc);
   });
 });

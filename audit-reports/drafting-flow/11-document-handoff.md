@@ -171,6 +171,17 @@ app/(protected)/requests/[id]/page.tsx:649-651 —
 
 **Scope / residual.** The stamp → **DF-P10** (`PHYS-9`); the page's comparison → **DF-P9** (the banner mount, `HAND-7`).
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT — the stamp limb (done-when 2), in the FileViewerModal region, with public-surfaces `PHYS-9`'s control state. Reproduced on `596d34e`: the download watermarked a ticket Final `"CONTROLLED COPY"` (`app/(protected)/requests/[id]/page.tsx:661`) and both footers said only `… deliverable Rev N at time of … — scan the QR to confirm it is still the latest.` (`:591-593`, `:663-665`).
+- `lib/ticketDeliverableCopy.ts` (new) `ticketCopyPlan`: every ticket file is stamped `controlState` "uncontrolled" (a Draft "review") — never controlled — and its footer describes the file itself: "This file is `<ticket>` deliverable Rev `<the file's own rev>` — not a controlled document revision — scan the QR to confirm it is still the latest." (a Draft: "review draft Rev `<rev>`"; a file the page knows is superseded leads "SUPERSEDED by Rev `<N>` at time of printing / download — this file is `<ticket>` deliverable Rev `<rev>`, not the current revision — not a controlled document revision — scan the QR for the current status."; the last issue of a ticket being re-worked adds "— a newer revision is in progress at time of printing / download —"; with no recorded rev: "… no deliverable revision is recorded for this file, so which printing this is cannot be confirmed. Not a controlled document revision."). The page's two paths stamp from it (`page.tsx:611`, `:670`).
+- Tests: `lib/__tests__/verifyTicketVerdict.test.ts` "PHYS-9 / HAND-3 — … 'not a controlled document revision'" (every file type, both paths) and "no public origin → no QR", which pins that the statement survives when the stamper strips the scan instruction.
+
+**Done-when.**
+- ✓ (in `DEC-22`'s shape) Unchanged (DF-P1).
+- ✓ The ticket deliverable stamp explicitly states "not a controlled document revision" (the stamp is of the ticket's file, which is never the register version even after a publish).
+- ✗ (in part) Unchanged → DF-P9 (the page's comparison, `HAND-7`).
+
+**Scope / residual.** Done-when 3's page half → **DF-P9** (as assigned). Nothing left for DF-P10.
+
 ---
 
 <a id="hand-4"></a>

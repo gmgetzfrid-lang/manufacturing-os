@@ -657,7 +657,7 @@ contrast the validation the same route does perform at :121-130 — `      retur
 ## AUTHZ-12 · The public /api/verify-ticket surface returns internal workflow state and unit to anyone holding a ticket UUID, forever, unrated and unarchived-checked
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-ticket/route.ts:37-54`, `app/api/verify-ticket/route.ts:91-103`, `app/api/verify-ticket/route.ts:6-10`, `app/api/verify/route.ts:60-63`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every literal sub-claim checks out: internal workflow status, unit and last-activity timestamp are returned forever to any holder of the ticket UUID, unrated and with no archived/retired check (unlike app/api/verify/route.ts:88 which computes `docRetired` from status). Severity lowered to LOW: exposure is a handful of low-sensitivity fields for one ticket, gated behind an unguessable UUID that the org itself printed on a deliverable it handed to that party — no files, URLs, or people are returned.
@@ -699,6 +699,18 @@ app/api/verify-ticket/route.ts:9-10 (the claim) —
 - [ ] `ticketStatus` and `unit` are dropped, or `ticketStatus` is mapped to the same coarse verdict vocabulary the page renders (current / revision underway / superseded)
 - [ ] A rate limit per IP and per ticket id is applied, and archived/closed-long-ago tickets answer with a generic 'contact the requester' rather than live state
 - [ ] The route comment matches the payload field-for-field
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT, on the integrator's ruling (DEC-90 practice, given in DF-P10's brief, 2026-10-13; recorded at DEC-90): *a scanned QR keeps answering forever, for revision-status facts only; `ticketStatus` and `unit` leave the public payload; scans stay logged and rate-limited on PS-VERIFY's substrate.* Reproduced on `596d34e`: the response returned `unit`, `ticketStatus` and `lastActivityAt` (`app/api/verify-ticket/route.ts:155`, `:160-161`) and answered an archived stub like a live ticket; PS-VERIFY (Round F) had already added the per-IP cap, the `verify_scans` row and `no-store`.
+- `app/api/verify-ticket/route.ts` — the payload is exactly `ticketNumber, title, printedRev, currentRev, latestIssuedRev, inReview, verdict, checkedAt`; the select drops `unit` and `last_modified` and adds `archived_at` (`:68`); the header comment states the payload field for field. An archived ticket answers `unknown` with `currentRev` / `latestIssuedRev` null (`lib/verifyTicketVerdict.ts` `ticketVerdict`).
+- `app/verify-ticket/[ticketId]/page.tsx` — the unit line and the "activity <date>" line are gone (they read fields no longer sent).
+- Tests: `verifyTicketVerdict.test.ts` "AUTHZ-12 / EDGE-2 — /api/verify-ticket answers revision-status facts only" (the exact key set, `no-store`, the select string, scan rows written for every answer, the archived answer, the header) and the page pin; `verifyDoor.test.ts`'s VFY-14 select pin updated.
+
+**Done-when.**
+1. ✓ `ticketStatus` and `unit` are dropped (and `lastActivityAt` — internal activity, not a revision fact).
+2. Amended by the integrator's ruling — not ✓ as written (`DEC-29`): no per-ticket limit exists, and closed-long-ago tickets keep answering. Per-IP: PS-VERIFY's limiter (`lib/verifyRateLimit.ts`, consumed, not forked). Per ticket id: not built — the ruling keeps the limit on PS-VERIFY's per-IP substrate; every scan of a ticket is a `verify_scans` row (target UUID, IP), so a per-ticket poller is visible. Archived tickets answer the generic "cannot confirm" with no live state ✓. Closed-long-ago tickets keep answering revision-status facts — by the ruling ("a scanned QR keeps answering forever"; the field must be able to scan an old print).
+3. ✓ The route comment matches the payload field for field (pinned).
+
+**Scope / residual.** None beyond the ruling's own amendment of done-when 2 (per-ticket limit and closed-long-ago answers, above). Reversal: a stated need for a per-ticket cap adds a target term to `checkVerifyRate` (public-surfaces' file).
 
 ---
 

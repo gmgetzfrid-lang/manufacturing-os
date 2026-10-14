@@ -163,9 +163,11 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     // Unread notification count. drafting-flow EVID-13: a workflow alert the
     // ticket has moved past is marked metadata.superseded_at (read_at is left
     // for the recipient's own act), so it is not counted as unread, the same
-    // filter lib/inAppNotifications.ts countUnread applies.
+    // filter lib/inAppNotifications.ts countUnread applies — and, like it,
+    // scoped to this workspace, so it agrees with the bell (DELIV-10 dw4,
+    // notifications Round G N4: it counted every workspace the person is in).
     supabase.from("notifications").select("*", { count: "exact", head: true })
-      .eq("user_id", userId).is("read_at", null).is("metadata->>superseded_at", null),
+      .eq("org_id", orgId).eq("user_id", userId).is("read_at", null).is("metadata->>superseded_at", null),
     // Transmittals I issued that are still awaiting recipient acknowledgement.
     // If the table isn't migrated yet this resolves with an error → empty.
     supabase.from("transmittals").select("id, number, subject, recipient_name, recipient_company, issued_at, items")

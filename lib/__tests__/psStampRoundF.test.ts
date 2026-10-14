@@ -443,16 +443,17 @@ describe("PHYS-9 substrate — StampOptions.controlState drives the footer's mai
     // The stamper is the backstop whether or not the drafting caller (DF-P10's file) still passes the literal.
   });
   it("the drafting download's audit row records the watermark actually printed, not the literal the caller passed", () => {
+    // drafting-flow DF-P10 (PHYS-9's drafting caller) dropped the literals: both paths pass the
+    // file's control state, and the record names stampWatermark(undefined, state) — the watermark
+    // the stamper prints for that state (lib/ticketDeliverableCopy.ts; behaviour in verifyTicketVerdict.test.ts).
     const page = src("app/(protected)/requests/[id]/page.tsx");
-    const literal = 'file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY"';
-    // the same expression the stamp is given …
-    expect(page).toContain(`watermarkText: ${literal},`);
-    // … is passed through the stamper's own rule before it is recorded
-    expect(page).toContain(`? stampWatermark(${literal}, undefined)`);
-    expect(page).not.toContain(`? (${literal})`);
-    expect(page).toContain("import { downloadStampedPdf, stampWatermark } from '@/lib/stamping';");
-    expect(stampWatermark("CONTROLLED COPY", undefined)).toBe("UNCONTROLLED COPY");
-    expect(stampWatermark("REVIEW ONLY - DO NOT DISTRIBUTE", undefined)).toBe("REVIEW ONLY - DO NOT DISTRIBUTE");
+    expect(page).not.toContain('"CONTROLLED COPY"');
+    expect(page).toContain("controlState: plan.controlState,");
+    expect(page).toContain("import { downloadStampedPdf } from '@/lib/stamping';");
+    const lib = src("lib/ticketDeliverableCopy.ts");
+    expect(lib).toContain("watermark: stampWatermark(undefined, controlState),");
+    expect(stampWatermark(undefined, "uncontrolled")).toBe("UNCONTROLLED COPY");
+    expect(stampWatermark(undefined, "review")).toBe("REVIEW ONLY — DO NOT DISTRIBUTE");
   });
   it("controlState with no watermarkText drives the watermark too, so the two marks agree", async () => {
     const texts: Array<{ t: string; o: Record<string, unknown> }> = [];

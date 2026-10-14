@@ -212,6 +212,90 @@ export function exportOrderKey(table: string): readonly string[] {
   return Object.prototype.hasOwnProperty.call(EXPORT_ORDER_KEYS, table) ? EXPORT_ORDER_KEYS[table] : ["id"];
 }
 
+/** intelligence ILIFE-11: columns a table is exported WITHOUT. Every other
+ *  table is read `select("*")`; a table listed here is read with an explicit
+ *  column list (`select`) that leaves the `omit` columns out, so their values
+ *  never reach the envelope, the ZIP or a destination. The manifest names
+ *  each omitted column with its reason (manifest.omittedColumns and a note).
+ *  lib/__tests__/exportCoverage.test.ts fails when `select` is not exactly
+ *  the table's columns in the census of supabase/ less `omit` — a column a
+ *  later migration adds fails the build until it is listed here, so the
+ *  explicit list can never silently drop one.
+ *
+ *  knowledge_chunks.embedding: one 1024-dimension vector per chunk, written
+ *  as text by PostgREST (on the order of 15–20 KB a row), was inlined into
+ *  every backup. It is derived, not authored: every restored chunk arrives
+ *  with embedding NULL, in the queue embed_claim_batch claims from, and
+ *  keyword search works at once. The meaning index does NOT rebuild by
+ *  itself: the embed drain (lib/knowledgeEmbedDrain.ts) spends only on a
+ *  consent stamped on the library (ai_features.embedBuild), a finished
+ *  build's stamp is cleared at 100%, and a stamp whose payer is not an
+ *  active member of the restored workspace is released unspent. Meaning
+ *  search comes back when someone starts a meaning-index Build on each
+ *  library, on their own embedding key (lib/__tests__/
+ *  intelRoundGChunkExport.test.ts drives the drain over a restore).
+ *
+ *  `reset`: columns exported with a fixed value because they described the
+ *  omitted one, on a row that carried it. `resetWhenAny` names the columns
+ *  that say the row carried it: the reset applies only when one of them is
+ *  non-null on the row as read. For knowledge_chunks that is embedding_model
+ *  (read on both paths) or embedding (present on the select("*") fallback):
+ *  the embed writer sets both together (lib/knowledgeEmbedCore.ts writeBack)
+ *  and the Rebuild clears both together (app/api/knowledge/embed/route.ts).
+ *  The drain's state on an embedded chunk (embed_attempts, embed_error,
+ *  embed_claimed_until, embed_retry_after) is about the vector that is left
+ *  out: a chunk that embedded on its last allowed try would otherwise be
+ *  restored with embed_attempts one short of the cap, and the next Build's
+ *  first transient provider error would refuse it for good. Each is exported
+ *  as the column's default (0 / NULL), so a restored chunk starts the queue
+ *  fresh. A chunk that never had a vector keeps its state as it is: a
+ *  passage the provider refused for good (embed_attempts at the cap, with
+ *  its error) stays refused and keeps the reason, instead of coming back as
+ *  pending and spending more tries on someone's key. Applied only to a
+ *  column the row has (a database without it yet gains nothing). */
+export const EXPORT_OMITTED_COLUMNS: Record<string, { omit: readonly string[]; select: readonly string[]; reset: Readonly<Record<string, unknown>>; resetWhenAny: readonly string[]; reason: string }> = {
+  knowledge_chunks: {
+    omit: ["embedding"],
+    select: [
+      "id", "org_id", "library_id", "document_id", "page", "seq", "section", "content", "tsv",
+      "embedding_model", "embed_attempts", "embed_error", "embed_claimed_until", "embed_retry_after",
+      "source", "source_model",
+    ],
+    reset: { embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null },
+    resetWhenAny: ["embedding_model", "embedding"],
+    reason:
+      "the semantic-search vector (1024 numbers per passage) is derived from the passage text and is not exported. " +
+      "After a restore, keyword search works at once; meaning search stays off for the restored passages until someone starts a " +
+      "meaning-index Build on each library, which re-embeds them on that person's own embedding key (their own AI spend). " +
+      "Nothing re-embeds them automatically. Each embedded passage's embedding retry state (embed_attempts, embed_error, " +
+      "embed_claimed_until, embed_retry_after) is exported reset to its default, since it described the vector left out; " +
+      "a passage that never had a vector keeps its state, so one the provider refused stays refused with its reason",
+  },
+};
+
+/** The PostgREST select list the export reads `table` with: "*", or the
+ *  explicit column list of a table that omits columns (ILIFE-11). */
+export function exportSelectFor(table: string): string {
+  return Object.prototype.hasOwnProperty.call(EXPORT_OMITTED_COLUMNS, table) ? EXPORT_OMITTED_COLUMNS[table].select.join(", ") : "*";
+}
+
+/** Drop every omitted column of a `table` row, and, on a row that carried
+ *  the omitted value (a `resetWhenAny` column non-null), set each `reset`
+ *  column the row has to its declared value (ILIFE-11). Pure; returns a new
+ *  object, and leaves a table with no omissions byte-identical. Applied to
+ *  every row read, so a row read `select("*")` (the fallback when the
+ *  explicit list names a column the database does not have yet) carries no
+ *  omitted value and no stale state either. */
+export function omitExportColumns(table: string, row: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.prototype.hasOwnProperty.call(EXPORT_OMITTED_COLUMNS, table)) return row;
+  const entry = EXPORT_OMITTED_COLUMNS[table];
+  const carried = entry.resetWhenAny.some((c) => row[c] !== undefined && row[c] !== null);
+  const out: Record<string, unknown> = { ...row };
+  for (const c of entry.omit) delete out[c];
+  if (carried) for (const [c, v] of Object.entries(entry.reset)) if (Object.prototype.hasOwnProperty.call(out, c)) out[c] = v;
+  return out;
+}
+
 /** User-scoped tables exported alongside (membership in this org acts as
  *  the join — we only include rows for users who belong to the org). */
 export const USER_SCOPED_FOR_ORG_TABLES = ["notification_preferences"] as const;

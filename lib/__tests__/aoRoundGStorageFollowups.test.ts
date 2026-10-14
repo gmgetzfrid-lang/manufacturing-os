@@ -830,7 +830,8 @@ describe("ORG-16 — a backup restore (Admin) puts covers and backgrounds back a
 
   it("review fix (issue 3): the restore page skips such a cover and lists it in a named notice (re-pick under Customize), not among generic failures", () => {
     const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
-    expect(page).toMatch(/if \(req\.nodeImageProblem\) \{\n\s+nodeImagesNotRestored\.push\(key\.split\("\/"\)\.slice\(-2\)\.join\("\/"\)\);\n\s+return;\n\s+\}/);
+    // (ORG-18, P11: the skipped key is also kept, with whether the storage check reported it missing, before the return)
+    expect(page).toMatch(/if \(req\.nodeImageProblem\) \{\n\s+nodeImagesNotRestored\.push\(key\.split\("\/"\)\.slice\(-2\)\.join\("\/"\)\);\n\s+skippedNodeImages\.push\(\{ key, reportedMissing: check\.ok && state\?\.missing === true \}\);\n\s+return;\n\s+\}/);
     // the skip comes before the presign request, so nothing is counted as failed
     expect(page.indexOf("if (req.nodeImageProblem)")).toBeLessThan(page.indexOf("const up = await fetch(`/api/storage/upload-url`"));
     expect(page).toContain("nodeImagesNotRestored: [...nodeImagesNotRestored],");

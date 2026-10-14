@@ -326,7 +326,7 @@ components/cockpit/AttentionFeed.tsx:44 -- `if (k.includes("rev") || k.includes(
 ## TAX-6 · The bell badge and the Notification Center are hard-capped at 50 unread notification rows, so a busy controller's true backlog is unreachable and unknowable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:176`, `lib/inAppNotifications.ts:157-174`, `lib/inAppNotifications.ts:176-185`, `hooks/useTicketNotifications.ts:311-312`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The 50-row ceiling and the 'mark read → older rows page in → badge does not move' behavior are both real and confirmed. Downgraded to MEDIUM because the compliance backlog is NOT unknowable: lib/inbox.ts:249/309 computes an uncapped exact unread count, and /inbox renders dedicated, independently-sourced obligation lists — `data.reviewCyclesDueOnMe` (inbox/page.tsx:400), `data.distributionAcksPendingOnMe` (:416), `data.accessRecertsDue` (:430), plus listMyPendingAcks/listMyPendingReviews — so the actual PSM work items remain reachable outside the truncated bell feed.
@@ -352,6 +352,21 @@ hooks/useTicketNotifications.ts:311-312 -- `/** The single count every surface b
 - [ ] The badge shows the true unread count (via `countUnread`) even when the list is paged
 - [ ] The feed can page past 50 rows, or explicitly says "showing the newest 50 of N"
 - [ ] Marking rows read monotonically decreases the badge
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: `listMyNotifications({ onlyUnread: true, limit: 50, orgId })` (`hooks/useTicketNotifications.ts:231`), `count: items.length` (`:386`), `countUnread` called by nothing.
+
+What landed:
+- **The count.** The feed's notification total is `countUnread(activeOrgId)` (`lib/inAppNotifications.ts`, an exact head count of my unread, unsuperseded rows in the workspace), read beside the page. When it exceeds the rows loaded, the rows below are tallied by kind (`listUnreadKindsBeyond`, up to `REMAINDER_TALLY_CAP` = 1,000 more; a row about a ticket already in the feed folds in, as on the page) into the section badges and the action count; any beyond the tally count in the total as activity. `count` = `counts.all` (the hook's return shape is unchanged; its value is now the true one).
+- **Paging.** `listMyNotifications` takes a `before` cursor — `(created_at, id)`, ordered `created_at desc, id desc` (review fix: rows written in one statement share `created_at`, and a `created_at`-only cursor dropped the second of two rows at a page boundary); the feed loads the newest 50 and, on "Load older", the next page by cursor (`useAttentionStatus().loadMoreNotifications`). The tally of the rows below reads after the window's last row by the same keyset, never an offset, so no row is both listed and tallied. `components/cockpit/AttentionFeed.tsx` says "Showing the newest N of M unread notifications." with the button — in the center, `/inbox` and the dashboard widget.
+- Tests: `lib/__tests__/attentionProvider.test.ts` "the badge is the exact count, not the page: 50 loaded of 120 — the 70 below count by section and action", "'Load older' pages the created_at cursor; marking one read moves the badge down by one" (the cursor is now `(created_at, id)`), "the feed says 'Showing the newest N of M' with 'Load older'…"; review fix: the tally's keyset read, and "the action rows BELOW the window are sent for reconcile too; a discharged one leaves the badge and the action count".
+- Verified: loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,352 passed, 10 expected fail, 4 failed, every one "Test timed out in 5000ms" in a file this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `exportContractRoundTrip`, `notificationDispatchMembership`; load average 18–29 on the shared box), each exit 0 when rerun alone. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The badge shows the true unread count (`countUnread`) when the list is paged.
+- ✓ The feed pages past 50 rows (a cursor) and says "Showing the newest N of M".
+- ✓ Marking a row read lowers the badge by one: the count falls by one and the window refills from below, which only moves a row from the tallied remainder to the list.
+
+**Scope / residual.** Section badges are exact up to 1,050 unread rows (the page + the tally); beyond that the excess counts in the header total only (`DEC-105` §3). The reconcile pass checks at most 200 rows per pass — the window's candidates first, then the tally's — so an action row deeper than that clears on a later pass, once the rows above it are read or retired.
 
 ---
 

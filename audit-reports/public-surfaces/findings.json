@@ -8,18 +8,18 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 65,
+    "findings": 66,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
       "MEDIUM": 21,
-      "LOW": 27
+      "LOW": 28
     },
     "by_status": {
-      "RESOLVED": 55,
-      "OPEN": 9,
-      "WONTFIX": 1
+      "RESOLVED": 58,
+      "WONTFIX": 1,
+      "OPEN": 7
     }
   },
   "status_vocabulary": [
@@ -65,7 +65,7 @@
       "id": "PHYS-2",
       "title": "Printing an older ticket deliverable stamps it with the ticket's CURRENT revision and encodes that rev in the QR — the scan then certifies a superseded print as \"LATEST ISSUE\" in green",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -345,7 +345,7 @@
       "id": "PHYS-9",
       "title": "The drafting download watermark asserts \"CONTROLLED COPY\" while the footer stamped on the same page by the same call says \"UNCONTROLLED COPY\" — and nothing registers, numbers, or recalls the copy it claims is controlled",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1348,6 +1348,31 @@
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
     },
     {
+      "id": "PHYS-17",
+      "title": "`download_audits` has no ticket or attachment column, so a drafting-ticket copy can never be recalled — the stale-copies ledger has no ticket arm",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED on DF-P10's branch.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/schema.sql",
+        "supabase/migrations/20261068_dc_roundF_download_audits_record.sql",
+        "lib/ticketDeliverableCopy.ts",
+        "lib/staleCopies.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Rev 2 of a drafting ticket issues; three people printed Rev 1's package last week. Nothing lists them as holders of a superseded copy: the stale-copies nudge and the recall cover register documents only.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/03-physical-bridge.md"
+    },
+    {
       "id": "SHR-7",
       "title": "A share link is bound to the document, not the revision — it silently follows every rev-up, and the stamped footer's rev comes from documents.rev rather than the version actually served",
       "severity": "LOW",
@@ -1607,7 +1632,7 @@
       "id": "VFY-15",
       "title": "Effective dates are decided in ONE deployment-wide facility zone — a deployment whose orgs run plants in different zones has no per-org calendar, so \"NOT YET IN EFFECT\" can lift early for one org's field scans",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

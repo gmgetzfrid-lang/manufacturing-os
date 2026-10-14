@@ -453,7 +453,10 @@ describe("WF-17 / DEC-14 — cancel_request exists; NEW and PENDING_ENG_INITIAL 
     const term = "not('status', 'in', '(\"CLOSED\",\"CANCELED\")')";
     const termDq = 'not("status", "in", \'("CLOSED","CANCELED")\')';
     expect(src("app/(protected)/requests/page.tsx").split(term).length - 1).toBe(2);
-    expect(src("hooks/useTicketNotifications.ts").split(term).length - 1).toBe(2);
+    // the queue scope, the requester scope, and (notifications N4 second review
+    // fix) a drafter's assigned OPEN tickets — their closed ones are a separate
+    // capped read on TERMINAL_TICKET_STATUSES
+    expect(src("hooks/useTicketNotifications.ts").split(term).length - 1).toBe(3);
     expect(src("lib/inbox.ts").split(termDq).length - 1).toBe(3);
     expect(src("components/documents/CheckInPanel.tsx")).toContain(termDq);
     const portal = src("app/(protected)/requests/page.tsx");
@@ -755,7 +758,7 @@ describe("WF-21 / DEC-15 — a reopen starts a new revision cycle, and the QR en
       { actionType: "approve_minor_correction", actionLabel: "Approve with Minor Correction", comment: "typo", actor: admin, now: NOW });
     expect(review.updates.engineer_approved_at).toBeUndefined();
   });
-  it("/api/verify-ticket: a reopened ticket reads revision_in_progress for the last issue, superseded for older, never current; closed-without-issue stays unknown", async () => {
+  it("/api/verify-ticket: a reopened ticket reads revision_in_progress for the last issue, superseded for older, never current; closed again with no label is unknown, as base (EDGE-2, DF-P10, the integrator's ruling)", async () => {
     const { GET } = await import("@/app/api/verify-ticket/route");
     const T = "11111111-1111-1111-1111-111111111111";
     const verify = async (r: string) => {
@@ -771,6 +774,12 @@ describe("WF-21 / DEC-15 — a reopen starts a new revision cycle, and the QR en
     expect((await verify("1")).verdict).toBe("superseded");
     expect((await verify("2A")).verdict).toBe("draft_copy");
     state.rows.tickets = [row({ status: "CLOSED" })]; // closed again with no new issue
+    // drafting-flow EDGE-2 (DF-P10), the integrator's ruling (DEC-90, fail-safe): a CLOSED row with no
+    // issued label answers "cannot confirm", as base did — its only evidence of an issue is a history line,
+    // which any member may append (until DF-P12's ticket_update_guard limb). Never green, never withdrawn.
+    expect(await verify("2")).toMatchObject({ verdict: "unknown", latestIssuedRev: null, inReview: false });
+    expect((await verify("1")).verdict).toBe("unknown");
+    state.rows.tickets = [row({ status: "CLOSED", history: [] })]; // closed with no label and no issue line (pre-20260827 / an RFI)
     expect((await verify("2")).verdict).toBe("unknown");
     state.rows.tickets = [row({ status: "PENDING_IFC", deliverable_rev: "2", revision_count: 1 })]; // an ordinary issue is still current
     expect((await verify("2")).verdict).toBe("current");
