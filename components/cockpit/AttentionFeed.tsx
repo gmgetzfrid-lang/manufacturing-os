@@ -248,7 +248,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
             </button>
           )}
           {ticketsCut && (
-            <span>Requests: the {status.ticketsLoaded} most recently active of {status.ticketsTotal} open requests are checked.</span>
+            <span>Requests: the {status.ticketsLoaded} {status.ticketsOldestFirst ? "longest-waiting" : "most recently active"} of {status.ticketsTotal} open requests are checked.</span>
           )}
         </div>
       )}

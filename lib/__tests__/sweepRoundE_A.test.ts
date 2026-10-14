@@ -220,6 +220,27 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     state.user = { id: "a-1" };
     expect((await commentPatch(req("/api/tickets/comment", "PATCH", { ticketId: "t1", commentId: "c-1" }))).status).toBe(400);
   });
+  it("drafting-flow PERS-2 done-when 3 (DF-P9): a root-cause edit racing a workflow action — the edit's compare-and-set loses (409), nothing of it lands, and the action's write stands", async () => {
+    state.user = { id: "a-1" };
+    state.rows.org_members = [member("a-1", "Admin"), member("d-1", "Drafter"), member("req-1", "Requester")];
+    const revision = { id: "c-9", text: "Fix the nozzle orientation", user: "e-1@x.io", role: "Engineer-2", category: null, authorUid: "e-1" };
+    state.rows.tickets = [ticketRow({ comments: [{ id: "c-1", text: "leak", user: "req-1@x.io", role: "Requester", category: null, authorUid: "req-1" }] })];
+    // between the edit's read and its write, a workflow action appends a comment and moves the token
+    state.onCall = (table, method) => {
+      if (table === "tickets" && method === "update") {
+        state.rows.tickets[0].last_modified = "2026-09-17T00:00:09.000Z";
+        state.rows.tickets[0].comments = [...(state.rows.tickets[0].comments as unknown[]), revision];
+      }
+    };
+    const res = await commentPatch(req("/api/tickets/comment", "PATCH", { ticketId: "t1", commentId: "c-1", category: "Vendor data" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).conflict).toBe(true);
+    // the edit wrote nothing that stuck: no mirror row, no audit of a change that did not happen
+    expect(updateOf("ticket_comments")).toHaveLength(0);
+    expect(insertsOf("audit_logs").some((a) => a.action === "TICKET_ROOT_CAUSE_UPDATE")).toBe(false);
+    // the concurrent action's comment is still on the row
+    expect((state.rows.tickets[0].comments as Array<{ id: string }>).map((c) => c.id)).toEqual(["c-1", "c-9"]);
+  });
   it("comment route PATCH: two authorities — the AUTHOR edits their text but cannot reclassify it; a DocCtrl classifies but cannot edit another's text", async () => {
     const comment = { id: "c-1", text: "leak", user: "req-1@x.io", role: "Requester", category: "Vendor data", authorUid: "req-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("c-1", "DocCtrl"), member("d-1", "Drafter")];
@@ -339,7 +360,9 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     expect(p).toContain("body: JSON.stringify({ ticketId, actionType: 'attach_file', attachment: newAttachment }),");
     expect(p).toContain("await callCommentApi('PATCH', { ticketId, commentId, category: editCategoryVal });");
     expect(p).toContain("const res = await fetch('/api/tickets/watch', {");
-    expect(p).toContain("const canAttach = availableActions.some((a) => a.action === 'attach_file');");
+    // drafting-flow Round G (DF-P9, AUTHZ-15): derived from the engine's actions, held back while the policy is unreadable
+    expect(p).toContain("const liveActions = policyFault ? [] : availableActions;");
+    expect(p).toContain("const canAttach = liveActions.some((a) => a.action === 'attach_file');");
     expect(p).toContain("{canAttach && (");
     expect(p).not.toContain("hasAnyRole(['Drafter', 'Requester', 'Admin'])");
   });
@@ -466,7 +489,9 @@ describe("WF-17 / DEC-14 — cancel_request exists; NEW and PENDING_ENG_INITIAL 
     expect(portal).toContain("if (!includeClosed) rows = rows.filter((r) => !isTerminalTicketStatus(r.status as string));");
     expect(portal).toContain("if (isTerminalTicketStatus(t.status) && !includeClosed) continue;");
     expect(portal).toContain("const includeClosed = showClosed || filters.status === 'ALL' || isTerminalTicketStatus(filters.status);");
-    expect(portal).toContain('<option value="CANCELED">Canceled</option>');
+    // drafting-flow Round G (DF-P9, UI-7): the filter's choices come from the shared label list, which carries CANCELED
+    expect(portal).toContain("{TICKET_STATUS_FILTER_ORDER.map((st) => <option key={st} value={st}>{ticketStatusLabel(st)}</option>)}");
+    expect(src("lib/ticketStatusLabels.ts")).toMatch(/TICKET_STATUS_FILTER_ORDER[^=]*=\s*\[[^\]]*"CANCELED"/);
     expect(portal).toMatch(/case 'CANCELED': return 'bg-rose-50/);
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/case 'CANCELED': return 'bg-rose-50/);
     const analytics = src("app/(protected)/admin/analytics/page.tsx");
@@ -666,7 +691,7 @@ describe("WF-18 — the Reassign button carries an action the route accepts: rea
     const p = src("app/(protected)/requests/[id]/page.tsx");
     expect(p).not.toContain("setPendingAction({ action: 'assign', label: 'Reassign Ticket', variant: 'warning' });");
     expect(p).toContain("const handleReassignClick = (action: WorkflowAction) => {");
-    expect(p).toContain("const reassignAction = availableActions.find((a) => a.action === 'reassign_drafter');");
+    expect(p).toContain("const reassignAction = liveActions.find((a) => a.action === 'reassign_drafter');"); // DF-P9: held back on an unreadable policy
     expect(p).toContain("{reassignAction && (");
     expect(p).toContain("onClick={() => handleReassignClick(reassignAction)}");
     expect(p).toContain("if (action.action === 'reassign_drafter') { handleReassignClick(action); return; }");
@@ -824,16 +849,18 @@ describe("WF-24 / CHAIN-3 — ONE management tier; attention is derived from the
   });
   it("the badge hook and the portal evaluate under the org's own policy and use the visibility scope, not the tier", () => {
     const hook = src("hooks/useTicketNotifications.ts");
-    expect(hook).toContain("isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount })");
+    // drafting-flow Round G (DF-P9): + the requesters' current roles (FRIC-7), and nothing counted while the policy is unreadable (AUTHZ-15)
+    expect(hook).toContain("!policyFault && isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles })");
     // GAP-2 / DEC-12: the count the ticket page evaluates under — fetched the same way ([id] page), passed through the context
     expect(hook).toContain(".select('uid', { count: 'exact', head: true })");
     expect(hook).toContain(".eq('status', 'active')");
     expect(hook).toContain("if (alive && typeof count === 'number') setActiveMemberCount(count);");
     expect(hook).toContain("setEngineeringFirstTypes(flaggedRequestTypes(cfgRow?.data, 'engineeringFirst'));");
     expect(hook).toContain("isQueueViewer(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')");
-    expect(hook).toContain("void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => {});");
+    // drafting-flow Round G (DF-P9, AUTHZ-15): the entry, so an unreadable policy is known (not silently the defaults)
+    expect(hook).toContain("void loadCapabilityPolicyEntry(activeOrgId).then((entry) => {");
     const portal = src("app/(protected)/requests/page.tsx");
-    expect(portal).toContain("ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount })");
+    expect(portal).toContain("!policyFault && ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles })");
     expect(portal).toContain(".select('uid', { count: 'exact', head: true })");
     expect(portal).toContain("if (alive && typeof count === 'number') setActiveMemberCount(count);");
     // DEC-14: the tiles re-pointed off the retired stage carry labels that name what they count

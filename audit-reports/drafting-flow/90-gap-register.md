@@ -604,6 +604,8 @@ the flow.
 *Landed 2026-10-13 (drafting-flow Round G, DF-P3): acceptance 2 and 3 — `tickets.outcome` (`20261195`, pending paste) and "How Requests Ended" on `/admin/analytics`. Acceptance 1 holds at the route; the request page's picker is DF-P9's (until then a cancel without a category records none — never a guessed `withdrawn` — so the leak rate counts only outcomes someone named). The list is the ratified five, in code and a CHECK; org-configurable later. See [`DEC-103`](../DECISIONS.md#dec-103), `LEAK-9`.*
 *Amended 2026-10-13 (DF-P3 fix pass 3): acceptance 2 is an instrument, not yet a number — until DF-P9's picker ships, a UI cancel names no category, so wherever no cancel named one the block shows the leak rate as "—" ("not measured yet: N cancels named no category") rather than a 0 % made of closes; once some cancels carry a category the rate is shown with the uncategorized ones counted beside it. See `LEAK-9` done-when 2.*
 
+*Assigned (2026-10-14, the integrator at the drafting-flow DF-P9 merge, DEC-31):* acceptance 1's org-configured reason list → drafting-flow **DF-P14** (with roles-and-permissions `GAP-13`); acceptances 2 and 3 landed (DF-P3, DF-P9's Cancel Request picker).
+
 ---
 
 <a id="gap-108"></a>
@@ -657,6 +659,10 @@ first-time requester can see the process before committing to it.
 4. No user-facing surface shows a raw status identifier as the primary label.
 
 **Related findings:** `UI-1`, `UI-2`, `UI-4`, `UI-7`.
+
+*Landed 2026-10-14 (drafting-flow Round G, DF-P9 TICKET-PAGE): acceptance 1–3 — the ticket's waiting line states the stage in words, who it waits on by name and part, and for how long, with "Your turn" when the engine offers the viewer a live action (`UI-1`); "View Only" is explained (`UI-4`); the workflow map has a visible affordance on the ticket and opens from the queue and from the request form before anything is filed (`UI-2`). The labels are one list (`lib/ticketStatusLabels.ts`), which the map's stage names read too. **Acceptance 4 is NOT met:** the request surfaces read that list, but six sites outside DF-P9's files still show the raw status or keep a third label set — `app/(protected)/admin/analytics/page.tsx:516`, the workflow route's bell body (`app/api/tickets/workflow-action/route.ts:1407`), email (`:1455`, `:1458`) and refusal text (`:360`), the SLA clock's bell / email bodies (`lib/ticketSla.ts:192`, `:196`, `:197`), and `components/dashboard/widgets.tsx:283-296`. The remainder and its owners are recorded under `UI-7` (OPEN, Partial); each fix is a call to `ticketStatusLabel`, never a new list ("Do not write a third set"). *(List completed at the DF-P9 integrator fix pass, which also fixed three more request sites with the shared list — a document's impact panel, the archived-ticket viewer and the printed traveler — and the queue board's lane chips; see `UI-7`.)*
+
+*Assigned (2026-10-14, the integrator at the drafting-flow DF-P9 merge, DEC-31):* acceptance 4 (no raw status identifier as a primary label anywhere) → drafting-flow **DF-P14** (the `UI-7` remaining sites); acceptances 1–3 landed with DF-P9.
 
 ---
 

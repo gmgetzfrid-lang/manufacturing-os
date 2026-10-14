@@ -22,8 +22,8 @@
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 96,
-      "OPEN": 27,
+      "RESOLVED": 97,
+      "OPEN": 26,
       "RESOLVED (2026-10-14, notifications Round G, N10 PUSH — done-when 1 met as narrowed by the integrator, `DEC-90`)": 1,
       "RESOLVED (2026-10-13, notifications N15; PASTE pending (both pastes): `20261206` — once BEFORE the N15 deploy and again, REQUIRED, after the next maintenance run following that deploy)": 1
     }
@@ -1354,7 +1354,7 @@
       "id": "PROD-4",
       "title": "13 of 17 emit() call sites hardcode their audience; the follower/watcher machinery is bypassed and audience.projectId is never used at all",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

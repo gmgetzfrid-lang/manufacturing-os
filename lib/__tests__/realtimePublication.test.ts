@@ -122,10 +122,8 @@ describe("RT-12 dw3 — every realtime-subscribed table has its publication stat
 /** A filtered subscription with no DELETE companion in its own file yet —
  *  RT-4's remainder, with its owner (DEC-31). */
 const RT4_PENDING: Record<string, string> = {
-  // The requests portal's tickets channel (org filter). No app path
-  // hard-deletes a ticket; the companion listener is one line in a file
-  // notifications N4 does not hold (RT-4 Partial, owner: drafting-flow).
-  "app/(protected)/requests/page.tsx:tickets": "drafting-flow: add the unfiltered tickets DELETE companion (RT-4)",
+  // (The requests portal's tickets channel carries its unfiltered DELETE
+  // companion since drafting-flow Round G, DF-P9 — RT-4's tickets limb.)
   // The library page's documents channel (library_id filter). A document IS
   // hard-deleted from that page (and by the intake route's roll-back), so a
   // viewer in another session keeps the deleted row until reload (RT-4's own
