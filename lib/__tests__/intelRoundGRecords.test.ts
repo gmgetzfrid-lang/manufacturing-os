@@ -37,7 +37,12 @@
 // `.limit()` (filter, sort, then window, as PostgREST does), so when the
 // container reads start paging these cases run that loop too; the row-cap
 // limb itself (more folders than one window) is KACL-12 Done-when 4 and is not
-// reproduced here.
+// reproduced here (lib/__tests__/intelRoundGDocAcl.test.ts pages it).
+//
+// Since intelligence I-12 (2026-10-14) all four hold: loadDcLandscape throws
+// on a failed container read, loadPrincipal answers no principal on a failed
+// team_members read, and a chain is never evaluated with a rung missing — the
+// four cases are plain `it`.
 //
 // DACL-2 criterion 1 (a key belonging to a held document is refused) did not
 // hold for a revision's NATIVE SOURCE file when this file was written:
@@ -323,7 +328,7 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 2 and 3: a FOLDER-level ACL re
   });
 });
 
-describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails until the fix lands, then flip each to `it`", () => {
+describe("KACL-12 (owner I-12): the seam's own reads fail CLOSED — flipped from it.fails to it by intelligence I-12 (2026-10-14)", () => {
   /** What a denied Viewer gets back from both tools: the denied document's
    *  match and its passage, if either leaks. The tools catch a throwing seam
    *  (tools.ts:89, :112), so a fix that throws reads as "nothing leaked". */
@@ -351,7 +356,7 @@ describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails unti
       if (where === "library") db.tables.libraries[0].acl = DENY_VIEWER_READ;
       expect(await leakedTo(await ctxFor("u-viewer"))).toEqual([]);
     });
-    it.fails(`a ${table} read error never lets a document under a ${where}-level deny through either tool — nothing controlled comes back, or the seam aborts`, async () => {
+    it(`a ${table} read error never lets a document under a ${where}-level deny through either tool — nothing controlled comes back, or the seam aborts`, async () => {
       seed(where === "folder" ? (DENY_VIEWER_READ as unknown as Row) : null);
       if (where === "library") db.tables.libraries[0].acl = DENY_VIEWER_READ;
       const viewer = await ctxFor("u-viewer");
@@ -378,7 +383,7 @@ describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails unti
     seedTeamDeny();
     expect(await leakedTo(await ctxFor("u-viewer"))).toEqual([]);
   });
-  it.fails("a team_members read error never drops a team deny — no principal, an abort, or the deny still applies", async () => {
+  it("a team_members read error never drops a team deny — no principal, an abort, or the deny still applies", async () => {
     seedTeamDeny();
     db.errors.team_members = { message: "statement timeout" };
     const outcome = await loadPrincipal(ORG, "u-viewer").then(
@@ -408,7 +413,7 @@ describe("KACL-12 (owner I-12): the seam's own reads fail OPEN — it.fails unti
     const l = await loadDcLandscape(ORG);
     expect([containerReadable("library", LIB, principal, l), containerReadable("folder", FOLDER, principal, l)]).toEqual([false, false]);
   });
-  it.fails("a libraries read error never makes a folder under a library-level deny a readable container — refused, or the landscape load aborts", async () => {
+  it("a libraries read error never makes a folder under a library-level deny a readable container — refused, or the landscape load aborts", async () => {
     seed(null);
     db.tables.libraries[0].acl = DENY_VIEWER_READ;
     const principal = (await loadPrincipal(ORG, "u-viewer")) as KnowledgePrincipal;

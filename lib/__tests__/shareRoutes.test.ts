@@ -617,7 +617,9 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect(may).toMatch(/if \(download\.unreadable\) \{[\s\S]*?return false;\s*\n\s*\}\s*\n\s*if \(download\.denied\) return false;/);
     const route = src("app/api/storage/download-url/route.ts");
     expect(route).toContain('import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";');
-    expect(route).toMatch(/const \{ denied \} = await memberDownloadDenied\(supabaseAdmin, \{/);
+    // intelligence KACL-5: the route keeps the rule and refuses on a read error (closed).
+    expect(route).toMatch(/const download = await memberDownloadDenied\(supabaseAdmin, \{/);
+    expect(route).toMatch(/if \(download\.unreadable\) throw new Error/);
     expect(route).not.toMatch(/dl\.users\?\.download/); // the inline copy is gone: one rule, two callers
   });
   it("a refused attempt on a KNOWN share leaves one 'refused' access row with the reason, IP and UA (SHR-10); an unknown token leaves none", async () => {

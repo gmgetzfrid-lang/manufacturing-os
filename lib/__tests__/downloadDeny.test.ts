@@ -120,6 +120,8 @@ describe("GET /api/storage/download-url — the member half, through the one hel
     org_members: { data: { uid: "u1", role: roles[0], roles } },
     team_members: { data: teams.map((team_id) => ({ team_id })) },
     document_versions: { data: { record_id: "docA" } },
+    // KACL-5: the route reads the document's container chain (its library).
+    libraries: { data: { id: "lib1", acl: null } },
   });
   const doc = (acl_index: unknown) => ({ data: { visibility: "normal", acl: null, acl_index, org_id: ORG, owner_user_id: null, collection_id: null, library_id: "lib1" } });
 
@@ -140,10 +142,14 @@ describe("GET /api/storage/download-url — the member half, through the one hel
     expect((await download()).status).toBe(200);
     expect(state.signed).toBe(1);
   });
-  it("keeps its fail-open posture on a read error: evaluated on what was read", async () => {
+  it("FAILS CLOSED on a read error for a key behind a document (intelligence KACL-5): 503, nothing signed — it used to evaluate on what was read and serve", async () => {
     state.tables = { ...member(["Engineer-2"]), team_members: { data: null, error: { message: "down" } }, documents: doc(withIndex({ teams: { download: ["t1"] } })) };
-    expect((await download()).status).toBe(200);
+    state.signed = 0;
+    const res = await download();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "Couldn't verify your access to this file — try again." });
     state.tables = { ...member(["Engineer-2"]), team_members: { data: null, error: { message: "down" } }, documents: doc(withIndex({ users: { download: ["u1"] } })) };
-    expect((await download()).status).toBe(403);
+    expect((await download()).status).toBe(503);
+    expect(state.signed).toBe(0);
   });
 });

@@ -29,6 +29,9 @@ const bad = (error: string, status: number) => NextResponse.json({ error }, { st
 
 const MAX_DOCS = 5000;
 
+/** KACL-12: the access rules could not be read in full, so nothing is shown. */
+const UNREADABLE = "Couldn't read the document libraries and folders (and their access rules) — try again.";
+
 const displayName = (d: { name: string | null; title: string | null; document_number: string | null }): string => {
   const number = (d.document_number ?? "").trim();
   const title = (d.title ?? d.name ?? "").trim();
@@ -48,11 +51,17 @@ export async function GET(req: NextRequest) {
   const principal = await loadPrincipal(orgId, userData.user.id);
   if (!principal) return bad("Not a member of this workspace", 403);
 
-  const [{ data: libRows, error: libErr }, landscape] = await Promise.all([
+  // KACL-12: a landscape that could not be read in full is never turned
+  // into a map — a missing library or folder would drop its ACL from every
+  // chain below it.
+  const libsAndLandscape = await Promise.all([
     supabaseAdmin.from("knowledge_libraries").select("id, name")
       .eq("org_id", orgId).order("name"),
-    loadDcLandscape(orgId),
+    loadDcLandscape(orgId).then((l) => l, (e: unknown) => e instanceof Error ? e : new Error(String(e))),
   ]);
+  const [{ data: libRows, error: libErr }, landscapeOrError] = libsAndLandscape;
+  if (landscapeOrError instanceof Error) return bad(UNREADABLE, 503);
+  const landscape = landscapeOrError;
   if (libErr) return bad(`Couldn't load knowledge libraries: ${libErr.message}`, 500);
 
   // Every knowledge document, paged — nothing hides.
@@ -163,7 +172,11 @@ export async function GET(req: NextRequest) {
   const allDcIds = new Set(dcDocs.map((d) => d.id));
   let visibleDcDocs = dcDocs;
   if (!principal.isController) {
-    const readable = await readableControlledDocIds(principal, [...allDcIds]);
+    // KACL-12: the seam throws when it cannot check — answer 503, never the
+    // whole tree.
+    let readable: Set<string>;
+    try { readable = await readableControlledDocIds(principal, [...allDcIds]); }
+    catch { return bad(UNREADABLE, 503); }
     visibleDcDocs = dcDocs.filter((d) => readable.has(d.id));
   }
   const visibleDcIds = new Set(visibleDcDocs.map((d) => d.id));

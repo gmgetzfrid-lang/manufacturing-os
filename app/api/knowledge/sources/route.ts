@@ -41,6 +41,9 @@ function bad(msg: string, status = 400) {
 const missingTable = (message: string, code?: string) =>
   code === "42P01" || /does not exist/i.test(message);
 
+/** KACL-12: the access rules could not be read in full. */
+const LANDSCAPE_UNREADABLE = "Couldn't read the document libraries and folders (and their access rules) — try again.";
+
 async function authUser(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -58,7 +61,10 @@ export async function GET(req: NextRequest) {
 
   // ── Browse: containers the caller can read, for the picker ─────────────
   if (req.nextUrl.searchParams.get("action") === "browse") {
-    const landscape = await loadDcLandscape(orgId);
+    // KACL-12: never offer containers from a partial landscape.
+    let landscape: Awaited<ReturnType<typeof loadDcLandscape>>;
+    try { landscape = await loadDcLandscape(orgId); }
+    catch { return bad(LANDSCAPE_UNREADABLE, 503); }
     const libraries = [...landscape.libraries.entries()]
       .filter(([id]) => containerReadable("library", id, principal, landscape))
       .map(([id, l]) => ({ id, name: l.name }))
@@ -207,7 +213,10 @@ export async function POST(req: NextRequest) {
   // ── Link new sources ───────────────────────────────────────────────────
   const additions = Array.isArray(body.add) ? body.add.slice(0, 25) : [];
   if (additions.length === 0) return bad("add[] is required");
-  const landscape = await loadDcLandscape(orgId);
+  // KACL-12: the server-side re-check is never made on a partial landscape.
+  let landscape: Awaited<ReturnType<typeof loadDcLandscape>>;
+  try { landscape = await loadDcLandscape(orgId); }
+  catch { return bad(LANDSCAPE_UNREADABLE, 503); }
   const { data: memberRow } = await supabaseAdmin
     .from("org_members").select("display_name, email")
     .eq("org_id", orgId).eq("uid", user.id).maybeSingle();

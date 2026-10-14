@@ -3,13 +3,176 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { canServeContent, controllerBypassDecided } from "@/lib/permissions";
-import { normalizeRoles } from "@/lib/roleCapabilities";
+import { canServeContent, controllerBypassDecided, type Principal } from "@/lib/permissions";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import { resolvePresignedLifetime } from "@/lib/presignedLifetime";
-import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";
 import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition";
-import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
+import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";
+import { loadReaderPrincipal, loadContainerAclChain, BrokenAclChainError } from "@/lib/docFileServer";
+import type { AccessControl, NodeVisibility } from "@/types/schema";
+
+/** KACL-5: the access check could not be made (a lookup failed). */
+const ACCESS_UNVERIFIED = "Couldn't verify your access to this file — try again.";
+
+type KeyDoc = {
+  id: string;
+  org_id: string | null;
+  visibility: string | null;
+  acl: unknown;
+  acl_index: unknown;
+  owner_user_id: string | null;
+  collection_id: string | null;
+  library_id: string | null;
+};
+
+/** Every document that names this key — as a revision's rendered file
+ *  (file_url) or its native source (source_file_key) — in lookup order. Two
+ *  exact-equality lookups, never a PostgREST .or() string (assertSafeStorageKey
+ *  admits commas and parentheses; the storage delete route's pattern). A
+ *  database without the source column (42703 / PGRST204) has only the first.
+ *  THROWS on any other lookup error. */
+async function documentsNamingKey(path: string): Promise<string[]> {
+  const ids: string[] = [];
+  for (const col of ["file_url", "source_file_key"] as const) {
+    const { data, error } = await supabaseAdmin
+      .from("document_versions").select("record_id").eq(col, path).limit(25);
+    if (error) {
+      const code = (error as { code?: string }).code;
+      if (col === "source_file_key" && (code === "42703" || code === "PGRST204")) break;
+      throw new Error(`the file's document could not be looked up: ${error.message}`);
+    }
+    const rows = (Array.isArray(data) ? data : data ? [data] : []) as Array<{ record_id?: string | null }>;
+    for (const r of rows) if (r.record_id && !ids.includes(r.record_id)) ids.push(r.record_id);
+  }
+  return ids;
+}
+
+/** KACL-5: may this member be handed a URL for this org key? `null` = yes
+ *  (or no document is behind the key); otherwise the refusal to send.
+ *  The documents naming the key are judged in turn and the first one that
+ *  serves the caller serves the bytes (they are the same bytes; a clone that
+ *  shares a revision file is read through either). For each: the one read
+ *  predicate over its full chain; DEC-43's record when only the controller
+ *  tier served it (unless the effective-owner cascade would have); GAP-15 /
+ *  DEC-7's cascade when the ACL refuses; then the explicit download deny,
+ *  which binds everyone (lib/downloadDeny — the share routes' rule too). */
+async function documentKeyGate(
+  keyOrg: string,
+  path: string,
+  user: { id: string; email: string | null },
+): Promise<NextResponse | null> {
+  const refuse = (error: string, status: number) => NextResponse.json({ error }, { status });
+  try {
+    const docIds = await documentsNamingKey(path);
+    if (docIds.length === 0) return null; // no record behind the key
+    const docs: KeyDoc[] = [];
+    for (const id of docIds) {
+      const { data, error } = await supabaseAdmin
+        .from("documents")
+        .select("id, visibility, acl, acl_index, org_id, owner_user_id, collection_id, library_id")
+        .eq("id", id)
+        .maybeSingle();
+      if (error) throw new Error(`the file's document could not be read: ${error.message}`);
+      if (data) docs.push({ ...(data as KeyDoc), id: ((data as { id?: string }).id ?? id) });
+    }
+    // A version naming a document that is gone: no record behind the key.
+    if (docs.length === 0) return null;
+
+    const principals = new Map<string, Principal | null>();
+    let refusal: { error: string; status: number } = { error: "Not authorized for this document", status: 403 };
+    for (const doc of docs) {
+      // Judged in the document's own workspace (a document of another
+      // workspace than the key's prefix needs an active membership there).
+      const orgId = doc.org_id ?? keyOrg;
+      if (!principals.has(orgId)) principals.set(orgId, await loadReaderPrincipal(orgId, user.id));
+      const principal = principals.get(orgId) ?? null;
+      if (!principal) continue;
+      let containerChain: Array<AccessControl | undefined>;
+      try {
+        containerChain = await loadContainerAclChain(orgId, { libraryId: doc.library_id, collectionId: doc.collection_id });
+      } catch (e) {
+        // A rung that does not exist: the decision cannot be made — say so
+        // (permanent until a controller repairs the chain), never serve.
+        if (e instanceof BrokenAclChainError) { refusal = { error: e.message, status: 409 }; continue; }
+        throw e;
+      }
+      const visibility: NodeVisibility = doc.visibility === "private" || doc.visibility === "hidden" ? doc.visibility : "normal";
+      const contentCheck = {
+        principal,
+        aclChain: [...containerChain, (doc.acl ?? undefined) as AccessControl | undefined],
+        visibility,
+        // GAP-15/DEC-7: ownership serves on its own, so an owner who is also
+        // a controller is NOT a bypass read (DEC-43). The explicit document
+        // owner is authoritative here (user_is_effective_owner says the
+        // same); the folder / library / team cascade is asked below, before
+        // any audit row is written.
+        effectiveOwnerUserId: (doc.owner_user_id as string | null) ?? null,
+      };
+      const allowed = canServeContent(contentCheck);
+      // DOCACL-3 / DEC-43: controllers are unscoped by design (the recovery
+      // rail, DEC-2). The mitigation is a RECORD: when the bytes of a
+      // restricted node are served ONLY because the caller is a controller,
+      // write an audit row. Best-effort — a failed audit insert never blocks
+      // the rail.
+      if (allowed && controllerBypassDecided(contentCheck)) {
+        // Ownership that would have served the bytes anyway leaves no row:
+        // the same cascade the deny path consults. A lookup error records
+        // the read rather than skipping it.
+        const { data: isOwner } = await supabaseAdmin.rpc("user_is_effective_owner", {
+          p_doc_owner: (doc.owner_user_id as string | null) ?? null,
+          p_collection: (doc.collection_id as string | null) ?? null,
+          p_library: (doc.library_id as string | null) ?? null,
+          p_uid: user.id,
+        });
+        if (isOwner !== true) {
+          await supabaseAdmin.from("audit_logs").insert({
+            action: "CONTROLLER_RESTRICTED_READ",
+            resource_type: "document",
+            resource_id: doc.id,
+            org_id: orgId,
+            user_id: user.id,
+            user_email: user.email ?? null,
+            details: { path, visibility, roles: contentCheck.principal.roles },
+          }).then(() => undefined, () => undefined);
+        }
+      }
+      if (!allowed) {
+        // GAP-15/DEC-7: ownership carries read access — the effective owner
+        // (document → folder → library → team-supervisor cascade, resolved by
+        // the same DB function the publish guard uses) may pull the bytes of
+        // their own document. A lookup error is a check not made (closed).
+        const { data: isOwner, error: ownerErr } = await supabaseAdmin.rpc("user_is_effective_owner", {
+          p_doc_owner: (doc.owner_user_id as string | null) ?? null,
+          p_collection: (doc.collection_id as string | null) ?? null,
+          p_library: (doc.library_id as string | null) ?? null,
+          p_uid: user.id,
+        });
+        if (ownerErr) throw new Error(`ownership could not be checked: ${ownerErr.message}`);
+        if (isOwner !== true) continue;
+      }
+      // Explicit DOWNLOAD deny rules bind here too — URL issuance is the
+      // enforcement point for bytes, so an ACL "deny download" must not be
+      // routable around via a hand-built request. acl_index is chain-
+      // resolved, so inherited denies are covered. The rule is
+      // lib/downloadDeny.ts — the one the public share routes apply to a
+      // link's creator (SHR-3). KACL-5: a read error refuses (closed).
+      const download = await memberDownloadDenied(supabaseAdmin, {
+        orgId, uid: user.id, aclIndex: (doc.acl_index as DownloadDenyIndex) ?? null,
+      });
+      if (download.unreadable) throw new Error("the download rules could not be checked");
+      if (download.denied) {
+        refusal = { error: "Downloading this document is denied for your account", status: 403 };
+        continue;
+      }
+      return null; // served
+    }
+    return refuse(refusal.error, refusal.status);
+  } catch {
+    // KACL-5 done-when 3: a key behind a record (or one whose record could
+    // not be looked up) fails CLOSED — never a URL on a check not made.
+    return refuse(ACCESS_UNVERIFIED, 503);
+  }
+}
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -59,117 +222,21 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
     }
 
-    // Defense-in-depth (finding H7): membership alone isn't enough for a
-    // restricted document. If this key belongs to a document that is private
-    // or hidden AND the caller can't discover it under its ACL, deny — else a
-    // member could read the bytes of a doc the ACL hides from them. This only
-    // ever tightens access for private/hidden docs; normal docs are unaffected.
-    // Fail OPEN to the membership check on any lookup error, so a legitimate
-    // download is never broken by this extra guard.
-    try {
-      const orgId = orgMatch[1];
-      const { data: ver } = await supabaseAdmin
-        .from("document_versions")
-        .select("record_id")
-        .eq("file_url", path)
-        .limit(1)
-        .maybeSingle();
-      const docId = (ver?.record_id as string | undefined) ?? undefined;
-      if (docId) {
-        const { data: doc } = await supabaseAdmin
-          .from("documents")
-          .select("visibility, acl, acl_index, org_id, owner_user_id, collection_id, library_id")
-          .eq("id", docId)
-          .maybeSingle();
-        const visibility = (doc?.visibility as NodeVisibility | undefined) ?? "normal";
-        if (doc && (visibility === "private" || visibility === "hidden")) {
-          const [{ data: mem }, { data: teams }] = await Promise.all([
-            supabaseAdmin.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
-            supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
-          ]);
-          // DOCACL-5: a discover-only grantee may know the document exists;
-          // the bytes need read or download.
-          const contentCheck = {
-            principal: {
-              uid: user.id,
-              role: (mem?.role as Role) ?? "Viewer",
-              roles: normalizeRoles(mem?.roles, mem?.role),
-              orgId,
-              teamIds: (teams ?? []).map((t) => t.team_id as string),
-              isActiveMember: true,
-            },
-            aclChain: [doc.acl as AccessControl | undefined],
-            visibility,
-            // GAP-15/DEC-7: ownership serves on its own, so an owner who is
-            // also a controller is NOT a bypass read (DEC-43). The explicit
-            // document owner is authoritative here (user_is_effective_owner
-            // says the same); the folder / library / team cascade is asked
-            // below, before any audit row is written.
-            effectiveOwnerUserId: (doc.owner_user_id as string | null) ?? null,
-          };
-          const allowed = canServeContent(contentCheck);
-          // DOCACL-3 / DEC-43: controllers are unscoped by design (the
-          // recovery rail, DEC-2). The mitigation is a RECORD: when the
-          // bytes of a restricted node are served ONLY because the caller
-          // is a controller, write an audit row. Best-effort — a failed
-          // audit insert never blocks the rail.
-          if (allowed && controllerBypassDecided(contentCheck)) {
-            // Ownership that would have served the bytes anyway leaves no
-            // row: the same cascade the deny path consults. A lookup error
-            // records the read rather than skipping it.
-            const { data: isOwner } = await supabaseAdmin.rpc("user_is_effective_owner", {
-              p_doc_owner: (doc.owner_user_id as string | null) ?? null,
-              p_collection: (doc.collection_id as string | null) ?? null,
-              p_library: (doc.library_id as string | null) ?? null,
-              p_uid: user.id,
-            });
-            if (isOwner !== true) {
-              await supabaseAdmin.from("audit_logs").insert({
-                action: "CONTROLLER_RESTRICTED_READ",
-                resource_type: "document",
-                resource_id: docId,
-                org_id: orgId,
-                user_id: user.id,
-                user_email: user.email ?? null,
-                details: { path, visibility, roles: contentCheck.principal.roles },
-              }).then(() => undefined, () => undefined);
-            }
-          }
-          if (!allowed) {
-            // GAP-15/DEC-7: ownership carries read access — the effective
-            // owner (document → folder → library → team-supervisor cascade,
-            // resolved by the same DB function the publish guard uses) may
-            // pull the bytes of their own private-library documents.
-            const { data: isOwner } = await supabaseAdmin.rpc("user_is_effective_owner", {
-              p_doc_owner: (doc.owner_user_id as string | null) ?? null,
-              p_collection: (doc.collection_id as string | null) ?? null,
-              p_library: (doc.library_id as string | null) ?? null,
-              p_uid: user.id,
-            });
-            if (isOwner !== true) {
-              return NextResponse.json({ error: "Not authorized for this document" }, { status: 403 });
-            }
-          }
-        }
-        // Explicit DOWNLOAD deny rules bind here too — URL issuance is the
-        // enforcement point for bytes, so an ACL "deny download" must not be
-        // routable around via a hand-built request. acl_index is
-        // chain-resolved, so inherited denies are covered. The rule is
-        // lib/downloadDeny.ts — the one the public share routes apply to a
-        // link's creator (SHR-3). A read error keeps this route's fail-open
-        // posture: the evaluation runs on what was read, as it always did.
-        if (doc) {
-          const { denied } = await memberDownloadDenied(supabaseAdmin, {
-            orgId, uid: user.id, aclIndex: (doc.acl_index as DownloadDenyIndex) ?? null,
-          });
-          if (denied) {
-            return NextResponse.json({ error: "Downloading this document is denied for your account" }, { status: 403 });
-          }
-        }
-      }
-    } catch {
-      /* fail open to the membership check above — never break a valid download */
-    }
+    // KACL-5 / IEDGE-12: membership alone is never enough for a key that
+    // belongs to a document. Every org key is resolved to EVERY document
+    // that names it — as a revision's rendered file (file_url) or its native
+    // source (source_file_key) — and the bytes are served only when the
+    // caller may read one of them: lib/permissions canServeContent, the one
+    // read predicate (read or download over the FULL library → folder
+    // lineage → document chain, on every visibility — an allow-list or a deny
+    // on a normal document, its folder or its library binds here exactly as
+    // it binds the AI seam and the library page). A key behind a record FAILS
+    // CLOSED: a lookup that cannot be made answers 503, a chain with a rung
+    // that does not exist answers 409 naming it. Only a key with no document
+    // behind it keeps the membership check alone (attachments, knowledge
+    // uploads, logos — they have their own doors).
+    const gate = await documentKeyGate(orgMatch[1], path, { id: user.id, email: user.email ?? null });
+    if (gate) return gate;
   }
 
   // ARCHIVE-AWARE: if this key's binary was shed to an offline space archive,

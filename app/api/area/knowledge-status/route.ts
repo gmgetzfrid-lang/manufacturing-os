@@ -57,10 +57,17 @@ export async function GET(req: NextRequest) {
   const unit = { code: unitRow.code as string, label: (unitRow.label as string) || `Unit ${unitCode}` };
   const boundId = ((unitRow.meta as { knowledgeLibraryId?: string } | null)?.knowledgeLibraryId ?? "").trim() || null;
 
-  const [{ data: klRows }, landscape] = await Promise.all([
+  // KACL-12: a landscape that could not be read in full is never turned
+  // into folder names or counts (a missing library would drop its ACL from
+  // the folders under it) — 503, try again.
+  const [{ data: klRows }, landscapeOrError] = await Promise.all([
     supabaseAdmin.from("knowledge_libraries").select("id, name").eq("org_id", orgId).order("name"),
-    loadDcLandscape(orgId),
+    loadDcLandscape(orgId).then((l) => l, (e: unknown) => (e instanceof Error ? e : new Error(String(e)))),
   ]);
+  if (landscapeOrError instanceof Error) {
+    return bad("Couldn't read the document libraries and folders (and their access rules) — try again.", 503);
+  }
+  const landscape = landscapeOrError;
   const knowledgeLibraries = (klRows ?? []) as Array<{ id: string; name: string }>;
   const boundLibrary = boundId ? knowledgeLibraries.find((l) => l.id === boundId) ?? null : null;
 

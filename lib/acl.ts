@@ -175,11 +175,26 @@ export function evaluateAcl(
   };
 }
 
+/** DACL-6: does this ACL say anything? A node with no rules whose visibility
+ *  is normal (or unset) grants nothing and restricts nothing — it is what the
+ *  Permissions drawer writes when a controller opens it and saves without a
+ *  change. The database already reads it as "no ACL" (buildAclIndexFromRules
+ *  writes no index for zero rules, and node_visible opens a normal row), so
+ *  the app does too: a chain made ONLY of such nodes is no decision, and the
+ *  caller's default applies. Any rule, or a hidden / private visibility,
+ *  makes the node count, and then the whole chain is evaluated exactly as
+ *  before (a normal zero-rule node still resets an inherited visibility). */
+export function aclSaysSomething(acl: AccessControl | null | undefined): boolean {
+  if (!acl) return false;
+  if (Array.isArray(acl.rules) && acl.rules.length > 0) return true;
+  return acl.visibility === "hidden" || acl.visibility === "private";
+}
+
 export function evaluateAclChain(
   chain: Array<AccessControl | undefined>,
   ctx: SubjectContext
 ): AclDecision | null {
-  if (!chain.some(Boolean)) return null;
+  if (!chain.some(aclSaysSomething)) return null;
 
   let mergedRules: AccessRule[] = [];
   let visibility: NodeVisibility = "normal";

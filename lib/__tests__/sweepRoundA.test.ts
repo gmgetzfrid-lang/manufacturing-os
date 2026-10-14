@@ -104,9 +104,13 @@ describe("DEL-2 residual — the ownership cascade carries read access everywher
   it("knowledge access resolves document → folder lineage → library → team supervisor and short-circuits for the owner", () => {
     const k = src("lib/knowledgeAccess.ts");
     expect(k).toMatch(/export function effectiveOwnerFor\(/);
-    expect(k).toMatch(/if \(effectiveOwnerUid && effectiveOwnerUid === principal\.uid\) return true;/);
-    expect(k).toMatch(/select\("id, name, acl, visibility, owner_user_id, owner_team_id"\)/);
-    expect(k).toMatch(/from\("teams"\)\.select\("id, supervisor_user_id"\)/);
+    // IEDGE-12 (intelligence I-12): the owner arm lives in the one read
+    // predicate (lib/permissions canReadNode); the seam hands it the owner.
+    expect(k).toMatch(/effectiveOwnerUserId: effectiveOwnerUid \?\? null,/);
+    expect(src("lib/permissions.ts")).toMatch(/export function canReadNode\([\s\S]*?if \(params\.effectiveOwnerUserId && principal\.uid && params\.effectiveOwnerUserId === principal\.uid\) return true;/);
+    // KACL-12 (intelligence I-12): the container reads page through readAllPages.
+    expect(k).toMatch(/readAllPages\("libraries", "id, name, acl, visibility, owner_user_id, owner_team_id", orgId\)/);
+    expect(k).toMatch(/readAllPages\("teams", "id, supervisor_user_id", orgId\)/);
     expect(k).toMatch(/const owner = effectiveOwnerFor\(doc\.owner_user_id, doc\.collection_id, doc\.library_id, landscape\);/);
     expect(k).toMatch(/select\("id, library_id, collection_id, acl, visibility, is_private, scope, created_by, owner_user_id"\)/);
   });
