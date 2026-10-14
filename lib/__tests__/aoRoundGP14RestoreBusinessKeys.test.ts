@@ -40,6 +40,7 @@ import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import {
   RESTORE_BUSINESS_KEYS, EXPLICIT_LINK_NOT_APPLIED, DECISION_NOT_APPLIED, planRestore, runChunkedRestore, previewChunkedRestore,
+  businessKeyReadBatches,
   meaningIndexRebuildList, MEANING_INDEX_REBUILD_NOTE,
   type RestorePost, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
@@ -104,11 +105,19 @@ describe("ILIFE-10 — RESTORE_BUSINESS_KEYS names each table's real business ke
     expect(migrations).toMatch(/entity_mentions_doc_page_uniq\s+ON entity_mentions \(asset_id, document_id, page\)\s+WHERE knowledge_document_id IS NULL/);
     expect(migrations).toMatch(/entity_mentions_unique_idx\s+ON entity_mentions \(asset_id, COALESCE\(knowledge_document_id, document_id\), page\)/);
     const schema = censusSchema();
+    // P14 fix pass: the read is narrowed on every column of the row's key (both shapes of a mention's key)
+    const shapes: Row[] = [{ knowledge_document_id: "k" }, { knowledge_document_id: null, document_id: "d" }];
     for (const [table, bk] of Object.entries(RESTORE_BUSINESS_KEYS)) {
-      for (const c of ["id", "org_id", bk.narrowBy, ...bk.columns]) {
+      const narrowed = new Set(shapes.flatMap((r) => [...bk.narrowBy(r)]));
+      for (const c of ["id", "org_id", ...narrowed, ...bk.columns]) {
         expect(schema.get(table)?.columns.has(c), `${table}.${c}`).toBe(true);
       }
+      for (const c of narrowed) expect(bk.columns, `${table} reads back ${c}`).toContain(c);
     }
+    expect(RESTORE_BUSINESS_KEYS.process_flows.narrowBy({})).toEqual(["from_kind", "from_ref", "to_kind", "to_ref"]);
+    expect(RESTORE_BUSINESS_KEYS.proposed_links.narrowBy({})).toEqual(["document_id", "target_document_id", "proposer"]);
+    expect(RESTORE_BUSINESS_KEYS.entity_mentions.narrowBy({ knowledge_document_id: "k" })).toEqual(["asset_id", "knowledge_document_id", "page"]);
+    expect(RESTORE_BUSINESS_KEYS.entity_mentions.narrowBy({ knowledge_document_id: null, document_id: "d" })).toEqual(["asset_id", "document_id", "page"]);
   });
   it("a mention's key is its knowledge document when it has one, else its controlled document (20261126's two indexes)", () => {
     const k = RESTORE_BUSINESS_KEYS.entity_mentions.keyOf;
@@ -222,6 +231,67 @@ describe("ILIFE-10 criterion 2 — a restore into a workspace that re-indexed me
     expect(again.body).toMatchObject({ ok: true, inserted: 0, existing: 2 });
     expect(again.body.notApplied).toBeUndefined(); // same rows: nothing differs
     expect(rowsOf("entity_mentions").map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+});
+
+// ── P14 fix pass (review minor): the live read is narrowed on every key column ─
+// It was narrowed by asset_id alone, so each chunk re-read a hub asset's whole
+// live mention set (1,000 rows a request), growing as the restore wrote it.
+describe("ILIFE-10 (P14 fix pass) — the business-key read narrows on every key column, so a hub asset is not re-read whole for each chunk", () => {
+  /** Counts the select statements on `table` (the memory database looks
+   *  readError up once for a read that does not fail). */
+  const countSelects = (table: string) => {
+    const counter = { n: 0 };
+    db.readError = new Proxy({} as Record<string, string>, { get: (_t, k) => { if (k === table) counter.n++; return undefined; } });
+    return counter;
+  };
+
+  it("a hub asset with 2,000 live mentions: each 100-row chunk reads a couple of statements, flat as the restore grows (was: the whole set, 20+ pages under a 100-row cap, every chunk)", async () => {
+    db.maxRows = 100; // a server row cap below the page size
+    const kdocs = Array.from({ length: 200 }, (_, i) => `k-${String(i).padStart(4, "0")}`);
+    const fresh = Array.from({ length: 300 }, (_, i) => `kb-${String(i).padStart(4, "0")}`);
+    db.rows.assets.push({ id: "hub", org_id: ORG });
+    db.rows.knowledge_documents = [...kdocs, ...fresh].map((id) => ({ id, org_id: ORG }));
+    db.rows.entity_mentions = kdocs.flatMap((k, i) => Array.from({ length: 10 }, (_, p) => ({
+      id: `m-live-${String(i * 10 + p).padStart(5, "0")}`, org_id: ORG, asset_id: "hub", knowledge_document_id: k, page: p + 1, is_explicit: false,
+    })));
+    expect(rowsOf("entity_mentions")).toHaveLength(2000);
+    const perChunk: number[] = [];
+    for (let c = 0; c < 3; c++) {
+      // 95 new mentions of the hub on knowledge documents restored since; 5 the workspace already holds (re-indexed)
+      const rows: Row[] = [
+        ...Array.from({ length: 95 }, (_, j) => ({ id: `m-b-${c}-${j}`, asset_id: "hub", knowledge_document_id: fresh[c * 95 + j], page: 1 + (j % 4), is_explicit: false })),
+        ...Array.from({ length: 5 }, (_, j) => ({ id: `m-re-${c}-${j}`, asset_id: "hub", knowledge_document_id: kdocs[c * 5 + j], page: 2, is_explicit: true })),
+      ];
+      const selects = countSelects("entity_mentions");
+      const r = await chunk("entity_mentions", rows);
+      db.readError = {};
+      expect(r.status, `chunk ${c}`).toBe(200);
+      expect(r.body, `chunk ${c}`).toMatchObject({ ok: true, inserted: 95, existing: 5 });
+      expect((r.body.notApplied as unknown[]).length, `chunk ${c}`).toBe(5);
+      perChunk.push(selects.n);
+    }
+    // one batch: a page and the empty page that ends it (narrowed by asset_id alone it was 21, 22, 23 — the hub's whole set, growing)
+    expect(perChunk).toEqual([2, 2, 2]);
+    expect(rowsOf("entity_mentions")).toHaveLength(2000 + 3 * 95);
+  });
+
+  it("the batches keep every row's values and fit the URL budget; a row past the budget or the row cap starts a new batch", () => {
+    const rows: Row[] = Array.from({ length: 250 }, (_, i) => ({ a: `asset-${i % 7}`, k: `${"x".repeat(40)}-${i}`, p: i % 9 }));
+    const cols = ["a", "k", "p"];
+    const batches = businessKeyReadBatches(rows, cols, 1500, 100);
+    expect(batches.length).toBeGreaterThan(2);
+    for (const b of batches) {
+      const size = b.reduce((sum, values) => sum + values.reduce((s2, v) => s2 + encodeURIComponent(String(v)).length + 3, 0), 0);
+      expect(size).toBeLessThanOrEqual(1500);
+    }
+    for (const r of rows) {
+      expect(batches.some((b) => cols.every((c, i) => b[i].includes(r[c] as string | number))), JSON.stringify(r)).toBe(true);
+    }
+    // the row cap alone: short values, 250 rows → three batches of at most 100
+    const small = businessKeyReadBatches(rows.map((r, i) => ({ a: "h", k: i, p: 1 })), cols, 1e9, 100);
+    expect(small.map((b) => b[1].length)).toEqual([100, 100, 50]);
+    expect(businessKeyReadBatches([], cols)).toEqual([]);
   });
 });
 

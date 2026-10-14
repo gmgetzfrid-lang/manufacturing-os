@@ -116,8 +116,18 @@ export async function alertAdminsOfExport(
      *  it takes, e.g. "Admin"). `failed`: an unconfirmed destination's
      *  night in the bounded grace whose push FAILED (its error) — the bell
      *  still rings, because every night of the grace and the pause are said
-     *  (DEC-87 §1, amended), and it says nothing left. */
-    scheduled?: { destinationName: string; configuredBy: string | null; unconfirmed?: { by: string; holds: string }; grace?: UnconfirmedGrace; failed?: string };
+     *  (DEC-87 §1, amended). It says nothing left only when the push failed
+     *  before the archive was sent; `failedAfterSend` (P14 fix pass) when
+     *  its transmission to the destination had begun (a webhook that
+     *  answered 500 after receiving it, a bucket put that failed after the
+     *  bytes went), and then it says the destination may hold the archive.
+     *  `pausedNotice` (P14 fix pass): a PAUSED night announcing the pause,
+     *  because the bell of the night that paused it could not be sent —
+     *  nothing left tonight. */
+    scheduled?: {
+      destinationName: string; configuredBy: string | null; unconfirmed?: { by: string; holds: string }; grace?: UnconfirmedGrace;
+      failed?: string; failedAfterSend?: boolean; pausedNotice?: { of: number };
+    };
   },
 ): Promise<ExportAlertResult> {
   const when = new Date().toISOString();
@@ -125,14 +135,24 @@ export async function alertAdminsOfExport(
   // DEC-87 §1 as amended under DEC-90 (admin-and-org Round G, P14): the
   // night's place in the bounded grace, said in every Admin's bell.
   const grace = unconfirmed ? info.scheduled?.grace : undefined;
-  const graceText = grace ? ` ${graceSentence(grace)}` : "";
-  // P14: a failed night of the grace is a bell too — it never says the
-  // workspace left (only an unconfirmed destination's grace night passes it).
-  const failed = unconfirmed && grace ? info.scheduled?.failed : undefined;
+  // P14 fix pass: a paused night that announces the pause (the pausing night's bell was refused).
+  const pausedNotice = unconfirmed ? info.scheduled?.pausedNotice : undefined;
+  const graceText = pausedNotice ? ` ${pauseAnnouncedLateSentence(pausedNotice.of)}` : grace ? ` ${graceSentence(grace)}` : "";
+  // P14: a failed night of the grace is a bell too (only an unconfirmed
+  // destination's grace night passes it). It says nothing left only when the
+  // push failed before the archive was sent (P14 fix pass: a webhook that
+  // answers 500 has already received the whole ZIP).
+  const failed = unconfirmed && grace && !pausedNotice ? info.scheduled?.failed : undefined;
+  const failedAfterSend = failed !== undefined && info.scheduled?.failedAfterSend === true;
+  const failure = failed !== undefined ? failed.slice(0, 200) || "no error given" : "";
   const what = info.scheduled
-    ? (failed !== undefined
-      ? `A scheduled export to "${info.scheduled.destinationName}" (${info.destination}) failed tonight, so nothing left the workspace (${failed.slice(0, 200) || "no error given"}).`
-      : `A scheduled export pushed the entire workspace to "${info.scheduled.destinationName}" (${info.destination}).`)
+    ? (pausedNotice
+      ? `A scheduled export to "${info.scheduled.destinationName}" (${info.destination}) was skipped tonight, so nothing left the workspace.`
+      : failed !== undefined
+        ? (failedAfterSend
+          ? `A scheduled export to "${info.scheduled.destinationName}" (${info.destination}) failed tonight after the archive's transmission to it began, so the destination may hold the entire workspace (${failure}).`
+          : `A scheduled export to "${info.scheduled.destinationName}" (${info.destination}) failed tonight before the archive was sent, so nothing left the workspace (${failure}).`)
+        : `A scheduled export pushed the entire workspace to "${info.scheduled.destinationName}" (${info.destination}).`)
     : `${info.actorEmail} exported the entire workspace (${info.destination}).`;
   const body = (forAdmin: boolean) => unconfirmed
     ? `${what} ${unconfirmedSentence(unconfirmed)} ${forAdmin
@@ -147,7 +167,7 @@ export async function alertAdminsOfExport(
         : "tell an Admin now so they can review the account. The export is recorded in the audit log."}`;
   return alertControllers(admin, info.orgId, info.actorUserId, {
     title: unconfirmed
-      ? (grace?.pausing ? "Scheduled export paused until an Admin confirms it" : "Scheduled export needs an Admin to confirm it")
+      ? (grace?.pausing || pausedNotice ? "Scheduled export paused until an Admin confirms it" : "Scheduled export needs an Admin to confirm it")
       : info.scheduled ? "Scheduled workspace export ran" : "Full workspace export was run",
     body,
     actorUserId: info.actorUserId,
@@ -157,7 +177,8 @@ export async function alertAdminsOfExport(
       ...(info.scheduled ? { scheduled: true, destinationName: info.scheduled.destinationName, configuredBy: info.scheduled.configuredBy } : {}),
       ...(unconfirmed ? { unconfirmed: { by: unconfirmed.by, holds: unconfirmed.holds } } : {}),
       ...(grace ? { grace: { night: grace.night, of: grace.of, pausing: grace.pausing } } : {}),
-      ...(failed !== undefined ? { failed: true } : {}),
+      ...(failed !== undefined ? { failed: true, ...(failedAfterSend ? { failedAfterSend: true } : {}) } : {}),
+      ...(pausedNotice ? { paused: { of: pausedNotice.of, announcedLate: true } } : {}),
     },
   });
 }
@@ -169,12 +190,17 @@ export async function alertAdminsOfExport(
 // but no longer indefinitely. Each such scheduled push is an unconfirmed
 // NIGHT, counted on its run row (diagnostics step GRACE_NIGHT_STEP, detail
 // `night=<n>/<of>`); nights 1 to UNCONFIRMED_GRACE_NIGHTS run and every
-// Admin's bell names the night (a night whose push FAILED rings it too, and
-// says nothing left — `scheduled.failed`); the last night's push is followed
-// by a pause (its bell says so, whether it left or failed); from the next night the sweep skips it with a
-// cancelled run row (GRACE_PAUSED_STEP) and no bell, until an Admin opens it
-// and saves it (which stamps updated_by: confirmed — it runs as any other
-// destination) or disables it. The count reads only rows this rule wrote, so
+// Admin's bell names the night (a night whose push FAILED rings it too —
+// `scheduled.failed` — saying nothing left only when it failed before the
+// archive was sent, else that the destination may hold it); the last night's
+// push is followed by a pause (its bell says so, whether it left or failed);
+// from the next night the sweep skips it with a cancelled run row
+// (GRACE_PAUSED_STEP) and no bell, until an Admin opens it and saves it
+// (which stamps updated_by: confirmed — it runs as any other destination) or
+// disables it. P14 fix pass: if the pausing night's bell was refused
+// (alert:unsent), the next paused night rings it (checked) and records
+// GRACE_PAUSE_ANNOUNCED_STEP, so the pause is announced once; every paused
+// night after carries that step forward. The count reads only rows this rule wrote, so
 // the night the change deploys is night 1 for every such destination, never
 // the night a backup stops. A run the gate skipped for another reason
 // (cancelled, no grace step) neither counts nor breaks the count; any other
@@ -188,6 +214,13 @@ export async function alertAdminsOfExport(
 // count reads the destination's run rows page by page (keyset, newest first)
 // until a deciding row: a pause is never forgotten behind a long run of gate
 // skips or unverified nights.
+// P14 fix pass: a count that cannot be read never pushes from a paused
+// destination either — the sweep falls back on the destination row in hand:
+// one whose card says its last scheduled run was paused, or was the night
+// that paused it (pausedAtLastRun), stays paused. And on a night whose
+// confirmation cannot be verified, a destination SAVED since its pause (only
+// an Admin can save one, and only a save stamps updated_at — savedSince) is
+// not held paused on that guess: it runs uncounted (grace:unverified).
 
 /** DEC-87 §1 (amended): consecutive unconfirmed nightly runs before a pause. */
 export const UNCONFIRMED_GRACE_NIGHTS = 7;
@@ -200,6 +233,13 @@ export const GRACE_PAUSED_STEP = "grace:paused";
 export const GRACE_UNVERIFIED_STEP = "grace:unverified";
 /** Run rows read per page by the grace's count. */
 export const GRACE_COUNT_PAGE = 100;
+/** P14 fix pass: the paused run row's step saying the pause was announced —
+ *  tonight (the pausing night's bell had been refused) or at an earlier run. */
+export const GRACE_PAUSE_ANNOUNCED_STEP = "grace:paused-announced";
+/** The run row's step for a bell that could not be sent (as the sweep writes it). */
+export const ALERT_UNSENT_STEP = "alert:unsent";
+/** The paused row's announcement detail when the pause was announced before tonight. */
+export const PAUSE_ANNOUNCED_EARLIER = "the pause was announced at an earlier run";
 
 export interface UnconfirmedGrace {
   /** Tonight's unconfirmed night (1-based), or null when the count could not be read (it runs). */
@@ -209,13 +249,30 @@ export interface UnconfirmedGrace {
   pausing: boolean;
 }
 
+/** A paused destination's place in the grace (P14 fix pass): `since` is the
+ *  started_at of the row that decided the pause (the newest paused night, or
+ *  the night that paused it); `announced` is false only when the pause's
+ *  last bell is recorded as not sent (alert:unsent), or the pausing night
+ *  never closed (its push killed before its bell rang). */
+export interface GracePaused {
+  paused: true;
+  since: string | null;
+  announced: boolean;
+}
+
+/** The words graceSentence uses for the night that pauses it — also how a
+ *  card in hand says its last run paused it (pausedAtLastRun). */
+const PAUSING_MARK = "so it is now PAUSED";
+/** The first word of every paused night's note (PAUSED_LEAD). */
+const PAUSED_WORD = "Paused:";
+
 /** What the bell, run row and card say about tonight's place in the grace. */
 export function graceSentence(g: UnconfirmedGrace): string {
   if (g.night === null) {
     return `It runs tonight; how many unconfirmed nights it has had could not be read, so the count resumes at the next run (it is paused after ${g.of} unconfirmed nights).`;
   }
   return g.pausing
-    ? `This was unconfirmed night ${g.night} of ${g.of}, so it is now PAUSED: no scheduled push leaves until an Admin opens it and saves it to confirm it (or disables it).`
+    ? `This was unconfirmed night ${g.night} of ${g.of}, ${PAUSING_MARK}: no scheduled push leaves until an Admin opens it and saves it to confirm it (or disables it).`
     : `This is unconfirmed night ${g.night} of ${g.of}: unless an Admin confirms it, it is paused after night ${g.of}'s push.`;
 }
 
@@ -231,7 +288,7 @@ export function graceUnverifiedStep(ts: string): { ts: string; step: string; det
 }
 
 const PAUSED_LEAD = (of: number) =>
-  `Paused: no Admin has confirmed this destination after ${of} unconfirmed nightly pushes, so no scheduled push leaves until an Admin opens it under Admin → Data export and saves it to confirm it (or disables it).`;
+  `${PAUSED_WORD} no Admin has confirmed this destination after ${of} unconfirmed nightly pushes, so no scheduled push leaves until an Admin opens it under Admin → Data export and saves it to confirm it (or disables it).`;
 
 /** What a paused night's run row, card and sweep result say. */
 export function pausedNote(u: { by: string; holds: string }, of = UNCONFIRMED_GRACE_NIGHTS): string {
@@ -241,11 +298,50 @@ export function pausedNote(u: { by: string; holds: string }, of = UNCONFIRMED_GR
 /** P14 review fix: what a paused destination's run row, card and sweep
  *  result say on a night its confirmation could not be verified — it stays
  *  paused (an unverifiable read never ends the pause; only an Admin's save
- *  does). */
+ *  does — P14 fix pass: a destination saved since its pause runs uncounted
+ *  on such a night instead, SAVED_SINCE_PAUSE_NOTE). */
 export function pausedUnverifiedNote(reason: string, of = UNCONFIRMED_GRACE_NIGHTS): string {
   const entry = adminSurface("data-export")?.entry ?? ["Admin"];
   const holds = entry === "*" ? "the data-export role" : entry.join(" or ");
   return `${PAUSED_LEAD(of)} Whether the member who last configured it holds ${holds} could not be verified tonight (${reason}), so it stays paused; this is checked again at the next run.`;
+}
+
+/** P14 fix pass: what a paused night's bell says when it announces the
+ *  pause the pausing night's bell could not. */
+export function pauseAnnouncedLateSentence(of = UNCONFIRMED_GRACE_NIGHTS): string {
+  return `It was paused after ${of} unconfirmed nightly pushes: no scheduled push leaves until an Admin opens it and saves it to confirm it (or disables it). The bell that should have said so at its last push could not be sent.`;
+}
+
+/** P14 fix pass: what a paused night's note adds when the count could not be
+ *  read and the destination row in hand says its last scheduled run paused it. */
+export function pausedCountUnreadSentence(reason: string): string {
+  return `How many unconfirmed nights it has had could not be read tonight (${reason}); its last scheduled run left it paused, so it stays paused (checked again at the next run).`;
+}
+
+/** P14 fix pass: the note of an unverified night that runs because the
+ *  destination was saved since its pause. */
+export const SAVED_SINCE_PAUSE_NOTE =
+  "it was paused, and it has been saved since (only an Admin can save a destination), so tonight it runs, uncounted; whether it is confirmed is checked again at the next run";
+
+/** P14 fix pass (DEC-87 §1): the destination row in hand says its last
+ *  scheduled run left it paused — a paused night's card (`skipped: Paused:`)
+ *  or the card of the night that paused it. The sweep's fallback when the
+ *  run-row count cannot be read, so an unreadable count never pushes from a
+ *  paused destination. */
+export function pausedAtLastRun(dest: { last_run_error?: unknown }): boolean {
+  const e = dest.last_run_error;
+  return typeof e === "string" && (e.startsWith(`skipped: ${PAUSED_WORD}`) || e.includes(PAUSING_MARK));
+}
+
+/** P14 fix pass: was the destination saved after `since`? Only an Admin can
+ *  save one (the data-export surface is Admin-only since P3), and only a save
+ *  stamps updated_at (PATCH /api/data-export/destinations/[id]; no trigger,
+ *  and the sweep never writes it). An unreadable time answers no. */
+export function savedSince(updatedAt: unknown, since: unknown): boolean {
+  if (typeof updatedAt !== "string" || typeof since !== "string") return false;
+  const u = Date.parse(updatedAt);
+  const s = Date.parse(since);
+  return Number.isFinite(u) && Number.isFinite(s) && u > s;
 }
 
 /** The keyset condition for the run rows after (started_at, id), newest
@@ -260,18 +356,31 @@ function afterRunCursor(c: { at: string; id: string }): string {
  *  (started_at, id) — until a deciding row). `paused` when the previous
  *  counted night was the last one, or a paused night; otherwise tonight's
  *  night. A read that fails answers `night: null` — the push runs (a backup
- *  is never stopped on a guess) and says the count could not be read.
+ *  is never stopped on a guess) and says the count could not be read; the
+ *  sweep then falls back on the destination row in hand (pausedAtLastRun),
+ *  so a paused destination stays paused (P14 fix pass).
  *  Neutral rows (a gate skip, an unread count, an unverified night) are paged
  *  past, never taken as the end of the history (P14 review fix: a fixed
- *  window of 28 rows forgot a pause behind 28 gate skips). */
+ *  window of 28 rows forgot a pause behind 28 gate skips).
+ *  P14 fix pass: a pause answers `since` (the deciding row's started_at) and
+ *  `announced`. Paused rows that say nothing of the announcement (an
+ *  unverified or unread night's) are read past to the row that does: a
+ *  paused row's GRACE_PAUSE_ANNOUNCED_STEP (announced) or ALERT_UNSENT_STEP
+ *  (its re-announcement was refused), else the night that paused it (its
+ *  bell refused — alert:unsent — or never rung: the row never closed). A
+ *  read that fails once the pause is found still answers the pause, as
+ *  announced (no bell on a guess). */
 export async function unconfirmedGraceTonight(
   sb: Pick<SupabaseClient, "from">,
   destinationId: string,
   of = UNCONFIRMED_GRACE_NIGHTS,
   pageSize = GRACE_COUNT_PAGE,
-): Promise<{ paused: true } | ({ paused: false } & UnconfirmedGrace) | ({ paused: false; error: string } & UnconfirmedGrace)> {
+): Promise<GracePaused | ({ paused: false } & UnconfirmedGrace) | ({ paused: false; error: string } & UnconfirmedGrace)> {
   let previous = 0;
   let cursor: { at: string; id: string } | null = null;
+  let pause: { since: string | null } | null = null;
+  const paused = (announced: boolean): GracePaused => ({ paused: true, since: pause?.since ?? null, announced });
+  const startedAt = (run: { started_at?: unknown }) => (typeof run.started_at === "string" ? run.started_at : null);
   scan: for (;;) {
     let q = sb
       .from("export_runs")
@@ -285,31 +394,49 @@ export async function unconfirmedGraceTonight(
       .order("started_at", { ascending: false })
       .order("id", { ascending: false })
       .limit(pageSize);
-    if (error) return { paused: false, night: null, of, pausing: false, error: error.message };
+    if (error) {
+      if (pause) return paused(true);
+      return { paused: false, night: null, of, pausing: false, error: error.message };
+    }
     const rows = (Array.isArray(data) ? data : []) as Array<{ id?: unknown; status?: unknown; diagnostics?: unknown; started_at?: unknown }>;
     for (const run of rows) {
       const steps = Array.isArray(run.diagnostics) ? run.diagnostics as Array<{ step?: unknown; detail?: unknown }> : [];
-      if (steps.some((d) => d?.step === GRACE_PAUSED_STEP)) return { paused: true };
+      const has = (step: string) => steps.some((d) => d?.step === step);
+      if (has(GRACE_PAUSED_STEP)) {
+        pause ??= { since: startedAt(run) };
+        if (has(GRACE_PAUSE_ANNOUNCED_STEP)) return paused(true);
+        if (has(ALERT_UNSENT_STEP)) return paused(false);
+        continue; // a paused night that says nothing of the announcement: read on to one that does
+      }
       const night = steps.find((d) => d?.step === GRACE_NIGHT_STEP);
       if (night) {
         const m = /^night=(\d+)\/\d+$/.exec(String(night.detail ?? ""));
         if (!m) continue; // an unread count: it neither counts nor breaks the run of nights
+        // the night that paused it: announced unless its bell was refused, or the run never closed (its bell never rang)
+        const announced = (run.status === "succeeded" || run.status === "failed") && !has(ALERT_UNSENT_STEP);
+        if (pause) return paused(announced);
         previous = Number(m[1]);
+        if (previous >= of) {
+          pause = { since: startedAt(run) };
+          return paused(announced);
+        }
         break scan;
       }
-      if (steps.some((d) => d?.step === GRACE_UNVERIFIED_STEP)) continue; // an unverified night: neutral
+      if (has(GRACE_UNVERIFIED_STEP)) continue; // an unverified night: neutral
       if (run.status === "cancelled") continue; // a gate skip for another reason
+      if (pause) return paused(true); // nothing says the pause went unannounced
       break scan; // a confirmed push, or a run from before this rule: the count starts again
     }
     if (rows.length < pageSize) break; // the destination's whole history was read
     const last = rows[rows.length - 1];
     const next = { at: String(last.started_at ?? ""), id: String(last.id ?? "") };
     if (!next.at || !next.id || (cursor && next.at === cursor.at && next.id === cursor.id)) {
+      if (pause) return paused(true);
       return { paused: false, night: null, of, pausing: false, error: "the run history could not be paged" };
     }
     cursor = next;
   }
-  if (previous >= of) return { paused: true };
+  if (pause) return paused(true);
   const tonight = previous + 1;
   return { paused: false, night: tonight, of, pausing: tonight >= of };
 }

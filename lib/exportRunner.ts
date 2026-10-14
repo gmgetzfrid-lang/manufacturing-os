@@ -143,11 +143,15 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
  *  307 → http://169.254.169.254/… would receive the whole org ZIP with the
  *  guard never re-run (the runtime follows redirects and re-resolves DNS on
  *  its own). Residual: the CONNECTED address is still the runtime's own
- *  resolution of the checked host (no custom dispatcher without undici). */
-export async function fetchExternalGuarded(url: string, init: RequestInit & { method: string }): Promise<Response> {
+ *  resolution of the checked host (no custom dispatcher without undici).
+ *  `onSend` (P14 fix pass) is called just before each request goes out, once
+ *  its hop has passed the guard: from then the body may have reached that
+ *  host, whatever it answers. */
+export async function fetchExternalGuarded(url: string, init: RequestInit & { method: string }, onSend?: () => void): Promise<Response> {
   let current = url;
   for (let hop = 0; ; hop++) {
     await assertSafeExternalUrl(current);
+    onSend?.();
     const res = await fetch(current, { ...init, redirect: "manual" });
     const location = res.headers.get("location");
     if (!REDIRECT_STATUSES.has(res.status) || !location) return res;
@@ -370,15 +374,26 @@ type BuildAndDeliverParams = {
  *  slow upload that succeeds today — the recall's read allows a day
  *  (lib/dataExport.ts UNDELIVERED_READ_WINDOW_MS; A&O P3 fix pass 8). A
  *  function killed mid-delivery (Vercel at 300 s, a container restart)
- *  writes no row at all, and its run row stays "running". */
+ *  writes no row at all, and its run row stays "running".
+ *  P14 fix pass (DEC-87 §1): an error thrown once the archive's transmission
+ *  to the destination had begun — the webhook POST or the bucket put sent,
+ *  whatever the destination then answered (a webhook's 500 comes back after
+ *  it received the whole ZIP) — carries `transmissionBegan`
+ *  (pushTransmissionBegan), so the scheduled sweep's bell never tells the
+ *  Admins nothing left when the destination may hold the archive. An error
+ *  before that (the envelope, the ZIP, the credentials, the address guard)
+ *  carries nothing: nothing was sent. */
 export async function buildAndDeliverExport(params: BuildAndDeliverParams): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
   const recordId = randomUUID();
   let recorded = false;
+  let transmitting = false;
   try {
-    return await buildAndDeliver(params, recordId, () => { recorded = true; });
+    return await buildAndDeliver(params, recordId, () => { recorded = true; }, () => { transmitting = true; });
   } catch (e) {
+    if (transmitting && e && typeof e === "object") (e as { transmissionBegan?: boolean }).transmissionBegan = true;
     if (!recorded) throw e;
     const err = e instanceof Error ? e : new Error(String(e));
+    if (transmitting) (err as Error & { transmissionBegan?: boolean }).transmissionBegan = true;
     const unwritten = await recordExportUndelivered(
       createClient(params.supabaseUrl, params.serviceRoleKey, { auth: { persistSession: false } }),
       {
@@ -394,10 +409,18 @@ export async function buildAndDeliverExport(params: BuildAndDeliverParams): Prom
   }
 }
 
+/** P14 fix pass: did this error come after the archive's transmission to the
+ *  destination began (buildAndDeliverExport's `transmissionBegan`)? Then the
+ *  destination may hold the archive, whatever it answered. */
+export function pushTransmissionBegan(e: unknown): boolean {
+  return !!e && typeof e === "object" && (e as { transmissionBegan?: unknown }).transmissionBegan === true;
+}
+
 async function buildAndDeliver(
   params: BuildAndDeliverParams,
   recordId: string,
   onRecorded: () => void,
+  onTransmitting: () => void = () => undefined,
 ): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
   const diagnostics: DiagnosticStep[] = [];
   const step = (s: string, d?: string) => diagnostics.push({ ts: new Date().toISOString(), step: s, detail: d });
@@ -594,6 +617,7 @@ async function buildAndDeliver(
           key: fullKey,
           body: zipBytes,
           contentType: "application/zip",
+          onSend: onTransmitting,
         });
         step("s3:done");
 
@@ -672,7 +696,7 @@ async function buildAndDeliver(
           method: "POST",
           headers,
           body: zipBytes as unknown as BodyInit,
-        });
+        }, onTransmitting);
         if (!res.ok) throw new Error(`Webhook ${res.status}: ${await res.text()}`);
         step("webhook:done");
 
@@ -715,8 +739,11 @@ async function s3Put(params: {
   key: string;
   body: Uint8Array;
   contentType: string;
+  /** P14 fix pass: called once the credentials are read, just before the put is sent. */
+  onSend?: () => void;
 }): Promise<void> {
   const client = buildS3ClientFromDestination(params.dest);
+  params.onSend?.();
   await client.send(new PutObjectCommand({
     Bucket: params.dest.bucket || "",
     Key: params.key,

@@ -1018,8 +1018,11 @@ export function conflictTargetFor(table: string): string {
 export interface RestoreBusinessKey {
   /** Columns read back for the live rows (besides `id`). */
   columns: readonly string[];
-  /** The column the live read is narrowed by (`.in()`). */
-  narrowBy: string;
+  /** The key columns the live read is narrowed by for this row (one `.in()`
+   *  each, besides org_id): every column of the key the row is matched on
+   *  (P14 fix pass: was one column, so a hub asset's whole mention set was
+   *  read again for every chunk). The read is a superset; keyOf decides. */
+  narrowBy: (row: Record<string, unknown>) => readonly string[];
   /** The row's business-key identity, or null when a key column is unset. */
   keyOf: (row: Record<string, unknown>) => string | null;
   /** What a backup row's decision the kept live row lacks, or null. */
@@ -1043,19 +1046,19 @@ const statusDecision = (decided: readonly string[], noun: string) =>
 export const RESTORE_BUSINESS_KEYS: Readonly<Record<string, RestoreBusinessKey>> = {
   process_flows: {
     columns: ["org_id", "from_kind", "from_ref", "to_kind", "to_ref", "status"],
-    narrowBy: "from_ref",
+    narrowBy: () => ["from_kind", "from_ref", "to_kind", "to_ref"],
     keyOf: (r) => bkJoin([bkPart(r.org_id), bkPart(r.from_kind), bkPart(r.from_ref), bkPart(r.to_kind), bkPart(r.to_ref)]),
     decision: statusDecision(["confirmed", "dismissed"], "process flow"),
   },
   proposed_links: {
     columns: ["document_id", "target_document_id", "proposer", "status"],
-    narrowBy: "document_id",
+    narrowBy: () => ["document_id", "target_document_id", "proposer"],
     keyOf: (r) => bkJoin([bkPart(r.document_id), bkPart(r.target_document_id), bkPart(r.proposer)]),
     decision: statusDecision(["approved", "dismissed"], "link proposal"),
   },
   entity_mentions: {
     columns: ["asset_id", "knowledge_document_id", "document_id", "page", "is_explicit"],
-    narrowBy: "asset_id",
+    narrowBy: (r) => (bkPart(r.knowledge_document_id) !== null ? ["asset_id", "knowledge_document_id", "page"] : ["asset_id", "document_id", "page"]),
     keyOf: (r) => {
       const kdoc = bkPart(r.knowledge_document_id);
       return bkJoin([bkPart(r.asset_id), kdoc !== null ? `k:${kdoc}` : (bkPart(r.document_id) !== null ? `d:${bkPart(r.document_id)}` : null), bkPart(r.page)]);
@@ -1798,42 +1801,92 @@ export async function applyRestoreChunk(
   };
 }
 
+/** ILIFE-10 (P14 fix pass): the encoded length the business-key read's
+ *  `.in()` lists may take in one request (lib/storageOrphans.ts's re-check
+ *  bound, which the gateway accepts), and the most rows one request asks for
+ *  (locateRestoreKeys's batch). */
+const BUSINESS_KEY_READ_URL_BUDGET = 6000;
+const BUSINESS_KEY_READ_ROWS = 100;
+
+/** ILIFE-10 (P14 fix pass): `rows` (sorted by their narrowing values) cut into
+ *  batches whose distinct values per column fit the URL budget, each batch
+ *  one value list per column of `cols`. */
+export function businessKeyReadBatches(
+  rows: ReadonlyArray<Record<string, unknown>>, cols: readonly string[],
+  budget = BUSINESS_KEY_READ_URL_BUDGET, maxRows = BUSINESS_KEY_READ_ROWS,
+): Array<Array<Array<string | number>>> {
+  const out: Array<Array<Array<string | number>>> = [];
+  let sets = cols.map(() => new Set<string | number>());
+  let size = 0;
+  let n = 0;
+  const flush = () => {
+    if (n > 0) out.push(sets.map((x) => Array.from(x)));
+    sets = cols.map(() => new Set<string | number>());
+    size = 0;
+    n = 0;
+  };
+  for (const r of rows) {
+    const cost = () => cols.reduce((sum, c, i) => sum + (sets[i].has(r[c] as string | number) ? 0 : encodeURIComponent(String(r[c])).length + 3), 0);
+    let extra = cost();
+    if (n > 0 && (size + extra > budget || n >= maxRows)) {
+      flush();
+      extra = cost();
+    }
+    cols.forEach((c, i) => sets[i].add(r[c] as string | number));
+    size += extra;
+    n++;
+  }
+  flush();
+  return out;
+}
+
 /** ILIFE-10 (P14): the live rows of `orgId` holding any business key of
- *  `rows`, by key. Narrowed by one column's values in batches of 100 and read
- *  in keyset pages (id order) until an empty page, so a server row cap below
- *  the page size cannot cut the read short. */
+ *  `rows`, by key. Narrowed on EVERY column of each row's key (narrowBy; P14
+ *  fix pass: was the first column alone, so each chunk re-read a hub asset's
+ *  whole live mention set, growing as the restore wrote it), the rows cut
+ *  into batches by URL budget (businessKeyReadBatches), and read in keyset
+ *  pages (id order) until an empty page, so a server row cap below the page
+ *  size cannot cut the read short. */
 async function liveBusinessKeyRows(
   sb: RestoreDb, table: string, orgId: string, rows: ReadonlyArray<Record<string, unknown>>, bk: RestoreBusinessKey,
 ): Promise<{ ok: true; rows: Map<string, Record<string, unknown>> } | { ok: false; error: string }> {
   const wanted = new Set<string>();
-  const narrow = new Set<string | number>();
+  // the rows by the columns their key is read on (a mention with a knowledge document, one without)
+  const groups = new Map<string, { cols: readonly string[]; rows: Array<Record<string, unknown>> }>();
   for (const r of rows) {
     const k = bk.keyOf(r);
-    const v = r[bk.narrowBy];
-    if (k === null || !isKeyValue(v)) continue;
+    if (k === null) continue;
+    const cols = bk.narrowBy(r);
+    if (!cols.every((c) => isKeyValue(r[c]))) continue;
     wanted.add(k);
-    narrow.add(v);
+    const sig = cols.join(",");
+    const g = groups.get(sig);
+    if (g) g.rows.push(r); else groups.set(sig, { cols, rows: [r] });
   }
   const out = new Map<string, Record<string, unknown>>();
-  const values = Array.from(narrow);
   const select = Array.from(new Set(["id", ...bk.columns])).join(",");
-  for (let i = 0; i < values.length; i += 100) {
-    const slice = values.slice(i, i + 100);
-    let last: string | null = null;
-    for (;;) {
-      let q = sb.from(table).select(select).eq("org_id", orgId).in(bk.narrowBy, slice).order("id", { ascending: true });
-      if (last !== null) q = q.gt("id", last);
-      const { data, error } = await q.limit(KEY_PAGE);
-      if (error) return { ok: false, error: error.message };
-      const page = (data ?? []) as unknown as Array<Record<string, unknown>>;
-      if (page.length === 0) break;
-      for (const row of page) {
-        const k = bk.keyOf(row);
-        if (k !== null && wanted.has(k) && !out.has(k)) out.set(k, row);
+  for (const { cols, rows: group } of groups.values()) {
+    const tuple = (r: Record<string, unknown>) => cols.map((c) => String(r[c])).join("\u0000");
+    const sorted = [...group].sort((a, b) => { const x = tuple(a); const y = tuple(b); return x < y ? -1 : x > y ? 1 : 0; });
+    for (const values of businessKeyReadBatches(sorted, cols)) {
+      let last: string | null = null;
+      for (;;) {
+        let q = sb.from(table).select(select).eq("org_id", orgId);
+        for (const [i, c] of cols.entries()) q = q.in(c, values[i]);
+        q = q.order("id", { ascending: true });
+        if (last !== null) q = q.gt("id", last);
+        const { data, error } = await q.limit(KEY_PAGE);
+        if (error) return { ok: false, error: error.message };
+        const page = (data ?? []) as unknown as Array<Record<string, unknown>>;
+        if (page.length === 0) break;
+        for (const row of page) {
+          const k = bk.keyOf(row);
+          if (k !== null && wanted.has(k) && !out.has(k)) out.set(k, row);
+        }
+        const id = page[page.length - 1].id;
+        if (id === null || id === undefined || String(id) === last) break;
+        last = String(id);
       }
-      const id = page[page.length - 1].id;
-      if (id === null || id === undefined || String(id) === last) break;
-      last = String(id);
     }
   }
   return { ok: true, rows: out };

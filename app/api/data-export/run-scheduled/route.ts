@@ -44,23 +44,32 @@
 // row, its card (after the failure) and the sweep result (fifth review fix:
 // it was dropped there). A CONFIRMED destination's failed push rings no bell;
 // an unconfirmed destination's failed night in the bounded grace (below)
-// rings every Admin's bell, saying nothing left (P14).
+// rings every Admin's bell (P14): it says nothing left only when the push
+// failed before the archive was sent, and otherwise that the destination may
+// hold it (P14 fix pass: a webhook that answers 500 has already received the
+// whole ZIP — lib/exportRunner.ts pushTransmissionBegan).
 //
 // DEC-87 §1 as amended 2026-10-13 under DEC-90 (admin-and-org Round G, P14;
 // intelligence IEDGE-10 / DACL-7): that grace is BOUNDED. Each unconfirmed
 // push is a counted night (lib/exportAlerts.ts unconfirmedGraceTonight, read
 // from the destination's own scheduled run rows — the night this deploys is
 // night 1); nights 1 to 7 run and every Admin's bell names the night (a
-// night whose push failed rings it too, saying nothing left); night
-// 7's push is followed by a pause, said in its bell; from night 8 the sweep
-// skips it with a cancelled run row and the card saying it is paused (no
-// bell), until an Admin opens it and saves it (confirmed: it runs as any
-// other destination) or disables it. A count that cannot be read never stops
-// a backup: it runs, and says so. P14 review fix: a night whose confirmation
-// cannot be VERIFIED (the configurer's role read failed) never ends the
-// pause — the count is still read, and a paused destination is skipped as on
-// any paused night; otherwise it runs, its run row marked grace:unverified,
-// which neither counts nor breaks the count (only an Admin's save ends it).
+// night whose push failed rings it too, saying whether the archive was
+// sent); night 7's push is followed by a pause, said in its bell; from night
+// 8 the sweep skips it with a cancelled run row and the card saying it is
+// paused (no bell — P14 fix pass: unless night 7's bell was refused, when the
+// first paused night that can rings it, checked, once), until an Admin opens
+// it and saves it (confirmed: it runs as any other destination) or disables
+// it. A count that cannot be read never stops a backup: it runs, and says so
+// — P14 fix pass: unless the destination row in hand says its last scheduled
+// run left it paused (lib/exportAlerts.ts pausedAtLastRun), when it stays
+// paused. P14 review fix: a night whose confirmation cannot be VERIFIED (the
+// configurer's role read failed) never ends the pause — the count is still
+// read, and a paused destination is skipped as on any paused night; otherwise
+// it runs, its run row marked grace:unverified, which neither counts nor
+// breaks the count. Only an Admin's save ends a pause (P14 fix pass: on an
+// unverified night a destination saved since its pause — only an Admin can
+// save one — runs uncounted rather than staying paused on that guess).
 //
 // admin-and-org BKP-6: a succeeded bucket push whose retention purge ran puts
 // the purge's deleted and failed counts on its run row's own columns
@@ -72,12 +81,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, exportEmbedDeadline, pushesToBucket, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, exportEmbedDeadline, pushesToBucket, pushTransmissionBegan, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
 import {
   alertAdminsOfExport, destinationConfirmation, unconfirmedNote as unconfirmedNoteFor,
   unconfirmedGraceTonight, graceSentence, graceNightStep, graceUnverifiedStep, pausedNote, pausedUnverifiedNote,
-  GRACE_PAUSED_STEP, type UnconfirmedGrace,
+  pausedCountUnreadSentence, pausedAtLastRun, savedSince, SAVED_SINCE_PAUSE_NOTE, PAUSE_ANNOUNCED_EARLIER,
+  GRACE_PAUSED_STEP, GRACE_PAUSE_ANNOUNCED_STEP, ALERT_UNSENT_STEP, UNCONFIRMED_GRACE_NIGHTS, type UnconfirmedGrace,
 } from "@/lib/exportAlerts";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -102,6 +112,11 @@ type ScheduledDestination = ExportDestination & {
   created_by?: string | null;
   updated_by?: string | null;
   name?: string | null;
+  /** Stamped only by an Admin's save (PATCH); read by the grace (savedSince). */
+  updated_at?: string | null;
+  /** The card's last run, read by the grace's fallback (pausedAtLastRun). */
+  last_run_at?: string | null;
+  last_run_error?: string | null;
 };
 
 type ScheduledRunResult = {
@@ -248,7 +263,7 @@ async function handler(req: NextRequest) {
     // DEC-87 §1 (amended, P14): an unconfirmed destination's night in the
     // bounded grace — or, past its last night, a pause.
     let grace: UnconfirmedGrace | null = null;
-    let graceReadNote: string | null = null;
+    const graceNotes: string[] = [];
     // P14 review fix: a confirmation that could not be VERIFIED (the role read
     // failed) still reads the grace — a paused destination stays paused, and
     // tonight's run row is marked neutral in the count (grace:unverified), so
@@ -257,11 +272,51 @@ async function handler(req: NextRequest) {
     const unverified = !confirmation.unconfirmed && confirmation.notice ? (confirmation.unverified ?? "the role read failed") : null;
     if (confirmation.unconfirmed || unverified !== null) {
       const tonight = await unconfirmedGraceTonight(sb, dest.id);
-      if (tonight.paused) {
+      const countError = !tonight.paused && "error" in tonight ? tonight.error : null;
+      // P14 fix pass (major): a count that cannot be read falls back on the
+      // row in hand — a destination whose last scheduled run left it paused
+      // stays paused (never a whole-workspace push on a failed read).
+      let paused = tonight.paused || (countError !== null && pausedAtLastRun(dest));
+      // P14 fix pass (minor): on an unverified night, a destination saved
+      // since its pause (only an Admin can save one) is not held paused on
+      // that guess — it runs, uncounted (grace:unverified).
+      if (paused && unverified !== null && savedSince(dest.updated_at, tonight.paused ? tonight.since : dest.last_run_at)) {
+        paused = false;
+        graceNotes.push(SAVED_SINCE_PAUSE_NOTE);
+        console.warn(`[run-scheduled] destination ${dest.id}: ${SAVED_SINCE_PAUSE_NOTE}`);
+      }
+      if (paused) {
         const at = new Date().toISOString();
-        const note = confirmation.unconfirmed ? pausedNote(confirmation.unconfirmed) : pausedUnverifiedNote(unverified ?? "");
+        const base = confirmation.unconfirmed ? pausedNote(confirmation.unconfirmed) : pausedUnverifiedNote(unverified ?? "");
+        const note = countError !== null ? `${base} ${pausedCountUnreadSentence(countError)}` : base;
         if (unverified !== null) console.warn(`[run-scheduled] destination ${dest.id}: ${confirmation.notice}; it stays paused`);
+        if (countError !== null) console.warn(`[run-scheduled] destination ${dest.id}: the unconfirmed-night count could not be read (${countError}); its last scheduled run left it paused, so it stays paused`);
         const msg = `skipped: ${note}`;
+        // P14 fix pass (minor): a pause whose announcing bell was refused is
+        // announced by the first paused night that can (checked), once; a
+        // pause already announced is carried forward on the row, so the next
+        // count stops here.
+        const announced: Array<{ ts: string; step: string; detail: string }> = [];
+        const warnings: string[] = [];
+        if (tonight.paused && tonight.announced) {
+          announced.push({ ts: at, step: GRACE_PAUSE_ANNOUNCED_STEP, detail: PAUSE_ANNOUNCED_EARLIER });
+        } else if (tonight.paused && confirmation.unconfirmed) {
+          const bell = await alertAdminsOfExport(sb, {
+            orgId: dest.org_id, actorUserId: null, actorEmail: SCHEDULED_EXPORT_ACTOR.email,
+            destination: dest.destination_type,
+            scheduled: {
+              destinationName: dest.name || dest.id, configuredBy: dest.updated_by || dest.created_by || null,
+              unconfirmed: confirmation.unconfirmed, pausedNotice: { of: UNCONFIRMED_GRACE_NIGHTS },
+            },
+          }).catch((err) => ({ ok: false, notified: 0, error: (err as Error).message }));
+          if (bell.ok) {
+            announced.push({ ts: at, step: GRACE_PAUSE_ANNOUNCED_STEP, detail: `announced tonight to ${bell.notified} controller(s): the bell at its last push could not be sent` });
+          } else {
+            announced.push({ ts: at, step: ALERT_UNSENT_STEP, detail: bell.error ?? "the alert could not be sent" });
+            warnings.push(`the pausing alert was not sent: ${bell.error}`);
+            console.error(`[run-scheduled] destination ${dest.id}: the pausing alert was not sent: ${bell.error}`);
+          }
+        }
         const unrecorded: string[] = [];
         const { error: runErr } = await sb.from("export_runs").insert({
           org_id: dest.org_id,
@@ -270,7 +325,7 @@ async function handler(req: NextRequest) {
           status: "cancelled",
           error_message: msg.slice(0, 1000),
           destination_type: dest.destination_type,
-          diagnostics: [{ ts: at, step: GRACE_PAUSED_STEP, detail: note }],
+          diagnostics: [{ ts: at, step: GRACE_PAUSED_STEP, detail: note }, ...announced],
           started_at: at,
           completed_at: at,
           duration_ms: 0,
@@ -283,12 +338,16 @@ async function handler(req: NextRequest) {
         }).eq("id", dest.id);
         if (destErr) unrecorded.push(`last-run status not recorded: ${destErr.message}`);
         for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
-        results.push({ destinationId: dest.id, ok: false, error: [msg, ...unrecorded].join("; ") });
+        results.push({
+          destinationId: dest.id, ok: false, error: [msg, ...unrecorded].join("; "),
+          ...(warnings.length ? { warnings } : {}),
+        });
         continue;
       }
-      if (confirmation.unconfirmed) grace = { night: tonight.night, of: tonight.of, pausing: tonight.pausing };
-      if ("error" in tonight) {
-        graceReadNote = `the unconfirmed-night count could not be read (${tonight.error}); the push ran`;
+      if (confirmation.unconfirmed && !tonight.paused) grace = { night: tonight.night, of: tonight.of, pausing: tonight.pausing };
+      if (countError !== null) {
+        const graceReadNote = `the unconfirmed-night count could not be read (${countError}); the push ran`;
+        graceNotes.push(graceReadNote);
         console.warn(`[run-scheduled] destination ${dest.id}: ${graceReadNote}`);
       }
     }
@@ -297,7 +356,7 @@ async function handler(req: NextRequest) {
       : null;
     const notices = [
       ...gate.notices, ...(confirmation.notice ? [confirmation.notice] : []), ...(unconfirmedNote ? [unconfirmedNote] : []),
-      ...(graceReadNote ? [graceReadNote] : []),
+      ...graceNotes,
     ];
     if (confirmation.notice) console.warn(`[run-scheduled] destination ${dest.id}: ${confirmation.notice}`);
 
@@ -328,6 +387,8 @@ async function handler(req: NextRequest) {
       continue;
     }
 
+    // P14 fix pass: once the builder has returned, the archive was delivered.
+    let delivered = false;
     try {
       const result = await buildAndDeliverExport({
         supabaseUrl,
@@ -344,6 +405,7 @@ async function handler(req: NextRequest) {
         delivery: { kind: "destination", destination: dest },
         deadlineAt: exportEmbedDeadline(routeStart, maxDuration),
       });
+      delivered = true;
 
       // BKP-13: the controllers' bell, as for a manual run — every controller
       // (no person ran this), naming the destination and its configurer; for
@@ -362,7 +424,11 @@ async function handler(req: NextRequest) {
       if (!alert.ok) console.error(`[run-scheduled] destination ${dest.id}: the export alert was not sent: ${alert.error}`);
       // BKP-6: a retention purge that did not finish is said on the run row and the card.
       const retentionNote = retentionProblem(result.retention);
-      const cardNote = [retentionNote, unconfirmedNote].filter(Boolean).join(" ") || null;
+      // P14 fix pass: cut so the unconfirmed note (the night that pauses it
+      // says so, which pausedAtLastRun reads) survives, as on the failure path.
+      const cardNote = retentionNote && unconfirmedNote
+        ? `${retentionNote.slice(0, Math.max(0, 500 - unconfirmedNote.length - 1))} ${unconfirmedNote}`
+        : (retentionNote || unconfirmedNote || null);
       const completedAt = new Date().toISOString();
       const unrecorded: string[] = [];
       {
@@ -382,7 +448,7 @@ async function handler(req: NextRequest) {
             ...(confirmation.notice ? [{ ts: startedAt, step: "gate:notice", detail: confirmation.notice }] : []),
             ...(unconfirmedNote ? [{ ts: startedAt, step: "gate:unconfirmed", detail: unconfirmedNote }] : []),
             ...(graceStep ? [graceStep] : []),
-            ...(graceReadNote ? [{ ts: startedAt, step: "gate:notice", detail: graceReadNote }] : []),
+            ...graceNotes.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
             ...result.diagnostics,
             ...(alert.ok ? [] : [{ ts: completedAt, step: "alert:unsent", detail: alert.error }]),
           ],
@@ -424,15 +490,19 @@ async function handler(req: NextRequest) {
         : msg.slice(0, 500);
       // DEC-87 §1 as amended (P14): a night of the bounded grace is a bell
       // even when its push failed — every night before the pause, and the
-      // pause itself, reach every Admin. It says nothing left. A confirmed
-      // destination's failed push rings no bell, as before.
+      // pause itself, reach every Admin. It says nothing left only when the
+      // push failed before the archive was sent; once its transmission began
+      // (a webhook's 500 comes after the whole ZIP reached it) it says the
+      // destination may hold it (P14 fix pass). A confirmed destination's
+      // failed push rings no bell, as before.
+      const sent = delivered || pushTransmissionBegan(e);
       const graceAlert = grace && confirmation.unconfirmed
         ? await alertAdminsOfExport(sb, {
           orgId: dest.org_id, actorUserId: null, actorEmail: SCHEDULED_EXPORT_ACTOR.email,
           destination: dest.destination_type,
           scheduled: {
             destinationName: dest.name || dest.id, configuredBy: dest.updated_by || dest.created_by || null,
-            unconfirmed: confirmation.unconfirmed, grace, failed: msg,
+            unconfirmed: confirmation.unconfirmed, grace, failed: msg, ...(sent ? { failedAfterSend: true } : {}),
           },
         }).catch((err) => ({ ok: false, notified: 0, error: (err as Error).message }))
         : null;
@@ -450,7 +520,7 @@ async function handler(req: NextRequest) {
               ...(confirmation.notice ? [{ ts: startedAt, step: "gate:notice", detail: confirmation.notice }] : []),
               ...(unconfirmedNote ? [{ ts: startedAt, step: "gate:unconfirmed", detail: unconfirmedNote }] : []),
               ...(graceStep ? [graceStep] : []),
-              ...(graceReadNote ? [{ ts: startedAt, step: "gate:notice", detail: graceReadNote }] : []),
+              ...graceNotes.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
               ...(graceAlert && !graceAlert.ok ? [{ ts: completedAt, step: "alert:unsent", detail: graceAlert.error }] : []),
             ],
           } : {}),
