@@ -26,6 +26,7 @@ import { splitPlacements, compareDayPlacements, compareBandPlacements, activeWin
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
+import { overdueOpenWork } from "@/lib/openWork";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -76,6 +77,9 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
   // (every step due, grouped by equipment, with progress entry).
   const [agendaDay, setAgendaDay] = useState<string | null>(null);
   const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
+  // Overdue open work as of today (plant time): it sits at the top of
+  // today's tile in red until it is finished or re-planned.
+  const overdueToday = useMemo(() => overdueOpenWork(milestones, today.getTime()), [milestones, today]);
 
   const byId = useMemo(() => {
     const m = new Map<string, Milestone>();
@@ -433,6 +437,16 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                       {(items.length > 0 || bands.length > 0) && <span className="text-[8px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Day view</span>}
                     </button>
                   </div>
+                  {isToday && overdueToday.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setAgendaDay(key)}
+                      title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "") + "\nOpen the day view to work them"}
+                      className="w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wide hover:bg-rose-700"
+                    >
+                      ⚠ {overdueToday.length} carried over — not done
+                    </button>
+                  )}
                   {/* Groups covering this day — root first. Solid = work
                       under it is scheduled today; muted = it only carries over. */}
                   {shownBands.map((b) => {

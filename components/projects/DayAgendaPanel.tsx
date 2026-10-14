@@ -18,6 +18,7 @@ import ProgressControl from "@/components/projects/ProgressControl";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
+import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -42,6 +43,8 @@ interface Row {
   endsToday: boolean;
   startMs: number;
   finishMs: number;
+  /** Why this row is on today although its plan slot is elsewhere. */
+  live?: "overdue" | "started-early";
 }
 
 interface EquipmentGroup {
@@ -59,6 +62,13 @@ export default function DayAgendaPanel({
 }: Props) {
   const dayMs = dayKeyToMs(day, tz);
   const label = fmtInTz(dayMs, tz, { weekday: "long", month: "long", day: "numeric" });
+  // Today (plant time) also carries LIVE work whatever the plan says:
+  // overdue open steps (carry-over) and steps started ahead of plan.
+  const isToday = dayKey(Date.now(), tz) === day;
+  const live = useMemo(() => {
+    if (!isToday) return { overdue: [] as ReturnType<typeof overdueOpenWork>, early: [] as ReturnType<typeof startedEarlyWork> };
+    return { overdue: overdueOpenWork(milestones, dayMs), early: startedEarlyWork(milestones, addDays(dayMs, 1, tz)) };
+  }, [isToday, milestones, dayMs, tz]);
 
   const groups = useMemo(() => {
     const isLeaf = (m: Milestone) => !m.id || (childrenByParent.get(m.id) ?? []).length === 0;
@@ -71,6 +81,8 @@ export default function DayAgendaPanel({
       if (sKey > day || fKey < day) continue;
       rows.push({ leaf: m, startsToday: sKey === day, endsToday: fKey === day, startMs: s, finishMs: f });
     }
+    for (const w of live.overdue) rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "overdue" });
+    for (const w of live.early) rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "started-early" });
     // Group by immediate parent; order groups by their first step's time.
     const byParent = new Map<string, EquipmentGroup>();
     for (const r of rows) {
@@ -85,16 +97,18 @@ export default function DayAgendaPanel({
       }
       g.rows.push(r);
     }
+    const rank = (r: Row) => (r.live === "overdue" ? 0 : r.live === "started-early" ? 1 : r.startsToday ? 3 : 2);
     const cmpRow = (a: Row, b: Row) => {
-      // Carry-overs first (already running at 00:00), then by start time.
-      if (a.startsToday !== b.startsToday) return a.startsToday ? 1 : -1;
+      // Overdue carry-over first, then work started early, then today's
+      // carry-ins (running since 00:00), then by start time.
+      if (rank(a) !== rank(b)) return rank(a) - rank(b);
       return (a.startMs - b.startMs) || (a.finishMs - b.finishMs) || wbsCompare(a.leaf.wbs, b.leaf.wbs) || a.leaf.name.localeCompare(b.leaf.name);
     };
     const out = Array.from(byParent.values());
     for (const g of out) g.rows.sort(cmpRow);
     out.sort((a, b) => cmpRow(a.rows[0], b.rows[0]));
     return out;
-  }, [milestones, childrenByParent, ancestorsOf, day, tz]);
+  }, [milestones, childrenByParent, ancestorsOf, day, tz, live]);
 
   const pctOf = (m: Milestone) =>
     (m.id ? progress?.get(m.id)?.percent : undefined) ?? (m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0));
@@ -107,12 +121,16 @@ export default function DayAgendaPanel({
   }, [groups, progress]);
 
   const windowOf = (r: Row) => {
+    if (r.live === "overdue") return "OVERDUE";
+    if (r.live === "started-early") return "early";
     const a = r.startsToday ? (clockLabel(r.startMs, tz) || "0:00") : "…";
     const b = r.endsToday ? (clockLabel(r.finishMs, tz) || "24:00") : "…";
     if (a === "…" && b === "…") return "all day";
     return `${a}–${b}`;
   };
   const spanNote = (r: Row) => {
+    if (r.live === "overdue") return `was due ${fmtInTz(r.finishMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finishMs, tz)} — carry-over, finish or re-plan it`;
+    if (r.live === "started-early") return `planned ${fmtInTz(r.startMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.startMs, tz)} — started ahead of plan`;
     if (r.startsToday && r.endsToday) return null;
     const parts: string[] = [];
     if (!r.startsToday) parts.push(`started ${fmtInTz(r.startMs, tz, { month: "short", day: "numeric" })}`);
@@ -139,6 +157,8 @@ export default function DayAgendaPanel({
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)]">
                 {totals.n === 0 ? "Nothing scheduled this day." : <>{totals.n} step{totals.n === 1 ? "" : "s"} · {totals.done} done · {totals.avg}% complete</>}
+                {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-rose-700">{live.overdue.length} carried over</span>}
+                {isToday && live.early.length > 0 && <span className="ml-2 font-bold text-blue-700">{live.early.length} started early</span>}
               </div>
             </div>
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day"><ChevronRight className="w-4 h-4" /></button>
@@ -184,8 +204,8 @@ export default function DayAgendaPanel({
                     const pct = pctOf(r.leaf);
                     const note = spanNote(r);
                     return (
-                      <li key={r.leaf.id} className="px-4 py-2 flex items-center gap-3">
-                        <span className="w-[88px] shrink-0 text-[11px] font-mono text-[var(--color-text-muted)] tabular-nums">{windowOf(r)}</span>
+                      <li key={r.leaf.id} className={`px-4 py-2 flex items-center gap-3 ${r.live === "overdue" ? "bg-rose-50" : r.live === "started-early" ? "bg-blue-50/60" : ""}`}>
+                        <span className={`w-[88px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700" : r.live === "started-early" ? "font-bold text-blue-700" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}

@@ -160,6 +160,10 @@ export interface ShiftReport {
     plannedFinish: number | null;
     daysElapsed: number;
     daysTotal: number;
+    /** What "plan said by now" is measured against: the captured baseline
+     *  (so moving work around can't hide slippage) or, when no baseline
+     *  exists, the live planned dates. */
+    planBasis: "baseline" | "current";
   };
   review: {
     scheduled: ShiftRow[];
@@ -229,6 +233,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     return out; // nearest first
   };
   const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
+  const toMs = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
   const rowFor = (m: Milestone, win: ShiftWindow): ShiftRow => {
     const chain = pathOf(m);
@@ -251,7 +256,6 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       hoursLeft: Math.round(effectiveWeight(m) * (1 - Math.min(100, Math.max(0, percent)) / 100) * 10) / 10,
     };
   };
-  const toMs = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
   const inWin = (ms: number, win: ShiftWindow) => Number.isFinite(ms) && ms >= win.start && ms < win.end;
 
   const leaves = milestones.filter((m) => isLeaf(m) && m.plannedAt && Number.isFinite(startMsOf(m)) && Number.isFinite(finishMsOf(m)));
@@ -260,13 +264,19 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     (a.start - b.start) || (a.finish - b.finish) || wbsCompare(a.leaf.wbs, b.leaf.wbs) || a.leaf.name.localeCompare(b.leaf.name);
 
   // ── 1. Overall standing ──────────────────────────────────────────
-  let wsum = 0, wplanned = 0, stepsDone = 0;
+  let wsum = 0, wplanned = 0, stepsDone = 0, baselined = 0;
   let plannedStart = Infinity, plannedFinish = -Infinity;
   for (const m of leaves) {
     const s = startMsOf(m), f = finishMsOf(m);
     plannedStart = Math.min(plannedStart, s); plannedFinish = Math.max(plannedFinish, f);
     const w = effectiveWeight(m);
-    const frac = f <= s ? (now >= f ? 1 : 0) : Math.max(0, Math.min(1, (now - s) / (f - s)));
+    // Measure "where the plan said we'd be" against the BASELINE when one
+    // was captured: dragging a task later must not erase the slip.
+    const bs = toMs(m.baselineStartAt), bf = toMs(m.baselineFinishAt);
+    const useBase = Number.isFinite(bs) && Number.isFinite(bf);
+    if (useBase) baselined++;
+    const ps = useBase ? bs : s, pf = useBase ? bf : f;
+    const frac = pf <= ps ? (now >= pf ? 1 : 0) : Math.max(0, Math.min(1, (now - ps) / (pf - ps)));
     wsum += w; wplanned += w * frac;
     if (DONE({ status: m.status, percent: pctOf(m) })) stepsDone++;
   }
@@ -353,6 +363,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       actualPct, plannedPct, variancePct, standing, stepsDone, stepsTotal: leaves.length,
       plannedStart: hasSpan ? plannedStart : null, plannedFinish: hasSpan ? plannedFinish : null,
       daysElapsed, daysTotal,
+      planBasis: baselined > 0 ? "baseline" : "current",
     },
     review: { scheduled, done, inProgress, notStarted, carryOver },
     goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, stretch, gapHours, backOnTrackAt },

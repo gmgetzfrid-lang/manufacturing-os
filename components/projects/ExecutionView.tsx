@@ -888,6 +888,7 @@ export default function ExecutionView({
       {pendingMove && pendingMove.ids.length > 0 && (
         <MovePreviewSheet
           targets={pendingMove.ids.map((id) => byId.get(id)).filter((m): m is Milestone => !!m)}
+          allTasks={items}
           deltaDays={pendingMove.deltaDays}
           onCancel={() => setPendingMove(null)}
           onConfirm={(mode) => void commitMove(mode)}

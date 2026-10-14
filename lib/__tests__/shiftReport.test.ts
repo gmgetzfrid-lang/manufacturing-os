@@ -159,3 +159,27 @@ describe("must-do vs stretch", () => {
     expect(r2.goals.backOnTrackAt).toBe(1);
   });
 });
+
+describe("the plan is held against the baseline once one is captured", () => {
+  const shift = shiftWindow("2026-10-26", "day", CHI);
+  // Planned (and baselined) for the day shift, 8 h, not started, then
+  // dragged two days later. Without a baseline the slip vanishes from
+  // "plan said by now"; with one it stays visible.
+  const slippedNoBase = mk({ id: "s", name: "Slipped", plannedStartAt: at("2026-10-28", "08:00"), plannedAt: at("2026-10-28", "16:00"), durationHours: 8 });
+  const slippedWithBase = { ...slippedNoBase, baselineStartAt: new Date(at("2026-10-26", "08:00")).toISOString(), baselineFinishAt: new Date(at("2026-10-26", "16:00")).toISOString() } as Milestone;
+  const other = mk({ id: "o", name: "Other", plannedStartAt: at("2026-10-26", "08:00"), plannedAt: at("2026-10-26", "16:00"), durationHours: 8, status: "completed", percentComplete: 100 });
+  it("without a baseline, moving the task later makes the plan follow it", () => {
+    const r = buildShiftReport({ milestones: [slippedNoBase, other], tz: CHI, shift, now: shift.end });
+    expect(r.overall.planBasis).toBe("current");
+    expect(r.overall.plannedPct).toBe(50); // only "other" was expected by now
+    expect(r.overall.standing).toBe("on track");
+  });
+  it("with a baseline, the slip stays on the books", () => {
+    const r = buildShiftReport({ milestones: [slippedWithBase, { ...other, baselineStartAt: other.plannedStartAt, baselineFinishAt: other.plannedAt } as Milestone], tz: CHI, shift, now: shift.end });
+    expect(r.overall.planBasis).toBe("baseline");
+    expect(r.overall.plannedPct).toBe(100); // both were expected done by now
+    expect(r.overall.actualPct).toBe(50);
+    expect(r.overall.standing).toBe("behind");
+    expect(r.goals.gapHours).toBe(8);
+  });
+});
