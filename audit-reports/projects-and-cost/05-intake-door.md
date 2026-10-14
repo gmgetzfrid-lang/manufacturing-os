@@ -1,6 +1,6 @@
 # 05 · External intake & the contractor door
 
-**19 findings** — 1 CRITICAL · 6 HIGH · 8 MEDIUM · 4 LOW (severities as recorded on each finding; `INTK-15` and `INTK-16` opened by projects Round G, 2026-09-30; `INTK-17` opened by projects Round G package J13, 2026-10-01; `INTK-18` (LOW) opened by the integrator at the J10b merge, 2026-10-02; `INTK-19` (LOW) opened by intelligence Round G I-17, 2026-10-14).
+**20 findings** — 1 CRITICAL · 6 HIGH · 8 MEDIUM · 5 LOW (severities as recorded on each finding; `INTK-15` and `INTK-16` opened by projects Round G, 2026-09-30; `INTK-17` opened by projects Round G package J13, 2026-10-01; `INTK-18` (LOW) opened by the integrator at the J10b merge, 2026-10-02; `INTK-19` (LOW) opened by intelligence Round G I-17, 2026-10-14; `INTK-20` (LOW) opened by intelligence Round G I-28, 2026-10-14).
 
 The tokened portal, and whether promoted content enters document control through the guard or around it.
 
@@ -903,7 +903,7 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 ## INTK-19 · Six SECURITY DEFINER helpers answer questions about ANY person — five to the public anon key, one to any signed-in account — because they take the uid (or project) to judge as a parameter
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-10-14, intelligence Round G I-28 DEFINER ORACLES — PASTE pending: `20261224`, after `20261199`, `20261159` and `20261137`, either order with `20261217`, no deploy gate; the same-workspace remainder of done-when 1 is split to `INTK-20` (DEC-31), and `node_visible`'s `p_owner` is decided KEPT under the integrator's ruling for this package (DEC-90))
 - **Assigned:** intelligence I-28 DEFINER ORACLES (each uid-taking helper answers only for `auth.uid()` for a client role, or policies call a caller-bound wrapper and the uid-taking form narrows to `service_role`; `project_org` decided; the census rows re-reasoned) — package added by the integrator at the I-17 merge, 2026-10-14 (DEC-31; the record asked the integrator to route it).
 - **Assigned:** — (the integrator, to route to roles-and-permissions: the policy-helper family, `DB-7`'s census). Opened 2026-10-14 by intelligence Round G I-17, as the remainder of `INTK-14`'s grant census (DEC-31). `org_capability_allows_for` added by I-17's review fix pass the same day; the membership answer (through `user_is_effective_owner` and `node_visible`'s caller-supplied `p_owner`) added by its second review fix pass.
 - **Verification:** CONFIRMED (grant state read with `has_function_privilege` on a fresh replay of the whole sequence, PostgreSQL 16.13; `lib/__tests__/rls/definerCensus.test.ts`)
@@ -928,5 +928,133 @@ Every call needs the uuids, which are not guessable, and each answer discloses a
 - [ ] Each of the five uid-taking helpers (`user_can_publish_on_library`, `user_is_effective_owner`, `org_capability_allows`, `acl_index_denies`, `org_capability_allows_for`) answers only for `auth.uid()` when called by a client role. Alternatively, the policies and the SECURITY INVOKER callers (`transmittals_guard`) call a caller-bound wrapper, and the uid-taking form is narrowed to `service_role` and the definer callers. No client role can learn whether a person it names is an active member: not through `user_is_effective_owner`'s caller-supplied `p_doc_owner`, and not through `node_visible`'s caller-supplied `p_owner`. Every policy that uses them must answer exactly as before for `authenticated` and for `anon`, and `transmittals_guard` must still let a transmit authority issue, void and revoke. Prove each on the harness (`npm run test:db`), with a DRLS-16 migration in DEC-30's shape; the "INTK-19's remainder, pinned" case in `definerCensus.test.ts` is then inverted (both membership answers refused or constant).
 - [ ] `project_org` gets a decision: kept with its reason, or caller-scoped.
 - [ ] The rows in `lib/__tests__/rls/definerDecisions.ts` are updated: no `policy-helper-oracle` or `signed-in-oracle` row and no `caller-supplied-oracle` binding is left, or each one kept is re-reasoned; `member_is_active`'s row drops its `INTK-19` owner. `definerCensus.test.ts` passes.
+
+**Resolution (2026-10-14, intelligence Round G).** Package intelligence I-28 DEFINER ORACLES added `supabase/migrations/20261224_intel_roundG_definer_oracles.sql` (PASTE pending; one paste in DEC-30's shape; DRLS-16). It changes no policy and no app code.
+- **Reproduced first.** These answers were reproduced on the harness's snapshot of the sequence taken just before `20261224`, with `20261217` applied:
+  - each bound helper answered the anon key about another uid;
+  - any signed-in account could call `org_capability_allows_for` about anyone;
+  - `user_is_effective_owner(X, NULL, <library>, X)` gave the anon key X's membership, and with no library "is X active in any workspace?";
+  - a signed-in library owner got the cross-workspace form of the same answer through `node_visible`'s `p_owner`.
+  The "before 20261224" phase of `definerCensus.test.ts` and the doors test in `intelI28DefinerOracles.test.ts` pin these answers.
+- **Inventory (counts only).** These are the paste's own TEMP-table counts of the catalog, taken on the replay before the transaction:
+  - Policies naming each helper: `user_can_publish_on_library` 5, `user_is_effective_owner` 5, `org_capability_allows` 4, `acl_index_denies` 2, `project_org` 6, `org_capability_allows_for` 0. That is 18 distinct policies on 13 tables.
+  - Other SECURITY DEFINER bodies naming each: 8, 11, 3, 0, 1 and 2.
+  - SECURITY INVOKER bodies naming each: 0, 0, 0, 1, 0 and 1. The one for `acl_index_denies` is `intake_door_rls_gaps`, a catalog check that names the signature and never calls it; no client role may execute it. The one for `org_capability_allows_for` is `transmittals_guard`.
+  - Views, column defaults, CHECK constraints and trigger definitions: 0 for every helper.
+  - SECURITY DEFINER functions the anon role may execute: 27 before and after. For the authenticated role: 56 before and after. `org_capability_allows_for` leaves and `caller_capability_allows` joins.
+- **What landed.** The four parts below. `node_visible` is not re-created, per the ruling.
+  1. **Bound helpers.** `user_can_publish_on_library`, `user_is_effective_owner`, `org_capability_allows` and `acl_index_denies` are re-created from their newest bodies (`20261059`, `20261042`, `20261052`, `20261025`), each with one added block. When the request's role is `anon` or `authenticated` (the role PostgREST sets, or the JWT's role claim), a uid other than `auth.uid()` is refused with `42501`. The block never tests `auth.uid()` for NULL.
+     - `user_is_effective_owner` also answers a client role `false` when no workspace resolves.
+     - Every policy passes `auth.uid()`. So does every definer that calls these helpers in a client session (the publish, register, retention, review and intake-link guards, `publish_revision`, the checkout guards, `supersession_writable`, `user_can_publish_doc`, `documents_guard_access_change`, `node_visible`).
+     - The service role, the SQL editor and definer code in a server session still ask about anyone.
+     - Their grants are unchanged.
+  2. **The review-signoff stamp.** `effective_owner_matches` (new, internal, executable by no client role and not by the service role) is the same walk with its membership tests written inline. It serves the one definer that asks about other candidates in a signed-in session: `review_signoff_owner_stamp`, re-created from `20261159` with that call renamed. `user_is_effective_owner` stays the only function that names `member_is_active`, so `20261217`'s precondition holds in either paste order.
+  3. **The 4-argument evaluator.** `org_capability_allows_for` is not re-created; its `20261137` body stays the base for later capability rows. Its EXECUTE narrows to `service_role`.
+     - The REVOKE runs under a live-database precondition, as `20261217`'s does. Nothing else a client role could reach it through may exist: a policy, a view, a default, a CHECK, a trigger, a SECURITY INVOKER function other than `transmittals_guard`, or a definer owned by a role that would lose the call.
+     - Its definer callers (`org_capability_allows`, `quality_signoff_granted_for`) still call it as its owner, so the quality sign-off helpers still ask about other signers.
+     - `transmittals_guard` (SECURITY INVOKER) is re-created from `20261199`, and its two TRX-1 calls now go through `caller_capability_allows` (new: the evaluator for `auth.uid()` only; `authenticated` and `service_role`).
+  4. **`project_org`.** Re-created from `20260913`, caller-scoped (done-when 2's decision): a client role reads a project's workspace only as an active member of it. Each of its 6 policies already requires that membership, and `checkouts_resync_project_documents` returns early for a non-member either way. The anon key, another workspace and a suspended member get NULL; the service role reads any project.
+- **Every caller answers as before.** `lib/__tests__/rls/intelI28DefinerOracles.test.ts` (opt-in, `npm run test:db`) seeds one world identically into the pre-`20261224` snapshot and into the replay of the whole sequence. The world has two workspaces, owners at every rung, a suspended owner, a publish grant, ACL denies and a capability policy.
+  - **The comparison.** 29 statements each run as 14 callers: anon, a member of another workspace, eleven members including the suspended one, and the service role. Each runs as PostgREST runs a request, in a transaction that is rolled back. On both sides every caller's outcome is identical after ids are normalised.
+  - **No vacuous case.** Each case pins readers allowed and readers refused.
+  - **The 18 policies.** Every one has a case: the document deny guards; ack, disposition and review-signoff insert and update; revision branches; shares; the audit trail; holds; transmittals; and the six `project_org` policies.
+  - **Policy-adjacent callers.**
+    - The document read policy through `node_visible`.
+    - The three checkout guards.
+    - The review-signoff guard's alternate activation (RG-4).
+    - The owner stamp: the folder owner is stamped, and a suspended document owner is skipped.
+    - `transmittals_guard`: a transmit authority issues, voids and revokes; the Viewer who created the transmittal is refused `42501`; a Manager matches no row.
+    - The quality sign-off helpers asking about other signers: counts 4, 3, 3 and 3, unchanged.
+    - The app's own calls, where a signed-in caller asks about itself.
+  - **The doors.** A client role asking a bound helper about another person was answered before the paste and is refused `42501` after it. The service role is answered both times.
+  - **`org_capability_allows_for`.** Any signed-in account could call it before the paste. After it, only the service role can.
+  - **The stamp's twin.** `effective_owner_matches` names the same owner as `user_is_effective_owner` at every rung.
+  - **The paste itself.**
+    - A first paste returns one result set of 44 rows: 13 probes true and the four precondition rows 0.
+    - A second paste is clean and changes nothing, and `20261217` pasted after it is clean.
+    - Each of four blockers (a policy, a SECURITY INVOKER function, a view, a definer owned by another non-superuser) leaves the grants as they were, raises a NOTICE and turns exactly two probes false, while the rest applies.
+    - The apply-order check refuses on a database whose `transmittals_guard` is older than `20261199` and changes nothing.
+  - `definerCensus.test.ts`'s "INTK-19's membership answer" now runs in two phases. Before `20261224` it is reachable. After it, the anon key and other workspaces are refused or get a constant answer, and the same-workspace answer is pinned as `INTK-20`.
+  - The default suite's `lib/__tests__/intelRoundGDefinerOraclesMigration.test.ts` checks the migration's text:
+    - each re-created body equals its newest earlier body plus the named block (lineDiff, scanning the folder now);
+    - nine functions and nothing else (no policy, no trigger, no `node_visible`);
+    - one client predicate and `42501`;
+    - DRLS-16 grants;
+    - the REVOKE only inside the precondition;
+    - the one-paste shape and the header's paste facts.
+- **The census** (`lib/__tests__/rls/definerDecisions.ts`):
+  - The five helpers are `policy-helper` rows, and `org_capability_allows_for` is a `service-only` row. Each binds its uid with evidence from the live body (`is-the-caller`).
+  - `user_is_effective_owner` binds both person parameters (a new `persons` field): `p_uid` is `is-the-caller`, and `p_doc_owner` is `same-workspace`, owned by `INTK-20`.
+  - `node_visible`'s `p_owner` is `same-workspace`, decided KEPT.
+  - `caller_capability_allows` (`signed-in`) and `effective_owner_matches` (`internal`) are new rows.
+  - `member_is_active`'s row has no owner.
+  - No `policy-helper-oracle` or `signed-in-oracle` row and no `caller-supplied-oracle` binding is left. `definerCensus.test.ts` asserts all of this against the catalog.
+- **`node_visible` (the brief's decision, under the integrator's ruling for this package, DEC-90): KEPT, with its reason.**
+  - After `20261224` its ownership limb's callee answers a client only about `auth.uid()`, and only inside the named library's workspace. A caller-supplied `p_owner` therefore tells the anon key nothing, and tells a signed-in account nothing about a workspace it is not an active member of.
+  - Inside one where the caller is the active effective owner of the named container, the answer still follows `p_owner`'s membership there. That is a row `org_members_read` already returns to that caller.
+  - **Handed to intelligence I-30**, which re-creates `node_visible` once. Keep the limb byte for byte: `IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN RETURN true; END IF;`. Do not route it through `effective_owner_matches`, which skips the client binding, and do not inline the walk.
+  - I-28 does not re-create `node_visible`.
+- **Paste facts.**
+  - ORDER: after `20261199`, `20261159` and `20261137`, and after the bodies it re-creates (`20261059`, `20261042`, `20261052`, `20261025`, `20260913`). The apply-order check refuses, changing nothing, when one is missing.
+  - Either order with `20261217` and `20261212`. DEPLOY GATE: none, since the app calls no new function and no changed signature.
+  - EXPECTED: one result set of 44 rows: 13 probes `ok = true`, then 2 after-counts and 29 inventory counts, the four precondition rows 0.
+  - Re-pasting an earlier file that re-creates one of the seven functions undoes this file for that function, and so does re-pasting `20261137`, whose GRANT gives `authenticated` the evaluator back. Re-paste `20261224` after it.
+  - ROLLBACK is in the header.
+
+**Done-when.**
+- ✓ Each of the five uid-taking helpers answers a client role only for `auth.uid()`. Four are bound in their bodies. `org_capability_allows_for` is narrowed to `service_role` and its definer callers, and its SECURITY INVOKER caller `transmittals_guard` asks the caller-bound `caller_capability_allows`.
+  - Every policy that uses them answers exactly as before for `anon` and for `authenticated`, and so do the service role and the definer callers. `transmittals_guard` still lets a transmit authority issue, void and revoke. Both are proven per role, before and after, on the harness.
+  - The "INTK-19's remainder, pinned" case is inverted: refused to the anon key, and constant across workspaces, through both doors.
+  - The sub-clause "no client role can learn whether a person it names is an active member" holds for the anon key and for every other workspace, through both doors. Inside the caller's own workspace it does not hold: there the caller already reads that person's status through `org_members_read`. It is split to `INTK-20` under DEC-31, and `node_visible`'s half is decided KEPT under DEC-90, as above.
+- ✓ `project_org` is caller-scoped, as above.
+- ✓ The rows in `lib/__tests__/rls/definerDecisions.ts` are updated as listed above: no oracle row or binding is left, and `member_is_active`'s row has dropped its `INTK-19` owner. `definerCensus.test.ts` passes (`npm run test:db`).
+
+**Scope / residual.**
+- **`INTK-20` (LOW, opened here).** The same-workspace membership answer through `user_is_effective_owner`'s caller-supplied `p_doc_owner` remains, as does `node_visible`'s `p_owner`, decided kept. `INTK-20` waits on the integrator's ruling.
+- **Unpasted.** Until `20261224` is pasted, every answer above stays as the Mechanism describes.
+- **Later re-creators.** A later package that re-creates any of the seven functions starts from `20261224`'s body and keeps the added block. The lineDiff tests in `intelRoundGDefinerOraclesMigration.test.ts` scan for the newest earlier definer.
+- **Outside the package's list.** Three test files changed:
+  - `lib/__tests__/intelRoundGDbHarness.test.ts`: the census expectations it restates;
+  - `lib/__tests__/dcRoundFTransmittalIssueVerdict.test.ts` and `lib/__tests__/dcRoundFTransmittalMigrations.test.ts`: `20261224` joins their list of later `transmittals_guard` definers.
+- **Records not edited.** README counts (`INTK-20`) and the paste guide row are the integrator's.
+- Ship loop (`DEC-29` item 4):
+  - `tsc --noEmit` exits 0.
+  - `eslint --max-warnings=0` on the 8 changed `.ts` files exits 0.
+  - The full default `vitest` run, `--maxWorkers=2` in 4 shards, exits 0 in each shard: 593 files, 13,227 tests passed, 4 expected failures.
+  - `npm run test:db` (PostgreSQL 16, the whole replay) exits 0: 8 files, 125 tests.
+  - The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge.
+
+---
+
+## INTK-20 · Inside their own workspace, a container's effective owner can still learn whether a named member is active, through `user_is_effective_owner`'s and `node_visible`'s caller-supplied owner
+
+- **Severity:** LOW
+- **Severity rationale:** The answer is one the caller can already read. `org_members_read` returns every member row of the caller's own workspace, `status` included, to an active member. After `20261224` the anon key and every other workspace get a refusal or a constant answer. The residual is defence in depth: a second door to a fact that RLS already shows.
+- **Status:** OPEN
+- **Assigned:** — (the integrator, for a ruling: keep it, as `node_visible`'s half was kept under DEC-90, or route the document-keyed client form described in the Remediation). Opened 2026-10-14 by intelligence Round G I-28 DEFINER ORACLES, as the remainder of `INTK-19` done-when 1 (DEC-31).
+- **Verification:** CONFIRMED (exercised on the database harness, PostgreSQL 16, replay of the whole sequence with `20261224`; `lib/__tests__/rls/definerCensus.test.ts` "INTK-19's membership answer, after 20261224")
+- **Blast radius:** information disclosure (one boolean per call, inside the caller's own workspace)
+- **Locations:**
+  - `supabase/migrations/20261224_intel_roundG_definer_oracles.sql`: `user_is_effective_owner`. The client binding covers `p_uid` only. The walk's first rung, `IF p_doc_owner IS NOT NULL AND member_is_active(v_org, p_doc_owner) THEN RETURN p_doc_owner = p_uid;`, still reads a `p_doc_owner` the caller supplies.
+  - `node_visible` (newest `20261203:189`; the ownership limb at `:225`, `user_is_effective_owner(p_owner, p_collection, p_library, auth.uid())`). A policy passes the row's owner column, but over PostgREST the caller supplies `p_owner`.
+  - The client-form callers that a routed fix would move: `lib/ownership.ts:234` (`isEffectiveOwnerOfDocument`, the caller asking about itself with the document's own columns), `lib/revisions.ts:884` (no document owner), and the five policies that pass `d.owner_user_id`.
+- **Related:** `INTK-19` (its done-when 1 sub-clause), `INTK-14`, intelligence I-30 (re-creates `node_visible`; keeps the limb as `INTK-19`'s resolution states)
+- **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-28 on its PostgreSQL 16 harness run; not yet challenged)
+
+**Mechanism.** The walk keeps the first candidate that is an active member of the named library's workspace and compares it with `p_uid`. Since `20261224`, `p_uid` must be the caller, and no workspace means `false`. When the caller is the effective owner of a library or folder (or the owning team's supervisor), the walk reaches the caller exactly when the `p_doc_owner` it names is not active. So `user_is_effective_owner(X, NULL, <a library I own>, <me>)` is true exactly when X is not an active member of that workspace. `node_visible('restricted', '{}', <org>, X, NULL, <a library I own>)` is the same.
+
+**Failure scenario.** A Viewer who owns a library calls `rpc/user_is_effective_owner` with a colleague's uid as `p_doc_owner` and learns whether that colleague is active or suspended. The same Viewer can read it with `select status from org_members where uid = <colleague>`.
+
+**Remediation.** The integrator chooses one:
+- (a) **Keep it, with this reason.** The answer is the caller's own workspace's member list, which RLS returns. Close the finding by ruling.
+- (b) **Route it.**
+  1. Add a document-keyed client form, for example `caller_is_effective_owner_of_document(p_document uuid)` and `caller_is_effective_owner_of_container(p_library uuid, p_collection uuid)`, that reads the owner from the row.
+  2. Move `lib/ownership.ts:234` and `lib/revisions.ts:884` to it.
+  3. Re-create the five policies to call it, or `effective_owner_matches` behind a bound wrapper.
+  4. Then REVOKE the uid-taking form from client roles, under a live-database precondition as `20261224`'s REVOKE has.
+  5. `node_visible`'s `p_owner` needs the same split, made inside intelligence I-30's single re-creation.
+
+**Done when.**
+- [ ] The integrator has ruled. Under (a), this finding is closed by that ruling, with the reason above. Under (b), every policy and app caller answers exactly as before per role, proven on the harness, and `definerCensus.test.ts`'s same-workspace pin is inverted.
 
 ---

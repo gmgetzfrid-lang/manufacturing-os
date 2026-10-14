@@ -670,6 +670,29 @@ A later package that re-creates either starts from `20261178`'s body and keeps t
 
 The assertions those lines stopped covering for later files live in I-16's `intelRoundGCodebookLifecycleMigration.test.ts` ("censuses held for neighbouring migrations"). See CB-5, fix pass 3.
 
+
+**Paste / deploy order — intelligence Round G I-28 (`20261224`, projects-and-cost `INTK-19`).** The paste and the deploy can come in either order: no app code changes, and the app calls no new function and no changed signature.
+- `20261224` needs `20261199`, `20261159` and `20261137`, and the bodies it re-creates (`20261059`, `20261042`, `20261052`, `20261025`, `20260913`). Its apply-order check refuses, changing nothing, when one is missing.
+- It is independent of `20261217` and `20261212` (either order).
+- One result set of 44 rows: 13 probes true, 2 after-counts and 29 inventory counts. The four precondition rows read 0.
+- A precondition row above 0 means a client-reachable caller of `org_capability_allows_for` exists on the live database. The evaluator then stays executable by signed-in accounts, two probes answer false, a NOTICE gives the total, and the rest applies.
+- For the paste guide row: a NARROWING. Nobody legitimate loses anything; every policy answers as before per role, proven on the harness.
+
+**Re-creation chain.** `20261224` re-creates seven functions from their newest bodies, each with one block added:
+- `user_can_publish_on_library` (`20261059`), `user_is_effective_owner` (`20261042`), `org_capability_allows` (`20261052`) and `acl_index_denies` (`20261025`) gain the client binding;
+- `project_org` (`20260913`) is caller-scoped;
+- `review_signoff_owner_stamp` (`20261159`) calls `effective_owner_matches`;
+- `transmittals_guard` (`20261199`) calls `caller_capability_allows`.
+
+A later package that re-creates any of them starts from `20261224`'s body and keeps the block. The lineDiff tests in `intelRoundGDefinerOraclesMigration.test.ts` scan for the newest earlier definer. Re-pasting an earlier file that re-creates one of them, or `20261137` (whose GRANT gives `authenticated` the evaluator back), undoes `20261224` for that function. Re-paste `20261224` after it.
+
+**Merge point — I-28 with I-30 (`node_visible`).** I-28 does not re-create `node_visible`. I-30 re-creates it once and keeps the ownership limb byte for byte: `IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN RETURN true; END IF;`. That limb is decided KEPT under DEC-90; see `INTK-19`'s resolution. Do not route it through `effective_owner_matches`, which has no client binding. The same-workspace answer that remains is `INTK-20`, for the integrator's ruling. If that ruling routes a document-keyed form, the `node_visible` half is made inside I-30's single re-creation.
+
+**Merge conflict point — I-28 with the transmittal and census tests.**
+- `lib/__tests__/dcRoundFTransmittalIssueVerdict.test.ts` and `lib/__tests__/dcRoundFTransmittalMigrations.test.ts` list `20261224` as a later definer of `transmittals_guard`.
+- `lib/__tests__/intelRoundGDbHarness.test.ts` restates the census decisions.
+- `lib/__tests__/rls/replayKnownDefects.ts` adds the `20261224` checkpoint.
+
 ---
 
 ## Do not do these

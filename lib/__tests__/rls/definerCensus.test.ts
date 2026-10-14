@@ -3,14 +3,15 @@
 // replay and held to the reasoned decisions in definerDecisions.ts — and the
 // before / after proof for 20261217, the one narrowing the census needed
 // (DEC-30: the app works before and after the paste), with the membership
-// answer it does NOT take away pinned as INTK-19's remainder.
+// answer it does NOT take away pinned as INTK-19's remainder before 20261224
+// and as INTK-20's (same workspace only) after it.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { admin, asCaller, mosDb, seedOrg, selectAs, skipReason, type SeededMember } from "./dbKit";
-import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_RULED, TRIGGER_FUNCTIONS, type DefinerDecision } from "./definerDecisions";
+import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_RULED, TRIGGER_FUNCTIONS, personBindings, type DefinerDecision } from "./definerDecisions";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
 
@@ -124,7 +125,7 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
         expect(d.reason, d.signature).toContain(RULING_4_RULED);
         expect(d.owner, d.signature).toBeUndefined();
       }
-      if (d.person?.binding === "caller-supplied-oracle") expect(d.owner, d.signature).toMatch(/INTK-19/);
+      for (const p of personBindings(d)) if (p.binding === "caller-supplied-oracle") expect(d.owner, d.signature).toMatch(/INTK-\d+/);
     }
   });
 
@@ -145,7 +146,7 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
       const l = bySig.get(d.signature);
       if (!l) continue; // reported by the two-way comparison above
       const body = squash(l.src);
-      const fragments = [...(d.evidence ?? []), ...(d.person?.evidence ?? [])];
+      const fragments = [...(d.evidence ?? []), ...personBindings(d).flatMap((p) => p.evidence)];
       if (!d.evidence?.length) problems.push(`${d.signature}: a ${d.decision} decision with no evidence from the body`);
       for (const f of fragments) if (!body.includes(squash(f))) problems.push(`${d.signature}: evidence not in the live body: ${f}`);
       if (!isOracle(d)) {
@@ -170,18 +171,22 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
         if (!/INTK-19/.test(d.owner ?? "")) problems.push(`${l.sig}: an oracle with no owner`);
         continue;
       }
-      if (!d.person) { problems.push(`${l.sig}: takes ${persons.join(", ")} but its row neither binds it (person) nor records an oracle`); continue; }
-      if (!persons.includes(d.person.param)) problems.push(`${l.sig}: person.param ${d.person.param} is not one of its person parameters (${persons.join(", ")})`);
+      const bindings = personBindings(d);
+      if (bindings.length === 0) { problems.push(`${l.sig}: takes ${persons.join(", ")} but its row neither binds it (person) nor records an oracle`); continue; }
+      // A function with several person parameters binds each one (`persons`), or is an oracle.
+      const bound = bindings.map((p) => p.param);
+      for (const a of persons) if (!bound.includes(a)) problems.push(`${l.sig}: person parameter ${a} has no binding; record an oracle or bind it in persons`);
       const body = squash(l.src);
-      const named = d.person.evidence.filter((f) => new RegExp(`\\b${d.person!.param}\\b`).test(f));
-      if (named.length === 0) problems.push(`${l.sig}: no person evidence names ${d.person.param}`);
-      for (const f of d.person.evidence) if (!body.includes(squash(f))) problems.push(`${l.sig}: person evidence not in the live body: ${f}`);
-      if ((d.person.binding === "is-the-caller" || d.person.binding === "judged-for-caller" || d.person.binding === "caller-supplied-oracle") && !named.some((f) => /auth\.uid\(\)/.test(f))) {
-        problems.push(`${l.sig}: ${d.person.binding} needs a fragment that sets ${d.person.param} against auth.uid()`);
+      for (const p of bindings) {
+        if (!persons.includes(p.param)) problems.push(`${l.sig}: person.param ${p.param} is not one of its person parameters (${persons.join(", ")})`);
+        const named = p.evidence.filter((f) => new RegExp(`\\b${p.param}\\b`).test(f));
+        if (named.length === 0) problems.push(`${l.sig}: no person evidence names ${p.param}`);
+        for (const f of p.evidence) if (!body.includes(squash(f))) problems.push(`${l.sig}: person evidence not in the live body: ${f}`);
+        if ((p.binding === "is-the-caller" || p.binding === "judged-for-caller" || p.binding === "caller-supplied-oracle") && !named.some((f) => /auth\.uid\(\)/.test(f))) {
+          problems.push(`${l.sig}: ${p.binding} needs a fragment that sets ${p.param} against auth.uid()`);
+        }
+        if (p.binding === "caller-supplied-oracle" && !/INTK-\d+/.test(d.owner ?? "")) problems.push(`${l.sig}: a caller-supplied-oracle binding with no owner`);
       }
-      if (d.person.binding === "caller-supplied-oracle" && !/INTK-19/.test(d.owner ?? "")) problems.push(`${l.sig}: a caller-supplied-oracle binding with no owner`);
-      // A function with several person parameters binds each, or is an oracle.
-      if (persons.length > 1) problems.push(`${l.sig}: ${persons.length} person parameters; record an oracle or extend the row`);
     }
     expect(seen, "the replay has client-callable definers that take a person").toBeGreaterThan(5);
     expect(problems).toEqual([]);
@@ -197,8 +202,10 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
       const target = persons.length > 0 ? persons : l!.inArgs;
       expect((d.evidence ?? []).some((f) => target.some((a) => new RegExp(`\\b${a}\\b`).test(f))), d.signature).toBe(true);
     }
-    // the authenticated-only oracle the review found (INTK-19)
-    expect(CALLABLE_DEFINERS.find((d) => d.signature === "org_capability_allows_for(uuid,text,uuid,jsonb)")?.decision).toBe("signed-in-oracle");
+    // the authenticated-only oracle the I-17 review found is the service role's since 20261224 (INTK-19)
+    expect(CALLABLE_DEFINERS.find((d) => d.signature === "org_capability_allows_for(uuid,text,uuid,jsonb)")?.decision).toBe("service-only");
+    // and no oracle decision is left (INTK-19 done-when 3); a new one needs an owner
+    expect(CALLABLE_DEFINERS.filter(isOracle).map((d) => d.signature)).toEqual([]);
   });
 
   it("a policy-helper decision is true to the catalog: some row-level-security policy really calls it", () => {
@@ -307,26 +314,71 @@ describe.skipIf(skip !== null)("20261217: the app works before and after the pas
     expect(acl(after)).toBe(acl(before()));
   });
 
-  it("INTK-19's remainder, pinned: after the paste the same membership answer is still reachable — user_is_effective_owner to the anon key, node_visible's p_owner to a signed-in library owner", () => {
-    const { orgId, m } = seedOrg(after, { active: { role: "Viewer" }, gone: { role: "Viewer" }, owner: { role: "Viewer" } });
-    const libId = randomUUID();
-    admin(after, `
-      UPDATE org_members SET status = 'suspended' WHERE org_id = '${orgId}' AND uid = '${m.gone.uid}';
-      INSERT INTO libraries (id, org_id, name, type, owner_user_id) VALUES ('${libId}', '${orgId}', 'Owned', 'documents', '${m.owner.uid}');`);
-    const anon = { role: "anon" as const };
-    const owns = (x: SeededMember) => `SELECT user_is_effective_owner('${x.uid}', NULL, '${libId}', '${x.uid}')`;
-    // anon: true for the active member, false for the suspended one — member_is_active's answer
-    expect(selectAs(after, anon, owns(m.active))).toEqual(["t"]);
-    expect(selectAs(after, anon, owns(m.gone))).toEqual(["f"]);
-    // with no library at all: "is X active in any org?"
-    expect(selectAs(after, anon, `SELECT user_is_effective_owner('${m.active.uid}', NULL, NULL, '${m.active.uid}')`)).toEqual(["t"]);
-    expect(selectAs(after, anon, `SELECT user_is_effective_owner('${m.gone.uid}', NULL, NULL, '${m.gone.uid}')`)).toEqual(["f"]);
-    expect(asCaller(after, anon, `SELECT member_is_active('${orgId}', '${m.gone.uid}')`)).toMatchObject({ ok: false, code: "42501" });
-    // a signed-in Viewer who owns the library: node_visible is true exactly when p_owner is NOT active
-    const vis = (x: SeededMember) => `SELECT node_visible('restricted', '{}'::jsonb, '${orgId}', '${x.uid}', NULL, '${libId}')`;
-    expect(selectAs(after, m.owner.caller, vis(m.active))).toEqual(["f"]);
-    expect(selectAs(after, m.owner.caller, vis(m.gone))).toEqual(["t"]);
-  });
+  // INTK-19, inverted by 20261224 (intelligence I-28). Before that paste —
+  // 20261217 applied — the membership answer member_is_active gave was still
+  // reachable: user_is_effective_owner to the anon key (with no library, "is X
+  // active in ANY workspace?"), and node_visible's caller-supplied p_owner to a
+  // signed-in library owner (with no library, across workspaces). After it the
+  // anon key is refused 42501 and other workspaces get a constant answer. What
+  // remains is pinned as projects-and-cost INTK-20: inside a workspace where
+  // the caller is active and the effective owner of the named container, the
+  // answer still follows the named person's membership there, which
+  // org_members_read returns to that caller. node_visible's limb is decided
+  // KEPT under the integrator's ruling for I-28 (DEC-90).
+  for (const phase of ["before 20261224", "after 20261224"] as const) {
+    it(`INTK-19's membership answer, ${phase}: ${phase === "after 20261224" ? "refused to the anon key, constant across workspaces; the same-workspace answer pinned as INTK-20" : "still reachable (the remainder 20261224 closes)"}`, () => {
+      const db = phase === "after 20261224" ? after : mosDb().report!.checkpoints["20261224"];
+      const closed = phase === "after 20261224";
+      const { orgId, m } = seedOrg(db, { active: { role: "Viewer" }, gone: { role: "Viewer" }, owner: { role: "Viewer" } });
+      const other = seedOrg(db, { admin: { role: "Admin" } });
+      const libId = randomUUID();
+      const folderId = randomUUID();
+      const otherLib = randomUUID();
+      admin(db, `
+        UPDATE org_members SET status = 'suspended' WHERE org_id = '${orgId}' AND uid = '${m.gone.uid}';
+        INSERT INTO libraries (id, org_id, name, type, owner_user_id) VALUES ('${libId}', '${orgId}', 'Owned', 'documents', '${m.owner.uid}');
+        INSERT INTO collections (id, org_id, library_id, name, owner_user_id) VALUES ('${folderId}', '${orgId}', '${libId}', 'Owned folder', '${m.owner.uid}');
+        INSERT INTO libraries (id, org_id, name, type) VALUES ('${otherLib}', '${other.orgId}', 'Theirs', 'documents');`);
+      const anon = { role: "anon" as const };
+      const owns = (x: SeededMember, lib: string | null) => `SELECT user_is_effective_owner('${x.uid}', NULL, ${lib ? `'${lib}'` : "NULL"}, '${x.uid}')`;
+      if (!closed) {
+        // anon: true for the active member, false for the suspended one — member_is_active's answer
+        expect(selectAs(db, anon, owns(m.active, libId))).toEqual(["t"]);
+        expect(selectAs(db, anon, owns(m.gone, libId))).toEqual(["f"]);
+        // with no library at all: "is X active in any org?"
+        expect(selectAs(db, anon, owns(m.active, null))).toEqual(["t"]);
+        expect(selectAs(db, anon, owns(m.gone, null))).toEqual(["f"]);
+      } else {
+        for (const x of [m.active, m.gone]) {
+          for (const lib of [libId, null]) expect(asCaller(db, anon, owns(x, lib)), `${x.email} ${lib}`).toMatchObject({ ok: false, code: "42501" });
+          // a signed-in account of ANOTHER workspace asking about them is refused too
+          expect(asCaller(db, other.m.admin.caller, owns(x, libId))).toMatchObject({ ok: false, code: "42501" });
+        }
+        // the service role still asks about anyone (unchanged)
+        expect(selectAs(db, { role: "service_role" }, owns(m.active, libId))).toEqual(["t"]);
+        expect(selectAs(db, { role: "service_role" }, owns(m.gone, libId))).toEqual(["f"]);
+      }
+      expect(asCaller(db, anon, `SELECT member_is_active('${orgId}', '${m.gone.uid}')`)).toMatchObject({ ok: false, code: "42501" });
+      // node_visible's caller-supplied p_owner, asked by the signed-in Viewer who owns the library and the folder
+      const vis = (x: SeededMember, folder: string | null, lib: string | null) =>
+        `SELECT node_visible('restricted', '{}'::jsonb, '${orgId}', '${x.uid}', ${folder ? `'${folder}'` : "NULL"}, ${lib ? `'${lib}'` : "NULL"})`;
+      // across workspaces (no library: "is X active anywhere?"): reachable before, constant after
+      expect(selectAs(db, m.owner.caller, vis(m.active, folderId, null))).toEqual(["f"]);
+      expect(selectAs(db, m.owner.caller, vis(m.gone, folderId, null))).toEqual([closed ? "f" : "t"]);
+      // a library of a workspace the caller is not in: constant (false) both times
+      expect(selectAs(db, m.owner.caller, vis(m.active, null, otherLib))).toEqual(["f"]);
+      expect(selectAs(db, m.owner.caller, vis(m.gone, null, otherLib))).toEqual(["f"]);
+      // INTK-20 (same workspace): true exactly when p_owner is NOT an active member — the row
+      // org_members_read returns this caller; through node_visible decided kept (I-28, DEC-90)
+      expect(selectAs(db, m.owner.caller, vis(m.active, null, libId))).toEqual(["f"]);
+      expect(selectAs(db, m.owner.caller, vis(m.gone, null, libId))).toEqual(["t"]);
+      expect(selectAs(db, m.owner.caller, `SELECT status FROM org_members WHERE org_id = '${orgId}' AND uid = '${m.gone.uid}'`)).toEqual(["suspended"]);
+      // and the same answer through user_is_effective_owner's p_doc_owner, the caller asking about itself
+      const selfAsk = (x: SeededMember) => `SELECT user_is_effective_owner('${x.uid}', NULL, '${libId}', '${m.owner.uid}')`;
+      expect(selectAs(db, m.owner.caller, selfAsk(m.active))).toEqual(["f"]);
+      expect(selectAs(db, m.owner.caller, selfAsk(m.gone))).toEqual(["t"]);
+    });
+  }
 
   it("the header's ROLLBACK restores member_is_active's pre-paste ACL exactly", () => {
     const body = readFileSync(join(process.cwd(), "supabase", "migrations", "20261217_intel_roundG_definer_grants.sql"), "utf8");
