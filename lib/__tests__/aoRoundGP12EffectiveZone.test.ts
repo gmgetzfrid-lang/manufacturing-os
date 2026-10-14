@@ -83,6 +83,7 @@ vi.mock("@/lib/ownership", () => ({
 import {
   effectiveStatusFor, effectiveDateTimeZone, workspaceEffectiveDateTimeZone, cachedWorkspaceEffectiveDateTimeZone,
   resetWorkspaceZoneCacheForTests, applyEffectiveDate, scanEffectiveDates, daysUntilEffective, EFFECTIVE_DATE_FALLBACK_TIME_ZONE,
+  workspaceEffectiveZoneHonoured, WORKSPACE_EFFECTIVE_ZONE_PREREQUISITE,
 } from "@/lib/effectiveDate";
 import { supabase } from "@/lib/supabase";
 
@@ -92,16 +93,22 @@ const INSTANT = new Date("2026-03-01T20:00:00Z");
 const EFFECTIVE = "2026-03-02";
 
 const prevZone = process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+const prevGate = process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
 beforeEach(() => {
   st.zones = {}; st.zoneReadError = null; st.calls = []; st.docs = [];
   st.verifyDoc = null; st.versionEffective = null;
   resetWorkspaceZoneCacheForTests();
   process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = "America/Chicago";
+  // These suites describe the deployment AFTER 20261203 is pasted and
+  // recorded (the review-fix gate); the gate's own suite below unsets it.
+  process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE = "20261203";
 });
 afterEach(() => {
   vi.restoreAllMocks();
   if (prevZone === undefined) delete process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
   else process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = prevZone;
+  if (prevGate === undefined) delete process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
+  else process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE = prevGate;
 });
 
 describe("VFY-15 — the resolver prefers the workspace's zone", () => {
@@ -277,5 +284,85 @@ describe("VFY-15 — every caller passes the document's org (source pins)", () =
   it("the watermark's callers pass the document's org (the revert passes no date, so no calendar)", () => {
     expect(src("lib/revisions.ts")).toMatch(/applyEffectiveDate\(\{ documentId: doc\.id, versionId: newVersion\.id \?\? "", effectiveDate: input\.effectiveDate \?\? null, orgId \}\)/);
     expect(src("lib/reviewControl.ts")).toMatch(/applyEffectiveDate\(\{ documentId: input\.documentId, versionId: pendingId, effectiveDate, orgId: input\.orgId \}\)/);
+  });
+});
+
+// Review fix (blocker): until 20261203 is pasted the 'timezone' key is any
+// active member's to write (the permissive org policy; 20260818's
+// restrictive policies end ELSE true), so the stored zone decides nothing
+// until the deployment records the paste.
+describe("VFY-15 review fix — the workspace zone decides nothing until 20261203 is recorded live", () => {
+  const DOC = "22222222-2222-2222-2222-222222222222";
+  const verifyDoc = (org: string) => ({
+    id: DOC, org_id: org, document_number: "P-101", title: "P&ID", name: "P-101", rev: "5", status: "Issued",
+    current_version_id: "11111111-1111-1111-1111-111111111111", legal_hold: false,
+  });
+
+  it("the flag must name the migration exactly: unset, 'on', 'true' or another number honour nothing", () => {
+    expect(WORKSPACE_EFFECTIVE_ZONE_PREREQUISITE).toBe("20261203");
+    for (const v of [undefined, "", "on", "true", "1", "20261204"]) {
+      if (v === undefined) delete process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
+      else process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE = v;
+      expect(workspaceEffectiveZoneHonoured()).toBe(false);
+    }
+    process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE = " 20261203 ";
+    expect(workspaceEffectiveZoneHonoured()).toBe(true);
+  });
+
+  it("before the paste is recorded: a member-written Pacific/Kiritimati is not read, every helper decides in the deployment's calendar", async () => {
+    delete process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
+    st.zones = { w: "Pacific/Kiritimati" };
+    expect(await workspaceEffectiveDateTimeZone(supabase, "w")).toBe("America/Chicago");
+    expect(await cachedWorkspaceEffectiveDateTimeZone(supabase, "w")).toBe("America/Chicago");
+    expect(st.calls.some((c) => c.table === "org_configurations")).toBe(false);
+    // the scan and the watermark too
+    vi.useFakeTimers(); vi.setSystemTime(INSTANT);
+    try {
+      await scanEffectiveDates("w");
+      const lte = st.calls.find((c) => c.table === "documents" && c.ops.some((o) => o.m === "lte"))!;
+      expect(lte.ops.find((o) => o.m === "lte")!.args).toEqual(["effective_date", "2026-03-01"]);
+      st.calls = [];
+      await applyEffectiveDate({ documentId: "d1", versionId: "v1", effectiveDate: EFFECTIVE, orgId: "w" });
+      const upd = st.calls.find((c) => c.table === "documents" && c.ops.some((o) => o.m === "update"))!;
+      expect((upd.ops.find((o) => o.m === "update")!.args[0] as Record<string, unknown>).effective_notified_at).toBeNull();
+      expect(st.calls.some((c) => c.table === "org_configurations")).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("the finding's scenario at /api/verify: a Viewer's Kiritimati does not turn tomorrow's revision green before the paste; after it, the Admin's zone decides", async () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(INSTANT);
+    try {
+      const { GET } = await import("@/app/api/verify/route");
+      const ask = async () => {
+        const u = new URL("https://app/api/verify");
+        u.searchParams.set("doc", DOC);
+        u.searchParams.set("v", "11111111-1111-1111-1111-111111111111");
+        return ((await (await GET(new NextRequest(u))).json()) as Record<string, unknown>).verdict;
+      };
+      st.versionEffective = EFFECTIVE;
+      st.zones = { w: "Pacific/Kiritimati" };
+      st.verifyDoc = verifyDoc("w");
+      delete process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE;
+      expect(await ask()).toBe("not_yet_effective"); // Chicago: 1 March
+      resetWorkspaceZoneCacheForTests();
+      process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE = "20261203";
+      expect(await ask()).toBe("current"); // the (now Admin-only) zone: 2 March
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("the settings card says which calendar decides effective dates, by the same gate", () => {
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/settings/page.tsx"), "utf8");
+    expect(page).toContain("import { workspaceEffectiveZoneHonoured } from \"@/lib/effectiveDate\";");
+    expect(page).toMatch(/\{workspaceEffectiveZoneHonoured\(\)\s*\? <>Effective dates and whether a revision is &ldquo;in effect&rdquo; are decided in this zone too/);
+    expect(page).toContain("still follow the deployment&apos;s facility time zone, not this setting, until the deployment enables it.");
+    expect(page).not.toContain("until that change lands");
+  });
+
+  it("the operator's switch is documented beside the deployment zone", () => {
+    const env = readFileSync(join(process.cwd(), ".env.example"), "utf8");
+    expect(env).toMatch(/^NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE=$/m);
+    expect(env).toMatch(/AFTER 20261203 is pasted/);
   });
 });

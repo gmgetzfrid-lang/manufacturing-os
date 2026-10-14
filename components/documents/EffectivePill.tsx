@@ -7,24 +7,39 @@
 // VFY-15 (admin-and-org Round G, P12): given the document's workspace
 // (`orgId`), the badge decides in that workspace's calendar — its Admin's
 // time zone, read once per workspace and kept a few minutes — the same
-// calendar the daily scan announces in and /api/verify answers in. Until it
-// has loaded, or with no workspace given, none set or an unreadable setting,
-// it decides in the deployment's calendar, as before.
+// calendar the daily scan announces in and /api/verify answers in. With no
+// workspace given, none set, an unreadable setting, or before the deployment
+// records 20261203 as live (workspaceEffectiveZoneHonoured), it decides in
+// the deployment's calendar, as before. Review fix: WHILE the workspace's
+// zone is loading it decides in the latest calendar (UTC-12,
+// EFFECTIVE_DATE_FALLBACK_TIME_ZONE) — the deployment's calendar could be
+// ahead of the workspace's and leave "not yet in effect" off the first
+// paint; the latest calendar can only show the badge a little longer, never
+// drop it early (DEC-63 / REV-9's "late, never early").
 
 import React, { useEffect, useState } from "react";
 import { CalendarClock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { effectiveStatusFor, daysUntilEffective, cachedWorkspaceEffectiveDateTimeZone } from "@/lib/effectiveDate";
+import {
+  effectiveStatusFor, daysUntilEffective, cachedWorkspaceEffectiveDateTimeZone,
+  workspaceEffectiveZoneHonoured, EFFECTIVE_DATE_FALLBACK_TIME_ZONE,
+} from "@/lib/effectiveDate";
 
 function useWorkspaceEffectiveZone(orgId: string | null | undefined, wanted: boolean): string | undefined {
   const [zone, setZone] = useState<{ orgId: string; zone: string } | null>(null);
+  const honoured = workspaceEffectiveZoneHonoured();
   useEffect(() => {
-    if (!orgId || !wanted) return;
+    if (!orgId || !wanted || !honoured) return;
     let live = true;
     void cachedWorkspaceEffectiveDateTimeZone(supabase, orgId).then((z) => { if (live) setZone({ orgId, zone: z }); });
     return () => { live = false; };
-  }, [orgId, wanted]);
-  return zone && zone.orgId === orgId ? zone.zone : undefined;
+  }, [orgId, wanted, honoured]);
+  // Before 20261203 is recorded live the setting is not read: the
+  // deployment's calendar decides (undefined), as before VFY-15.
+  if (!orgId || !honoured) return undefined;
+  if (zone && zone.orgId === orgId) return zone.zone;
+  // Loading: the latest calendar, so the badge is never dropped early.
+  return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
 }
 
 export default function EffectivePill({ effectiveDate, orgId = null, compact = false, className = "" }: {

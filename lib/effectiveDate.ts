@@ -59,6 +59,19 @@ export type EffectiveStatus = "none" | "pending" | "effective";
 // register, the suppression watermark (applyEffectiveDate) and the daily
 // scan (scanEffectiveDates) — so the watermark and the scan still share one
 // calendar per workspace (REV-9's rule, now per org).
+//
+// VFY-15 review fix (the 20261203 prerequisite): the stored zone decides
+// effective dates only once the deployment says the key is an Admin's.
+// Until 20261203 is pasted the 'timezone' key falls to the permissive org
+// policy — ANY active member could write it straight through PostgREST,
+// bypassing the settings page and its audit row, and so move every
+// effective date of the workspace up to 26 hours early (Etc/GMT+12 →
+// Pacific/Kiritimati) on the public verify verdict, the badge, the scan and
+// the watermark. So the workspace zone is honoured only when
+// NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE names that migration
+// ("20261203"), set by the operator AFTER the paste; unset (or anything
+// else), every effective date is decided exactly as before VFY-15 — the
+// deployment variable, else UTC-12 — and the setting is not even read.
 
 /** The calendar used when the deployment names no (valid) facility zone:
  *  UTC-12. IANA spells it "Etc/GMT+12" — the POSIX sign is inverted, so
@@ -127,6 +140,20 @@ export function effectiveDateTimeZone(workspaceZone?: string | null): string {
   }
 }
 
+/** The migration that makes the workspace time-zone key Admin-only — the
+ *  value NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE must carry before a
+ *  workspace's zone decides its effective dates (VFY-15 review fix). */
+export const WORKSPACE_EFFECTIVE_ZONE_PREREQUISITE = "20261203";
+
+/** VFY-15 review fix: may the workspace's stored zone decide effective
+ *  dates? Only once the operator has recorded, in the deployment, that
+ *  20261203 is live (before it any active member can write the key). The
+ *  literal `process.env.NEXT_PUBLIC_…` reference is what Next inlines into
+ *  the browser bundle, so the badge and the server agree. */
+export function workspaceEffectiveZoneHonoured(): boolean {
+  return (process.env.NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE ?? "").trim() === WORKSPACE_EFFECTIVE_ZONE_PREREQUISITE;
+}
+
 /** Minimal client surface the workspace-zone read needs (the browser client
  *  or a service client). */
 type ZoneClient = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -135,12 +162,15 @@ const warnedUnreadOrgs = new Set<string>();
 
 /** VFY-15: the calendar a document of `orgId` is decided in — the
  *  workspace's zone (lib/workspaceTimeZone.ts readWorkspaceTimeZone, through
- *  the client given: the service client on the server), else the deployment
- *  variable, else UTC-12. A setting that cannot be read is said once per
+ *  the client given: the service client on the server) once
+ *  workspaceEffectiveZoneHonoured() (20261203 recorded live), else the
+ *  deployment variable, else UTC-12. A setting that cannot be read is said once per
  *  workspace per runtime and falls back to the deployment variable — today's
  *  behaviour — never to UTC. Never rejects. */
 export async function workspaceEffectiveDateTimeZone(sb: ZoneClient, orgId: string | null | undefined): Promise<string> {
-  if (!orgId) return effectiveDateTimeZone();
+  // Review fix: before 20261203 the key is any member's to write, so it is
+  // not read at all — the deployment's calendar decides, as before VFY-15.
+  if (!orgId || !workspaceEffectiveZoneHonoured()) return effectiveDateTimeZone();
   const r = await readWorkspaceTimeZone(sb, orgId);
   if (!r.ok) {
     if (!warnedUnreadOrgs.has(orgId)) {

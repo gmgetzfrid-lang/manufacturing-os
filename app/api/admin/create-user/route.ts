@@ -6,6 +6,7 @@ import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import { assertOrgHasAccess } from "@/lib/serverAuth";
 import { clearAccessRequestNotices, queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
 import { pruneRemovedMemberAclIndex, type RpcClient } from "@/lib/memberAclIndexPrune";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 // Bounded lookup of auth users by email. Only used in the rare path where the
 // auth account already exists (e.g. they signed in with Microsoft first) but
@@ -74,6 +75,56 @@ const READD_ACL_INDEX_CHUNK = 2_000;
 
 type ReAddAclIndexCleanup = { done: boolean; pruned: number; calls: number; error?: string };
 
+/** ORG-7 review fix: does the audit trail already show that nothing the
+ *  removal left can still name the person? Read from the
+ *  MEMBER_ACL_GRANTS_PRUNED rows written at or after the removal
+ *  (`sinceIso`, the MEMBER_REMOVED row's timestamp — revoke_member writes
+ *  both in one transaction, so its own row carries the same timestamp):
+ *   · revoke_member's own row (no `phase`) says no library and no folder
+ *     carried the grant (`libraries` and `collections` both 0) — a grant on
+ *     a document or a set is inherited by nothing, so there is nothing to
+ *     walk; or
+ *   · a chunk row of prune_removed_member_acl_index (`phase: "acl_index"`)
+ *     says `done: true` — the members page's walk finished.
+ *  The chunk RPC writes a row only for a call that pruned something, so a
+ *  walk whose LAST call pruned nothing leaves no `done` row: that case
+ *  still walks (within the budget). Only a row whose writer is an ACTIVE
+ *  Admin of the workspace counts — both writers (revoke_member's remove and
+ *  the chunk RPC) refuse anyone else, so a row any other member inserted
+ *  into audit_logs cannot switch the clean-up off; a service-role row (no
+ *  user) is not trusted either and the walk runs. A read that fails
+ *  answers false — the walk runs, as before this check. */
+async function removalWalkSettled(orgId: string, uid: string, sinceIso: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from("audit_logs")
+    .select("details, user_id")
+    .eq("org_id", orgId)
+    .eq("action", "MEMBER_ACL_GRANTS_PRUNED")
+    .eq("resource_id", uid)
+    .gte("timestamp", sinceIso)
+    .order("timestamp", { ascending: false })
+    .limit(200);
+  if (error || !Array.isArray(data)) return false;
+  const writers = new Set<string>();
+  for (const row of data as Array<{ details?: Record<string, unknown> | null; user_id?: string | null }>) {
+    const d = row.details ?? {};
+    const settles = (d.phase === "acl_index" && d.done === true)
+      || (d.phase === undefined && d.reason === "member_removed"
+          && Number(d.libraries ?? NaN) === 0 && Number(d.collections ?? NaN) === 0);
+    if (settles && row.user_id) writers.add(String(row.user_id));
+  }
+  if (writers.size === 0) return false;
+  const { data: admins, error: admErr } = await supabaseAdmin
+    .from("org_members")
+    .select("uid, role, roles")
+    .eq("org_id", orgId)
+    .eq("status", "active")
+    .in("uid", [...writers]);
+  if (admErr || !Array.isArray(admins)) return false;
+  return (admins as Array<{ uid: string; role?: unknown; roles?: unknown }>)
+    .some((m) => writers.has(String(m.uid)) && memberHoldsAny(m, ["Admin"]));
+}
+
 /** ORG-7 — the re-add residual of the member-removal prune. A removal
  *  (revoke_member, 20261204) strips the person's own grant rules at once,
  *  and the members page strips what descendants INHERITED from them in
@@ -87,14 +138,16 @@ type ReAddAclIndexCleanup = { done: boolean; pruned: number; calls: number; erro
  *  READD_ACL_INDEX_BUDGET_MS. It runs only when the person's latest
  *  MEMBER_REMOVED row says the removal pruned a grant (`prunedAclGrants`,
  *  written only by 20261204's revoke_member): no pruned grant, nothing
- *  inherited one. Never blocks the re-add: a read or call that fails, or a
+ *  inherited one. Review fix: and not when the audit trail already shows
+ *  the walk is settled (removalWalkSettled — no library or folder carried
+ *  the grant, or the members page's walk recorded `done`). Never blocks the re-add: a read or call that fails, or a
  *  walk the budget cuts short, is logged and returned, and the rest is the
  *  nightly rebuild's. Returns null when there was nothing to clear. */
 async function clearStaleInheritedAclIndex(orgId: string, uid: string): Promise<ReAddAclIndexCleanup | null> {
   try {
     const { data: removed, error: remErr } = await supabaseAdmin
       .from("audit_logs")
-      .select("details")
+      .select("details, timestamp")
       .eq("org_id", orgId)
       .eq("action", "MEMBER_REMOVED")
       .eq("resource_id", uid)
@@ -104,9 +157,10 @@ async function clearStaleInheritedAclIndex(orgId: string, uid: string): Promise<
       console.warn(`[create-user] ORG-7: the removal record of ${uid} could not be read (${remErr.message}) — any stale index entries are left to the nightly rebuild.`);
       return { done: false, pruned: 0, calls: 0, error: remErr.message };
     }
-    const last = (Array.isArray(removed) ? removed[0] : null) as { details?: { prunedAclGrants?: unknown } | null } | null;
+    const last = (Array.isArray(removed) ? removed[0] : null) as { details?: { prunedAclGrants?: unknown } | null; timestamp?: string | null } | null;
     const prunedGrants = Number(last?.details?.prunedAclGrants ?? 0);
     if (!last || !(prunedGrants > 0)) return null;
+    if (last.timestamp && await removalWalkSettled(orgId, uid, last.timestamp)) return null;
     const libraries: string[] = [];
     for (let from = 0; from < 50_000; from += 1000) {
       const { data: libs, error: libErr } = await supabaseAdmin

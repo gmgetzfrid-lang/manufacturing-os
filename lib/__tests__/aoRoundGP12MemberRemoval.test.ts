@@ -42,6 +42,7 @@ function fake() {
         if (f.m === "eq") out = out.filter((r) => r[k] === v);
         if (f.m === "neq") out = out.filter((r) => r[k] !== v);
         if (f.m === "in") out = out.filter((r) => (v as unknown[]).includes(r[k]));
+        if (f.m === "gte") out = out.filter((r) => String(r[k] ?? "") >= String(v));
       }
       if (range) out = out.slice(range[0], range[1] + 1);
       if (limit !== null) out = out.slice(0, limit);
@@ -65,7 +66,7 @@ function fake() {
       get(_t, p: string) {
         if (p === "then") return (res: (v: unknown) => void, rej?: (e: unknown) => void) => Promise.resolve().then(() => run(false)).then(res, rej);
         return (...args: unknown[]) => {
-          if (p === "eq" || p === "neq" || p === "in") filters.push({ m: p, args });
+          if (p === "eq" || p === "neq" || p === "in" || p === "gte") filters.push({ m: p, args });
           if (p === "insert" || p === "update" || p === "upsert" || p === "delete") write = { m: p, row: args[0] };
           if (p === "range") range = [args[0] as number, args[1] as number];
           if (p === "limit") limit = args[0] as number;
@@ -301,6 +302,53 @@ describe("ORG-7 re-add — stale inherited index entries are cleared before the 
     expect(await res.json()).toMatchObject({ uid: "pat", aclIndexCleanup: { done: false, error: "permission denied" } });
     expect(db.rpcCalls).toEqual([]);
     warn.mockRestore();
+  });
+
+  // Review fix (minor 3): a walk the audit trail already shows settled is
+  // not repeated at the re-add.
+  const prunedRow = (details: Row, extra: Partial<Row> = {}) => ({
+    org_id: "o1", action: "MEMBER_ACL_GRANTS_PRUNED", resource_id: "pat", user_id: "a1",
+    timestamp: "2026-10-12T00:00:00Z", details, ...extra,
+  });
+  it("the members page's walk recorded done (by an Admin, after the removal): no walk, the add answers as before", async () => {
+    seed(2);
+    db.tables.audit_logs.push(prunedRow({ reason: "member_removed", libraries: 1, collections: 0, documents: 1, documentSets: 0 }));
+    db.tables.audit_logs.push(prunedRow({ reason: "member_removed", phase: "acl_index", table: "document_sets", nodes: 1, done: true }, { timestamp: "2026-10-12T00:00:05Z" }));
+    expect(await (await post()).json()).toEqual({ uid: "pat" });
+    expect(db.rpcCalls).toEqual([]);
+  });
+
+  it("the removal's own row says no library or folder carried the grant (a document grant is inherited by nothing): no walk", async () => {
+    seed(2);
+    db.tables.audit_logs.push(prunedRow({ reason: "member_removed", libraries: 0, collections: 0, documents: 2, documentSets: 0 }));
+    expect(await (await post()).json()).toEqual({ uid: "pat" });
+    expect(db.rpcCalls).toEqual([]);
+  });
+
+  it("still walks when the trail does not settle it: a library carried the grant and no done row, done false, an EARLIER removal's done row, or a row a non-Admin wrote", async () => {
+    const cases: Row[][] = [
+      [prunedRow({ reason: "member_removed", libraries: 1, collections: 0, documents: 0, documentSets: 0 })],
+      [prunedRow({ reason: "member_removed", phase: "acl_index", table: "documents", nodes: 9, done: false })],
+      [prunedRow({ reason: "member_removed", phase: "acl_index", table: "document_sets", nodes: 1, done: true }, { timestamp: "2026-09-01T00:00:00Z" })],
+      [prunedRow({ reason: "member_removed", phase: "acl_index", table: "document_sets", nodes: 1, done: true }, { user_id: "v1" })],
+      [prunedRow({ reason: "member_removed", libraries: 0, collections: 0, documents: 1, documentSets: 0 }, { user_id: null })],
+    ];
+    for (const rows of cases) {
+      beforeEachReset(); seed(2);
+      db.tables.org_members.push({ org_id: "o1", uid: "v1", email: "v1@x.io", role: "Viewer", roles: ["Viewer"], status: "active" });
+      db.tables.audit_logs.push(...rows);
+      const res = await post();
+      expect(res.status).toBe(200);
+      expect(db.rpcCalls.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("pins: a settled-walk read that fails answers 'not settled' (the walk runs); the writer must hold Admin by the role collection", () => {
+    const route = readFileSync(join(process.cwd(), "app/api/admin/create-user/route.ts"), "utf8");
+    expect(route).toMatch(/if \(error \|\| !Array\.isArray\(data\)\) return false;/);
+    expect(route).toMatch(/if \(admErr \|\| !Array\.isArray\(admins\)\) return false;/);
+    expect(route).toMatch(/memberHoldsAny\(m, \["Admin"\]\)/);
+    expect(route).toMatch(/if \(last\.timestamp && await removalWalkSettled\(orgId, uid, last\.timestamp\)\) return null;/);
   });
 
   it("the walk is bounded by a time budget (the rest is the nightly rebuild's)", () => {

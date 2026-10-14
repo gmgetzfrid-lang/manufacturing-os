@@ -24,6 +24,7 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { logAuditAction } from "@/lib/audit";
 import { readWorkspaceTimeZone, saveWorkspaceTimeZone, knownTimeZones, timeZoneOptions } from "@/lib/workspaceTimeZone";
+import { workspaceEffectiveZoneHonoured } from "@/lib/effectiveDate";
 
 // DEC-17: this page's main action (schema health) is an Admin-only API — the
 // client gate now says the same thing instead of admitting DocCtrl to a 403.
@@ -527,7 +528,9 @@ function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null
         <Clock className="w-3.5 h-3.5" /> Workspace time zone
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mb-3">
-        The plant&apos;s time zone. Times in notifications and emails are written in it, with the zone named. Not set, they read UTC. The daily compliance digest is still sent once a day at 03:00 UTC; its body names its window in this zone. Effective dates and whether a revision is &ldquo;in effect&rdquo; still follow the deployment&apos;s facility time zone, not this setting, until that change lands.
+        The plant&apos;s time zone. Times in notifications and emails are written in it, with the zone named. Not set, they read UTC. The daily compliance digest is still sent once a day at 03:00 UTC; its body names its window in this zone. {workspaceEffectiveZoneHonoured()
+          ? <>Effective dates and whether a revision is &ldquo;in effect&rdquo; are decided in this zone too (not set, in the deployment&apos;s facility time zone).</>
+          : <>Effective dates and whether a revision is &ldquo;in effect&rdquo; still follow the deployment&apos;s facility time zone, not this setting, until the deployment enables it.</>}
       </p>
       {readError ? (
         <div role="alert" className="text-xs text-rose-700 inline-flex items-center gap-2">
