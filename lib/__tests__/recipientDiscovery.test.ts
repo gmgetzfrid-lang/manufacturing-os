@@ -273,6 +273,45 @@ describe("NEDGE-6 done-when 3 — a document's follower who may not discover it 
     }
   });
 
+  it("fix pass 4 (review item c): a STALLED session read is bounded too — the whole check (getSession + fetch) times out after DISCOVER_TIMEOUT_MS as a FAILED check, the fetch never sent; the copy holders' recall (no followers) never waits on it", async () => {
+    vi.useFakeTimers();
+    const stalled = vi.fn(() => new Promise(() => undefined)); // never resolves
+    try {
+      vi.stubGlobal("window", {});
+      (h.client.auth as Record<string, unknown>).getSession = stalled;
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const { DISCOVER_TIMEOUT_MS } = await import("@/lib/notify/recipients");
+      let settled = false;
+      const pending = discoveringAmong(ORG, "doc-1", ["w-sees", "w-admin"]).then((v) => { settled = true; return v; });
+      await vi.advanceTimersByTimeAsync(DISCOVER_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const out = await pending;
+      expect(out).toMatchObject({ uids: ["w-admin"], outcome: "failed", error: "the discover check did not answer within 5000 ms" });
+      expect(fetchMock).not.toHaveBeenCalled();
+      // through emit(): the follower notice ends on the redacted path (the controllers in full)
+      const sent = emit(ev());
+      await vi.advanceTimersByTimeAsync(DISCOVER_TIMEOUT_MS);
+      expect((await sent).recipients).toBe(5);
+      const rows = h.state.tables.notifications as Array<Record<string, unknown>>;
+      expect(rows.filter((x) => (x.metadata as { redacted?: boolean } | null)?.redacted).map((x) => x.user_id).sort()).toEqual(["named", "w-hidden", "w-sees"]);
+      // the copy holders' recall names its people (no followers): it asks no
+      // discover check, so it finishes with the session read still stalled and
+      // no timer advanced
+      h.state.tables.notifications = [];
+      stalled.mockClear();
+      const recall = await emit(ev({ category: "recall", kind: "doc_recalled", audience: { involved: ["w-sees", "w-hidden"] } }));
+      expect(recall.recipients).toBe(2);
+      expect(stalled).not.toHaveBeenCalled();
+      expect((h.state.tables.notifications as Array<Record<string, unknown>>).map((x) => x.user_id).sort()).toEqual(["w-hidden", "w-sees"]);
+    } finally {
+      vi.useRealTimers();
+      (h.client.auth as Record<string, unknown>).getSession = async () => ({ data: { session: null } });
+    }
+  });
+
   it("no check in this context (a server entry that did not load lib/documentDiscoverers): everyone kept, as before, logged", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const out = await discoveringAmong(ORG, "doc-1", ["w-hidden"]);

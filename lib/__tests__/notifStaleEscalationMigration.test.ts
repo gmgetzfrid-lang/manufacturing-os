@@ -98,10 +98,13 @@ describe("20261206 — one paste for the SQL editor (DEC-30)", () => {
     expect(CODE).not.toMatch(/DROP TRIGGER|CREATE TRIGGER/);
   });
 
-  it("fix pass 3: states the paste / deploy order the brief asks — paste BEFORE the deploy (safe under the old cron: an active session's row is kept), the optional re-paste after it, and what a late paste costs the two watcher FYIs — no bell row and no email", () => {
+  it("fix pass 3: states the paste / deploy order the brief asks — paste BEFORE the deploy (safe under the old cron: an active session's row is kept), the REQUIRED re-paste after it (fix pass 4), and what a late paste costs the two watcher FYIs — no bell row and no email", () => {
     expect(SQL).toMatch(/PASTE THIS FILE BEFORE THE DEPLOY of the N15 app/);
     expect(SQL).not.toMatch(/DEPLOY the N15 app FIRST/);
-    expect(SQL).toMatch(/OPTIONAL, after the\s*\n--\s+deploy: paste this file again/);
+    // fix pass 4 (the integrator's ruling): the second paste is REQUIRED, after
+    // the next maintenance run following the deploy — never "optional"
+    expect(SQL).toMatch(/REQUIRED, after the\s*\n--\s+next maintenance run following the deploy \(fix pass 4 — the\s*\n--\s+integrator's ruling\): paste this file again/);
+    expect(SQL).not.toMatch(/OPTIONAL, after the/);
     expect(SQL).toMatch(/doc_retired from the supersede door,\s*\n--\s+checkout_force_released_fyi from a force-release\) are declared kinds\s*\n--\s+from their first write/);
     expect(SQL).toMatch(/with emailOnlyWithBell, so a watcher whose bell row was refused gets\s*\n--\s+NO email either/);
   });
@@ -142,8 +145,10 @@ describe("20261206 — notification_kinds() from its NEWEST definition, plus che
   });
 
   it("checkout_force_released_fyi is a lock notice under Locks — checkout_handoff's flags (an FYI, not an action, not compliance), never the thread's chat kind (fix pass)", () => {
-    const { section, actionRequired, compliance, icon, tone, group } = KIND_META.checkout_handoff;
-    expect(KIND_META.checkout_force_released_fyi).toEqual({ section, actionRequired, compliance, icon, tone, group });
+    const { section, actionRequired, compliance, icon, tone, group, category } = KIND_META.checkout_handoff;
+    // N4's toast category (merge, fix pass 4): watched_activity — its emit's 'watched', as checkout_handoff's
+    expect(category).toBe("watched_activity");
+    expect(KIND_META.checkout_force_released_fyi).toEqual({ section, actionRequired, compliance, icon, tone, group, category });
     expect(KIND_META.checkout_force_released_fyi.group).toBe("locks");
     expect(KIND_META.checkout_force_released_fyi.icon).toBe("Lock");
     expect(valuesOf(mine[0][1]).find(([k]) => k === "checkout_force_released_fyi")).toEqual(["checkout_force_released_fyi", false]);
@@ -152,13 +157,15 @@ describe("20261206 — notification_kinds() from its NEWEST definition, plus che
   it("doc_retired is doc_recalled's badge, icon and group but NOT a compliance kind (PROD-17: a watcher's FYI stays out of the digest and is deletable)", () => {
     const { section, actionRequired, icon, tone, group } = KIND_META.doc_recalled;
     expect(KIND_META.doc_recalled.compliance).toBe(true);
-    expect(KIND_META.doc_retired).toEqual({ section, actionRequired, compliance: false, icon, tone, group });
+    // N4's toast category (merge, fix pass 4): the watcher's own — its emit's 'watched' (doc_recalled's is status_change)
+    expect(KIND_META.doc_retired).toEqual({ section, actionRequired, compliance: false, icon, tone, group, category: "watched_activity" });
     expect(valuesOf(mine[0][1]).find(([k]) => k === "doc_retired")).toEqual(["doc_retired", false]);
   });
 
   it("the new kind carries checkout_released's flags (an action, not a compliance kind) — no badge, digest or dismiss rule moves", () => {
-    const { section, actionRequired, compliance, icon, tone, group } = KIND_META.checkout_released;
-    expect(KIND_META.checkout_stale_escalation).toEqual({ section, actionRequired, compliance, icon, tone, group });
+    const { section, actionRequired, compliance, icon, tone, group, category } = KIND_META.checkout_released;
+    // N4's toast category too (merge, fix pass 4): sla_warning, as checkout_released
+    expect(KIND_META.checkout_stale_escalation).toEqual({ section, actionRequired, compliance, icon, tone, group, category });
   });
 
   it("its own probe states its own list's counts", () => {

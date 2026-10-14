@@ -81,10 +81,14 @@
 --      asks notification_i_wrote. After the deploy the browser-written
 --      watcher FYIs (doc_retired from the supersede door,
 --      checkout_force_released_fyi from a force-release) are declared kinds
---      from their first write, so no watcher misses one. OPTIONAL, after the
---      deploy: paste this file again — the remaining escalation rows of
---      sessions that were active at the first paste are re-filed then (the
---      N15 cron dedupes on both kinds, so nothing depends on it).
+--      from their first write, so no watcher misses one. REQUIRED, after the
+--      next maintenance run following the deploy (fix pass 4 — the
+--      integrator's ruling): paste this file again — the escalation rows of
+--      sessions that were active at the first paste and have closed since
+--      are re-filed then. A session still active at that paste keeps its
+--      checkout_released row until it closes and the file is pasted again;
+--      it reads the same meanwhile (same flags, toast category and
+--      reconcile class; the N15 cron dedupes on both kinds).
 --      If it is pasted after the deploy instead, nothing breaks: the
 --      escalation is written by the cron on the service role, which
 --      20261160's rail passes, and its dedupe reads both kinds. The cost is

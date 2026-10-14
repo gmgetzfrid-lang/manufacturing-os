@@ -1176,6 +1176,6 @@ export type NotifChannel = "inapp" | "email";
 
 **Scope / residual.**
 - Stays OPEN on DF-P4's limb. `DEC-102` Risk (b) is unchanged, no owner: the read-back can miss a row whose insert is still executing.
-- **Pending migration:** `20261206` (fix pass 3: paste BEFORE the deploy, `TAX-17`; the app works before and after).
+- **Pending migration:** `20261206` (fix pass 3: paste BEFORE the deploy, `TAX-17`; the app works before and after). *(Fix pass 4: paste it again, REQUIRED, after the next maintenance run following the deploy (`TAX-17`). The new SECURITY DEFINER `notification_i_wrote` in that number is RATIFIED by the integrator under `DEC-90`.)*
 
 ---

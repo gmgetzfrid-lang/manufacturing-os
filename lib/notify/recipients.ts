@@ -186,41 +186,56 @@ export function __registerServerDiscoverCheck(fn: DiscoverCheck | null): void {
  *  DISCOVERERS_MAX_UIDS). */
 export const DISCOVER_CHUNK = 500;
 
-/** How long the browser waits for the discover route before the check
- *  counts as FAILED (review fix): a hung route then takes the failed-check
- *  path (controllers in full, the others redacted) instead of holding the
- *  emit — and whatever awaits it — open indefinitely. */
+/** How long the browser waits for the WHOLE discover check — the session
+ *  read and the route together — before it counts as FAILED (review fix;
+ *  fix pass 4 widened it from the fetch alone: a stalled
+ *  supabase.auth.getSession() held the caller open too). A timed-out check
+ *  takes the failed-check path (controllers in full, the others redacted)
+ *  instead of holding the emit — and whatever awaits it — open
+ *  indefinitely. */
 export const DISCOVER_TIMEOUT_MS = 5000;
+
+const DISCOVER_TIMED_OUT = `the discover check did not answer within ${DISCOVER_TIMEOUT_MS} ms`;
 
 /** The BROWSER check: POST /api/documents/discoverers with the member's own
  *  token. The route answers only about a document the caller's session can
- *  read, and only the subset of the people sent. Never throws; aborted after
- *  DISCOVER_TIMEOUT_MS (a failure). */
-async function browserDiscoverCheck(input: { orgId: string; documentId: string; uids: string[] }): Promise<DiscoverCheckAnswer> {
+ *  read, and only the subset of the people sent. Never throws; the session
+ *  read and the fetch together are bounded by DISCOVER_TIMEOUT_MS — past it
+ *  the check answers a failure at once and the fetch, if started, is
+ *  aborted. */
+function browserDiscoverCheck(input: { orgId: string; documentId: string; uids: string[] }): Promise<DiscoverCheckAnswer> {
   const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timer = setTimeout(() => ctrl?.abort(), DISCOVER_TIMEOUT_MS);
-  try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
-    if (!token) return { ok: false, error: "no signed-in session" };
-    const res = await fetch("/api/documents/discoverers", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(input),
-      signal: ctrl?.signal,
-    });
-    const body = (await res.json().catch(() => null)) as { discover?: unknown; error?: unknown } | null;
-    if (ctrl?.signal.aborted) return { ok: false, error: `the discover check did not answer within ${DISCOVER_TIMEOUT_MS} ms` };
-    if (!res.ok || !body || !Array.isArray(body.discover)) {
-      return { ok: false, error: typeof body?.error === "string" ? body.error : `the discover check answered ${res.status}` };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<DiscoverCheckAnswer>((resolve) => {
+    timer = setTimeout(() => {
+      ctrl?.abort();
+      resolve({ ok: false, error: DISCOVER_TIMED_OUT });
+    }, DISCOVER_TIMEOUT_MS);
+  });
+  const asked = (async (): Promise<DiscoverCheckAnswer> => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (ctrl?.signal.aborted) return { ok: false, error: DISCOVER_TIMED_OUT };
+      const token = data?.session?.access_token;
+      if (!token) return { ok: false, error: "no signed-in session" };
+      const res = await fetch("/api/documents/discoverers", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(input),
+        signal: ctrl?.signal,
+      });
+      const body = (await res.json().catch(() => null)) as { discover?: unknown; error?: unknown } | null;
+      if (ctrl?.signal.aborted) return { ok: false, error: DISCOVER_TIMED_OUT };
+      if (!res.ok || !body || !Array.isArray(body.discover)) {
+        return { ok: false, error: typeof body?.error === "string" ? body.error : `the discover check answered ${res.status}` };
+      }
+      return { ok: true, discover: (body.discover as unknown[]).filter((u): u is string => typeof u === "string") };
+    } catch (e) {
+      if (ctrl?.signal.aborted) return { ok: false, error: DISCOVER_TIMED_OUT };
+      return { ok: false, error: (e as Error)?.message ?? String(e) };
     }
-    return { ok: true, discover: (body.discover as unknown[]).filter((u): u is string => typeof u === "string") };
-  } catch (e) {
-    if (ctrl?.signal.aborted) return { ok: false, error: `the discover check did not answer within ${DISCOVER_TIMEOUT_MS} ms` };
-    return { ok: false, error: (e as Error)?.message ?? String(e) };
-  } finally {
-    clearTimeout(timer);
-  }
+  })();
+  return Promise.race([asked, timedOut]).finally(() => clearTimeout(timer));
 }
 
 export type DiscoverFilter = {
