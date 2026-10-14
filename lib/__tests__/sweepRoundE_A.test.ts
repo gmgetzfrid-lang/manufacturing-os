@@ -453,7 +453,10 @@ describe("WF-17 / DEC-14 — cancel_request exists; NEW and PENDING_ENG_INITIAL 
     const term = "not('status', 'in', '(\"CLOSED\",\"CANCELED\")')";
     const termDq = 'not("status", "in", \'("CLOSED","CANCELED")\')';
     expect(src("app/(protected)/requests/page.tsx").split(term).length - 1).toBe(2);
-    expect(src("hooks/useTicketNotifications.ts").split(term).length - 1).toBe(2);
+    // the queue scope, the requester scope, and (notifications N4 second review
+    // fix) a drafter's assigned OPEN tickets — their closed ones are a separate
+    // capped read on TERMINAL_TICKET_STATUSES
+    expect(src("hooks/useTicketNotifications.ts").split(term).length - 1).toBe(3);
     expect(src("lib/inbox.ts").split(termDq).length - 1).toBe(3);
     expect(src("components/documents/CheckInPanel.tsx")).toContain(termDq);
     const portal = src("app/(protected)/requests/page.tsx");

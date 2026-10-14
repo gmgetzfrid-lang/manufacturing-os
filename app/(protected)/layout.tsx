@@ -22,6 +22,7 @@ import BackToGraphChip from "@/components/graph/BackToGraphChip";
 import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
 import { NotificationCenterProvider, useNotificationCenter } from "@/components/notifications/NotificationCenter";
+import { AttentionProvider } from "@/components/providers/AttentionProvider";
 import UpdatePill from "@/components/system/UpdatePill";
 import { Spinner } from "@/components/ui/Spinner";
 import { resolveProtectedView } from "@/lib/protectedGate";
@@ -256,9 +257,14 @@ export default function ProtectedLayout({
       <RoleProvider>
         <OrgBrandingProvider>
           <SubscriptionProvider>
-            <NotificationCenterProvider>
-              <ProtectedContent>{children}</ProtectedContent>
-            </NotificationCenterProvider>
+            {/* The tab's one attention feed (RT-3 / TRAIL-8): around the
+                center, whose panel reads it too, so every badge, the bell,
+                the center and the widgets share one channel and one fetch. */}
+            <AttentionProvider>
+              <NotificationCenterProvider>
+                <ProtectedContent>{children}</ProtectedContent>
+              </NotificationCenterProvider>
+            </AttentionProvider>
           </SubscriptionProvider>
         </OrgBrandingProvider>
       </RoleProvider>
