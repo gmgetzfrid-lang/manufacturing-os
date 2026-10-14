@@ -559,11 +559,11 @@ contrast components/requests/EngineerPickerModal.tsx:77-89 —
 **Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the drafter picker (the same change as [`EDGE-6`](./13-edges-and-invariants.md#edge-6)).
 
 **Done-when.**
-- ✓ The drafter picker selects `roles` and matches headline ∪ additive — by the route's own rule under the org's policy (`lib/ticketPage.ts` `drafterCandidates`, `pickRoles`); `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` and `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` as recorded on `EDGE-6`.
+- ✓ The drafter picker selects `roles` and matches headline ∪ additive — by the route's own rule under the org's policy (`lib/ticketPage.ts` `drafterCandidates`, `pickRoles`); `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` and `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` as recorded on `EDGE-6`. *DF-P9 integrator fix pass (`DEC-90`):* that widening read every active member in one unpaged request, which PostgREST's max-rows cuts (1000 by default) — a Drafter past the cut was missing though the route accepts them. The read is now keyset-paged on `uid` (`lib/ticketPickerMembers.ts` `loadPickerMembers`), so the picker never hides someone the route accepts whatever max-rows is; a normal workspace's result and order are unchanged — tests as recorded on `EDGE-6`.
 - ✗ in part — one shared helper for all three: the drafter picker's rule lives in `lib/ticketPage.ts` and `lib/ticketRouting.ts` reads `heldRoles`, but `components/requests/EngineerPickerModal.tsx` still carries its own filter. **Owner:** drafting-flow **DF-P5** (its package lists `EngineerPickerModal.tsx`): move the engineer picker onto a shared "active members holding capability X" helper (`drafterCandidates`' shape with `ticket.eng_review` / the engineer tokens).
 - ✓ The route validates the `assignment` pick: `policyAllows(capPolicy, "ticket.draft_work", held[0], held, ref, resource)` (`app/api/tickets/workflow-action/route.ts`, WF-14 — landed in an earlier round, re-verified), so widening the picker widened nothing. *DF-P9 review fix pass:* the picker also follows the route's two per-ticket refusals — the current drafter is not offered on a reassignment, and the requester is shown disabled with the reason in a workspace of 3+ — as recorded on `EDGE-6`.
 
-**Scope / residual.** Done-when 2's engineer picker → DF-P5.
+**Scope / residual.** Done-when 2's engineer picker → DF-P5 (its member read, `components/requests/EngineerPickerModal.tsx:87-91`, is also unpaged — the shared helper should read through `loadPickerMembers`).
 
 ---
 
@@ -763,6 +763,39 @@ hooks/useTicketNotifications.ts:188-193 —
 - ✓ `lib/__tests__/ticketCreateRoute.test.ts`, "once the ticket leaves PENDING_ASSIGNMENT (a supervisor assigns it, through the real workflow route), no creation alert is left live in any bell": the route drives `POST /api/tickets/workflow-action` `assign`, and every creation row is superseded (`superseded_by: "assign"`), none unread and live.
 
 **Scope / residual.** None for creation. Re-entry into `PENDING_ASSIGNMENT` is `ROUTE-5`'s (DF-P3).
+
+---
+
+<a id="route-12"></a>
+
+## ROUTE-12 · The request queue reads its scope in one unpaged request, so above PostgREST's max-rows the oldest-modified requests — the stalled ones — vanish from the queue, its Needs-me lens and its counts without a word
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** proposed — drafting-flow, the next package that holds `app/(protected)/requests/page.tsx` (the integrator assigns, `DEC-31`: a remainder is a new id with an owner) — opened by drafting-flow DF-P9's integrator fix pass, 2026-10-14, while correcting `EDGE-3`'s scope line (which had pointed at this read as the place the badge's unevaluated requests can still be found).
+- **Verification:** CONFIRMED (by reading; not exercised against a live database)
+- **Independently verified:** — (`author`: opened at the DF-P9 integrator fix pass; the cited lines re-read there; not yet challenged by a second party).
+- **Blast radius:** attention / visibility
+- **Locations:**
+  - `app/(protected)/requests/page.tsx:386-388` — the management / engineer / DocCtrl scope: `supabase.from('tickets').select('*').eq('org_id', activeOrgId)` (the terminal filter only when closed rows are excluded) `.order('last_modified', { ascending: false })` — no `range`, no paging, and the read's `error` is not read
+  - `app/(protected)/requests/page.tsx:340` — `includeClosed` is true in the default view (the status filter starts at "Any", `ALL`), so the default scope is every request the workspace has ever had
+  - `app/(protected)/requests/page.tsx:391-394` — the Drafter scope: two unpaged, unordered reads (assigned; the pool)
+  - `app/(protected)/requests/page.tsx:402-404` — the requester scope: one unpaged read
+- **Related:** `ROUTE-7` / `EDGE-3` (the badge's own scope, paged since N4 / DF-P9), `EDGE-6` (the drafter picker's member read, keyset-paged at the same fix pass)
+
+**Mechanism.** PostgREST answers every request with at most the project's max-rows (Supabase's default is 1000). The queue asks for its whole scope in one request and treats what comes back as the scope: the response stops at the cap with no error and nothing marks it short. Ordered newest-modified first, the rows past the cap are the least recently touched — a request that has stalled for months. Because the default view includes closed and canceled requests, a workspace crosses the cap once it has about 1000 requests in its whole history, not 1000 open ones.
+
+**Failure scenario.** A plant workspace has 1,400 requests since go-live, 120 of them open. A `PENDING_REVIEW` request untouched since spring is the 1,150th most recently modified row. The supervisor's queue — the table and cards, the by-drafter board, "All N", "Needs me", the Action Required tile, the header's "N Total Records" — never shows it, and nothing says the list was cut. The attention badge does count it (`ROUTE-7` / `EDGE-3`), so the bell leads to a request the queue cannot find.
+
+**Chain reaction.** The same read ignores its `error`: a refused or failed read shows an empty queue ("No matching tickets found") rather than saying the list could not be loaded. The Drafter scope's two reads have no order, so even below the cap their order is the database's.
+
+**Remediation.** Read each scope in pages that carry on from the last row received — keyset on (`last_modified`, `id`), or range pages continued until a page adds nobody — never assuming the server returned the page size asked for (the drafter picker's reader, `lib/ticketPickerMembers.ts`, is the pattern); read each page's `error` and say a failed read; keep the Needs-me lens computing over the full scope. If the full history is too large to hold, bound the default view to open requests and page closed ones on demand, and say how many of how many the list shows.
+
+**Done when.**
+
+- [ ] The queue's list holds every row of its scope whatever PostgREST's max-rows is, or says plainly that it shows N of M.
+- [ ] A failed read is said, never an empty queue.
+- [ ] A rendered test with more rows than one page asserts an old, untouched request appears in the list and, when it needs the viewer, in Needs me.
 
 ---
 

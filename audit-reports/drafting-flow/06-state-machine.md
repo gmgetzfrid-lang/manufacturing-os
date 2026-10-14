@@ -842,7 +842,7 @@ if (action.requiresFile) {
 
 **Scope / residual.** The type-specific client check → **DF-P9** (fleet plan: DF-P9 TICKET-PAGE lists `SM-13`).
 
-**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the client half. `lib/ticketPage.ts` `requiredFileType` / `missingRequiredFile` (:87, :97): **Submit Draft** needs a `Draft` on the ticket (a Reference or Source no longer satisfies it); **Issue Final** needs the file the IFC upload supplies, typed `Final` — checked when the action is chosen (`app/(protected)/requests/[id]/page.tsx`:1446) and again before it is sent (`app/(protected)/requests/[id]/page.tsx`:1533), so the client refuses exactly what the route refuses (DF-P1's server half, unchanged).
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the client half. `lib/ticketPage.ts` `requiredFileType` / `missingRequiredFile` (:120, :130): **Submit Draft** needs a `Draft` on the ticket (a Reference or Source no longer satisfies it); **Issue Final** needs the file the IFC upload supplies, typed `Final` — checked when the action is chosen (`app/(protected)/requests/[id]/page.tsx`:1471) and again before it is sent (`app/(protected)/requests/[id]/page.tsx`:1558), so the client refuses exactly what the route refuses (DF-P1's server half, unchanged).
 
 **Done-when.**
 - ✓ The route enforces `requiresFile` against the right type (DF-P1).
