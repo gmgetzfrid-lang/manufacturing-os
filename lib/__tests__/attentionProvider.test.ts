@@ -44,6 +44,11 @@ const fx = vi.hoisted(() => ({
   onReconcile: null as null | ((ids: string[]) => void),
   channels: [] as Array<{ name: string; ons: Array<{ cfg: Record<string, unknown>; cb: (p: unknown) => void }>; status?: (s: string) => void }>,
   role: { roles: ["Viewer"], activeOrgId: "o1", uid: "u1", membershipState: "member" },
+  /** DF-P9 (AUTHZ-15): what loadCapabilityPolicyEntry answers. */
+  policyEntry: { policy: undefined, version: null } as Record<string, unknown>,
+  /** DF-P9 (FRIC-7): the active members a requester-roles read returns. */
+  members: [] as Array<Record<string, unknown>>,
+  memberReads: [] as unknown[][],
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -51,7 +56,7 @@ vi.mock("@/lib/supabase", () => {
     const q: Record<string, unknown> = {};
     let isUpdate = false;
     const own: Array<{ method: string; args: unknown[] }> = [];
-    for (const m of ["select", "eq", "not", "in", "order", "limit", "range", "is", "or", "gte", "lt"]) {
+    for (const m of ["select", "eq", "not", "in", "order", "limit", "range", "is", "or", "gte", "lt", "contains"]) {
       q[m] = (...args: unknown[]) => { fx.calls.push({ table, method: m, args }); own.push({ method: m, args }); return q; };
     }
     q.update = (...args: unknown[]) => { isUpdate = true; fx.calls.push({ table, method: "update", args }); return q; };
@@ -60,6 +65,8 @@ vi.mock("@/lib/supabase", () => {
       const result = isUpdate ? { data: null, error: null }
         : table === "tickets" ? (fx.ticketsFail ? { data: null, error: { message: "tickets down" }, count: null } : fx.ticketQuery ? fx.ticketQuery(own) : { data: fx.tickets, error: null, count: fx.ticketCount })
         : table === "documents" ? { data: fx.documents, error: null }
+        : table === "org_members" && own.some((c) => c.method === "in" && c.args[0] === "uid")
+          ? (() => { const ids = own.find((c) => c.method === "in")!.args[1] as string[]; fx.memberReads.push(ids); return { data: fx.members.filter((m) => ids.includes(m.uid as string)), error: null }; })()
         : { data: [], error: null, count: 0 };
       return Promise.resolve(result).then(ok, ko);
     };
@@ -85,6 +92,7 @@ vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => fx.role })
 vi.mock("@/lib/capabilityPolicy", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   loadCapabilityPolicy: async () => undefined,
+  loadCapabilityPolicyEntry: async () => fx.policyEntry,
 }));
 vi.mock("@/lib/inAppNotifications", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -151,6 +159,7 @@ beforeEach(() => {
   fx.pages = [[]]; fx.listCalls = []; fx.listFails = false; fx.total = 0; fx.beyond = []; fx.beyondCalls = []; fx.ticketsFail = false;
   fx.role = { roles: ["Viewer"], activeOrgId: "o1", uid: "u1", membershipState: "member" };
   fx.reconcileCalls = []; fx.retire = []; fx.onReconcile = null; fx.channels = [];
+  fx.policyEntry = { policy: undefined, version: null }; fx.members = []; fx.memberReads = [];
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
@@ -585,5 +594,110 @@ describe("TRAIL-7 — ticket paging (review fix): no duplicates across pages; a 
     expect(last().items.some((i) => i.key === "ticket:t9000")).toBe(true);
     // 'of M open requests': the closed rows are not counted as open requests, and nothing reads as cut
     expect(lastStatus()).toMatchObject({ ticketsLoaded: 1, ticketsTotal: 1 });
+  });
+});
+
+describe("drafting-flow Round G (DF-P9) — the badge counts what the page offers", () => {
+  const trow = (i: number, over: Record<string, unknown> = {}) => ({ id: `t${i}`, org_id: "o1", ticket_id: `DR-${i}`, title: `T ${i}`, status: "PENDING_ASSIGNMENT", requester_id: "r-1", unread_by: [], last_modified: `2026-10-13T00:00:${String(i % 60).padStart(2, "0")}Z`, ...over });
+  const actionKeys = () => last().items.filter((i) => i.source === "ticket" && i.actionRequired).map((i) => i.key);
+
+  it("EDGE-3: the 501st open request is evaluated and counted (the queue owner's badge is not capped at a page)", async () => {
+    fx.role = { roles: ["DraftingSupervisor"], activeOrgId: "o1", uid: "s-1", membershipState: "member" };
+    fx.ticketQuery = (own) => {
+      const range = own.find((c) => c.method === "range");
+      if (!range) return { data: Array.from({ length: 500 }, (_, i) => trow(i)), error: null, count: 501 };
+      return { data: [trow(500)], error: null, count: null };
+    };
+    await mount(withProvider(1));
+    expect(actionKeys().length).toBe(501);
+    expect(actionKeys()).toContain("ticket:t500");
+    expect(last().actionRequiredCount).toBeGreaterThanOrEqual(501);
+    expect(lastStatus()).toMatchObject({ ticketsLoaded: 501, ticketsTotal: 501, ticketsOldestFirst: false });
+  });
+
+  it("ROUTE-7 / EDGE-3: past the scan ceiling the oldest-modified requests are the ones evaluated, and the surface says so", async () => {
+    fx.role = { roles: ["DraftingSupervisor"], activeOrgId: "o1", uid: "s-1", membershipState: "member" };
+    const orders: boolean[] = [];
+    fx.ticketQuery = (own) => {
+      const order = own.find((c) => c.method === "order");
+      const asc = (order?.args[1] as { ascending?: boolean } | undefined)?.ascending === true;
+      orders.push(asc);
+      const range = own.find((c) => c.method === "range");
+      const from = range ? (range.args[0] as number) : 0;
+      // newest-first rows are 9000+, oldest-first rows are 0+ — the aged request is t0
+      const base = asc ? 0 : 9000;
+      return { data: Array.from({ length: 500 }, (_, i) => trow(base + from + i)), error: null, count: range ? null : 6000 };
+    };
+    await mount(withProvider(1));
+    expect(orders[0]).toBe(false); // the first read is as before (most recent first), with the count
+    expect(orders.slice(1).every((a) => a === true)).toBe(true); // then the scope is re-read from the oldest end
+    const keys = last().items.filter((i) => i.source === "ticket").map((i) => i.key);
+    expect(keys).toContain("ticket:t0"); // the longest-waiting request is evaluated
+    expect(keys).not.toContain("ticket:t9000");
+    expect(keys.length).toBe(5000);
+    expect(lastStatus()).toMatchObject({ ticketsLoaded: 5000, ticketsTotal: 6000, ticketsOldestFirst: true });
+    function Feed() {
+      const { items, counts } = useTicketNotifications();
+      return React.createElement(AttentionFeed, { items, counts, filter: "all", onFilter: () => {}, onMarkRead: () => {}, onMarkAll: () => {}, markingAll: false });
+    }
+    await act(async () => { root.render(React.createElement(AttentionProvider, null, React.createElement(Feed))); });
+    await flush();
+    expect(host.textContent).toMatch(/5000 longest-waiting of 6000 open requests/);
+  });
+
+  it("REGRESSION: under the ceiling the read order is unchanged (most recently active first) and nothing says 'longest-waiting'", async () => {
+    fx.role = { roles: ["DraftingSupervisor"], activeOrgId: "o1", uid: "s-1", membershipState: "member" };
+    fx.ticketQuery = (own) => {
+      const order = own.find((c) => c.method === "order");
+      expect((order?.args[1] as { ascending?: boolean } | undefined)?.ascending).toBe(false);
+      return { data: [trow(1)], error: null, count: 1 };
+    };
+    await mount(withProvider(1));
+    expect(lastStatus().ticketsOldestFirst).toBe(false);
+  });
+
+  it("FRIC-7: a departed requester's review is counted for an engineer (the page requires their co-review); a present requester's is not", async () => {
+    fx.role = { roles: ["Engineer-2"], activeOrgId: "o1", uid: "e-9", membershipState: "member" };
+    fx.tickets = [
+      trow(1, { status: "PENDING_REVIEW", requester_id: "r-gone", assigned_drafter_id: "d-1" }),
+      trow(2, { status: "PENDING_REVIEW", requester_id: "r-here", assigned_drafter_id: "d-1" }),
+    ];
+    fx.members = [{ uid: "r-here", role: "Requester", roles: ["Requester"] }];
+    await mount(withProvider(1));
+    expect(fx.memberReads.some((ids) => ids.includes("r-gone") && ids.includes("r-here"))).toBe(true);
+    expect(actionKeys()).toEqual(["ticket:t1"]);
+  });
+
+  it("AUTHZ-15: an unreadable policy counts nothing as needing the viewer — said, not guessed under the defaults — and recovers on the next read", async () => {
+    fx.role = { roles: ["DraftingSupervisor"], activeOrgId: "o1", uid: "s-1", membershipState: "member" };
+    fx.tickets = [trow(1)];
+    fx.policyEntry = { policy: {}, version: null, unreadable: "permission denied" };
+    await mount(withProvider(1));
+    expect(actionKeys()).toEqual([]);
+    expect(lastStatus().error).toMatch(/Permissions could not be read/);
+    // the next ticket fetch re-reads the policy; readable now → the request counts again
+    fx.policyEntry = { policy: undefined, version: null };
+    const tickets = fx.channels[0].ons.find((o) => o.cfg.table === "tickets" && o.cfg.filter)!;
+    act(() => tickets.cb({}));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(actionKeys()).toEqual(["ticket:t1"]);
+    expect(lastStatus().error).toBeNull();
+  });
+
+  it("REGRESSION: a stale (last-good) policy is drawn as is — the badge still counts", async () => {
+    fx.role = { roles: ["DraftingSupervisor"], activeOrgId: "o1", uid: "s-1", membershipState: "member" };
+    fx.tickets = [trow(1)];
+    fx.policyEntry = { policy: {}, version: "v1", stale: true, staleError: "timeout" };
+    await mount(withProvider(1));
+    expect(actionKeys()).toEqual(["ticket:t1"]);
+    expect(lastStatus().error).toBeNull();
+  });
+
+  it("ROUTE-1 done-when 2: a revision nobody owns says it needs a drafter, in the feed's row", async () => {
+    fx.role = { roles: ["DraftingSupervisor"], activeOrgId: "o1", uid: "s-1", membershipState: "member" };
+    fx.tickets = [trow(1, { status: "REVISION_REQ", assigned_drafter_id: null, unread_by: ["s-1"] })];
+    await mount(withProvider(1));
+    const item = last().items.find((i) => i.key === "ticket:t1");
+    expect(item?.subtitle ?? "").toMatch(/needs a drafter/);
   });
 });

@@ -25,8 +25,22 @@
 // supervisor is told about a PENDING_IFC package (so they can chase the
 // drafter) but the engine offers them nothing there, so it is not their
 // action item — it is a bell row, not a badge count.
+//
+// drafting-flow Round G, DF-P9 TICKET-PAGE:
+//   * FRIC-7 — the badge takes the requesters' CURRENT role collections
+//     (AttentionContext.requesterRoles), so a departed requester's co-review,
+//     which the page and the route require, is counted by the badge too.
+//   * UI-1 / GAP-108 — who a ticket is waiting on (holdersFor) and since when
+//     (waitingSince), from the ticket's own identity columns and the routed
+//     pool's names the caller resolved (lib/ticketRouting.ts queuePool); no
+//     role table here.
+//   * UI-4 — why a viewer has nothing to do (explainNoActions): not their
+//     turn (they act at another stage of this request) vs not permitted
+//     (no stage of it offers them anything), naming who to talk to.
+//   * ROUTE-1 done-when 2 — attentionLabel tells a revision with a drafter
+//     from one without.
 
-import type { Role, Ticket } from "@/types/schema";
+import type { Role, Ticket, TicketStatus } from "@/types/schema";
 import { WorkflowEngine } from "@/lib/workflow";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
@@ -67,6 +81,23 @@ export interface AttentionContext {
   /** WF-15: request types that close from DRAFTING without review — the
    *  same configured option list, so the inputs match the page's. */
   closeWithoutReviewTypes?: string[];
+  /** FRIC-7 (DF-P9): each requester's CURRENT role collection, by uid — the
+   *  input the route and the ticket page pass the engine (DEC-16). An entry
+   *  with roles is an active member holding them; an entry `[]` is known NOT
+   *  to be an active member (departed or suspended — the engine then
+   *  requires the co-review on their behalf). A requester with no entry, and
+   *  an absent / null map, is unknown: assumed present, the behaviour before
+   *  this field (a failed read never invents a departure). Read with
+   *  lib/ticketRequesterRoles.ts loadRequesterRoles. */
+  requesterRoles?: ReadonlyMap<string, readonly string[]> | null;
+}
+
+/** FRIC-7: the requester collection the engine is given for `ticket` under
+ *  `ctx` — what the route resolves for the same requester, or undefined
+ *  (unknown) when the context does not cover them. */
+export function requesterRolesFor(ticket: Pick<Ticket, "requesterId">, ctx: Pick<AttentionContext, "requesterRoles">): readonly string[] | undefined {
+  if (!ctx.requesterRoles || !ticket.requesterId) return undefined;
+  return ctx.requesterRoles.get(ticket.requesterId);
 }
 
 /**
@@ -86,22 +117,233 @@ export function isActionRequired(ticket: Ticket, ctx: AttentionContext): boolean
     activeMemberCount: ctx.activeMemberCount,
     engineeringFirstTypes: ctx.engineeringFirstTypes,
     closeWithoutReviewTypes: ctx.closeWithoutReviewTypes,
+    requesterRoles: requesterRolesFor(ticket, ctx),
   });
   return actions.some((a) => !a.optional && !a.disabledReason);
 }
 
 /** Short human label for WHY a ticket needs attention, given its status.
- *  Used by the bell / inbox to describe an action-required row. */
-export function attentionLabel(status: string): string {
+ *  Used by the bell / inbox to describe an action-required row, and by the
+ *  ticket page's status header (UI-1).
+ *
+ *  ROUTE-1 done-when 2 (DF-P9): a revision (or a drafting ticket) whose
+ *  drafter is known to be NONE is not "in progress" — nobody owns it —
+ *  so `{ hasDrafter: false }` says it needs a drafter. Without the option
+ *  (or with a drafter) the label is exactly what it always was. */
+export function attentionLabel(status: string, opts?: { hasDrafter?: boolean }): string {
+  const ownerless = opts?.hasDrafter === false;
   switch (status) {
     case "PENDING_ASSIGNMENT": return "Needs a drafter assigned";
     case "PENDING_ENG_TEAM": return "Engineering review";
     case "PENDING_REVIEW": return "Needs review";
     case "PENDING_FINAL_APPROVAL": return "Needs engineer sign-off";
-    case "DRAFTING":
-    case "REVISION_REQ": return "Drafting in progress";
-    case "PENDING_IFC": return "Issue the IFC package";
+    case "DRAFTING": return ownerless ? "Needs a drafter assigned" : "Drafting in progress";
+    case "REVISION_REQ": return ownerless ? "Revision requested — needs a drafter" : "Drafting in progress";
+    case "PENDING_IFC": return ownerless ? "Needs a drafter to issue the IFC package" : "Issue the IFC package";
     case "FINAL_DRAFT": return "Acknowledge & close";
     default: return "Needs your attention";
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI-1 / GAP-108 — "where is my request": who it waits on, and since when.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Whose turn it is: a named person on the ticket, or a pool (the
+ *  assignment queue — DraftingSupervisor holders, else Admins:
+ *  lib/ticketRouting.ts queuePool — or management, when the requester whose
+ *  review it is has left). */
+export type HolderKind = "requester" | "drafter" | "engineer" | "queue" | "management";
+
+export interface TicketHolder {
+  kind: HolderKind;
+  /** The person's uid when the holder is one person on the ticket; null for
+   *  a pool or a name the ticket does not carry. */
+  uid: string | null;
+  /** What a reader is shown: a name, or the pool's description. */
+  name: string;
+  /** The part they play at this step, in words ("the drafter"). */
+  part: string;
+}
+
+export interface HoldersContext {
+  /** The assignment queue's members' names (lib/ticketRouting.ts queuePool
+   *  over the org's active members), when the caller resolved them; empty or
+   *  absent = described, not named. */
+  queueNames?: readonly string[] | null;
+  /** The requester's CURRENT role collection (the page's DEC-16 read): `[]`
+   *  = known not to be an active member — their review then falls to
+   *  management, as the engine says (WF-24). null / absent = assumed present. */
+  requesterRoles?: readonly string[] | null;
+}
+
+const nameOr = (v: string | null | undefined, fallback: string): string => {
+  const t = typeof v === "string" ? v.trim() : "";
+  return t || fallback;
+};
+
+function queueHolders(ctx?: HoldersContext): TicketHolder[] {
+  const names = (ctx?.queueNames ?? []).map((n) => n.trim()).filter(Boolean);
+  if (names.length === 0) return [{ kind: "queue", uid: null, name: "the assignment queue", part: "assigns a drafter" }];
+  return names.map((name) => ({ kind: "queue" as const, uid: null, name, part: "assignment queue" }));
+}
+
+/**
+ * Who `ticket` is waiting on right now — the people (or the pool) whose
+ * move the current status is. Derived from the status and the ticket's own
+ * identity columns; the queue's names come from the caller. CLOSED and
+ * CANCELED wait on nobody ([]).
+ */
+export function holdersFor(
+  ticket: Pick<Ticket, "status" | "requesterId" | "requesterName" | "requesterEmail" | "assignedDrafterId" | "assignedDrafterName" | "assignedEngineerId" | "assignedEngineerName">,
+  ctx?: HoldersContext,
+): TicketHolder[] {
+  const requesterGone = Array.isArray(ctx?.requesterRoles) && ctx!.requesterRoles!.length === 0;
+  const requester = (): TicketHolder[] => requesterGone || !ticket.requesterId
+    ? [{ kind: "management", uid: null, name: "management", part: "reviews on the requester's behalf (the requester is no longer an active member)" }]
+    : [{ kind: "requester", uid: ticket.requesterId, name: nameOr(ticket.requesterName, nameOr(ticket.requesterEmail?.split("@")[0], "the requester")), part: "the requester" }];
+  const drafter = (): TicketHolder[] => ticket.assignedDrafterId
+    ? [{ kind: "drafter", uid: ticket.assignedDrafterId, name: nameOr(ticket.assignedDrafterName, "the assigned drafter"), part: "the drafter" }]
+    : queueHolders(ctx);
+  const engineer = (): TicketHolder[] => ticket.assignedEngineerId
+    ? [{ kind: "engineer", uid: ticket.assignedEngineerId, name: nameOr(ticket.assignedEngineerName, "the assigned engineer"), part: "the reviewing engineer" }]
+    : [{ kind: "engineer", uid: null, name: "an engineer", part: "the reviewing engineer" }];
+  switch (ticket.status) {
+    case "PENDING_ASSIGNMENT": return queueHolders(ctx);
+    case "PENDING_ENG_TEAM": return engineer();
+    case "DRAFTING":
+    case "REVISION_REQ":
+    case "PENDING_IFC": return drafter();
+    case "PENDING_REVIEW":
+    case "FINAL_DRAFT": return requester();
+    case "PENDING_FINAL_APPROVAL": return engineer();
+    default: return [];
+  }
+}
+
+/** History lines that change neither the stage nor who holds it: a file, a
+ *  saved draft, the triage details, the source link at creation, the
+ *  register note written beside a close. Every other line marks a step
+ *  (a transition, a (re)assignment, a hand-back). A test pins this set
+ *  against the engine's labels (an action that never moves the status must
+ *  be named here; one named here must never move it). */
+export const NON_STEP_HISTORY_ACTIONS: readonly string[] = [
+  "File Uploaded",
+  "Save Progress (Stage Files)",
+  "Save Progress",
+  "Triage details set",
+  "Source Linked",
+  "Closed — deliverable not in the register",
+];
+
+/**
+ * When the ticket's current wait began: the date of the newest history line
+ * that changed its stage or who holds it (see NON_STEP_HISTORY_ACTIONS),
+ * else its creation. Returns null when no date can be read.
+ */
+export function waitingSince(ticket: Pick<Ticket, "history" | "createdAt">): Date | null {
+  const history = Array.isArray(ticket.history) ? ticket.history : [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i] as { action?: unknown; date?: unknown } | undefined;
+    if (!h || typeof h.action !== "string" || NON_STEP_HISTORY_ACTIONS.includes(h.action)) continue;
+    const d = toDateOrNull(h.date);
+    if (d) return d;
+  }
+  return toDateOrNull(ticket.createdAt);
+}
+
+function toDateOrNull(v: unknown): Date | null {
+  if (!v) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (typeof v === "object") {
+    const o = v as { toDate?: () => Date; seconds?: number };
+    if (typeof o.toDate === "function") return o.toDate();
+    if (typeof o.seconds === "number") return new Date(o.seconds * 1000);
+    return null;
+  }
+  const d = new Date(v as string | number);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** "3 days", "5 hours", "under an hour" — how long since `since`. */
+export function waitedFor(since: Date | null, now: Date = new Date()): string | null {
+  if (!since) return null;
+  const ms = now.getTime() - since.getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return "under an hour";
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI-4 — "View Only" explained.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The open statuses, for asking the engine "would this viewer act at any
+ *  stage of this request?". */
+const OPEN_STATUSES: readonly TicketStatus[] = [
+  "PENDING_ASSIGNMENT", "PENDING_ENG_TEAM", "DRAFTING", "REVISION_REQ", "PENDING_REVIEW",
+  "PENDING_FINAL_APPROVAL", "PENDING_IFC", "FINAL_DRAFT",
+];
+
+export interface NoActionsExplanation {
+  /** terminal — nothing waits on anyone; not_your_turn — the viewer acts at
+   *  another stage of this request (or is a party to it); not_permitted —
+   *  no stage of this request offers the viewer anything. */
+  kind: "terminal" | "not_your_turn" | "not_permitted";
+  /** One plain sentence for the page. */
+  text: string;
+}
+
+const joinNames = (holders: readonly TicketHolder[]): string => {
+  const names = holders.map((h) => h.name);
+  if (names.length <= 1) return names[0] ?? "nobody";
+  if (names.length === 2) return `${names[0]} or ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+};
+
+/**
+ * Why the viewer described by `ctx` has no live action on `ticket`, in one
+ * sentence that names who to talk to (UI-4). The caller shows it only when
+ * the engine offers the viewer nothing. "Not your turn" when the viewer is a
+ * party to the request (its requester, drafter or engineer) or the engine
+ * would offer them a live action at another open stage of it; otherwise
+ * "not permitted", pointing at the holder and at an Admin for the policy.
+ */
+export function explainNoActions(
+  ticket: Ticket,
+  ctx: AttentionContext & { holders: readonly TicketHolder[] },
+): NoActionsExplanation {
+  if (ticket.status === "CLOSED" || ticket.status === "CANCELED") {
+    return {
+      kind: "terminal",
+      text: ticket.status === "CANCELED"
+        ? "This request was canceled — nothing is waiting on anyone. File a new request if the work is still needed."
+        : "This request is closed — nothing is waiting on anyone. Ask the drafting supervisor to reopen it if something was missed.",
+    };
+  }
+  const holders = ctx.holders;
+  const what = attentionLabel(ticket.status, { hasDrafter: !!ticket.assignedDrafterId }).toLowerCase();
+  const who = joinNames(holders);
+  const uid = ctx.uid ?? null;
+  const party: string | null = !uid ? null
+    : ticket.assignedDrafterId === uid ? "the drafter"
+      : ticket.assignedEngineerId === uid ? "the reviewing engineer"
+        : ticket.requesterId === uid ? "the requester"
+          : null;
+  const holderPart = holders[0]?.part ?? "someone else";
+  if (party) {
+    return { kind: "not_your_turn", text: `You are ${party} — this step is ${holderPart === party ? "not yours yet" : `${holderPart}'s`} (waiting on ${who}: ${what}).` };
+  }
+  const actsElsewhere = !!uid && OPEN_STATUSES.some((status) => status !== ticket.status
+    && isActionRequired({ ...ticket, status }, ctx));
+  if (actsElsewhere) {
+    return { kind: "not_your_turn", text: `Not your turn — waiting on ${who} (${what}). You act on this request at another stage.` };
+  }
+  return {
+    kind: "not_permitted",
+    text: `Your roles don't act on this request — waiting on ${who} (${what}). If you should be able to, an Admin can change who may act in Admin → Permissions.`,
+  };
 }

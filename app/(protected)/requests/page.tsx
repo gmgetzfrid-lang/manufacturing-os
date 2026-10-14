@@ -39,16 +39,27 @@ import {
   Inbox,
   MousePointerClick,
   Users,
+  GitBranch,
+  Megaphone,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   isActionRequired as ticketNeedsAction,
   isQueueViewer,
 } from '@/lib/ticketAttention';
 import { isEngineerRole } from '@/lib/workflow';
-import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { affordancePolicyFault } from '@/lib/checkoutAffordances';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
 import { isTerminalTicketStatus } from '@/lib/ticketShed';
 import { csvLine } from '@/lib/csvSafe';
+import { isPastDue, isNearingDue } from '@/lib/notifications';
+import { creationNoticeOwed } from '@/lib/ticketLibrary';
+import { parseSourceDocuments } from '@/lib/sourceDocRef';
+import { driftedSources } from '@/components/requests/SourceDriftBanner';
+import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
+import { ticketStatusLabel, ticketUnitDisplay, TICKET_STATUS_FILTER_ORDER } from '@/lib/ticketStatusLabels';
+import { loadRequesterRoles } from '@/lib/ticketRequesterRoles';
 
 // =========================================================================================
 // SECTION 1: TYPES & CONFIGURATION INTERFACES
@@ -184,13 +195,22 @@ export default function RequestPortal() {
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState<boolean>(false);
   const [selectedTicketIds, setSelectedTicketIds] = useState<Set<string>>(new Set());
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
+  // UI-2: the workflow map, reachable from the queue (not only a ticket).
+  const [showWorkflowMap, setShowWorkflowMap] = useState(false);
 
   // --- STATE: FILTERING ---
+  // FRIC-9 / UI-6 (DF-P9; ruled under DEC-90): the queue opens on what needs
+  // ME — the engine's action-required set (lib/ticketAttention.ts), for every
+  // role — with "All open" one click away, and both counts on screen either
+  // way. The assignee filter starts at "all" for everyone: the needs-me lens
+  // is the default narrowing now (it used to be `assignedTo: 'me'` for a
+  // Drafter only, a proxy for this set).
+  const [attentionView, setAttentionView] = useState<'needs_me' | 'all'>('needs_me');
   const [filters, setFilters] = useState<FilterConfig>({
     status: 'ALL',
     type: 'ALL',
     dateRange: 'all',
-    assignedTo: activeRole === 'Drafter' ? 'me' : 'all',
+    assignedTo: 'all',
     priority: 'all',
     search: ''
   });
@@ -238,15 +258,37 @@ export default function RequestPortal() {
   // capability policy, so a row is marked exactly when the ticket page would
   // offer this viewer a live action.
   const [capPolicy, setCapPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  // AUTHZ-15 (DF-P9; the integrator's ruling under DEC-89): the policy could
+  // not be read and no last good copy was served (`unreadable`, or a read
+  // that threw). The shipped defaults are NOT the org's policy, so the
+  // policy-dependent parts of the queue — the "needs you" markers, the
+  // needs-me list, Archive and Force Close (the server refuses both on an
+  // unreadable policy) — are held back with the reason and a Try again. A
+  // `stale` answer is the last good policy and is drawn as is.
+  const [policyFault, setPolicyFault] = useState<string | null>(null);
+  const [policyAttempt, setPolicyAttempt] = useState(0);
   // GAP-2 / DEC-12: the active member count the ticket page evaluates the
   // engine under — separation of duties (3+) disables a Drafter-requester's
   // pick-up, so without it the row was marked for a ticket the page showed
   // as view-only.
   const [activeMemberCount, setActiveMemberCount] = useState<number | undefined>(undefined);
+  // FRIC-7: the requesters' current collections, read with the tickets — the
+  // engine's input on the ticket page and the route (an entry [] = the
+  // requester is no longer an active member). null = unknown.
+  const [requesterRoles, setRequesterRoles] = useState<ReadonlyMap<string, readonly string[]> | null>(null);
   useEffect(() => {
     let alive = true;
     if (!activeOrgId) return;
-    void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setCapPolicy(p); }).catch(() => {});
+    void loadCapabilityPolicyEntry(activeOrgId).then((entry) => {
+      if (!alive) return;
+      const fault = affordancePolicyFault(entry);
+      setPolicyFault(fault);
+      setCapPolicy(fault ? undefined : entry.policy);
+    }).catch((e: unknown) => {
+      if (!alive) return;
+      setPolicyFault((e as Error)?.message || 'the capability policy could not be read');
+      setCapPolicy(undefined);
+    });
     void supabase
       .from('org_members')
       .select('uid', { count: 'exact', head: true })
@@ -254,10 +296,10 @@ export default function RequestPortal() {
       .eq('status', 'active')
       .then(({ count }) => { if (alive && typeof count === 'number') setActiveMemberCount(count); }, () => {});
     return () => { alive = false; };
-  }, [activeOrgId]);
+  }, [activeOrgId, policyAttempt]);
   const isActionRequired = useCallback(
-    (ticket: Ticket) => ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount }),
-    [uid, roles, capPolicy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount],
+    (ticket: Ticket) => !policyFault && ticketNeedsAction(ticket, { uid, roles, policy: capPolicy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles }),
+    [uid, roles, capPolicy, policyFault, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles],
   );
 
 
@@ -280,7 +322,8 @@ export default function RequestPortal() {
     const fromRow = (r: Record<string, unknown>): Ticket => ({
       id: r.id as string, orgId: r.org_id as string, ticketId: r.ticket_id as string,
       title: r.title as string, description: r.description as string | undefined,
-      unit: r.unit as string, requestType: r.request_type as string,
+      // PERS-6: a NULL unit is a designed value ("Unit unknown"), never cast.
+      unit: typeof r.unit === 'string' ? r.unit : null, requestType: r.request_type as string,
       status: r.status as Ticket['status'], priority: r.priority as number | undefined,
       requesterId: r.requester_id as string, requesterName: r.requester_name as string | undefined,
       requesterEmail: r.requester_email as string | undefined,
@@ -331,8 +374,13 @@ export default function RequestPortal() {
           rows = (data || []) as Record<string, unknown>[];
         }
 
+        const mapped = rows.map(fromRow);
+        // FRIC-7: the requesters' current collections, in one batched read
+        // (a failed read is null — every requester assumed present).
+        const reqRoles = await loadRequesterRoles(activeOrgId, mapped.map((t) => t.requesterId));
         if (alive) {
-          setTickets(rows.map(fromRow));
+          setTickets(mapped);
+          setRequesterRoles(reqRoles);
           setLoading(false);
           setRefreshing(false);
         }
@@ -347,6 +395,18 @@ export default function RequestPortal() {
       .channel(`tickets-portal-${activeOrgId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
         () => { if (alive) fetchTickets(); })
+      // notifications RT-4 (DF-P9): Supabase does not filter DELETE events,
+      // so the org-filtered listener above never hears one. This unfiltered
+      // companion (the attention feed's pattern, DEC-105 §4) hears every
+      // tenant's tickets DELETEs — the old row's primary key alone — and acts
+      // only on a ticket this list holds: it drops that row, nothing else.
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tickets' },
+        (payload) => {
+          if (!alive) return;
+          const gone = (payload as { old?: { id?: string } | null } | undefined)?.old?.id;
+          if (!gone) return;
+          setTickets((prev) => (prev.some((t) => t.id === gone) ? prev.filter((t) => t.id !== gone) : prev));
+        })
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
@@ -490,14 +550,91 @@ export default function RequestPortal() {
     });
   }, [tickets, filters, sortConfig, uid, showClosed]);
 
+  // FRIC-9 / UI-6: the needs-me lens over the filtered list — the table and
+  // the cards. (The supervisor board is the team's live work by design and
+  // keeps the whole filtered list.) Both counts are on screen either way.
+  const needsMeTickets = useMemo(() => filteredTickets.filter((t) => isActionRequired(t)), [filteredTickets, isActionRequired]);
+  const listTickets = attentionView === 'needs_me' ? needsMeTickets : filteredTickets;
+  const pickAttentionView = (v: 'needs_me' | 'all') => { setAttentionView(v); setCurrentPage(1); };
+
   // --- PAGINATION ---
   const paginatedTickets = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
     const end = start + itemsPerPage;
-    return filteredTickets.slice(start, end);
-  }, [filteredTickets, currentPage, itemsPerPage]);
+    return listTickets.slice(start, end);
+  }, [listTickets, currentPage, itemsPerPage]);
 
-  const totalPages = Math.ceil(filteredTickets.length / itemsPerPage);
+  const totalPages = Math.ceil(listTickets.length / itemsPerPage);
+
+  // HAND-7 done-when 2 (DF-P2's hand-off): a "source moved" chip on a queue
+  // row whose source document's register revision has moved since the
+  // request was raised — lib/sourceDocRef revDrift through SourceDriftBanner's
+  // driftedSources, by version id when the request captured one. One
+  // documents read per page of rows (id, rev, current_version_id, in this
+  // workspace, read as the viewer — a document they cannot see says nothing),
+  // and a failed read says nothing either.
+  const [driftByTicket, setDriftByTicket] = useState<Record<string, string[]>>({});
+  const pageSourceKey = paginatedTickets
+    .map((t) => `${t.id}:${parseSourceDocuments(t.metadata).map((r) => `${r.id}@${r.versionId ?? ''}@${r.rev ?? ''}`).join(',')}`)
+    .join('|');
+  useEffect(() => {
+    let alive = true;
+    const refsByTicket = paginatedTickets
+      .map((t) => ({ id: t.id ?? '', refs: parseSourceDocuments(t.metadata) }))
+      .filter((x) => x.id && x.refs.length > 0);
+    const ids = Array.from(new Set(refsByTicket.flatMap((x) => x.refs.map((r) => r.id))));
+    void (async () => {
+      if (!activeOrgId || ids.length === 0) { if (alive) setDriftByTicket({}); return; }
+      const live = new Map<string, { currentVersionId: string | null; rev: string | null }>();
+      for (let i = 0; i < ids.length; i += 100) {
+        const { data, error } = await supabase
+          .from('documents').select('id, rev, current_version_id').eq('org_id', activeOrgId).in('id', ids.slice(i, i + 100));
+        if (error) { if (alive) setDriftByTicket({}); return; }
+        for (const d of (data ?? []) as Array<{ id: string; rev: string | null; current_version_id: string | null }>) {
+          live.set(d.id, { currentVersionId: d.current_version_id ?? null, rev: d.rev ?? null });
+        }
+      }
+      const out: Record<string, string[]> = {};
+      for (const x of refsByTicket) {
+        const moved = driftedSources(x.refs, live);
+        if (moved.length > 0) out[x.id] = moved.map((m) => m.ref.documentNumber || m.ref.title || 'the source document');
+      }
+      if (alive) setDriftByTicket(out);
+    })().catch(() => { if (alive) setDriftByTicket({}); });
+    return () => { alive = false; };
+    // `pageSourceKey` carries every row and reference the read depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId, pageSourceKey]);
+
+  /** The row chips the queue shows beside a request's title: the unit when
+   *  none is on the record or it is not on the list (FRIC-3 / FRIC-8 readers),
+   *  "not announced" (EDGE-8 — the assignment queue was never told about it,
+   *  lib/ticketLibrary.ts creationNoticeOwed), and "source moved" (HAND-7). */
+  const rowChips = (t: Ticket) => {
+    const unit = ticketUnitDisplay(t.unit, t.metadata);
+    const moved = t.id ? driftByTicket[t.id] : undefined;
+    const notAnnounced = creationNoticeOwed(t.status, t.metadata);
+    if (!unit.note && !notAnnounced && !moved) return null;
+    return (
+      <div className="flex flex-wrap items-center gap-1 mt-1">
+        {unit.note && (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-800 text-[10px] font-bold" title={`Unit ${unit.text}: ${unit.note}`}>
+            Unit {unit.note}
+          </span>
+        )}
+        {notAnnounced && (
+          <span data-testid="chip-not-announced" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-red-200 bg-red-50 text-red-700 text-[10px] font-bold" title="The assignment queue was never told about this request (nobody received its creation notice). Assign it from here, or tell the drafting supervisor.">
+            <Megaphone className="w-3 h-3" /> Not announced
+          </span>
+        )}
+        {moved && (
+          <span data-testid="chip-source-moved" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-800 text-[10px] font-bold" title={`The source revision has moved since this request was raised: ${moved.join(', ')}`}>
+            <AlertCircle className="w-3 h-3" /> Source moved
+          </span>
+        )}
+      </div>
+    );
+  };
 
   // --------------------------------------------------------------------
   // MEMO: SUPERVISOR "BY DRAFTER" BOARD
@@ -545,7 +682,9 @@ export default function RequestPortal() {
       awaitingIfc: count(g.tickets, (t) => t.status === 'PENDING_IFC'),
       review: count(g.tickets, (t) => ['PENDING_REVIEW', 'PENDING_FINAL_APPROVAL', 'PENDING_ENG_TEAM', 'PENDING_ASSIGNMENT'].includes(t.status)),
       actionable: count(g.tickets, (t) => isActionRequired(t)),
-      overdue: count(g.tickets, (t) => !!t.targetCompletionAt && new Date(t.targetCompletionAt as string) < new Date()),
+      // EDGE-7 done-when 3: one rule for overdue (lib/notifications.ts
+      // isPastDue) — a CLOSED or CANCELED ticket past its target is not.
+      overdue: count(g.tickets, (t) => isPastDue(t)),
       stale: count(g.tickets, (t) => calculateDaysOpen(t.lastModified) > 7),
     }));
     // Pool first (it's the supervisor's triage queue), then heaviest workloads.
@@ -627,6 +766,9 @@ export default function RequestPortal() {
 
   const handleBulkArchive = useCallback(async () => {
     if (selectedTicketIds.size === 0) return;
+    // PERS-7 (DF-P9): no signed-in member, no action — never an 'unknown'
+    // stand-in on the audit row.
+    if (!uid || !activeOrgId) { await appAlert({ message: "You're not signed in to a workspace, so nothing was archived.", tone: 'danger' }); return; }
     if (!(await appConfirm({ message: `Are you sure you want to archive ${selectedTicketIds.size} tickets?`, tone: 'danger' }))) return;
 
     setProcessingBulk(true);
@@ -635,11 +777,14 @@ export default function RequestPortal() {
       // server audit, and fan-out — a non-management caller gets a 403.
       await Promise.all(Array.from(selectedTicketIds).map(id => callWorkflowAction(id, 'close_ticket')));
 
-      await logAuditAction({
+      const audit = await logAuditAction({
         action: 'TICKET_BULK_ARCHIVE', resourceId: 'bulk', resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole ?? undefined,
+        orgId: activeOrgId, userId: uid, userRole: activeRole ?? undefined,
         details: { count: selectedTicketIds.size, ticketIds: Array.from(selectedTicketIds) }
       });
+      // PERS-7: the closes landed (each with the route's own audit row); a
+      // refused bulk summary row is said, never passed over.
+      if (!audit.ok) await appAlert({ message: `The tickets were archived, but the bulk record of it could not be written: ${audit.error}`, tone: 'danger' });
 
       setSelectedTicketIds(new Set());
     } catch (error) {
@@ -653,38 +798,70 @@ export default function RequestPortal() {
   // "Urgent" is a PRIORITY, not a workflow state. This used to set
   // status=REVISION_REQ, which hijacked the revision stage as an urgency flag
   // and corrupted the ticket's real position in the workflow.
+  //
+  // PERS-3 / LEAK-4 / PERS-7 (DF-P9): priority stays a member's own write
+  // (one of the four columns a client keeps — 20261208's ticket_update_guard),
+  // but it can no longer fail silently or race the workflow route: the write
+  // compare-and-sets on the ticket's last_modified as this list read it (a
+  // null token is its own leg, as the route's — EDGE-15), returns the row it
+  // matched, and a refusal or a lost race is SAID. The audit row follows only
+  // a confirmed write, names the signed-in member (no 'unknown' stand-in),
+  // and a refused audit row is said too.
+  const markUrgentChecked = useCallback(async (t: Ticket): Promise<string | null> => {
+    if (!activeOrgId || !t.id) return 'no active workspace';
+    const now = new Date().toISOString();
+    let q = supabase.from('tickets').update({ priority: 1, last_modified: now }).eq('id', t.id).eq('org_id', activeOrgId);
+    q = t.lastModified ? q.eq('last_modified', String(t.lastModified)) : q.is('last_modified', null);
+    const { data: hit, error } = await q.select('id');
+    if (error) return error.message || 'the write was refused';
+    if (!hit || hit.length === 0) return 'it changed while you were looking at it (the list is refreshing) — try again';
+    return null;
+  }, [activeOrgId]);
+
   const handleBulkUrgencyToggle = useCallback(async () => {
     if (selectedTicketIds.size === 0) return;
+    if (!uid || !activeOrgId) { await appAlert({ message: "You're not signed in to a workspace, so nothing was marked urgent.", tone: 'danger' }); return; }
     setProcessingBulk(true);
     try {
-      const now = new Date().toISOString();
-      await Promise.all(Array.from(selectedTicketIds).map(id =>
-        supabase.from('tickets').update({ priority: 1, last_modified: now }).eq('id', id)
-      ));
-
-      await logAuditAction({
-        action: 'TICKET_BULK_URGENT', resourceId: 'bulk', resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole ?? undefined,
-        details: { count: selectedTicketIds.size, ticketIds: Array.from(selectedTicketIds) }
-      });
-
-      setSelectedTicketIds(new Set());
+      const chosen = tickets.filter((t) => !!t.id && selectedTicketIds.has(t.id));
+      const results = await Promise.all(chosen.map(async (t) => ({ id: t.id as string, err: await markUrgentChecked(t) })));
+      const done = results.filter((r) => !r.err).map((r) => r.id);
+      const failed = results.filter((r) => r.err);
+      const problems: string[] = [];
+      if (failed.length > 0) problems.push(`${failed.length} of ${chosen.length} were not marked urgent: ${failed[0].err}.`);
+      if (done.length > 0) {
+        const audit = await logAuditAction({
+          action: 'TICKET_BULK_URGENT', resourceId: 'bulk', resourceType: 'ticket',
+          orgId: activeOrgId, userId: uid, userRole: activeRole ?? undefined,
+          details: { count: done.length, ticketIds: done }
+        });
+        if (!audit.ok) problems.push(`${done.length} were marked urgent, but the record of it could not be written: ${audit.error}`);
+      }
+      // Only what failed stays selected, so a retry touches nothing twice.
+      setSelectedTicketIds(new Set(failed.map((r) => r.id)));
+      if (problems.length > 0) await appAlert({ message: problems.join(' '), tone: 'danger' });
     } catch (error) {
       console.error("Bulk Update Failed:", error);
+      await appAlert({ message: "Failed to mark the selection urgent.", tone: 'danger' });
     } finally {
       setProcessingBulk(false);
     }
-  }, [selectedTicketIds, activeOrgId, activeRole, uid]);
+  }, [selectedTicketIds, tickets, markUrgentChecked, activeOrgId, activeRole, uid]);
 
   const handleQuickMarkUrgent = async (ticketId: string) => {
+    if (!uid || !activeOrgId) { await appAlert({ message: "You're not signed in to a workspace, so it was not marked urgent.", tone: 'danger' }); return; }
+    const t = tickets.find((x) => x.id === ticketId);
+    if (!t) return;
     try {
-      await supabase.from('tickets').update({ priority: 1, last_modified: new Date().toISOString() }).eq('id', ticketId);
-      await logAuditAction({
+      const err = await markUrgentChecked(t);
+      if (err) { await appAlert({ message: `Not marked urgent: ${err}.`, tone: 'danger' }); return; }
+      const audit = await logAuditAction({
         action: 'TICKET_MARK_URGENT', resourceId: ticketId, resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole ?? undefined,
+        orgId: activeOrgId, userId: uid, userRole: activeRole ?? undefined,
         details: { priority: 1 }
       });
       setOpenRowMenu(null);
+      if (!audit.ok) await appAlert({ message: `Marked urgent, but the record of it could not be written: ${audit.error}`, tone: 'danger' });
     } catch (error) {
       console.error("Mark urgent failed:", error);
       await appAlert({ message: "Failed to mark urgent.", tone: 'danger' });
@@ -725,6 +902,7 @@ export default function RequestPortal() {
 
   const clearAllFilters = () => {
     setFilters({ status: 'ALL', type: 'ALL', dateRange: 'all', assignedTo: 'all', priority: 'all', search: '' });
+    setCurrentPage(1);
   };
 
   if (loading && tickets.length === 0) {
@@ -764,6 +942,8 @@ export default function RequestPortal() {
   return (
     <div className="pb-20">
 
+      {showWorkflowMap && <WorkflowDiagramModal onClose={() => setShowWorkflowMap(false)} />}
+
       {/* 1. TOP METRICS DASHBOARD */}
       {/* Wide canvas (matches the ticket page + libraries) — this portal was
           born at 1920px; a narrower wrap strands it in dead margins. */}
@@ -788,6 +968,15 @@ export default function RequestPortal() {
                 <Download className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />
                 Export CSV
               </button>
+              {/* UI-2: the workflow map, from the queue — a labelled button, not a hover hint. */}
+              <button
+                type="button"
+                onClick={() => setShowWorkflowMap(true)}
+                className="flex items-center px-4 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all"
+              >
+                <GitBranch className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />
+                How requests flow
+              </button>
               <Link href="/requests/new">
                 <button className="flex items-center px-5 py-2 bg-orange-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-orange-600/20 hover:bg-orange-700 hover:scale-105 transition-all">
                   <Plus className="w-5 h-5 mr-2" />
@@ -802,7 +991,7 @@ export default function RequestPortal() {
             {/* SLOT 1: MY ACTION ITEMS */}
             <div 
               className={`border p-3 rounded-xl flex flex-col justify-between cursor-pointer transition-colors group relative overflow-hidden ${metrics.myActionItems > 0 ? 'bg-orange-50 border-orange-300 ring-2 ring-orange-500/20' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}
-              onClick={() => setFilters({ ...filters, assignedTo: 'me' })}
+              onClick={() => { setFilters({ ...filters, status: 'ALL' }); pickAttentionView('needs_me'); }}
             >
               <div className="flex justify-between items-start z-10">
                 <span className={`text-[10px] font-bold uppercase ${metrics.myActionItems > 0 ? 'text-orange-600' : 'text-[var(--color-text-faint)]'}`}>Action Required</span>
@@ -873,11 +1062,22 @@ export default function RequestPortal() {
               </div>
             </div>
             <button 
-              onClick={() => setFilters({ ...filters, assignedTo: 'me', status: 'ALL' })}
+              onClick={() => { setFilters({ ...filters, status: 'ALL' }); pickAttentionView('needs_me'); }}
               className="px-5 py-2 bg-[var(--color-surface)] border border-orange-200 text-orange-700 text-xs font-bold rounded-lg hover:bg-orange-100 transition-colors shadow-sm"
             >
               View My Tasks
             </button>
+          </div>
+        )}
+
+        {/* AUTHZ-15: the policy could not be read — what it decides is held back, said, retryable. */}
+        {policyFault && (
+          <div role="alert" data-testid="requests-policy-fault" className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start gap-3 text-amber-900">
+            <ShieldAlert className="w-5 h-5 mt-0.5 shrink-0 text-amber-600" />
+            <div className="text-sm flex-1">
+              <span className="font-bold">Permissions could not be read</span> — {policyFault}. Which requests need you, Archive and Force Close are held back until they can be (the server would refuse those actions now).
+            </div>
+            <button type="button" onClick={() => setPolicyAttempt((n) => n + 1)} className="px-3 py-1.5 bg-[var(--color-surface)] border border-amber-300 rounded-lg text-xs font-bold text-amber-800 hover:bg-amber-100">Try again</button>
           </div>
         )}
 
@@ -891,7 +1091,7 @@ export default function RequestPortal() {
             <div className="flex items-center space-x-2">
               <button onClick={handleExportCSV} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100"><Download className="w-4 h-4 mr-2" /> Export</button>
               <button onClick={handleBulkUrgencyToggle} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Zap className="w-4 h-4 mr-2" /> Mark Urgent</button>
-              <button onClick={handleBulkArchive} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Archive className="w-4 h-4 mr-2" /> Archive</button>
+              {!policyFault && <button onClick={handleBulkArchive} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Archive className="w-4 h-4 mr-2" /> Archive</button>}
               <button onClick={() => setSelectedTicketIds(new Set())} className="p-1.5 text-orange-600 hover:text-orange-800"><X className="w-5 h-5" /></button>
             </div>
           </div>
@@ -911,8 +1111,30 @@ export default function RequestPortal() {
               <button onClick={() => pickView('table')} title="Table" className={`p-2 rounded-md transition-all ${viewMode === 'table' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><ListIcon className="w-5 h-5" /></button>
               <button onClick={() => pickView('grid')} title="Cards" className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}><LayoutGrid className="w-5 h-5" /></button>
             </div>
+            {viewMode !== 'team' && (
+              <div role="group" aria-label="Which requests to list" className="bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg p-1 flex shadow-sm">
+                <button
+                  type="button"
+                  data-testid="view-needs-me"
+                  aria-pressed={attentionView === 'needs_me'}
+                  onClick={() => pickAttentionView('needs_me')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-bold transition-all ${attentionView === 'needs_me' ? 'bg-orange-100 text-orange-800' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
+                >
+                  Needs me <span className="ml-1 font-black">{policyFault ? '—' : needsMeTickets.length}</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="view-all"
+                  aria-pressed={attentionView === 'all'}
+                  onClick={() => pickAttentionView('all')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-bold transition-all ${attentionView === 'all' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
+                >
+                  All <span className="ml-1 font-black">{filteredTickets.length}</span>
+                </button>
+              </div>
+            )}
             <Select value={filters.assignedTo} onChange={(e) => setFilters({ ...filters, assignedTo: e.target.value as FilterConfig['assignedTo'] })} className="w-44"><option value="all">Assignee: All</option><option value="me">My Tickets</option><option value="unassigned">Unassigned Only</option></Select>
-            <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="w-44"><option value="ALL">Status: Any</option><option value="PENDING_ASSIGNMENT">Pending Assignment</option><option value="DRAFTING">In Drafting</option><option value="PENDING_REVIEW">In Review</option><option value="REVISION_REQ">Revisions Required</option><option value="PENDING_IFC">Ready for IFC</option><option value="FINAL_DRAFT">Finalized</option><option value="CLOSED">Closed</option><option value="CANCELED">Canceled</option></Select>
+            <Select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as FilterConfig['status'] })} className="w-44"><option value="ALL">Status: Any</option>{TICKET_STATUS_FILTER_ORDER.map((st) => <option key={st} value={st}>{ticketStatusLabel(st)}</option>)}</Select>
             <button onClick={() => setIsFilterPanelOpen(!isFilterPanelOpen)} className={`flex items-center px-4 py-3 rounded-xl text-sm font-bold border transition-all ${isFilterPanelOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]'}`}><SlidersHorizontal className="w-4 h-4 mr-2" />More Filters</button>
             <button
               onClick={() => setShowClosed((v) => !v)}
@@ -1010,7 +1232,7 @@ export default function RequestPortal() {
                       {b.tickets.map((t) => {
                         const actionNeeded = isActionRequired(t);
                         const due = t.targetCompletionAt ? new Date(t.targetCompletionAt as string) : null;
-                        const overdue = !!due && due < new Date();
+                        const overdue = isPastDue(t);
                         return (
                           <Link key={t.id} href={`/requests/${t.id}`} className="block">
                             <div className={`group rounded-lg border p-2.5 transition-colors hover:border-orange-300 hover:bg-orange-50/40 ${actionNeeded ? 'border-red-200 bg-red-50/30' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
@@ -1019,11 +1241,14 @@ export default function RequestPortal() {
                                   {actionNeeded && <span className="shrink-0 w-2 h-2 rounded-full bg-red-500 animate-pulse" title="Action needed" />}
                                   <span className="font-mono text-[11px] font-bold text-[var(--color-text)] truncate">{t.ticketId}</span>
                                 </div>
-                                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${getStatusColor(t.status)}`}>{t.status.replace(/_/g, ' ')}</span>
+                                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${getStatusColor(t.status)}`}>{ticketStatusLabel(t.status)}</span>
                               </div>
                               <div className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-1">{t.title}</div>
+                              {creationNoticeOwed(t.status, t.metadata) && (
+                                <div className="mt-1"><span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-red-200 bg-red-50 text-red-700 text-[10px] font-bold" title="The assignment queue was never told about this request (nobody received its creation notice)."><Megaphone className="w-3 h-3" /> Not announced</span></div>
+                              )}
                               <div className="flex items-center gap-3 mt-1.5 text-[10px] text-[var(--color-text-faint)]">
-                                <span className="font-mono">{t.unit}</span>
+                                <span className="font-mono">{ticketUnitDisplay(t.unit, t.metadata).text}</span>
                                 {due && <span className={`flex items-center gap-0.5 font-bold ${overdue ? 'text-red-600' : 'text-[var(--color-text-muted)]'}`}><Clock className="w-3 h-3" />{overdue ? 'Past due' : due.toLocaleDateString()}</span>}
                                 {(t.comments?.length || 0) > 0 && <span className="flex items-center gap-0.5"><MessageCircle className="w-3 h-3" />{t.comments?.length}</span>}
                               </div>
@@ -1037,6 +1262,13 @@ export default function RequestPortal() {
               })}
             </div>
           )
+        ) : paginatedTickets.length === 0 && attentionView === 'needs_me' && filteredTickets.length > 0 ? (
+          <div data-testid="needs-me-empty" className="flex flex-col items-center justify-center py-24 bg-[var(--color-surface)] rounded-2xl border border-dashed border-[var(--color-border-strong)] text-center">
+            <div className="w-20 h-20 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mb-6"><CheckCircle2 className="w-10 h-10 text-emerald-400" /></div>
+            <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">{policyFault ? 'Which requests need you cannot be worked out right now' : 'Nothing needs you right now'}</h3>
+            <p className="text-[var(--color-text-muted)] max-w-md mx-auto mb-6">{policyFault ? 'Permissions could not be read (see above).' : 'No request in this view is waiting on you.'} {filteredTickets.length} request{filteredTickets.length === 1 ? '' : 's'} match your filters.</p>
+            <button onClick={() => pickAttentionView('all')} className="bg-slate-900 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-slate-800 transition-colors">Show all {filteredTickets.length}</button>
+          </div>
         ) : paginatedTickets.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-32 bg-[var(--color-surface)] rounded-2xl border border-dashed border-[var(--color-border-strong)] text-center">
             <div className="w-20 h-20 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mb-6"><Search className="w-10 h-10 text-slate-300" /></div>
@@ -1046,6 +1278,12 @@ export default function RequestPortal() {
           </div>
         ) : (
           <>
+            {attentionView === 'needs_me' && (
+              <div data-testid="needs-me-summary" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-[var(--color-text-muted)]">
+                <span>Showing the <span className="font-bold text-[var(--color-text)]">{needsMeTickets.length}</span> request{needsMeTickets.length === 1 ? '' : 's'} that need you, of {filteredTickets.length}.</span>
+                <button type="button" onClick={() => pickAttentionView('all')} className="font-bold text-orange-700 hover:underline">Show all</button>
+              </div>
+            )}
             {/* VIEW: TABLE MODE */}
             {viewMode === 'table' && (
               <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden min-h-[500px]">
@@ -1083,9 +1321,9 @@ export default function RequestPortal() {
                                 <span className="text-[10px] text-[var(--color-text-faint)] mt-0.5 font-mono">{ticket.requestType}</span>
                               </div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticket.status.replace(/_/g, ' ')}</span>{ticket.archivedAt && <span className="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border border-sky-300 text-sky-700 bg-sky-50" title="Content archived for space — restore from the saved archive to view">Archived</span>}</td>
-                            <td className="px-6 py-4"><div className="flex flex-col max-w-md"><span className={`text-sm ${isUnread ? 'font-bold text-[var(--color-text)]' : 'font-medium text-[var(--color-text)]'} truncate`}>{ticket.title}</span><div className="flex items-center mt-1 text-xs text-[var(--color-text-muted)]"><User className="w-3 h-3 mr-1" /><span className="mr-3">{ticket.requesterName}</span>{ticket.assignedDrafterName && (<><ArrowRight className="w-3 h-3 mr-1 text-slate-300" /><span className="font-semibold text-[var(--color-text)]">{ticket.assignedDrafterName}</span></>)}</div></div></td>
-                            <td className="px-6 py-4 whitespace-nowrap"><span className="text-sm font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-2 py-1 rounded border border-[var(--color-border)]">{ticket.unit}</span></td>
+                            <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticketStatusLabel(ticket.status)}</span>{ticket.archivedAt && <span className="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border border-sky-300 text-sky-700 bg-sky-50" title="Content archived for space — restore from the saved archive to view">Archived</span>}</td>
+                            <td className="px-6 py-4"><div className="flex flex-col max-w-md"><span className={`text-sm ${isUnread ? 'font-bold text-[var(--color-text)]' : 'font-medium text-[var(--color-text)]'} truncate`}>{ticket.title}</span>{rowChips(ticket)}<div className="flex items-center mt-1 text-xs text-[var(--color-text-muted)]"><User className="w-3 h-3 mr-1" /><span className="mr-3">{ticket.requesterName}</span>{ticket.assignedDrafterName && (<><ArrowRight className="w-3 h-3 mr-1 text-slate-300" /><span className="font-semibold text-[var(--color-text)]">{ticket.assignedDrafterName}</span></>)}</div></div></td>
+                            <td className="px-6 py-4 whitespace-nowrap">{(() => { const u = ticketUnitDisplay(ticket.unit, ticket.metadata); return <span title={u.note ?? undefined} className={`text-sm ${u.unknown ? 'italic text-[var(--color-text-faint)]' : 'font-mono text-[var(--color-text-muted)]'} bg-[var(--color-surface-2)] px-2 py-1 rounded border border-[var(--color-border)]`}>{u.text}</span>; })()}</td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               {typeof ticket.priority === 'number' ? (
                                 <div className={`flex items-center px-2 py-1 rounded border text-xs font-bold w-fit 
@@ -1108,8 +1346,9 @@ export default function RequestPortal() {
                                 <span className="font-medium text-[var(--color-text)]">{toDate(ticket.lastModified).toLocaleDateString()}</span>
                                 {ticket.targetCompletionAt && (() => {
                                   const due = new Date(ticket.targetCompletionAt as string);
-                                  const past = due < new Date() && !isTerminalTicketStatus(ticket.status);
-                                  const soon = !past && due.getTime() - Date.now() < 24 * 60 * 60 * 1000 && !isTerminalTicketStatus(ticket.status);
+                                  // EDGE-7 done-when 3: the one overdue rule (lib/notifications.ts).
+                                  const past = isPastDue(ticket);
+                                  const soon = !past && isNearingDue(ticket);
                                   return (
                                     <span className={`font-bold flex items-center mt-0.5 ${past ? "text-red-600" : soon ? "text-amber-600" : "text-[var(--color-text-muted)]"}`}>
                                       <Clock className="w-3 h-3 mr-1" />
@@ -1141,7 +1380,7 @@ export default function RequestPortal() {
                                       <div className="absolute right-0 mt-2 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 origin-top-right animate-in fade-in zoom-in-95 duration-150">
                                         <div className="py-1">
                                           <button onClick={() => handleQuickMarkUrgent(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-bold"><AlertCircle className="w-3 h-3 mr-2" /> Mark Urgent</button>
-                                          {hasAnyRole(['Manager', 'Admin']) && (<button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}
+                                          {hasAnyRole(['Manager', 'Admin']) && (!policyFault && <button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}
                                         </div>
                                       </div>
                                     </>
@@ -1156,7 +1395,7 @@ export default function RequestPortal() {
                   </table>
                 </div>
                 <div className="bg-[var(--color-surface)] px-6 py-4 border-t border-[var(--color-border)] flex items-center justify-between">
-                  <div className="flex flex-col md:flex-row md:items-center text-sm text-[var(--color-text-muted)]"><span className="mr-4">Showing <span className="font-bold text-[var(--color-text)]">{(currentPage - 1) * itemsPerPage + 1}</span> to <span className="font-bold text-[var(--color-text)]">{Math.min(currentPage * itemsPerPage, filteredTickets.length)}</span> of <span className="font-bold text-[var(--color-text)]">{filteredTickets.length}</span> results</span><select value={itemsPerPage} onChange={(e) => setItemsPerPage(Number(e.target.value))} className="mt-2 md:mt-0 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-xs py-1 px-2 focus:ring-orange-500 focus:border-orange-500 cursor-pointer"><option value={10}>10 per page</option><option value={25}>25 per page</option><option value={50}>50 per page</option><option value={100}>100 per page</option></select></div>
+                  <div className="flex flex-col md:flex-row md:items-center text-sm text-[var(--color-text-muted)]"><span className="mr-4">Showing <span className="font-bold text-[var(--color-text)]">{(currentPage - 1) * itemsPerPage + 1}</span> to <span className="font-bold text-[var(--color-text)]">{Math.min(currentPage * itemsPerPage, listTickets.length)}</span> of <span className="font-bold text-[var(--color-text)]">{listTickets.length}</span> results</span><select value={itemsPerPage} onChange={(e) => setItemsPerPage(Number(e.target.value))} className="mt-2 md:mt-0 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-xs py-1 px-2 focus:ring-orange-500 focus:border-orange-500 cursor-pointer"><option value={10}>10 per page</option><option value={25}>25 per page</option><option value={50}>50 per page</option><option value={100}>100 per page</option></select></div>
                   <div className="flex items-center space-x-2"><button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--color-surface-2)] transition-colors">Previous</button><button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[var(--color-surface-2)] transition-colors">Next</button></div>
                 </div>
               </div>
@@ -1188,9 +1427,9 @@ export default function RequestPortal() {
                         )}
                       </div>
 
-                      <div className="flex justify-between items-start mb-4"><div className="flex flex-col"><span className="font-mono text-xs font-bold text-[var(--color-text-faint)]">{ticket.ticketId}</span><span className="text-[10px] font-bold text-[var(--color-text-faint)] mt-0.5 uppercase tracking-wide">{ticket.requestType}</span></div><div className="flex flex-col items-end gap-1"><span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticket.status.replace(/_/g, ' ')}</span>{ticket.archivedAt && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border border-sky-300 text-sky-700 bg-sky-50" title="Content archived for space — restore from the saved archive to view">Archived</span>}</div></div>
-                      <Link href={`/requests/${ticket.id}`} className="block mb-4"><h3 className={`text-lg leading-snug group-hover:text-orange-600 transition-colors line-clamp-2 ${isUnread ? 'font-black text-[var(--color-text)]' : 'font-bold text-[var(--color-text)]'}`}>{ticket.title}</h3></Link>
-                      <div className="flex items-center text-xs text-[var(--color-text-muted)] mb-6 bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)]"><span className="font-semibold bg-[var(--color-surface)] px-1.5 py-0.5 border rounded text-[var(--color-text)] mr-2 border-[var(--color-border)]">{ticket.unit}</span><User className="w-3 h-3 mr-1" /><span className="truncate flex-1">{ticket.requesterName}</span></div>
+                      <div className="flex justify-between items-start mb-4"><div className="flex flex-col"><span className="font-mono text-xs font-bold text-[var(--color-text-faint)]">{ticket.ticketId}</span><span className="text-[10px] font-bold text-[var(--color-text-faint)] mt-0.5 uppercase tracking-wide">{ticket.requestType}</span></div><div className="flex flex-col items-end gap-1"><span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase border ${getStatusColor(ticket.status)}`}>{ticketStatusLabel(ticket.status)}</span>{ticket.archivedAt && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border border-sky-300 text-sky-700 bg-sky-50" title="Content archived for space — restore from the saved archive to view">Archived</span>}</div></div>
+                      <Link href={`/requests/${ticket.id}`} className="block mb-4"><h3 className={`text-lg leading-snug group-hover:text-orange-600 transition-colors line-clamp-2 ${isUnread ? 'font-black text-[var(--color-text)]' : 'font-bold text-[var(--color-text)]'}`}>{ticket.title}</h3>{rowChips(ticket)}</Link>
+                      <div className="flex items-center text-xs text-[var(--color-text-muted)] mb-6 bg-[var(--color-surface-2)] p-2 rounded-lg border border-[var(--color-border)]"><span className="font-semibold bg-[var(--color-surface)] px-1.5 py-0.5 border rounded text-[var(--color-text)] mr-2 border-[var(--color-border)]">{ticketUnitDisplay(ticket.unit, ticket.metadata).text}</span><User className="w-3 h-3 mr-1" /><span className="truncate flex-1">{ticket.requesterName}</span></div>
                       <div className="mt-auto pt-4 border-t border-[var(--color-border)] flex items-center justify-between"><div className="flex flex-col"><span className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase">Assigned To</span><span className="text-xs font-semibold text-[var(--color-text)]">{ticket.assignedDrafterName || 'Unassigned'}</span></div><Link href={`/requests/${ticket.id}`}><button className="h-8 w-8 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-faint)] flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-all shadow-sm"><ArrowRight className="w-4 h-4" /></button></Link></div>
                     </div>
                    );
