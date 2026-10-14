@@ -583,6 +583,9 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue"])', keys: ["ackEscalation"] }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
+  // notifications N10 PUSH (GAP-205): the push sender reads the bell rows an emit() just wrote,
+  // to push only a person whose row landed (for a browser's request, a row that member wrote).
+  "lib/push/sendPush.ts": [{ marks: '.in("kind", [...PUSH_KINDS])', none: "not a dedupe: the push channel sends a device notification only for a push-worthy bell row that landed for that person in the last two minutes (for a browser's request, one whose actor_user_id is the caller — 20261160 stamps every browser row with its writer), never for a redacted notice, at most PUSH_WRITER_CAP per writer and person in ten minutes. A row a member forges can only cause a generic push to its own recipient within those caps; no row stops a notice anyone else sends, and no bell row or email is withheld because one exists" }],
   "lib/storageAlerts.ts": [
     { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
     // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the quota bell is not sent the

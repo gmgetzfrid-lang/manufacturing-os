@@ -2,7 +2,22 @@
 //
 // THE single entry point every producer should call. One event in → resolved
 // recipients (from all follow systems) → fanned out to every delivery channel
-// (in-app bell, email), each honoring per-user, per-channel preferences.
+// (in-app bell, email, and — for the push-worthy kinds — Web Push), each
+// honoring per-user, per-channel preferences.
+//
+// Push (notifications Round G, N10 — GAP-205, OS-9): the third leg runs only
+// after the bell and email legs have finished, never throws into the caller
+// and never changes what they did (a push failure is logged only — the
+// deleted 0bb13ed sendPushSafe contract). It is sent only for a kind
+// KIND_META marks pushWorthy, only to the recipients told IN FULL (a
+// follower sent the redacted notice gets no push — DEC-106 item 2), and only
+// beside the bell leg (push follows a bell row). In the browser the leg asks
+// POST /api/push/notify (fire-and-forget, keepalive); on the server it calls
+// the sender lib/push/sendPush.ts registered when loaded
+// (__registerServerPushSender) — this file is bundled for the browser and
+// never imports web-push or the service role. Who is actually pushed —
+// push_enabled, a device the person turned on, the bell row that landed,
+// VAPID configured — is decided there.
 //
 // It wraps the existing notifyMany()/queueEmail() helpers rather than replacing
 // them, so producers can migrate to emit() one at a time with zero regression.
@@ -11,7 +26,7 @@ import { notify, notifyMany, notifyBatchWithReason, type NotificationKind } from
 import { queueEmail } from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
 import { renderNotificationEmail, requireEmailOrigin } from "@/lib/emailRender";
-import { KIND_META } from "@/lib/notificationKinds";
+import { KIND_META, kindMeta } from "@/lib/notificationKinds";
 import {
   activeMembersOf,
   discoveringAmong,
@@ -21,7 +36,7 @@ import {
   type ResourceRef,
   type ResourceType,
 } from "./recipients";
-export type NotifChannel = "inapp" | "email";
+export type NotifChannel = "inapp" | "email" | "push";
 export type NotifCategory = "mention" | "assignment" | "status" | "watched" | "sla" | "system" | "recall" | "safety";
 
 export interface EmitInput {
@@ -52,8 +67,9 @@ export interface EmitInput {
      *  beside the holder's own notice). */
     exclude?: string[];
   };
-  /** Defaults to both channels (in-app and email). Pass a subset to
-   *  force-limit a noisy event. */
+  /** Defaults to every channel (in-app, email, and push — which sends only
+   *  for a KIND_META.pushWorthy kind, beside the in-app leg). Pass a subset
+   *  to force-limit a noisy event: `["inapp"]` never attempts push. */
   channels?: NotifChannel[];
   /** Write the in-app rows as ONE insert statement (notifyBatchWithReason)
    *  instead of one request per recipient (notifyMany). For a chatty fan-out
@@ -308,11 +324,12 @@ export async function emit(input: EmitInput): Promise<EmitResult> {
     });
     return { recipients: 0 };
   }
-  const result = await deliver(input, full);
+  const result = await deliver(input, full, { push: true });
   if (redacted.length > 0) {
     // NEDGE-6 (N15 fix pass): the followers a failed discover check could not
-    // settle — one row and one email each, without the document's name.
-    const r = await deliver(redactedNotice(input), redacted);
+    // settle — one row and one email each, without the document's name. No
+    // push (N10, DEC-106 item 2): only a recipient told in full is pushed.
+    const r = await deliver(redactedNotice(input), redacted, { push: false });
     if (r.inapp) {
       result.inapp = {
         sent: (result.inapp?.sent ?? 0) + r.inapp.sent,
@@ -323,13 +340,18 @@ export async function emit(input: EmitInput): Promise<EmitResult> {
   return { ...result, recipients: full.length + redacted.length };
 }
 
-/** One notice to `recipients` on every enabled channel (emit's body). */
-async function deliver(input: EmitInput, recipients: string[]): Promise<EmitResult> {
+/** One notice to `recipients` on every enabled channel (emit's body).
+ *  `push`: whether these recipients may be pushed (the full audience; never
+ *  the redacted one). */
+async function deliver(input: EmitInput, recipients: string[], opts: { push: boolean }): Promise<EmitResult> {
   if (recipients.length === 0) return { recipients: 0 };
-  const channels = input.channels ?? ["inapp", "email"];
+  const channels = input.channels ?? DEFAULT_CHANNELS;
   const result: EmitResult = { recipients: recipients.length };
   // emailOnlyWithBell: the recipients whose bell row landed (null: everyone)
   let bellLanded: Set<string> | null = null;
+  // the push leg (N10): the recipients whose bell row landed, where the
+  // in-app leg answers per recipient (null: not known — the sender checks)
+  let pushLanded: Set<string> | null = null;
 
   // 1) In-app bell — reuse the existing fan-out helper (it also drops the actor
   //    and dedupes recipients defensively), or, when the producer asks for it,
@@ -374,7 +396,8 @@ async function deliver(input: EmitInput, recipients: string[]): Promise<EmitResu
     }, opts)));
     const sent = landed.filter(Boolean).length;
     result.inapp = { sent, failed: landed.length - sent };
-    if (input.emailOnlyWithBell) bellLanded = new Set(recipients.filter((_, i) => landed[i]));
+    pushLanded = new Set(recipients.filter((_, i) => landed[i]));
+    if (input.emailOnlyWithBell) bellLanded = pushLanded;
   } else if (channels.includes("inapp") && input.emailOnlyWithBell) {
     // one typed row per recipient, as notifyMany writes them, answering
     // which landed (the email follows only those)
@@ -394,6 +417,7 @@ async function deliver(input: EmitInput, recipients: string[]): Promise<EmitResu
     const sent = landed.filter(Boolean).length;
     result.inapp = { sent, failed: landed.length - sent };
     bellLanded = new Set(recipients.filter((_, i) => landed[i]));
+    pushLanded = bellLanded;
     if (bellLanded.size < recipients.length) {
       console.warn(`[notify] ${recipients.length - bellLanded.size} ${input.kind} bell row(s) refused — no email for those recipients (emailOnlyWithBell)`);
     }
@@ -462,7 +486,112 @@ async function deliver(input: EmitInput, recipients: string[]): Promise<EmitResu
     );
   }
 
+  // 3) Push (N10 — OS-9): only after the bell and email legs are done, only
+  //    for a push-worthy kind, only beside the bell leg, only for the
+  //    recipients told in full whose bell row landed (when known). Never
+  //    throws; never changes `result`.
+  if (opts.push && channels.includes("push") && channels.includes("inapp") && kindMeta(input.kind)?.pushWorthy === true) {
+    const pushTo = pushLanded ? recipients.filter((u) => pushLanded!.has(u)) : recipients;
+    if (pushTo.length > 0 && (result.inapp?.sent ?? 0) > 0) {
+      await pushLeg({ orgId: input.orgId, kind: input.kind, resourceId: input.resource.id, recipients: pushTo });
+    }
+  }
+
   return result;
+}
+
+// ─── Push (notifications Round G, N10 — GAP-205) ────────────────────────────
+
+/** emit()'s channels when the producer names none. */
+const DEFAULT_CHANNELS: NotifChannel[] = ["inapp", "email", "push"];
+
+/** One emit's push request: who to push about which bell row. The sender
+ *  (lib/push/sendPush.ts) re-checks every condition itself. `writerUid` is
+ *  set by POST /api/push/notify only — the signed-in member who wrote the
+ *  bell rows; the server path leaves it unset. */
+export interface PushSendInput {
+  orgId: string;
+  kind: NotificationKind;
+  resourceId: string;
+  recipients: string[];
+  writerUid?: string | null;
+}
+export type PushSender = (input: PushSendInput) => Promise<void>;
+
+/** The SERVER sender (lib/push/sendPush.ts sendPushSafe), registered when
+ *  that module is loaded — it imports web-push and the service role, so this
+ *  file (bundled for the browser too) never imports it. A server entry that
+ *  does not load it sends no push from its emits (logged once). */
+let serverPushSender: PushSender | null = null;
+export function __registerServerPushSender(fn: PushSender | null): void {
+  serverPushSender = fn;
+}
+
+/** How long a server emit waits for its push leg before it returns (the bell
+ *  and email legs have already finished). */
+export const PUSH_LEG_TIMEOUT_MS = 8000;
+
+/** The most recipients one POST /api/push/notify is about; the browser leg
+ *  sends a larger audience in parts (lib/push/sendPush.ts PUSH_MAX_RECIPIENTS
+ *  is this number). */
+export const PUSH_REQUEST_MAX_RECIPIENTS = 500;
+
+let pushNoSenderLogged = false;
+
+/** The push leg. Never throws. */
+async function pushLeg(input: PushSendInput): Promise<void> {
+  if (typeof window !== "undefined") {
+    browserPushRequest(input);
+    return;
+  }
+  const sender = serverPushSender;
+  if (!sender) {
+    if (!pushNoSenderLogged) {
+      pushNoSenderLogged = true;
+      console.info(`[notify] no push sender in this server context — ${input.kind} notices from it are not pushed (a server entry that should push loads lib/push/sendPush; the maintenance cron does not)`);
+    }
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => sender(input)).catch((e) => {
+        console.warn(`[notify] the ${input.kind} push failed (bell and email are unaffected): ${(e as Error)?.message ?? e}`);
+      }),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, PUSH_LEG_TIMEOUT_MS); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The BROWSER push leg: POST /api/push/notify with the member's own token,
+ *  fire-and-forget (`keepalive`, so it survives a navigation) — the emit's
+ *  caller never waits on it. The route pushes only for bell rows this member
+ *  wrote just now. An audience past PUSH_REQUEST_MAX_RECIPIENTS goes in
+ *  parts. Never throws. */
+function browserPushRequest(input: PushSendInput): void {
+  void (async () => {
+    try {
+      if (typeof fetch !== "function") return;
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      for (let i = 0; i < input.recipients.length; i += PUSH_REQUEST_MAX_RECIPIENTS) {
+        await fetch("/api/push/notify", {
+          method: "POST",
+          keepalive: true,
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            orgId: input.orgId, kind: input.kind, resourceId: input.resourceId,
+            recipients: input.recipients.slice(i, i + PUSH_REQUEST_MAX_RECIPIENTS),
+          }),
+        });
+      }
+    } catch (e) {
+      console.info(`[notify] the ${input.kind} push request did not go out (bell and email are unaffected): ${(e as Error)?.message ?? e}`);
+    }
+  })();
 }
 
 /** The workspace's name for the email's header and footer — read once per

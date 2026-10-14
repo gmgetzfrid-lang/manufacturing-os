@@ -1892,3 +1892,49 @@ describe("20261183 — DELIV-1 dw3: who queued an email, in the DEC-30 one-paste
     expect(src("lib/schemaExpectations.ts")).toContain('{ table: "email_notifications", column: "queued_by", migration: "20261183_notif_roundG_email_attribution.sql"');
   });
 });
+
+// notifications Round G — N10 PUSH (GAP-205; OS-2 done-when 4's cron half).
+// The cron only prunes push registrations — it never sends a push (the
+// sender runs inside emit() at the moment of the event) and adds no
+// vercel.json entry.
+describe("N10 (GAP-205) — step 7c: the device registrations of people with no active membership are pruned", () => {
+  it("a departed or suspended person's device goes; an active member's stays, in any workspace", async () => {
+    db.tables.org_members = [
+      member(ORG_A, U(1)), member(ORG_A, U(2), "suspended"),
+      member(ORG_B, U(3)), member(ORG_A, U(3), "removed"),
+    ];
+    db.tables.push_subscriptions = [
+      { id: "ps1", user_id: U(1), endpoint: "https://push.example/1" },
+      { id: "ps2", user_id: U(2), endpoint: "https://push.example/2" },
+      { id: "ps3", user_id: U(3), endpoint: "https://push.example/3" },
+      { id: "ps4", user_id: U(4), endpoint: "https://push.example/4" },
+    ];
+    const r = await runCron();
+    expect(r.pushSubscriptionsPruned).toBe(2);
+    expect(rows("push_subscriptions").map((x) => x.id)).toEqual(["ps1", "ps3"]);
+    expect(r.errors.filter((e) => e.startsWith("push-subscriptions"))).toEqual([]);
+  });
+
+  it("pages through every registration (more than one page)", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.push_subscriptions = Array.from({ length: 160 }, (_, i) => ({
+      id: `ps${String(i).padStart(3, "0")}`, user_id: i % 2 === 0 ? U(1) : U(500 + i), endpoint: `https://push.example/${i}`,
+    }));
+    const r = await runCron();
+    expect(r.pushSubscriptionsPruned).toBe(80);
+    expect(rows("push_subscriptions")).toHaveLength(80);
+    expect(rows("push_subscriptions").every((x) => x.user_id === U(1))).toBe(true);
+  });
+
+  it("an unreadable membership prunes nothing and says so; before 20260804 (no table) the step is silent", async () => {
+    db.tables.push_subscriptions = [{ id: "ps1", user_id: U(1), endpoint: "https://push.example/1" }];
+    db.readError.org_members = { message: "upstream timeout" };
+    let r = await runCron();
+    expect(rows("push_subscriptions")).toHaveLength(1);
+    expect(r.errors).toContain("push-subscriptions: memberships unreadable (upstream timeout) — nothing pruned from here");
+    db.readError = { push_subscriptions: { code: "42P01", message: 'relation "public.push_subscriptions" does not exist' } as { message: string } };
+    r = await runCron();
+    expect(r.errors.filter((e) => e.startsWith("push-subscriptions"))).toEqual([]);
+    expect(r.pushSubscriptionsPruned).toBe(0);
+  });
+});

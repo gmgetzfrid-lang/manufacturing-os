@@ -1,0 +1,319 @@
+// @vitest-environment jsdom
+//
+// notifications Round G — N10 PUSH (GAP-205; OS-3, OS-10, TAX-12):
+// components/settings/PushOptIn.tsx on the RENDERED card.
+//
+//   OS-3 dw1/dw3: the browser's permission dialog is reached only through
+//     the person's click, and the card says what will be sent BEFORE it.
+//   OS-3 dw3: "Not now" (or the dialog dismissed) is recorded and the card
+//     stops inviting.
+//   OS-3 dw4: a browser that blocked the site renders how to unblock it.
+//   OS-10 dw2: push_enabled is a real control, saved alone.
+//   OS-2 dw1 / TAX-12 dw1 / RT-7 dw2: registration.pushManager.subscribe(
+//     { userVisibleOnly: true, applicationServerKey }) from
+//     navigator.serviceWorker.ready, POSTed to /api/push/subscribe.
+//   GAP-205 acceptance 1: the opt-in from settings lands the row.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+const db = vi.hoisted(() => ({
+  prefRow: null as Record<string, unknown> | null,
+  prefError: null as { message: string } | null,
+  subRow: null as Record<string, unknown> | null,
+  upserts: [] as Array<{ table: string; row: Record<string, unknown>; opts: unknown }>,
+}));
+
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    from: (table: string) => {
+      const q: Record<string, unknown> = {};
+      Object.assign(q, {
+        select: () => q,
+        eq: () => q,
+        maybeSingle: async () => {
+          if (table === "notification_preferences") return { data: db.prefError ? null : db.prefRow, error: db.prefError };
+          if (table === "push_subscriptions") return { data: db.subRow, error: null };
+          throw new Error(`unexpected table ${table}`);
+        },
+        upsert: async (row: Record<string, unknown>, opts: unknown) => {
+          db.upserts.push({ table, row, opts });
+          return { data: null, error: null };
+        },
+      });
+      return q;
+    },
+    auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) },
+  },
+}));
+
+import PushOptIn, {
+  PUSH_WHAT_IS_SENT, PUSH_PRIVACY_NOTE, PUSH_DENIED_TEXT, PUSH_UNSUPPORTED_TEXT, PUSH_UNCONFIGURED_TEXT, PUSH_DECLINE_KEY,
+  urlBase64ToUint8Array,
+} from "@/components/settings/PushOptIn";
+import { KIND_META, NOTIFICATION_KINDS } from "@/lib/notificationKinds";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// A real-shaped VAPID public key (65 bytes, base64url).
+const PUBLIC_KEY = "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM";
+
+type Sub = { endpoint: string; options: { applicationServerKey: ArrayBuffer | null }; unsubscribe: ReturnType<typeof vi.fn>; toJSON: () => unknown };
+const env = {
+  permission: "default" as NotificationPermission,
+  requestResult: "granted" as NotificationPermission,
+  existing: null as Sub | null,
+  configured: true,
+  subscribeResult: 200,
+};
+const calls = {
+  requestPermission: vi.fn(),
+  subscribe: vi.fn(),
+  fetch: [] as Array<{ url: string; init?: RequestInit }>,
+};
+const makeSub = (endpoint = "https://fcm.googleapis.com/fcm/send/device-1", key: Uint8Array | null = urlBase64ToUint8Array(PUBLIC_KEY)): Sub => ({
+  endpoint,
+  options: { applicationServerKey: key ? key.buffer.slice(0) as ArrayBuffer : null },
+  unsubscribe: vi.fn(async () => true),
+  toJSON: () => ({ endpoint, keys: { p256dh: "p256dh-key", auth: "auth-key" } }),
+});
+
+function installBrowser(supported = true) {
+  const reg = {
+    pushManager: {
+      getSubscription: vi.fn(async () => env.existing),
+      subscribe: vi.fn(async (opts: unknown) => { calls.subscribe(opts); env.existing = makeSub(); return env.existing; }),
+    },
+  };
+  if (supported) {
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { ready: Promise.resolve(reg), getRegistration: vi.fn(async () => reg) },
+    });
+    (window as unknown as Record<string, unknown>).PushManager = function PushManager() { /* present */ };
+    (window as unknown as Record<string, unknown>).Notification = {
+      get permission() { return env.permission; },
+      requestPermission: vi.fn(async () => { calls.requestPermission(); env.permission = env.requestResult; return env.requestResult; }),
+    };
+  }
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    calls.fetch.push({ url, init });
+    if (url === "/api/push/subscribe" && (!init || !init.method || init.method === "GET")) {
+      return new Response(JSON.stringify({ configured: env.configured, publicKey: env.configured ? PUBLIC_KEY : null }), { status: 200 });
+    }
+    if (url === "/api/push/subscribe") {
+      return new Response(JSON.stringify(env.subscribeResult === 200 ? { ok: true } : { error: "Device notifications need a database update that has not been applied yet (20260804_push_subscriptions.sql). Nothing was changed." }), { status: env.subscribeResult });
+    }
+    if (url === "/api/push/unsubscribe") return new Response(JSON.stringify({ ok: true, removed: 1 }), { status: 200 });
+    return new Response("{}", { status: 404 });
+  }));
+  return reg;
+}
+function uninstallBrowser() {
+  try { delete (navigator as unknown as Record<string, unknown>).serviceWorker; } catch { /* jsdom */ }
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: undefined });
+  delete (window as unknown as Record<string, unknown>).PushManager;
+  delete (window as unknown as Record<string, unknown>).Notification;
+}
+
+let host: HTMLDivElement;
+let root: Root;
+beforeEach(() => {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  db.prefRow = null; db.prefError = null; db.subRow = null; db.upserts.length = 0;
+  env.permission = "default"; env.requestResult = "granted"; env.existing = null; env.configured = true; env.subscribeResult = 200;
+  calls.requestPermission.mockClear(); calls.subscribe.mockClear(); calls.fetch.length = 0;
+  window.localStorage.clear();
+});
+afterEach(() => {
+  act(() => root.unmount());
+  host.remove();
+  uninstallBrowser();
+  vi.unstubAllGlobals();
+});
+
+const flush = async () => { for (let i = 0; i < 8; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
+const mount = async (props = { uid: "u1", orgId: "o1" }) => {
+  await act(async () => { root.render(React.createElement(PushOptIn, props)); });
+  await flush();
+};
+const button = (text: RegExp) => [...host.querySelectorAll("button")].find((b) => text.test(b.textContent ?? "")) as HTMLButtonElement | undefined;
+const click = async (el: HTMLElement | undefined) => {
+  expect(el, "control present").toBeTruthy();
+  await act(async () => { el!.click(); });
+  await flush();
+};
+const deviceState = () => host.querySelector("[data-push-device]")?.getAttribute("data-push-device");
+const pushSwitch = () => host.querySelector('[role="switch"][aria-label="Device notifications"]') as HTMLButtonElement | null;
+
+describe("OS-3 — the permission prompt is reached only by a deliberate click, after the card says what will be sent", () => {
+  it("on load nothing asks: no requestPermission, no subscribe; the card offers 'Turn on notifications for this device'", async () => {
+    installBrowser();
+    await mount();
+    expect(deviceState()).toBe("off");
+    expect(calls.requestPermission).not.toHaveBeenCalled();
+    expect(calls.subscribe).not.toHaveBeenCalled();
+    expect(button(/Turn on notifications for this device/)).toBeTruthy();
+  });
+
+  it("the first click explains what will be sent — every push-worthy kind, and that the notification names nothing — and still asks nothing", async () => {
+    installBrowser();
+    await mount();
+    await click(button(/Turn on notifications for this device/));
+    const panel = host.querySelector("[data-push-explain]")!;
+    expect(panel).toBeTruthy();
+    for (const line of PUSH_WHAT_IS_SENT) expect(panel.textContent).toContain(line);
+    expect(panel.textContent).toContain(PUSH_PRIVACY_NOTE);
+    expect(panel.textContent).toMatch(/Your browser will ask for permission next/);
+    expect(calls.requestPermission).not.toHaveBeenCalled();
+    // one line per push-worthy kind (a kind made push-worthy updates this copy)
+    expect(PUSH_WHAT_IS_SENT).toHaveLength(NOTIFICATION_KINDS.filter((k) => (KIND_META[k] as { pushWorthy?: boolean }).pushWorthy).length);
+  });
+
+  it("acceptance 1: 'Allow notifications' → the browser's dialog → subscribe({ userVisibleOnly: true, applicationServerKey }) from serviceWorker.ready → the device POSTed → 'On for this device'", async () => {
+    installBrowser();
+    await mount();
+    await click(button(/Turn on notifications for this device/));
+    await click(button(/Allow notifications/));
+    expect(calls.requestPermission).toHaveBeenCalledTimes(1);
+    expect(calls.subscribe).toHaveBeenCalledTimes(1);
+    const opts = calls.subscribe.mock.calls[0][0] as { userVisibleOnly: boolean; applicationServerKey: Uint8Array };
+    expect(opts.userVisibleOnly).toBe(true);
+    expect([...opts.applicationServerKey]).toEqual([...urlBase64ToUint8Array(PUBLIC_KEY)]);
+    expect(opts.applicationServerKey).toHaveLength(65);
+    const post = calls.fetch.find((f) => f.url === "/api/push/subscribe" && f.init?.method === "POST")!;
+    expect((post.init!.headers as Record<string, string>).authorization).toBe("Bearer tok");
+    expect(JSON.parse(String(post.init!.body))).toEqual({
+      orgId: "o1",
+      subscription: { endpoint: "https://fcm.googleapis.com/fcm/send/device-1", keys: { p256dh: "p256dh-key", auth: "auth-key" } },
+    });
+    expect(deviceState()).toBe("on");
+    expect(host.textContent).toMatch(/On for this device/);
+  });
+
+  it("a server that refuses the device (20260804 not applied) says why, and the browser's subscription is taken back", async () => {
+    installBrowser();
+    env.subscribeResult = 503;
+    await mount();
+    await click(button(/Turn on notifications for this device/));
+    await click(button(/Allow notifications/));
+    expect(deviceState()).toBe("off");
+    expect(host.textContent).toMatch(/20260804_push_subscriptions\.sql/);
+    expect(env.existing!.unsubscribe).toHaveBeenCalled();
+  });
+
+  it("'Not now' is recorded (this account, this workspace) and the card stops inviting — the browser was never asked", async () => {
+    installBrowser();
+    await mount();
+    await click(button(/Turn on notifications for this device/));
+    await click(button(/Not now/));
+    expect(calls.requestPermission).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem(`dismissed:u1:o1:${PUSH_DECLINE_KEY}`)).toBe("1");
+    expect(host.textContent).toMatch(/You chose not to turn on notifications for this device\. The app will not ask again\./);
+    // remount: still recorded
+    act(() => root.unmount());
+    root = createRoot(host);
+    await mount();
+    expect(host.textContent).toMatch(/You chose not to turn on notifications for this device/);
+  });
+
+  it("the browser's dialog answered Block: the decline is recorded and the card shows how to unblock, not a dead control", async () => {
+    installBrowser();
+    env.requestResult = "denied";
+    await mount();
+    await click(button(/Turn on notifications for this device/));
+    await click(button(/Allow notifications/));
+    expect(deviceState()).toBe("denied");
+    expect(host.textContent).toContain(PUSH_DENIED_TEXT);
+    expect(button(/Turn on notifications for this device/)).toBeUndefined();
+    expect(window.localStorage.getItem(`dismissed:u1:o1:${PUSH_DECLINE_KEY}`)).toBe("1");
+    expect(calls.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("dw4: a site already blocked renders the explanatory state on load", async () => {
+    installBrowser();
+    env.permission = "denied";
+    await mount();
+    expect(deviceState()).toBe("denied");
+    expect(host.textContent).toContain(PUSH_DENIED_TEXT);
+    expect(button(/Turn on notifications/)).toBeUndefined();
+  });
+
+  it("a browser without push, or a server without VAPID keys, gets a sentence — no control, nothing asked", async () => {
+    installBrowser(false);
+    await mount();
+    expect(deviceState()).toBe("unsupported");
+    expect(host.textContent).toContain(PUSH_UNSUPPORTED_TEXT);
+    expect(calls.fetch).toHaveLength(0);
+    act(() => root.unmount());
+    root = createRoot(host);
+    installBrowser();
+    env.configured = false;
+    await mount();
+    expect(deviceState()).toBe("unconfigured");
+    expect(host.textContent).toContain(PUSH_UNCONFIGURED_TEXT);
+    expect(button(/Turn on notifications/)).toBeUndefined();
+  });
+});
+
+describe("this device, on and off", () => {
+  it("a device already on (its subscription made with this key, the row ours) loads as on; 'Turn off' unsubscribes and removes the row", async () => {
+    installBrowser();
+    env.permission = "granted";
+    env.existing = makeSub("https://push.example/mine");
+    db.subRow = { id: "s1" };
+    await mount();
+    expect(deviceState()).toBe("on");
+    const sub = env.existing;
+    await click(button(/Turn off for this device/));
+    expect(sub.unsubscribe).toHaveBeenCalled();
+    const off = calls.fetch.find((f) => f.url === "/api/push/unsubscribe")!;
+    expect(JSON.parse(String(off.init!.body))).toEqual({ endpoint: "https://push.example/mine" });
+    expect(deviceState()).toBe("off");
+  });
+
+  it("a subscription made with another key (the server's key rotated) reads as off, and turning on replaces it", async () => {
+    installBrowser();
+    env.permission = "granted";
+    const stale = makeSub("https://push.example/old", new Uint8Array(65).fill(7));
+    env.existing = stale;
+    db.subRow = { id: "s-old" };
+    await mount();
+    expect(deviceState()).toBe("off");
+    await click(button(/Turn on notifications for this device/));
+    await click(button(/Allow notifications/));
+    expect(stale.unsubscribe).toHaveBeenCalled();
+    expect(calls.subscribe).toHaveBeenCalledTimes(1);
+    expect(deviceState()).toBe("on");
+  });
+});
+
+describe("OS-10 done-when 2 — push_enabled is a real control, saved alone", () => {
+  it("reflects the stored value and saves ONLY push_enabled for this user (no other column)", async () => {
+    installBrowser(false);
+    db.prefRow = { push_enabled: false, email_enabled: false };
+    await mount();
+    expect(pushSwitch()!.getAttribute("aria-checked")).toBe("false");
+    await click(pushSwitch()!);
+    expect(db.upserts).toEqual([{ table: "notification_preferences", row: { user_id: "u1", push_enabled: true }, opts: { onConflict: "user_id" } }]);
+    expect(pushSwitch()!.getAttribute("aria-checked")).toBe("true");
+    expect(host.textContent).toMatch(/Saved/);
+  });
+
+  it("no row reads as the column default (on); an unreadable setting disables the switch instead of guessing", async () => {
+    installBrowser(false);
+    await mount();
+    expect(pushSwitch()!.getAttribute("aria-checked")).toBe("true");
+    act(() => root.unmount());
+    root = createRoot(host);
+    db.prefError = { message: "permission denied" };
+    await mount();
+    expect(pushSwitch()!.disabled).toBe(true);
+    expect(host.textContent).toMatch(/could not be read/);
+    await click(pushSwitch()!);
+    expect(db.upserts).toHaveLength(0);
+  });
+});
