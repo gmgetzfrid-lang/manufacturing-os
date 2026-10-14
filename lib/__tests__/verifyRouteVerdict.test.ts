@@ -397,9 +397,62 @@ describe("VFY-14 — the route selects only what it uses", () => {
     const docSel = state.selects.find((s) => s.table === "documents")!.cols;
     // VFY-15 (admin-and-org P12): org_id is read to pick the workspace's
     // calendar for the effective date; it is never in the response.
-    expect(docSel).toBe("id, org_id, document_number, title, name, rev, status, current_version_id, legal_hold");
+    // VFY-16 (intelligence I-12): visibility is read to decide whether the
+    // answer may name the document; it is never in the response either.
+    expect(docSel).toBe("id, org_id, document_number, title, name, rev, status, current_version_id, legal_hold, visibility");
     for (const s of state.selects) expect(s.cols).not.toContain("superseded_at");
     expect(state.selects.find((s) => s.table === "document_holds")!.cols).toBe("reason");
+  });
+});
+
+describe("VFY-16 (intelligence I-12) — a private or hidden document is answered without its number or title", () => {
+  const RESTRICTED = "Restricted document";
+  it("REGRESSION: a normal and a NULL visibility keep the number and title exactly as before (and the name fallback)", async () => {
+    state.doc = docWith("Issued", { visibility: "normal" });
+    let r = await verify();
+    expect(r).toMatchObject({ docNumber: "P-101", title: "P&ID", verdict: "current", isCurrent: true });
+    state.doc = docWith("Issued", { visibility: null });
+    r = await verify();
+    expect(r).toMatchObject({ docNumber: "P-101", title: "P&ID", verdict: "current" });
+    state.doc = docWith("Issued", { visibility: "normal", document_number: null, name: "legacy-name", title: null });
+    r = await verify();
+    expect(r).toMatchObject({ docNumber: "legacy-name", title: null });
+  });
+  for (const [label, extra] of [
+    ["private", { visibility: "private" }],
+    ["hidden", { visibility: "hidden" }],
+    ["an unknown value", { visibility: "secret" }],
+    ["an unread visibility (row without the column — treated as hidden)", {}],
+  ] as const) {
+    it(`${label}: number null, title "Restricted document"; the verdict, revisions, dates and holds unchanged; nothing in the body names it`, async () => {
+      state.doc = docWith("Issued", { ...extra, document_number: "INC-7", title: "Incident 7 investigation", name: "inc-7" });
+      const res = await call();
+      expect(res.status).toBe(200);
+      const r = (await res.json()) as Record<string, unknown>;
+      expect(r.docNumber).toBeNull();
+      expect(r.title).toBe(RESTRICTED);
+      expect(r).toMatchObject({ verdict: "current", isCurrent: true, printedRev: "5", currentRev: "5", onHold: false, activeHolds: 0, docStatus: "Issued" });
+      expect(JSON.stringify(r)).not.toMatch(/INC-7|Incident 7|inc-7/);
+      // the scan row is unchanged (target and verdict, never a label)
+      expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row.verdict)).toEqual(["current"]);
+    });
+  }
+  it("a restricted document's stale, held and retired answers are still given (the field can still pull the paper)", async () => {
+    state.doc = docWith("Issued", { visibility: "hidden" });
+    let r = await verify({ v: V_OLD });
+    expect(r).toMatchObject({ verdict: "superseded_version", printedRev: "4", docNumber: null, title: RESTRICTED });
+    state.holdRows = [{ reason: "Client Review" }];
+    r = await verify();
+    expect(r).toMatchObject({ verdict: "held", holdReasons: ["Client Review"], activeHolds: 1, docNumber: null, title: RESTRICTED });
+    state.holdRows = [];
+    state.doc = docWith("Void", { visibility: "private" });
+    expect((await verify()).verdict).toBe("void");
+  });
+  it("the route asks lib/verifyDisclosure — the one rule the pack and hold routes use", () => {
+    const src = readFileSync(join(process.cwd(), "app/api/verify/route.ts"), "utf8");
+    expect(src).toContain('import { RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";');
+    expect(src).toContain("docNumber: mayName ? d.document_number || d.name || null : null,");
+    expect(src).toContain("title: mayName ? d.title || null : RESTRICTED_DOCUMENT_LABEL,");
   });
 });
 

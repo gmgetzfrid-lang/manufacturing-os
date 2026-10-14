@@ -8,7 +8,10 @@
 //   * The response contains ONLY revision-status facts (doc number, title,
 //     printed rev vs current rev, dates, the document's status, and whether
 //     it is held — the hold's public CATEGORY only, never operator text) —
-//     no file access, no URLs, no content, no people.
+//     no file access, no URLs, no content, no people. A private or hidden
+//     document (or one whose visibility was not read) is answered without
+//     its number or title: number null, title "Restricted document"
+//     (public-surfaces VFY-16; intelligence DACL-8 / DACL-3, lib/verifyDisclosure).
 //   * Every answered scan leaves a row in verify_scans (endpoint, target,
 //     verdict, client IP / user agent — VFY-12) and counts toward a generous
 //     per-IP hourly cap; every answer is Cache-Control: no-store (VFY-13).
@@ -30,6 +33,7 @@ import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import type { DocVerdict } from "@/lib/verifyPresent";
+import { RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
 
 // A revision verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -54,6 +58,9 @@ interface DocRow {
   status: string | null;
   current_version_id: string | null;
   legal_hold: boolean | null;
+  // VFY-16: read only to decide whether the answer may name the document
+  // (lib/verifyDisclosure verifyMayNameDocument); never part of the response.
+  visibility?: string | null;
 }
 interface PrintedVersionRow { revision_label: string | null; created_at: string | null; record_id: string | null }
 interface CurrentVersionRow { created_at?: string | null; effective_date?: string | null }
@@ -83,7 +90,7 @@ export async function GET(req: NextRequest) {
 
   const { data: doc, error: docErr } = await sb
     .from("documents")
-    .select("id, org_id, document_number, title, name, rev, status, current_version_id, legal_hold")
+    .select("id, org_id, document_number, title, name, rev, status, current_version_id, legal_hold, visibility")
     .eq("id", docId)
     .maybeSingle();
   if (docErr) {
@@ -216,9 +223,13 @@ export async function GET(req: NextRequest) {
 
   await scan(verdict);
 
+  // VFY-16 (DEC-90 default; intelligence DACL-8 / DACL-3): the verdict,
+  // revisions, dates and holds are answered for every document; its number
+  // and title only when its row was read with visibility normal or unset.
+  const mayName = verifyMayNameDocument(d);
   return verifyJson({
-    docNumber: d.document_number || d.name || null,
-    title: d.title || null,
+    docNumber: mayName ? d.document_number || d.name || null : null,
+    title: mayName ? d.title || null : RESTRICTED_DOCUMENT_LABEL,
     printedRev: printed?.revision_label ?? null,
     printedAt: printed?.created_at ?? null,
     currentRev: d.rev ?? null,

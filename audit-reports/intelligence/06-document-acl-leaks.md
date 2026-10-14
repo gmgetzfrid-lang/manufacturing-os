@@ -188,6 +188,16 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 
 **Remaining / owner.** The `/api/verify` limb of `VFY-16`: the integrator wires it at the P12 merge (add `visibility` to the route's `documents` select; answer `docNumber: verifyMayNameDocument(d) ? … : null` and `title: verifyMayNameDocument(d) ? … : RESTRICTED_DOCUMENT_LABEL`, with a test on a private, a hidden and an unread visibility), then `VFY-16` and this criterion close by pointer. The "verify_tokens" alternative is `DACL-8` criterion 2 (owner named there).
 
+**Partial (2026-10-14, intelligence I-12, at the admin-and-org P12 merge).** The `/api/verify` limb named above is wired (`app/api/verify/route.ts:93`, `:229-232`; test `lib/__tests__/verifyRouteVerdict.test.ts:408`), so a private or hidden document's number and title no longer come back from a scanned or obtained UUID. Criterion 3 is still NOT closed, because it does not hold as written (`DEC-29`): it asks that `/api/verify` "requires BOTH doc and version ids and refuses documents whose visibility is private/hidden, or is scoped to versions that were actually stamped/issued". (a) The visibility limb holds on the `DEC-90` default's reading — the verdict is answered without number or title rather than refused. (b) The both-ids limb does not: a doc-only QR is still answered (`unverifiable`, never green, `DEC-65` §2), and for a normal document that answer still names it. It is kept deliberately — refusing it would take the held / retired answer away from every paper printed before `?v=` existed (`verifyRouteVerdict.test.ts` "a retired or held document still says so without ?v=", which this change leaves green). (c) The alternative, a token keyed to a printed copy, is `DACL-8` criterion 2 and is not built.
+
+**Done-when.**
+1. ✓ (as recorded).
+2. ✓ (as recorded).
+3. ◐ (a) ✓ on the default's reading; (b) ✗ (kept, above); (c) ✗.
+
+**Remaining / owner.** Criterion 3's (b) / (c) limb — both ids required once every live print carries a per-print id, or the per-print token itself.
+- **Owner:** public-surfaces PS-P9 PER-PRINT SHEET TOKEN — the package the integrator assigned `DACL-8` criterion 2 to (2026-10-14, at the I-12 merge); this is the same limb, so it is recorded there too (integrator to confirm at merge). `VFY-16` done-when 3 waits on it.
+
 ---
 
 <a id="dacl-4"></a>
@@ -476,6 +486,16 @@ Tests: `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-16 (intelligence I-12)
 3. ✓ With `?print=` the answer is exactly the printed sheets; without it, the verdict is answered as counts by state — no number, title or position of any member of the live membership (the `DEC-90` less-disclosing reading; the other reading recorded above — numbers for normal-visibility sheets once `VFY-16` withholds the rest — stays open to the integrator's ratification and would change only `legacyCoverStateRows`' caller).
 
 **Remaining / owner.** Criterion 1's `/api/verify` limb: the integrator at the P12 merge (the exact change is on `DACL-3`). Criterion 2: a new package the integrator queues under DEC-31 (proposed: public-surfaces "per-print sheet token" — a migration, the stamping path and `/api/verify`), on the less-disclosing default recorded above.
+
+**Partial (2026-10-14, intelligence I-12, at the admin-and-org P12 merge).** Criterion 1's last limb landed: `/api/verify` reads `visibility` with the document and answers a private, hidden, unknown or unread visibility with `docNumber` null and `title` "Restricted document" (`app/api/verify/route.ts:93`, `:229-232`, through `lib/verifyDisclosure.ts:30` `verifyMayNameDocument`), P12's workspace effective-date zone untouched. What such an answer still carries, stated so nobody reads more into "only 'current / superseded'": the verdict (`current`, `superseded_version`, `held`, `void`, …) and `isCurrent`, the printed and current revision labels, the printed / current-issue / effective dates, the hold count and the holds' public categories, and the document's status — no number, no title, no name, no id beyond the one scanned. Tests: `lib/__tests__/verifyRouteVerdict.test.ts:408` (private, hidden, an unknown value, an unread visibility; normal and NULL unchanged), beside the pack and hold tests recorded above.
+
+**Done-when.**
+1. ✓ — closed by pointer: public-surfaces `VFY-16` done-when 1 and 2 (all three document-bearing verify routes, each pinned including an unread visibility).
+2. ✗ Not built (as recorded): a sheet QR keyed to a per-print id recorded at stamping.
+3. ✓ (as recorded).
+
+**Remaining / owner.** Criterion 2.
+- **Assigned (2026-10-14, the integrator at the I-12 merge):** public-surfaces PS-P9 PER-PRINT SHEET TOKEN (criterion 2, the per-print sheet token).
 
 ---
 
