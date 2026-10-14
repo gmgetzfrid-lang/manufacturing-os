@@ -21,6 +21,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
+import { aiReadability } from "@/lib/aiBoundary";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { orIlikeContains, type ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge, type TraceStep } from "@/lib/pidTrace";
@@ -207,13 +208,8 @@ const findDocuments: ToolDef = {
     const q = String(args.query);
     const { data, error } = await supabaseAdmin
       .from("documents")
-      .select("id, document_number, title, rev, status, library_id, updated_at")
+      .select("id, document_number, title, rev, status, library_id, updated_at, ai_excluded, archived_at, current_version_id")
       .eq("org_id", ctx.orgId)
-      // PILLAR A. `ai_excluded` is the per-document carve-out a controller sets
-      // when a document must stay invisible to anything automated. It is
-      // honoured here explicitly because this code runs on the service-role
-      // key, where RLS would not stop us.
-      .eq("ai_excluded", false)
       // ORCH-6: the model's text is a quoted, escaped literal — a comma or a
       // parenthesis in a title no longer re-splits the filter list.
       .or(orIlikeContains(["document_number", "title"], q))
@@ -225,8 +221,22 @@ const findDocuments: ToolDef = {
     if (error) {
       return { data: { error: "The document lookup failed — this is NOT the same as finding nothing. Say it could not be checked.", matches: null } };
     }
+    // PILLAR A / KACL-9: the AI boundary is lib/aiBoundary aiReadability —
+    // the one function every AI door asks — honoured here explicitly because
+    // this code runs on the service-role key, where RLS would not stop us. A
+    // finder hands the model a document's IDENTITY, not its text, so the
+    // reason that binds here is `held_back` (ai_excluded: the per-document
+    // carve-out a controller sets when a document must stay invisible to
+    // anything automated); a superseded or file-less document is still found
+    // and named with its status, as before.
+    const rows = ((data ?? []) as Array<Record<string, unknown>>).filter((r) => aiReadability({
+      id: String(r.id),
+      status: (r.status as string | null) ?? null,
+      archivedAt: (r.archived_at as string | null) ?? null,
+      currentVersionId: (r.current_version_id as string | null) ?? null,
+      aiExcluded: r.ai_excluded === true,
+    }, true).reason !== "held_back");
     // SURF-7: only what the caller could open themselves.
-    const rows = (data ?? []) as Array<Record<string, unknown>>;
     const readable = await readableIds(ctx, rows.map((r) => String(r.id)));
     return {
       data: {

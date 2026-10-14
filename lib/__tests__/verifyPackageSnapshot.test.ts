@@ -908,3 +908,22 @@ describe("VFY-16 (intelligence I-12) — a private or hidden document's sheet is
     expect(((await verify(true)).sheets as Array<Record<string, unknown>>)[0].label).toBe("P-101");
   });
 });
+
+describe("DACL-8 criterion 3 (intelligence I-12) — a cover QR without a print id answers the verdict without the live membership's numbers or titles", () => {
+  it("reproduction → fix: each sheet of a legacy cover is named by its place ('Sheet 1', 'Sheet 2'), the verdict and the per-sheet state unchanged", async () => {
+    state.liveMembers.push({ document_id: DOC2, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1", status: "Draft" }));
+    const r = await verify(false);
+    const sheets = r.sheets as Array<Record<string, unknown>>;
+    expect(sheets.map((x) => x.label)).toEqual(["Sheet 1", "Sheet 2"]);
+    expect(JSON.stringify(r)).not.toMatch(/P-101|P-102|P&ID/);
+    expect(r.verdict).toBe("stale");
+    expect(r.printConfirmed).toBe(false);
+  });
+  it("regression: a cover QR that names its print still names every printed sheet", async () => {
+    state.print = printAt([sheetV2]);
+    const r = await verify(true);
+    expect((r.sheets as Array<Record<string, unknown>>)[0].label).toBe("P-101");
+    expect(r.verdict).toBe("current");
+  });
+});

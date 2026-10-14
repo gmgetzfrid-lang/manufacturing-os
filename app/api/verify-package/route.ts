@@ -45,7 +45,7 @@ import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import { isPackLeftOutCode } from "@/lib/packLeftOut";
 import type { NotPrintableReason, PackVerdict, SheetState } from "@/lib/verifyPresent";
-import { RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
+import { legacyCoverSheetLabel, RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
 
 // A pack verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -245,7 +245,7 @@ export async function GET(req: NextRequest) {
     return String(d?.document_number || d?.title || d?.name || fallback || "Document");
   };
 
-  const sheets = sources.map((s) => {
+  const sheets = sources.map((s, position) => {
     const d = byId.get(s.document_id);
     const reasons = holdsByDoc.get(s.document_id) ?? [];
     const held = !!d && (holdsUnreadable || d.legal_hold === true || reasons.length > 0);
@@ -263,7 +263,9 @@ export async function GET(req: NextRequest) {
     else if (effectiveStatusFor(d.current_version_id ? effectiveByVersion.get(d.current_version_id) : null) === "pending") state = "not_yet_effective";
     else state = "fresh";
     return {
-      label: labelOf(s.document_id, s.label),
+      // DACL-8 c3 (DEC-90 default): a legacy cover QR's list is the LIVE
+      // membership, not the paper — each sheet is named by its place only.
+      label: printConfirmed ? labelOf(s.document_id, s.label) : legacyCoverSheetLabel(position + 1),
       // A legacy QR records no printing: its live pin is not "what was printed".
       printedRev: printConfirmed ? s.rev_label : null,
       currentRev: d?.rev ?? null,

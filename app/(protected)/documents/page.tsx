@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { searchDocuments, type DocumentRow } from "@/lib/search";
 import { libraryIsPublicRead, libraryReadsByRole } from "@/lib/libraryAccess";
+import { normalizeDocNumber, normalizedNumberPattern } from "@/lib/docNumberMatch";
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
@@ -47,9 +48,6 @@ const safeLower = (v: unknown) => (typeof v === "string" ? v.toLowerCase() : "")
 // page asks the same function, so a direct URL never shows what this page
 // hides (libraryReadsByRole was this file's computeCanRead, unchanged).
 
-/** VFY-7: the identity a typed drawing number is matched on — case and
- *  punctuation forgiven ("2002 D 10001" is "2002-D-10001"). */
-const normalizeDocNumber = (v: string | null | undefined): string => (v ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 export default function DocumentsHomePage() {
   const router = useRouter();
@@ -100,9 +98,12 @@ export default function DocumentsHomePage() {
   // what this user could already search for.
   // VFY-7: the match is punctuation-forgiving at the query too — when the
   // search finds no exact normalized match, a second candidate read matches
-  // the typed characters in order across any separators (still under RLS,
-  // org-scoped), and only an EXACT normalized match is ever taken. Two or
-  // more exact matches open a chooser; none falls back to the search.
+  // the NORMALIZED number itself (still under RLS, org-scoped): an anchored,
+  // case-insensitive pattern that admits the typed letters and digits in
+  // order with only separators around and between them — exactly the
+  // numbers whose normalized form is the one typed, so no window of loose
+  // matches can crowd an exact one out. Only an EXACT normalized match is
+  // ever taken. Two or more open a chooser; none falls back to the search.
   const [shortLinkChoices, setShortLinkChoices] = useState<{ raw: string; rows: DocumentRow[] } | null>(null);
   useEffect(() => {
     if (!activeOrgId || typeof window === "undefined") return;
@@ -121,7 +122,7 @@ export default function DocumentsHomePage() {
           const { data } = await supabase.from("documents")
             .select("id, library_id, document_number, title, updated_at")
             .eq("org_id", activeOrgId)
-            .ilike("document_number", `%${norm.split("").join("%")}%`)
+            .regexIMatch("document_number", normalizedNumberPattern(norm))
             .order("updated_at", { ascending: false })
             .limit(200);
           take((data ?? []) as unknown as DocumentRow[]);

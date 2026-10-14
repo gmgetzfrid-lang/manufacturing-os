@@ -704,7 +704,10 @@ describe("DACL-9 / DACL-10 — the explorer's chains and the one library check (
 describe("VFY-7 — the short link's resolver: punctuation-forgiving at the query, a chooser for two exact matches", () => {
   it("source pins: an in-order character match across separators as the second candidate read, exact normalized matches only, a chooser for more than one, never rows[0]", () => {
     const home = readFileSync(join(process.cwd(), "app/(protected)/documents/page.tsx"), "utf8");
-    expect(home).toMatch(/\.ilike\("document_number", `%\$\{norm\.split\(""\)\.join\("%"\)\}%`\)/);
+    // the second candidate read matches the normalized number itself (an
+    // anchored ~* pattern), never a loose in-order window
+    expect(home).toMatch(/\.regexIMatch\("document_number", normalizedNumberPattern\(norm\)\)/);
+    expect(home).not.toMatch(/\.ilike\("document_number", `%\$\{norm/);
     expect(home).toMatch(/if \(normalizeDocNumber\(r\.document_number\) === norm\) exact\.set\(r\.id, r\);/);
     expect(home).toMatch(/else if \(hits\.length > 1\) \{[\s\S]*?setShortLinkChoices\(\{ raw, rows: hits \}\);/);
     expect(home).toContain("data-short-link-chooser");

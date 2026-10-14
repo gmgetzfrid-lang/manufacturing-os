@@ -289,7 +289,9 @@ export function containerReadable(
   const folder = landscape.folders.get(id);
   if (!folder) return false;
   const fc = folderChain(id, landscape);
-  if (!fc) return false;
+  // A rung missing (its library, or an ancestor its parent pointers name):
+  // unreadable to everyone but a controller (DEC-43).
+  if (!fc) return principal.isController;
   return chainReadable(fc.chain, fc.visibility, principal, effectiveOwnerFor(null, id, folder.library_id, landscape));
 }
 

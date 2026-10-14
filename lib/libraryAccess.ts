@@ -58,14 +58,22 @@ export function libraryIsPublicRead(lib: Pick<LibraryAccessFields, "readAccess">
  *  nothing: an allow of discover / read / download to every role in
  *  readAccess ∪ visibleTo. `undefined` for "ALL" (or a missing value —
  *  the home page reads that as "ALL" too) and whenever the ACL says
- *  something (the ACL is then the model). */
+ *  something (the ACL is then the model). A restricted list naming NO role
+ *  (the home page shows the library to no one but controllers) stands for a
+ *  private rung with no grant: a zero-rule normal ACL would say nothing
+ *  (lib/acl aclSaysSomething) and leave the contents open, so the rung is
+ *  marked private (hidden stays hidden) — a grant deeper in the tree still
+ *  merges in, as it does under any restricted library. */
 export function legacyLibraryAcl(lib: LibraryAccessFields): AccessControl | undefined {
   if (aclSaysSomething(lib.acl)) return undefined;
   if (lib.readAccess === "ALL" || lib.readAccess == null) return undefined;
   const roles = [...new Set([...toRoles(lib.readAccess), ...toRoles(lib.visibleTo)])];
+  const visibility: NodeVisibility = roles.length === 0
+    ? (lib.visibility === "hidden" ? "hidden" : "private")
+    : (lib.visibility ?? "normal");
   return {
     inherit: true,
-    visibility: lib.visibility ?? "normal",
+    visibility,
     rules: roles.map((r) => ({ effect: "allow" as const, subject: { type: "role" as const, id: r }, actions: ["discover", "read", "download"] as PermissionAction[] })),
   } as AccessControl;
 }

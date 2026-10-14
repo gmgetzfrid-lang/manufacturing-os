@@ -19,3 +19,15 @@ export function verifyMayNameDocument(row: { visibility?: unknown } | null | und
   if (!row || !("visibility" in row)) return false;
   return row.visibility === null || row.visibility === "normal";
 }
+
+/** DACL-8 criterion 3 (intelligence I-12, the DEC-90 less-disclosing
+ *  default): a work-pack cover QR WITHOUT a print id cannot say which
+ *  printing it is — its sheet list would be the package's LIVE membership,
+ *  which is not what the paper carries (it is never green, DEC-65 §2). Its
+ *  verdict is still answered, sheet by sheet, but each sheet is named only
+ *  by its place in the list, never by the live membership's number or
+ *  title. A cover QR that names its print (`?print=`) answers exactly the
+ *  printed sheets, named as before. */
+export function legacyCoverSheetLabel(position: number): string {
+  return `Sheet ${position}`;
+}
