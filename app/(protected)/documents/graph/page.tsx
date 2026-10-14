@@ -17,11 +17,12 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Search, X, Loader2, Waypoints, HardDrive, Sparkles, Plus, Trash2,
-  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye, Activity,
+  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye, Activity, Globe,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
-import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle } from "@/components/documents/FileGraph";
+import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
+import { globalGraphHref } from "@/lib/estate/lenses";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf, CONTAINER_TYPES } from "@/lib/fileFinder/fileTypes";
 import {
@@ -285,6 +286,21 @@ function GraphPageInner() {
     return { visible: [...vis.values()], collapsed, upNode };
   }, [nodes, nodeById, childrenOf, focusId, hits, activeIdx, ancestorsOf]);
 
+  // Entities the search resolved, drawn beside the files they relate to.
+  const satellites = useMemo<FileGraphSatellite[]>(() => {
+    if (!serverFind) return [];
+    const out: FileGraphSatellite[] = [];
+    for (const ent of serverFind.entities) {
+      const links: FileGraphSatellite["links"] = [];
+      for (const r of serverFind.results) for (const rel of r.relations) if (rel.node === ent.node && nodeById.has(r.id)) links.push({ to: r.id, kind: rel.rel });
+      if (ent.kind === "unit") for (const r of serverFind.results) if (nodeById.has(r.id) && entryById.get(r.id)?.unitCodes.includes(ent.node.slice(7))) links.push({ to: r.id, kind: "linked_unit" });
+      if (!links.length) continue;
+      out.push({ id: ent.node, label: ent.label, sub: ent.kind === "asset" ? `Equipment${ent.sub ? ` · ${ent.sub}` : ""}` : ent.kind === "unit" ? "Unit" : "Project",
+        color: ent.kind === "asset" ? "#059669" : ent.kind === "unit" ? "#7c3aed" : "#d97706", iconKey: ent.kind === "asset" ? "file" : ent.kind === "unit" ? "library" : "folder", href: ent.href, links });
+    }
+    return out;
+  }, [serverFind, nodeById, entryById]);
+
   const ranks = useMemo(() => {
     const m = new Map<string, number>();
     hits.slice(0, 9).forEach((h, i) => m.set(h.entry.id, i + 1));
@@ -327,13 +343,19 @@ function GraphPageInner() {
     return chain.map((id) => nodeById.get(id)).filter((n): n is FileGraphNode => !!n);
   }, [focusId, ancestorsOf, nodeById]);
 
-  // ?q= runs once data is in.
+  // ?q= runs once data is in; ?reveal=<node id> lands on that node.
   const ranInitial = useRef(false);
   useEffect(() => {
     if (ranInitial.current || !data) return;
     ranInitial.current = true;
     if (query.trim()) runSearch(query);
-  }, [data, query, runSearch]);
+    const rv = params.get("reveal");
+    if (rv && nodeById.has(rv)) {
+      const n = nodeById.get(rv)!;
+      if (n.kind === "file" || n.kind === "extfile") { if (n.parentId) setFocusId(n.parentId); setSelectedId(rv); window.setTimeout(() => graphRef.current?.focus(rv, 1.6), 120); }
+      else setFocusId(rv);
+    }
+  }, [data, query, runSearch, params, nodeById]);
 
   const removeChip = (chip: QueryChip) => {
     if (!parsed) return;
@@ -510,7 +532,8 @@ function GraphPageInner() {
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
-            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry} />
+            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry}
+              satellites={satellites} onSatellite={(sat) => { if (sat.href) window.location.assign(sat.href); else window.location.assign(globalGraphHref(sat.id)); }} />
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
             <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
@@ -540,6 +563,8 @@ function GraphPageInner() {
               )}
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
               <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
+              <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph — equipment, units, projects and documents in one web"
+                className={`rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 ${selectedId || focusId ? "" : "opacity-50 pointer-events-none"}`}><Globe className="w-3 h-3" /> Global view</Link>
               <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
                 {data ? `${data.libraries.length} libraries · ${data.folders.size} folders · ${data.entries.length} files` : "…"}
                 {listingEntries.length > 0 && ` · ${listingEntries.length} on drives`}
@@ -777,6 +802,7 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
         <div className="mt-2 flex items-center gap-3">
           <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
           <Link href={entry.href} className="text-xs font-semibold text-[var(--color-text-muted)] hover:underline">Go to it in the library</Link>
+          <Link href={globalGraphHref(entry.id)} className="text-xs font-semibold text-[var(--color-text-muted)] hover:underline inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global view</Link>
         </div>
       )}
       {entry.source === "listing" && (

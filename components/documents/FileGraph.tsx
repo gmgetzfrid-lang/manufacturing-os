@@ -42,6 +42,18 @@ export interface FileGraphLight {
   score: number;
 }
 
+/** An entity the search resolved (equipment, unit, project), drawn beside the
+ *  files it relates to with a dashed line per relationship. */
+export interface FileGraphSatellite {
+  id: string;
+  label: string;
+  sub?: string;
+  color: string;
+  iconKey: FileTypeInfo["key"];
+  href?: string;
+  links: Array<{ to: string; kind: "drawn_on" | "mentioned_in" | "tagged_to" | "filed_under" | "in_project" | "linked_unit" }>;
+}
+
 export interface FileGraphHandle {
   fit: () => void;
   /** Fly the camera to a node; `scale` is the zoom to land at. */
@@ -68,6 +80,8 @@ interface Props {
   onUp: () => void;
   /** A file was double-clicked. */
   onOpen: (id: string) => void;
+  satellites?: FileGraphSatellite[];
+  onSatellite?: (s: FileGraphSatellite) => void;
   className?: string;
 }
 
@@ -80,7 +94,7 @@ const isContainer = (k: FileNodeKind) => k !== "file" && k !== "extfile";
 interface Camera { x: number; y: number; scale: number }
 
 const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
-  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, className = "" }, ref,
+  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, satellites = [], onSatellite, className = "" }, ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { images, hostRef } = useIconImages();
@@ -98,6 +112,9 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   const collapsedRef = useRef(collapsed); useEffect(() => { collapsedRef.current = collapsed; }, [collapsed]);
   const ranksRef = useRef(ranks); useEffect(() => { ranksRef.current = ranks; }, [ranks]);
   const activeRef = useRef(activeId); useEffect(() => { activeRef.current = activeId; }, [activeId]);
+  const satRef = useRef(satellites); useEffect(() => { satRef.current = satellites; }, [satellites]);
+  /** Satellite positions, recomputed each frame from the files they link to. */
+  const satPos = useRef<Map<string, Placed>>(new Map());
   const upRef = useRef(upNode); useEffect(() => { upRef.current = upNode; }, [upNode]);
 
   const byId = useMemo(() => new Map(visible.map((n) => [n.id, n])), [visible]);
@@ -262,6 +279,43 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       }
       ctx.setLineDash([]);
 
+      // Satellites: each sits beside the centroid of the visible files it
+      // relates to, spread around it so several never overlap.
+      const sats = satRef.current;
+      const satsHere = sats.filter((sat) => sat.links.some((l) => pos.has(l.to)));
+      satsHere.forEach((sat, i) => {
+        let cx = 0, cy = 0, n = 0;
+        for (const l of sat.links) { const p = pos.get(l.to); if (p) { cx += p.x; cy += p.y; n++; } }
+        if (!n) return;
+        cx /= n; cy /= n;
+        const ang = -Math.PI / 2 + (i * 2 * Math.PI) / Math.max(1, satsHere.length);
+        const dist = 110 + Math.min(120, n * 6);
+        const target = { x: cx + Math.cos(ang) * dist, y: cy + Math.sin(ang) * dist };
+        const cur = satPos.current.get(sat.id) ?? target;
+        cur.x += (target.x - cur.x) * 0.2; cur.y += (target.y - cur.y) * 0.2;
+        satPos.current.set(sat.id, cur);
+        const LINK: Record<string, string> = { drawn_on: "rgba(14,165,233,0.8)", mentioned_in: "rgba(99,102,241,0.8)", tagged_to: "rgba(16,185,129,0.8)", filed_under: "rgba(217,119,6,0.8)", in_project: "rgba(245,158,11,0.8)", linked_unit: "rgba(124,58,237,0.8)" };
+        ctx.setLineDash([5 / s, 4 / s]); ctx.lineWidth = Math.max(1, 1.4 / s);
+        for (const l of sat.links) {
+          const p = pos.get(l.to);
+          if (!p) continue;
+          ctx.strokeStyle = LINK[l.kind] ?? "rgba(100,116,139,0.6)";
+          ctx.beginPath(); ctx.moveTo(cur.x, cur.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        const r = 20;
+        ctx.beginPath(); ctx.arc(cur.x, cur.y, r + 6, 0, Math.PI * 2); ctx.fillStyle = sat.color + "33"; ctx.fill();
+        ctx.beginPath(); ctx.arc(cur.x, cur.y, r, 0, Math.PI * 2); ctx.fillStyle = sat.color; ctx.fill();
+        ctx.lineWidth = hoverRef.current === `sat:${sat.id}` ? 3 : 1.5; ctx.strokeStyle = hoverRef.current === `sat:${sat.id}` ? "#0ea5e9" : "rgba(255,255,255,0.95)"; ctx.stroke();
+        const img = imagesRef.current.get(sat.iconKey);
+        if (img) ctx.drawImage(img, cur.x - r * 0.6, cur.y - r * 0.6, r * 1.2, r * 1.2);
+        ctx.font = "800 12px ui-sans-serif, system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        const tw = ctx.measureText(sat.label).width;
+        ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(cur.x - tw / 2 - 3, cur.y + r + 3, tw + 6, 16);
+        ctx.fillStyle = "#0f172a"; ctx.fillText(sat.label, cur.x, cur.y + r + 5);
+      });
+      for (const sat of sats) if (!satsHere.includes(sat)) satPos.current.delete(sat.id);
+
       // Nodes.
       const sel = selRef.current, hov = hoverRef.current, imgs = imagesRef.current, col = collapsedRef.current;
       ctx.textAlign = "center"; ctx.textBaseline = "top";
@@ -368,6 +422,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     let best: string | null = null, bestD = Infinity;
     const upP = upPosRef.current, up = upRef.current;
     if (up && upP && Math.hypot(upP.x - wx, upP.y - wy) < RADIUS[up.kind] * 0.8 + 4 / camRef.current.scale) return "__up__";
+    for (const [id, p] of satPos.current) if (Math.hypot(p.x - wx, p.y - wy) < 20 + 4 / camRef.current.scale) return `sat:${id}`;
     for (const n of visibleRef.current) {
       const p = posRef.current.get(n.id);
       if (!p) continue;
@@ -404,6 +459,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     const { x, y } = toWorld(e);
     const id = hit(x, y);
     if (id === "__up__") { onUp(); return; }
+    if (id?.startsWith("sat:")) { const sat = satRef.current.find((x) => `sat:${x.id}` === id); if (sat) onSatellite?.(sat); return; }
     const now = performance.now();
     const dbl = id && lastClick.current.id === id && now - lastClick.current.at < 350;
     lastClick.current = { id, at: now };
@@ -417,7 +473,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     if (p) { const scale = Math.max(camRef.current.scale, 1.5); camTarget.current = { scale, x: -p.x * scale, y: -p.y * scale }; }
   };
 
-  const hoverNode = hoverId === "__up__" ? upNode : hoverId ? byId.get(hoverId) : null;
+  const hoverSat = hoverId?.startsWith("sat:") ? satellites.find((x) => `sat:${x.id}` === hoverId) : null;
+  const hoverNode = hoverId === "__up__" ? upNode : hoverSat ? { id: hoverSat.id, kind: "file" as const, label: hoverSat.label, parentId: null, childCount: 0, type: { key: hoverSat.iconKey, label: hoverSat.sub ?? "Entity", color: hoverSat.color, ext: "" } } : hoverId ? byId.get(hoverId) : null;
 
   return (
     <div className={`relative w-full h-full ${className}`}>
@@ -441,7 +498,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         >
           <div className="font-bold truncate">{hoverNode.label}</div>
           <div className="text-[var(--color-text-muted)]">
-            {hoverId === "__up__" ? "Click to go back up" : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
+            {hoverId === "__up__" ? "Click to go back up" : hoverSat ? `${hoverSat.sub ?? "Entity"} · ${hoverSat.links.length} linked file${hoverSat.links.length === 1 ? "" : "s"} · click to open` : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
           </div>
         </div>
       )}

@@ -14,10 +14,12 @@
 // want the document do you open it, and even then you can come straight back.
 
 import React from "react";
+import Link from "next/link";
 import {
   X, ArrowUpRight, ArrowLeft, Focus, Crosshair, Quote, Loader2,
-  CornerDownLeft, Layers, FileText, Link2,
+  CornerDownLeft, Layers, FileText, Link2, Waypoints,
 } from "lucide-react";
+import { documentsGraphHref } from "@/lib/estate/lenses";
 import type { GraphNode } from "@/lib/orgGraph";
 import { mentionsForAsset, mentionsForDocument, type MentionEvidence } from "@/lib/mentions";
 
@@ -185,6 +187,12 @@ export default function NodePeek({
           className="w-full inline-flex items-center justify-center gap-1 text-[11px] font-black text-white bg-violet-600 hover:bg-violet-500 rounded-lg px-2 py-1.5">
           Open {labelFor(node.type).replace(/s$/, "").toLowerCase()} <ArrowUpRight className="w-3.5 h-3.5" />
         </button>
+        {(node.type === "document" || node.type === "asset" || node.type === "unit" || node.type === "project") && (
+          <Link href={documentsGraphHref(node.id, node.label)}
+            className="mt-1.5 w-full inline-flex items-center justify-center gap-1 text-[11px] font-black text-sky-700 border border-sky-200 dark:border-sky-800 rounded-lg px-2 py-1.5 hover:bg-sky-50 dark:hover:bg-sky-950/40">
+            <Waypoints className="w-3.5 h-3.5" /> {node.type === "document" ? "Find it on the Documents map" : "Everything filed about it, on the Documents map"}
+          </Link>
+        )}
       </div>
     </div>
   );
