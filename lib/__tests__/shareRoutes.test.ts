@@ -107,6 +107,9 @@ const state = vi.hoisted(() => ({
   // the order the bytes, the stamp and the two record writes happened in
   seq: [] as string[],
   versionError: null as null | { message: string },
+  // KACL-12 (I-12 third review fix): the seam's own documents-row read
+  // (readableControlledDocIds' `.in("id", …)`, never a maybeSingle) errors
+  docsReadError: null as null | { message: string },
 }));
 
 function makeClient() {
@@ -124,6 +127,7 @@ function makeClient() {
         return { data: err ? null : [payload], error: err ?? null };
       }
       if (op === "update") return { data: state.updateRows, error: null };
+      if (table === "documents" && state.docsReadError) return { data: null, error: state.docsReadError };
       if (table === "document_holds") return state.holds;
       if (table === "team_members") return state.teams;
       if (table === "document_acknowledgments") return state.acks;
@@ -228,6 +232,7 @@ beforeEach(() => {
   state.audits = [];
   state.seq = [];
   state.versionError = null;
+  state.docsReadError = null;
   stamp.calls = [];
   r2.send.mockClear();
 });
@@ -691,6 +696,31 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect((await fileGet()).status).toBe(410);
     expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ reason: "authority_lapsed" })]);
     err.mockRestore();
+  });
+  it("KACL-12 (intelligence I-12 third review fix): through the REAL shareAuthority, a creator's document chain whose documents-row read fails answers 503 'unavailable' / authority_unverified — it read as 'no rows' and answered 410 'revoked' / authority_lapsed; a row that is truly gone is still a lapse", async () => {
+    const actual = await vi.importActual<typeof import("@/lib/shareAuthorization")>("@/lib/shareAuthorization");
+    const { shareAuthority } = await import("@/lib/shareAuthorization");
+    vi.mocked(shareAuthority).mockImplementation(actual.shareAuthority);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // a non-controller creator, so the chain is asked (a controller is answered before any read)
+      state.creatorMember = { role: "Engineer", roles: ["Engineer"] };
+      state.docsReadError = { message: "canceling statement due to statement timeout" };
+      state.inserts = [];
+      r2.send.mockClear();
+      const res = await fileGet();
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "unavailable", unreadable: true });
+      expect(r2.send).not.toHaveBeenCalled();
+      expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "authority_unverified" })]);
+      // control: the read answers and the creator can no longer reach the row → revoked, as before
+      state.docsReadError = null; state.inserts = [];
+      expect((await fileGet()).status).toBe(410);
+      expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ reason: "authority_lapsed" })]);
+    } finally {
+      err.mockRestore();
+      vi.mocked(shareAuthority).mockImplementation(async () => (state.authorized === "unknown" ? "unknown" : state.authorized ? "ok" : "lapsed"));
+    }
   });
   it("a refused attempt on a KNOWN share leaves one 'refused' access row with the reason, IP and UA (SHR-10); an unknown token leaves none", async () => {
     const cases: Array<[Row, Row | null, boolean, string, number]> = [

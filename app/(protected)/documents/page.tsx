@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { searchDocuments, type DocumentRow } from "@/lib/search";
 import { libraryIsPublicRead, libraryReadsByRole } from "@/lib/libraryAccess";
-import { shortLinkExactMatches } from "@/lib/docNumberMatch";
+import { shortLinkExactMatches, shortLinkMatchState, isCurrentMatch } from "@/lib/docNumberMatch";
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
@@ -107,7 +107,10 @@ export default function DocumentsHomePage() {
   // match, so "P-101" found by the search hid "P101"). Only an EXACT
   // normalized match is ever taken. Two or more open a chooser; none — or a
   // read that failed, when one match cannot be told from two — falls back
-  // to the search.
+  // to the search. The chooser lists documents in force first and shows each
+  // row's revision, status and "archived" (I-12 third review fix: a
+  // superseded row sharing the current one's number looked the same — both
+  // reads now select status, rev and archived_at; searchDocuments selects *).
   const [shortLinkChoices, setShortLinkChoices] = useState<{ raw: string; rows: DocumentRow[] } | null>(null);
   useEffect(() => {
     if (!activeOrgId || typeof window === "undefined") return;
@@ -121,7 +124,7 @@ export default function DocumentsHomePage() {
           search: (q) => searchDocuments({ orgId: activeOrgId, query: q, limit: 25 }),
           normalized: async (pattern) => {
             const { data, error } = await supabase.from("documents")
-              .select("id, library_id, document_number, title, updated_at")
+              .select("id, library_id, document_number, title, rev, status, archived_at, updated_at")
               .eq("org_id", activeOrgId)
               .regexIMatch("document_number", pattern)
               .order("updated_at", { ascending: false })
@@ -448,6 +451,14 @@ export default function DocumentsHomePage() {
                     <FileText className="h-4 w-4 text-[var(--color-text-faint)]" />
                     <span className="font-bold">{r.document_number}</span>
                     {r.title && <span className="text-[var(--color-text-muted)]">{r.title}</span>}
+                    {shortLinkMatchState(r) && (
+                      <span
+                        className={`text-xs ${isCurrentMatch(r) ? "text-[var(--color-text-muted)]" : "font-bold text-amber-700"}`}
+                        data-short-link-state={isCurrentMatch(r) ? "current" : "not-current"}
+                      >
+                        {shortLinkMatchState(r)}
+                      </span>
+                    )}
                     <span className="ml-auto text-xs text-[var(--color-text-faint)]">{libById.get(r.library_id)?.name ?? "Library"}</span>
                   </Link>
                 </li>

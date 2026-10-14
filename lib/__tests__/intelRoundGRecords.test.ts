@@ -41,9 +41,13 @@
 // reproduced here (lib/__tests__/intelRoundGDocAcl.test.ts pages it).
 //
 // Since intelligence I-12 (2026-10-14) all four hold: loadDcLandscape throws
-// on a failed container read, loadPrincipal answers no principal on a failed
-// team_members read, and a chain is never evaluated with a rung missing — the
-// four cases are plain `it`.
+// on a failed container read, loadPrincipal THROWS PrincipalUnreadableError
+// on a failed team_members read (superseded wording: the first build answered
+// no principal; since the I-12 second review fix it throws, and the routes
+// answer 503 "try again", never 403 "Not a member"), the container reads page
+// by keyset until an empty page, readableControlledDocIds throws on a failed
+// documents read (I-12 third review fix), and a chain is never evaluated with
+// a rung missing — the four cases are plain `it`.
 //
 // DACL-2 criterion 1 (a key belonging to a held document is refused) did not
 // hold for a revision's NATIVE SOURCE file when this file was written:
@@ -317,14 +321,17 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 2 and 3: a FOLDER-level ACL re
     expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual(["INC-0042", "STD-0007", "Site note"]);
   });
 
-  it("fails CLOSED: when the seam cannot read the documents' own ACL rows, nothing controlled is returned (upload-origin passages only)", async () => {
+  it("fails CLOSED: when the seam cannot read the documents' own ACL rows it THROWS (I-12 third review fix — it read as 'no rows'), so nothing controlled is returned and the passage hop hides everything, as for any seam throw", async () => {
     seed(null);
     const viewer = await ctxFor("u-viewer");
     // find_documents' own candidate query still succeeds (it is not an
     // `.in("id", …)` read); only readableControlledDocIds' row read fails.
     db.failIn.add("documents");
     expect(matchIds(await run("find_documents", { query: "flare" }, viewer))).toEqual([]);
-    expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual(["Site note"]);
+    // unreadableMirrors treats every id as unreadable when the seam throws
+    // (lib/orchestrator/tools.ts) — the upload-origin note included, as on a
+    // landscape read failure; it came back while the failure read as "no rows".
+    expect(passageDocs(await run("search_documents", { query: "knockout drum" }, viewer))).toEqual([]);
   });
 
   it("fails CLOSED on the mirror hop: when knowledge_documents cannot be read, every returned knowledge document is hidden", async () => {

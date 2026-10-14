@@ -190,6 +190,17 @@ export function aclSaysSomething(acl: AccessControl | null | undefined): boolean
   return acl.visibility === "hidden" || acl.visibility === "private";
 }
 
+/** DACL-9 (I-12 third review fix): what the node below a non-inheriting one
+ *  keeps of the rules merged so far (the non-inheriting node's own — its
+ *  reset already cleared its ancestors'): its DENIES. The old rule reset
+ *  here and dropped them (fail-open); its GRANTS are still dropped, as the
+ *  old rule did, because carrying them widens access — the half that waits
+ *  for the integrator's DEC-90 ruling. Strictly narrower than the old rule,
+ *  in the app and in acl_index alike. */
+function withheldGrantsDropped(rules: AccessRule[]): AccessRule[] {
+  return rules.filter((r) => r != null && r.effect === "deny");
+}
+
 export function evaluateAclChain(
   chain: Array<AccessControl | undefined>,
   ctx: SubjectContext
@@ -206,13 +217,21 @@ export function evaluateAclChain(
     const nodeInherit = acl.inherit !== false;
 
     // DACL-9 (intelligence I-12 review fix): `inherit: false` on a node
-    // clears its ANCESTORS' rules — on that node's own step only. It used to
-    // test the previous node's flag too, so the node BELOW a non-inheriting
-    // one cleared the non-inheriting node's own rules (a folder's deny was
-    // dropped and an allow on the document below won).
+    // clears its ANCESTORS' rules — on that node's own step. It used to test
+    // the previous node's flag too, so the node BELOW a non-inheriting one
+    // cleared the non-inheriting node's own rules (a folder's deny was
+    // dropped and an allow on the document below won — fail-open).
     if (!nodeInherit) {
       mergedRules = [];
       visibility = "normal";
+    } else if (!inherit) {
+      // …the node below a non-inheriting one now KEEPS that node's denies
+      // (and its visibility) — the narrowing half. Its GRANTS are still
+      // dropped there, as before (I-12 third review fix): carrying them would
+      // widen access, which waits for a DEC-90 ruling (sized by 20261212's
+      // DACL-9 inventory) — to land it, delete this branch here and in
+      // buildAclIndexFromChain together.
+      mergedRules = withheldGrantsDropped(mergedRules);
     }
 
     mergedRules = mergedRules.concat(acl.rules ?? []);
@@ -386,17 +405,25 @@ export function buildAclIndexFromChain(chain: Array<AccessControl | undefined>, 
   if (!chain.some(Boolean)) return null;
 
   let mergedRules: AccessRule[] = [];
+  let inherit = true;
 
   for (const acl of chain) {
     if (!acl) continue;
 
-    // DACL-9 (I-12 review fix): reset on the node's OWN inherit:false only —
-    // evaluateAclChain's rule, so the index and the app agree.
-    if (acl.inherit === false) {
+    const nodeInherit = acl.inherit !== false;
+
+    // DACL-9 (I-12 review fix): evaluateAclChain's rule, so the index and the
+    // app agree — a full reset on the node's OWN inherit:false; the node below
+    // it keeps that node's denies and (I-12 third review fix) still drops its
+    // grants until the DEC-90 ruling on the widening half.
+    if (!nodeInherit) {
       mergedRules = [];
+    } else if (!inherit) {
+      mergedRules = withheldGrantsDropped(mergedRules);
     }
 
     mergedRules = mergedRules.concat(acl.rules ?? []);
+    inherit = nodeInherit;
   }
 
   return buildAclIndexFromRules(mergedRules, nowMs);

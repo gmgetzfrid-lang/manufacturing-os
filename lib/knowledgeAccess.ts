@@ -30,6 +30,10 @@
 // shifts another out of the read); and a document or folder whose library or
 // folder is absent from the landscape is unreadable to everyone but a
 // controller (its chain is never evaluated with a rung missing).
+// readableControlledDocIds throws the same error when the documents' own rows
+// cannot be read (I-12 third review fix: that read's error was dropped and a
+// timeout read as "unreadable" — share serving then said "revoked" and wrote
+// `authority_lapsed` for a temporary failure).
 //
 // DACL-10 (review fix): the library rung is lib/libraryAccess
 // effectiveLibraryAclFromRow — the library's ACL, or, for a legacy row whose
@@ -150,13 +154,16 @@ export function chainReadable(
 }
 
 /** KACL-12: the landscape could not be read in full — a libraries, folders
- *  or teams read failed. Every caller fails closed on it: the readable set is
- *  never computed from a partial landscape (readableControlledDocIds lets it
- *  propagate to its callers, which drop everything controlled), and the
- *  direct callers answer 503 or skip the library. */
+ *  or teams read failed — or (`what: "documents"`, I-12 third review fix)
+ *  readableControlledDocIds could not read the documents' own rows. Every
+ *  caller fails closed on it: the readable set is never computed from a
+ *  partial read (readableControlledDocIds lets it propagate to its callers,
+ *  which drop everything controlled; share serving answers "unavailable",
+ *  never "revoked"), and the direct callers answer 503 or skip the library.
+ *  A TEMPORARY condition, never a verdict. */
 export class DcLandscapeUnreadableError extends Error {
-  constructor(readonly what: "libraries" | "folders" | "teams", detail: string) {
-    super(`The document ${what === "folders" ? "folders" : what} (and their access rules) could not be read: ${detail}`);
+  constructor(readonly what: "libraries" | "folders" | "teams" | "documents", detail: string) {
+    super(`${what === "documents" ? "The documents" : `The document ${what}`} (and their access rules) could not be read: ${detail}`);
     this.name = "DcLandscapeUnreadableError";
   }
 }
@@ -411,10 +418,14 @@ function documentContainerChain(
  *  the full chain (library → folder lineage → document) per doc.
  *
  *  KACL-12: THROWS DcLandscapeUnreadableError when the landscape cannot be
- *  read in full — every caller already fails closed on a throw (the orchestrator's tools
- *  and chips, the ask route, drawing, locate, share serving and listing,
- *  the history filter, /api/flows/browse). A document whose library or
- *  folder is absent from the landscape is not readable. */
+ *  read in full, or (I-12 third review fix) when the documents' own rows
+ *  cannot be read — every caller already fails closed on a throw (the
+ *  orchestrator's tools and chips, the ask route, drawing, locate, share
+ *  serving and listing, the history filter, /api/flows/browse), and share
+ *  serving (lib/shareAuthorization shareAuthority) tells it apart as
+ *  "unknown" — 503 "unavailable", never "revoked". A document whose library
+ *  or folder is absent from the landscape is not readable; a document id
+ *  with no row (deleted, or another org's) is not readable. */
 export async function readableControlledDocIds(
   principal: KnowledgePrincipal,
   docIds: string[],
@@ -426,12 +437,15 @@ export async function readableControlledDocIds(
   const landscape = await loadDcLandscape(principal.orgId);
   const docs: DocAclRow[] = [];
   for (let i = 0; i < docIds.length; i += 100) {
-    // A failed read of the documents' own rows reads as "no rows": nothing
-    // in that slice is readable (closed), as before.
-    const { data } = await supabaseAdmin
+    // A failed read of the documents' own rows THROWS (I-12 third review
+    // fix): it read as "no rows" — closed, but a caller could not tell a
+    // timeout from "not readable", so share serving answered "revoked" and
+    // recorded `authority_lapsed` for a temporary failure.
+    const { data, error } = await supabaseAdmin
       .from("documents")
       .select("id, library_id, collection_id, acl, visibility, is_private, scope, created_by, owner_user_id")
       .in("id", docIds.slice(i, i + 100));
+    if (error) throw new DcLandscapeUnreadableError("documents", error.message ?? String(error));
     docs.push(...((data ?? []) as DocAclRow[]));
   }
 

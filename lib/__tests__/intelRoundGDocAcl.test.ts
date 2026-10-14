@@ -23,6 +23,11 @@
 //            library is not blanked; the DB's answer.
 //   KACL-10  the sync fails closed on an errored held-back read and removes
 //            a mirror whose document was held back while it ran.
+//
+// Third review fix: the seam's own documents-row read throws (KACL-12 — a
+// timeout is "unknown" to share serving, never "revoked"); the inherit fix's
+// GRANT half is withheld until a DEC-90 ruling (DACL-9 — strictly narrower
+// than the old rule); the sync's held-back read pages by keyset (KACL-10).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -339,6 +344,21 @@ describe("KACL-12 — the seam fails CLOSED on its own reads", () => {
     expect(await shareAuthority(ORG, "u-viewer", DOC)).toBe("ok");
     expect(await shareAuthority(ORG, "u-gone", DOC)).toBe("lapsed");
   });
+  it("third review fix: a failed read of the documents' OWN rows throws DcLandscapeUnreadableError('documents') — it read as 'no rows', so share serving said 'revoked' for a timeout — and shareAuthority calls it 'unknown'; a document id with no row is still unreadable (no throw)", async () => {
+    seed();
+    db.errors.documents = { message: "canceling statement due to statement timeout" };
+    await expect(readableControlledDocIds(await viewer(), [DOC])).rejects.toMatchObject({ name: "DcLandscapeUnreadableError", what: "documents" });
+    await expect(readableControlledDocIds(await viewer(), [DOC])).rejects.toThrow(/^The documents \(and their access rules\) could not be read: canceling statement/);
+    const { shareAuthority } = await import("@/lib/shareAuthorization");
+    expect(await shareAuthority(ORG, "u-viewer", DOC)).toBe("unknown");                // was "lapsed"
+    // a controller is answered before any read (DEC-43), as before
+    expect([...await readableControlledDocIds((await loadPrincipal(ORG, "u-dc")) as KnowledgePrincipal, [DOC])]).toEqual([DOC]);
+    // control: the read answers and the row is gone → unreadable, a lapse
+    seed();
+    db.tables.documents = [];
+    expect([...await readableControlledDocIds(await viewer(), [DOC])]).toEqual([]);
+    expect(await shareAuthority(ORG, "u-viewer", DOC)).toBe("lapsed");
+  });
   it("done-when 3: a document whose folder is absent from the landscape, or whose folder's ancestor is, is unreadable; a folder whose library is absent is not a readable container", async () => {
     seed();
     db.tables.documents[0].collection_id = "99999999-9999-4999-8999-999999999999";
@@ -522,6 +542,28 @@ describe("KACL-10 — the sync's held-back read fails closed, and a flip during 
     const out = await syncKnowledgeLibrarySources("kl-1");
     expect(out.added).toBe(1);
     expect(out.errors).toEqual([]);
+  });
+  it("third review fix: the held-back read pages by KEYSET until an empty page — under a project max-rows below the page size, the held-back documents past the first page are still held back and none becomes a pending mirror (the offset loop stopped at the first short page)", async () => {
+    seedSync();
+    // 600 held-back PDFs, stored newest-id first so the (unordered) source
+    // enumeration meets the ones a 500-row first page of the id-ordered
+    // held-back read would miss
+    const held = Array.from({ length: 600 }, (_, i) => `h-${String(599 - i).padStart(4, "0")}`).map((id) => ({
+      ...db.tables.documents[0], id, document_number: id.toUpperCase(), current_version_id: `v-${id}`, ai_excluded: true,
+    }));
+    db.tables.documents.push(...held);
+    db.tables.document_versions.push(...held.map((d) => ({
+      id: `v-${d.id}`, record_id: d.id, file_url: `orgs/${ORG}/libraries/${LIB}/${d.id}.pdf`, file_type: "application/pdf",
+      archived_at: null, archive_id: null, revision_label: "A", size: 10,
+    })));
+    db.maxRows = 500; // below HELD_BACK_PAGE (1000): every page comes back short
+    const out = await syncKnowledgeLibrarySources("kl-1");
+    expect(out.errors).toEqual([]);
+    const insertedSources = db.inserts.filter((i) => i.table === "knowledge_documents")
+      .flatMap((i) => (Array.isArray(i.row) ? i.row : [i.row]) as Row[]).map((r) => r.source_document_id);
+    expect(insertedSources).toEqual([DOC]);   // the offset read inserted h-0500…h-0599 as pending mirrors, then removed them
+    expect(out.added).toBe(1);
+    expect(out.removed).toBe(0);
   });
   it("done-when 2: a document held back WHILE the pass runs (after its first read) never keeps a mirror — the pass re-reads the flag after inserting and removes it", async () => {
     seedSync();
@@ -908,12 +950,55 @@ describe("DACL-9 (review fix) — inherit:false resets on the node's OWN step on
     expect(idx?.deny.teams?.read).toContain("T-x");
     expect(canReadViaIndex(idx, { ...ctxX, isActiveMember: true } as Principal)).toBe(false);
   });
-  it("a node's own inherit:false still clears its ancestors' rules (a library deny above it no longer applies); the node below keeps the node's grants", () => {
+  it("a node's own inherit:false still clears its ancestors' rules (a library deny above it no longer applies)", () => {
     const lib = acl([deny("team", "T-x", ["read"])]) as AccessControl;
     const restart = acl([allow("team", "T-x", ["read"])], "normal", false) as AccessControl;
     expect(evaluateAclChain([lib, restart], ctxX)?.can("read")).toBe(true);
-    expect(evaluateAclChain([lib, restart, acl([]) as AccessControl], ctxX)?.can("read")).toBe(true);     // was false: the next node cleared restart's grant
-    expect(buildAclIndexFromChain([lib, restart, acl([]) as AccessControl], Date.now())?.allow.teams?.read).toEqual(["T-x"]);
+    expect(buildAclIndexFromChain([lib, restart], Date.now())?.deny.teams?.read ?? []).toEqual([]);
+  });
+  it("third review fix — the WIDENING half is withheld until the DEC-90 ruling: the node below a non-inheriting one still drops that node's GRANTS (as the old rule did), in the app and in the index alike", () => {
+    const lib = acl([deny("team", "T-x", ["read"])]) as AccessControl;
+    const restart = acl([allow("team", "T-x", ["read"])], "normal", false) as AccessControl;
+    const below = acl([]) as AccessControl;
+    expect(evaluateAclChain([lib, restart, below], ctxX)?.can("read")).toBe(false);                     // as before the fix
+    expect(buildAclIndexFromChain([lib, restart, below], Date.now())?.allow.teams?.read ?? []).toEqual([]);
+    // …while the same node's DENIES and visibility now carry (the narrowing half)
+    const restartDeny = acl([allow("org", ORG, ["read"]), deny("team", "T-x", ["read"])], "private", false) as AccessControl;
+    const docOwn = acl([allow("team", "T-x", ["discover", "read"])]) as AccessControl;
+    expect(evaluateAclChain([lib, restartDeny, docOwn], ctxX)?.can("read")).toBe(false);
+    expect(evaluateAclChain([lib, restartDeny, { inherit: true, rules: [] } as AccessControl], ctxX)?.visibility).toBe("private");
+    const idx = buildAclIndexFromChain([lib, restartDeny, docOwn], Date.now());
+    expect(idx?.deny.teams?.read).toEqual(["T-x"]);
+    expect(idx?.allow.orgs?.read ?? []).toEqual([]);                                                   // the org grant is withheld below
+    expect(idx?.allow.teams?.read).toEqual(["T-x"]);                                                   // the document's own grant stands (the deny wins)
+  });
+  it("third review fix — strictly narrower than the old rule: on every chain of up to three nodes over these rules, a reader the new evaluation admits the old one admitted too", () => {
+    const oldEval = (chain: AccessControl[]) => {
+      // the rule before the DACL-9 fix: reset on the node's own flag AND on the previous node's
+      let merged: unknown[] = []; let inherit = true;
+      for (const a of chain) {
+        const own = a.inherit !== false;
+        if (!inherit || !own) merged = [];
+        merged = merged.concat(a.rules ?? []);
+        inherit = own;
+      }
+      return evaluateAclChain([{ inherit: true, visibility: "normal", rules: merged } as AccessControl], ctxX)?.can("read") ?? true;
+    };
+    const nodes: AccessControl[] = [];
+    for (const inherit of [true, false]) {
+      for (const rules of [[], [allow("team", "T-x", ["read"])], [deny("team", "T-x", ["read"])], [allow("org", ORG, ["read"]), deny("team", "T-x", ["read"])]]) {
+        nodes.push(acl(rules, "normal", inherit) as AccessControl);
+      }
+    }
+    let compared = 0;
+    for (const a of nodes) for (const b of nodes) for (const c of nodes) {
+      const chain = [a, b, c];
+      if (!chain.some((n) => (n.rules ?? []).length > 0)) continue;
+      const now = evaluateAclChain(chain, ctxX)?.can("read") ?? true;
+      if (now) expect(oldEval(chain)).toBe(true);
+      compared += 1;
+    }
+    expect(compared).toBeGreaterThan(400);
   });
 });
 

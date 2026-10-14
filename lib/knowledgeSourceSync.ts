@@ -66,6 +66,10 @@ const displayName = (d: DcDocRow): string => {
   return title || number || "Document";
 };
 
+/** Rows per page of the held-back read (KACL-10; keyset, until an empty
+ *  page — a project max-rows below it only makes more pages). */
+export const HELD_BACK_PAGE = 1000;
+
 const isPdf = (fileUrl: string | null, fileType: string | null): boolean => {
   if ((fileType ?? "").toLowerCase().includes("pdf")) return true;
   return (fileUrl ?? "").toLowerCase().endsWith(".pdf");
@@ -145,22 +149,33 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   // re-check below reads it again only where it does.
   let exclusionColumn = true;
   {
-    // KACL-10: paged by id so a large carve-out is read in full, and an error
-    // FAILS CLOSED for this pass — it used to read as "nothing is excluded"
-    // and mirror every held-back document. Only a missing column (a database
-    // from before the feature) means nothing is excluded.
-    for (let from = 0; ; from += 1000) {
-      const { data, error } = await supabaseAdmin
-        .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true)
-        .order("id", { ascending: true }).range(from, from + 999);
+    // KACL-10: read in full, and an error FAILS CLOSED for this pass — it
+    // used to read as "nothing is excluded" and mirror every held-back
+    // document. Only a missing column (a database from before the feature)
+    // means nothing is excluded. Paged by KEYSET on id until an EMPTY page
+    // (I-12 third review fix — lib/knowledgeAccess readAllPages' rule): the
+    // offset loop stopped at the first short page, so under a PostgREST
+    // max-rows below the page size it read only the first page, and the
+    // held-back documents past it were inserted as pending mirrors an
+    // ingest worker could claim before the re-check below removed them.
+    let lastHeldId: string | null = null;
+    for (;;) {
+      let q = supabaseAdmin
+        .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true);
+      if (lastHeldId !== null) q = q.gt("id", lastHeldId);
+      const { data, error } = await q.order("id", { ascending: true }).limit(HELD_BACK_PAGE);
       if (error) {
         if (isMissingColumn(error)) { exclusionColumn = false; break; }
         out.errors.push(`held-back documents: ${error.message} — this library was not reconciled (nothing added or removed)`);
         return out;
       }
-      const page = (data ?? []) as Array<{ id: string }>;
+      // Strictly ascending: a page that repeats an id already read ends the
+      // read instead of looping.
+      const page = ((data ?? []) as Array<{ id: string }>)
+        .filter((r) => lastHeldId === null || String(r.id) > lastHeldId);
+      if (page.length === 0) break;
       for (const r of page) aiExcluded.add(r.id);
-      if (page.length < 1000) break;
+      lastHeldId = String(page[page.length - 1].id);
     }
   }
 

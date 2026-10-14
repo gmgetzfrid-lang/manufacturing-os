@@ -20,7 +20,10 @@ import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
  *               longer readable to them — the link is dead ("revoked");
  *   - "unknown" a read the decision needs failed (the creator's membership or
  *               teams — loadPrincipal's PrincipalUnreadableError — or the
- *               landscape / document reads, KACL-12): a TEMPORARY condition.
+ *               landscape / document reads, KACL-12's
+ *               DcLandscapeUnreadableError; the documents-row read throws it
+ *               too since the I-12 third review fix — it read as "no rows",
+ *               so a timeout there answered "lapsed"): a TEMPORARY condition.
  *               The share never serves on it, and never calls it "revoked" or
  *               records it as a lapsed authority (I-12 second review fix: a
  *               statement timeout told the recipient "revoked" and wrote

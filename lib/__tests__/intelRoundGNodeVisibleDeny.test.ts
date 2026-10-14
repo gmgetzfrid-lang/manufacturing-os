@@ -107,6 +107,46 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(inv).not.toMatch(/SELECT\s+\*/);
   });
 
+  it("third review fix (WRITES TOO): the header states that the RESTRICTIVE SELECT policy now refuses a named member's INSERT … RETURNING and UPDATE on a read-denied normal row (a drop box's uploads), and the inventory counts what that can touch — before BEGIN, counts only", () => {
+    const header = SQL.slice(0, SQL.indexOf("-- ── 0. pre-apply inventory"));
+    expect(header).toMatch(/⚠ WRITES TOO/);
+    expect(header).toMatch(/INSERT \.\.\. RETURNING/);
+    expect(header).toMatch(/new\s+(--\s+)?row violates row-level security policy "documents_acl_select"/);
+    expect(header).toMatch(/The same insert without RETURNING succeeds\./);
+    expect(header).toMatch(/can no longer write it back or upload into\s+-- it \(WRITES TOO, above\)/);
+    const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), code.indexOf("\nBEGIN;"));
+    for (const label of [
+      "'WRITES TOO: of those normal documents, the ones whose read deny names a subject the same index does not deny UPLOAD",
+      "'WRITES TOO: of those normal folders, the ones whose read deny names a subject the same index does not deny UPLOAD",
+      "'WRITES TOO: libraries with a default ACL for new documents",
+      "'WRITES TOO: of those, libraries whose own ACL or default ACL has a rule that DENIES read",
+    ]) expect(inv, label).toContain(label);
+    // a read-deny id is counted only where the same subject's upload list does not name it
+    expect(inv.match(/WHERE NOT COALESCE\(\(acl_index->'deny'->s\.subj->'upload'\) \? x\.id, false\)\)/g)!.length).toBe(2);
+    expect(inv).not.toMatch(/SELECT\s+\*/);
+  });
+
+  it("third review fix: paste BEFORE the I-12 branch deploys (the bytes door's source-key lookup scans until the index exists; the DACL-9 / DACL-10 counts are read before the deploy); DACL-9's labels say the grant half is withheld; DACL-10's ACL-NULL legacy libraries are counted", () => {
+    const header = SQL.slice(0, SQL.indexOf("-- ── 0. pre-apply inventory"));
+    expect(header).toMatch(/Paste it BEFORE the I-12\s+-- branch deploys/);
+    expect(header).not.toMatch(/Independent of every other pending file/);
+    expect(header).toMatch(/Its GRANTS are still dropped there \(I-12 third review\s+--\s+fix\)/);
+    expect(header).toMatch(/DACL-10 \(inventory only\)/);
+    const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), code.indexOf("\nBEGIN;"));
+    expect(inv).toContain("their grants only after the DEC-90 ruling)'");
+    expect(inv).toContain("upper bound of the rows the withheld grant half would widen");
+    for (const label of [
+      "'DACL-10: libraries whose ACL is NULL while read_access is restricted",
+      "'DACL-10: documents filed in those libraries",
+      "'DACL-10: (library, member) pairs where an active non-controller member, not the library''s owner, holds no role",
+      "'DACL-10: of those pairs, distinct members'",
+      "'DACL-10: libraries whose ACL has no rule and normal visibility while read_access is restricted",
+    ]) expect(inv, label).toContain(label);
+    expect(inv).toMatch(/read_access <> '"ALL"'::jsonb/);
+  });
+
   it("the only function it creates is node_visible/6: SECURITY DEFINER, search_path pinned, grants deliberately left as they are", () => {
     const creates = [...SQL.matchAll(/^CREATE OR REPLACE FUNCTION (\w+)\(/gm)].map((m) => m[1]);
     expect(creates).toEqual(["node_visible"]);
