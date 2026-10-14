@@ -30,6 +30,13 @@ import {
   type ParsedQuery, type QueryChip, type RankedHit, type IndexEntry, type FinderAlias, type FinderAliasKind,
 } from "@/lib/fileFinder";
 import { loadFinderData, type FinderData } from "@/lib/fileFinder/load";
+import { supabase } from "@/lib/supabase";
+import { docRowToDocumentRecord } from "@/lib/documentRows";
+import { rowToVersion } from "@/lib/revisions";
+import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+
+// The drawing viewer is heavy (pdf.js); it only downloads when a file is opened.
+const FullScreenViewer = React.lazy(() => import("@/components/viewers/FullScreenViewer"));
 import {
   listFinderAliases, addFinderAlias, removeFinderAlias, bumpFinderAlias,
   listFinderListings, saveFinderListing, deleteFinderListing, storeState, type FinderListing,
@@ -74,10 +81,14 @@ function GraphPageInner() {
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [parsed, setParsed] = useState<ParsedQuery | null>(null);
   /** The container the view is rooted at; null = the whole estate. */
-  const [focusId, setFocusId] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(params.get("focus"));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** Which result the map is honed in on. */
   const [activeIdx, setActiveIdx] = useState(0);
+  /** A file opened in place: the viewer sits over the map, no navigation. */
+  const [viewer, setViewer] = useState<{ doc: DocumentRecord; version: DocumentVersion } | null>(null);
+  const [viewerLoading, setViewerLoading] = useState<string | null>(null);
+  const [viewerError, setViewerError] = useState<string | null>(null);
   const [panel, setPanel] = useState<"search" | "drives" | "aliases">("search");
   const graphRef = useRef<FileGraphHandle | null>(null);
 
@@ -252,6 +263,18 @@ function GraphPageInner() {
     if (hits.length) jumpTo(0); else { setActiveIdx(0); }
   }, [hits, jumpTo]);
 
+  // The query and the folder being explored live in the URL, so leaving and
+  // coming back (browser Back, a refresh, "go to it in the library") lands on
+  // the same view with the same results — never on an empty map.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    if (parsed?.raw) sp.set("q", parsed.raw); else sp.delete("q");
+    if (focusId) sp.set("focus", focusId); else sp.delete("focus");
+    const next = `${window.location.pathname}${sp.toString() ? `?${sp}` : ""}`;
+    if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, "", next);
+  }, [parsed, focusId]);
+
   const crumbs = useMemo(() => {
     if (!focusId) return [];
     const chain = [focusId, ...ancestorsOf(focusId)].reverse();
@@ -290,10 +313,39 @@ function GraphPageInner() {
     setSelectedId(id);
     window.setTimeout(() => graphRef.current?.focus(id), 80);
   };
-  const openEntry = (id: string) => {
+  /** Open a system document right here: fetch its row and current version,
+   *  then put the viewer over the map. The library page is never loaded. */
+  const openEntry = useCallback(async (id: string) => {
     const e = entryById.get(id);
-    if (e?.href) { onOpenHit(); window.location.assign(e.href); }
-  };
+    if (!e || e.source !== "system") return;
+    const docId = id.replace(/^doc:/, "");
+    onOpenHit();
+    setViewerError(null);
+    setViewerLoading(id);
+    try {
+      const { data: row, error } = await supabase.from("documents").select("*").eq("id", docId).maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!row) throw new Error("That document is no longer available.");
+      const doc = docRowToDocumentRecord(row as Record<string, unknown>);
+      let vrow: Record<string, unknown> | null = null;
+      if (doc.currentVersionId) {
+        const { data } = await supabase.from("document_versions").select("*").eq("id", doc.currentVersionId).maybeSingle();
+        vrow = (data as Record<string, unknown> | null) ?? null;
+      }
+      if (!vrow) {
+        const { data } = await supabase.from("document_versions").select("*").eq("record_id", docId)
+          .or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }).limit(1);
+        vrow = ((data as Record<string, unknown>[] | null) ?? [])[0] ?? null;
+      }
+      if (!vrow) throw new Error("This document has no file to open yet.");
+      setViewer({ doc, version: rowToVersion(vrow) });
+    } catch (err) {
+      setViewerError((err as Error).message);
+    } finally {
+      setViewerLoading(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entryById, parsed, activeOrgId]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -459,7 +511,9 @@ function GraphPageInner() {
               </button>
               <button onClick={() => jumpTo(activeIdx + 1)} className="rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Next result (→)"><ChevronRight className="w-4 h-4" /></button>
               {activeHit.entry.href && (
-                <Link href={activeHit.entry.href} onClick={onOpenHit} className="ml-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 font-bold" title="Open (Enter)"><ExternalLink className="w-3.5 h-3.5" /> Open</Link>
+                <button onClick={() => openEntry(activeHit.entry.id)} disabled={viewerLoading === activeHit.entry.id} className="ml-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 font-bold disabled:opacity-60" title="Open (Enter)">
+                  {viewerLoading === activeHit.entry.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Open
+                </button>
               )}
             </div>
           )}
@@ -470,7 +524,7 @@ function GraphPageInner() {
         <aside className="border-l border-[var(--color-border)] bg-[var(--color-surface)] min-h-0 overflow-y-auto">
           {selectedEntry && (
             <SelectedCard entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
-              onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={onOpenHit} />
+              onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={() => openEntry(selectedEntry.id)} />
           )}
           <div className="p-3">
             {parsed ? (
@@ -495,7 +549,7 @@ function GraphPageInner() {
                 )}
                 <div className="space-y-2">
                   {hits.slice(0, 80).map((h, i) => (
-                    <HitCard key={h.entry.id} hit={h} rank={i + 1} active={activeHit?.entry.id === h.entry.id} onReveal={() => jumpTo(i)} onOpen={onOpenHit} />
+                    <HitCard key={h.entry.id} hit={h} rank={i + 1} active={activeHit?.entry.id === h.entry.id} onReveal={() => jumpTo(i)} onOpen={() => openEntry(h.entry.id)} />
                   ))}
                   {hits.length > 80 && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
                 </div>
@@ -510,6 +564,29 @@ function GraphPageInner() {
           </div>
         </aside>
       </div>
+      {viewerError && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-3 py-2 shadow-lg flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" /> {viewerError}
+          <button onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+      {viewer && (
+        <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-black/60 text-white text-sm"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening…</div>}>
+          <FullScreenViewer
+            isOpen
+            onClose={() => setViewer(null)}
+            url={viewer.version.fileUrl}
+            title={viewer.doc.title || viewer.doc.name || "Document"}
+            docNumber={viewer.doc.documentNumber || ""}
+            rev={viewer.version.revisionLabel || ""}
+            document={viewer.doc}
+            userRole={activeRole}
+            currentUserId={uid || undefined}
+            currentUserEmail={userEmail || undefined}
+            orgId={activeOrgId ?? undefined}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -559,9 +636,9 @@ function HitCard({ hit, rank, active, onReveal, onOpen }: { hit: RankedHit; rank
           <PathCrumbs entry={e} />
         </button>
         {e.href && (
-          <Link href={e.href} onClick={onOpen} className="shrink-0 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-surface)]" title="Open document">
+          <button onClick={onOpen} className="shrink-0 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-surface)]" title="Open the drawing here">
             <ExternalLink className="w-3.5 h-3.5" />
-          </Link>
+          </button>
         )}
       </div>
       <EvidenceList hit={hit} />
@@ -591,7 +668,10 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
         <button onClick={onClose} className="shrink-0 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
       </div>
       {entry.href && (
-        <Link href={entry.href} onClick={onOpen} className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><ExternalLink className="w-3.5 h-3.5" /> Open in library</Link>
+        <div className="mt-2 flex items-center gap-3">
+          <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
+          <Link href={entry.href} className="text-xs font-semibold text-[var(--color-text-muted)] hover:underline">Go to it in the library</Link>
+        </div>
       )}
       {entry.source === "listing" && (
         <div className="mt-2 text-xs text-teal-800 inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
