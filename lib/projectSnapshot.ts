@@ -402,30 +402,44 @@ export async function gatherProjectSnapshotUncached(
   const voided = checklists.filter((c) => c.status === "void");
   let checklistsVoided: NonNullable<ProjectStateSnapshot["checklistsVoided"]> = [];
   if (voided.length > 0) {
-    type AuditRow = { user_email: string | null; details: Record<string, unknown> | null };
+    // ALOG-7 (admin-and-org P13): the row's actor_kind (20261201) says whose
+    // word "voided by" is. Before that paste the column is absent (42703 /
+    // PGRST204): the read is the old one and the line labels the identity
+    // the writer's word — never "could not be read".
+    type AuditRow = { user_email: string | null; actor_kind?: string | null; details: Record<string, unknown> | null };
+    const voidQuery = (cols: string) => sig(supabase.from("audit_logs").select(cols)
+      .eq("resource_type", "project").eq("resource_id", projectId).eq("action", "CHECKLIST_STATUS")
+      .order("timestamp", { ascending: false }).limit(500)) as unknown as PromiseLike<QueryResult<AuditRow[]>>;
     let rows: AuditRow[] = [];
     let unreadable = false;
     try {
-      const r = await (sig(supabase.from("audit_logs").select("user_email, details, timestamp")
-        .eq("resource_type", "project").eq("resource_id", projectId).eq("action", "CHECKLIST_STATUS")
-        .order("timestamp", { ascending: false }).limit(500)) as unknown as PromiseLike<QueryResult<AuditRow[]>>);
+      let r = await voidQuery("user_email, actor_kind, details, timestamp");
+      if (r.error && r.error.code && MISSING_COLUMN.has(r.error.code)) r = await voidQuery("user_email, details, timestamp");
       if (r.error) unreadable = true; else rows = r.data ?? [];
     } catch (e) {
       if (signal?.aborted) throw e;
       unreadable = true;
     }
-    const voidedBy = new Map<string, string>();
+    const voidedBy = new Map<string, { who: string; actorKind: string | null }>();
     for (const row of rows) {
       const d = row.details ?? {};
       const id = typeof d.checklistId === "string" ? d.checklistId : null;
-      if (id && d.status === "void" && !voidedBy.has(id)) voidedBy.set(id, row.user_email || "a signed-in member");
+      if (id && d.status === "void" && !voidedBy.has(id)) {
+        voidedBy.set(id, { who: row.user_email || "a signed-in member", actorKind: typeof row.actor_kind === "string" ? row.actor_kind : null });
+      }
     }
-    checklistsVoided = voided.map((c) => ({
-      id: c.id,
-      title: (c.title ?? "").trim() || "Untitled checklist",
-      voidedBy: voidedBy.get(c.id) ?? null,
-      ...(unreadable ? { voidedByUnreadable: true } : {}),
-    }));
+    checklistsVoided = voided.map((c) => {
+      const by = voidedBy.get(c.id);
+      return {
+        id: c.id,
+        title: (c.title ?? "").trim() || "Untitled checklist",
+        voidedBy: by?.who ?? null,
+        // Only a stored actor_kind is carried; none (before 20261201) leaves
+        // the entry exactly as before and reads as the writer's word.
+        ...(by?.actorKind ? { voidedByActorKind: by.actorKind } : {}),
+        ...(unreadable ? { voidedByUnreadable: true } : {}),
+      };
+    });
   }
   if (signal?.aborted) throw abortError();
 

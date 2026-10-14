@@ -17,12 +17,21 @@
 // permission): rows typed org / member / team / capability_policy /
 // org_configuration / export_destination, and CAPABILITY_ / MEMBER_ / ROLE_ /
 // EXPORT_ / SECURITY_ / TEAM_ / DATA_EXPORT / RESTORE_ / PURGE_ actions
-// (audit_logs_admin_trail, 20261063 — DEC-17, SURF-9, ROLE-5). The
-// document-level history every active member reads INCLUDES permission
-// (NODE_ACL_CHANGED), ownership (OWNER_*) and recertification
-// (ACCESS_RECERTIFIED) changes made on a library, folder or document: they
-// are typed library / collection / document, so the overlay does not cover
-// them. Project scoping (SEC-20 / SEC-21: a project's rows only to those who
+// (audit_logs_admin_trail, 20261063 — DEC-17, SURF-9, ROLE-5).
+// admin-and-org ALOG-16 (P13, 20261219): permission (NODE_ACL_CHANGED),
+// ownership (OWNER_ASSIGNED / OWNER_CLEARED / OWNER_TEAM_*) and
+// recertification (ACCESS_RECERTIFIED) changes made on a library, folder or
+// document are readable only by Audit log holders and by those who may
+// manage that node (audit_row_node_manageable: the workspace's controllers —
+// Admin / DocCtrl, is_org_controller — its effective owner (the owner
+// cascade: the document's, its folder's or its library's owner), an Admin /
+// Manage Permissions grant on it, deny wins); every member reads the
+// rest of the document-level history. Stated from the deploy because the
+// P13 deploy is HARD-GATED on the paste (20261142, then 20261219, pasted
+// before this app is deployed — 20261219's header and MIGRATION-PASTE-ORDER),
+// and a later 20261157 paste is followed by a 20261219 re-paste in the same
+// SQL-editor window, so the sentence never runs ahead of the database (this
+// header's "only what the database enforces" rule). Project scoping (SEC-20 / SEC-21: a project's rows only to those who
 // can see it) lives in 20261142 and 20261157, neither confirmed pasted when
 // P7 landed, so the page neither claims nor denies it; add it to the stated
 // rule once MIGRATION-PASTE-ORDER.md marks both live. The DATABASE applies the rule
@@ -45,7 +54,7 @@ import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
-import { foldTicketFeed } from "@/lib/auditActions";
+import { foldTicketFeed, auditActorNote } from "@/lib/auditActions";
 
 interface ActivityRow {
   id: string;
@@ -54,6 +63,8 @@ interface ActivityRow {
   resourceId: string;
   userEmail: string | null;
   userRole: string | null;
+  /** ALOG-7 (P13): audit_logs.actor_kind (20261201) — null before that paste. */
+  actorKind: string | null;
   details: Record<string, unknown> | null;
   timestamp: string;
 }
@@ -139,6 +150,7 @@ export default function ActivityFeedPage() {
         resourceId: String(r.resource_id),
         userEmail: (r.user_email as string | null) ?? null,
         userRole: (r.user_role as string | null) ?? null,
+        actorKind: (r.actor_kind as string | null | undefined) ?? null,
         details: (r.details as Record<string, unknown> | null) ?? null,
         timestamp: String(r.timestamp),
       }));
@@ -240,7 +252,7 @@ export default function ActivityFeedPage() {
           title="Activity Feed"
           subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.{" "}
             <span className="block mt-1 text-[11px] text-[var(--color-text-faint)]">
-              Who can read this feed: workspace-level authority events (capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges) are shown only to people with the Audit log permission. Every member reads the workspace&apos;s document-level history, and that includes permission (access list), ownership and recertification changes made on a library, folder or document. The database applies this rule, not this page.
+              Who can read this feed: workspace-level authority events (capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges) are shown only to people with the Audit log permission. Permission (access list), ownership and recertification changes made on a library, folder or document are shown only to people with the Audit log permission and to those who may manage that library, folder or document (the workspace&apos;s Admins and Document Control, its owner or the owner of the folder or library it is in, and anyone granted Admin or Manage Permissions on it). Every member reads the rest of the workspace&apos;s document-level history. The database applies this rule, not this page.
             </span></>}
           actions={
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
@@ -320,6 +332,7 @@ export default function ActivityFeedPage() {
                         )}
                         <div className="flex-1 min-w-0 text-xs leading-relaxed">
                           <span className="font-bold text-[var(--color-text)]">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
+                          <span className={`ml-1 text-[10px] ${r.actorKind ? "text-[var(--color-text-faint)]" : "text-amber-700"}`} title="ALOG-7: whose word the name on this row is">({auditActorNote(r.actorKind)})</span>
                           {" "}<span className="text-[var(--color-text-muted)]">{verb}</span>{" "}
                           {href ? (
                             <Link href={href} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] underline-offset-2 hover:underline transition-colors">
