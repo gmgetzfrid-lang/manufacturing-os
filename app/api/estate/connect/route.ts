@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  let body: { orgId?: string; libraryIds?: string[] };
+  let body: { orgId?: string; libraryIds?: string[]; visionAllPages?: boolean; rereadAll?: boolean };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Expected JSON body" }, { status: 400 }); }
   const orgId = String(body.orgId ?? "");
   const auth = await requireMember(req, orgId, ["Admin", "DocCtrl"]);
@@ -21,6 +21,7 @@ export async function POST(req: NextRequest) {
     const status = await connectEverything(supabaseAdmin, {
       orgId, libraryIds: Array.isArray(body.libraryIds) ? body.libraryIds.map(String) : undefined,
       actor: { userId: auth.caller!.userId, name: auth.caller!.email }, budgetMs: 40_000,
+      visionAllPages: typeof body.visionAllPages === "boolean" ? body.visionAllPages : undefined, rereadAll: !!body.rereadAll,
     });
     return NextResponse.json(status);
   } catch (e) {

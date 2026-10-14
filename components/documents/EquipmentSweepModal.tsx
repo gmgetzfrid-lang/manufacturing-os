@@ -179,11 +179,10 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                 <span className="font-bold text-[var(--color-text)]">Auto-apply after indexing</span>
               </label>
             </div>
-            {!bridge.targetColumnKey && (
-              <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                Pick the column that should receive equipment tags (a “tags”-type custom column — e.g. the one you named Equipment). Nothing applies until this is set.
-              </div>
-            )}
+            <div className="text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5">
+              This is the same engine <b>Connect everything</b> runs on the Documents map for every drawing library at once — reading included. Here it works on this library only.
+              {!bridge.targetColumnKey && <> No column is picked, so tags go to the registry and the drawing&apos;s links; pick one to have them written into the library table as well.</>}
+            </div>
           </div>
 
           {error && (
@@ -197,7 +196,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
               {sweeping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               {rows.length === 0 ? "Sweep the library" : "Re-sweep"}
             </Button>
-            {pendingRows.length > 0 && bridge.targetColumnKey && (
+            {pendingRows.length > 0 && (
               <Button size="sm" onClick={() => void apply(pendingRows.map((r) => r.document_id))} disabled={applying !== null}>
                 {applying === "__all" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                 Apply all {pendingRows.length} document{pendingRows.length === 1 ? "" : "s"}
@@ -224,7 +223,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                       <span className="text-[10px] text-[var(--color-text-muted)]">{r.suggested.length} tag{r.suggested.length === 1 ? "" : "s"}</span>
                       {done ? (
                         <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-black text-emerald-700"><Check className="w-3 h-3" /> applied</span>
-                      ) : fresh.length > 0 && bridge.targetColumnKey ? (
+                      ) : fresh.length > 0 ? (
                         <button onClick={() => void apply([r.document_id])} disabled={applying !== null}
                           className="ml-auto inline-flex items-center gap-1 text-[10px] font-black text-[var(--color-accent)] hover:underline disabled:opacity-40">
                           {applying === r.document_id ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Apply {fresh.length}

@@ -32,6 +32,10 @@ import { computeForKnowledgeDoc, applyForDocument } from "@/lib/equipmentBridgeS
 import { resolveEstate } from "./resolverServer";
 import { computeReadiness, type EstateReadiness } from "./readinessServer";
 
+/** Bump when the tag reader learns to see more: every read copy is read
+ *  again once, so sheets read by an older reader catch up on their own. */
+export const TAG_READER_VERSION = 2;
+
 export interface ConnectStep { key: "units" | "read" | "index" | "registry" | "links"; title: string; state: "done" | "working" | "waiting" | "blocked"; detail: string }
 export interface ConnectStatus {
   steps: ConnectStep[];
@@ -42,6 +46,8 @@ export interface ConnectStatus {
   more: boolean;
   readiness: EstateReadiness;
   libraries: Array<{ id: string; name: string }>;
+  /** The caller's AI key, as the reading uses it: vision for pages with no usable text layer. */
+  ai: { hasKey: boolean; provider?: string; model?: string; visionAllPages: boolean };
 }
 
 const UNIT_IN_NAME = /(?:^|[^A-Z0-9])(?:UNIT|U)[\s\-_]?(\d{1,3})(?![0-9])/i;
@@ -73,37 +79,60 @@ async function ensureUnits(admin: SupabaseClient, orgId: string, actor: string |
 
 function looksLikeDrawings(name: string): boolean { return /draw|p&id|p&amp;id|pid|iso|dwg|diagram|schematic|loop/i.test(name); }
 
-async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: Array<{ id: string; name: string }>, actor: { userId: string; name: string | null }): Promise<{ libraryId: string; created: boolean; sourcesAdded: number; sync: { added: number; refreshed: number; errors: string[] }; rereads: number }> {
-  // A knowledge library already watching any of these DC libraries wins;
-  // else one is made for the purpose.
+async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: Array<{ id: string; name: string }>, actor: { userId: string; name: string | null }, opts: { visionAllPages?: boolean; rereadAll?: boolean }): Promise<{ libraryId: string; libraryName: string; created: boolean; removedDuplicate: boolean; sourcesAdded: number; sync: { added: number; refreshed: number; errors: string[] }; rereads: number }> {
+  // A knowledge library a person already pointed at these drawings wins —
+  // whether it watches the whole library or a folder inside it. A library
+  // this button made earlier, when a person's own exists, is removed so
+  // every sheet has one read copy, not two.
   const { data: srcRows } = await admin.from("knowledge_sources").select("library_id, source_id, source_type").eq("org_id", orgId).limit(2000);
   const sources = (srcRows as Array<{ library_id: string; source_id: string; source_type: string }> | null) ?? [];
   const dcIds = new Set(dcLibs.map((l) => l.id));
-  let libraryId = sources.find((s) => s.source_type === "library" && dcIds.has(s.source_id))?.library_id ?? null;
-  let created = false;
-  if (!libraryId) {
-    const { data: existing } = await admin.from("knowledge_libraries").select("id, name").eq("org_id", orgId).limit(100);
-    const named = ((existing as Array<{ id: string; name: string }> | null) ?? []).find((l) => /drawings — read by the estate/i.test(l.name));
-    if (named) libraryId = named.id;
-    else {
-      const { data: made, error } = await admin.from("knowledge_libraries").insert({
-        org_id: orgId, name: "Drawings — read by the estate",
-        description: "Every drawing library in Document Control, read once so searches can put units, equipment, sheets and photos together. Made by Connect everything.",
-        created_by: actor.userId, created_by_name: actor.name, ai_features: { drawingIntel: true },
-      }).select("id").single();
-      if (error || !made) throw new Error(`Could not make the read library: ${error?.message ?? "unknown"}`);
-      libraryId = String((made as { id: string }).id); created = true;
-    }
+  const folderIds = sources.filter((s) => s.source_type === "folder").map((s) => s.source_id);
+  const folderLib = new Map<string, string>();
+  if (folderIds.length) {
+    const { data: cols } = await admin.from("collections").select("id, library_id").in("id", folderIds);
+    for (const c of (cols as Array<{ id: string; library_id: string }> | null) ?? []) folderLib.set(c.id, c.library_id);
   }
+  const covers = (s: { source_id: string; source_type: string }) => (s.source_type === "library" ? dcIds.has(s.source_id) : dcIds.has(folderLib.get(s.source_id) ?? ""));
+  const { data: existing } = await admin.from("knowledge_libraries").select("id, name, description").eq("org_id", orgId).limit(200);
+  const libs = ((existing as Array<{ id: string; name: string; description: string | null }> | null) ?? []);
+  const isAuto = (l: { name: string; description: string | null }) => /drawings — read by the estate/i.test(l.name) && /Made by Connect everything/.test(l.description ?? "");
+  const covering = [...new Set(sources.filter(covers).map((s) => s.library_id))].map((id) => libs.find((l) => l.id === id)).filter((l): l is { id: string; name: string; description: string | null } => !!l);
+  const own = covering.find((l) => !isAuto(l)) ?? null;
+  const auto = libs.find(isAuto) ?? null;
+  let libraryId: string | null = own?.id ?? auto?.id ?? null;
+  let created = false;
+  let removedDuplicate = false;
+  if (own && auto && own.id !== auto.id) {
+    // One read copy per sheet: the person's library stays, the made one goes.
+    const { error } = await admin.from("knowledge_libraries").delete().eq("id", auto.id).eq("org_id", orgId);
+    removedDuplicate = !error;
+    libraryId = own.id;
+  }
+  if (!libraryId) {
+    const { data: made, error } = await admin.from("knowledge_libraries").insert({
+      org_id: orgId, name: "Drawings — read by the estate",
+      description: "Every drawing library in Document Control, read once so searches can put units, equipment, sheets and photos together. Made by Connect everything.",
+      created_by: actor.userId, created_by_name: actor.name, ai_features: { drawingIntel: true },
+    }).select("id").single();
+    if (error || !made) throw new Error(`Could not make the read library: ${error?.message ?? "unknown"}`);
+    libraryId = String((made as { id: string }).id); created = true;
+  }
+  const libraryName = libs.find((l) => l.id === libraryId)?.name ?? "Drawings — read by the estate";
   // Drawing intelligence on, whichever library it is.
   const { data: libRow } = await admin.from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
   const feats = ((libRow?.ai_features as Record<string, unknown> | null) ?? {});
   if (feats.drawingIntel !== true) await admin.from("knowledge_libraries").update({ ai_features: { ...feats, drawingIntel: true } }).eq("id", libraryId).then(() => undefined, () => undefined);
   // Sources: each drawing library, once.
-  const have = new Set(sources.filter((s) => s.library_id === libraryId).map((s) => s.source_id));
+  const watched = new Set<string>();
+  for (const s of sources) {
+    if (s.library_id !== libraryId) continue;
+    if (s.source_type === "library") watched.add(s.source_id);
+    else { const lib = folderLib.get(s.source_id); if (lib) watched.add(lib); }
+  }
   let sourcesAdded = 0;
   for (const l of dcLibs) {
-    if (have.has(l.id)) continue;
+    if (watched.has(l.id)) continue;
     const { error } = await admin.from("knowledge_sources").insert({ org_id: orgId, library_id: libraryId, source_type: "library", source_id: l.id, source_name: l.name, created_by: actor.userId, created_by_name: actor.name });
     if (!error) sourcesAdded++;
   }
@@ -111,18 +140,25 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
   // Copies read with no equipment on any page: read before tags were
   // extracted, or read as prose. Each is re-read once (the ids already
   // re-read live on the library, so a sheet that truly has no tags is
-  // never re-read in a loop).
+  // never re-read in a loop). When the reader itself has improved, or the
+  // person turned on reading every page with vision, every copy is read
+  // again once.
   let rereads = 0;
-  const already = new Set<string>(Array.isArray(feats.connectReread) ? (feats.connectReread as string[]) : []);
+  const readerBefore = Number(feats.tagReaderVersion ?? 0);
+  const visionTurnedOn = !!opts.visionAllPages && feats.visionAllPages !== true;
+  const readEverything = readerBefore < TAG_READER_VERSION || visionTurnedOn || !!opts.rereadAll;
+  const already = new Set<string>(readEverything ? [] : (Array.isArray(feats.connectReread) ? (feats.connectReread as string[]) : []));
   const { data: ready } = await admin.from("knowledge_documents").select("id, pages_indexed").eq("library_id", libraryId).eq("status", "ready").gt("pages_indexed", 0).limit(3000);
   const ids = ((ready as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+  const nextFeats: Record<string, unknown> = { ...feats, drawingIntel: true, tagReaderVersion: TAG_READER_VERSION };
+  if (opts.visionAllPages !== undefined) nextFeats.visionAllPages = !!opts.visionAllPages;
   if (ids.length) {
     const withTags = new Set<string>();
     for (let i = 0; i < ids.length; i += 200) {
       const { data: ents } = await admin.from("knowledge_page_entities").select("document_id").eq("org_id", orgId).eq("kind", "equipment").in("document_id", ids.slice(i, i + 200)).limit(20000);
       for (const e of (ents as Array<{ document_id: string }> | null) ?? []) withTags.add(e.document_id);
     }
-    const stale = ids.filter((id) => !withTags.has(id) && !already.has(id));
+    const stale = readEverything ? ids : ids.filter((id) => !withTags.has(id) && !already.has(id));
     for (let i = 0; i < stale.length; i += 200) {
       const slice = stale.slice(i, i + 200);
       await admin.from("knowledge_chunks").delete().in("document_id", slice).then(() => undefined, () => undefined);
@@ -130,9 +166,10 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
       const { error } = await admin.from("knowledge_documents").update({ status: "stale", pages_indexed: 0, page_count: null, last_section: null, error: null }).in("id", slice);
       if (!error) { rereads += slice.length; for (const id of slice) already.add(id); }
     }
-    if (stale.length) await admin.from("knowledge_libraries").update({ ai_features: { ...feats, drawingIntel: true, connectReread: [...already].slice(-5000) } }).eq("id", libraryId).then(() => undefined, () => undefined);
+    nextFeats.connectReread = [...already].slice(-5000);
   }
-  return { libraryId, created, sourcesAdded, sync, rereads };
+  if (JSON.stringify(nextFeats) !== JSON.stringify(feats)) await admin.from("knowledge_libraries").update({ ai_features: nextFeats }).eq("id", libraryId).then(() => undefined, () => undefined);
+  return { libraryId, libraryName, created, removedDuplicate, sourcesAdded, sync, rereads };
 }
 
 async function ensureBridge(admin: SupabaseClient, orgId: string, dcLibs: Array<{ id: string; name: string }>): Promise<void> {
@@ -141,7 +178,7 @@ async function ensureBridge(admin: SupabaseClient, orgId: string, dcLibs: Array<
   for (const r of (rows as Array<{ id: string; equipment_bridge: Record<string, unknown> | null; custom_columns: Array<{ key: string; type?: string; isPill?: boolean }> | null }> | null) ?? []) {
     const cur = r.equipment_bridge ?? {};
     const col = (r.custom_columns ?? []).find((c) => c.type === "tags" || c.type === "multi" || c.isPill);
-    const next = { ...cur, createAssets: cur.createAssets ?? true, targetColumnKey: cur.targetColumnKey ?? col?.key };
+    const next = { ...cur, createAssets: cur.createAssets ?? true, autoApply: cur.autoApply ?? true, targetColumnKey: cur.targetColumnKey ?? col?.key };
     if (JSON.stringify(next) !== JSON.stringify(cur)) await admin.from("libraries").update({ equipment_bridge: next }).eq("id", r.id).then(() => undefined, () => undefined);
   }
 }
@@ -172,7 +209,7 @@ async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: st
   return out;
 }
 
-export async function connectEverything(admin: SupabaseClient, input: { orgId: string; libraryIds?: string[]; actor: { userId: string; name: string | null }; budgetMs?: number }): Promise<ConnectStatus> {
+export async function connectEverything(admin: SupabaseClient, input: { orgId: string; libraryIds?: string[]; actor: { userId: string; name: string | null }; budgetMs?: number; visionAllPages?: boolean; rereadAll?: boolean }): Promise<ConnectStatus> {
   const deadline = Date.now() + (input.budgetMs ?? 40_000);
   const steps: ConnectStep[] = [];
   const { orgId } = input;
@@ -192,13 +229,14 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
       : { key: "units", title: "Units", state: "blocked", detail: "none in the codebook and none readable from folder or drawing names. Add one in Admin › Site codebook › Units and press the button again." });
 
   // 2. Read library + sources + sync.
-  const r = await ensureReadLibrary(admin, orgId, dcLibs, input.actor);
-  const readBits = [`watching ${dcLibs.map((l) => l.name).join(", ")}`];
+  const r = await ensureReadLibrary(admin, orgId, dcLibs, input.actor, { visionAllPages: input.visionAllPages, rereadAll: input.rereadAll });
+  const readBits = [`"${r.libraryName}" in Intelligence watches ${dcLibs.map((l) => l.name).join(", ")}`];
   if (r.created) readBits.push("read library made");
+  if (r.removedDuplicate) readBits.push("a duplicate read library this button made earlier was removed");
   if (r.sourcesAdded) readBits.push(`${r.sourcesAdded} source${r.sourcesAdded === 1 ? "" : "s"} linked`);
   if (r.sync.added) readBits.push(`${r.sync.added} new to read`);
   if (r.sync.refreshed) readBits.push(`${r.sync.refreshed} revised, re-reading`);
-  if (r.rereads) readBits.push(`${r.rereads} read before tags existed, re-reading`);
+  if (r.rereads) readBits.push(`${r.rereads} being read again (the tag reader improved, or vision was turned on)`);
   if (r.sync.errors.length) readBits.push(r.sync.errors[0]);
   steps.push({ key: "read", title: "Drawings watched", state: "done", detail: readBits.join(" · ") });
 
@@ -237,10 +275,32 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
     try { const l = await resolveEstate(admin, { orgId, all: true, actor: input.actor }); links = { applied: l.applied, pending: l.pending, unchanged: l.unchanged }; } catch { /* reported by readiness */ }
   }
   const readiness = await computeReadiness(admin, orgId);
+  // The caller's AI key: the browser reads scanned or line-work pages with it.
+  const { data: conn } = await admin.from("ai_connections").select("provider, model").eq("org_id", orgId).eq("user_id", input.actor.userId).maybeSingle();
+  const { data: libNow } = await admin.from("knowledge_libraries").select("ai_features").eq("id", r.libraryId).maybeSingle();
+  const ai = { hasKey: !!conn, provider: (conn as { provider?: string } | null)?.provider, model: (conn as { model?: string } | null)?.model, visionAllPages: ((libNow?.ai_features as Record<string, unknown> | null) ?? {}).visionAllPages === true };
   steps.push({
     key: "links", title: "Links", state: readiness.estateMissing ? "blocked" : "done",
     detail: readiness.estateMissing ? "migration 20261020 is not applied" : `${links.applied} new · ${links.pending} for Review · ${readiness.edges.applied} in place (${readiness.docsWithAsset} documents to equipment, ${readiness.docsWithUnit} to a unit)`,
   });
 
-  return { steps, queuedIds: queued.slice(0, 30).map((q) => q.id), queued: queued.length, more: queued.length > 0 || reg.left > 0, readiness, libraries: dcLibs };
+  return { steps, queuedIds: queued.slice(0, 30).map((q) => q.id), queued: queued.length, more: queued.length > 0 || reg.left > 0, readiness, libraries: dcLibs, ai };
+}
+
+/** The nightly pass: every drawing-set library's freshly read copies feed
+ *  the registry, bounded by a deadline. New sheets label themselves without
+ *  anyone pressing anything. */
+export async function registryAllOrgs(admin: SupabaseClient, opts: { deadlineMs: number }): Promise<{ libraries: number; applied: number; assets: number; errors: string[] }> {
+  const out = { libraries: 0, applied: 0, assets: 0, errors: [] as string[] };
+  const { data: libs, error } = await admin.from("knowledge_libraries").select("id, org_id, ai_features").limit(500);
+  if (error) { out.errors.push(error.message); return out; }
+  for (const l of (libs as Array<{ id: string; org_id: string; ai_features: Record<string, unknown> | null }> | null) ?? []) {
+    if (Date.now() > opts.deadlineMs) break;
+    if ((l.ai_features ?? {}).drawingIntel !== true) continue;
+    try {
+      const r = await buildRegistry(admin, l.org_id, l.id, "00000000-0000-0000-0000-000000000000", opts.deadlineMs);
+      out.libraries++; out.applied += r.applied; out.assets += r.assets;
+    } catch (e) { out.errors.push(`${l.id}: ${(e as Error).message}`); }
+  }
+  return out;
 }

@@ -714,7 +714,7 @@ function GraphPageInner() {
           )}
           {showConnect && (connect.status || connect.running || connect.error) && (
             <div className="absolute top-12 right-3 pointer-events-auto">
-              <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} />
+              <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} onRun={(o) => void connect.run(o)} />
             </div>
           )}
           {resolveNote && !(showConnect && (connect.status || connect.running)) && (

@@ -21,29 +21,40 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
   const [status, setStatus] = useState<ConnectStatus | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reading, setReading] = useState<{ done: number; total: number } | null>(null);
+  const [reading, setReading] = useState<{ done: number; total: number; visionPages: number; visionSkip: string | null } | null>(null);
   const stop = useRef(false);
   const onDoneRef = useRef(onDone); useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
 
-  const run = async () => {
+  const run = async (opts: { visionAllPages?: boolean; rereadAll?: boolean } = {}) => {
     if (!orgId || running) return;
     stop.current = false; setRunning(true); setError(null); setReading(null);
     try {
       for (let pass = 0; pass < MAX_PASSES && !stop.current; pass++) {
-        const st = await estatePost<ConnectStatus>("/api/estate/connect", { orgId });
+        // Options apply on the first pass; later passes only continue.
+        const st = await estatePost<ConnectStatus>("/api/estate/connect", pass === 0 ? { orgId, ...opts } : { orgId });
         setStatus(st);
         if (!st.more) break;
         if (st.queuedIds.length) {
           // Read in the browser on the caller's key, three at a time.
           const ids = [...st.queuedIds];
-          let done = 0;
-          setReading({ done, total: st.queued });
+          let done = 0, visionPages = 0; let visionSkip: string | null = null;
+          const perDoc = new Map<string, number>();
+          const report = () => setReading({ done, total: st.queued, visionPages: [...perDoc.values()].reduce((a, b) => a + b, visionPages), visionSkip });
+          report();
           const worker = async () => {
             for (;;) {
               const id = ids.shift();
               if (!id || stop.current) return;
-              try { await ingestKnowledgeDocument(id); } catch { /* marked on the row; move on */ }
-              done++; setReading({ done, total: st.queued });
+              try {
+                await ingestKnowledgeDocument(id, (_i, _t, progress) => {
+                  if (!progress) return;
+                  perDoc.set(id, progress.visionPages ?? 0);
+                  if (progress.visionSkipReason) visionSkip = progress.visionSkipReason;
+                  report();
+                });
+              } catch { /* marked on the row; move on */ }
+              visionPages += perDoc.get(id) ?? 0; perDoc.delete(id);
+              done++; report();
             }
           };
           await Promise.all([worker(), worker(), worker()]);
@@ -65,9 +76,11 @@ export function ConnectButton({ running, onClick, disabled, className = "" }: { 
   );
 }
 
-export function ConnectProgress({ status, running, error, reading, onCancel, onClose }: {
-  status: ConnectStatus | null; running: boolean; error: string | null; reading: { done: number; total: number } | null;
+export function ConnectProgress({ status, running, error, reading, onCancel, onClose, onRun }: {
+  status: ConnectStatus | null; running: boolean; error: string | null; reading: { done: number; total: number; visionPages: number; visionSkip: string | null } | null;
   onCancel: () => void; onClose: () => void;
+  /** Run again with options: read every page with vision, or re-read everything. */
+  onRun?: (opts: { visionAllPages?: boolean; rereadAll?: boolean }) => void;
 }) {
   if (!status && !running && !error) return null;
   return (
@@ -83,7 +96,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
           {status.steps.map((s) => {
             const I = s.state === "done" ? CheckCircle2 : s.state === "working" ? Loader2 : s.state === "waiting" ? Clock : AlertCircle;
             const tone = s.state === "done" ? "text-emerald-600" : s.state === "working" ? "text-sky-600 animate-spin" : s.state === "waiting" ? "text-[var(--color-text-faint)]" : "text-rose-600";
-            const detail = s.key === "index" && reading && running ? `${s.detail} · reading in this browser: ${reading.done} of ${reading.total}` : s.detail;
+            const detail = s.key === "index" && reading && running ? `${s.detail} · reading in this browser: ${reading.done} of ${reading.total}${reading.visionPages ? ` · ${reading.visionPages} page${reading.visionPages === 1 ? "" : "s"} read with AI vision` : ""}` : s.detail;
             return (
               <li key={s.key} className="flex items-start gap-1.5">
                 <I className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${tone}`} />
@@ -93,8 +106,25 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
           })}
         </ol>
       )}
-      {status && !running && !status.more && (
-        <div className="text-[11px] text-[var(--color-text-muted)]">Search a tag now. New drawings are picked up nightly, or press the button again.</div>
+      {reading?.visionSkip && running && <div className="text-[11px] text-amber-700">{reading.visionSkip}</div>}
+      {status && (
+        <div className="text-[11px] text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-1.5 space-y-1">
+          <div>
+            {status.ai.hasKey
+              ? <>AI vision is on your key ({status.ai.provider}{status.ai.model ? ` · ${status.ai.model}` : ""}): pages with no usable text layer are read by vision as they come up.</>
+              : <>No AI key on your account, so pages with no text layer (scans, CAD text plotted as lines) stay unread. Add one in Intelligence › Setup and press again.</>}
+          </div>
+          {!running && onRun && (
+            <div className="flex flex-wrap gap-1">
+              <label className="inline-flex items-center gap-1 cursor-pointer" title="For sheets whose tags are drawn as lines: every page goes through AI vision. Costs per page on your key.">
+                <input type="checkbox" checked={status.ai.visionAllPages} disabled={!status.ai.hasKey} onChange={(e) => onRun({ visionAllPages: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
+                Read every page with AI vision
+              </label>
+              <button onClick={() => onRun({ rereadAll: true })} className="rounded-full border border-[var(--color-border)] px-2 py-0.5 font-semibold hover:bg-[var(--color-surface-2)]">Re-read all drawings</button>
+            </div>
+          )}
+          {!running && !status.more && <div>Search a tag now. New drawings are picked up nightly, or press the button again.</div>}
+        </div>
       )}
     </div>
   );

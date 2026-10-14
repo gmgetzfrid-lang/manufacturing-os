@@ -55,20 +55,27 @@ export const EQUIPMENT_CATEGORIES: Record<string, string> = {
 export interface EquipmentTagHit {
   tag: string;        // "V-3", "P-101A" (normalized uppercase, dashed)
   prefix: string;     // "V", "PSV"
+  /** The unit someone wrote in front of it ("10-V-101" → "10"), when any. */
+  unit?: string;
 }
 
 // LETTERS-DASH-DIGITS(optional letter suffix). The dash is required — it's
 // what separates real tags from prose abbreviations. Longest-prefix rules
 // (PSV before P) come from the prefix itself being captured.
 const EQUIPMENT_RE = /\b([A-Z]{1,3})[-–](\d{1,5})([A-Z]{1,2})?\b/g;
+// On a DRAWING there is no prose, so the dash can be missing or be a space
+// or a dot: "V101", "V 101", "P.101A". Two digits at least, so a sheet size
+// (A1) or a revision (R2) never passes.
+const LOOSE_EQUIPMENT_RE = /(?<![A-Z0-9])([A-Z]{1,3})[\s.]?(\d{2,5})([A-Z]{1,2})?(?![A-Z0-9])/g;
 
 // Tokens that match the shape but are never equipment on real drawings.
 const EQUIPMENT_STOP_PREFIXES = new Set([
   "NO", "DWG", "REV", "PID", "DRW", "SHT", "SH", "PG", "ISO", "API", "ANSI", "NPS",
 ]);
 
-export function extractEquipmentTags(text: string): EquipmentTagHit[] {
+export function extractEquipmentTags(text: string, opts: { loose?: boolean } = {}): EquipmentTagHit[] {
   const out: EquipmentTagHit[] = [];
+  const seen = new Set<string>();
   const upper = text.toUpperCase();
   for (const m of upper.matchAll(EQUIPMENT_RE)) {
     const prefix = m[1];
@@ -76,11 +83,35 @@ export function extractEquipmentTags(text: string): EquipmentTagHit[] {
     // "2002-D-2001" is a DRAWING NUMBER — reading D-2001 out of its middle
     // would mint a phantom drum for every sheet in the set. A digit-dash
     // immediately before the prefix means the letters are an inner segment
-    // of a larger number, not a tag.
+    // of a larger number… unless those digits are a short UNIT prefix:
+    // "10-V-101" is the vessel V-101 in unit 10, and refineries write it
+    // that way on half their sheets. One or two digits with nothing
+    // alphanumeric before them read as a unit; three or more read as a
+    // drawing number's first segment.
     const at = m.index ?? 0;
-    if (at >= 2 && /[-–]/.test(upper[at - 1]) && /\d/.test(upper[at - 2])) continue;
+    let unit: string | undefined;
+    if (at >= 2 && /[-–]/.test(upper[at - 1]) && /\d/.test(upper[at - 2])) {
+      const lead = upper.slice(0, at - 1).match(/(?:^|[^A-Z0-9])(\d{1,2})$/);
+      // A lone D/P after a unit with four digits ("21-D-1105") is a drawing
+      // number in most sets; a longer prefix or a shorter number is a tag.
+      const number = m[2];
+      if (!lead || (prefix.length === 1 && number.length >= 4)) continue;
+      unit = lead[1];
+    }
     const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
-    out.push({ tag, prefix });
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(unit ? { tag, prefix, unit } : { tag, prefix });
+  }
+  if (opts.loose) {
+    for (const m of upper.matchAll(LOOSE_EQUIPMENT_RE)) {
+      const prefix = m[1];
+      if (EQUIPMENT_STOP_PREFIXES.has(prefix)) continue;
+      const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      out.push({ tag, prefix });
+    }
   }
   return out;
 }

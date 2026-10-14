@@ -156,7 +156,7 @@ export async function ingestKnowledgeDocBatch(
     //    refs), making the sheet fully searchable and citable.
     let visionRead = false;
     const rawPageText = lines.join("\n");
-    const tagsFromText = extractEquipmentTags(rawPageText).length + extractDrawingRefs(rawPageText).length;
+    const tagsFromText = extractEquipmentTags(rawPageText, { loose: drawingSet }).length + extractDrawingRefs(rawPageText).length;
     if (vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText)) {
       // Don't START a vision page we can't finish — a page begun at t=50s on
       // a 60s function is pure waste, and worse, it takes the whole batch's
@@ -235,6 +235,8 @@ export async function ingestKnowledgeDocBatch(
         }
       }
     } else if (drawingSet || isDrawingLikePage(pageText) || tagsFromText >= 8) {
+      const loose = drawingSet;
+      const onPage = new Set<string>();
       // Normalized position rides along with every hit: PDF user space has
       // its origin at the BOTTOM-left and is sized in points, neither of
       // which a browser overlay can use. 0..1 from the top-left survives any
@@ -250,7 +252,8 @@ export async function ingestKnowledgeDocBatch(
         const x = item.transform?.[4] ?? null;
         const y = item.transform?.[5] ?? null;
         const { nx, ny } = norm(x, y);
-        for (const hit of extractEquipmentTags(str)) {
+        for (const hit of extractEquipmentTags(str, { loose })) {
+          onPage.add(hit.tag);
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
             page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(str, 160), x, y,
@@ -262,6 +265,24 @@ export async function ingestKnowledgeDocBatch(
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
             page: p, kind: "ref", tag: ref, raw: truncateSafe(str, 160), x, y,
             nx, ny, pos_source: nx === null ? null : "text",
+          });
+        }
+      }
+    }
+
+    // A tag the PDF split across two text objects ("P-" then "101A") is
+    // whole again on the rebuilt line. Anything the lines carry that no
+    // single object did is kept, without a position.
+    if (!visionRead && (drawingSet || isDrawingLikePage(pageText) || tagsFromText >= 8)) {
+      const found = new Set(entityRows.filter((r) => r.document_id === doc.id && r.page === p && r.kind === "equipment").map((r) => String(r.tag)));
+      for (const line of lines) {
+        for (const hit of extractEquipmentTags(line, { loose: drawingSet })) {
+          if (found.has(hit.tag)) continue;
+          found.add(hit.tag);
+          entityRows.push({
+            org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+            page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(line, 160), x: null, y: null,
+            nx: null, ny: null, pos_source: null,
           });
         }
       }

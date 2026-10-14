@@ -125,7 +125,7 @@ export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDoc
 
   // Auto-apply when the library opted in AND a target column is mapped.
   let autoApplied = false;
-  if (bridge?.autoApply && bridge.targetColumnKey) {
+  if (bridge?.autoApply) {
     try {
       await applyForDocument(admin, { orgId, documentId, userId: null });
       autoApplied = true;

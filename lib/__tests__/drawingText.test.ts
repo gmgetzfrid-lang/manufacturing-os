@@ -36,6 +36,26 @@ describe("extractEquipmentTags", () => {
     expect(extractEquipmentTags("the V3 nozzle and P101 casing")).toEqual([]);
   });
 
+  it("keeps a unit-prefixed tag and remembers the unit", () => {
+    const tags = extractEquipmentTags("10-V-101 feeds 10-P-101A; see 2002-D-2001");
+    expect(tags.map((t) => t.tag)).toEqual(["V-101", "P-101A"]);
+    expect(tags[0].unit).toBe("10");
+  });
+
+  it("still reads 21-D-1105 as a drawing number, not a drum", () => {
+    expect(extractEquipmentTags("CONT ON 21-D-1105")).toEqual([]);
+  });
+
+  it("reads dashless and spaced tags only when told the page is a drawing", () => {
+    expect(extractEquipmentTags("V101 P 101A E.204 A1 R2")).toEqual([]);
+    const loose = extractEquipmentTags("V101 P 101A E.204 A1 R2", { loose: true }).map((t) => t.tag);
+    expect(loose).toEqual(["V-101", "P-101A", "E-204"]);
+  });
+
+  it("reports each tag once per call", () => {
+    expect(extractEquipmentTags("V-3 V-3 V-3", { loose: true }).length).toBe(1);
+  });
+
   it("normalizes case and en-dashes", () => {
     expect(extractEquipmentTags("v–17b")[0]?.tag).toBe("V-17B");
   });
