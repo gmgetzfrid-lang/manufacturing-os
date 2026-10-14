@@ -292,20 +292,33 @@ export async function recallRetiredDocument(input: {
    *  (notifyHolderOfRetirement) and the open packages' owners
    *  (notifyPackagesOfRetirement). A door that tells neither passes false. */
   personallyToldElsewhere?: { checkoutHolder?: boolean; packageOwners?: boolean };
+  /** PROD-17 (document-control P26 fix pass 4; the integrator's ruling
+   *  under DEC-90, 2026-10-14): false when the retirement takes away no
+   *  controlled issue — the document was never issued (its prior status is
+   *  not one lib/issueStatus.ts isControlledIssueStatus counts: Draft, In
+   *  Review, Void). No copy holder is read or recalled and no
+   *  DISTRIBUTION_RECALL row is written: "destroy old prints" is false for
+   *  a document that was never issued. The watchers' FYI below goes as it
+   *  does for any retirement. Default true: supersede and every other
+   *  caller recall exactly as before. */
+  recallCopyHolders?: boolean;
 }): Promise<number> {
   try {
-    const since = new Date(Date.now() - DOC_RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
-    const { data } = await supabase
-      .from("download_audits")
-      .select("user_id")
-      .eq("document_id", input.documentId)
-      .gt("created_at", since)
-      .limit(DOC_RECALL_ROW_CAP);
-    const holders = [...new Set(
-      (((data as Array<{ user_id: string | null }> | null) ?? []))
-        .map((r) => r.user_id)
-        .filter((u): u is string => !!u && u !== input.actorUserId),
-    )];
+    let holders: string[] = [];
+    if (input.recallCopyHolders !== false) {
+      const since = new Date(Date.now() - DOC_RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+      const { data } = await supabase
+        .from("download_audits")
+        .select("user_id")
+        .eq("document_id", input.documentId)
+        .gt("created_at", since)
+        .limit(DOC_RECALL_ROW_CAP);
+      holders = [...new Set(
+        (((data as Array<{ user_id: string | null }> | null) ?? []))
+          .map((r) => r.user_id)
+          .filter((u): u is string => !!u && u !== input.actorUserId),
+      )];
+    }
     // The copy holders' recall goes out FIRST, with its DIST-10 audit row
     // (review fix, N15): it is the safety notice, and it must not wait on
     // the watchers' FYI below — whose discover check, follower reads and

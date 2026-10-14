@@ -14,7 +14,7 @@ to proceed is a finding.
 ## UI-1 · A ticket never says who it is waiting on
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / adoption
 - **Locations:**
@@ -49,12 +49,21 @@ current holder is a small change against an existing, tested function.
 2. It states how long it has been in that state.
 3. The requester can tell at a glance whether the ball is in their court.
 
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE, base `ee21632`. Reproduced first by reading: the page rendered `{ticket.status.replace(/_/g, ' ')}` and named no holder or elapsed time. The ticket header now carries one line under the title (`app/(protected)/requests/[id]/page.tsx`:2139, `data-testid="waiting-on"`): **"Your turn: …"** when the engine offers the viewer a live, non-optional action (the attention rule, `liveActions.some((a) => !a.optional && !a.disabledReason)`, :1903); otherwise **"Waiting on <name> (<part>) — <what>"**; for a closed / canceled request, "nothing is waiting on anyone"; and **"· for N days"** since the wait began. The pieces are pure and shared (`lib/ticketAttention.ts`): `holdersFor` (:203) names the person on the ticket whose move the status is — the drafter, the reviewing engineer, the requester — or the assignment queue by its members' names (`lib/ticketRouting.ts` `queuePool`, read once on the page when the step is the queue's), or — when the requester whose review or acknowledgement it is has left, or the request has none — the co-reviewer pool the engine draws (`lib/workflow.ts`): "a reviewer — engineers or management" (`ticket.direct_approve` and `ticket.manage` holders), and with no requester "a requester-reviewer, engineer or management" (`ticket.requester_review` too) *(corrected at the DF-P9 review fix pass: the first cut said "management" alone, while the engine also requires engineers' co-review there)*; `waitingSince` (:255) is the newest history line that moved the stage or its holder (a file, a saved draft, the triage note do not reset it — `NON_STEP_HISTORY_ACTIONS`, :241, pinned against the engine by a census); `waitedFor` (:280) reads in hours under two days, then days; `attentionLabel` (:133) words the step. The status itself reads in words (`UI-7`).
+
+**Done-when.**
+1. ✓ The ticket states in plain language what stage it is at (the status label, and `attentionLabel`) and who it is waiting on (by name and part). `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "UI-1 / UI-7 — where the request is, on whom, since when, in words".
+2. ✓ It states how long it has been in that state ("· for 3 days" in the same test; `waitingSince` / `waitedFor` cases and the history census in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts`, "UI-1 — who a request waits on, and since when").
+3. ✓ The requester can tell at a glance whether the ball is in their court: "Your turn" is the engine's own answer for the viewer (the queue owner at the assignment step, same test); otherwise the line names someone else.
+
+**Scope / residual.** None. The queue-member names come from one routing read per ticket view; when it fails the line says "the assignment queue". *DF-P9 review fix pass:* the page's own read of the requester's membership (`app/(protected)/requests/[id]/page.tsx`, the `requesterRoles` effect, :1269) turned any failed read into `[]` ("left the workspace"), and this line then stated that invented departure as fact; a read that errors is now unknown (null, assumed present), as `lib/ticketRequesterRoles.ts` answers — `FRIC-7`. Pinned rendered: `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "fix pass (FRIC-7): a requester read that ERRORS invents no departure…" and its success-with-no-row regression; the co-reviewer wording is pinned against the engine in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "fix pass — the co-reviewer pool is described as the ENGINE draws it".
+
 ---
 
 ## UI-2 · The workflow map is hidden behind a status pill that does not look clickable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -84,6 +93,15 @@ good. It needs a visible affordance, and it needs to exist on the request form
 2. It is reachable from the new-request form and the queue, not only from an
    existing ticket.
 3. It does not depend on hover.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. The status pill keeps its help icon and gains an `aria-label` ("Status: <label> — see where this request is in the workflow") and a visible text button beside it, **"See the workflow"** (`app/(protected)/requests/[id]/page.tsx`:2088-2105). The map opens from the request queue ("How requests flow", `app/(protected)/requests/page.tsx`:1075-1082, and the modal at :1048) and from the new-request form ("See how a request flows", `app/(protected)/requests/new/page.tsx:453`). Every trigger is a click or tap, never a hover. The map's stage names come from the same label list as the pills (`components/requests/WorkflowDiagramModal.tsx` reads `TICKET_STATUS_LABELS`).
+
+**Done-when.**
+1. ✓ A visible, obviously clickable affordance: a labelled text button beside the pill, plus the pill itself. `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "UI-2: the status pill opens the workflow map".
+2. ✓ Reachable from the new-request form and the queue — `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "UI-2 — the workflow map is reachable from the queue" (rendered: a click opens the map); `lib/__tests__/requestFormCreate.test.ts` "UI-2 (DF-P9) — the form opens the workflow map before filing" (rendered: the form mounts, a click on "See how a request flows" — a `type="button"` that never submits — opens the map with its stages in words, Escape closes it, nothing is filed). *(Corrected at the DF-P9 review fix pass: this item first cited `requestFormCreate.test.ts` for a link it never touched; the only pin was a source string in the census in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts`, which stays.)*
+3. ✓ Nothing depends on hover.
+
+**Scope / residual.** None.
 
 ---
 
@@ -124,7 +142,7 @@ channel real work arrives through.**
 ## UI-4 · "View Only — No Actions Available" explains nothing
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -152,6 +170,16 @@ library — <controller> can grant it."*
 
 **Done when.** The empty state distinguishes "not your turn" from "not
 permitted", and names who to talk to in each case.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. "View Only — No Actions Available" is gone. When the engine offers the viewer nothing, the page shows one sentence from `lib/ticketAttention.ts` `explainNoActions` (:326; `app/(protected)/requests/[id]/page.tsx`:2247, `data-testid="no-actions-why"`):
+- **Not your turn** — the viewer is a party to the request (its requester, drafter or reviewing engineer), or the engine would offer them a live action at another open stage of it: "You are the requester — this step is the drafter's (waiting on Hector: …)" / "Not your turn — waiting on <holder> (…). You act on this request at another stage."
+- **Not permitted** — no stage offers them anything: "Your roles don't act on this request — waiting on <holder> (…). If you should be able to, an Admin can change who may act in Admin → Permissions."
+- **Terminal** — closed / canceled, nothing waits on anyone, and what to do instead.
+The holder is named exactly as the waiting line names them (`holdersFor`). While the policy is unreadable the page shows the AUTHZ-15 notice instead (it cannot say "not permitted" without the policy).
+
+**Done-when.** ✓ The empty state distinguishes "not your turn" from "not permitted" and names who to talk to in each case — the holder, and for "not permitted" the Admin who edits the policy. `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "UI-4 — 'View Only' explained" (requester, drafter at another stage, viewer, terminal); `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "UI-4 — no action, explained" (rendered: the Viewer sees the queue member's name and Admin → Permissions; the old text is absent).
+
+**Scope / residual.** None.
 
 ---
 
@@ -195,7 +223,7 @@ with no recovery path and no explanation.
 ## UI-6 · The queue opens on the whole org, not on what needs you
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Re-verified:** hardening pass — **SURVIVES**. `myActionItems` is computed at `app/(protected)/requests/page.tsx:329` but the initial `filters` state opens on `status: 'ALL'` across the org (same file, `:180-187`). Duplicate of `FRIC-9` within this area; fix once.
@@ -209,6 +237,12 @@ opens on the full org queue, default sort, 25 per page. The selector exists, its
 result is already on screen, and the list does not use it.
 
 **Done when.** See `FRIC-9`.
+
+**Resolution (2026-10-14, drafting-flow Round G).** Closed with [`FRIC-9`](./02-friction-latency.md) (the same change): the queue opens on "Needs me" for every role — the engine's action-required set, the `myActionItems` selector this finding names — with "All" one click away and both counts on screen.
+
+**Done-when.** ✓ See `FRIC-9`.
+
+**Scope / residual.** None.
 
 ---
 
@@ -247,6 +281,26 @@ users actually see.
 **Done when.** A user-facing surface never shows a raw status identifier as the
 primary label.
 
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the request surfaces only; *corrected at the DF-P9 review fix pass*: the first record called this RESOLVED by narrowing the done-when to "no user-facing **request** surface". Under `DEC-29` / `DEC-31` it stays OPEN, with the request-page limb landed and the remainder owned below. A display layer only — the enum values are untouched, as this finding's chain reaction requires. `lib/ticketStatusLabels.ts` (new) holds one label per status (`TICKET_STATUS_LABELS`, :28: "Awaiting drafter", "Engineering review", "Drafting", "Revision requested", "In review", "Engineer sign-off", "Ready to issue (IFC)", **"Issued — awaiting acknowledgement"** for `FINAL_DRAFT`, "Closed", "Canceled") and `ticketStatusLabel` (:44), which words a value this build does not know ("Some new state") rather than showing it. The request surfaces read it: the ticket header pill (`app/(protected)/requests/[id]/page.tsx`, `data-testid="status-pill"`), the queue's table and cards (`ticketStatusLabel(ticket.status)`, `app/(protected)/requests/page.tsx`:1446, :1552) and its status filter (:1259, `TICKET_STATUS_FILTER_ORDER`), the supervisor board's per-request chips (:1366) and the workflow map's stage names (`components/requests/WorkflowDiagramModal.tsx`). The CSV export keeps the stored value (a data file, not a label).
+
+*DF-P9 integrator fix pass (2026-10-14, the integrator's ruling under `DEC-90`: the remaining-sites list complete, every site owned).* Re-derived on this branch with a repo-wide search (`.status.replace(/_/g`, `{….status}`, `${….status}` / `${newStatus}` in user-facing text, and every other status-label map). Four more request sites were found; three are fixed here with the shared list, and the fourth is owned below:
+- **Fixed here** — `components/documents/ImpactPanel.tsx:180`, a document's "Open drafting work on this document" list, rendered `{t.status.replace(/_/g, " ")}` ("PENDING IFC", "FINAL DRAFT") for every open request on the document; it is a TICKET status, so it now reads `ticketStatusLabel(t.status)` ("Ready to issue (IFC)"). No document-control owner is needed (the brief's rule: a ticket status is fixed here; a document status would have gone to document-control P28 STATUS-DOOR REMAINDERS).
+- **Fixed here** — `components/archive/TicketArchiveViewer.tsx:159` (the archived-ticket viewer the ticket page opens) showed `{row.status}` ("CANCELED"); it reads `ticketStatusLabel` ("Canceled"), and a snapshot with no status still shows none.
+- **Fixed here** — the printed traveler's "Status at printing" (`lib/physicalBridge.ts:332` words what it is given with `.replace(/_/g, " ")` — "PENDING IFC"): its only caller, the ticket page, now hands it the pill's label (`status: ticketStatusLabel(ticket.status)`, `app/(protected)/requests/[id]/page.tsx`:2167). The generator itself is unchanged (public-surfaces' file; its golden test feeds a fixed input).
+- **The board's lane chips** (`app/(protected)/requests/page.tsx`:1345-1350) — exactly which read the shared list: the single-status chips **Drafting** (`DRAFTING`), **Revision requested** (`REVISION_REQ`, was "Revisions"), **Ready to issue (IFC)** (`PENDING_IFC`, was "Awaiting IFC") and **Closed** (`CLOSED`) read `ticketStatusLabel`. The `review` bucket counts **four** statuses (`REVIEW_BUCKET_STATUSES`, :158 — `PENDING_ASSIGNMENT`, `PENDING_ENG_TEAM`, `PENDING_REVIEW`, `PENDING_FINAL_APPROVAL`), so it no longer borrows "In review" (`PENDING_REVIEW`'s label alone, which the cards beneath it also carry): it reads **"Review or assignment"**, and its tooltip names the four in the shared words ("Waiting at one of: Awaiting drafter, Engineering review, In review, Engineer sign-off"). **Overdue** is a due-date count (`lib/notifications.ts` `isPastDue`), not a status, and keeps its word.
+
+**Done-when.** (as written above — every user-facing surface)
+- ✓ for the request surfaces (the ticket page and its traveler and archive viewer, the queue and its board, the workflow map, the request form's map, a document's impact panel): `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "UI-7 — a status is shown in words" (every status labelled, none in snake case, the filter lists each once); `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "UI-7 / FRIC-3 / EDGE-8 — a row in words" (rendered: labels present, `PENDING_ASSIGNMENT` / `REVISION_REQ` absent, the filter offers "Issued — awaiting acknowledgement") and "UI-7 (integrator fix pass) — the board's lane chips never reuse one status's label for a bucket" (rendered: each single-status chip's shared label, the bucket's label and tooltip, no lane chip reads "In review"); `lib/__tests__/dfRoundG_P9_integratorFix.test.ts` "UI-7 (integrator fix pass) — a document's impact panel names its open requests' statuses in words" and "— the archived-ticket viewer states the status in words" (both rendered); `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "UI-7 (integrator fix pass) — the printed traveler states the status in words" (rendered: the generator receives "Ready to issue (IFC)"); `lib/__tests__/requestFormCreate.test.ts` "UI-2 (DF-P9) — the form opens the workflow map before filing" (the map's stages in words, no identifier); the census in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` forbids `.status.replace(/_/g` in both request pages.
+- ✗ **Not met for every user-facing surface** — these sites outside DF-P9's files still show the raw status, or a second label set, to a person (the complete list, re-derived on this branch at the integrator fix pass):
+  - `app/(protected)/admin/analytics/page.tsx:516` renders `{t.status}` as the chip in a member's ticket list ("PENDING_IFC", "FINAL_DRAFT"). **Owner: admin-and-org** (the analytics surface; DF-P3 holds only the "How Requests Ended" block there). **Assigned (2026-10-14, the integrator at the DF-P9 merge): drafting-flow DF-P14 QUEUE READ AND STATUS-LABEL REMAINDERS.** One line: `{ticketStatusLabel(t.status)}`.
+  - `app/api/tickets/workflow-action/route.ts:1407` — the bell body is `` `Status: ${newStatus}` `` when there is no comment. **Owner: the workflow route's holder** (drafting-flow; the route is shared by DF-P1 / P3 / P4 / P5 / P6 / P7 / P8 this round — the integrator assigns the next one). One line: `` `Status: ${ticketStatusLabel(newStatus)}` ``.
+  - `app/api/tickets/workflow-action/route.ts:1455` (text) and `:1458` (HTML) — the email reads "Status is now: PENDING_IFC". **Owner: the same.** The label in both lines; the stored value may stay in a machine-readable header if one is wanted.
+  - `app/api/tickets/workflow-action/route.ts:360` — the refusal a person reads on the page ("Workflow action failed: Action "…" is not available to you at status PENDING_REVIEW") names the stored value. *(Added at the integrator fix pass.)* **Owner: the same.** `ticketStatusLabel(ticket.status)` in the message (the `code` / status code unchanged).
+  - `lib/ticketSla.ts:192`, `:196`, `:197` — the SLA clock's "Due soon" / "Overdue" bell and email bodies say "It is waiting at PENDING_REVIEW" / "…is still waiting at DRAFTING". *(Added at the integrator fix pass.)* **Assigned (2026-10-14, the integrator at the DF-P9 merge): drafting-flow DF-P14 QUEUE READ AND STATUS-LABEL REMAINDERS.** (DF-P13, named here first, merged without these lines.) *Was:* **Owner: drafting-flow DF-P13** (it held `lib/ticketSla.ts`; parallel-locked during this pass). `ticketStatusLabel(t.status)` in the three bodies.
+  - `components/dashboard/widgets.tsx:283-296` (`TICKET_STATUS`, "mirrors the request portal") keeps its own label set — a requester reads "Final draft" on the dashboard and "Issued — awaiting acknowledgement" on the ticket, a third set `GAP-108` says not to write — and its fallback shows an unknown value raw (`label: s ?? "—"`, :296). **Owner: whoever holds `components/dashboard/widgets.tsx` next** (notifications N2 / N3 edited it this round for the counts; the integrator confirms). Keep the widget's badge classes; take the words from `ticketStatusLabel`.
+  Each is the shared `ticketStatusLabel` (`lib/ticketStatusLabels.ts`), never a new list. Not request statuses, so outside this finding: `components/knowledge/DrawingIntelPanel.tsx:327` (a drawing-review verdict), `lib/stripe.ts:161` (a subscription), `components/projects/ProjectDocumentsCard.tsx:215` and `app/(protected)/assets/[tag]/page.tsx:480` (document statuses).
+
+**Scope / residual.** The six sites above (owners named). **Assigned (2026-10-14, the integrator at the DF-P9 merge): drafting-flow DF-P14 QUEUE READ AND STATUS-LABEL REMAINDERS.** — every one of the six sites, the workflow route's four lines and the dashboard widgets included (their earlier owners were a role, not a package). The ticket page's audit-trail tab still shows history *action* names with underscores replaced (`event.action.replace(/_/g, ' ')`) — those are history entries, not statuses, outside this finding.
 ---
 
 ## The first-run walkthrough

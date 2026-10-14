@@ -39,13 +39,17 @@
 // ticket with none gets one only when its org configured `sla_defaults` for
 // its type (default_days from created_at) — DEFAULT_SLA_DAYS is never
 // applied retroactively, because a ticket filed months ago with no target
-// would otherwise breach on the first run after the deploy.
+// would otherwise breach on the first run after the deploy. A stored window
+// outside the create route's bound (lib/notifications.ts boundedSlaDays —
+// whole days, 1 to SLA_DEFAULT_DAYS_MAX) is never used: the pass treats its
+// type as one with no row and says so (drafting-flow EDGE-17, DF-P13).
 
 import type { TicketStatus } from "@/types/schema";
 import {
   loadRoutingContext, routedPool, queuePool, type RoutingClient, type RoutingContext,
 } from "@/lib/ticketRouting";
 import { formatRecordDate } from "@/lib/recordTime";
+import { SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";
 
 /** GAP-106: the fraction of the SLA window at which the owner is warned. */
 export const SLA_WARN_FRACTION = 0.75;
@@ -460,11 +464,23 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
     return report;
   }
   const byOrg = new Map<string, Map<string, number>>();
+  // EDGE-17 (DF-P13): a stored window outside the create route's bound
+  // (boundedSlaDays — whole days, 1 to SLA_DEFAULT_DAYS_MAX; 20261218's CHECK)
+  // is never used. Its type is passed over exactly as a type with no row is,
+  // so one workspace's row (a value of ~100,000,000 days made the date below
+  // throw) never stops this pass for the workspaces after it. Each workspace
+  // holding such rows is one line: its id and a count, nothing more.
+  const unusable = new Map<string, number>();
   for (const d of ((defs as Array<{ org_id: string; request_type: string; default_days: number }> | null) ?? [])) {
-    if (!d.org_id || !d.request_type || !(Number(d.default_days) > 0)) continue;
+    if (!d.org_id || !d.request_type) continue;
+    const days = boundedSlaDays(d.default_days);
+    if (days === null) { unusable.set(d.org_id, (unusable.get(d.org_id) ?? 0) + 1); continue; }
     const m = byOrg.get(d.org_id) ?? new Map<string, number>();
-    m.set(d.request_type, Number(d.default_days));
+    m.set(d.request_type, days);
     byOrg.set(d.org_id, m);
+  }
+  for (const [orgId, n] of unusable) {
+    report.errors.push(`ticket-sla@${orgId}: ${n} sla_defaults window(s) outside 1–${SLA_DEFAULT_DAYS_MAX} whole days were not used — the open requests of those types with no due date of their own are not timed, as for a type with no window, until the window is corrected (Admin → Request forms)`);
   }
   let read2 = 0;
   for (const [orgId, types] of byOrg) {

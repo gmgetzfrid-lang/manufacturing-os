@@ -234,6 +234,17 @@ What landed — done-when 2 (companions) and done-when 3 (soft-delete only), per
 
 **Scope / residual.** Stays OPEN for two companion listeners, each one `.on('postgres_changes', { event: 'DELETE', schema: 'public', table: … }, …)` beside its filtered one, acting only on a row the page holds: the requests portal's tickets channel — owner: drafting-flow DF-P9 TICKET-PAGE (assigned 2026-10-13, above); the library page's documents channel — owner: document-control (the library page's holder). Until then a document hard-deleted in one session stays on another viewer's library page until reload (the finding's own scenario).
 
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the tickets limb. The requests portal's tickets channel (`app/(protected)/requests/page.tsx:430-441`) gains its unfiltered `DELETE` companion beside the org-filtered listener — the attention feed's pattern (`DEC-105` item 4): it hears every tenant's tickets DELETEs (the old row's primary key alone), acts only on a ticket the list holds, and drops that row; anything else is ignored, with no refetch. `"app/(protected)/requests/page.tsx:tickets"` is removed from `RT4_PENDING` (`lib/__tests__/realtimePublication.test.ts`), so the census now requires the companion.
+
+**Done-when.**
+- ✓ for `tickets` (both subscribers): done-when 2 — the attention feed's companion (N4) and now the portal's. `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "RT-4 — the tickets DELETE companion" (rendered: unfiltered; a held row dropped; another tenant's delete changes nothing and refetches nothing); `realtimePublication.test.ts` (the census).
+- ✓ for the never-hard-deleted tables (N4; unchanged).
+- ✗ The library page's `documents` channel still has no companion. **Owner:** document-control (the library page's holder), as recorded; `RT4_PENDING` keeps that one entry.
+
+**Scope / residual.** The library page's documents companion → document-control.
+
+*Assigned (2026-10-14, the integrator at the DF-P9 merge):* the library page's `documents` channel companion → document-control **P28 STATUS-DOOR REMAINDERS** (it holds that page's editor save and bulk archive after intelligence I-12).
+
 ---
 
 <a id="rt-5"></a>

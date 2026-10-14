@@ -336,9 +336,13 @@ export function defaultSlaTargetDate(requestType: string): string | null {
 }
 
 /** The longest window a workspace's `sla_defaults.default_days` may set
- *  (ten years). `sla_defaults` is writable by every active member today
- *  (20260605 `sla_defaults_member_all`, FOR ALL — drafting-flow EDGE-16) and
- *  `default_days` carries no CHECK, so the value is bounded where it is read. */
+ *  (ten years). Until 20261218 is pasted, `sla_defaults` is writable by every
+ *  active member (20260605 `sla_defaults_member_all`, FOR ALL — drafting-flow
+ *  EDGE-16) and `default_days` carries no CHECK; after it, the drafting-
+ *  configuration editors alone write it and a CHECK holds new writes to 1 to
+ *  this bound, but a row stored before the paste may still be outside it (the
+ *  CHECK then stays NOT VALID). So the value is bounded where it is read, in
+ *  both worlds. */
 export const SLA_DEFAULT_DAYS_MAX = 3650;
 
 /** An `sla_defaults.default_days` value the create route may use: a whole
