@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { loadScanRetryPlan } from "@/lib/complianceNotify";
 import { effectiveOwnerForDocument, getOrgControllers } from "@/lib/ownership";
+import { readWorkspaceTimeZone } from "@/lib/workspaceTimeZone";
 
 export type EffectiveStatus = "none" | "pending" | "effective";
 
@@ -43,6 +44,21 @@ export type EffectiveStatus = "none" | "pending" | "effective";
 // lands, which changes effectiveDateTimeZone() and nothing else). Dates are
 // compared as YYYY-MM-DD strings, never by parsing a bare datetime (which JS
 // reads in the local zone).
+//
+// VFY-15 (admin-and-org Round G, P12 — DEC-63 §4 reversal 4): the org
+// setting has landed. An Admin names the workspace's zone on /admin/settings
+// (org_configurations key "timezone", lib/workspaceTimeZone.ts), and it is
+// the calendar a document of that workspace is decided in, BEFORE the
+// deployment variable: effectiveDateTimeZone(workspaceZone) prefers it, and
+// workspaceEffectiveDateTimeZone(client, orgId) reads it for the document's
+// org. No zone set, a stored value this runtime does not know, or a setting
+// that cannot be read all fall back to the deployment variable — today's
+// behaviour, never silently UTC — and then, as before, to UTC-12. Every
+// caller passes the zone it resolved for the document's org: /api/verify,
+// /api/verify-package, the transmittal portal, the badge (EffectivePill), the
+// register, the suppression watermark (applyEffectiveDate) and the daily
+// scan (scanEffectiveDates) — so the watermark and the scan still share one
+// calendar per workspace (REV-9's rule, now per org).
 
 /** The calendar used when the deployment names no (valid) facility zone:
  *  UTC-12. IANA spells it "Etc/GMT+12" — the POSIX sign is inverted, so
@@ -79,7 +95,16 @@ export function facilityTimeZoneHealth(): { configured: boolean; valid: boolean;
  *  inlines into the browser bundle, and the cron scan reads the same name
  *  on the server — else the latest calendar (UTC-12), which can only be
  *  late, never early. */
-export function effectiveDateTimeZone(): string {
+export function effectiveDateTimeZone(workspaceZone?: string | null): string {
+  // VFY-15: the workspace's own zone (an Admin's setting, already read for
+  // the document's org) wins when this runtime knows it.
+  const ws = (workspaceZone ?? "").trim();
+  if (ws) {
+    try {
+      new Intl.DateTimeFormat("en-CA", { timeZone: ws });
+      return ws;
+    } catch { /* not a zone this runtime knows: the deployment's calendar decides */ }
+  }
   const raw = (process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE ?? "").trim();
   if (!raw) {
     // Review fix 3: an UNSET zone is said once per runtime too — silence
@@ -100,6 +125,48 @@ export function effectiveDateTimeZone(): string {
     }
     return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
   }
+}
+
+/** Minimal client surface the workspace-zone read needs (the browser client
+ *  or a service client). */
+type ZoneClient = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+const warnedUnreadOrgs = new Set<string>();
+
+/** VFY-15: the calendar a document of `orgId` is decided in — the
+ *  workspace's zone (lib/workspaceTimeZone.ts readWorkspaceTimeZone, through
+ *  the client given: the service client on the server), else the deployment
+ *  variable, else UTC-12. A setting that cannot be read is said once per
+ *  workspace per runtime and falls back to the deployment variable — today's
+ *  behaviour — never to UTC. Never rejects. */
+export async function workspaceEffectiveDateTimeZone(sb: ZoneClient, orgId: string | null | undefined): Promise<string> {
+  if (!orgId) return effectiveDateTimeZone();
+  const r = await readWorkspaceTimeZone(sb, orgId);
+  if (!r.ok) {
+    if (!warnedUnreadOrgs.has(orgId)) {
+      warnedUnreadOrgs.add(orgId);
+      console.error(`[effectiveDate] the workspace time zone of ${orgId} could not be read (${r.error}) — effective dates are decided in the deployment's calendar (${effectiveDateTimeZone()}) until it can be.`);
+    }
+    return effectiveDateTimeZone();
+  }
+  return effectiveDateTimeZone(r.timeZone);
+}
+
+/** VFY-15, for the browser: the same answer, kept per workspace for a few
+ *  minutes so a page of badges reads the setting once. */
+const ZONE_CACHE_MS = 5 * 60_000;
+const zoneCache = new Map<string, { at: number; zone: Promise<string> }>();
+export function cachedWorkspaceEffectiveDateTimeZone(sb: ZoneClient, orgId: string, now: number = Date.now()): Promise<string> {
+  const hit = zoneCache.get(orgId);
+  if (hit && now - hit.at < ZONE_CACHE_MS) return hit.zone;
+  const zone = workspaceEffectiveDateTimeZone(sb, orgId).catch(() => effectiveDateTimeZone());
+  zoneCache.set(orgId, { at: now, zone });
+  return zone;
+}
+/** Tests only: forget the browser cache and the once-per-workspace warnings. */
+export function resetWorkspaceZoneCacheForTests(): void {
+  zoneCache.clear();
+  warnedUnreadOrgs.clear();
 }
 
 /** Today's date (YYYY-MM-DD) in the effective-date calendar — the ONE
@@ -124,36 +191,42 @@ function isoDay(value: string): string | null {
   return day;
 }
 
-const todayISO = () => effectiveTodayISO();
+const todayISO = (timeZone?: string) => effectiveTodayISO(new Date(), timeZone);
 
 /** `none` = no future effective date (effective immediately / already in force);
  *  `pending` = a future effective date not yet reached; `effective` = the date
  *  has arrived/passed. Only `pending` warrants a badge. Decided in the
- *  effective-date calendar (REV-9), the same one the scan announces in. */
-export function effectiveStatusFor(effectiveDate?: string | null, now: Date = new Date()): EffectiveStatus {
+ *  effective-date calendar (REV-9), the same one the scan announces in —
+ *  `timeZone` is the document's workspace calendar when the caller resolved
+ *  it (VFY-15: workspaceEffectiveDateTimeZone), else the deployment's. */
+export function effectiveStatusFor(effectiveDate?: string | null, now: Date = new Date(), timeZone?: string): EffectiveStatus {
   if (!effectiveDate) return "none";
   const eff = isoDay(effectiveDate);
   if (!eff) return "none";
-  return eff > effectiveTodayISO(now) ? "pending" : "effective";
+  return eff > effectiveTodayISO(now, timeZone) ? "pending" : "effective";
 }
 
 /** Whole days until the effective date (negative = already effective), in
  *  the effective-date calendar (REV-9). */
-export function daysUntilEffective(effectiveDate?: string | null, now: Date = new Date()): number | null {
+export function daysUntilEffective(effectiveDate?: string | null, now: Date = new Date(), timeZone?: string): number | null {
   if (!effectiveDate) return null;
   const eff = isoDay(effectiveDate);
   if (!eff) return null;
   const toUtc = (day: string) => { const [y, m, d] = day.split("-").map(Number); return Date.UTC(y, m - 1, d); };
-  return Math.round((toUtc(eff) - toUtc(effectiveTodayISO(now))) / 86_400_000);
+  return Math.round((toUtc(eff) - toUtc(effectiveTodayISO(now, timeZone))) / 86_400_000);
 }
 
 /** Persist an effective date onto a version + denormalize it onto the document.
  *  If the date is immediate (null / today / past) we pre-stamp the notify
  *  watermark so the "now in effect" notice never fires for it — only a genuinely
- *  FUTURE effective date gets announced when it arrives. */
-export async function applyEffectiveDate(input: { documentId: string; versionId: string; effectiveDate: string | null }): Promise<void> {
+ *  FUTURE effective date gets announced when it arrives. VFY-15: "today" is
+ *  the document's workspace calendar (`orgId`), the one scanEffectiveDates
+ *  announces in — a watermark decided in another calendar could pre-suppress
+ *  a date the scan has not reached yet (REV-9's defect, between two zones). */
+export async function applyEffectiveDate(input: { documentId: string; versionId: string; effectiveDate: string | null; orgId?: string | null }): Promise<void> {
   const eff = input.effectiveDate ? input.effectiveDate.slice(0, 10) : null;
-  const suppress = !eff || eff <= todayISO();
+  const zone = eff && input.orgId ? await workspaceEffectiveDateTimeZone(supabase, input.orgId) : undefined;
+  const suppress = !eff || eff <= todayISO(zone);
   // OWN-14: checked — both call sites treat this as best-effort, but a
   // refusal must at least THROW so their catch is a decision, not a default.
   const { error: verErr } = await supabase.from("document_versions")
@@ -175,12 +248,14 @@ const EFFECTIVE_RETRY_LOOKBACK_MS = 7 * 86_400_000;
  *  once per document (watermark), telling the owner + Admin/DocCtrl (and anyone
  *  who had to acknowledge it) that the revision is now in force. */
 export async function scanEffectiveDates(orgId: string): Promise<number> {
+  // VFY-15: decided in this workspace's calendar (the watermark's too).
+  const zone = await workspaceEffectiveDateTimeZone(supabase, orgId);
   const { data } = await supabase
     .from("documents")
     .select("id, library_id, collection_id, document_number, title, name, rev, effective_date, owner_user_id, owner_name, current_version_id")
     .eq("org_id", orgId)
     .not("effective_date", "is", null)
-    .lte("effective_date", todayISO())
+    .lte("effective_date", todayISO(zone))
     .is("effective_notified_at", null);
   const docs = (data ?? []) as Array<Record<string, unknown>>;
   if (!docs.length) return 0;

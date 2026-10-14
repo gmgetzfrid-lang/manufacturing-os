@@ -331,8 +331,9 @@ describe("VFY-4 / REV-9 — 'not yet in effect' is decided in the facility's cal
   it("the route no longer spells its own UTC 'today' — it asks lib/effectiveDate", () => {
     const src = readFileSync(join(process.cwd(), "app/api/verify/route.ts"), "utf8");
     expect(src).not.toMatch(/toISOString\(\)\.slice\(0, 10\)/);
-    expect(src).toContain('import { effectiveStatusFor } from "@/lib/effectiveDate";');
-    expect(src).toContain('effectiveStatusFor(effectiveDate) === "pending"');
+    // VFY-15 (admin-and-org P12): and hands it the document's workspace zone.
+    expect(src).toContain('import { effectiveStatusFor, workspaceEffectiveDateTimeZone } from "@/lib/effectiveDate";');
+    expect(src).toContain('effectiveStatusFor(effectiveDate, new Date(), effectiveDate ? await workspaceEffectiveDateTimeZone(sb, d.org_id) : undefined) === "pending"');
   });
 });
 
@@ -394,7 +395,9 @@ describe("VFY-14 — the route selects only what it uses", () => {
     state.doc = docWith("Issued");
     await verify();
     const docSel = state.selects.find((s) => s.table === "documents")!.cols;
-    expect(docSel).toBe("id, document_number, title, name, rev, status, current_version_id, legal_hold");
+    // VFY-15 (admin-and-org P12): org_id is read to pick the workspace's
+    // calendar for the effective date; it is never in the response.
+    expect(docSel).toBe("id, org_id, document_number, title, name, rev, status, current_version_id, legal_hold");
     for (const s of state.selects) expect(s.cols).not.toContain("superseded_at");
     expect(state.selects.find((s) => s.table === "document_holds")!.cols).toBe("reason");
   });

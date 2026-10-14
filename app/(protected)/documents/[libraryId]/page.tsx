@@ -3083,7 +3083,7 @@ export default function LibraryExplorerPage() {
       return <AckPill summary={docRecord.id ? ackSummaries.get(docRecord.id) : undefined} compact />;
     }
     if (def.type === "effective") {
-      return <EffectivePill effectiveDate={docRecord.effectiveDate} compact />;
+      return <EffectivePill effectiveDate={docRecord.effectiveDate} orgId={docRecord.orgId ?? activeOrgId} compact />;
     }
     if (def.type === "retention") {
       return <RetentionPill retentionUntil={docRecord.retentionUntil} dispositionState={docRecord.dispositionState} legalHold={docRecord.legalHold} compact />;

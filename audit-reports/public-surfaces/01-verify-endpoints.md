@@ -748,7 +748,7 @@ app/api/verify-hold/route.ts:29 — `.select("id, document_id, reason, notes, op
 ## VFY-15 · Effective dates are decided in ONE deployment-wide facility zone — a deployment whose orgs run plants in different zones has no per-org calendar, so "NOT YET IN EFFECT" can lift early for one org's field scans
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/effectiveDate.ts` (`effectiveDateTimeZone`, `effectiveTodayISO`, `effectiveStatusFor`, `scanEffectiveDates`), `app/api/verify/route.ts` (the `effectiveStatusFor` call)
 - **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY) from `VFY-4` done-when 2 ("the org's configured plant timezone"), per DEC-31; verified against the branch, not yet challenged by a second party.
@@ -785,6 +785,32 @@ DEC-63 §4 Reversal (4): "An org / library zone setting replaces the deployment 
 3. ✗ No two-org test yet.
 
 **Owner of the remainder:** admin-and-org, a P8 follow-up. The integrator schedules it once notifications N14 has merged `lib/effectiveDate.ts` *(N14 merged on the integration branch at `0cb6409`, 2026-10-13; this branch carries it since `e18cdd9` — the follow-up is unblocked, not built here: DEC-31)*, and decides whether it goes with document-control instead (the module's original owner, DC P3). The resolver reads `lib/workspaceTimeZone.ts` `readWorkspaceTimeZone` (or `lib/recordTime.ts` `orgTimeZone`) with the service client for the document's org. The finding stays OPEN.
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P12 MEMBER-REMOVAL AND WORKSPACE TIME-ZONE FOLLOW-UPS, under the integrator's DEC-90 ruling for this package (DEC-63 §4 reversal 4). Reproduced on `e69f353` (DEC-29): `lib/effectiveDate.ts` `effectiveDateTimeZone()` took no argument and read only `NEXT_PUBLIC_FACILITY_TIME_ZONE`, and no caller passed an org; a deployment set to Perth answered a Houston document "in effect" fourteen hours early (pinned by test below). No migration.
+- **The resolver** (`lib/effectiveDate.ts`):
+  - `effectiveDateTimeZone(workspaceZone?)` prefers the workspace's zone when the runtime knows it, else the deployment variable, else UTC-12 — the deployment and fallback logic unchanged, word for word.
+  - `workspaceEffectiveDateTimeZone(client, orgId)` reads the document's org's setting through `lib/workspaceTimeZone.ts` `readWorkspaceTimeZone` (`org_configurations` key `timezone`, the Admin's `/admin/settings` value) with the client given — the service client on the server. No zone set, a stored value the runtime does not know, no org, or a setting that cannot be read (said once per workspace per runtime) all fall back to the deployment variable — today's behaviour — never silently to UTC. It never rejects.
+  - `cachedWorkspaceEffectiveDateTimeZone` keeps the answer five minutes per workspace for the browser (the badge and the register read it once per page, not per row); the server never caches (each verify scan reads the setting).
+  - `effectiveStatusFor` and `daysUntilEffective` take an optional `timeZone`; with none they decide exactly as before.
+- **Every caller passes the document's org.**
+  - `/api/verify` (`app/api/verify/route.ts:214`) reads `documents.org_id` (used only for the calendar; never in the response — the VFY-14 select pin updated) and decides "NOT YET IN EFFECT" in that workspace's zone.
+  - `/api/verify-package` (`app/api/verify-package/route.ts:239`) in the package's workspace zone, so a sheet and its pack agree.
+  - The suppression watermark: `applyEffectiveDate` takes `orgId` and decides "already in force" in the workspace zone, the calendar the daily scan announces in (a watermark in another calendar could pre-suppress a date the scan had not reached — REV-9's defect between two zones). Its callers pass it: `lib/revisions.ts` (rev-up publish) and `lib/reviewControl.ts` (`finalizeReviewedRevision`). The revert passes no date, so no calendar is read.
+  - The daily scan: `scanEffectiveDates(orgId)` reads "today" in that workspace's zone (`.lte("effective_date", todayISO(zone))`); the cron already passes the org, so `app/api/cron/maintenance/route.ts` is unchanged.
+  - The badge: `components/documents/EffectivePill.tsx` takes `orgId` and decides in the workspace zone once loaded (the deployment's until then, or with none). Its three renderers pass it: the documents page (`docRecord.orgId ?? activeOrgId`), `InspectorPanel` (`selectedDoc.orgId ?? orgId`), and the register page (`activeOrgId`).
+  - The register (`lib/docControlRegister.ts`) decides `effectivePending` in the same cached workspace zone, so the register's flag and its badge agree.
+  - The transmittal portal (`app/api/transmittal/route.ts`, `notYetInForce`) in the issuing workspace's zone.
+- **Tests.** `lib/__tests__/aoRoundGP12EffectiveZone.test.ts` (14): two workspaces (Perth, Houston) decide `2026-03-02` differently at `2026-03-01T20:00Z`, by status and by days; the finding's unsafe mirror case (a Perth deployment no longer lifts a Houston date early); no zone set / an unknown stored zone / no org → the deployment variable; an unreadable setting → the deployment variable, said once, and UTC-12 (never UTC) when no deployment zone is set either; a throwing client still answers; REGRESSION — with no zone passed every helper decides as before; the browser cache reads once per few minutes; the watermark pre-stamps a date already in force in Perth and leaves the same date for Houston to the scan; no date reads no setting; the scan's `lte` is Perth's "today" for Perth and the deployment's for a workspace with none; `/api/verify` answers green for the Perth document and NOT YET IN EFFECT for the Houston one at the same instant, falls back on an unreadable setting, and never returns `org_id`; source pins for the pack, the portal, the register, the badge's three renderers and the watermark's two callers. Updated pins: `lib/__tests__/effectiveDate.test.ts` (the shared helper now takes the zone), `lib/__tests__/verifyRouteVerdict.test.ts` (the documents select adds `org_id`; the call passes the zone), `lib/__tests__/transmittalPortalRoute.test.ts`.
+
+**Done-when.**
+1. ✓ The org setting exists (P8: `org_configurations` key `timezone`, Admin-only since `20261203`), and the resolver takes the document's org and prefers it over the deployment variable (`workspaceEffectiveDateTimeZone` → `effectiveDateTimeZone(workspaceZone)`); the never-early fallback is kept.
+2. ✓ `/api/verify`, the badge, the suppression watermark and the daily scan pass the document's org (and so do `/api/verify-package`, the register and the transmittal portal).
+3. ✓ `aoRoundGP12EffectiveZone.test.ts` "done-when 3: two workspaces in different zones decide the same date differently at the same instant", and the same at the route.
+
+**Scope / residual.**
+- A workspace whose Admin has set a zone now has its effective dates decided in it. Where the deployment variable was unset (UTC-12) or named another zone, that workspace's badges, verify answers and "now in effect" notices move to the Admin's calendar from the deploy — the intended change (DEC-63 §4 reversal 4), not a regression; a workspace with no zone set is unchanged.
+- The badge decides in the deployment's calendar for the moment before the setting loads (one read per workspace per five minutes); near midnight it can flip once on load.
+- Document-control `REV-9`'s alternative close ("or an org / library zone setting lands") now holds for every workspace whose Admin set a zone; its status is its owner's (recorded on DEC-63).
 
 ---
 
