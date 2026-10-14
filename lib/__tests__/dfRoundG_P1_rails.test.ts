@@ -1214,12 +1214,18 @@ describe("AUTHZ-11 — the attach_file bell and email text name the vetted recor
 });
 
 describe("EVID-13 — stale workflow alerts are retired with the marker, and the inbox count leaves superseded rows out", () => {
-  it("the badge hook marks the stale rows it finds metadata.superseded_at (own rows, unread only), never read_at, and only when the ticket read succeeded", () => {
+  it("the badge hook has the stale rows it finds marked metadata.superseded_at (own rows, unread only) — on the SERVER since notifications N4 (NEDGE-18) — never read_at, and only when the ticket read succeeded", () => {
     const hook = src("hooks/useTicketNotifications.ts");
     expect(hook).toContain("const staleRows = liveErr ? [] : workflowRows");
-    expect(hook).toContain(".update({ metadata: { ...(r.metadata ?? {}), superseded_at: supersededAt } })");
-    expect(hook).toContain(".eq('id', r.id).eq('user_id', uid).is('read_at', null)");
+    // NEDGE-18: the browser no longer writes the mark (20261161 refuses it);
+    // the stale ids go to the reconcile route, which re-checks and marks them
+    expect(hook).not.toContain(".update(");
+    expect(hook).toContain("requestReconcile(activeOrgId, ids)");
+    const server = src("lib/notificationReconcileServer.ts");
+    expect(server).toContain(".update({ metadata: { ...(r.metadata ?? {}), superseded_at: supersededAt } })");
+    expect(server).toMatch(/\.eq\("id", r\.id\)\s*\.eq\("user_id", input\.uid\)\s*\.eq\("org_id", input\.orgId\)\s*\.is\("read_at", null\)/);
     expect(hook).not.toMatch(/update\(\{\s*read_at/);
+    expect(server).not.toMatch(/read_at:/);
   });
   it("lib/inbox.ts counts unread notifications with the same superseded filter as countUnread", () => {
     expect(src("lib/inbox.ts")).toContain('.eq("user_id", userId).is("read_at", null).is("metadata->>superseded_at", null),');

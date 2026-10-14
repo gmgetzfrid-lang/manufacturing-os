@@ -8,6 +8,11 @@
 
 import { supabase } from "@/lib/supabase";
 import { normalizeEvidence, isMachineActorName } from "@/lib/checklistEngine";
+import { auditActorNote } from "@/lib/auditActions";
+
+/** admin-and-org ALOG-7: whose word an audit row's identity is (actor_kind,
+ *  stamped by 20261201's trigger; a row without it is the writer's word). */
+const actorNote = (a: Record<string, unknown>): string => ` <span class="muted">· ${esc(auditActorNote(a.actor_kind))}</span>`;
 
 interface EvidenceData {
   doc: Record<string, unknown> | null;
@@ -79,7 +84,7 @@ export function renderEvidenceHtml(data: EvidenceData): string {
     <tr>
       <td>${date(a.timestamp)}</td>
       <td><b>${esc(a.action)}</b></td>
-      <td>${esc(a.user_email || a.user_id || "—")}${a.user_role ? ` <span class="muted">(${esc(a.user_role)})</span>` : ""}</td>
+      <td>${esc(a.user_email || a.user_id || "—")}${a.user_role ? ` <span class="muted">(${esc(a.user_role)})</span>` : ""}${actorNote(a)}</td>
       <td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td>
     </tr>`);
 
@@ -381,7 +386,7 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   });
 
   const auditRows = data.audit.map((a) => `
-    <tr><td>${date(a.timestamp)}</td><td><b>${esc(a.action)}</b></td><td>${esc(a.user_email || a.user_id || "—")}</td><td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td></tr>`);
+    <tr><td>${date(a.timestamp)}</td><td><b>${esc(a.action)}</b></td><td>${esc(a.user_email || a.user_id || "—")}${actorNote(a)}</td><td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td></tr>`);
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Project Evidence Pack — ${name}</title>
 <style>

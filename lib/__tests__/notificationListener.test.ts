@@ -97,16 +97,19 @@ vi.mock("@/lib/checkoutEpisodes", () => ({
   isMissingEpisodeSchema: () => false,
 }));
 
-vi.mock("@/lib/notificationPrefs", async (orig) => ({
-  ...(await orig<Record<string, unknown>>()),
-  readToastPreference: async (uid: string) => {
+vi.mock("@/lib/notificationPrefs", async (orig) => {
+  const read = async (uid: string) => {
     fx.prefReads.push(uid);
     const v = fx.pref[uid];
     if (v === "throw") throw new Error("network");
     if (v === "stall") return new Promise<boolean>(() => {}); // associated Wi-Fi, no route out
     return v ?? true;
-  },
-}));
+  };
+  // notifications N4 (RT-10): the listener reads readToastPreferences (the
+  // master switch with the per-category switches); a boolean answer is the
+  // master switch alone, every category on — what this file drives.
+  return { ...(await orig<Record<string, unknown>>()), readToastPreference: read, readToastPreferences: read };
+});
 
 vi.mock("@/components/providers/RoleContext", async () => {
   const R = await import("react");
@@ -133,8 +136,8 @@ vi.mock("@/components/providers/ToastProvider", async (orig) => {
 });
 
 import {
-  NotificationListener, toastForRow, burstSummary, createNotificationToaster, notificationCoalesceKey,
-  BURST_WINDOW_MS, BURST_SHOWN_MAX, PREF_FRESH_MS, PREF_READ_TIMEOUT_MS, SEEN_IDS_MAX, NOTIFICATION_TOAST_MS,
+  NotificationListener, toastForRow, burstSummary, actionSummary, createNotificationToaster, notificationCoalesceKey, isActionRow, isConflictAction,
+  BURST_WINDOW_MS, BURST_SHOWN_MAX, ACTION_SHOWN_MAX, PREF_FRESH_MS, PREF_READ_TIMEOUT_MS, SEEN_IDS_MAX, NOTIFICATION_TOAST_MS,
 } from "@/components/providers/NotificationListener";
 import { postActivity } from "@/lib/activityThread";
 import { TOAST_PREFERENCE_HONOURED } from "@/lib/notificationPrefs";
@@ -236,11 +239,23 @@ describe("RT-2 / TAX-4 — one checkout-thread post: one toast per participant, 
     bus.tables.subscriptions = [{ user_id: "uW", resource_type: "document", resource_id: "d1" }];
     bus.tables.checkout_sessions = [];
     for (const uid of ["uA", "uP", "uW", "uU"]) await mountListener(uid);
+    // TAX-4 dw3 (notifications N15): the thread's notice asks who may discover
+    // the document (POST /api/documents/discoverers, the author's token) —
+    // here a document both may discover
+    const { supabase } = await import("@/lib/supabase");
+    const auth = (supabase as unknown as { auth?: unknown }).auth;
+    (supabase as unknown as { auth: unknown }).auth = { getSession: async () => ({ data: { session: { access_token: "tok-A" } } }) };
+    const discover = vi.fn(async (_u: string, init: { body: string }) => ({ ok: true, status: 200, json: async () => ({ discover: (JSON.parse(init.body) as { uids: string[] }).uids }) }));
+    vi.stubGlobal("fetch", discover);
 
     await act(async () => {
       await postActivity({ orgId: "o1", documentId: "d1", episodeId: "e1", text: "pressure relief sizing looks wrong on sheet 3", userId: "uA", userName: "Alice" });
     });
     await flush();
+    vi.unstubAllGlobals();
+    (supabase as unknown as { auth: unknown }).auth = auth;
+    expect(discover).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(discover.mock.calls[0][1].body)).toMatchObject({ orgId: "o1", documentId: "d1" });
 
     // The post itself landed (the thread line) — and nothing listens to that table any more.
     expect((bus.tables.checkout_messages ?? []).length).toBe(2);
@@ -324,7 +339,7 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
     vi.useFakeTimers();
     await mountListener("u1");
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    for (let i = 0; i < 5; i++) await insertNotification({ user_id: "u1", kind: "ack_requested", title: `Ack ${i}`, body: null, resource_id: `d${i}` });
+    for (let i = 0; i < 5; i++) await insertNotification({ user_id: "u1", kind: "ack_complete", title: `Ack ${i}`, body: null, resource_id: `d${i}` });
     await insertNotification({ user_id: "u1", kind: "branch_open", title: "Branch opened on P-9", body: null, resource_id: "d9" });
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(toastsOf("u1").map((t) => t.title)).toEqual(["Ack 0", "Ack 1", "Branch opened on P-9"]);
@@ -333,6 +348,58 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
     await insertNotification({ user_id: "u1", kind: "ticket_comment", title: "New comment", body: null, resource_id: "t1" });
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(toastsOf("u1").at(-1)!.title).toBe("New comment");
+  });
+
+  it("20 action rows in one window (a scan's 'Still unconfirmed' run) are at most ACTION_SHOWN_MAX sticky cards and ONE sticky 'N more actions need you' card — never folded into the informational summary (review fix)", async () => {
+    const shown: Array<{ type: string; title: string; duration: number; coalesceKey?: string }> = [];
+    const fires: Array<() => void> = [];
+    const t = createNotificationToaster({
+      show: (s) => shown.push({ type: s.type, title: s.title, duration: s.duration, coalesceKey: s.coalesceKey }), readPreference: async () => true, now: () => 0,
+      setTimer: (cb, ms) => { if (ms === BURST_WINDOW_MS) fires.push(cb); return fires.length; }, clearTimer: () => {},
+    });
+    for (let i = 0; i < 20; i++) t.receive({ id: `a${i}`, kind: "ack_overdue", title: "Still unconfirmed", body: `DOC-${i}`, resource_id: `d${i}` });
+    for (let i = 0; i < 4; i++) t.receive({ id: `i${i}`, kind: "review_due", title: `due ${i}`, body: null, resource_id: `r${i}` });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ACTION_SHOWN_MAX).toBe(2);
+    expect(shown.map((x) => x.title)).toEqual(["Still unconfirmed", "Still unconfirmed", "due 0", "due 1"]);
+    for (const f of fires) f();
+    const actions = shown.filter((x) => x.type === "warning");
+    expect(actions.length).toBeLessThanOrEqual(3);
+    expect(actions.at(-1)).toMatchObject({ title: "18 more actions need you", duration: 0 });
+    expect(actions.at(-1)!.coalesceKey).toBeTruthy();
+    // the informational burst keeps its own summary
+    expect(shown.filter((x) => x.title === "2 more notifications")).toHaveLength(1);
+    expect(shown).toHaveLength(6);
+    expect(actionSummary(1).title).toBe("1 more action needs you");
+  });
+
+  it("third review fix: 2 ack_requested + 1 checkout_conflict in one window — the conflict gets its OWN card (outside the action cap), never folded into 'N more actions need you'", async () => {
+    const shown: Array<{ type: string; title: string; duration: number }> = [];
+    const fires: Array<() => void> = [];
+    const t = createNotificationToaster({
+      show: (s) => shown.push({ type: s.type, title: s.title, duration: s.duration }), readPreference: async () => true, now: () => 0,
+      setTimer: (cb, ms) => { if (ms === BURST_WINDOW_MS) fires.push(cb); return fires.length; }, clearTimer: () => {},
+    });
+    t.receive({ id: "a1", kind: "ack_requested", title: "Please confirm DOC-1", body: null, resource_id: "d1" });
+    t.receive({ id: "a2", kind: "ack_requested", title: "Please confirm DOC-2", body: null, resource_id: "d2" });
+    t.receive({ id: "c1", kind: "checkout_conflict", title: "Someone published over your checkout", body: "DOC-7", resource_id: "d7" });
+    t.receive({ id: "a3", kind: "ack_requested", title: "Please confirm DOC-3", body: null, resource_id: "d3" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shown.map((x) => x.title)).toEqual(["Please confirm DOC-1", "Please confirm DOC-2", "Someone published over your checkout"]);
+    expect(shown[2]).toMatchObject({ type: "warning", duration: 0 });
+    for (const f of fires) f();
+    // the third PSM row is the held one; the conflict was never held
+    expect(shown.map((x) => x.title)).toEqual(["Please confirm DOC-1", "Please confirm DOC-2", "Someone published over your checkout", "Please confirm DOC-3"]);
+    // the conflict class: the non-PSM action kinds; the PSM obligations and FYI kinds are not
+    for (const k of ["checkout_conflict", "checkout_released", "checkout_force_released", "checkout_auto_released", "overlap_advisory", "branch_open"]) expect(isConflictAction({ kind: k }), k).toBe(true);
+    for (const k of ["ack_requested", "review_requested", "review_invalidated", "ack_overdue", "review_overdue", "access_recert_due", "ticket_comment", "hold_opened"]) expect(isConflictAction({ kind: k }), k).toBe(false);
+  });
+
+  it("the cron's review-health nudge (review_overdue with metadata.reviewHealth) is not an action toast — the row-level rule the feed's counts read", () => {
+    expect(isActionRow({ kind: "review_overdue", metadata: { reviewHealth: true, reviewHealthDay: "2026-10-13" } })).toBe(false);
+    expect(isActionRow({ kind: "review_overdue", metadata: null })).toBe(true);
+    const spec = toastForRow({ id: "h", kind: "review_overdue", title: "Review health", body: null, metadata: { reviewHealth: true } });
+    expect(spec).toMatchObject({ type: "info", duration: NOTIFICATION_TOAST_MS });
   });
 
   it("a window that holds one extra row shows it as itself, not as a summary", () => {
@@ -391,7 +458,8 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
   it("the remembered ids are bounded (RT-5 dw2)", async () => {
     const shown: string[] = [];
     const t = createNotificationToaster({ show: (s) => shown.push(s.title), readPreference: async () => true, setTimer: () => 1, clearTimer: () => {} });
-    for (let i = 0; i < SEEN_IDS_MAX + 10; i++) t.receive({ id: `n${i}`, kind: "checkout_conflict", title: `x${i}`, body: null });
+    // one statement repeated (it joins its card, so the action cap never holds it)
+    for (let i = 0; i < SEEN_IDS_MAX + 10; i++) t.receive({ id: `n${i}`, kind: "checkout_conflict", title: "x", body: null });
     await new Promise((r) => setTimeout(r, 0));
     expect(shown).toHaveLength(SEEN_IDS_MAX + 10);
     // the oldest id fell out of the window: a replay of it is a new delivery;
@@ -553,6 +621,6 @@ describe("RT-10 — the member's pop-up switch is read before a toast, re-read w
 
   it("the settings page offers the switch now that the listener reads it (the N1 tripwire's other side)", () => {
     expect(TOAST_PREFERENCE_HONOURED).toBe(true);
-    expect(LISTENER).toContain("readToastPreference(uid)");
+    expect(LISTENER).toContain("readToastPreferences(uid)");
   });
 });

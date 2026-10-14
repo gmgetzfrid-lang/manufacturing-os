@@ -34,7 +34,8 @@ import {
   planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, readBackupArchive, RESTORE_ADDITIVE_NOTE,
   RESTORE_HELD_ELSEWHERE_NOTE, RESTORE_LINK_MEMBER_STATUSES, restoreRefusalLabel, isDanglingFlowRefusal, DANGLING_FLOW_CODE,
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
-  type BackupArchiveRead,
+  type BackupArchiveRead, clearSkippedNodeImagePointers, nodeImagePointerLabel, overflowLines, type SkippedNodeImage,
+  restoreEnvelopeNodeIds, nodeIdsPresentBeforeRestore, addRestoredNodeIds, storageAnsweredInRun, RESTORE_FILES_POINTER_NOTE,
 } from "@/lib/dataRestore";
 import { restoreUploadRequest, isWorkspaceLogoKey, isNodeImageKey } from "@/lib/storageKey";
 import { withRestoreMembershipCheck, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
@@ -64,9 +65,30 @@ interface FilesProgress {
   /** Folder / library covers and backgrounds the server will not sign
    *  (ORG-16: an SVG, HEIC or TIFF from before the rule), by file name. */
   nodeImagesNotRestored?: string[];
+  /** ORG-18: the folders / libraries whose pointer at such a file was
+   *  cleared (the storage check reported it missing), one line each. */
+  nodeImagesCleared?: string[];
+  /** ORG-18: nodes that name such a file the storage check did not report
+   *  missing — named, not changed. */
+  nodeImagesKept?: string[];
+  /** ORG-18: a read or write of those pointers that failed, in words. */
+  nodeImagePointerErrors?: string[];
 }
 
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
+
+/** ORG-18: every line of a restore list, behind a "Show all" toggle, so a
+ *  list longer than the panel's summary still names every node. */
+function ShowAllLines({ lines, testId }: { lines: string[]; testId: string }) {
+  return (
+    <details data-testid={testId} className="mt-1">
+      <summary className="cursor-pointer font-bold underline">Show all {fmtNum(lines.length)}</summary>
+      <ul className="mt-1 list-disc pl-4">
+        {lines.map((l, i) => <li key={`${i}:${l}`}>{l}</li>)}
+      </ul>
+    </details>
+  );
+}
 
 export default function RestorePage() {
   const { activeOrgId, hasAnyRole } = useRole();
@@ -96,6 +118,13 @@ export default function RestorePage() {
   const [membershipCheck, setMembershipCheck] = useState<RestoreMembershipCheck | null>(null);
   const [preview, setPreview] = useState<ChunkedRestorePreview | null>(null);
   const idRemapRef = useRef<RestorePlan["idRemap"] | null>(null);
+  // ORG-18 fix pass 2: the libraries / folders this session's restore runs
+  // ADDED (absent before the records were applied). "Put the files back" may
+  // clear a skipped image's pointer only on these; a row that was already
+  // here is never changed. A failed "was it here" read is kept as a note and
+  // adds nothing (fail-safe).
+  const restoredNodesRef = useRef<{ libraries: Set<string>; collections: Set<string> } | null>(null);
+  const restoredNodesNoteRef = useRef<string | null>(null);
 
   const [filesProgress, setFilesProgress] = useState<FilesProgress>({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
 
@@ -132,6 +161,7 @@ export default function RestorePage() {
     setFilesProgress({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
     envelopeRef.current = null; zipsRef.current = []; archiveFilesRef.current = []; archiveWarningsRef.current = []; setFileEntryCount(0);
     idRemapRef.current = null;
+    restoredNodesRef.current = null; restoredNodesNoteRef.current = null;
 
     const zips = dropped.filter((f) => /\.zip$/i.test(f.name));
     const jsons = dropped.filter((f) => /\.json$/i.test(f.name));
@@ -230,6 +260,13 @@ export default function RestorePage() {
         confirmLabel: "Apply restore",
       });
       if (!ok) return;
+      // ORG-18 fix pass 2: which of the backup's libraries and folders are
+      // already here, read before anything is written — the files step never
+      // changes one of those. Read-only; a failure does not stop the restore.
+      const backupNodeIds = restoreEnvelopeNodeIds(envelope);
+      const nodesBefore = backupNodeIds.libraries.length + backupNodeIds.collections.length > 0
+        ? await nodeIdsPresentBeforeRestore(supabase, activeOrgId, backupNodeIds)
+        : null;
       // NEDGE-16: the completion step — who is active now (restored people
       // are inactive and hear nothing until reactivated), shown and audited
       // — runs once the run has started, whether it returns or throws.
@@ -237,6 +274,8 @@ export default function RestorePage() {
         async () => await runChunkedRestore({ orgId: activeOrgId, envelope, plan: fresh, orgNameChoice: keepName, post, onProgress }),
         setMembershipCheck);
       idRemapRef.current = result.idRemap; // "Put the files back" follows the org remap
+      if (nodesBefore?.ok) restoredNodesRef.current = addRestoredNodeIds(restoredNodesRef.current, backupNodeIds, nodesBefore);
+      else if (nodesBefore && !nodesBefore.ok) restoredNodesNoteRef.current = nodesBefore.error;
       setApplyProgress((p) => ({ ...p, phase: "done" }));
       setApplyResult(result);
     } catch (e) {
@@ -262,6 +301,9 @@ export default function RestorePage() {
     const reasons = new Map<string, number>();
     let logoNotRestored: string | null = null;
     const nodeImagesNotRestored: string[] = [];
+    // ORG-18: each skipped cover / background key, and whether the storage
+    // check said it is not there (only then is a node's pointer cleared).
+    const skippedNodeImages: SkippedNodeImage[] = [];
     const detail = () => ({
       reasons: [...reasons].map(([reason, files]) => ({ reason, files })),
       logoNotRestored,
@@ -280,7 +322,7 @@ export default function RestorePage() {
         const check = await fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null } | null;
+        const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; missing?: boolean } | null;
         if (check.ok && state?.archived === false) { counters.skipped++; return; }
         if (check.ok && state?.archived === true && state?.archiveId) { counters.offline++; return; }
 
@@ -302,9 +344,12 @@ export default function RestorePage() {
         }
         // ORG-16: a cover or background the server will not sign (an SVG,
         // HEIC or TIFF from before the rule) is not asked for either; the
-        // panel names it so the node can be given its image again.
+        // panel names it so the node can be given its image again. ORG-18:
+        // the key is kept, with whether the storage check reported it missing
+        // (`missing: true` — the route's answer to a HEAD failure of any kind).
         if (req.nodeImageProblem) {
           nodeImagesNotRestored.push(key.split("/").slice(-2).join("/"));
+          skippedNodeImages.push({ key, reportedMissing: check.ok && state?.missing === true });
           return;
         }
         const up = await fetch(`/api/storage/upload-url`, {
@@ -338,7 +383,32 @@ export default function RestorePage() {
         }
       }),
     );
-    setFilesProgress({ running: false, total: entries.length, ...counters, ...detail() });
+    // ORG-18: no folder or library this restore added is left pointing at a
+    // cover or background this run skipped — the pointer is cleared (when the
+    // storage check reported the file missing and storage answered this run)
+    // and each node is named; a node that was already here is named and kept.
+    // The restored rows are in place: this step follows "Restore records".
+    let pointers: { nodeImagesCleared: string[]; nodeImagesKept: string[]; nodeImagePointerErrors: string[] } | null = null;
+    if (skippedNodeImages.length > 0) {
+      try {
+        // Fix pass 2 (DEC-90 fail-safe): only a row this restore added, and
+        // only when storage answered at least once this run.
+        const added = restoredNodesRef.current;
+        const r = await clearSkippedNodeImagePointers(supabase, activeOrgId, skippedNodeImages, {
+          restoredLibraryIds: added?.libraries ?? new Set<string>(),
+          restoredFolderIds: added?.collections ?? new Set<string>(),
+          storageAnswered: storageAnsweredInRun(counters),
+        });
+        pointers = {
+          nodeImagesCleared: r.cleared.map(nodeImagePointerLabel),
+          nodeImagesKept: r.kept.map(nodeImagePointerLabel),
+          nodeImagePointerErrors: [...(restoredNodesNoteRef.current ? [restoredNodesNoteRef.current] : []), ...r.errors],
+        };
+      } catch (e) {
+        pointers = { nodeImagesCleared: [], nodeImagesKept: [], nodeImagePointerErrors: [(e instanceof Error && e.message) || "The folders and libraries using these images could not be checked."] };
+      }
+    }
+    setFilesProgress({ running: false, total: entries.length, ...counters, ...detail(), ...(pointers ?? {}) });
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -570,7 +640,8 @@ export default function RestorePage() {
                 <FolderArchive className="w-4 h-4 text-violet-600" /> Put the files back
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Re-uploads the <b>{fmtNum(fileEntryCount)}</b> file(s) embedded in the dropped part(s) to live storage under their original keys, so drawings open normally instead of prompting for an archive. Files already in storage are skipped; files that belong to offline space archives stay offline by design.
+                Re-uploads the <b>{fmtNum(fileEntryCount)}</b> file(s) embedded in the dropped part(s) to live storage under their original keys, so drawings open normally instead of prompting for an archive. Files already in storage are skipped; files that belong to offline space archives stay offline by design.{" "}
+                <span data-testid="restore-files-pointer-note">{RESTORE_FILES_POINTER_NOTE}</span>
               </p>
               {filesProgress.total > 0 && (
                 <div className="mb-3">
@@ -604,6 +675,47 @@ export default function RestorePage() {
                       until then it shows no cover or background.
                     </div>
                   )}
+                  {(filesProgress.nodeImagesCleared ?? []).length > 0 && (() => {
+                    const all = filesProgress.nodeImagesCleared!;
+                    const { shown, more } = overflowLines(all, 10);
+                    return (
+                      <div data-testid="restore-node-images-cleared" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                        So nothing points at a missing image, the cover or background was removed from{" "}
+                        {fmtNum(all.length)} folder(s) / librar(ies): {shown.join("; ")}
+                        {more > 0 ? `; and ${fmtNum(more)} more` : ""}. Pick a new image for each under Customize.
+                        {more > 0 && <ShowAllLines lines={all} testId="restore-node-images-cleared-all" />}
+                      </div>
+                    );
+                  })()}
+                  {(filesProgress.nodeImagesKept ?? []).length > 0 && (() => {
+                    const all = filesProgress.nodeImagesKept!;
+                    const { shown, more } = overflowLines(all, 10);
+                    return (
+                      <div data-testid="restore-node-images-kept" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                        These still point at a skipped image (nothing was changed), each with the reason it was kept:{" "}
+                        {shown.join("; ")}{more > 0 ? `; and ${fmtNum(more)} more` : ""}.
+                        Run again, or pick a new image under Customize (an SVG, HEIC or TIFF must be replaced by a PNG, JPEG, WebP, GIF, AVIF or BMP).
+                        {more > 0 && <ShowAllLines lines={all} testId="restore-node-images-kept-all" />}
+                      </div>
+                    );
+                  })()}
+                  {(filesProgress.nodeImagePointerErrors ?? []).length > 0 && (() => {
+                    const all = filesProgress.nodeImagePointerErrors!;
+                    const { shown, more } = overflowLines(all, 5);
+                    return (
+                      <div data-testid="restore-node-image-errors" className="text-[10.5px] text-red-700">
+                        {shown.map((e, i) => (
+                          <div key={`${i}:${e}`} className="mt-0.5">{e}</div>
+                        ))}
+                        {more > 0 && (
+                          <>
+                            <div className="mt-0.5 font-bold">and {fmtNum(more)} more that failed</div>
+                            <ShowAllLines lines={all} testId="restore-node-image-errors-all" />
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               <div className="flex items-center justify-end">

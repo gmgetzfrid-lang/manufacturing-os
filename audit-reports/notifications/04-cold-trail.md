@@ -388,7 +388,7 @@ link: doc?.library_id ? `/documents/${doc.library_id}?doc=${input.documentId}` :
 ## TRAIL-7 · Both feeds are silently truncated — 50 unread notifications and 500 open tickets — so the count is wrong and the OLDEST items are the ones that vanish
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:176`, `lib/inAppNotifications.ts:157-174`, `hooks/useTicketNotifications.ts:31`, `hooks/useTicketNotifications.ts:156`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves: newest-first ordering plus a hard limit means the OLDEST unread rows are the ones dropped, and count/sectionCounts/NotificationCenter counts are all computed from the truncated arrays (countUnread() in inAppNotifications.ts:176 does an exact head-count but no surface in the attention path calls it). No 'showing N of M' affordance exists in NotificationBell.tsx or NotificationCenter.tsx.
@@ -427,6 +427,21 @@ Note `countUnread()` at lib/inAppNotifications.ts:176-185 returns an exact head-
 - [ ] the UI shows a 'showing N of M' affordance when a feed is truncated
 - [ ] or the caps are raised and paginated so no attention item is silently excluded
 
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: 50 newest unread notifications (`hooks/useTicketNotifications.ts:231`) and 500 most recently modified open tickets (`:53`, `:211`) — the oldest of each fell out of every count, with no indication.
+
+What landed:
+- **The count.** The feed's notification total is `countUnread(activeOrgId)` (`lib/inAppNotifications.ts`, an exact head count of my unread, unsuperseded rows in the workspace), read beside the page. When it exceeds the rows loaded, the rows below are tallied by kind (`listUnreadKindsBeyond`, up to `REMAINDER_TALLY_CAP` = 1,000 more; a row about a ticket already in the feed folds in, as on the page) into the section badges and the action count; any beyond the tally count in the total as activity. `count` = `counts.all` (the hook's return shape is unchanged; its value is now the true one).
+- **Paging.** `listMyNotifications` takes a `before` cursor — `(created_at, id)`, ordered `created_at desc, id desc` (review fix: rows written in one statement share `created_at`, and a `created_at`-only cursor dropped the second of two rows at a page boundary); the feed loads the newest 50 and, on "Load older", the next page by cursor (`useAttentionStatus().loadMoreNotifications`). The tally of the rows below reads after the window's last row by the same keyset, never an offset, so no row is both listed and tallied. `components/cockpit/AttentionFeed.tsx` says "Showing the newest N of M unread notifications." with the button — in the center, `/inbox` and the dashboard widget.
+- **Tickets.** Each ticket scope is read a page of `OPEN_TICKET_CAP` (500) at a time with an exact count (`loadTicketScope`); when the scope holds more, the next pages are read, up to `TICKET_SCAN_CEILING` (5,000 open tickets in one person's scope). Beyond the ceiling `AttentionFeed` says "Requests: the N most recently active of M open requests are checked." The cap comment that inverted the attention semantics is rewritten. "Must act" is the workflow engine's per-ticket answer (`WF-24`), so the plan's "head count of action-required tickets" cannot be a query (`DEC-105` §3). Second review fix: range pages over a `last_modified` order return a ticket twice when it is modified between two page reads, so `loadTicketScope` deduplicates by id (one item, counted once); and a Drafter's assigned scope, which carries no status filter (closed tickets enter the feed while unread), is split — the assigned OPEN tickets are paged with a count, the assigned closed ones are one capped, uncounted read as before the paging (`{ single: true }`), so a long-tenured drafter's thousands of closed tickets are not paged on every refetch and "of M open requests" counts open ones. Tests: `lib/__tests__/attentionProvider.test.ts` "a ticket modified between two page reads … appears once", "a drafter: the assigned OPEN tickets are paged with a count, the assigned closed ones are ONE uncounted, unpaged read".
+- Tests: `lib/__tests__/attentionProvider.test.ts` (the exact-count and paging cases; the ticket select's exact count).
+
+**Done-when.**
+- ✓ The notification badge comes from an exact server-side count (`countUnread`), not the page length.
+- ✓ The UI shows "Showing the newest N of M" for notifications, and "N of M open requests" past the ticket ceiling.
+- ✓ (the "or" limb) The caps are paginated: notification pages by cursor on request; open tickets page by page to 5,000 — none is silently excluded, the excess past the ceiling is said.
+
+**Scope / residual.** Open tickets past 5,000 in one person's scope are not evaluated for "must act" (said in the feed).
+
 ---
 
 <a id="trail-8"></a>
@@ -434,7 +449,7 @@ Note `countUnread()` at lib/inAppNotifications.ts:176-185 returns an exact head-
 ## TRAIL-8 · Five independent copies of the attention hook, each with its own realtime channel, each refetching everything on every change
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:143-230`, `components/navigation/Sidebar.tsx:124`, `components/notifications/NotificationBell.tsx:54`, `components/notifications/NotificationCenter.tsx:55`, `components/dashboard/widgets.tsx:669`, `app/(protected)/inbox/page.tsx:38`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and worse than 'five': app/(protected)/layout.tsx mounts Sidebar (line 56) and NotificationCenterProvider (line 145) — whose CenterPanel calls the hook unconditionally even while closed — plus the TopBar bell, so three instances are live on EVERY protected route and five on the dashboard. The write-back at line 207 (markManyRead) does land on the `notifications` table the subscription at line 225 watches, so the self-retrigger described is real.
@@ -473,6 +488,15 @@ The comment treats multiple instances as the intended design rather than the pro
 - [ ] adding a new consumer does not add a query or a channel
 - [ ] a single ticket write causes one refetch, not one per mounted consumer
 
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider` — the same change as `RT-3` (record there). **Reproduced** on `6503ea7` as `RT-3` describes (five instances on the dashboard, each with its own channel).
+
+**Done-when.**
+- ✓ One provider owns the feed and one realtime subscription (`components/providers/AttentionProvider.tsx`, mounted once in `app/(protected)/layout.tsx`); `useTicketNotifications` reads from context.
+- ✓ A new consumer adds no query or channel — under the provider the hook's own copy is disabled (`useAttentionFeedState(false)` runs no effect). `lib/__tests__/attentionProvider.test.ts` mounts five consumers and counts one channel and one fetch.
+- ✓ A single ticket write causes one refetch (debounced; the same test fires six events and counts one).
+
+**Scope / residual.** None. The write-back the finding's chain reaction describes is `RT-8` / `NEDGE-18` (the browser no longer writes).
+
 ---
 
 <a id="trail-9"></a>
@@ -480,7 +504,7 @@ The comment treats multiple instances as the intended design rather than the pro
 ## TRAIL-9 · Stale-alert reconciliation covers ONLY ticket workflow rows — hold_opened and hold_released both persist unread, so the Documents badge counts a condition that no longer exists
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:186-210`, `lib/holds.ts:238-241`, `hooks/useTicketNotifications.ts:86-95`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Accurate: hold rows can never be reconciled, and the hook's own header comment (lines 24-25, 'stale workflow alerts ... are reconciled away — so the badge can never disagree with the portal') overstates what the code does. Downgraded to LOW because an unread-until-read inbox row is normal semantics, the count is real unread mail rather than fabricated, and hold_released is itself the resolution notice — the badge is noisy, not false.
@@ -521,6 +545,24 @@ hooks/useTicketNotifications.ts:93-95:
 - [ ] a hold_released row supersedes and clears the matching hold_opened row for the same document + user
 - [ ] branch_resolved clears the matching branch_open row
 - [ ] the reconciler either covers document kinds or the header comment is narrowed to say it only covers tickets
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: the hook reconciled only rows with `metadata.status` + `metadata.action` (`hooks/useTicketNotifications.ts:253-258`); a released hold's `hold_opened` row and a resolved branch's `branch_open` row stayed unread, and the header comment (`:28-30`) claimed the badge "can never disagree with the portal".
+
+What landed — on the server, because a browser may change only `read_at` since `20261161` (`NEDGE-18`):
+- `lib/notificationReconcile.ts` `reconcileClassOf` names `hold_opened` and `branch_open` (with `metadata.branchId`) as reconcilable; the feed sends them to `POST /api/notifications/reconcile` (new), and `lib/notificationReconcileServer.ts` `retireStaleAlerts` marks them `metadata.superseded_at` when the condition is gone:
+  - `hold_opened` — no open hold on the document (`document_holds.released_at` null for none); an aging nudge (`metadata.staleHoldId`) — that hold is released. Third review fix: only a row whose `resource_type` is `document` is reconciled — the check reads `document_holds` by document id, so a legacy row, another producer's or a future project-scoped hold's would have read "no open hold" and been retired while its hold still stood; such a row now stays until read (`reconcileClassOf`; test "a hold_opened row whose resource is not a document is KEPT"). This is the database's answer, so it holds for every recipient, including one who never received the `hold_released` row; two holds on one document keep the row until both are released.
+  - `branch_open` — its branch (`revision_branches.resolved_at`) is resolved. That clears the DocCtrl pool's copies too (the `DEC-81` Risk paragraph's controller copies), beside N8's `clear_resolved_branch_alerts`.
+  - The same pass clears the stale-checkout escalation (`checkout_released` with `metadata.staleSessionId`) once its session has ended — `DEC-81` Risk's other uncleared controller copy.
+- The header comment says what is reconciled and that every other kind stays until read (`hooks/useTicketNotifications.ts` header).
+- Tests: `lib/__tests__/notificationReconcile.test.ts` "TRAIL-9: hold_opened is retired once no hold is open on the document; an aging nudge once ITS hold is released", "TRAIL-9 / DEC-81 Risk: branch_open is retired once its branch is resolved; a stale-checkout escalation once its session ended"; `lib/__tests__/attentionProvider.test.ts` (a retired row leaves the feed and the count).
+- Verified: loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,352 passed, 10 expected fail, 4 failed, every one "Test timed out in 5000ms" in a file this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `exportContractRoundTrip`, `notificationDispatchMembership`; load average 18–29 on the shared box), each exit 0 when rerun alone. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ A `hold_opened` row is retired once its hold is released (no open hold on that document), for the recipient's own row on that document; a `hold_opened` about anything but a document is never retired by this check (third review fix).
+- ✓ `branch_open` is retired once its branch is resolved.
+- ✓ The reconciler covers these document kinds, and the header comment is narrowed to what is true.
+
+**Scope / residual.** A row is retired when the recipient's feed next loads it (on load, on tab return, every visible minute); a row below the loaded window is sent too, from the tally (review fix — within the pass's 200-id cap, the window's first). `checkout_conflict` after the conflicting checkout ends (the finding's third example) is not reconciled: the row records a moment ("someone opened a checkout on a document you have open") and has no recorded session to check.
 
 ---
 
@@ -608,7 +650,7 @@ Case-insensitive grep for `badge|notif|attention|unread` in app/(protected)/docu
 ## TRAIL-12 · When a document notification has no link, the fallback deep-links into a search that can never match — searchDocuments never queries by id
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:293-297`, `lib/search.ts:171-235`, `lib/branches.ts:144`, `lib/distributionAcks.ts:141`, `lib/staleCopies.ts:201`, `components/documents/EditOverlapBanner.tsx:92`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — a document notification with no link deep-links to a uuid query that structurally cannot match. But the headline example is wrong: lib/revisions.ts:124 types `libraryId: string` (required) and line 699 passes it straight to announceBranchOpened, so branch_open ALWAYS has a link. The fallback is only reachable via the nullable-libraryId emitters (staleCopies.ts:186/201, distributionAcks.ts:104/141, EditOverlapBanner.tsx:22/92), hence LOW.
@@ -644,6 +686,18 @@ lib/branches.ts:144: ``link: input.libraryId ? `/documents/${input.libraryId}?do
 - [ ] the document fallback resolves the library id (from the row or a lookup) and builds /documents/<lib>?doc=<id>
 - [ ] or searchDocuments accepts a uuid and short-circuits to a direct id lookup
 - [ ] no notification link can resolve to a search for a raw uuid
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: a `document` row with no link fell back to `/search?q=<uuid>` (`hooks/useTicketNotifications.ts:362-366`), which nothing in search matches.
+
+What landed (`hooks/useTicketNotifications.ts`): the fetch collects the link-less `document` rows in the window and resolves their libraries in ONE batched read (`documents.select('id, library_id').in('id', …)`, the reader's own RLS); such a row links to `/documents/<library>?doc=<id>` — the deep link the library page already resolves — and, when the library cannot be read, to `/documents`. No notification link is a search any more.
+- Tests: `lib/__tests__/attentionProvider.test.ts` "resolved in one batched read; unresolved opens Documents; never a search for a raw id".
+
+**Done-when.**
+- ✓ The document fallback resolves the library and builds `/documents/<lib>?doc=<id>`.
+- (the "or" limb — not needed) `searchDocuments` is unchanged.
+- ✓ No notification link resolves to a search for a raw uuid (repo search: the only `/search?q=` builders are the search page, the command palette and the dashboard search box).
+
+**Scope / residual.** None.
 
 ---
 

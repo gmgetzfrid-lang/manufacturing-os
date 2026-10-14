@@ -208,7 +208,7 @@ import { join } from "node:path";
 import {
   mapStripeStatus, ACCESS_STATUSES, LIVE_STRIPE_STATUSES, BILLED_STRIPE_STATUSES, PLAN_HOLDING_STRIPE_STATUSES, UNSTARTED_STRIPE_STATUSES,
   holdsLiveSubscription, hasAccess, type SubscriptionStatus,
-} from "@/lib/subscription";
+} from "@/lib/billing";
 import { customerIdempotencyKey } from "@/lib/stripe";
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
 import { POST as checkoutPOST } from "@/app/api/stripe/checkout/route";
@@ -549,7 +549,7 @@ const STRIPE_STATUSES: Array<[string, SubscriptionStatus, boolean]> = [
 ];
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
-describe("BILL-1 — the status map (lib/subscription.ts mapStripeStatus)", () => {
+describe("BILL-1 — the status map (lib/billing.ts mapStripeStatus)", () => {
   it("maps each Stripe status as the table says; incomplete and unknown never to active or trialing", () => {
     for (const [stripe, stored] of STRIPE_STATUSES) expect(mapStripeStatus(stripe).status, stripe).toBe(stored);
     expect(mapStripeStatus("a_status_stripe_adds_later").known).toBe(false);

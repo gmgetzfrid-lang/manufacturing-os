@@ -436,6 +436,7 @@ CREATE POLICY notifications_org_insert ON notifications FOR INSERT WITH CHECK (
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P8 PROJECTS, through `DELIV-16` (done-when 2's one remaining producer, `CheckInPanel.tsx`) — by the integrator at the N15 merge, 2026-10-14 (DEC-31). Done-when 1's last two scans were N15's and are done.
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (dw1's last two scans: `scanDistributionAcks` in `lib/distributionAcks.ts` and `scanStaleHolds` in `lib/holds.ts` adopt `notifyCompliance` as the six scans in N14's files do — no reminder marked sent for a dead-lettered recipient, delivered counted apart from attempted) — by the integrator, 2026-10-13 (at the N14 merge, DEC-31: N14 named notifications N9 for these limbs, but N9 merged before N14 — re-owned; fleet plan updated).
 - **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31), as N6's Scope / residual names: the remaining callers of done-when 1 and the raw inserts of done-when 3.
 - **Verification:** CONFIRMED
@@ -534,6 +535,37 @@ export async function notify(input: NotificationInput): Promise<void> {
 - Owner: **notifications N9** — integrator ruling, 2026-10-13 — for the two step-6 scans N14 may not edit, `lib/distributionAcks.ts` (`scanDistributionAcks`: `notify()` and `emit()`) and `lib/holds.ts` (`scanStaleHolds`: `emit()`). Three steps, as the six scans now do them: (a) adopt `notifyCompliance` (one import line; `emit()`'s in-app leg in `lib/notify/dispatch.ts` for the emits); (b) read the answer — do not mark a reminder sent for a recipient whose notice dead-lettered, so the next run retries it (`scanDistributionAcks` keys its cooldown on the `notifications` rows themselves (`ackRequest` / `ackEscalation`), and `scanStaleHolds` on `staleHoldId`; a notice that never landed leaves no such row, so for them the question is what else the scan stamps); (c) count delivered apart from attempted, so the two scans appear in `result.complianceBellNotices`.
 - The other producers' owners are as listed under `DELIV-16`.
 - Residual of the integrator fix pass, recorded (no owner needed — each is the scan's behaviour before this pass, at worst): a dead letter that falls out of the plan's lookback (the cron down for longer than the scan's cooldown, or a run with more than 5000 dead letters in an org) is no longer told apart, and its row sends every notice again; a retry plan that cannot be read is a line in the run's errors, and every due row then sends every notice. A retry run sends only the lost notices and then stamps, so a notice that became due only since (an escalation past its grace) waits for the next cooldown, at most one day later than before.
+
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — done-when 1's last two scans (the integrator's ruling of 2026-10-13).
+
+**Reproduced first** on `89c9aaa`:
+- `lib/distributionAcks.ts` `scanDistributionAcks` called `notify()` (one attempt, answer ignored).
+- `lib/holds.ts` `scanStaleHolds` called `emit()` (its in-app leg `notifyMany`, one attempt). Its dedupe was "any row for this hold and expectation", so a nudge that reached one pool member and dead-lettered for another was never sent again to the second.
+- Neither scan appeared in `result.complianceBellNotices`.
+
+**What landed.**
+- `scanDistributionAcks` takes `notifyCompliance` with one import line (`import { notifyCompliance as notify }`). Each nudge carries its row's retry key (`distribution-acks:<ack id>`) and each escalation its own (`distribution-acks:escalation:<requester>:<doc>`).
+  - Its cooldown watermark IS the notifications rows, per (recipient, document). A dead-lettered nudge leaves no row, so nothing marks it sent, and the next run nudges that recipient again (and only them).
+  - `n` stays the rows attempted.
+- `scanStaleHolds`: the nudge's bell rows go through `emit()`'s new `inappRetry: { retryKey: "hold-aging:<hold>:<expectation>" }`, which routes them through `notifyCompliance` (the hold kinds are not compliance kinds).
+  - The dedupe is now per recipient: once a hold's nudge has rows, the scan reads its dead letters (`loadScanRetryPlan`, 7 days; `ScanRetryPlan.has` new) and sends again only to the recipients its latest run lost who still have no row, bell only.
+  - A pool member who joined since is not nudged about an old miss, as before.
+  - *(Superseded at fix pass 3 — an unreadable plan now DEFERS the hold; see Tests.)* Fix pass 2: when the dead letters cannot be read (`plan.unreadable` — the `audit_logs` read failed), the hold is no longer skipped (`plan.has` was false, so a recipient whose row dead-lettered stayed un-nudged until the hold's expectation changed — marked sent in effect). The bell row goes to every current recipient who still has no row, bell only (the email went the first time). A pool member who joined since may then be nudged; that is the `ScanRetryPlan` contract ("the dead letters could not be read: every row sends every notice"), and the plan's read failure is already a note in the scan's line.
+- Both scans run inside `runComplianceScan` (the cron's step 6, unchanged). Their bell notices are now counted attempted / delivered / dead-lettered in `result.complianceBellNotices`, and their shortfall is reported in the run's errors.
+
+**Tests.**
+- `lib/__tests__/n15EmitRouting.test.ts` "scanDistributionAcks": retry keys; a dead-lettered nudge is sent again next run to that recipient only.
+- `lib/__tests__/holds.test.ts` "DELIV-7 dw1 (notifications N15)": the retry key; the lost recipient re-sent bell-only; nobody else; no dead letter means no re-send (REGRESSION). ~~"DELIV-7 dw1 (N15 fix pass 2)": an unreadable plan (the `audit_logs` read fails) re-sends the bell row to the recipient with no row, with the retry key, and once everyone has a row sends nothing more.~~ *(Replaced at fix pass 3, below.)*
+- *Fix pass 3 (2026-10-14):* the fix-pass-2 rule for an unreadable plan re-sent the nudge on EVERY unreadable run to anyone without a row — including a recipient who read and deleted it (`hold_opened` is not a compliance kind, so `20261161` lets it be cleared, and a deleted row looks like a lost one) and pool members who joined after the miss. `scanStaleHolds` now DEFERS a hold someone was already told about while the plan is unreadable (nothing is sent, nothing is marked); the dead letters stay readable for `HOLD_RETRY_LOOKBACK_MS` (7 days), so the next run that can read them sends the lost row to the lost recipient only. A hold nobody was told about yet still gets its first nudge under an unreadable plan. Tests: `holds.test.ts` "DELIV-7 dw1 (N15 fix pass 3)" (two unreadable runs send nothing — not to the admin who deleted theirs, not to the DocCtrl who joined since; the next readable run sends the opener's lost row, bell-only, with the retry key) and "REGRESSION (N15 fix pass 3)" (a first nudge under an unreadable plan). Residual: a miss whose dead letters stay unreadable for the whole lookback is not retried (logged on every run by `loadScanRetryPlan`).
+- `lib/__tests__/n15EmitRouting.test.ts`: `emit()`'s routing.
+
+**Done-when.**
+- ✓ 1, now for all eight step-6 scans.
+- Done-when 2 → `DELIV-16`, which stays OPEN on drafting-flow DF-P4's `CheckInPanel` limb.
+- ✓ 3.
+- ✓ 4.
+
+**Scope / residual.** Stays OPEN on done-when 2 only, through `DELIV-16`.
 
 ---
 
@@ -686,7 +718,7 @@ The pre-paste fallback reads the same key: the latest row's subject and `body_te
 ## DELIV-10 · The bell shows at most 50 unread rows and counts only what it fetched — older unread obligations are permanently invisible, and countUnread() is dead code
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:176-177`, `hooks/useTicketNotifications.ts:312`, `lib/inAppNotifications.ts:157-174`, `lib/inAppNotifications.ts:176-185`, `lib/inbox.ts:163-165`, `components/notifications/NotificationCenter.tsx:76-80`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves check out: the cap is a hard 50 with DESC ordering (oldest unread fall off), the bell/NotificationCenter (components/notifications/NotificationCenter.tsx:76-80 `all: items.length`) consume the same truncated array, and countUnread is dead. Worth noting lib/inbox.ts:163-165 does compute a true exact unread count, so the cockpit number and the bell number can disagree once past 50 — which reinforces rather than refutes the finding.
@@ -723,6 +755,24 @@ The pre-paste fallback reads the same key: the latest row's subject and `body_te
 - [ ] Oldest-unread items are reachable (e.g. action-required kinds sorted or filtered ahead of the cap)
 - [ ] lib/inbox.ts's unread count is org-scoped so it agrees with the bell
 - [ ] The `.catch(() => [])` distinguishes "no unread" from "the query failed"
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: the 50-row cap and `count: items.length` (`hooks/useTicketNotifications.ts:231`, `:386`); `.catch(() => [] as NotificationRow[])` (`:232`) turned a failed read into an empty list; `lib/inbox.ts:167-168` counted unread rows with no `org_id`.
+
+What landed:
+- **The count.** The feed's notification total is `countUnread(activeOrgId)` (`lib/inAppNotifications.ts`, an exact head count of my unread, unsuperseded rows in the workspace), read beside the page. When it exceeds the rows loaded, the rows below are tallied by kind (`listUnreadKindsBeyond`, up to `REMAINDER_TALLY_CAP` = 1,000 more; a row about a ticket already in the feed folds in, as on the page) into the section badges and the action count; any beyond the tally count in the total as activity. `count` = `counts.all` (the hook's return shape is unchanged; its value is now the true one).
+- **Paging.** `listMyNotifications` takes a `before` cursor — `(created_at, id)`, ordered `created_at desc, id desc` (review fix: rows written in one statement share `created_at`, and a `created_at`-only cursor dropped the second of two rows at a page boundary); the feed loads the newest 50 and, on "Load older", the next page by cursor (`useAttentionStatus().loadMoreNotifications`). The tally of the rows below reads after the window's last row by the same keyset, never an offset, so no row is both listed and tallied. `components/cockpit/AttentionFeed.tsx` says "Showing the newest N of M unread notifications." with the button — in the center, `/inbox` and the dashboard widget.
+- **A failed read is said.** A refused notifications read no longer becomes `[]`: the feed keeps its last good rows — of the same feed only (review fix: the snapshot is keyed `${uid}:${activeOrgId}`; `RoleContext.setActiveOrgId` changes the workspace without touching `membershipState`, so the first draft carried workspace A's tickets, rows and counts into workspace B when B's first read failed; a switch now clears tickets, rows, hidden set, totals, tally and document links before the first read) — and sets `useAttentionStatus().error`; `AttentionFeed` shows it (`role="alert"`), and with nothing loaded says "Nothing could be loaded — this is not \"all caught up\"" instead of "You're all caught up". A failed count or ticket read is said the same way.
+- **The inbox count is org-scoped** — `lib/inbox.ts:170` adds `.eq("org_id", orgId)` (the filter `countUnread` applies).
+- Tests: `lib/__tests__/attentionProvider.test.ts` (the count / cursor cases above; "a failed notification read is an error the feed says, and keeps the last good rows"; "a workspace switch clears the feed: a failed read in the new workspace shows nothing of the old one" (fails with the reset disabled); "first-load failure: the feed surface says nothing could be loaded…"); `lib/__tests__/dfRoundG_P1_rails.test.ts` "lib/inbox.ts counts unread notifications with the same superseded filter as countUnread" (unchanged, still passes).
+
+**Done-when.**
+- ✓ The badge uses a real count (`countUnread`) independent of the page size.
+- ✓ The feed paginates — a `created_at` cursor with a "Load older" affordance and "Showing the newest N of M".
+- ✓ Oldest unread items are reachable (load older pages).
+- ✓ `lib/inbox.ts`'s unread count is org-scoped.
+- ✓ The read distinguishes "no unread" from "the query failed" — and what it keeps on a failure is never another workspace's.
+
+**Scope / residual.** None.
 
 ---
 
@@ -1019,6 +1069,7 @@ export type NotifChannel = "inapp" | "email";
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P8 PROJECTS (the one remaining limb: `components/documents/CheckInPanel.tsx`'s `review_requested` adopts `notifyCompliance`) — re-owned by the integrator at the N15 merge, 2026-10-14 (DEC-31): DF-P4's brief kept `CheckInPanel.tsx` off-limits while document-control P23 held it, so DF-P4 did not take it; DF-P8 is the queued drafting-flow package that edits `CheckInPanel.tsx`. N15's limbs are done (its Partial below).
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (the compliance producers N14 could not edit: `lib/distributionAcks.ts`, `lib/postPublish.ts`, `lib/staleCopies.ts`, `lib/revisionImpact.ts`, `lib/workPackages.ts`, `emit()`'s in-app leg in `lib/notify/dispatch.ts` for `lib/holds.ts` / `lib/distributionAcks.ts`, the intake door's `review_requested` / `doc_superseded` in `app/api/intake/upload/route.ts`; and the browser writer learning whether its own notice to another member landed); drafting-flow DF-P4 LIBRARY (`components/documents/CheckInPanel.tsx`'s `review_requested`, assigned at the DF-P2 merge) — by the integrator, 2026-10-13 (at the N14 merge, DEC-31: N14 named notifications N9 for these limbs, but N9 merged before N14 — re-owned; fleet plan updated).
 - **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31). Opened 2026-10-07 by notifications Round G (N6 EMAIL-PIPELINE-AND-CRON) as the remainder of `DELIV-7` done-when 2.
 - **Verification:** CONFIRMED by reading the code at `2de62f1` + N6: `lib/inAppNotifications.ts` `notifyChecked` / `notify()` insert once and answer `false` on a refusal (N6 made the answer visible; nothing retries); `lib/notify/dispatch.ts` `emit()` reports `inapp: { sent, failed }` to its caller and stops; the email channel has a queue (`email_notifications`, attempt_count, the drain's bounded retry) and the bell channel has none.
@@ -1090,5 +1141,43 @@ export type NotifChannel = "inapp" | "email";
 - The read-back can miss a row whose insert is still executing on the server when its answer was lost (it commits after the read), and then the retry writes a second copy. Recorded in `DEC-102` Risk; no owner — closing it needs an idempotency key the table does not have (a migration and a unique index, which the notifications census forbids an upsert against).
 - A cron scan's dead-lettered notice is now sent again on the next run, to its recipient only (`DELIV-7`, integrator fix pass); the scan no longer stamps its cooldown over it.
 - A notice refused while the breaker is open, or past the cron's deadline, is not retried; it is still dead-lettered, and its error says why it was not retried.
+
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`); migration `20261206` (`notification_i_wrote`).
+
+**Reproduced first** on `89c9aaa`, the gaps the N14 Partial lists:
+- `emit()`'s in-app leg wrote every kind through `notifyMany`, a single attempt.
+- `lib/postPublish.ts` `notifyPackagesOfRetirement` and `lib/distributionAcks.ts` `scanDistributionAcks` wrote directly, once.
+- A browser notice to another member was dead-lettered without a retry.
+
+**What landed.**
+- `lib/notify/dispatch.ts` `emit()`: a COMPLIANCE kind's bell rows (`KIND_META`), and any row a producer passes `inappRetry` for, go through `lib/complianceNotify.ts` `notifyCompliance`, one per recipient, with the producer's retry key. Every other kind goes through `notifyMany`, unchanged. This covers every compliance `emit()` in:
+  - `lib/distributionAcks.ts` (requests, re-nudges), `lib/postPublish.ts` (`doc_superseded`), `lib/staleCopies.ts` (`doc_recalled`), `lib/revisionImpact.ts` (`doc_upstream_changed`), `lib/workPackages.ts` (`package_doc_stale`);
+  - the intake door's notices (`app/api/intake/upload/route.ts` — `intake_submission` / `intake_quote`, the former `review_requested`, and `doc_superseded`).
+  - `lib/holds.ts` passes `inappRetry` for its stop-work hold notice and its aging nudge.
+- Direct writers: `lib/distributionAcks.ts` imports `notifyCompliance as notify`; `lib/postPublish.ts` `notifyPackagesOfRetirement` writes `package_doc_retired` through it, without telling the actor of their own act.
+- **The browser writer learns whether its own notice to another member landed.** `20261206` adds `notification_i_wrote(p_org, p_user, p_kind, p_title, p_resource_id, p_since)`:
+  - STABLE SECURITY DEFINER, `search_path` pinned, EXECUTE to `authenticated` only;
+  - a boolean, never a row: did a row the CALLER wrote (`actor_user_id = auth.uid()`, which the insert rail stamps) land, for an active member of the org, of a declared kind, at most an hour back.
+  - `lib/complianceNotify.ts` asks it before each retry and before the dead letter, and retries on its answer. Before the paste (PGRST202 / 42883), or when the read fails, today's path holds: no retry, a dead letter that says why.
+- **A server writer with no scan scope and no session** (a route on the service role — the intake door) now reads its row back from the table and retries. The service role sees every row. An unbound server client is the anon key, whose insert RLS refuses deterministically.
+
+**Exercised on PostgreSQL 16** (with `TAX-17`'s cases):
+- the writer's own row to another member → true;
+- a wrong title, a window after the row, a row older than the one-hour clamp, another member asking about it, a suspended member, another org, an undeclared kind, no signed-in caller → false;
+- anon → permission denied.
+
+**Tests.**
+- `lib/__tests__/complianceRetryN15.test.ts`: the browser's transient failure retried to ONE row; a lost answer found with no second copy; before the paste, no retry and the dead letter says why; REGRESSION, a landed notice is written once with no read-back; a browser with no session not retried; the server writer's retry and lost answer.
+- `lib/__tests__/n15EmitRouting.test.ts`: the in-app leg's routing, the counts, `inappRetry`'s key, REGRESSION for non-compliance kinds, and the producers' source pins.
+- `lib/__tests__/notifStaleEscalationMigration.test.ts`: the function's shape.
+- `lib/__tests__/complianceNotify.test.ts`: two cases updated for the new read-backs.
+
+**Done-when.**
+- Done-when 1 is met for every compliance producer above, and for a browser notice to another member once `20261206` is pasted. **Not done:** `components/documents/CheckInPanel.tsx`'s `review_requested` (drafting-flow DF-P4's, assigned at the DF-P2 merge).
+- ✓ Done-when 2 (N14).
+
+**Scope / residual.**
+- Stays OPEN on DF-P4's limb. `DEC-102` Risk (b) is unchanged, no owner: the read-back can miss a row whose insert is still executing.
+- **Pending migration:** `20261206` (fix pass 3: paste BEFORE the deploy, `TAX-17`; the app works before and after). *(Fix pass 4: paste it again, REQUIRED, after the next maintenance run following the deploy (`TAX-17`). The new SECURITY DEFINER `notification_i_wrote` in that number is RATIFIED by the integrator under `DEC-90`.)*
 
 ---

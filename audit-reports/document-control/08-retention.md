@@ -353,6 +353,8 @@ lib/storageOrphans.ts:127-129 `const res = await r2.send(new ListObjectsV2Comman
 
 *Cross-area note (2026-09-30, intelligence Round G; corrected by its fix pass 3): intelligence `ILIFE-8` (the same bucket-wide sweep) cites this resolution for its listing half and its reference-query limb is declined by `DEC-57` (this finding's Done-when 2, made a decision), but ILIFE-8 stays OPEN on the `referencedKeys` residual below. Done-when 3 ("the GET response reports only the caller's org's totals") does not fully hold: the GET spreads the whole scan (`app/api/admin/orphans/route.ts:30`), including `referencedKeys: referenced.size` (`lib/storageOrphans.ts:187`), a count of the keys every tenant references. Recorded as an ILIFE-8 residual (owner admin-and-org P2, `BKP-2`); the status is left to document-control.*
 
+*Cross-note (2026-10-13, intelligence Round G, I-01 phase B): intelligence `ILIFE-8` is re-verified on `596d34e` and stays OPEN on the `referencedKeys` aggregate the scan still returns (`lib/storageOrphans.ts:163`; this record's Done-when 3). No running or queued package lists `lib/storageOrphans.ts` (corrected at the second review fix pass: this first named admin-and-org P10, but P10 is running, not queued, and its brief lists only `lib/storageAlerts.ts`, `lib/storageUsage.ts` and `app/api/storage/upload-url/route.ts`). It waits on a new package the integrator must queue under DEC-31, proposed "admin-and-org export/restore remainders".*
+
 ---
 
 <a id="ret-8"></a>

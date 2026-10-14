@@ -77,7 +77,7 @@ const AT = "2026-10-07T12:00:00.000Z";
 const portal = { orgId: "o1", transmittalId: "t1", number: "TR-0007", subject: "IFC set", issuerUid: "issuer", acknowledgedByName: "Jane Doe", via: "portal" as const, note: "All received", at: AT };
 
 describe("PROD-12 dw1 — the issuer is told of a receipt, from either door", () => {
-  it("the portal: the ack_complete bell row and the receipt email — the email the portal sent before N9, word for word", async () => {
+  it("the portal: the ack_complete bell row and the receipt email — the email the portal sent before N9, word for word but the time (NEDGE-12, N15: ISO-8601 with its zone)", async () => {
     const out = await tellIssuerOfReceipt(admin() as never, portal);
     expect(out).toEqual({ told: true, emailQueued: true });
     expect(state.bell).toEqual([expect.objectContaining({
@@ -89,7 +89,7 @@ describe("PROD-12 dw1 — the issuer is told of a receipt, from either door", ()
     expect(state.emails).toEqual([{
       orgId: "o1", toUserId: "issuer", toEmail: "issuer@acme.com",
       subject: "Transmittal TR-0007 acknowledged by Jane Doe",
-      bodyText: `Jane Doe confirmed receipt of transmittal TR-0007 (IFC set) through the recipient portal on ${new Date(AT).toLocaleString()}.\n\nTheir note: All received`,
+      bodyText: `Jane Doe confirmed receipt of transmittal TR-0007 (IFC set) through the recipient portal on 2026-10-07T12:00:00+00:00 (UTC).\n\nTheir note: All received`,
       resourceId: "t1", eventType: "watcher_activity",
     }]);
   });
@@ -105,7 +105,7 @@ describe("PROD-12 dw1 — the issuer is told of a receipt, from either door", ()
     });
     expect(state.emails[0]).toMatchObject({
       subject: "Transmittal TR-0007 acknowledged by Jane Doe",
-      bodyText: `dora@acme.com recorded Jane Doe's receipt of transmittal TR-0007 (IFC set) on ${new Date(AT).toLocaleString()}.`,
+      bodyText: `dora@acme.com recorded Jane Doe's receipt of transmittal TR-0007 (IFC set) on 2026-10-07T12:00:00+00:00 (UTC).`,
       eventType: "watcher_activity",
     });
   });

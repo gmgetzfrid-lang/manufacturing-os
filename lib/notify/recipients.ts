@@ -1,15 +1,24 @@
 // lib/notify/recipients.ts
 //
-// Unified recipient resolution for the notification dispatcher. This is the
-// single place that turns "who should hear about this" into a list of user
-// ids, folding together EVERY follow/subscribe mechanism in the app:
-//   • generic subscriptions table (documents / projects / assets / libraries / tickets)
-//   • tickets.watchers array (back-compat, read through the same path)
+// Unified recipient resolution for the notification dispatcher (emit()). It
+// turns an emit()'s audience into a list of user ids from these sources:
+//   • the watch / follow table `subscriptions` (lib/watches.ts — documents /
+//     projects / assets / libraries; WatchResourceType has no ticket)
+//   • tickets.watchers, for a ticket resource — read ONLY for an emit() that
+//     passes `followers: true` on a ticket, which today is the intake door's
+//     redline notice (app/api/intake/upload/route.ts). The two ticket routes
+//     (app/api/tickets/comment, app/api/tickets/workflow-action) do NOT walk
+//     this resolver: they fold tickets.watchers into their own fan-out (the
+//     transition's unread_by — lib/ticketTransitions.ts — and the comment
+//     route's merge). A ticket emit that adds `followers: true` beside them
+//     would double-supply the watchers (drafting-flow ROUTE-3 (a), N15).
 //   • role pools (additive roles[])
 //   • project membership (implicit follow)
 //
-// This finally powers the fan-out the subscriptions table was built for — the
-// `listFollowerIds` that was previously dead.
+// Discovery (NEDGE-6 done-when 3, TAX-4 done-when 3 — notifications Round G
+// N15): a document's follower who may not DISCOVER it (a hidden or private
+// node, an ACL that excludes them) is dropped from a document-scoped event —
+// discoveringAmong, below; controllers are never dropped (DEC-43).
 //
 // Membership (NEDGE-3, notifications Round G N5): only an ACTIVE member of
 // the event's org is a recipient. The role pool always asked for status =
@@ -69,8 +78,10 @@ export async function resolveFollowers(resource: ResourceRef, orgId: string): Pr
     .eq("resource_id", resource.id);
   ((subs as Array<{ user_id: string }> | null) ?? []).forEach((r) => ids.add(r.user_id));
 
-  // Tickets carry their own watchers array; read it through the same resolver
-  // so the two follow stores look like one to every caller.
+  // Tickets carry their own watchers array. Only an emit() that passes
+  // `followers: true` on a ticket reaches here (the intake door's redline
+  // notice); the two ticket routes fold tickets.watchers themselves and never
+  // call this (ROUTE-3 (a) — see the header).
   if (resource.type === "ticket") {
     const { data: t } = await supabase
       .from("tickets")
@@ -152,4 +163,136 @@ export async function projectVisibleAmong(
     console.warn("[notify] project visibility could not be read — the hand-named recipients are left out", (e as Error)?.message ?? e);
     return [];
   }
+}
+
+// ─── Discovery (NEDGE-6 done-when 3, TAX-4 done-when 3 — N15) ───────────────
+
+/** One discover check's answer: who among the people asked may discover the
+ *  document. */
+export type DiscoverCheckAnswer = { ok: true; discover: string[] } | { ok: false; error: string };
+export type DiscoverCheck = (input: { orgId: string; documentId: string; uids: string[] }) => Promise<DiscoverCheckAnswer>;
+
+/** The SERVER check (lib/documentDiscoverers.ts discoverersOfDocument, on the
+ *  service role). That module registers it when it is loaded — it imports
+ *  supabaseAdmin, so this file (bundled for the browser too) never imports
+ *  it. A server entry that emits document-scoped follower notices loads it
+ *  (app/api/intake/upload/route.ts). */
+let serverDiscoverCheck: DiscoverCheck | null = null;
+export function __registerServerDiscoverCheck(fn: DiscoverCheck | null): void {
+  serverDiscoverCheck = fn;
+}
+
+/** How many people one discover call asks about (the route's
+ *  DISCOVERERS_MAX_UIDS). */
+export const DISCOVER_CHUNK = 500;
+
+/** How long the browser waits for the WHOLE discover check — the session
+ *  read and the route together — before it counts as FAILED (review fix;
+ *  fix pass 4 widened it from the fetch alone: a stalled
+ *  supabase.auth.getSession() held the caller open too). A timed-out check
+ *  takes the failed-check path (controllers in full, the others redacted)
+ *  instead of holding the emit — and whatever awaits it — open
+ *  indefinitely. */
+export const DISCOVER_TIMEOUT_MS = 5000;
+
+const DISCOVER_TIMED_OUT = `the discover check did not answer within ${DISCOVER_TIMEOUT_MS} ms`;
+
+/** The BROWSER check: POST /api/documents/discoverers with the member's own
+ *  token. The route answers only about a document the caller's session can
+ *  read, and only the subset of the people sent. Never throws; the session
+ *  read and the fetch together are bounded by DISCOVER_TIMEOUT_MS — past it
+ *  the check answers a failure at once and the fetch, if started, is
+ *  aborted. */
+function browserDiscoverCheck(input: { orgId: string; documentId: string; uids: string[] }): Promise<DiscoverCheckAnswer> {
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<DiscoverCheckAnswer>((resolve) => {
+    timer = setTimeout(() => {
+      ctrl?.abort();
+      resolve({ ok: false, error: DISCOVER_TIMED_OUT });
+    }, DISCOVER_TIMEOUT_MS);
+  });
+  const asked = (async (): Promise<DiscoverCheckAnswer> => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (ctrl?.signal.aborted) return { ok: false, error: DISCOVER_TIMED_OUT };
+      const token = data?.session?.access_token;
+      if (!token) return { ok: false, error: "no signed-in session" };
+      const res = await fetch("/api/documents/discoverers", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(input),
+        signal: ctrl?.signal,
+      });
+      const body = (await res.json().catch(() => null)) as { discover?: unknown; error?: unknown } | null;
+      if (ctrl?.signal.aborted) return { ok: false, error: DISCOVER_TIMED_OUT };
+      if (!res.ok || !body || !Array.isArray(body.discover)) {
+        return { ok: false, error: typeof body?.error === "string" ? body.error : `the discover check answered ${res.status}` };
+      }
+      return { ok: true, discover: (body.discover as unknown[]).filter((u): u is string => typeof u === "string") };
+    } catch (e) {
+      if (ctrl?.signal.aborted) return { ok: false, error: DISCOVER_TIMED_OUT };
+      return { ok: false, error: (e as Error)?.message ?? String(e) };
+    }
+  })();
+  return Promise.race([asked, timedOut]).finally(() => clearTimeout(timer));
+}
+
+export type DiscoverFilter = {
+  /** the people kept, in input order */
+  uids: string[];
+  /** checked: the check answered; failed: it ran and did not answer — only
+   *  the controllers were kept (fail closed; the caller decides what the
+   *  others get — emit() sends them redactedNotice(), the checkout thread
+   *  keeps its session holders); unavailable: no check exists in
+   *  this context (a server entry that did not load lib/documentDiscoverers)
+   *  — everyone was kept, as before the filter, and it is logged. */
+  outcome: "checked" | "failed" | "unavailable";
+  error?: string;
+};
+
+/**
+ * NEDGE-6 done-when 3 / TAX-4 done-when 3: the subset of `uids` who may
+ * DISCOVER document `documentId` — the bar a member's own client applies
+ * over the full library → folders → document chain, the effective owner and
+ * the controller tier (DEC-43: an Admin or DocCtrl is never dropped). On the
+ * server through the registered check; in the browser through the route.
+ *
+ * A check that runs and fails keeps only the org's controllers among `uids`
+ * (fail closed — a notice names the document, so it is not sent to someone
+ * who might not be allowed to know it exists; DEC-90's fail-safe rule) and
+ * logs; the caller decides what the others get (emit() sends them a notice
+ * without the details — dispatch.ts redactedNotice). A context with no
+ * check (unregistered server entry) keeps everyone, logged — the behaviour before this filter. Never throws.
+ */
+export async function discoveringAmong(orgId: string, documentId: string, uids: Array<string | null | undefined>): Promise<DiscoverFilter> {
+  const want = Array.from(new Set(uids.filter((u): u is string => !!u)));
+  if (!orgId || !documentId || want.length === 0) return { uids: [], outcome: "checked" };
+  const check = typeof window === "undefined" ? serverDiscoverCheck : browserDiscoverCheck;
+  if (!check) {
+    console.warn(`[notify] no discover check in this context — ${want.length} follower(s) of document ${documentId} kept unchecked (load lib/documentDiscoverers in this server entry)`);
+    return { uids: want, outcome: "unavailable" };
+  }
+  const seen = new Set<string>();
+  let failure: string | null = null;
+  for (let i = 0; i < want.length && !failure; i += DISCOVER_CHUNK) {
+    let answer: DiscoverCheckAnswer;
+    try {
+      answer = await check({ orgId, documentId, uids: want.slice(i, i + DISCOVER_CHUNK) });
+    } catch (e) {
+      answer = { ok: false, error: (e as Error)?.message ?? String(e) };
+    }
+    if (!answer.ok) failure = answer.error;
+    else answer.discover.forEach((u) => seen.add(u));
+  }
+  if (failure) {
+    let controllers = new Set<string>();
+    try {
+      controllers = new Set(await resolveRoleRecipients(orgId, ["Admin", "DocCtrl"]));
+    } catch { /* nobody but a known controller */ }
+    const kept = want.filter((u) => controllers.has(u));
+    console.warn(`[notify] the discover check for document ${documentId} failed (${failure}) — ${want.length - kept.length} non-controller recipient(s) not settled (the caller withholds them or sends them a notice without the details)`);
+    return { uids: kept, outcome: "failed", error: failure };
+  }
+  return { uids: want.filter((u) => seen.has(u)), outcome: "checked" };
 }

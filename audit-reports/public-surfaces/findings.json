@@ -8,18 +8,18 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 65,
+    "findings": 66,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
       "MEDIUM": 21,
-      "LOW": 27
+      "LOW": 28
     },
     "by_status": {
-      "RESOLVED": 55,
-      "OPEN": 9,
-      "WONTFIX": 1
+      "RESOLVED": 57,
+      "WONTFIX": 1,
+      "OPEN": 8
     }
   },
   "status_vocabulary": [
@@ -65,7 +65,7 @@
       "id": "PHYS-2",
       "title": "Printing an older ticket deliverable stamps it with the ticket's CURRENT revision and encodes that rev in the QR — the scan then certifies a superseded print as \"LATEST ISSUE\" in green",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -345,7 +345,7 @@
       "id": "PHYS-9",
       "title": "The drafting download watermark asserts \"CONTROLLED COPY\" while the footer stamped on the same page by the same call says \"UNCONTROLLED COPY\" — and nothing registers, numbers, or recalls the copy it claims is controlled",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1344,6 +1344,31 @@
       ],
       "refuted": false,
       "summary": "A drawing numbered \"P‐101\" (U+2010, pasted from Word), or at revision \"Δ1\", goes on hold. Its hold card cannot be printed: printHoldCard throws and nothing downloads, so the red tag the hold exists to hang is never made. An equipment label whose description carries \"Ω\", or a traveler for a ticket whose number or title carries such a character, fails the same way. (As opened, the scenario was a /pa",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/03-physical-bridge.md"
+    },
+    {
+      "id": "PHYS-17",
+      "title": "`download_audits` has no ticket or attachment column, so a drafting-ticket copy can never be recalled — the stale-copies ledger has no ticket arm",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED on DF-P10's branch.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/schema.sql",
+        "supabase/migrations/20261068_dc_roundF_download_audits_record.sql",
+        "lib/ticketDeliverableCopy.ts",
+        "lib/staleCopies.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Rev 2 of a drafting ticket issues; three people printed Rev 1's package last week. Nothing lists them as holders of a superseded copy: the stale-copies nudge and the recall cover register documents only.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
     },

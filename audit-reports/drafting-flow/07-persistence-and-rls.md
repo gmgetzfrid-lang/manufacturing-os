@@ -406,6 +406,17 @@ app/(protected)/requests/[id]/page.tsx:981 —
 
 **Scope / residual.** The call sites' stand-ins → the packages that own each page (the two ticket-queue sites → **DF-P9**, TICKET-PAGE, the request pages' remaining direct writes). The `org_id IS NULL` readability → admin-and-org **P7** (`ALOG-10`; P7's audit identity trigger, `ALOG-7`, builds on this `lib/audit.ts` — fleet plan, DF-P1 `dependsOn`).
 
+**Partial (2026-10-13, admin-and-org Round G).** Package P7 — the `org_id IS NULL` readability re-owned to it at the DF-P1 merge (admin-and-org `ALOG-10`). Reproduced on base `6503ea7`: `audit_logs_insert` (`20260813:84-90`) admits `org_id IS NULL`; every read policy and both viewers read `org_id`.
+
+Landed: `supabase/migrations/20261202_ao_roundG_audit_org_required.sql` (PASTE pending): counts-only inventory, then `org_id` NOT NULL (or a stop with the count; never a delete) and `audit_logs_insert` re-created without the NULL branch; `lib/audit.ts` refuses an entry with no workspace (returned and logged, never written) — so the call sites' `orgId: activeOrgId || undefined` (`app/(protected)/requests/page.tsx:640`, `:667`, `:684`) can no longer write an unreadable row. See `ALOG-10`'s record for the worlds, the operator step and the PostgreSQL 16 cases.
+
+**Done-when.**
+- ✓ (DF-P1) `{ error }` destructured and surfaced.
+- ✗ Call sites still substitute `'unknown'` for a missing uid (owner DF-P9, as DF-P1 recorded); `lib/audit.ts` neutralises the stand-in, and now also refuses the missing workspace.
+- ✓ (pending `20261202`) The INSERT policy stops allowing `org_id IS NULL` — the criterion's first form; and no new row with no workspace is accepted by the app or (after the paste) the database.
+
+**Scope / residual.** The call-site stand-ins (DF-P9). Status stays OPEN for them.
+
 ---
 
 <a id="pers-8"></a>

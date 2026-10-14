@@ -81,7 +81,9 @@ describe("DEL-6 — the owner can open the recertification they are told to do",
     expect(p).toMatch(/const isLibraryOwner = !!uid && !!library\?\.ownerUserId && library\.ownerUserId === uid;/);
     expect(p).toMatch(/\{\(isController \|\| isLibraryOwner\) && \([\s\S]{0,2500}Access recertification/);
     const e = src("components/permissions/PermissionsExplorer.tsx");
-    expect(e).toMatch(/cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner"/);
+    // admin-and-org P7 review fix: the row says the LIVE database's rule — every member until 20261077 /
+    // 20261188 are pasted — and that the page offers the flow to a controller or the library's owner.
+    expect(e).toMatch(/cap: "Access recertification reviews", m: "yyyyyyyyyyyy", checked: true,\s+cond: "The library page offers the review to a controller or the library's owner/);
     expect(e).not.toMatch(/the owner path is a known gap/);
   });
 });

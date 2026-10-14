@@ -5,8 +5,8 @@
 // identical to the legacy client-side computation it replaced.
 
 import { describe, it, expect } from "vitest";
-import { computeTransition, classifyTransitionNotification, rowToTicket, draftRevLabel, issuedRevLabel } from "@/lib/ticketTransitions";
-import type { Ticket, TicketAttachment } from "@/types/schema";
+import { computeTransition, classifyTransitionNotification, rowToTicket, draftRevLabel, issuedRevLabel, joiningFileRev, joiningFileFields, stampIssuedFinals, issueLabelFor } from "@/lib/ticketTransitions";
+import type { Ticket, TicketAttachment, TicketHistoryEntry } from "@/types/schema";
 
 const NOW = "2026-06-15T12:00:00.000Z";
 
@@ -326,5 +326,222 @@ describe("rowToTicket", () => {
     expect(t.attachments).toEqual([]);
     expect(t.watchers).toEqual([]);
     expect(t.unreadBy).toEqual([]);
+  });
+});
+
+// ─── public-surfaces PHYS-2 (drafting-flow DF-P10): every file carries its OWN revision ───
+describe("PHYS-2 — per-file revision, stamped server-side", () => {
+  const drafter = { uid: "u-d", email: "d@x.com", role: "Drafter" };
+  const att = (over: Partial<TicketAttachment>): TicketAttachment =>
+    ({ id: "x", name: "x.pdf", url: "orgs/o/tickets/T/x.pdf", type: "Final", status: "submitted", ...over }) as TicketAttachment;
+  const files = (r: { updates: Record<string, unknown> }) => r.updates.attachments as TicketAttachment[];
+
+  it("submit_draft stamps the review label onto the Draft(s) it submits — not onto other staged files, not onto earlier drafts", () => {
+    const t = mk({
+      status: "DRAFTING", assignedDrafterId: "u-d", revisionCount: 1, draftIteration: 0,
+      attachments: [
+        att({ id: "old", type: "Draft", status: "submitted", rev: "1A" }),
+        att({ id: "d1", type: "Draft", status: "staged" }),
+        att({ id: "ref", type: "Reference", status: "staged", rev: null }),
+      ],
+    });
+    const r = computeTransition(t, { actionType: "submit_draft", actionLabel: "Submit Draft for Review", actor: drafter, now: NOW });
+    expect(r.updates.deliverable_rev).toBe("2A");
+    const byId = Object.fromEntries(files(r).map((a) => [a.id, a]));
+    expect(byId.d1).toMatchObject({ status: "submitted", rev: "2A" });
+    expect(byId.old.rev).toBe("1A");            // an earlier draft keeps its own label
+    expect(byId.ref).toMatchObject({ status: "submitted", rev: null }); // a reference file is no deliverable
+  });
+
+  it("submit_final stamps the issued label in force onto the package — whatever rev the client sent", () => {
+    const fin = att({ id: "f2", rev: "9" }); // a forged label from the browser
+    const r = computeTransition(mk({ status: "PENDING_IFC", assignedDrafterId: "u-d", deliverableRev: "2", revisionCount: 1 }), {
+      actionType: "submit_final", actionLabel: "Issue IFC", finalAttachment: fin, actor: drafter, now: NOW,
+    });
+    expect(files(r).find((a) => a.id === "f2")!.rev).toBe("2");
+    // a legacy row at PENDING_IFC without an issued label cannot name the file's revision
+    const legacy = computeTransition(mk({ status: "PENDING_IFC", assignedDrafterId: "u-d", deliverableRev: null }), {
+      actionType: "submit_final", actionLabel: "Issue IFC", finalAttachment: att({ id: "f3", rev: "1" }), actor: drafter, now: NOW,
+    });
+    expect(files(legacy).find((a) => a.id === "f3")!.rev).toBeNull();
+  });
+
+  it("attach_file: a Final added where the issued file is current takes that label; anywhere else it waits (null); never the client's", () => {
+    const at = (status: Ticket["status"], deliverableRev: string | null, a: TicketAttachment) =>
+      files(computeTransition(mk({ status, deliverableRev, assignedDrafterId: "u-d" }), { actionType: "attach_file", actionLabel: "Add File", attachment: a, actor: drafter, now: NOW }))
+        .find((x) => x.id === a.id)!;
+    expect(at("FINAL_DRAFT", "1", att({ id: "a1", status: "staged", rev: "7" })).rev).toBe("1");
+    expect(at("PENDING_IFC", "1", att({ id: "a2", status: "staged" })).rev).toBe("1");
+    expect(at("REVISION_REQ", "1", att({ id: "a3", status: "staged", rev: "1" })).rev).toBeNull(); // next cycle's work
+    expect(at("DRAFTING", null, att({ id: "a4", status: "staged" })).rev).toBeNull();
+    expect(at("FINAL_DRAFT", "1", att({ id: "a5", type: "Draft", status: "staged", rev: "1" })).rev).toBeNull(); // a draft is labelled at submit
+    expect(at("FINAL_DRAFT", "1", att({ id: "a6", type: "Source", status: "submitted", rev: "1" })).rev).toBeNull();
+    // the cycle a waiting Final joined in is recorded server-side; a client's revCycle is never kept
+    expect(at("DRAFTING", null, att({ id: "a7", status: "staged", revCycle: 9 })).revCycle).toBe(0);
+    expect(at("FINAL_DRAFT", "1", att({ id: "a8", status: "staged", revCycle: 9 })).revCycle).toBeUndefined();
+    expect(at("DRAFTING", null, att({ id: "a9", type: "Source", status: "staged", revCycle: 0 })).revCycle).toBeUndefined();
+  });
+
+  it("a redline is a reference file: its rev is null whatever the client sent", () => {
+    const r = computeTransition(mk({ status: "PENDING_REVIEW" }), {
+      actionType: "request_revision", actionLabel: "Request Revision", comment: "see redlines", variant: "destructive",
+      redlineAttachment: att({ id: "r1", type: "Reference", rev: "3" }), actor, now: NOW,
+    });
+    expect(files(r).find((a) => a.id === "r1")!.rev).toBeNull();
+  });
+
+  it("each issuing action stamps the new label onto the Finals waiting for it (rev null) — never onto a labelled Final or one recorded before per-file revisions", () => {
+    const eng = { uid: "e-1", email: "e@x.io", role: "Engineer-2" };
+    const cases: Array<[string, Ticket["status"], typeof actor]> = [
+      ["approve_draft_ifc", "PENDING_REVIEW", actor],
+      ["approve_minor_correction", "PENDING_REVIEW", actor],
+      ["engineer_approve_final", "PENDING_FINAL_APPROVAL", eng],
+    ];
+    for (const [actionType, status, who] of cases) {
+      const t = mk({
+        status, revisionCount: 1, draftIteration: 1, deliverableRev: "2A", assignedEngineerId: "e-1", assignedDrafterId: "u-d",
+        attachments: [
+          att({ id: "f1", rev: "1" }),                 // Rev 1's package
+          att({ id: "legacy" }),                       // recorded before per-file revisions (no key)
+          att({ id: "waiting", status: "staged", rev: null, revCycle: 1 }), // added in this cycle, awaiting this issue
+          att({ id: "dr", type: "Draft", rev: "2A" }),
+        ],
+      });
+      const r = computeTransition(t, { actionType, actionLabel: actionType, comment: "ok", actor: who, now: NOW });
+      expect(r.updates.deliverable_rev, actionType).toBe("2");
+      const byId = Object.fromEntries(files(r).map((a) => [a.id, a]));
+      expect(byId.waiting.rev, actionType).toBe("2");
+      expect(byId.f1.rev, actionType).toBe("1");
+      expect("rev" in byId.legacy, actionType).toBe(false);
+      expect(byId.dr.rev, actionType).toBe("2A"); // the draft stays a draft: it scans "review draft — Rev 2 issued from it"
+    }
+  });
+
+  it("helpers: joiningFileRev / stampIssuedFinals", () => {
+    expect(joiningFileRev({ status: "FINAL_DRAFT", deliverableRev: "3" }, { type: "Final" })).toBe("3");
+    expect(joiningFileRev({ status: "FINAL_DRAFT", deliverableRev: "3A" }, { type: "Final" })).toBeNull();
+    expect(joiningFileRev({ status: "CLOSED", deliverableRev: "3" }, { type: "Final" })).toBeNull();
+    const out = stampIssuedFinals([att({ id: "a", rev: null, revCycle: 3 }), att({ id: "b" }), att({ id: "c", type: "Reference", rev: null, revCycle: 3 }),
+      att({ id: "d", rev: null, revCycle: 2 }), att({ id: "e", rev: null })], "4", 3);
+    expect(out.map((a) => a.rev)).toEqual(["4", undefined, null, null, null]);
+    expect(joiningFileFields({ status: "DRAFTING", deliverableRev: null, revisionCount: 2 }, { type: "Final" })).toEqual({ rev: null, revCycle: 2 });
+    expect(joiningFileFields({ status: "PENDING_IFC", deliverableRev: "3", revisionCount: 2 }, { type: "Final" })).toEqual({ rev: "3", revCycle: undefined });
+  });
+
+  it("a Final from a REJECTED round is never stamped by a later issue: attached at DRAFTING, 1A sent back, 2A approved — it keeps rev null (cannot confirm), never Rev 2", () => {
+    const reviewer = { uid: "u-req", email: "r@x.com", role: "Requester" };
+    let t = mk({ status: "DRAFTING", assignedDrafterId: "u-d", revisionCount: 0, draftIteration: 0 });
+    const apply = (r: ReturnType<typeof computeTransition>) => {
+      t = { ...t, status: r.newStatus, attachments: r.updates.attachments as TicketAttachment[],
+        history: [...(t.history ?? []), r.historyEntry],
+        revisionCount: (r.updates.revision_count as number | undefined) ?? t.revisionCount,
+        deliverableRev: "deliverable_rev" in r.updates ? (r.updates.deliverable_rev as string | null) : t.deliverableRev,
+        draftIteration: (r.updates.draft_iteration as number | undefined) ?? t.draftIteration } as Ticket;
+    };
+    // a member attaches a Final at DRAFTING through the API (the UI offers only Source / Draft / Reference here)
+    apply(computeTransition(t, { actionType: "attach_file", actionLabel: "Add File", attachment: att({ id: "F1", status: "staged" }), actor: drafter, now: NOW }));
+    t = { ...t, attachments: [...t.attachments!, att({ id: "d1", type: "Draft", status: "staged" })] } as Ticket;
+    apply(computeTransition(t, { actionType: "submit_draft", actionLabel: "Submit Draft for Review", actor: drafter, now: NOW }));
+    expect(t.deliverableRev).toBe("1A");
+    apply(computeTransition(t, { actionType: "request_revision", actionLabel: "Request Revision", comment: "rework", variant: "destructive", actor: reviewer, now: NOW }));
+    expect(t.revisionCount).toBe(1);
+    // the next round: a new Final joins in cycle 1, 2A is submitted and approved
+    apply(computeTransition({ ...t, status: "DRAFTING" } as Ticket, { actionType: "attach_file", actionLabel: "Add File", attachment: att({ id: "F2", status: "staged" }), actor: drafter, now: NOW }));
+    t = { ...t, status: "DRAFTING", attachments: [...t.attachments!, att({ id: "d2", type: "Draft", status: "staged" })] } as Ticket;
+    apply(computeTransition(t, { actionType: "submit_draft", actionLabel: "Submit Draft for Review", actor: drafter, now: NOW }));
+    expect(t.deliverableRev).toBe("2A");
+    apply(computeTransition(t, { actionType: "approve_draft_ifc", actionLabel: "Approve (Issue for Construction)", actor: reviewer, now: NOW }));
+    expect(t.deliverableRev).toBe("2");
+    const byId = Object.fromEntries(t.attachments!.map((a) => [a.id, a]));
+    expect(byId.F1.rev).toBeNull();   // nobody approved it: no ?r= on its QR, "cannot confirm"
+    expect(byId.F1.revCycle).toBe(0);
+    expect(byId.F2.rev).toBe("2");    // the Final of the approved round takes the issue
+  });
+
+  it("the walk: Rev 1's package keeps Rev 1 after Rev 2 issues (the file the PM prints names its own revision)", () => {
+    const admin = actor;
+    let t = mk({ status: "PENDING_IFC", assignedDrafterId: "u-d", revisionCount: 0, deliverableRev: "1" });
+    const apply = (r: ReturnType<typeof computeTransition>) => {
+      t = { ...t, status: r.newStatus, attachments: r.updates.attachments as TicketAttachment[],
+        revisionCount: (r.updates.revision_count as number | undefined) ?? t.revisionCount,
+        deliverableRev: "deliverable_rev" in r.updates ? (r.updates.deliverable_rev as string | null) : t.deliverableRev,
+        draftIteration: (r.updates.draft_iteration as number | undefined) ?? t.draftIteration } as Ticket;
+    };
+    apply(computeTransition(t, { actionType: "submit_final", actionLabel: "Issue IFC", finalAttachment: att({ id: "rev1" }), actor: drafter, now: NOW }));
+    apply(computeTransition(t, { actionType: "close_ticket", actionLabel: "Acknowledge & Close", actor: admin, now: NOW }));
+    apply(computeTransition(t, { actionType: "reopen_ticket", actionLabel: "Reopen Ticket", comment: "missed a nozzle", actor: admin, now: NOW }));
+    t = { ...t, attachments: [...t.attachments!, att({ id: "d2", type: "Draft", status: "staged" })] } as Ticket;
+    apply(computeTransition({ ...t, status: "DRAFTING" } as Ticket, { actionType: "submit_draft", actionLabel: "Submit Draft for Review", actor: drafter, now: NOW }));
+    apply(computeTransition(t, { actionType: "approve_draft_ifc", actionLabel: "Approve", actor: admin, now: NOW }));
+    apply(computeTransition(t, { actionType: "submit_final", actionLabel: "Issue IFC", finalAttachment: att({ id: "rev2" }), actor: drafter, now: NOW }));
+    expect(t.deliverableRev).toBe("2");
+    const byId = Object.fromEntries(t.attachments!.map((a) => [a.id, a]));
+    expect(byId.rev1.rev).toBe("1");
+    expect(byId.rev2.rev).toBe("2");
+    expect(byId.d2.rev).toBe("2A");
+  });
+});
+
+// ─── drafting-flow SM-5 / LEAK-7 (DF-P10): an issuing action never re-issues a label ───
+describe("SM-5 — an issued label is never written twice: re-cycled from the history", () => {
+  const issuedLine = (n: number) => ({ action: `Approve (Issue for Construction) — issued Rev ${n}`, user: "r@x.com", role: "Requester", date: NOW });
+  const reviewer = { uid: "u-req", email: "r@x.com", role: "Requester" };
+  // A ticket reopened BEFORE Round E (LEAK-7 population (a)): the old reopen
+  // kept revision_count 0 and the issued label "1"; the history issued Rev 1.
+  const legacy = (over: Partial<Ticket> = {}) => mk({
+    status: "PENDING_REVIEW", revisionCount: 0, deliverableRev: "1", assignedDrafterId: "u-d",
+    history: [issuedLine(1) as TicketHistoryEntry, { action: "Reopen Ticket", user: "r@x.com", role: "Requester", date: NOW } as TicketHistoryEntry],
+    attachments: [{ id: "f-old", name: "v1.pdf", url: "orgs/o/tickets/T/v1.pdf", type: "Final", status: "submitted", rev: "1" } as TicketAttachment,
+      { id: "f-new", name: "v2.pdf", url: "orgs/o/tickets/T/v2.pdf", type: "Final", status: "submitted", rev: null, revCycle: 0 } as TicketAttachment],
+    ...over,
+  });
+
+  for (const [actionType, actionLabel, status] of [
+    ["approve_draft_ifc", "Approve (Issue for Construction)", "PENDING_REVIEW"],
+    ["approve_minor_correction", "Approve with Minor Correction", "PENDING_REVIEW"],
+    ["engineer_approve_final", "Engineer Approve", "PENDING_FINAL_APPROVAL"],
+  ] as const) {
+    it(`${actionType} on a legacy row whose history issued Rev 1 issues Rev 2 — never Rev 1 again`, () => {
+      const r = computeTransition(legacy({ status }), { actionType, actionLabel, actor: reviewer, now: NOW });
+      expect(r.updates.deliverable_rev).toBe("2");
+      expect(r.updates.revision_count).toBe(1); // the cycle moves with the label
+      expect(r.historyEntry.action).toMatch(/issued Rev 2$/);
+      expect(r.historyEntry.details).toMatch(/Rev 1 was already issued on this ticket — issued as Rev 2 instead/);
+      // the package waiting for this issue takes Rev 2; the old package keeps Rev 1
+      const files = Object.fromEntries((r.updates.attachments as TicketAttachment[]).map((a) => [a.id, a.rev]));
+      expect(files).toEqual({ "f-old": "1", "f-new": "2" });
+    });
+  }
+
+  it("a reviewer comment is kept, with the re-cycle note beside it", () => {
+    const r = computeTransition(legacy(), { actionType: "approve_draft_ifc", actionLabel: "Approve (Issue for Construction)", comment: "Looks good", actor: reviewer, now: NOW });
+    expect(r.historyEntry.details).toBe("Looks good [Rev 1 was already issued on this ticket — issued as Rev 2 instead, so no two packages share a label.]");
+  });
+
+  it("trust boundary: only an EXACT collision re-cycles; a history line above revision_count + 1 (a member's own append) is ignored", () => {
+    const forged = (n: number) => ({ action: `note — issued Rev ${n}`, user: "member@x.com", role: "Viewer", date: NOW }) as TicketHistoryEntry;
+    // a forged higher number never moves the label or revision_count
+    expect(issueLabelFor({ revisionCount: 1, history: [issuedLine(1), forged(3)] as TicketHistoryEntry[] })).toEqual({ label: "2", revisionCount: null, recycledFrom: null });
+    expect(issueLabelFor({ revisionCount: 0, history: [forged(9)] })).toEqual({ label: "1", revisionCount: null, recycledFrom: null });
+    // the legacy collision still re-cycles by exactly one
+    expect(issueLabelFor({ revisionCount: 0, history: [issuedLine(1), forged(9)] as TicketHistoryEntry[] })).toEqual({ label: "2", revisionCount: 1, recycledFrom: "1" });
+    // through the route's pure core: no revision_count 9, no Rev 10
+    const r = computeTransition(mk({ status: "PENDING_REVIEW", revisionCount: 0, deliverableRev: "1A", history: [forged(9)] }), {
+      actionType: "approve_draft_ifc", actionLabel: "Approve (Issue for Construction)", actor: reviewer, now: NOW,
+    });
+    expect(r.updates.deliverable_rev).toBe("1");
+    expect("revision_count" in r.updates).toBe(false);
+    expect(r.historyEntry.details).toBeUndefined();
+  });
+
+  it("the ordinary path is untouched: a label the history never issued is written as before, with no revision_count write and no note", () => {
+    expect(issueLabelFor({ revisionCount: 1, history: [issuedLine(1)] as TicketHistoryEntry[] })).toEqual({ label: "2", revisionCount: null, recycledFrom: null });
+    expect(issueLabelFor({ revisionCount: 0, history: [] })).toEqual({ label: "1", revisionCount: null, recycledFrom: null });
+    const r = computeTransition(mk({ status: "PENDING_REVIEW", revisionCount: 1, deliverableRev: "2A", history: [issuedLine(1) as TicketHistoryEntry] }), {
+      actionType: "approve_draft_ifc", actionLabel: "Approve (Issue for Construction)", actor: reviewer, now: NOW,
+    });
+    expect(r.updates.deliverable_rev).toBe("2");
+    expect("revision_count" in r.updates).toBe(false);
+    expect(r.historyEntry.details).toBeUndefined();
   });
 });

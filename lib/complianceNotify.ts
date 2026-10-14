@@ -25,8 +25,15 @@
 //     that read-back is authoritative: inside a cron scan (the service role
 //     the cron binds — lib/complianceNotifyScope.ts) or for the signed-in
 //     member's OWN row. A browser writing another member's row cannot read it
-//     (notifications_own_select, 20261161), so its failed notice is NOT
-//     retried: it is dead-lettered at once, its error saying why;
+//     (notifications_own_select, 20261161); since notifications N15 it asks
+//     notification_i_wrote (20261206, SECURITY DEFINER: did a row THIS member
+//     wrote, to that recipient, of that kind, title and resource, land since
+//     then?) and is retried on that answer. Before 20261206 is pasted (the
+//     function is missing — PGRST202 / 42883) or when that read fails, the
+//     notice is NOT retried: it is dead-lettered at once, its error saying
+//     why (today's path). A server writer with no scan scope and no session
+//     (a route on the service role — the intake door) reads the table back
+//     directly, as the cron does;
 //   · a notice notify() answers `false` for, where it may be retried, is
 //     tried again AT ONCE through notifyWithReason (the same insert,
 //     answering the refusal's text — what notify() does not say). A refusal
@@ -175,21 +182,38 @@ async function deadLetterWriter(input: NotificationInput): Promise<string> {
   }
 }
 
-/** Whose row a read-back may take for this notice — or undefined when no
- *  read-back is authoritative. Inside a cron scan (the service role, which
- *  sees every row) the row carries the actor the notice names, or none; in a
- *  browser only the signed-in member's OWN row can be read
- *  (notifications_own_select), and the insert rail (20261160) stamps the
- *  signed-in writer as its actor. A browser writing someone else's row, or a
- *  server context with no scan scope: undefined. Matching the actor means a
- *  row a member forged from a browser (always stamped with its writer) is
- *  never taken for a server notice (lib/__tests__/notificationWriteRails.test.ts). */
-async function readBackActor(input: NotificationInput, scope: ComplianceScope | undefined): Promise<string | null | undefined> {
-  if (scope) return input.actorUserId ?? null;
+/** How a read-back may settle this notice — or undefined when none is
+ *  authoritative. Inside a cron scan, or on a server route with no session
+ *  (the service role, which sees every row), the table is read for the actor
+ *  the notice names, or none; in a browser the signed-in member's OWN row is
+ *  read from the table (notifications_own_select), and the insert rail
+ *  (20261160) stamps the signed-in writer as its actor; a browser writing
+ *  SOMEONE ELSE's row asks notification_i_wrote (N15, 20261206), which
+ *  answers only for rows whose actor is the caller. A browser with no
+ *  session: undefined. Matching the actor means a row a member forged from a
+ *  browser (always stamped with its writer) is never taken for a server
+ *  notice (lib/__tests__/notificationWriteRails.test.ts). */
+type ReadBack =
+  /** read the table directly, matching this actor (null: no actor) */
+  | { via: "table"; actor: string | null }
+  /** a browser writing ANOTHER member's row: ask notification_i_wrote
+   *  (20261206, SECURITY DEFINER) whether a row THIS member wrote landed */
+  | { via: "rpc" };
+
+async function readBackActor(input: NotificationInput, scope: ComplianceScope | undefined): Promise<ReadBack | undefined> {
+  if (scope) return { via: "table", actor: input.actorUserId ?? null };
   try {
     const { data } = await supabase.auth.getSession();
     const uid = data?.session?.user?.id;
-    return uid && uid === input.userId ? uid : undefined;
+    if (uid) return uid === input.userId ? { via: "table", actor: uid } : { via: "rpc" };
+    // DELIV-16 (notifications N15): a SERVER writer with no session and no
+    // scan scope — a route that bound the shared client to the service role
+    // (the intake door's notices, through emit()). The service role reads
+    // every row, so its read-back is authoritative. (An unbound server
+    // client is the anon key: its insert is refused by RLS, nothing can have
+    // landed, and the refusal is deterministic — dead-lettered at once.)
+    if (typeof window === "undefined") return { via: "table", actor: input.actorUserId ?? null };
+    return undefined;
   } catch {
     return undefined;
   }
@@ -197,7 +221,22 @@ async function readBackActor(input: NotificationInput, scope: ComplianceScope | 
 
 /** Has this notice's row landed since `sinceIso`? true / false, or null when
  *  the read failed (a landed row cannot be ruled out). */
-async function landedSince(input: NotificationInput, sinceIso: string, actor: string | null): Promise<boolean | null> {
+async function landedSince(input: NotificationInput, sinceIso: string, rb: ReadBack): Promise<boolean | null> {
+  if (rb.via === "rpc") {
+    try {
+      const { data, error } = await (supabase as unknown as {
+        rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { code?: string | null; message?: string | null } | null }>;
+      }).rpc("notification_i_wrote", {
+        p_org: input.orgId, p_user: input.userId, p_kind: input.kind, p_title: input.title,
+        p_resource_id: input.resourceId ?? null, p_since: sinceIso,
+      });
+      if (error) return null;
+      return data === true;
+    } catch {
+      return null;
+    }
+  }
+  const actor = rb.actor;
   try {
     let q = db().from("notifications").select("id")
       .eq("org_id", input.orgId).eq("user_id", input.userId).eq("kind", input.kind).eq("title", input.title);
@@ -231,8 +270,8 @@ export async function notifyCompliance(input: NotificationInput, opts?: Complian
   const sinceIso = new Date(now() - READBACK_SKEW_MS).toISOString();
   // The first attempt IS notify(): an answer other than `false` is a write.
   if ((await notify(input)) !== false) return landed(input, scope);
-  const actor = await readBackActor(input, scope);
-  let readable = actor !== undefined;
+  const rb = await readBackActor(input, scope);
+  let readable = rb !== undefined;
   let error = "the insert was refused or failed";
   let attempts = 1;
   // the last failure may have committed (its answer lost): a read-back settles it
@@ -240,7 +279,7 @@ export async function notifyCompliance(input: NotificationInput, opts?: Complian
   const t0 = now();
   const breaker = breakerOpen(input.orgId, t0);
   if (!readable) {
-    error += " (not retried: this writer cannot read the recipient's bell rows back — a browser reads only its own — so a retry after a lost answer could write a second copy)";
+    error += " (not retried: this writer cannot read its rows back — a browser with no session — so a retry after a lost answer could write a second copy)";
   } else if (breaker.open) {
     error += ` (not retried: the last ${breaker.streak} compliance notices in this workspace were dead-lettered within ${BREAKER_WINDOW_MS / 1000} s of each other — retries resume when a write lands)`;
   } else if (scope?.deadlineMs != null && t0 >= scope.deadlineMs) {
@@ -252,10 +291,12 @@ export async function notifyCompliance(input: NotificationInput, opts?: Complian
         error += " (not retried further: the run's retry deadline — the steps after the compliance scans keep their time)";
         break;
       }
-      const seen = await landedSince(input, sinceIso, actor ?? null);
+      const seen = await landedSince(input, sinceIso, rb!);
       if (seen === true) return landed(input, scope);
       if (seen === null) {
-        error += " (not retried: the read-back that would rule out a landed row failed — a retry could write a second copy)";
+        error += rb!.via === "rpc"
+          ? " (not retried: this writer's read-back of its own rows (notification_i_wrote, 20261206) failed or is not deployed — a retry could write a second copy)"
+          : " (not retried: the read-back that would rule out a landed row failed — a retry could write a second copy)";
         readable = false;
         break;
       }
@@ -268,7 +309,7 @@ export async function notifyCompliance(input: NotificationInput, opts?: Complian
     }
   }
   // Before the dead letter: did the last attempt land after all?
-  if (readable && unsettled && (await landedSince(input, sinceIso, actor ?? null)) === true) return landed(input, scope);
+  if (readable && unsettled && (await landedSince(input, sinceIso, rb!)) === true) return landed(input, scope);
 
   const t1 = now();
   const prev = breakers.get(input.orgId);
@@ -322,6 +363,11 @@ export type ScanRetryPlan = {
    *  letter since its stamp sends every notice (the scan as it always was);
    *  a row whose last run dead-lettered sends only the notices that run lost. */
   only(key: string, stampedAt: string | null | undefined): (kind: string, uid: string) => boolean;
+  /** Did the row's latest run lose any notice (a dead letter carrying its
+   *  key, after `stampedAt`)? For a scan whose watermark is the bell rows
+   *  themselves (scanStaleHolds — N15): it re-sends only when this is true,
+   *  and only to the lost recipients that still have no row. */
+  has(key: string, stampedAt: string | null | undefined): boolean;
   /** the dead letters could not be read: every row sends every notice */
   unreadable: boolean;
 };
@@ -363,11 +409,17 @@ export async function loadScanRetryPlan(orgId: string, scan: string, lookbackMs:
     console.warn(`[compliance-notify] ${scan}@${orgId}: ${note}`);
     if (readScope?.()) noteComplianceScan(note);
   }
+  const after = (key: string, stampedAt: string | null | undefined) => {
+    const stamp = stampedAt ? Date.parse(stampedAt) : NaN;
+    return (byKey.get(key) ?? []).filter((x) => !Number.isFinite(stamp) || x.at > stamp);
+  };
   return {
     unreadable,
+    has(key, stampedAt) {
+      return after(key, stampedAt).length > 0;
+    },
     only(key, stampedAt) {
-      const stamp = stampedAt ? Date.parse(stampedAt) : NaN;
-      const list = (byKey.get(key) ?? []).filter((x) => !Number.isFinite(stamp) || x.at > stamp);
+      const list = after(key, stampedAt);
       if (list.length === 0) return () => true;
       const latest = Math.max(...list.map((x) => x.at));
       const lost = new Set(list.filter((x) => x.at >= latest - RETRY_RUN_SPAN_MS).map((x) => `${x.kind}|${x.recipient}`));

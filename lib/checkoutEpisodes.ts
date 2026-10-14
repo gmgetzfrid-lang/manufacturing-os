@@ -728,7 +728,8 @@ export async function forceReleaseDocument(input: {
     fileId: input.documentId,
     userId: input.actorUserId,
     userEmail: input.actorEmail || "unknown",
-    userRole: input.actorRole || "unknown",
+    // SESS-6 residual (document-control P23, DEC-91 §1): no role known is omitted, never "unknown" (an empty role is written NULL — lib/audit.ts logAuditAction).
+    userRole: input.actorRole ?? "",
     type: "FORCE_RELEASE",
     details: {
       reason: input.reason ?? null,
@@ -788,6 +789,44 @@ export async function forceReleaseDocument(input: {
       console.warn("[forceRelease] victim notify failed (non-blocking)", e);
     }
   }
+
+  // PROD-17 (notifications N15): the document's WATCHERS hear it too — in
+  // their own words (the holder's "your session has ended" is false for
+  // them), minus the holders the notice above already told. Its own kind,
+  // checkout_force_released_fyi (fix pass: not checkout_message, the
+  // thread's bell-only chat kind); the dispatcher drops a watcher who may
+  // not discover the document (NEDGE-6). The reason stays in the body. The
+  // kind is declared by 20261206 (pasted before the deploy; if it is late
+  // the rail refuses the row, and emailOnlyWithBell keeps the email from
+  // going without it).
+  // NOT awaited (review fix): the release returns to the UI without
+  // waiting on the discover check, the follower reads or the inserts —
+  // a stalled route must not leave the release button spinning.
+  void (async () => {
+    try {
+      const { emit } = await import("@/lib/notify/dispatch");
+      const { data: doc } = await supabase.from("documents").select("document_number, title, name, library_id")
+        .eq("id", input.documentId).maybeSingle();
+      const d = (doc ?? null) as { document_number?: string | null; title?: string | null; name?: string | null; library_id?: string | null } | null;
+      const label = d?.document_number || d?.title || d?.name || "a document you follow";
+      await emit({
+        orgId: input.orgId,
+        category: "watched",
+        kind: "checkout_force_released_fyi",
+        title: `${label} was force-released by ${input.actorName}`,
+        body: `${input.actorName} force-released the checkout on ${label}${input.reason ? `: "${input.reason}"` : ""}. Every session on it has ended; the document can be checked out again.`,
+        link: d?.library_id ? `/documents/${d.library_id}?doc=${input.documentId}` : undefined,
+        resource: { type: "document", id: input.documentId },
+        actorUserId: input.actorUserId,
+        actorName: input.actorName,
+        audience: { followers: true, exclude: victims },
+        metadata: { forceRelease: true, followerNotice: true },
+        emailOnlyWithBell: true,
+      });
+    } catch (e) {
+      console.warn("[forceRelease] follower notify failed (non-blocking)", e);
+    }
+  })();
   return { auditRecorded: !auditError, auditError };
 }
 

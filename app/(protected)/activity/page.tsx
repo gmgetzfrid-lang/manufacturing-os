@@ -10,6 +10,28 @@
 //
 // Reads the same audit_logs table — the back-end is shared — but
 // renders for humans, not auditors.
+//
+// admin-and-org ALOG-5 (P7): the page states its authority rule — only what
+// the database enforces today. The org-level authority trail is readable
+// only by holders of the admin.audit_view capability (the Audit log
+// permission): rows typed org / member / team / capability_policy /
+// org_configuration / export_destination, and CAPABILITY_ / MEMBER_ / ROLE_ /
+// EXPORT_ / SECURITY_ / TEAM_ / DATA_EXPORT / RESTORE_ / PURGE_ actions
+// (audit_logs_admin_trail, 20261063 — DEC-17, SURF-9, ROLE-5). The
+// document-level history every active member reads INCLUDES permission
+// (NODE_ACL_CHANGED), ownership (OWNER_*) and recertification
+// (ACCESS_RECERTIFIED) changes made on a library, folder or document: they
+// are typed library / collection / document, so the overlay does not cover
+// them. Project scoping (SEC-20 / SEC-21: a project's rows only to those who
+// can see it) lives in 20261142 and 20261157, neither confirmed pasted when
+// P7 landed, so the page neither claims nor denies it; add it to the stated
+// rule once MIGRATION-PASTE-ORDER.md marks both live. The DATABASE applies the rule
+// (audit_logs_org_access plus the RESTRICTIVE overlay), so this page shows
+// each reader only the rows they may read; it adds no gate of its own.
+// drafting-flow EVID-12: a TICKET_<ACTION> attempt row is read together with
+// the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it (lib/auditActions.ts
+// foldTicketFeed over pairTicketAttempts): the attempt line says the outcome
+// and the follow-up line folds into it.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -23,6 +45,7 @@ import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
+import { foldTicketFeed } from "@/lib/auditActions";
 
 interface ActivityRow {
   id: string;
@@ -187,6 +210,8 @@ export default function ActivityFeedPage() {
     return out;
   }, [rows]);
 
+  const feed = useMemo(() => foldTicketFeed(rows, grouped), [rows, grouped]); // EVID-12
+
   // Top-of-feed "pulse" widget: at-a-glance counts so Activity reads like a
   // dashboard, not a raw log. Buckets the loaded window by category + today.
   const pulse = useMemo(() => {
@@ -213,7 +238,10 @@ export default function ActivityFeedPage() {
         <PageHeaderBar
           icon={Activity}
           title="Activity Feed"
-          subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.</>}
+          subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.{" "}
+            <span className="block mt-1 text-[11px] text-[var(--color-text-faint)]">
+              Who can read this feed: workspace-level authority events (capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges) are shown only to people with the Audit log permission. Every member reads the workspace&apos;s document-level history, and that includes permission (access list), ownership and recertification changes made on a library, folder or document. The database applies this rule, not this page.
+            </span></>}
           actions={
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
@@ -258,7 +286,7 @@ export default function ActivityFeedPage() {
           <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center text-sm italic text-[var(--color-text-faint)]">No activity recorded yet.</div>
         ) : (
           <div className="space-y-6">
-            {grouped.map((group) => (
+            {feed.groups.map((group) => (
               <div key={group.day}>
                 <div className="sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest border-b border-[var(--color-border)]">
                   {group.day}
@@ -268,7 +296,7 @@ export default function ActivityFeedPage() {
                     const meta = ACTION_VERBS[r.action];
                     const Icon = meta?.icon ?? Activity;
                     const tone = TONE_BG[meta?.tone ?? "slate"];
-                    const verb = meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ");
+                    const verb = (meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ")) + feed.verbSuffix(r.id);
                     const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
                     const xm = !dm ? extraMeta.get(`${r.resourceType}:${r.resourceId}`) : undefined;
                     const resourceLabel = dm

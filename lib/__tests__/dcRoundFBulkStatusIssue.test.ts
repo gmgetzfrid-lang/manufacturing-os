@@ -35,6 +35,10 @@ const state = vi.hoisted(() => ({
   updatePayloads: [] as Array<{ id: unknown; payload: Record<string, unknown> }>,
   /** documents whose pre-write read (changeDocumentStatus's select("*")) fails */
   failRead: new Set<string>(),
+  /** P23 fix pass: document_status_issue_recorded_by_database() answers true (20261205 pasted) */
+  probeTrue: false,
+  /** audit actions whose insert the database refuses */
+  refuseActions: [] as string[],
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -42,6 +46,11 @@ vi.mock("@/lib/supabase", () => ({
     const real = makeFakeSupabase(state.db);
     return {
       ...real,
+      // the fake has no rpc: the probe answers true only when a test says so, else as a database before 20261205
+      rpc: (fn: string) => {
+        if (fn !== "document_status_issue_recorded_by_database") throw new Error(`rpc ${fn} is not mocked in this test`);
+        return Promise.resolve(state.probeTrue ? { data: true, error: null } : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } });
+      },
       from: (t: string) => {
         const b = real.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>;
         if (t !== "documents") return b;
@@ -144,6 +153,12 @@ beforeEach(() => {
   state.refuse = {};
   state.updatePayloads = [];
   state.failRead = new Set();
+  state.probeTrue = false;
+  state.refuseActions = [];
+  state.db.beforeInsert!.audit_logs = (row) => {
+    if (state.refuseActions.includes(String(row.action))) throw { code: "42501", message: "new row violates row-level security policy" };
+    return row;
+  };
   // the guard's part these tests need: its refusal, and the retirement stamp cleared on an exit (20261144)
   state.db.beforeUpdate!.documents = (next) => {
     const r = state.refuse[String(next.id)];
@@ -227,12 +242,28 @@ describe("REV-19 (P17) — the bulk editor's issuing rows start the clocks and a
     const items = Array.from(box.querySelectorAll("li")).map((li) => li.textContent ?? "");
     expect(items).toHaveLength(1);
     expect(items[0]).toMatch(/^E1 — The status was changed, but it was not recorded as an issue/);
-    expect(items[0]).toContain("no review clock or acknowledgment roster was started and no issue record was written");
+    // P23 (REV-19 (a)): "no issue record" is said of this editor — since 20261205 the database records the issue itself.
+    expect(items[0]).toContain("no review clock or acknowledgment roster was started and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one)");
     // P17 integrator fix: a failed read keeps the "start its clocks" advice — nothing was recorded
     expect(items[0]).toContain("its status before the change could not be read");
     expect(items[0]).toContain("start its clocks from the document");
     expect(items[0]).not.toMatch(/already issued/);
     expect(host.querySelector('[data-testid="bulk-not-issued-rows"]')).toBeNull();
+  });
+
+  it("P23 fix pass: after 20261205, a read-failed row whose follow-up row (no clock started) the database refuses is named with that too — never a silent success", async () => {
+    state.probeTrue = true;
+    state.refuseActions = ["COMPLIANCE_CLOCKS_NOT_STARTED"];
+    const a = seedDoc("e5");
+    state.failRead.add("e5");
+    await applyStatus([asRecord(a)], "Issued");
+    expect(docRow("e5").status).toBe("Issued");
+    const box = host.querySelector('[data-testid="bulk-issue-follow-ups"]')!;
+    expect(box).not.toBeNull();
+    const text = box.textContent ?? "";
+    expect(text).toContain("The status was changed, but it was not recorded as an issue");
+    expect(text).toMatch(/The record that no clock was started could not be written \([^)]*row-level security[^)]*\), so the document's history does not say so\./);
+    expect(T("audit_logs").filter((r) => r.action === "COMPLIANCE_CLOCKS_NOT_STARTED")).toHaveLength(0);
   });
 
   it("P17 integrator fix: a row someone else ISSUED between page load and apply is named as already issued — nothing owed, never the 'start its clocks' advice (which would restart a review clock)", async () => {
@@ -377,5 +408,77 @@ describe("REV-19 (P17) — REGRESSION: every bulk edit that issues nothing is wr
       door: "bulk", fromStatus: "IFC", toStatus: "Issued", putBack: false, entryIntoForce: true,
       complianceClocksStarted: false, reviewClockReset: false, acknowledgmentRosterOpened: true,
     });
+  });
+});
+
+// ── document-control P23 DIRECT-WRITE ISSUE RECORD: REV-19 (b) ─────────────
+// The rows routed through changeDocumentStatus are no longer picked from the
+// page's copy: every row written TO an issue status takes it, and the row it
+// reads first decides — as the metadata editor's save does (identity IS-P1).
+describe("REV-19 (b) (P23) — the bulk editor routes each issue-status write from the database row, not the page's copy", () => {
+  const unseenBox = () => host.querySelector('[data-testid="bulk-unseen-issue-rows"]');
+  const uncheckedBox = () => host.querySelector('[data-testid="bulk-unchecked-issue-rows"]');
+
+  it("the stale copy: a row the page shows Issued, which another change moved back to Draft, is issued by this change WITH its clocks and record, and named", async () => {
+    const d = seedDoc("s1", { status: "Draft" });
+    await applyStatus([asRecord({ ...d, status: "Issued" })], "Issued");
+    expect(docRow("s1").status).toBe("Issued");
+    expect(state.updatePayloads).toHaveLength(1);
+    expect(issuedRecords()).toHaveLength(1);
+    expect(issuedRecords()[0].details).toMatchObject({ door: "bulk", fromStatus: "Draft", toStatus: "Issued", putBack: false });
+    expect(onDocumentIssued).toHaveBeenCalledTimes(1);
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(unseenBox()?.textContent).toContain("S1 — it was issued by this change: another change after this page loaded had moved it out of issue (or given it its first revision), and this change sets Issued — the issue is recorded on its history like any other.");
+    expect(host.querySelector('[data-testid="bulk-issue-follow-ups"]')).toBeNull();
+    expect(host.querySelector('[data-testid="bulk-not-issued-rows"]')).toBeNull();
+  });
+
+  it("the stale copy into force: a row the page shows Issued, which another change moved to IFC, is put in force by this change — recorded as an entry into force, the review clock left as it was", async () => {
+    const d = seedDoc("s2", { status: "IFC" });
+    await applyStatus([asRecord({ ...d, status: "Issued" })], "Issued");
+    expect(docRow("s2").status).toBe("Issued");
+    expect(issuedRecords()).toHaveLength(1);
+    expect(issuedRecords()[0].details).toMatchObject({ door: "bulk", fromStatus: "IFC", toStatus: "Issued", putBack: false, entryIntoForce: true, reviewClockReset: false });
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(unseenBox()?.textContent).toContain("S2 — it was put in force by this change");
+  });
+
+  it("regression — a row the page shows Issued that is still Issued: a plain success, one UPDATE with the same payload, no record, no box", async () => {
+    const d = seedDoc("s3", { status: "Issued" });
+    await applyStatus([asRecord(d)], "Issued");
+    expect(host.textContent).toMatch(/Applied to 1 document\./);
+    expect(state.updatePayloads).toHaveLength(1);
+    expect(Object.keys(state.updatePayloads[0].payload).sort()).toEqual(["status", "updated_at", "updated_by"]);
+    expect(issuedRecords()).toEqual([]);
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(unseenBox()).toBeNull();
+    expect(host.querySelector('[data-testid="bulk-not-issued-rows"]')).toBeNull();
+  });
+
+  it("a row the page shows Issued whose state before the write cannot be read: said as unknown ('check its history'), never the 'start its clocks' advice", async () => {
+    const d = seedDoc("s4", { status: "Issued" });
+    state.failRead.add("s4");
+    await applyStatus([asRecord(d)], "Issued");
+    expect(docRow("s4").status).toBe("Issued");
+    expect(issuedRecords()).toEqual([]);
+    expect(uncheckedBox()?.textContent).toContain("S4 — it was changed, but its state just before the change could not be read, so whether this change issued it is unknown");
+    // P23 review 3: the read failed, so nobody is known to have changed it —
+    // its own heading says only what is known, and the "changed by someone
+    // else" box is not shown for it.
+    expect(uncheckedBox()?.textContent).toContain("1 row: whether this change issued it could not be told");
+    expect(unseenBox()).toBeNull();
+    expect(host.textContent).not.toMatch(/start its clocks from the document/);
+  });
+
+  it("a stale row the issue rule refuses is named \"not issued:\" in the database's words, the others applied", async () => {
+    const d = seedDoc("s5", { status: "Draft" });
+    const ok = seedDoc("s6", { status: "Issued" });
+    state.refuse.s5 = HOLD;
+    await applyStatus([asRecord({ ...d, status: "Issued" }), asRecord(ok)], "Issued");
+    const items = Array.from(host.querySelectorAll('[data-testid="bulk-refused-rows"] li')).map((li) => li.textContent);
+    expect(items).toEqual([`S5 — not issued: ${HOLD}`]);
+    expect(docRow("s5").status).toBe("Draft");
+    expect(issuedRecords()).toEqual([]);
   });
 });

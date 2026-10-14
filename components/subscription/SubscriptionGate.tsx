@@ -25,7 +25,7 @@ import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { clearServiceWorkerSession } from "@/lib/swSession";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
 import { useRole } from "@/components/providers/RoleContext";
-import { hasAccess, type SubscriptionInfo } from "@/lib/subscription";
+import { hasAccess, type SubscriptionInfo } from "@/lib/billing";
 
 const ALLOWED_WHEN_LAPSED = ["/admin/billing", "/admin/data-export", "/profile"];
 

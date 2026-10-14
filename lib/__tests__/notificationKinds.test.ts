@@ -199,6 +199,23 @@ const N9_ADDED: Record<string, "documents" | "projects"> = {
   intake_quote: "projects",           // app/api/intake/upload/route.ts (was review_requested — DEC-90 A13)
   intake_submission: "projects",      // the same route + lib/intakeRateLimit.ts (was review_requested)
 };
+// Kinds declared by notifications N15 (TAX-17): the stale-checkout
+// escalation's own name — checkout_released's last meaning, with its flags
+// (an action, documents, not compliance). checkout_released stays declared
+// for the rows written before (legacy only — nothing writes it now).
+// PROD-17: doc_retired, the watchers' retirement FYI — new vocabulary, not a
+// split: doc_recalled's badge, icon and group, but FYI and NOT compliance
+// (a watcher holds nothing to destroy; out of the digest, deletable).
+// checkout_force_released_fyi (fix pass): the watchers' force-release FYI,
+// off checkout_message (the thread's chat kind) — a lock notice, not an
+// action: the feed's predicates on the name give Lock / indigo / locks.
+const N15_ADDED: Record<string, "documents"> = {
+  checkout_stale_escalation: "documents", // app/api/cron/maintenance/route.ts escalateStaleCheckouts (was checkout_released)
+  doc_retired: "documents",               // lib/staleCopies.ts recallRetiredDocument's follower notice (PROD-17 — new)
+  checkout_force_released_fyi: "documents", // lib/checkoutEpisodes.ts forceReleaseDocument's follower notice (PROD-17 fix pass — new; was checkout_message)
+};
+/** Declared for legacy rows only: no producer writes it (TAX-17 dw2, PROD-8's rule). */
+const LEGACY_DECLARED = ["checkout_released"];
 /** The N9 kinds that inherit their parent's compliance flag (doc_superseded's
  *  four, review_requested's two) — dismiss-only and in the digest as before. */
 const N9_COMPLIANCE_ADDED = [
@@ -237,10 +254,18 @@ const BELL_ONLY = [
 // N9: the two kinds split off checkout_released keep its action flag — the
 // holder's own checkout was released under them (force-release, ad-hoc
 // expiry), exactly the notices checkout_released carried until N9.
-const ACTION_ADDED: string[] = ["checkout_force_released", "checkout_auto_released"];
-const PSM_OBLIGATIONS_FYI_UNTIL_CLEARED = [
-  "ack_requested", "review_requested", "review_invalidated", "ack_overdue", "review_overdue", "access_recert_due", "effective_now",
-];
+// N4 (DEC-81 §2 as DEC-90 A11 ratified it — "each PSM kind flips to
+// action-required in the same change that clears its row on discharge"): the
+// four PSM obligations whose rows the reconcile pass now clears once
+// discharged (lib/notificationReconcile.ts reconcileClassOf; the server
+// re-check in lib/notificationReconcileServer.ts — PROD-13 done-when 3).
+const PSM_FLIPPED_BY_N4: string[] = ["ack_requested", "review_requested", "review_invalidated", "access_recert_due", "ack_overdue", "review_overdue"];
+// N15 (TAX-17): checkout_stale_escalation is the stale-checkout escalation
+// checkout_released carried — same action flag, and the same discharge
+// check retires it (reconcile class 'stale_checkout': its session ended).
+const ACTION_ADDED: string[] = ["checkout_force_released", "checkout_auto_released", "checkout_stale_escalation", ...PSM_FLIPPED_BY_N4];
+// Still FYI: effective_now ("now in effect" — nothing to do).
+const PSM_OBLIGATIONS_FYI_UNTIL_CLEARED = ["effective_now"];
 // icon / tone / group departures from the predecessors.
 const ICON_DEPARTURES: Record<string, { icon: string; why: string }> = {
   storage_alert: { icon: "HardDrive", why: "the bell's new entry for the storage kinds (the plan names it)" },
@@ -256,6 +281,7 @@ const expectedSection = (k: string): string | null => {
   if (RETIRED.includes(k)) return null; // a legacy row: bell-only, as its unrendered bucket was
   if (k in N8_ADDED) return N8_ADDED[k];
   if (k in N9_ADDED) return N9_ADDED[k];
+  if (k in N15_ADDED) return N15_ADDED[k];
   if (SECTION_DEPARTURES[k]) return SECTION_DEPARTURES[k].to;
   const today = TODAY_SECTION[k] ?? "other";
   return today === "other" ? null : today;
@@ -522,7 +548,7 @@ afterEach(() => {
 describe("the union (PROD-8 / OS-7 / NEDGE-13 retired; PROD-10 / TAX-11 added)", () => {
   it("is TODAY's union, minus the four retired kinds, plus the five that were written outside it (and N8's four and N9's nine, with their producers)", () => {
     const today = Object.keys(TODAY_SECTION);
-    expect(unionKinds().sort()).toEqual([...today.filter((k) => !RETIRED.includes(k)), ...ADDED, ...Object.keys(N8_ADDED), ...Object.keys(N9_ADDED)].sort());
+    expect(unionKinds().sort()).toEqual([...today.filter((k) => !RETIRED.includes(k)), ...ADDED, ...Object.keys(N8_ADDED), ...Object.keys(N9_ADDED), ...Object.keys(N15_ADDED)].sort());
   });
 
   it("KIND_META classifies exactly the union — no kind missing, none extra", () => {
@@ -602,18 +628,25 @@ describe("sections — every kind where it was, except the kinds the records nam
 });
 
 describe("action, compliance, icon, tone, group — the other classifiers, in one table", () => {
-  it("actionRequired: exactly the conflict class, as before (DEC-81 §2)", () => {
+  it("actionRequired: the conflict class, plus the PSM obligations N4 clears on discharge (DEC-81 §2)", () => {
     for (const k of unionKinds()) expect(KIND_META[k as keyof typeof KIND_META].actionRequired, k).toBe(expectedAction(k));
     expect(unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].actionRequired).sort()).toEqual([...TODAY_ACTION, ...ACTION_ADDED].sort());
   });
 
-  it("the PSM obligations stay FYI until their rows clear on discharge — a met obligation must not keep the rail red", () => {
-    // ack_overdue / review_overdue are escalation copies to the owner and
-    // controllers, pinned FYI here with the obligations. No registry rule
-    // makes an escalation copy FYI: the conflict class's controller copies
-    // (escalateStaleCheckouts' checkout_released, announceBranchOpened's
-    // branch_open) are actions, and nothing clears them either — the TRAIL-9
-    // class (N4), DEC-81 §2.
+  it("N4: each PSM obligation flipped to action-required has a discharge check that clears its row (DEC-81 §2, PROD-13 dw3)", async () => {
+    const { reconcileClassOf } = await import("@/lib/notificationReconcile");
+    for (const k of PSM_FLIPPED_BY_N4) {
+      expect(KIND_META[k as keyof typeof KIND_META].actionRequired, k).toBe(true);
+      const resourceType = k === "access_recert_due" ? "library" : "document";
+      expect(reconcileClassOf({ kind: k, resourceType, resourceId: "x", metadata: null }), k).not.toBe(null);
+    }
+    // and no PSM kind left FYI is retired by the pass
+    for (const k of PSM_OBLIGATIONS_FYI_UNTIL_CLEARED) {
+      expect(reconcileClassOf({ kind: k, resourceType: "document", resourceId: "x", metadata: null }), k).toBe(null);
+    }
+  });
+
+  it("effective_now stays FYI — it asks nothing of anyone", () => {
     for (const k of PSM_OBLIGATIONS_FYI_UNTIL_CLEARED) {
       expect(isNotificationKind(k), k).toBe(true);
       expect(KIND_META[k as keyof typeof KIND_META].actionRequired, k).toBe(false);
@@ -726,10 +759,14 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
       // N9 (DEC-100): the checkout_released split inherits its action flag, so
       // its two kinds drew Zap in the feed too and now draw their kind's icon
       checkout_force_released: "Zap", checkout_auto_released: "Zap",
+      // N15 (TAX-17): the escalation's own kind inherits checkout_released's action flag too
+      checkout_stale_escalation: "Zap",
     };
     const moved: Record<string, string> = {};
     for (const k of NOTIFICATION_KINDS) {
-      const before = KIND_META[k].actionRequired ? "Zap" : TODAY_FEED(k).icon;
+      // the feed drew Zap for the action kinds of its day (N4's PSM flips came
+      // after N3 derived the icon, so they never drew Zap)
+      const before = KIND_META[k].actionRequired && !PSM_FLIPPED_BY_N4.includes(k) ? "Zap" : TODAY_FEED(k).icon;
       if (before !== KIND_META[k].icon) moved[k] = before;
     }
     expect(moved).toEqual(FEED_ICON_DEPARTURES);
@@ -743,7 +780,9 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
     // b9cdfdc warned for checkout_conflict and hold_opened; the other three
     // action kinds were blue info toasts (TAX-3) and now warn too.
     // N9 (DEC-100): checkout_released's two split kinds inherit its action flag, and so its amber, persistent toast
-    expect(warns.sort()).toEqual([...TODAY_ACTION, "hold_opened", "checkout_force_released", "checkout_auto_released"].sort());
+    // N4 (DEC-81 §2): the PSM obligations it flips to action-required warn
+    // and stay until dismissed, as every action kind's toast does (DEC-94)
+    expect(warns.sort()).toEqual([...TODAY_ACTION, "hold_opened", "checkout_force_released", "checkout_auto_released", "checkout_stale_escalation", ...PSM_FLIPPED_BY_N4].sort());
     for (const k of NOTIFICATION_KINDS) {
       const t = toastForRow({ id: k, kind: k, title: "t", body: null });
       expect(t.duration === 0, k).toBe(KIND_META[k].actionRequired);
@@ -778,13 +817,14 @@ describe("the hook — one row of every kind written on b9cdfdc", () => {
     // moves; the four conflict rows are now red on Documents (TRAIL-5);
     // transmittal_unstampable badges Documents since N9 (DEC-90 A12)
     expect(r.sectionCounts.requests).toEqual({ total: 5, actionRequired: 0 });
-    expect(r.sectionCounts.documents).toEqual({ total: 12 + 22 + 1, actionRequired: 4 });
+    expect(r.sectionCounts.documents).toEqual({ total: 12 + 22 + 1, actionRequired: 4 + PSM_FLIPPED_BY_N4.length });
     expect(r.sectionCounts.projects).toEqual({ total: 2 + 1, actionRequired: 0 });
   });
 
   it("TAX-7 / TRAIL-13: counts are computed once — action + activity = all — and actionRequiredCount is counts.action", async () => {
     const r = await mount(kinds.map((k, i) => row(k, i)));
-    expect(r.counts).toEqual({ all: kinds.length, action: 4, activity: kinds.length - 4, notifications: kinds.length });
+    const action = 4 + PSM_FLIPPED_BY_N4.length;
+    expect(r.counts).toEqual({ all: kinds.length, action, activity: kinds.length - action, notifications: kinds.length });
     expect(r.actionRequiredCount).toBe(r.counts.action);
     expect(r.unreadCount).toBe(r.counts.activity);
     expect("totalNotifications" in r).toBe(false);
@@ -915,7 +955,7 @@ describe("the producer census — every written kind is declared and classified"
     // each moved call: ONE typed statement (or one row) on the client it held
     expect(src("app/api/ai/usage/route.ts")).toMatch(/notifyBatchWithReason\(\[\.\.\.recipients\]\.map\(\(uid\) => \(\{[\s\S]*?kind: "ai_cap_changed" as const,[\s\S]*?\}\)\), supabaseAdmin\);\n\s+if \(error\) console\.warn\(/);
     expect(src("lib/orchestrator/tools.ts")).toMatch(/notifyWithReason\(\{[\s\S]*?kind: "orchestrator_message",[\s\S]*?\}, supabaseAdmin\);\n\s+if \(!bell\.ok\) \{\n\s+return \{ data: \{ error: "The notification could not be sent/);
-    expect(src("app/api/cron/maintenance/route.ts")).toMatch(/notifyBatchWithReason\(recipients\.map\(\(uid\) => \(\{[\s\S]*?kind: "checkout_released" as const,[\s\S]*?metadata: \{ staleSessionId: row\.id, escalation: true \},\n\s+\}\)\), sb\);\n\s+if \(insErr\) \{[\s\S]*?errors\.push\(/);
+    expect(src("app/api/cron/maintenance/route.ts")).toMatch(/notifyBatchWithReason\(recipients\.map\(\(uid\) => \(\{[\s\S]*?kind: "checkout_stale_escalation" as const,[\s\S]*?metadata: \{ staleSessionId: row\.id, escalation: true \},\n\s+\}\)\), sb\);\n\s+if \(insErr\) \{[\s\S]*?errors\.push\(/);
     expect(src("app/api/tickets/comment/route.ts")).toMatch(/notifyBatchWithReason\(\n\s+audience\.map\(\(uid\) => \(\{[\s\S]*?kind: mentionSet\.has\(uid\) \? "ticket_mention" as const : "ticket_comment" as const,[\s\S]*?\}\)\),\n\s+supabaseAdmin,\n\s+\);\n\s+if \(bellErr\) console\.error\(/);
     const wf = src("app/api/tickets/workflow-action/route.ts");
     expect(wf).toMatch(/notifyBatchWithReason\(\n\s+audience\.map\(\(uid\) => \(\{[\s\S]*?kind: "ticket_comment" as const,[\s\S]*?\}\)\),\n\s+supabaseAdmin,\n\s+\);\n\s+if \(activityErr\) console\.error\(/);
@@ -925,7 +965,8 @@ describe("the producer census — every written kind is declared and classified"
     const kindsAt = (file: string) => census().filter((p) => p.file === file).flatMap((p) => (p.kinds === "typed" ? [] : p.kinds));
     expect(new Set(kindsAt("app/api/tickets/workflow-action/route.ts"))).toEqual(new Set(["ticket_comment", "ticket_assigned", "ticket_status"]));
     expect(new Set(kindsAt("app/api/tickets/comment/route.ts"))).toEqual(new Set(["ticket_mention", "ticket_comment"]));
-    expect(kindsAt("app/api/cron/maintenance/route.ts")).toEqual(expect.arrayContaining(["checkout_released"]));
+    expect(kindsAt("app/api/cron/maintenance/route.ts")).toEqual(expect.arrayContaining(["checkout_stale_escalation"]));
+    expect(kindsAt("app/api/cron/maintenance/route.ts")).not.toContain("checkout_released"); // TAX-17 (N15)
     expect(kindsAt("lib/orchestrator/tools.ts")).toEqual(expect.arrayContaining(["orchestrator_message"]));
   });
 
@@ -981,6 +1022,8 @@ describe("the producer census — every written kind is declared and classified"
     const intake = src("app/api/intake/upload/route.ts");
     expect(intake).toMatch(/kind: "intake_quote" \| "intake_submission" \| "doc_superseded"; title: string;/);
     for (const k of ["intake_quote", "intake_submission"]) if (new RegExp(`await notifyTeam\\(\\{\\s+kind: "${k}",`).test(intake)) written.add(k);
-    expect(unionKinds().filter((k) => !written.has(k))).toEqual([]);
+    expect(unionKinds().filter((k) => !written.has(k) && !LEGACY_DECLARED.includes(k))).toEqual([]);
+    // and a legacy-only kind really has no producer left (TAX-17, N15)
+    for (const k of LEGACY_DECLARED) expect(written.has(k), k).toBe(false);
   });
 });

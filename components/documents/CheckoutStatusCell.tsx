@@ -220,7 +220,7 @@ const CheckoutInfoPopover = ({
         fileId: docRecord.id,
         userId: currentUserId,
         userEmail: currentUserEmail || "unknown",
-        userRole: userRole || "unknown",
+        userRole: userRole ?? "", // SESS-6 residual (P23, DEC-91 §1): no role known is omitted (written NULL)
         type: "CHECK_IN",
         details: { oneClickRelease: true },
       });
@@ -481,7 +481,7 @@ export default function CheckoutStatusCell({
         fileId: docRecord.id,
         userId: currentUserId,
         userEmail: currentUserEmail || "unknown",
-        userRole: userRole || "unknown",
+        userRole: userRole ?? "", // SESS-6 residual (P23, DEC-91 §1): no role known is omitted (written NULL)
         type: "CHECK_OUT",
         details: { quickHold: true, autoExpires: "end of day" },
       });

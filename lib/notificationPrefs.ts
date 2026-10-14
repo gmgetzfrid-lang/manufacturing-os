@@ -19,8 +19,14 @@
 //   * readToastPreference is the pop-up toast switch (RT-10) for the toast
 //     listener. It fails OPEN: a toast is the ephemeral echo of a bell row that
 //     is always written, so an unreadable preference shows toasts.
+//   * readToastPreferences (notifications Round G, N4 — RT-10's remaining
+//     limb) reads the master switch AND the five per-category switches
+//     (toast_on_<category>, 20261200) — the email toggles' categories, each
+//     kind's category written in lib/notificationKinds.ts KIND_META. It is
+//     what the toast listener reads now; toastAllowed is the rule.
 
 import { supabase } from "@/lib/supabase";
+import { TOAST_CATEGORIES, kindMeta, type ToastCategory } from "@/lib/notificationKinds";
 
 /** The digest_frequency CHECK list, in the constraint's order. */
 export const DIGEST_FREQUENCIES = ["instant", "hourly", "daily", "never"] as const;
@@ -202,4 +208,95 @@ export async function readToastPreference(uid: string | null | undefined): Promi
     console.warn("toast preference unreadable; showing toasts:", (e as Error).message);
     return true;
   }
+}
+
+// ── Per-category pop-up toasts (RT-10, notifications Round G N4) ──────────
+
+/** notification_preferences' per-category toast columns (20261200), one per
+ *  email category, all NOT NULL DEFAULT TRUE. */
+export type ToastCategoryColumn = `toast_on_${ToastCategory}`;
+export type ToastCategoryPrefs = Record<ToastCategoryColumn, boolean>;
+export const TOAST_CATEGORY_COLUMNS: readonly ToastCategoryColumn[] =
+  Object.freeze(TOAST_CATEGORIES.map((c) => `toast_on_${c}` as ToastCategoryColumn));
+
+/** The column defaults: a member with no row (or a database 20261200 has
+ *  not reached) gets every category. */
+export const TOAST_CATEGORY_DEFAULTS: Readonly<ToastCategoryPrefs> = Object.freeze(
+  Object.fromEntries(TOAST_CATEGORY_COLUMNS.map((c) => [c, true])) as ToastCategoryPrefs,
+);
+
+/** A stored row (or none) read into the per-category switches; a column the
+ *  row does not carry reads as on. */
+export function toastCategoryPrefsFromRow(row: Record<string, unknown> | null | undefined): ToastCategoryPrefs {
+  return Object.fromEntries(TOAST_CATEGORY_COLUMNS.map((c) => [c, row?.[c] !== false])) as ToastCategoryPrefs;
+}
+
+/** What the toast listener needs: the master switch and each category's. */
+export interface ToastPreference {
+  enabled: boolean;
+  categories: Record<ToastCategory, boolean>;
+}
+
+export const TOAST_PREFERENCE_ALL_ON: Readonly<ToastPreference> = Object.freeze({
+  enabled: true,
+  categories: Object.freeze(Object.fromEntries(TOAST_CATEGORIES.map((c) => [c, true])) as Record<ToastCategory, boolean>),
+});
+
+/** A boolean (the master switch alone, as readToastPreference answers) or a
+ *  full preference, read as a full preference. */
+export function normalizeToastPreference(p: boolean | ToastPreference): ToastPreference {
+  if (typeof p === "boolean") return { ...TOAST_PREFERENCE_ALL_ON, enabled: p };
+  return p;
+}
+
+/** Kinds no per-category pop-up switch silences (the master switch still
+ *  does): a drawing recall is a safety message, which the email side sends
+ *  whatever the toggles say (lib/notify/dispatch.ts categoryToEventType
+ *  "recall" → safety_recall, DIST-13). Its KIND_META category
+ *  (status_change) would otherwise let "Pop-ups for status changes" mute it. */
+export const TOAST_CATEGORY_EXEMPT_KINDS: ReadonlySet<string> = new Set(["doc_recalled"]);
+
+/** Whether a row of this kind toasts under this preference: the master switch,
+ *  then the kind's category (KIND_META.category). A legacy kind no union
+ *  declares has no category and follows the master switch alone, as does a
+ *  TOAST_CATEGORY_EXEMPT_KINDS kind.
+ *
+ *  The category is the KIND's, one per kind — not the category each emit()
+ *  call passed for the email, which the row does not carry. Where a producer
+ *  emails a kind under another category the two differ (RT-10 Resolution
+ *  names them: hold_opened's overdue-hold nudge is "sla" by email and
+ *  status_change here; markup_request, milestone_slipped, orchestrator_message,
+ *  doc_superseded, package_doc_stale, and the check-in panel's PSM
+ *  request_pending_approval, "safety" by email). */
+export function toastAllowed(pref: ToastPreference, kind: string): boolean {
+  if (!pref.enabled) return false;
+  if (TOAST_CATEGORY_EXEMPT_KINDS.has(kind)) return true;
+  const cat = kindMeta(kind)?.category;
+  return cat ? pref.categories[cat] !== false : true;
+}
+
+/** The member's pop-up switches. No row, or a database without the columns
+ *  (20261148 / 20261200 not pasted), reads as everything on. A read that
+ *  ANSWERS with any other error throws — the toast listener then keeps the
+ *  last value it actually read and fails open only when it has none (the N3
+ *  hand-off: readToastPreference folds such an error into "on", so a member
+ *  who switched pop-ups off got them back on a fast-failing read). */
+export async function readToastPreferences(uid: string | null | undefined): Promise<ToastPreference> {
+  if (!uid) return { ...TOAST_PREFERENCE_ALL_ON };
+  const select = (cols: string) => supabase.from("notification_preferences").select(cols).eq("user_id", uid).maybeSingle();
+  let { data, error } = await select(["toast_enabled", ...TOAST_CATEGORY_COLUMNS].join(", "));
+  if (error && TOAST_CATEGORY_COLUMNS.some((c) => isMissingColumnError(error, c))) {
+    // 20261200 not pasted yet: the master switch alone.
+    ({ data, error } = await select("toast_enabled"));
+  }
+  if (error) {
+    if (isMissingColumnError(error, "toast_enabled")) return { ...TOAST_PREFERENCE_ALL_ON };
+    throw new Error(error.message || "The pop-up preference could not be read.");
+  }
+  const row = (data as Record<string, unknown> | null) ?? null;
+  const cats = toastCategoryPrefsFromRow(row);
+  return {
+    enabled: row?.toast_enabled !== false,
+    categories: Object.fromEntries(TOAST_CATEGORIES.map((c) => [c, cats[`toast_on_${c}`]])) as Record<ToastCategory, boolean>,
+  };
 }

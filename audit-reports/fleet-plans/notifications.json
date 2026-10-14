@@ -315,7 +315,7 @@
   },
   {
    "name": "N10 PUSH — connect the two built ends of Web Push (GAP-205); OS-11 closes by record",
-   "findings": ["OS-2", "TAX-12", "DELIV-14", "RT-7", "OS-3", "OS-9", "OS-10", "OS-11"],
+   "findings": ["OS-2", "TAX-12", "DELIV-14", "RT-7", "OS-3", "OS-9", "OS-10", "OS-11", "drafting-flow ROUTE-3 limb (c) (restated by the integrator at the N15 merge, 2026-10-14), through TAX-12"],
    "severityMix": "7 MEDIUM, 1 LOW",
    "files": [
     "new lib/push/sendPush.ts (web-push re-added to package.json; VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT in .env.example next to CRON_SECRET, whose stale reminders/run comment is corrected; sendPushSafe(payload) NEVER throws and never blocks inapp/email — the deleted 0bb13ed contract; 404/410 delete the push_subscriptions row — OS-2 dw4)",
@@ -348,7 +348,7 @@
   },
   {
    "name": "N11 TRAIL — the badge continues below the sidebar: library, folder and document markers through the ACL the list uses (GAP-202 steps 3)",
-   "findings": ["TRAIL-1", "TRAIL-6", "TRAIL-11", "TAX-10", "DELIV-3 (remainder re-owned by the integrator 2026-10-01 at the N2 merge: done-when 3 — library, folder and document rows carrying their own counts; delivered by TRAIL-1)"],
+   "findings": ["TRAIL-1", "TRAIL-6", "TRAIL-11", "TAX-10", "DELIV-3 (remainder re-owned by the integrator 2026-10-01 at the N2 merge: done-when 3 — library, folder and document rows carrying their own counts; delivered by TRAIL-1)", "N4 hand-offs (assigned by the integrator 2026-10-13 at the N4 merge, DEC-31): RT-1 done-when 4 — the bell and the sidebar read useAttentionStatus().stale and say when the feed is stale; RT-12 — lib/tableViews.ts's table_views sync (the library page, which N11 edits, is its only consumer; 20261200 deliberately did not add table_views to the publication — decide and record); lib/inAppNotifications.ts markRead / markManyRead / markAllRead destructure { error } and surface a refusal (never a silent success; SAF-18 census)"],
    "severityMix": "2 MEDIUM, 2 LOW",
    "files": [
     "components/providers/AttentionProvider.tsx / hooks/useTicketNotifications.ts (N4's; adds useAttentionFor(section | resourceId) and a per-library / per-folder roll-up map alongside sectionCounts — TAX-10 dw1, TRAIL-6 dw2; each document-scoped item is resolved ONCE to (library_id, collection_id) through the container-chain resolver DC P4 REVIEW lands (lib/containerChain.ts / lib/docClass.ts:49-58) — never a third walk; the folder count fans up collections.pathIds — TRAIL-6 dw3; a failed resolution renders as unknown, never zero — GAP-202 acceptance 6; the roll-up runs under the viewer's own client so a document the ACL hides is never counted — the permission trap)",
@@ -374,7 +374,7 @@
   },
   {
    "name": "N12 NUDGES — the login nudge with the bell animation, and the person-to-person nudge recorded on the ticket (GAP-204 + GAP-206)",
-   "findings": ["OS-8", "OS-5", "OS-13 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: the /checkouts nudge cooldown is enforced by the database, not only the browser module — a repeat nudge inside the cooldown from any client is refused; one migration, DEC-30, DRLS-16)"],
+   "findings": ["OS-8", "OS-5", "OS-13 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: the /checkouts nudge cooldown is enforced by the database, not only the browser module — a repeat nudge inside the cooldown from any client is refused; one migration, DEC-30, DRLS-16)", "N4 hand-offs (assigned by the integrator 2026-10-13 at the N4 merge, DEC-31): PROD-18 — the nine kinds that ask for an action but have no discharge check get one (KIND_META.actionRequired and the reconcile classes, DEC-105); the check-in panel's 'Change proposed to …' notice gets its own kind (re-create notification_kinds() from its NEWEST body); optional, recommended: a metadata marker on the review-roster notices so lib/notificationReconcileServer.ts rosterWrote no longer reads titles (REVIEW_NOTICE_TITLES)", "notifications PROD-13 (MEDIUM; stays OPEN for PROD-18 — closes by pointer when PROD-18 is RESOLVED; the feed's action classification derives from KIND_META.actionRequired, never a hand list)"],
    "severityMix": "2 LOW (+ GAP-204, GAP-206 build specs)",
    "files": [
     "new migration 2026NNNN_notification_seen_and_nudge.sql (notification_preferences.notifications_seen_at TIMESTAMPTZ and nudge_dismissed_until TIMESTAMPTZ — own-row RLS already fits; no new table — OS-8 dw1/dw3; DEC-30 paste)",
@@ -481,6 +481,26 @@
       "admin-and-org P4 merged (lib/subscription.ts — DEC-98)"
     ],
     "sequencingNotes": "Added by the integrator 2026-10-13 at the N9 merge (DEC-31): every remainder N9 recorded as 'N14 (or as the integrator routes it)' that is not in N14's brief. Runs after N14."
+  },
+  {
+   "name": "N16 LIBRARY DISCOVER AND BOUNDED FALLBACK — a library-scoped follower notice names a document only to a follower who may discover it, and the failed-check fallback's controllers lookup is bounded",
+   "findings": [
+    "NEDGE-22 (opened by N15: library_doc_added, library_doc_revised and transmittal_issued name a document to a library's followers with no discover check — extend the N15 discover filter (lib/notify/recipients.ts discoveringAmong, the DEC-106 rules) to a document named by a library-scoped notice; a failed check redacts exactly as DEC-106 does; controllers never dropped)",
+    "NEDGE-6 remainder (integrator, N15 merge 2026-10-14): on a FAILED discover check the controllers lookup resolveRoleRecipients is not bounded by DISCOVER_TIMEOUT_MS — bound it (or reuse the already-resolved pool) so a stalled session read cannot hold the inserts open; a timed-out lookup is logged and the redacted notices still go"
+   ],
+   "files": [
+    "lib/notify/dispatch.ts, lib/notify/recipients.ts",
+    "lib/postPublish.ts (notifySuperseded's library_doc_revised), lib/libraryNotify.ts (library_doc_added), lib/transmittals.ts (notifyTransmittalIssued)",
+    "tests: a non-discovering library follower gets the redacted notice; a discovering one and every controller get it in full; a stalled controllers lookup is bounded; regression — every library notice that reaches a follower today still reaches them"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "notifications N15 merged (2026-10-14; DEC-106, the discover filter)",
+    "document-control: no running package edits lib/transmittals.ts / lib/postPublish.ts at launch (check every fleet plan's files list)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the N15 merge, 2026-10-14 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

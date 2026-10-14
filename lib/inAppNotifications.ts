@@ -31,11 +31,14 @@ export type NotificationKind =
   | "markup_request"          // a markup request on a document: you were asked for markups, or markups were shared to its thread
   | "doc_superseded"          // a doc the user has open / follows was superseded: a new revision was published (one meaning since N9 — PROD-13 / TAX-13)
   | "doc_recalled"            // your downloaded copy of a document is out of date, or the document was retired — destroy old prints (lib/staleCopies.ts; was doc_superseded + metadata.recall)
+  | "doc_retired"             // a document you WATCH was retired (superseded / voided / archived) — an FYI, not a recall: the copy holders get doc_recalled (lib/staleCopies.ts recallRetiredDocument — PROD-17, N15)
   | "doc_upstream_changed"    // a document connected to work you have checked out was revised (lib/revisionImpact.ts; was doc_superseded)
   | "package_doc_stale"       // a document pinned in your work package moved past its pin (lib/workPackages.ts; was doc_superseded + metadata.workPackageId)
   | "package_doc_retired"     // a document pinned in your work package was superseded / voided (lib/postPublish.ts; was doc_superseded + metadata.retirement)
-  | "checkout_released"       // (to Admin/DocCtrl) a checkout has been held for weeks — review it (the maintenance cron's stale-checkout escalation; until N9 it also meant the two below)
+  | "checkout_released"       // LEGACY rows only (TAX-17, N15): what the stale-checkout escalation was written as before N15 (20261206 re-files those rows); nothing writes it now
+  | "checkout_stale_escalation" // (to Admin/DocCtrl) a checkout has been held for weeks — review it (the maintenance cron's stale-checkout escalation; was checkout_released — TAX-17)
   | "checkout_force_released" // your checkout was force-released by someone else (lib/checkoutEpisodes.ts; was checkout_released)
+  | "checkout_force_released_fyi" // a document you WATCH was force-released — the watchers' FYI beside the holder's notice (lib/checkoutEpisodes.ts — PROD-17, N15)
   | "checkout_auto_released"  // your ad-hoc checkout expired and was released automatically (lib/projects.ts; was checkout_released + metadata.autoReleasedSessionId)
   | "overlap_advisory"        // two people hold live edit intents on the same doc
   | "branch_open"             // an unreconciled revision branch was opened
@@ -256,14 +259,44 @@ export interface NotificationRow {
   createdAt: string;
 }
 
+/** The bell's page size: the attention feed loads the newest this many
+ *  unread rows, then older pages on request (TAX-6 / DELIV-10). */
+export const NOTIFICATION_PAGE_SIZE = 50;
+
+/** A position in a newest-first notification list: the (created_at, id) of
+ *  its last row. Rows written in one statement share created_at (now()), so
+ *  created_at alone is not a unique position — the id breaks the tie. */
+export interface NotificationCursor { createdAt: string; id: string }
+
+/** The PostgREST filter for "strictly after `c` in (created_at desc, id desc)
+ *  order": created_at < c, or the same created_at and a smaller id. Values are
+ *  double-quoted — a timestamp carries '.' and ':' — and an embedded quote is
+ *  escaped. */
+function afterCursorFilter(c: NotificationCursor): string {
+  const v = (x: string) => `"${x.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `created_at.lt.${v(c.createdAt)},and(created_at.eq.${v(c.createdAt)},id.lt.${v(c.id)})`;
+}
+
 export async function listMyNotifications(
-  opts?: { limit?: number; onlyUnread?: boolean; orgId?: string | null },
+  opts?: {
+    limit?: number;
+    onlyUnread?: boolean;
+    orgId?: string | null;
+    /** Only rows after this position, newest first — the next page after a
+     *  page whose oldest row is the cursor (TAX-6 dw2, DELIV-10 dw2). A bare
+     *  created_at string is read as "created strictly before it" (a row that
+     *  shares it is skipped — pass the composite cursor). */
+    before?: NotificationCursor | string | null;
+  },
 ): Promise<NotificationRow[]> {
   let q = supabase
     .from("notifications")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(opts?.limit ?? 50);
+    .order("id", { ascending: false })
+    .limit(opts?.limit ?? NOTIFICATION_PAGE_SIZE);
+  if (typeof opts?.before === "string" && opts.before) q = q.lt("created_at", opts.before);
+  else if (opts?.before && typeof opts.before === "object") q = q.or(afterCursorFilter(opts.before));
   // Scope to the active workspace. Without this the bell counts notifications
   // from EVERY org the user belongs to, so the badge can show items the
   // current workspace's portal will never list. RLS already restricts to the
@@ -279,6 +312,9 @@ export async function listMyNotifications(
   return (data || []).map(rowToNotification);
 }
 
+/** The badge's number (PROD-7 dw1, TAX-6 dw1, TRAIL-7 dw1, DELIV-10 dw1): an
+ *  exact head count of my unread, unsuperseded rows in the workspace —
+ *  independent of how many rows the feed has loaded. */
 export async function countUnread(orgId?: string | null): Promise<number> {
   let q = supabase
     .from("notifications")
@@ -289,6 +325,49 @@ export async function countUnread(orgId?: string | null): Promise<number> {
   const { count, error } = await q;
   if (error) throw error;
   return count ?? 0;
+}
+
+/** One unread row below the feed's loaded window: enough to tally it into
+ *  its section and the action count, and to send it for reconcile. */
+export interface UnreadBeyondRow {
+  id: string;
+  kind: string;
+  resourceType: string | null;
+  resourceId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/** My unread rows BEYOND the rows the feed loaded — newest first, after the
+ *  loaded window's last row (`after`, the same (created_at, id) keyset the
+ *  pages use, so no row lands in both the window and the tally), at most
+ *  `cap` — so the per-section badges and the action count include the rows
+ *  below the page (TAX-6 dw1, TRAIL-7 dw1) without loading them, and the
+ *  reconcile pass can check the action rows among them. `after` null reads
+ *  from the top. Throws on a refused read. */
+export async function listUnreadKindsBeyond(
+  orgId: string, after: NotificationCursor | null, cap: number,
+): Promise<UnreadBeyondRow[]> {
+  let q = supabase
+    .from("notifications")
+    .select("id, kind, resource_type, resource_id, metadata, created_at")
+    .eq("org_id", orgId)
+    .is("read_at", null)
+    .is("metadata->>superseded_at", null);
+  if (after) q = q.or(afterCursorFilter(after));
+  const { data, error } = await q
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(Math.max(0, cap));
+  if (error) throw error;
+  return ((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
+    id: r.id as string,
+    kind: r.kind as string,
+    resourceType: (r.resource_type as string | null) ?? null,
+    resourceId: (r.resource_id as string | null) ?? null,
+    metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+    createdAt: r.created_at as string,
+  }));
 }
 
 export async function markRead(id: string): Promise<void> {

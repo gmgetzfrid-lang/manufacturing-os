@@ -15,11 +15,18 @@
 // (components/notifications/kindIcon.ts), so a row looks the same in both.
 // The words (RT-9): "Action" is what needs you to do something, "Activity"
 // everything else (the vocabulary note in hooks/useTicketNotifications.ts).
+//
+// It says how complete and current the feed is (notifications Round G, N4 —
+// useAttentionStatus): "Showing the newest N of M" with a "Load older" that
+// pages the feed's created_at cursor when unread rows sit below the loaded
+// window (TAX-6 dw2, DELIV-10 dw2); a read that failed is said, and never
+// reads as "all caught up" (DELIV-10 dw5); a live connection that dropped
+// says the counts may be out of date (RT-1 dw4).
 
 import React from "react";
 import Link from "next/link";
 import { Loader2, ChevronRight, ClipboardList, CheckCheck } from "lucide-react";
-import type { AttentionItem, AttentionCounts } from "@/hooks/useTicketNotifications";
+import { useAttentionStatus, type AttentionItem, type AttentionCounts } from "@/hooks/useTicketNotifications";
 import { formatAgo } from "@/components/cockpit/CommandDeck";
 import { kindMeta, type KindGroup, type KindTone } from "@/lib/notificationKinds";
 import { iconForKind, type IconComponent } from "@/components/notifications/kindIcon";
@@ -82,6 +89,9 @@ export function groupOf(kind: string): KindGroup {
 
 export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll, scopeLabel }: AttentionFeedProps) {
   const [visibleCount, setVisibleCount] = React.useState(30);
+  const status = useAttentionStatus();
+  const notificationsCut = status.notificationsTotal !== null && status.notificationsTotal > status.notificationsShown;
+  const ticketsCut = status.ticketsTotal !== null && status.ticketsTotal > status.ticketsLoaded;
   // Second axis: filter by WHAT the notification is about. A DocCtrl drowning
   // in publish fan-out can isolate their mentions in one tap.
   const [group, setGroup] = React.useState<string>("all");
@@ -143,6 +153,20 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
         </div>
       </div>
 
+      {/* The feed's own state (RT-1 dw4, DELIV-10 dw5): a failed read or a
+          dropped live connection is said, never shown as a quiet number. */}
+      {(status.error || status.stale) && (
+        <div
+          role={status.error ? "alert" : "status"}
+          data-attention-status
+          className="px-4 py-2 border-b border-amber-200 bg-amber-50 text-[11px] font-semibold text-amber-900"
+        >
+          {status.error
+            ? `${status.error} What is listed may be incomplete — it tries again on its own.`
+            : "Reconnecting — the counts may be out of date until the live connection is back."}
+        </div>
+      )}
+
       {/* Kind-group chips — their own wrapping row, so every chip stays
           visible and tappable at any width. */}
       {counts.all > 0 && (
@@ -176,10 +200,16 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
           <div className="w-12 h-12 mx-auto rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-3">
             <CheckCheck className="w-6 h-6 text-emerald-600 dark:text-emerald-500" />
           </div>
-          <div className="text-sm font-bold text-[var(--color-text)]">You&apos;re all caught up{scopeLabel ? ` in ${scopeLabel}` : ""}</div>
-          <div className="text-xs text-[var(--color-text-muted)] mt-1">
-            {scopeLabel ? `Nothing in ${scopeLabel} needs your attention right now.` : "Nothing needs your attention right now."}
-          </div>
+          {status.error ? (
+            <div className="text-sm font-bold text-[var(--color-text)]">Nothing could be loaded{scopeLabel ? ` in ${scopeLabel}` : ""} — this is not &quot;all caught up&quot;</div>
+          ) : (
+            <>
+              <div className="text-sm font-bold text-[var(--color-text)]">You&apos;re all caught up{scopeLabel ? ` in ${scopeLabel}` : ""}</div>
+              <div className="text-xs text-[var(--color-text-muted)] mt-1">
+                {scopeLabel ? `Nothing in ${scopeLabel} needs your attention right now.` : "Nothing needs your attention right now."}
+              </div>
+            </>
+          )}
         </div>
       ) : grouped.length === 0 ? (
         <div className="px-4 py-10 text-center text-xs text-[var(--color-text-muted)] italic">Nothing in this filter.</div>
@@ -197,6 +227,30 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
             </button>
           )}
         </ul>
+      )}
+
+      {/* TAX-6 dw2 / DELIV-10 dw2: the count is the true one; the list shows
+          the newest page and says so, and "Load older" pages the cursor. */}
+      {(notificationsCut || ticketsCut) && (
+        <div data-attention-truncation className="px-4 py-2 border-t border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
+          {notificationsCut && (
+            <span>Showing the newest {status.notificationsShown} of {status.notificationsTotal} unread notifications.</span>
+          )}
+          {status.hasMoreNotifications && (
+            <button
+              type="button"
+              onClick={status.loadMoreNotifications}
+              disabled={status.loadingMore}
+              className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline disabled:opacity-50"
+            >
+              {status.loadingMore && <Loader2 className="w-3 h-3 animate-spin" aria-hidden />}
+              Load older
+            </button>
+          )}
+          {ticketsCut && (
+            <span>Requests: the {status.ticketsLoaded} most recently active of {status.ticketsTotal} open requests are checked.</span>
+          )}
+        </div>
       )}
     </div>
   );

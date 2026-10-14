@@ -226,11 +226,9 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
   });
   it("the API routes behind a surface that STILL carry a constant use the surface's role set (pinned until they call the gate themselves — SURF-19's limbs owned by A&O P5 and P7)", () => {
     // SURF-19 (admin-and-org Round G, P6) converted every other route of this table to the gate
-    // (pinned below); these four are left to their owners: purge / archive-cancel (A&O P7),
-    // stripe checkout / portal (A&O P5, after P4).
+    // (pinned below); these are left to their owners: stripe checkout / portal (A&O P5, after P4).
+    // purge / archive-cancel were converted by A&O P7 (pinned in the table below).
     const table: Array<[string, readonly string[]]> = [
-      ["app/api/admin/purge/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/archive-cancel/route.ts", adminSurface("storage")!.writes!],
       ["app/api/stripe/checkout/route.ts", adminSurface("billing")!.writes!],
       ["app/api/stripe/portal/route.ts", adminSurface("billing")!.writes!],
     ];
@@ -256,6 +254,9 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
       ["app/api/admin/restore/begin/route.ts", 'authorizeAdminSurface(req, orgId, "restore", "write")', 1],
       ["app/api/admin/restore/apply-table/route.ts", 'authorizeAdminSurface(req, orgId, "restore", "write")', 1],
       ["app/api/admin/restore/preview/route.ts", 'authorizeAdminSurface(req, orgId, "restore")', 1],
+      // A&O P7 (SURF-19's purge / archive-cancel limb): the writes set, preview included.
+      ["app/api/admin/purge/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 2],
+      ["app/api/admin/archive-cancel/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 1],
     ];
     for (const [file, call, n] of table) {
       const s = src(file);
