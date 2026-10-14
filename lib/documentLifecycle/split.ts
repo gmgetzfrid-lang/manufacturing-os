@@ -10,11 +10,10 @@
 import { supabase } from "@/lib/supabase";
 import {
   authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
-  recallOnRetirement,
+  recallOnRetirement, skipsRetirementRecall,
 } from "@/lib/revisions";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
-import { isRetiredStatus } from "@/lib/issueStatus";
 import {
   type ActorContext,
   createNewDocWithFirstVersion,
@@ -303,11 +302,13 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
 
   // PROD-17 (document-control P26): the retired source's copy holders are
   // recalled and its watchers told, once, never awaited — unless it was
-  // already retired (the status read fresh before the flip): it is not
-  // recalled again (whether its earlier retirement recalled it depends on
-  // the door that retired it — PROD-17 residual). The checkout holder was
-  // told above (notifyHolderOfRetirement); no package owner is.
-  if (!isRetiredStatus(retired.priorStatus)) {
+  // already Superseded or Archived (the status read fresh before the flip;
+  // skipsRetirementRecall): it is not recalled again (whether its earlier
+  // retirement recalled it depends on the door that retired it — PROD-17
+  // residual). A Void source IS recalled (P26 fix pass 2: no live door
+  // that writes Void recalls). The checkout holder was told above
+  // (notifyHolderOfRetirement); no package owner is.
+  if (!skipsRetirementRecall(retired.priorStatus)) {
     recallOnRetirement({
       orgId, documentId: sourceId, libraryId: sourceLibraryId,
       docLabel: String(source.documentNumber || source.title || source.name || "document"),

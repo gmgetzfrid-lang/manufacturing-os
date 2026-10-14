@@ -520,7 +520,32 @@ export function recallOnRetirement(
     staleCopiesLoad ??= import("@/lib/staleCopies").catch((e) => { staleCopiesLoad = null; throw e; });
     const { recallRetiredDocument } = await staleCopiesLoad;
     await recallRetiredDocument({ ...input, docLabel: docLabel || "A document", libraryId });
-  })().catch(() => { /* non-blocking: the retirement has landed */ });
+  })().catch((e) => {
+    // Non-blocking — the retirement has landed — but never silent (P26 fix
+    // pass 2): a recall that did not run (the module failed to load after a
+    // deploy, a throw past recallRetiredDocument) is logged; the next
+    // recall retries the load.
+    console.warn(`[revisions] PROD-17: the retirement recall of document ${input.documentId} did not run`, e);
+  });
+}
+
+/** PROD-17 (P26 fix pass 2): does a door that retires a document out of
+ *  `priorStatus` (the status read fresh before its write) skip the recall,
+ *  because an earlier retirement may already have sent one? Only a
+ *  Superseded or Archived prior skips: supersede, a split and a merge
+ *  (Superseded) and the Archive dialog (Archived) recall. "May have" is
+ *  all it says — a Superseded / Archived set by a status editor's bare
+ *  write, the library page's bulk archive, a reversal's parking or a
+ *  retention disposal recalled nothing (PROD-17 residual). A Void prior
+ *  RECALLS: no live door that writes Void recalls (both status editors
+ *  write it bare; changeDocumentStatus would recall, but no caller routes
+ *  a retirement there), so for a Void row "already retired" means "never
+ *  recalled". A prior the read did not give (null) recalls — a second
+ *  recall over none. Interim: once a door that writes Void recalls, a Void
+ *  prior gives a second recall, until "already recalled" is decided from
+ *  the document's recall record (document-control DIST-16). */
+export function skipsRetirementRecall(priorStatus: string | null | undefined): boolean {
+  return isRetiredStatus(priorStatus) && (priorStatus ?? "").trim() !== "Void";
 }
 
 // ─── REV-6: retiring the in-flight review draft ───────────────────────────
@@ -2183,16 +2208,17 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
 
   // PROD-17 (document-control P26): an archive is a retirement — every copy
   // holder is recalled and the document's watchers told, once, never
-  // awaited. A document already retired (a Superseded or Void row, read
-  // just before the write) is not recalled again. That is not proof it was
-  // recalled: a Void, Superseded or Archived set by either status editor's
-  // bare write, a reversal's parking, a retention disposal, or any
-  // retirement before DIST-1, recalled nothing (PROD-17 residual), so until
-  // those doors recall, archiving such a row recalls no copies either. A
-  // status the read did not give recalls (a second recall over none). The
-  // archive tells no checkout holder or package owner itself, so they stay
-  // in the watchers' audience.
-  if (!isRetiredStatus(priorStatus)) {
+  // awaited. A Superseded row (read just before the write) is not recalled
+  // again (skipsRetirementRecall). That is not proof it was recalled: a
+  // Superseded set by either status editor's bare write, a reversal's
+  // parking, or any retirement before DIST-1, recalled nothing (PROD-17
+  // residual), so until those doors recall, archiving such a row recalls
+  // no copies either. A Void row IS recalled (P26 fix pass 2): no live door
+  // that writes Void recalls, so its copies were never recalled. A status
+  // the read did not give recalls (a second recall over none). The archive
+  // tells no checkout holder or package owner itself, so they stay in the
+  // watchers' audience.
+  if (!skipsRetirementRecall(priorStatus)) {
     recallOnRetirement({
       orgId, documentId: doc.id, libraryId: doc.libraryId,
       docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
@@ -2966,16 +2992,20 @@ export async function changeDocumentStatus(input: {
   }
   // PROD-17 (document-control P26): a write that RETIRES the document (into
   // Superseded / Void / Archived — isRetiredStatus — out of a status that is
-  // not one) recalls every copy holder and tells its watchers, once, never
-  // awaited; the outcome returned is unchanged. A re-save of a document
-  // already retired recalls nothing again. A pre-write read that failed
-  // (fromStatus unknown) recalls: a second recall over none. This door
-  // tells no checkout holder or package owner, so they stay in the
-  // watchers' audience. (Neither status editor routes a retirement here
-  // today: each writes a retired status with its own bare write, which
-  // recalls nothing — PROD-17 residual. A caller that routes one here must
-  // not also call recallOnRetirement: that would be a second recall.)
-  if (isRetiredStatus(input.toStatus) && !isRetiredStatus(before.fromStatus)) {
+  // not one, or out of Void) recalls every copy holder and tells its
+  // watchers, once, never awaited; the outcome returned is unchanged. A
+  // re-save of the status it already has recalls nothing, and nor does a
+  // move out of Superseded or Archived (skipsRetirementRecall); a move out
+  // of Void into another retired status recalls (P26 fix pass 2: no live
+  // door that writes Void recalls). A pre-write read that failed
+  // (fromStatus unknown) recalls: a second recall over none. This door tells no checkout holder or package
+  // owner, so they stay in the watchers' audience. (Neither status editor
+  // routes a retirement here today: each writes a retired status with its
+  // own bare write, which recalls nothing — PROD-17 residual. A caller that
+  // routes one here must not also call recallOnRetirement: that would be a
+  // second recall.)
+  if (isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim()
+    && !skipsRetirementRecall(before.fromStatus)) {
     recallOnRetirement({
       orgId: input.orgId, documentId: input.documentId,
       newStatus: input.toStatus.trim(), replacementNote: null,

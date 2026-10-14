@@ -18,8 +18,11 @@
 //     exactly one recall; a status change that retires nothing (or a re-save
 //     of a retired document) recalls nothing; archiving, splitting or
 //     merging a document already retired (its status read fresh before the
-//     write) recalls nothing again; a refused write recalls nothing; a
+//     write) recalls nothing again — a Superseded or Archived one; a Void
+//     one IS recalled (fix pass 2: no live door that writes Void recalls,
+//     skipsRetirementRecall); a refused write recalls nothing; a
 //     rolled-back split recalls nothing.
+//   · A recall that does not run is logged, never silent (fix pass 2).
 //   · CENSUS (fix pass): recallOnRetirement is called from exactly the four
 //     doors above and nowhere else — the status editors (the library page,
 //     BulkEditModal) are PROD-17 residual doors and do not call it, so a
@@ -144,7 +147,7 @@ vi.mock("@/lib/staleCopies", async (importOriginal) => {
   };
 });
 
-import { archiveDocument, supersedeDocument, changeDocumentStatus } from "@/lib/revisions";
+import { archiveDocument, supersedeDocument, changeDocumentStatus, skipsRetirementRecall } from "@/lib/revisions";
 import { splitDocument } from "@/lib/documentLifecycle/split";
 import { mergeDocuments } from "@/lib/documentLifecycle/merge";
 import { recallRetiredDocument } from "@/lib/staleCopies";
@@ -224,8 +227,8 @@ describe("PROD-17 (P26) — an archive recalls the copies and tells the watchers
     expect(recall).toHaveBeenCalledTimes(1);
   });
 
-  it("archiving a document already retired (Superseded, Void — read with the legal hold, just before the write) recalls nothing again; the archive itself is unchanged", async () => {
-    for (const [id, status] of [["p104", "Superseded"], ["p105", "Void"]] as const) {
+  it("archiving a document already Superseded or Archived (read with the legal hold, just before the write) recalls nothing again; the archive itself is unchanged", async () => {
+    for (const [id, status] of [["p104", "Superseded"], ["p107", "Archived"]] as const) {
       const d = seedDoc(id, { status });
       await expect(archiveDocument({ doc: asRecord({ ...d, status: "Issued" }), reason: "tidy", orgId: ORG, actorUserId: ME })).resolves.toBeUndefined();
       expect(docRow(id).status).toBe("Archived");
@@ -233,6 +236,19 @@ describe("PROD-17 (P26) — an archive recalls the copies and tells the watchers
     expect(audit("ARCHIVE_DOC")).toHaveLength(2);
     await settle();
     expect(recall).not.toHaveBeenCalled();
+  });
+
+  it("fix pass 2: archiving a VOIDED document recalls its copies — no live door that writes Void recalls, so they were never recalled (the metadata editor voids it bare; the Archive dialog archives it later)", async () => {
+    const d = seedDoc("p105", { status: "Void" });
+    await expect(archiveDocument({ doc: asRecord(d), reason: "tidy", orgId: ORG, actorUserId: ME, actorEmail: "dana@x" })).resolves.toBeUndefined();
+    expect(docRow("p105").status).toBe("Archived");
+    expect(audit("ARCHIVE_DOC")).toHaveLength(1);
+    await settle();
+    expect(recallsFor("p105")).toEqual([{
+      orgId: ORG, documentId: "p105", libraryId: LIB, docLabel: "P105", newStatus: "Archived", replacementNote: null,
+      actorUserId: ME, actorName: "dana@x",
+      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+    }]);
   });
 
   it("the row read just before the archive says Issued though the caller's copy says Superseded: the archive recalls (the fresh read decides)", async () => {
@@ -269,13 +285,27 @@ describe("PROD-17 (P26) — a status change that retires the document recalls an
     });
   }
 
-  it("a re-save of a document already retired (Void → Void, Archived → Void) recalls nothing again", async () => {
+  it("a re-save of a document already retired (Void → Void, Archived → Void, Superseded → Archived) recalls nothing again", async () => {
     seedDoc("s2", { status: "Void" });
     seedDoc("s3", { status: "Archived" });
+    seedDoc("s3b", { status: "Superseded" });
     expect(await changeDocumentStatus({ orgId: ORG, documentId: "s2", toStatus: "Void", door: "metadata", actorUserId: ME })).toEqual(NO_STATUS_ISSUE);
     expect(await changeDocumentStatus({ orgId: ORG, documentId: "s3", toStatus: "Void", door: "bulk", actorUserId: ME })).toEqual(NO_STATUS_ISSUE);
+    expect(await changeDocumentStatus({ orgId: ORG, documentId: "s3b", toStatus: "Archived", door: "metadata", actorUserId: ME })).toEqual(NO_STATUS_ISSUE);
     await settle();
     expect(recall).not.toHaveBeenCalled();
+  });
+
+  it("fix pass 2: a move out of Void into another retired status recalls (Void → Archived, Void → Superseded) — a Void was never recalled by any live door", async () => {
+    seedDoc("s9", { status: "Void" });
+    seedDoc("s10", { status: "Void" });
+    expect(await changeDocumentStatus({ orgId: ORG, documentId: "s9", toStatus: "Archived", door: "metadata", actorUserId: ME })).toEqual(NO_STATUS_ISSUE);
+    expect(await changeDocumentStatus({ orgId: ORG, documentId: "s10", toStatus: " Superseded ", door: "metadata", actorUserId: ME })).toEqual(NO_STATUS_ISSUE);
+    await settle();
+    expect(recallsFor("s9")).toHaveLength(1);
+    expect(recallsFor("s9")[0]).toMatchObject({ newStatus: "Archived", docLabel: "S9" });
+    expect(recallsFor("s10")).toHaveLength(1);
+    expect(recallsFor("s10")[0]).toMatchObject({ newStatus: "Superseded" });
   });
 
   it("regression: a change that retires nothing recalls nothing and returns what it returned (Issued → Draft; Draft → Issued is still the recorded issue)", async () => {
@@ -319,6 +349,25 @@ describe("PROD-17 (P26) — a status change that retires the document recalls an
     state.recallImpl = () => new Promise(() => {});
     seedDoc("s8");
     await expect(changeDocumentStatus({ orgId: ORG, documentId: "s8", toStatus: "Void", door: "metadata", actorUserId: ME })).resolves.toEqual(NO_STATUS_ISSUE);
+    // the recall was started all the same (fix pass 2: a door that dropped it would fail here)
+    await settle();
+    expect(recallsFor("s8")).toHaveLength(1);
+  });
+
+  it("fix pass 2: a recall that does not run is logged, never silent — and the door returns as before", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      state.recallImpl = () => Promise.reject(new Error("chunk load failed"));
+      seedDoc("s11");
+      await expect(changeDocumentStatus({ orgId: ORG, documentId: "s11", toStatus: "Void", door: "metadata", actorUserId: ME })).resolves.toEqual(NO_STATUS_ISSUE);
+      await settle();
+      expect(recallsFor("s11")).toHaveLength(1);
+      const logged = warn.mock.calls.find((c) => String(c[0]).includes("PROD-17"));
+      expect(logged?.[0]).toBe("[revisions] PROD-17: the retirement recall of document s11 did not run");
+      expect((logged?.[1] as Error).message).toBe("chunk load failed");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -348,6 +397,9 @@ describe("PROD-17 (P26) — a split or merge retiring its sources recalls each o
     state.recallImpl = () => new Promise(() => {});
     const a = seedDoc("a");
     await expect(splitDocument({ source: asRecord(a), libraryId: LIB, targets: [target("A1"), target("A2")], reason: "declutter", orgId: ORG, actorUserId: ME })).resolves.toMatchObject({ supersededSourceId: "a" });
+    // the stalled recall was started (fix pass 2: checked before the counts are cleared)
+    await settle();
+    expect(recallsFor("a")).toHaveLength(1);
     vi.clearAllMocks();
     const b = seedDoc("b");
     state.zeroUpdate = (t, p) => t === "documents" && p.status === "Superseded";
@@ -376,10 +428,10 @@ describe("PROD-17 (P26) — a split or merge retiring its sources recalls each o
     expect(notifyPackagesOfRetirement).not.toHaveBeenCalled();
   });
 
-  it("a source already retired before the split / merge (its status read fresh before the flip) is not recalled again; the live one is", async () => {
-    const v = seedDoc("rv", { status: "Void" });
-    const r = await splitDocument({ source: asRecord({ ...v, status: "Issued" }), libraryId: LIB, targets: [target("RV1"), target("RV2")], reason: "declutter", orgId: ORG, actorUserId: ME });
-    expect(r.supersededSourceId).toBe("rv");
+  it("a source already Superseded before the split / merge (its status read fresh before the flip) is not recalled again; the live one is", async () => {
+    const s0 = seedDoc("rs", { status: "Superseded" });
+    const r = await splitDocument({ source: asRecord({ ...s0, status: "Issued" }), libraryId: LIB, targets: [target("RS1"), target("RS2")], reason: "declutter", orgId: ORG, actorUserId: ME });
+    expect(r.supersededSourceId).toBe("rs");
     const a = seedDoc("ra", { status: "Superseded" }); const b = seedDoc("rb");
     const m = await mergeDocuments({
       sources: [asRecord({ ...a, status: "Issued" }), asRecord(b)],
@@ -388,9 +440,27 @@ describe("PROD-17 (P26) — a split or merge retiring its sources recalls each o
     });
     expect(m.supersededSourceIds.sort()).toEqual(["ra", "rb"]);
     await settle();
-    expect(recallsFor("rv")).toHaveLength(0);
+    expect(recallsFor("rs")).toHaveLength(0);
     expect(recallsFor("ra")).toHaveLength(0);
     expect(recallsFor("rb")).toHaveLength(1);
+  });
+
+  it("fix pass 2: a VOID source split or merged is recalled — no live door that writes Void recalls", async () => {
+    const v = seedDoc("rv", { status: "Void" });
+    const r = await splitDocument({ source: asRecord(v), libraryId: LIB, targets: [target("RV1"), target("RV2")], reason: "declutter", orgId: ORG, actorUserId: ME });
+    expect(r.supersededSourceId).toBe("rv");
+    const w = seedDoc("rw", { status: "Void" }); const x = seedDoc("rx");
+    const m = await mergeDocuments({
+      sources: [asRecord(w), asRecord(x)],
+      target: { kind: "create_new", documentNumber: "W-NEW", title: "merged", assetTags: [], file: pdf("w.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    });
+    expect(m.supersededSourceIds.sort()).toEqual(["rw", "rx"]);
+    await settle();
+    expect(recallsFor("rv")).toHaveLength(1);
+    expect(recallsFor("rv")[0]).toMatchObject({ newStatus: "Superseded", replacementNote: "Replaced by RV1, RV2." });
+    expect(recallsFor("rw")).toHaveLength(1);
+    expect(recallsFor("rx")).toHaveLength(1);
   });
 
   it("merge extending an existing document: the kept target is never recalled; the absorbed source is, once", async () => {
@@ -477,6 +547,24 @@ describe("PROD-17 (P26) — through the real recall: the copy holders first, the
       target: { kind: "create_new", documentNumber: "M-NEW", title: "merged", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
       reason: "combine", orgId: ORG, actorUserId: ME,
     })).resolves.toMatchObject({ supersededSourceIds: ["m1", "m2"] });
+    // fix pass 2: the recall was sent — one per source; m1's notice to its
+    // copy holder is the one that stalls, so its audit row never lands
+    await settle();
+    expect(recallsFor("m1")).toHaveLength(1);
+    expect(recallsFor("m2")).toHaveLength(1);
+    expect(state.emits.filter((e) => e.kind === "doc_recalled").map((e) => e.audience)).toEqual([{ involved: ["u5"] }]);
+    expect(audit("DISTRIBUTION_RECALL")).toHaveLength(0);
+  });
+});
+
+// ─── fix pass 2: which prior status skips the recall ────────────────────
+describe("PROD-17 (P26 fix pass 2) — skipsRetirementRecall", () => {
+  it("only a Superseded or Archived prior skips; Void, a status not retired, and an unread status (null) recall", () => {
+    expect(skipsRetirementRecall("Superseded")).toBe(true);
+    expect(skipsRetirementRecall(" Archived ")).toBe(true);
+    expect(skipsRetirementRecall("Void")).toBe(false);
+    expect(skipsRetirementRecall(" Void ")).toBe(false);
+    for (const s of ["Issued", "Draft", "In Review", "IFC", "", null, undefined]) expect(skipsRetirementRecall(s)).toBe(false);
   });
 });
 

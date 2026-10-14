@@ -12,14 +12,13 @@ import { logRevisionEvent } from "@/lib/audit";
 import {
   revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
   canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp, describeControllerOnlyFirstIssue,
-  recallOnRetirement,
+  recallOnRetirement, skipsRetirementRecall,
   type RevUpInput,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import type { PublishGuardState } from "@/lib/documentGuards";
 import type { DocumentRecord, DocumentVersion, AssetTag } from "@/types/schema";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
-import { isRetiredStatus } from "@/lib/issueStatus";
 import {
   type ActorContext,
   type Compensation,
@@ -518,13 +517,19 @@ async function finishMerge(
 
   // PROD-17 (document-control P26): each absorbed source's copy holders are
   // recalled and its watchers told — one recall per retired source, never
-  // awaited; a source already retired before the merge (its status read
-  // fresh before the flip) is not recalled again. Its checkout holder was
-  // told above; no package owner is.
+  // awaited; a source already Superseded or Archived before the merge (its
+  // status read fresh before the flip; skipsRetirementRecall) is not
+  // recalled again, a Void one is (P26 fix pass 2: no live door that
+  // writes Void recalls). Its checkout holder was told above; no package
+  // owner is. A person who holds copies of several sources gets one
+  // recall per source — each source is its own document; for the
+  // integrator to ratify under DEC-90 (PROD-17 Partial), else the merge
+  // joins the bulk doors' batched per-recipient recall once
+  // lib/staleCopies.ts has one.
   const mergedInto = target.kind === "create_new"
     ? target.documentNumber.trim()
     : String(target.target.documentNumber || target.target.title || target.target.name || "the kept document");
-  const wasRetired = new Set(retired.filter((r) => isRetiredStatus(r.priorStatus)).map((r) => r.sourceDocId));
+  const wasRetired = new Set(retired.filter((r) => skipsRetirementRecall(r.priorStatus)).map((r) => r.sourceDocId));
   for (const src of absorbed) {
     if (wasRetired.has(src.id!)) continue;
     recallOnRetirement({

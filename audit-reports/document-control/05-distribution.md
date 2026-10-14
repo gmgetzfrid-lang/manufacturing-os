@@ -1,6 +1,6 @@
 # 05 · Distribution, acknowledgment & recall
 
-**15 findings** — 3 CRITICAL · 6 HIGH · 6 MEDIUM.
+**16 findings** — 3 CRITICAL · 6 HIGH · 7 MEDIUM. `DIST-16` (MEDIUM) opened by document-control Round G (P26 STATUS-DOOR FOLLOW-UPS, fix pass 2), 2026-10-14.
 
 Who was told, who acknowledged, and whether either is provable.
 
@@ -645,5 +645,35 @@ lib/staleCopies.ts:197 `category: "status"`; lib/notify/dispatch.ts:53 the mappi
 3. ✓ A test drives the listing decision (controller sees all; non-controller refused) and the bulk revoke's per-row audit rows.
 
 **Scope / residual.** Code only; no migration. Live links are never capped below the 50 000 ceiling; of the expired and revoked links the page shows the newest 1000 and says so ("Every live link is listed. Of the expired and revoked links, only the newest 1000 are shown."). No navigation entry was added outside the admin gate's registry (the menus are other packages' files); the page is reachable at `/admin/shares`. `lib/adminSurfaces.ts` is outside this package's file list (one registry entry, disclosed).
+
+---
+
+<a id="dist-16"></a>
+
+## DIST-16 · A retirement recall is never withdrawn when the document is put back in force — un-archiving it, or reversing the split or merge that retired it, leaves "your copy is dead paper" standing on a drawing that is in force
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** unassigned — document-control, to be planned by the integrator together with `PROD-17`'s residual retirement doors (notifications `01-producer-census.md`, DEC-31). The files: `lib/revisions.ts` (`unarchiveDocument`, `changeDocumentStatus`, `archiveDocument`, `skipsRetirementRecall`), `lib/documentLifecycle/reverse.ts` (`reverseSplit`, `reverseMerge`), `lib/documentLifecycle/split.ts` / `merge.ts`, and, for the notice, a new kind row in `notification_kinds()` (a migration) and an entry in `lib/staleCopies.ts` — both the notifications area's.
+- **Verification:** CONFIRMED by reading the code on `fleet/DC-P26-status-doors` (base `ce5a053` plus P26).
+- **Independently verified:** opened 2026-10-14 by document-control Round G (P26 fix pass 2) on the package review's major finding; the reviewer read the code; not yet challenged by a second party.
+- **Locations:** `lib/revisions.ts:2466` (`unarchiveDocument`), `lib/documentLifecycle/reverse.ts:778` (`reverseSplit`), `:878` (`reverseMerge`); the recalls P26 added: `lib/revisions.ts:2221` (`archiveDocument`), `:3007-3008` (`changeDocumentStatus`), `lib/documentLifecycle/split.ts:311`, `merge.ts:533-543`; `lib/staleCopies.ts:279` (`recallRetiredDocument`, whose `DISTRIBUTION_RECALL` row names its `recipients`); `lib/notificationKinds.ts:202` (`doc_recalled`, a compliance kind)
+- **Opened:** 2026-10-14, document-control Round G, package P26 STATUS-DOOR FOLLOW-UPS (fix pass 2) — the restore half of the retirement recall P26 put on the Archive dialog, a split and a merge (`PROD-17`, `DIST-1`).
+
+**Mechanism.** Since P26, an archive (`archiveDocument`), a split (`splitDocument`) and a merge (`finishMerge`) call `recallRetiredDocument`. Everyone with a `download_audits` row on the document in the last 60 days gets `doc_recalled` ("<doc> is now Archived — your copy is dead paper … Stop any work based on your copy and destroy old prints") and a preference-exempt `safety_recall` email. The document gets a `DISTRIBUTION_RECALL` audit row naming them. Four doors put a retired document back in force: `unarchiveDocument` (into Issued by default), `reverseSplit` and `reverseMerge` (the source restored), and a status editor's save of an issue status over a retired row (the put-back through `changeDocumentStatus`). None of them tells anyone: there is no notify, emit or recall in `reverse.ts` or in `unarchiveDocument`, and `changeDocumentStatus` recalls only into a retired status. `doc_recalled` is a compliance kind (`notificationKinds.ts:202`). That makes it dismiss-only (`20261161`), lists it in the daily compliance digest (`app/api/cron/maintenance/route.ts:843`), and keeps it out of reconciliation. So the recall stands on a document that is in force, and nothing corrects it. Before P26 the archive / un-archive and split / reversal pairs told nobody anything, so this is new with P26. P26's records name it as a cost the integrator weighs when ratifying the copy-holder recall under `DEC-90`. The supersede door's recall (`DIST-1`, since 2026-08-24) has the same gap through a put-back.
+
+The same missing record — which recall stands for the document's current retirement — also decides whether a later retirement door recalls. P26 decides "already recalled" from the prior status (`skipsRetirementRecall`). A Superseded or Archived prior skips the recall, though a status editor's bare write, the library page's bulk archive, a reversal's parking or a retention disposal recalled nothing. A Void prior recalls (fix pass 2's interim), because no live door that writes Void recalls today. Once one does (`PROD-17` residual (1), the metadata editor routed through `changeDocumentStatus`), archiving, splitting or merging that Void sends a second recall.
+
+**Failure scenario.** A DocCtrl archives P-101 by mistake (a reason is required, but that is no guard) and un-archives it a minute later as Issued. Nine copy holders have already received a bell and a preference-exempt email telling them to destroy their prints and stop work. Their dismiss-only `doc_recalled` rows stay, and the compliance digest keeps listing "P-101 is now Archived — your copy is dead paper" for a drawing that is in force. Nothing corrects it. The same happens when a split or merge is reversed.
+
+**Remediation (illustrative).** When a restore lands (an un-archive into any status, a reversal restoring its source, a put-back), read the document's latest `DISTRIBUTION_RECALL` row with `retirement: true` written since its last retirement. Send its `recipients` one notice: "<doc> is back in force as <status>; the recall of <date> is withdrawn". Fire and forget it, as `recallOnRetirement` is. The notice needs a new kind: not compliance, not an action, declared in `notification_kinds()`. The watchers' `doc_retired` FYI is deletable, so whether they are told too is a `DEC-90` choice. Optionally mark the recipients' `doc_recalled` rows read. "Since its last retirement" is bounded by the latest record of a return to force: an un-archive's `ARCHIVE_DOC` (`action: "unarchive"`), `DOC_SPLIT_REVERSED`, `DOC_MERGE_REVERSED`, or a put-back's `DOCUMENT_ISSUED`. A bare write that retires leaves no record, so the recall row is the only evidence a recall went. The same read replaces `skipsRetirementRecall`'s status rule in the retirement doors: recall unless a retirement recall stands since the last return to force. Do this off the door's path, inside the background chain, so the door's timing does not change.
+
+**Done when.**
+
+- [ ] Un-archiving a document, reversing a split or merge (the restored source), and a put-back of a retired issue each send the people the document's standing retirement recall named one notice that the recall is withdrawn. The notice names the status the document is back in and the date of the recall. It is not a compliance kind and it is fired, never awaited. When no recall stands, nothing is sent.
+- [ ] The retirement doors (`archiveDocument`, `changeDocumentStatus`, the split, the merge) decide "already recalled" from the document's recall record since its last return to force, not from the prior status. This retires `skipsRetirementRecall`'s interim Void rule.
+- [ ] Tests: archive then un-archive, and the copy holders get the withdrawal; reverse a split, and the source's holders get it; with no recall on record, no withdrawal goes; archive a Void that a recalled status change set, and no second recall goes. REGRESSION: every restore door returns what it returned.
+
+**Closer:** document-control (the integrator routes it), with notifications for the kind row and the `lib/staleCopies.ts` entry.
 
 ---
