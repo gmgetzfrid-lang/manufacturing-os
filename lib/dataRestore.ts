@@ -2021,6 +2021,52 @@ export const RESTORE_HELD_ELSEWHERE_NOTE =
 
 export const RESTORE_CHUNK_ROWS = 500;
 
+/** intelligence ILIFE-15 (measured and fixed by the integrator at the P14
+ *  merge, under DEC-90's fail-safe rule): the most bytes one chunked-restore
+ *  request may carry — its JSON body as sent, UTF-8. The hosting platform
+ *  caps a function's request body at 4.5 MB (app/api/admin/restore/begin/
+ *  route.ts; read here at its lower reading, 4,500,000 bytes), and a backup
+ *  taken before the vector omission (ILIFE-11) carries the 1,024-number
+ *  vector inline on every knowledge_chunks row: measured at about 17 KB a
+ *  row, a 500-row slice is about 8.5 MB, so the platform refused it before
+ *  the route ran and the restore stopped at knowledge_chunks. A slice is now
+ *  cut early when its body would pass this budget (11% under the cap). A
+ *  slice that fits is exactly the 500-row slice it always was, so every
+ *  restore that fitted sends the same requests. */
+export const RESTORE_CHUNK_BYTES = 4_000_000;
+
+const utf8 = new TextEncoder();
+/** The UTF-8 length of `value` as JSON.stringify writes it (what fetch sends). */
+const jsonBytes = (value: unknown): number => utf8.encode(JSON.stringify(value) ?? "null").byteLength;
+
+/** ILIFE-15: `rows` cut into the slices the chunked restore posts, in order —
+ *  at most `maxRows` rows (RESTORE_CHUNK_ROWS, as always), and no more rows
+ *  than keep the request body (`bodyFor(slice)`, measured exactly: its
+ *  envelope once, each row's JSON, a comma between rows) within `maxBytes`.
+ *  A row that alone passes the budget is sent alone (it cannot be split;
+ *  the server's answer for it is reported as for any slice). Pure. */
+export function restoreSlices<T>(
+  rows: readonly T[], bodyFor: (slice: T[]) => unknown,
+  maxRows = RESTORE_CHUNK_ROWS, maxBytes = RESTORE_CHUNK_BYTES,
+): T[][] {
+  const envelope = jsonBytes(bodyFor([]));
+  const out: T[][] = [];
+  let slice: T[] = [];
+  let size = envelope;
+  for (const row of rows) {
+    const bytes = jsonBytes(row);
+    if (slice.length > 0 && (slice.length >= maxRows || size + 1 + bytes > maxBytes)) {
+      out.push(slice);
+      slice = [];
+      size = envelope;
+    }
+    size += (slice.length > 0 ? 1 : 0) + bytes;
+    slice.push(row);
+  }
+  if (slice.length > 0) out.push(slice);
+  return out;
+}
+
 /** intelligence ILIFE-11 criteria 1 and 3 (admin-and-org Round G, P14; the
  *  DEC-90 ruling): an export leaves the meaning-index vectors out (derived
  *  data), and a restore writes none back. What the page says, after a
@@ -2162,10 +2208,11 @@ export async function previewChunkedRestore(params: {
   for (const [tablesDone, table] of order.entries()) {
     const rows = tableRows(envelope, table);
     const acc = { rows: 0, existing: 0, heldElsewhere: 0, wouldInsert: 0 };
-    for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
+    // ILIFE-15: sliced by bytes too (key columns only, so a slice fits as before)
+    const body = (chunk: Array<Record<string, unknown>>) => ({ table, rows: chunk, idRemap: plan.idRemap, preview: true, manifest });
+    for (const chunk of restoreSlices(rows.map((r) => keyProjection(table, r)), body)) {
       params.onProgress?.({ phase: "checking", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
-      const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS).map((r) => keyProjection(table, r));
-      const res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, { table, rows: chunk, idRemap: plan.idRemap, preview: true, manifest });
+      const res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, body(chunk));
       if (!res.ok) throw new Error(`Could not check ${table} against this workspace: ${String(res.body?.error ?? `HTTP ${res.status}`)}`);
       acc.rows += num(res.body?.rows);
       acc.existing += num(res.body?.existing);
@@ -2217,12 +2264,15 @@ export async function runChunkedRestore(params: {
   for (const [tablesDone, table] of order.entries()) {
     const rows = tableRows(envelope, table);
     const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, heldElsewhere: 0, uncounted: 0, filtered: 0, refused: [], cleared: [], advanced: 0, notApplied: [] };
-    for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
+    // ILIFE-15: at most RESTORE_CHUNK_ROWS rows a request, as always, and cut
+    // earlier when the body would pass RESTORE_CHUNK_BYTES (an old backup's
+    // inline vectors); a slice that fits is the 500-row slice it always was.
+    const body = (chunk: Array<Record<string, unknown>>) => ({ table, rows: chunk, idRemap, manifest });
+    for (const chunk of restoreSlices(rows, body)) {
       params.onProgress?.({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
-      const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS);
       let res: Awaited<ReturnType<RestorePost>>;
       try {
-        res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, { table, rows: chunk, idRemap, manifest });
+        res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, body(chunk));
       } catch (e) {
         // The request never got an answer: whether this chunk landed is
         // unknown — a re-run skips whatever did.

@@ -104,7 +104,10 @@ import {
   retentionRunColumns, isMissingRetentionColumn, closeSucceededRun, RETENTION_COLUMNS_MIGRATION, pushesToBucket,
 } from "@/lib/exportRunner";
 import { planRestore } from "@/lib/dataRestore";
-import { ALERT_LINKS, destinationConfirmation, unconfirmedGraceTonight, GRACE_COUNT_PAGE, pausedAtLastRun, savedSince } from "@/lib/exportAlerts";
+import {
+  ALERT_LINKS, destinationConfirmation, unconfirmedGraceTonight, GRACE_COUNT_PAGE, pausedAtLastRun, savedSince,
+  pauseToKeep, withPauseKept, PAUSE_KEPT_SENTENCE,
+} from "@/lib/exportAlerts";
 import { encryptSecret } from "@/lib/serverCrypto";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { GET as structuredGET } from "@/app/api/data-export/structured/route";
@@ -3341,16 +3344,24 @@ describe("P14 — an unconfirmed legacy destination is paused after 7 consecutiv
     const count = (rows: Row[], pageSize = 5) => { db.rows.export_runs = rows; return unconfirmedGraceTonight({ from: memFrom } as never, "dest-1", 7, pageSize); };
     const N7 = { step: "grace:unconfirmed-night", detail: "night=7/7" };
     const UNSENT = { step: "alert:unsent", detail: "permission denied" };
+    const SENT = { step: "alert:sent", detail: "the bell reached 3 controller(s)" };
+    const UNSURE = { step: "grace:pause-bell-unsure", detail: "whether the bell at its last push was sent is not recorded" };
     const pausedRows = (from: number, k: number, extra: Row[] = []) => Array.from({ length: k }, (_, j) => run(from + j, "cancelled", [{ step: "grace:paused" }, ...extra]));
     // the night that paused it: announced when its bell rang (left or failed); not when refused, nor when its run never closed
     expect(await count([run(0, "succeeded", [N7])])).toEqual({ paused: true, since: at(0), announced: true });
     expect(await count([run(0, "failed", [N7])])).toEqual({ paused: true, since: at(0), announced: true });
     expect(await count([run(0, "succeeded", [N7, UNSENT])])).toEqual({ paused: true, since: at(0), announced: false });
-    expect(await count([run(0, "running", [N7])])).toEqual({ paused: true, since: at(0), announced: false });
+    // P14 integrator fix: a run that never closed is UNSURE (its bell may have rung, then the close was refused) —
+    // unless it holds alert:sent, written the moment the bell was delivered, before the close: then announced
+    expect(await count([run(0, "running", [N7])])).toEqual({ paused: true, since: at(0), announced: false, unsure: true });
+    expect(await count([run(0, "running", [N7, SENT])])).toEqual({ paused: true, since: at(0), announced: true });
+    expect(await count([run(0, "succeeded", [N7, SENT])])).toEqual({ paused: true, since: at(0), announced: true });
     // paused rows that say nothing of it (unverified / unread nights) are read past, page after page; `since` is the newest paused row
     expect(await count([run(0, "succeeded", [N7, UNSENT]), ...pausedRows(1, 12)])).toEqual({ paused: true, since: at(12), announced: false });
     // the newest paused row's re-announcement refused: not announced; one delivered after it: announced, and the read stops there
     expect(await count([run(0, "succeeded", [N7, UNSENT]), ...pausedRows(1, 1, [UNSENT])])).toEqual({ paused: true, since: at(1), announced: false });
+    // …and a refused late announcement of an UNSURE pausing bell keeps it unsure for the next try
+    expect(await count([run(0, "running", [N7]), ...pausedRows(1, 1, [UNSENT, UNSURE])])).toEqual({ paused: true, since: at(1), announced: false, unsure: true });
     expect(await count([run(0, "succeeded", [N7, UNSENT]), ...pausedRows(1, 1, [UNSENT]), ...pausedRows(2, 1, [{ step: "grace:paused-announced" }])])).toEqual({ paused: true, since: at(2), announced: true });
     // a page that fails once the pause is found: the pause stands (announced: no bell on a guess)
     let reads = 0;
@@ -3362,10 +3373,189 @@ describe("P14 — an unconfirmed legacy destination is paused after 7 consecutiv
     expect(pausedAtLastRun({ last_run_error: "Webhook 500: down It was last confirmed by dc@acme.com … This was unconfirmed night 7 of 7, so it is now PAUSED: …" })).toBe(true);
     expect(pausedAtLastRun({ last_run_error: "It was last confirmed by dc@acme.com … This is unconfirmed night 3 of 7: unless an Admin confirms it, it is paused after night 7's push." })).toBe(false);
     expect(pausedAtLastRun({ last_run_error: null })).toBe(false);
+    // P14 integrator fix: a card a gate skip rewrote with the pause kept
+    expect(pausedAtLastRun({ last_run_error: withPauseKept("skipped: the configurer's membership could not be verified (x); retried next cycle") })).toBe(true);
+    expect(pauseToKeep({ last_run_error: "skipped: Paused: …", updated_at: "2026-10-09T04:00:00.000Z", last_run_at: "2026-10-09T05:00:00.000Z" })).toBe(true);
+    expect(pauseToKeep({ last_run_error: "skipped: Paused: …", updated_at: "2026-10-09T14:00:00.000Z", last_run_at: "2026-10-09T05:00:00.000Z" })).toBe(false); // an Admin saved it since
+    expect(pauseToKeep({ last_run_error: "skipped: the subscription …", updated_at: null, last_run_at: "2026-10-09T05:00:00.000Z" })).toBe(false);
+    const long = withPauseKept(`skipped: ${"x".repeat(900)}`);
+    expect(long.length).toBeLessThanOrEqual(500);
+    expect(long.endsWith(PAUSE_KEPT_SENTENCE)).toBe(true);
     expect(savedSince("2026-10-09T14:00:00.000Z", "2026-10-09T05:00:00.000Z")).toBe(true);
     expect(savedSince("2026-10-09T05:00:00.000Z", "2026-10-09T05:00:00.000Z")).toBe(false);
     expect(savedSince(null, "2026-10-09T05:00:00.000Z")).toBe(false);
     expect(savedSince("2026-10-09T14:00:00.000Z", null)).toBe(false);
+  });
+
+  // ── P14 integrator fix (DEC-90: a paused destination STAYS paused until an Admin saves it) ──
+  it("integrator fix (1): paused → a gate-skip night → an unreadable count → still paused, nothing pushed (was: the skip's card dropped the pause and the unread night pushed the whole workspace)", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night(); // nights 1-7 pushed; 8 paused
+    expect(state.delivered).toHaveLength(7);
+    db.readError = { org_members: "connection reset" }; // the gate cannot verify the configurer: skipped
+    const skip = await night();
+    db.readError = {};
+    expect(skip.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: the configurer's membership could not be verified \(connection reset\); retried next cycle Its last scheduled run left it paused and no Admin has saved it since, so it is still PAUSED: /) });
+    const card = String(rowsOf("export_destinations")[0].last_run_error);
+    expect(card.length).toBeLessThanOrEqual(500);
+    expect(card).toMatch(/^skipped: the configurer's membership could not be verified/);
+    expect(card.endsWith(PAUSE_KEPT_SENTENCE)).toBe(true);
+    expect(pausedAtLastRun({ last_run_error: card })).toBe(true);
+    expect(steps(lastRun())).toEqual(["gate:skipped"]); // the skip's run row is still neutral in the count
+    db.readError = { export_runs: "statement timeout" };
+    const unread = await night();
+    db.readError = {};
+    expect(unread.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused: .*could not be read tonight \(statement timeout\); its last scheduled run left it paused, so it stays paused/) });
+    expect(state.delivered).toHaveLength(7); // nothing pushed
+    expect(bells()).toEqual([]);
+    expect(lastRun()).toMatchObject({ status: "cancelled", diagnostics: [PAUSED_ROW] });
+    // and the next readable night is paused as before
+    expect((await night()).results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (1): regression — a gate skip of a destination that is not paused, or that an Admin saved since its pause, writes the card exactly as before", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 3; n++) await night(); // mid-grace
+    db.readError = { org_members: "connection reset" };
+    const mid = await night();
+    db.readError = {};
+    expect(mid.results[0]).toEqual({ destinationId: "dest-1", ok: false, error: "skipped: the configurer's membership could not be verified (connection reset); retried next cycle" });
+    expect(rowsOf("export_destinations")[0].last_run_error).toBe("skipped: the configurer's membership could not be verified (connection reset); retried next cycle");
+    for (let n = 4; n <= 8; n++) await night(); // nights 4-7 pushed; paused
+    vi.setSystemTime(Date.now() + 9 * 3_600_000); // the afternoon: an Admin saves it
+    state.userId = "u-admin2";
+    expect((await destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body: editFormBody(db.rows.export_destinations[0]) }), params("dest-1"))).status).toBe(200);
+    db.readError = { org_members: "connection reset" };
+    const saved = await night();
+    db.readError = {};
+    expect(saved.results[0]).toMatchObject({ ok: false, error: "skipped: the configurer's membership could not be verified (connection reset); retried next cycle" });
+    expect(rowsOf("export_destinations")[0].last_run_error).toBe("skipped: the configurer's membership could not be verified (connection reset); retried next cycle");
+    // confirmed by the Admin's save: the next night pushes as any other destination
+    expect((await night()).results[0]).toMatchObject({ ok: true });
+    expect(state.delivered).toHaveLength(8);
+  });
+
+  it("integrator fix (1): a refused run-row open keeps the pause on the card the grace was read for; the next unreadable night stays paused", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night(); // paused on night 8
+    // the run history is gone (purged), so the count reads night 1 — but the card in hand says paused
+    db.rows.export_runs = [];
+    db.writeError = (table, op) => (table === "export_runs" && op === "insert" ? { code: "42501", message: "permission denied" } : null);
+    const refused = await night();
+    db.writeError = null;
+    expect(refused.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^not run: the run record could not be opened \(permission denied\); retried next cycle Its last scheduled run left it paused and no Admin has saved it since, so it is still PAUSED: /) });
+    const card = String(rowsOf("export_destinations")[0].last_run_error);
+    expect(card.endsWith(PAUSE_KEPT_SENTENCE)).toBe(true);
+    expect(state.delivered).toHaveLength(7);
+    db.readError = { export_runs: "statement timeout" };
+    const unread = await night();
+    db.readError = {};
+    expect(unread.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused: .*could not be read tonight \(statement timeout\)/) });
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (1): regression — a refused run-row open of a CONFIRMED destination writes the card exactly as before", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-admin", updated_by: "u-admin", last_run_error: "skipped: Paused: no Admin has confirmed this destination …" })];
+    db.writeError = (table, op) => (table === "export_runs" && op === "insert" ? { code: "42501", message: "permission denied" } : null);
+    const body = await night();
+    db.writeError = null;
+    expect(body.results[0]).toEqual({ destinationId: "dest-1", ok: false, error: "not run: the run record could not be opened (permission denied); retried next cycle" });
+    expect(rowsOf("export_destinations")[0].last_run_error).toBe("not run: the run record could not be opened (permission denied); retried next cycle");
+  });
+
+  it("integrator fix (2): night 7's bell is delivered and its closing write refused — alert:sent is on the row left running, so night 8 rings NO second pause bell", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 6; n++) await night();
+    db.writeError = (table, op, rows) => (table === "export_runs" && op === "update" && rows[0]?.status === "succeeded" ? { code: "57014", message: "statement timeout" } : null);
+    const seventh = await night();
+    db.writeError = null;
+    expect(seventh.results[0]).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.stringMatching(/^run row not updated: statement timeout/)]) });
+    expect(adminBells()).toHaveLength(2); // the pausing bell rang
+    expect(lastRun()).toMatchObject({ status: "running" });
+    expect(steps(lastRun())).toEqual(["grace:unconfirmed-night", "alert:sent"]);
+    expect(lastRun()?.diagnostics).toEqual([expect.objectContaining({ detail: "night=7/7" }), expect.objectContaining({ step: "alert:sent", detail: "the bell reached 3 controller(s)" })]);
+    const eighth = await night();
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(eighth.results[0]).not.toHaveProperty("warnings");
+    expect(bells()).toEqual([]); // was: a second pause bell saying the first could not be sent
+    expect(lastRun()).toMatchObject({ diagnostics: [PAUSED_ROW, expect.objectContaining({ step: "grace:paused-announced", detail: "the pause was announced at an earlier run" })] });
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (2): …a failed night 7 (its bell rung, its close refused) is read the same way", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 6; n++) await night();
+    state.deliver = async () => { throw new Error("Destination credentials are missing"); };
+    db.writeError = (table, op, rows) => (table === "export_runs" && op === "update" && rows[0]?.status === "failed" ? { code: "57014", message: "statement timeout" } : null);
+    await night();
+    db.writeError = null;
+    state.deliver = null;
+    expect(adminBells()).toHaveLength(2);
+    expect(steps(lastRun())).toEqual(["grace:unconfirmed-night", "alert:sent"]);
+    await night();
+    expect(bells()).toEqual([]);
+  });
+
+  const pausingNightUnrecorded = async () => {
+    for (let n = 1; n <= 6; n++) await night();
+    db.writeError = (table, op) => (table === "export_runs" && op === "update" ? { code: "57014", message: "statement timeout" } : null);
+    const seventh = await night(); // its bell rings; the marker AND the close are refused
+    db.writeError = null;
+    return seventh;
+  };
+  const saysMayNotHaveBeenSent = () => {
+    const b = adminBells();
+    expect(b).toHaveLength(2);
+    for (const x of b) {
+      expect(x.title).toBe("Scheduled export paused until an Admin confirms it");
+      expect(String(x.body)).toMatch(/^A scheduled export to "Nightly hook" \(webhook\) was skipped tonight, so nothing left the workspace\. .* It was paused after 7 unconfirmed nightly pushes: .* The bell that should have said so at its last push may not have been sent\.$/);
+      expect(String(x.body)).not.toMatch(/could not be sent/);
+      expect(x.metadata).toMatchObject({ paused: { of: 7, announcedLate: true, earlierBellUnsure: true } });
+    }
+    expect(lastRun()).toMatchObject({ diagnostics: [PAUSED_ROW, expect.objectContaining({ step: "grace:paused-announced", detail: "announced tonight to 3 controller(s): the bell at its last push may not have been sent" })] });
+  };
+
+  it("integrator fix (2): the marker write is refused too — night 7 says so on the sweep result; night 8 rings once, saying the earlier bell MAY not have been sent (never that it failed); night 9 does not", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    const seventh = await pausingNightUnrecorded();
+    expect(adminBells()).toHaveLength(2); // it did ring
+    expect(seventh.results[0]).toMatchObject({
+      ok: true,
+      warnings: expect.arrayContaining([expect.stringMatching(/^the pausing alert was sent, but recording that on the run row failed \(statement timeout\); if the run's closing write is refused too, the next paused night says that alert may not have been sent$/)]),
+    });
+    expect(lastRun()).toMatchObject({ status: "running" });
+    expect(steps(lastRun())).toEqual(["grace:unconfirmed-night"]);
+    const eighth = await night();
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    saysMayNotHaveBeenSent();
+    await night(); // night 9: not again
+    expect(bells()).toEqual([]);
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (2): …and when night 8's late bell is refused, the paused row keeps it unsure, so night 9's try still says it MAY not have been sent", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    await pausingNightUnrecorded();
+    db.writeError = (table) => (table === "notifications" ? { code: "42501", message: "permission denied" } : null);
+    const eighth = await night();
+    db.writeError = null;
+    expect(eighth.results[0]).toMatchObject({ warnings: [expect.stringMatching(/^the pausing alert was not sent: /)] });
+    expect(steps(lastRun())).toEqual(["grace:paused", "alert:unsent", "grace:pause-bell-unsure"]);
+    expect((await night()).results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    saysMayNotHaveBeenSent();
+    await night(); // night 10: not again
+    expect(bells()).toEqual([]);
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (2): regression — nights 1-6 write no marker (only the pausing night's bell is read back), and a closed night 7 keeps alert:sent on its closing row", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 7; n++) await night();
+    const runs = rowsOf("export_runs");
+    expect(runs.slice(0, 6).every((r) => !steps(r).includes("alert:sent"))).toBe(true);
+    expect(runs[6]).toMatchObject({ status: "succeeded" });
+    expect(steps(runs[6])).toEqual(expect.arrayContaining(["grace:unconfirmed-night", "alert:sent"]));
   });
 
   describe("fix pass (major): through the real builder — a failed night's bell says whether the archive was sent", () => {

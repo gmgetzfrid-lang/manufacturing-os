@@ -15,6 +15,13 @@
 //                  libraries whose restored passages had a vector in the
 //                  backup and hold none here (meaningIndex), and the run sums
 //                  them for the page's "meaning index needs a rebuild" prompt.
+//   intelligence ILIFE-15  (measured and fixed by the integrator at the P14
+//                  merge) a backup taken before the vector omission carries
+//                  the vector inline on every chunk: a 500-row slice was
+//                  measured at about 8.5 MB, over the platform's 4.5 MB
+//                  request cap; the chunked restore now cuts a slice early
+//                  at RESTORE_CHUNK_BYTES, and a slice that fits is exactly
+//                  the 500-row slice it always was.
 //
 // The routes run for real against the in-memory engine (./helpers/
 // restoreMemoryDb): a declared second unique key raises 23505, as Postgres's
@@ -42,6 +49,7 @@ import {
   RESTORE_BUSINESS_KEYS, EXPLICIT_LINK_NOT_APPLIED, DECISION_NOT_APPLIED, planRestore, runChunkedRestore, previewChunkedRestore,
   businessKeyReadBatches,
   meaningIndexRebuildList, MEANING_INDEX_REBUILD_NOTE,
+  RESTORE_CHUNK_ROWS, RESTORE_CHUNK_BYTES, restoreSlices,
   type RestorePost, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
 import { censusSchema } from "./helpers/schemaKeys";
@@ -382,4 +390,142 @@ describe("ILIFE-11 criteria 1/3 — the restore names each restored library whos
     const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
     expect(result).toMatchObject({ totalInserted: 1, totalNotApplied: 0, meaningIndexRebuild: {}, meaningIndexUnchecked: [] });
   });
+});
+
+// ── ILIFE-15: a pre-omission backup's inline vectors, measured ──────────────
+describe("ILIFE-15 — a backup taken before the vector omission restores within the request budget (measured)", () => {
+  /** The hosting platform's request-body cap, at its lower reading (4.5 MB). */
+  const PLATFORM_BODY_CAP = 4_500_000;
+  const utf8 = new TextEncoder();
+  const bytesOf = (body: unknown) => utf8.encode(JSON.stringify(body)).byteLength;
+  // deterministic synthetic data, realistic sizes: ~1,400-1,560-character passages (lib/knowledgeText.ts
+  // chunkPageText's target and overlap), their tsvector, and the vector as PostgREST writes it
+  let seed = 7; // mulberry32
+  const rnd = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let serial = 0;
+  const gauss = () => { let x = 0; for (let i = 0; i < 6; i++) x += rnd(); return (x - 3) / Math.sqrt(0.5); };
+  const hex = (n: number) => Array.from({ length: n }, () => Math.floor(rnd() * 16).toString(16)).join("");
+  const uuid = () => `${(serial++).toString(16).padStart(8, "0")}-${hex(4)}-4${hex(3)}-8${hex(3)}-${hex(12)}`;
+  const WORDS = "pump suction drum valve pressure relief flange gasket bolt torque inspection weld procedure hydrotest nozzle vessel shell tray column reboiler condenser exchanger tube bundle baffle impeller casing seal bearing vibration alarm interlock setpoint transmitter isolation blind drain vent manifold header isometric support hanger insulation coating corrosion allowance thickness carbon stainless alloy schedule rating".split(" ");
+  const passage = () => { let t = ""; while (t.length < 1560) t += `${WORDS[Math.floor(rnd() * WORDS.length)]}${rnd() < 0.1 ? ". " : " "}`; return t.slice(0, 1400 + Math.floor(rnd() * 160)); };
+  const tsv = (t: string) => {
+    const at = new Map<string, number[]>();
+    t.toLowerCase().split(/[^a-z]+/).filter(Boolean).forEach((w, i) => at.set(w, [...(at.get(w) ?? []), i + 1]));
+    return [...at].map(([w, p]) => `'${w}':${p.join(",")}`).join(" ");
+  };
+  // pgvector's text form: float4 values, at most 9 significant digits each
+  const vectorText = (dims: number) => `[${Array.from({ length: dims }, () => String(Number(Math.fround(gauss() / Math.sqrt(dims)).toPrecision(9)))).join(",")}]`;
+  const vectorJson = (dims: number) => Array.from({ length: dims }, () => gauss() / Math.sqrt(dims));
+  const BACKUP_ORG = "backup-org";
+  const backupChunks = (n: number, vector: (() => unknown) | null, lib = "lib-old", doc = "kd-old"): Row[] => Array.from({ length: n }, (_, i) => {
+    const content = passage();
+    return {
+      id: uuid(), org_id: BACKUP_ORG, library_id: lib, document_id: doc, page: 1 + (i % 40), seq: i % 7, section: "4.2 Suction drum",
+      content, tsv: tsv(content), embedding: vector ? vector() : null, embedding_model: vector ? "provider-model-x" : null,
+      embed_attempts: 1, embed_error: null, embed_claimed_until: null, embed_retry_after: null, source: "text", source_model: null,
+    };
+  });
+  // a workspace's member map, as /begin answers it (60 people)
+  const idRemap = { orgId: { [BACKUP_ORG]: ORG }, uid: Object.fromEntries(Array.from({ length: 60 }, () => [uuid(), uuid()])) };
+  const envelopeOf = (tables: Record<string, Row[]>): RestoreEnvelopeLike => ({ manifest: { orgId: BACKUP_ORG, orgName: "Acme Refining" }, tables });
+  const recording = () => {
+    const sent: Array<{ preview: boolean; table: string; rows: Row[]; bytes: number }> = [];
+    const post: RestorePost = async (path, body) => {
+      if (path.startsWith("/api/admin/restore/begin")) return { ok: true, status: 200, body: { idRemap } };
+      const b = body as { table: string; rows: Row[]; preview?: boolean };
+      sent.push({ preview: b.preview === true, table: b.table, rows: b.rows, bytes: bytesOf(body) });
+      return { ok: true, status: 200, body: b.preview ? { rows: b.rows.length, wouldInsert: b.rows.length } : { ok: true, inserted: b.rows.length } };
+    };
+    return { sent, post };
+  };
+  /** What the 500-rows-per-request path (before ILIFE-15) sent: the heaviest slice. */
+  const oldHeaviestSlice = (table: string, rows: Row[]) => {
+    let max = 0;
+    for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) max = Math.max(max, bytesOf({ table, rows: rows.slice(i, i + RESTORE_CHUNK_ROWS), idRemap, manifest: { orgId: BACKUP_ORG, orgName: "Acme Refining" } }));
+    return max;
+  };
+
+  it("measured: 3,000 chunks carrying the 1,024-number vector (the schema's vector(1024), as PostgREST writes it) — a 500-row slice was about 8.5 MB, nearly twice the 4.5 MB cap; now every request is within RESTORE_CHUNK_BYTES and every row is sent once, in order", async () => {
+    const rows = backupChunks(3000, () => vectorText(1024));
+    const perRow = rows.reduce((n, r) => n + bytesOf(r), 0) / rows.length;
+    expect(perRow).toBeGreaterThan(16_000); // ≈17 KB a row, the vector ≈13 KB of it
+    expect(perRow).toBeLessThan(18_500);
+    const before = oldHeaviestSlice("knowledge_chunks", rows);
+    expect(before).toBeGreaterThan(8_000_000); // ≈8.5 MB
+    expect(before).toBeLessThan(9_000_000);
+    expect(before).toBeGreaterThan(PLATFORM_BODY_CAP); // the platform refused it before the route ran: the restore stopped here
+    const { sent, post } = recording();
+    const env = envelopeOf({ knowledge_chunks: rows });
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post });
+    const applied = sent.filter((x) => !x.preview);
+    expect(Math.max(...applied.map((x) => x.bytes))).toBeLessThanOrEqual(RESTORE_CHUNK_BYTES);
+    expect(RESTORE_CHUNK_BYTES).toBeLessThan(PLATFORM_BODY_CAP);
+    expect(applied.length).toBeGreaterThanOrEqual(13); // ≈234 rows a request
+    expect(applied.flatMap((x) => x.rows.map((r) => r.id))).toEqual(rows.map((r) => r.id));
+    expect(applied.every((x) => x.rows.every((r) => typeof r.embedding === "string"))).toBe(true); // the vector still goes back, as before
+    expect(result).toMatchObject({ totalInserted: 3000, stoppedAt: null, notAttempted: [] });
+  }, 60_000);
+
+  it("measured: 1,536-number vectors, as text and as JSON float arrays (about 12.1 and 17.9 MB a 500-row slice) — every request fits", async () => {
+    for (const vector of [() => vectorText(1536), () => vectorJson(1536)]) {
+      const rows = backupChunks(1000, vector);
+      expect(oldHeaviestSlice("knowledge_chunks", rows)).toBeGreaterThan(11_000_000);
+      const { sent, post } = recording();
+      const env = envelopeOf({ knowledge_chunks: rows });
+      const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post });
+      expect(Math.max(...sent.map((x) => x.bytes))).toBeLessThanOrEqual(RESTORE_CHUNK_BYTES);
+      expect(result).toMatchObject({ totalInserted: 1000, stoppedAt: null });
+    }
+  }, 60_000);
+
+  it("regression: a backup taken since the omission (no vector, ≈3 KB a chunk, ≈1.5 MB a 500-row slice) sends exactly the 500-row slices it always did — the check and the apply", async () => {
+    const rows = backupChunks(1200, null);
+    expect(oldHeaviestSlice("knowledge_chunks", rows)).toBeLessThan(2_000_000);
+    const notes = Array.from({ length: 501 }, (_, i) => ({ id: `n-${i}`, org_id: BACKUP_ORG, body: "a note" }));
+    const { sent, post } = recording();
+    const env = envelopeOf({ knowledge_chunks: rows, notes });
+    const plan = planFor(env);
+    await previewChunkedRestore({ orgId: ORG, envelope: env, plan, post });
+    await runChunkedRestore({ orgId: ORG, envelope: env, plan, orgNameChoice: "current", post });
+    const sizes = (preview: boolean, table: string) => sent.filter((x) => x.preview === preview && x.table === table).map((x) => x.rows.length);
+    for (const preview of [true, false]) {
+      expect(sizes(preview, "knowledge_chunks")).toEqual([500, 500, 200]);
+      expect(sizes(preview, "notes")).toEqual([500, 1]);
+    }
+    // the slices are the very slices rows.slice(i, i + 500) gave
+    expect(sent.filter((x) => !x.preview && x.table === "knowledge_chunks").map((x) => x.rows)).toEqual([rows.slice(0, 500), rows.slice(500, 1000), rows.slice(1000)]);
+  }, 60_000);
+
+  it("restoreSlices: cut at the row cap or before the byte budget, measured exactly; a row past the budget alone is sent alone", () => {
+    const body = (slice: Row[]) => ({ table: "t", rows: slice });
+    const rows = [{ v: "a".repeat(40) }, { v: "é".repeat(20) }, { v: "b".repeat(200) }, { v: "c".repeat(10) }, { v: "d".repeat(10) }];
+    const slices = restoreSlices(rows, body, 3, 120);
+    expect(slices).toEqual([[rows[0], rows[1]], [rows[2]], [rows[3], rows[4]]]);
+    for (const s of slices.filter((x) => x !== slices[1])) expect(bytesOf(body(s))).toBeLessThanOrEqual(120); // "é" counted as 2 bytes
+    expect(bytesOf(body([rows[0], rows[1]]))).toBe(bytesOf(body([])) + bytesOf(rows[0]) + 1 + bytesOf(rows[1]));
+    expect(restoreSlices(rows, body, 2, 10_000).map((s) => s.length)).toEqual([2, 2, 1]);
+    expect(restoreSlices([], body)).toEqual([]);
+  });
+
+  it("through the real route: an old backup's 700 chunks land in byte-sized slices with their vectors, every count summed, every slice audited", async () => {
+    db.rows.knowledge_libraries = [{ id: "lib-old", org_id: ORG, name: "Standards" }];
+    db.rows.knowledge_documents = [{ id: "kd-old", org_id: ORG }];
+    const rows = backupChunks(700, () => vectorText(1024));
+    const env = envelopeOf({ knowledge_chunks: rows });
+    const bodies: number[] = [];
+    const measured: RestorePost = async (path, body) => { if (path.startsWith("/api/admin/restore/apply-table")) bodies.push(bytesOf(body)); return routePost(path, body); };
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: measured });
+    expect(result).toMatchObject({ totalInserted: 700, totalRefused: 0, stoppedAt: null });
+    expect(bodies.length).toBe(audits("RESTORE_CHUNK").length);
+    expect(bodies.length).toBeGreaterThanOrEqual(3);
+    expect(Math.max(...bodies)).toBeLessThanOrEqual(RESTORE_CHUNK_BYTES);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(700);
+    expect(rowsOf("knowledge_chunks").every((c) => c.org_id === ORG && typeof c.embedding === "string")).toBe(true);
+    expect(result.meaningIndexRebuild).toEqual({}); // they carried their vectors back: nothing to rebuild
+  }, 60_000);
 });

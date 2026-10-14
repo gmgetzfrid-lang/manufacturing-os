@@ -123,10 +123,13 @@ export async function alertAdminsOfExport(
      *  bytes went), and then it says the destination may hold the archive.
      *  `pausedNotice` (P14 fix pass): a PAUSED night announcing the pause,
      *  because the bell of the night that paused it could not be sent —
-     *  nothing left tonight. */
+     *  nothing left tonight; `unsure` (P14 integrator fix) when the record
+     *  cannot say whether that bell was sent (its run never closed and holds
+     *  no `alert:sent`), and then the bell says it MAY not have been sent,
+     *  never that it failed. */
     scheduled?: {
       destinationName: string; configuredBy: string | null; unconfirmed?: { by: string; holds: string }; grace?: UnconfirmedGrace;
-      failed?: string; failedAfterSend?: boolean; pausedNotice?: { of: number };
+      failed?: string; failedAfterSend?: boolean; pausedNotice?: { of: number; unsure?: boolean };
     };
   },
 ): Promise<ExportAlertResult> {
@@ -137,7 +140,7 @@ export async function alertAdminsOfExport(
   const grace = unconfirmed ? info.scheduled?.grace : undefined;
   // P14 fix pass: a paused night that announces the pause (the pausing night's bell was refused).
   const pausedNotice = unconfirmed ? info.scheduled?.pausedNotice : undefined;
-  const graceText = pausedNotice ? ` ${pauseAnnouncedLateSentence(pausedNotice.of)}` : grace ? ` ${graceSentence(grace)}` : "";
+  const graceText = pausedNotice ? ` ${pauseAnnouncedLateSentence(pausedNotice.of, pausedNotice.unsure === true)}` : grace ? ` ${graceSentence(grace)}` : "";
   // P14: a failed night of the grace is a bell too (only an unconfirmed
   // destination's grace night passes it). It says nothing left only when the
   // push failed before the archive was sent (P14 fix pass: a webhook that
@@ -178,7 +181,7 @@ export async function alertAdminsOfExport(
       ...(unconfirmed ? { unconfirmed: { by: unconfirmed.by, holds: unconfirmed.holds } } : {}),
       ...(grace ? { grace: { night: grace.night, of: grace.of, pausing: grace.pausing } } : {}),
       ...(failed !== undefined ? { failed: true, ...(failedAfterSend ? { failedAfterSend: true } : {}) } : {}),
-      ...(pausedNotice ? { paused: { of: pausedNotice.of, announcedLate: true } } : {}),
+      ...(pausedNotice ? { paused: { of: pausedNotice.of, announcedLate: true, ...(pausedNotice.unsure ? { earlierBellUnsure: true } : {}) } } : {}),
     },
   });
 }
@@ -200,7 +203,15 @@ export async function alertAdminsOfExport(
 // disables it. P14 fix pass: if the pausing night's bell was refused
 // (alert:unsent), the next paused night rings it (checked) and records
 // GRACE_PAUSE_ANNOUNCED_STEP, so the pause is announced once; every paused
-// night after carries that step forward. The count reads only rows this rule wrote, so
+// night after carries that step forward. P14 integrator fix (DEC-90): the
+// night that pauses it records ALERT_SENT_STEP on its run row the moment its
+// bell is delivered, before the close (a checked write), so a pausing night
+// whose closing write is refused (its row left "running") is still read as
+// announced and no second pause bell rings; a row that never closed and holds
+// no such marker is read as UNSURE (the bell may have rung, then the marker
+// and the close were both refused, or the push was killed first), and the
+// late bell then says the earlier one may not have been sent, never that it
+// failed. The count reads only rows this rule wrote, so
 // the night the change deploys is night 1 for every such destination, never
 // the night a backup stops. A run the gate skipped for another reason
 // (cancelled, no grace step) neither counts nor breaks the count; any other
@@ -238,6 +249,13 @@ export const GRACE_COUNT_PAGE = 100;
 export const GRACE_PAUSE_ANNOUNCED_STEP = "grace:paused-announced";
 /** The run row's step for a bell that could not be sent (as the sweep writes it). */
 export const ALERT_UNSENT_STEP = "alert:unsent";
+/** P14 integrator fix (DEC-90): the pausing night's run row step written the
+ *  moment its bell is delivered, before the run closes (a checked write). */
+export const ALERT_SENT_STEP = "alert:sent";
+/** P14 integrator fix: on a paused row whose late announcement was refused
+ *  (ALERT_UNSENT_STEP), that the pausing night's own bell was UNSURE — so the
+ *  next try still says it may not have been sent, never that it failed. */
+export const PAUSE_BELL_UNSURE_STEP = "grace:pause-bell-unsure";
 /** The paused row's announcement detail when the pause was announced before tonight. */
 export const PAUSE_ANNOUNCED_EARLIER = "the pause was announced at an earlier run";
 
@@ -253,16 +271,24 @@ export interface UnconfirmedGrace {
  *  started_at of the row that decided the pause (the newest paused night, or
  *  the night that paused it); `announced` is false only when the pause's
  *  last bell is recorded as not sent (alert:unsent), or the pausing night
- *  never closed (its push killed before its bell rang). */
+ *  never closed and holds no ALERT_SENT_STEP (P14 integrator fix). `unsure`
+ *  (only with `announced: false`): the record cannot say whether that bell
+ *  was sent — the pausing night never closed and holds no marker (or a late
+ *  announcement of such a night was itself refused). */
 export interface GracePaused {
   paused: true;
   since: string | null;
   announced: boolean;
+  unsure?: true;
 }
 
 /** The words graceSentence uses for the night that pauses it — also how a
  *  card in hand says its last run paused it (pausedAtLastRun). */
 const PAUSING_MARK = "so it is now PAUSED";
+/** P14 integrator fix: the words a card keeps when a gate skip or a refused
+ *  run-row open rewrites a paused card (PAUSE_KEPT_SENTENCE) — read by
+ *  pausedAtLastRun as the PAUSING_MARK is. */
+const PAUSE_KEPT_MARK = "so it is still PAUSED";
 /** The first word of every paused night's note (PAUSED_LEAD). */
 const PAUSED_WORD = "Paused:";
 
@@ -307,9 +333,16 @@ export function pausedUnverifiedNote(reason: string, of = UNCONFIRMED_GRACE_NIGH
 }
 
 /** P14 fix pass: what a paused night's bell says when it announces the
- *  pause the pausing night's bell could not. */
-export function pauseAnnouncedLateSentence(of = UNCONFIRMED_GRACE_NIGHTS): string {
-  return `It was paused after ${of} unconfirmed nightly pushes: no scheduled push leaves until an Admin opens it and saves it to confirm it (or disables it). The bell that should have said so at its last push could not be sent.`;
+ *  pause the pausing night's bell could not. P14 integrator fix: `unsure`
+ *  when the record cannot say whether that bell was sent — it then says it
+ *  MAY not have been sent, never that it failed. */
+export function pauseAnnouncedLateSentence(of = UNCONFIRMED_GRACE_NIGHTS, unsure = false): string {
+  return `It was paused after ${of} unconfirmed nightly pushes: no scheduled push leaves until an Admin opens it and saves it to confirm it (or disables it). The bell that should have said so at its last push ${earlierBellFate(unsure)}.`;
+}
+
+/** P14 integrator fix: how the late announcement names the pausing night's bell. */
+export function earlierBellFate(unsure: boolean): string {
+  return unsure ? "may not have been sent" : "could not be sent";
 }
 
 /** P14 fix pass: what a paused night's note adds when the count could not be
@@ -327,10 +360,33 @@ export const SAVED_SINCE_PAUSE_NOTE =
  *  scheduled run left it paused — a paused night's card (`skipped: Paused:`)
  *  or the card of the night that paused it. The sweep's fallback when the
  *  run-row count cannot be read, so an unreadable count never pushes from a
- *  paused destination. */
+ *  paused destination. P14 integrator fix: also a card a gate skip or a
+ *  refused run-row open rewrote with the pause kept (PAUSE_KEPT_SENTENCE). */
 export function pausedAtLastRun(dest: { last_run_error?: unknown }): boolean {
   const e = dest.last_run_error;
-  return typeof e === "string" && (e.startsWith(`skipped: ${PAUSED_WORD}`) || e.includes(PAUSING_MARK));
+  return typeof e === "string" && (e.startsWith(`skipped: ${PAUSED_WORD}`) || e.includes(PAUSING_MARK) || e.includes(PAUSE_KEPT_MARK));
+}
+
+/** P14 integrator fix (DEC-90 — a paused destination stays paused until an
+ *  Admin saves it): the sentence a card keeps when a night that does not run
+ *  the push (a gate skip, a refused run-row open) rewrites a card that said
+ *  the destination was paused, so the fallback above still holds on the next
+ *  night whose count cannot be read. */
+export const PAUSE_KEPT_SENTENCE =
+  `Its last scheduled run left it paused and no Admin has saved it since, ${PAUSE_KEPT_MARK}: no scheduled push leaves until an Admin opens it under Admin → Data export and saves it to confirm it (or disables it).`;
+
+/** P14 integrator fix: does the card in hand carry a pause that tonight's
+ *  rewrite must keep? It said paused (pausedAtLastRun), and no Admin has
+ *  saved the destination since that card's run (savedSince — only an Admin's
+ *  save stamps updated_at; a save ends the pause). */
+export function pauseToKeep(dest: { last_run_error?: unknown; updated_at?: unknown; last_run_at?: unknown }): boolean {
+  return pausedAtLastRun(dest) && !savedSince(dest.updated_at, dest.last_run_at);
+}
+
+/** P14 integrator fix: `text` with the pause kept — cut so the kept sentence
+ *  survives the card's `max` characters, as the unconfirmed note is. */
+export function withPauseKept(text: string, max = 500): string {
+  return `${text.slice(0, Math.max(0, max - PAUSE_KEPT_SENTENCE.length - 1))} ${PAUSE_KEPT_SENTENCE}`.slice(0, max);
 }
 
 /** P14 fix pass: was the destination saved after `since`? Only an Admin can
@@ -367,9 +423,11 @@ function afterRunCursor(c: { at: string; id: string }): string {
  *  unverified or unread night's) are read past to the row that does: a
  *  paused row's GRACE_PAUSE_ANNOUNCED_STEP (announced) or ALERT_UNSENT_STEP
  *  (its re-announcement was refused), else the night that paused it (its
- *  bell refused — alert:unsent — or never rung: the row never closed). A
- *  read that fails once the pause is found still answers the pause, as
- *  announced (no bell on a guess). */
+ *  bell refused — alert:unsent — or, P14 integrator fix, a row that never
+ *  closed and holds no ALERT_SENT_STEP: `unsure`, the bell may or may not
+ *  have rung; one that holds it is announced, closed or not). A read that
+ *  fails once the pause is found still answers the pause, as announced (no
+ *  bell on a guess). */
 export async function unconfirmedGraceTonight(
   sb: Pick<SupabaseClient, "from">,
   destinationId: string,
@@ -379,7 +437,9 @@ export async function unconfirmedGraceTonight(
   let previous = 0;
   let cursor: { at: string; id: string } | null = null;
   let pause: { since: string | null } | null = null;
-  const paused = (announced: boolean): GracePaused => ({ paused: true, since: pause?.since ?? null, announced });
+  const paused = (announced: boolean, unsure = false): GracePaused => ({
+    paused: true, since: pause?.since ?? null, announced, ...(!announced && unsure ? { unsure: true as const } : {}),
+  });
   const startedAt = (run: { started_at?: unknown }) => (typeof run.started_at === "string" ? run.started_at : null);
   scan: for (;;) {
     let q = sb
@@ -405,20 +465,26 @@ export async function unconfirmedGraceTonight(
       if (has(GRACE_PAUSED_STEP)) {
         pause ??= { since: startedAt(run) };
         if (has(GRACE_PAUSE_ANNOUNCED_STEP)) return paused(true);
-        if (has(ALERT_UNSENT_STEP)) return paused(false);
+        if (has(ALERT_UNSENT_STEP)) return paused(false, has(PAUSE_BELL_UNSURE_STEP));
         continue; // a paused night that says nothing of the announcement: read on to one that does
       }
       const night = steps.find((d) => d?.step === GRACE_NIGHT_STEP);
       if (night) {
         const m = /^night=(\d+)\/\d+$/.exec(String(night.detail ?? ""));
         if (!m) continue; // an unread count: it neither counts nor breaks the run of nights
-        // the night that paused it: announced unless its bell was refused, or the run never closed (its bell never rang)
-        const announced = (run.status === "succeeded" || run.status === "failed") && !has(ALERT_UNSENT_STEP);
-        if (pause) return paused(announced);
+        // the night that paused it: announced when its bell is recorded as
+        // delivered (alert:sent, written before the close — P14 integrator
+        // fix) or the run closed without alert:unsent; a run that never closed
+        // with no marker is unsure (the bell may have rung, then the marker
+        // and the close were refused — or the push was killed before it)
+        const closed = run.status === "succeeded" || run.status === "failed";
+        const announced = has(ALERT_SENT_STEP) || (closed && !has(ALERT_UNSENT_STEP));
+        const unsure = !announced && !has(ALERT_UNSENT_STEP);
+        if (pause) return paused(announced, unsure);
         previous = Number(m[1]);
         if (previous >= of) {
           pause = { since: startedAt(run) };
-          return paused(announced);
+          return paused(announced, unsure);
         }
         break scan;
       }

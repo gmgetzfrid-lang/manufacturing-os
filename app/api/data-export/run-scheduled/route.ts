@@ -70,6 +70,16 @@
 // breaks the count. Only an Admin's save ends a pause (P14 fix pass: on an
 // unverified night a destination saved since its pause — only an Admin can
 // save one — runs uncounted rather than staying paused on that guess).
+// P14 integrator fix (DEC-90: a paused destination stays paused until an
+// Admin saves it): a night that does not run the push — a gate skip, a
+// refused run-row open — rewrites the card; when the card it replaces said
+// paused and no Admin has saved the destination since, the new card keeps
+// the pause (PAUSE_KEPT_SENTENCE), so the fallback above still holds on the
+// next unreadable night. And the night that pauses it writes `alert:sent` on
+// its run row the moment its bell is delivered, before the close (checked),
+// so a refused closing write never makes the next paused night ring a second
+// pause bell; a row with neither (never closed, no marker) is read as unsure,
+// and the late bell then says the earlier one MAY not have been sent.
 //
 // admin-and-org BKP-6: a succeeded bucket push whose retention purge ran puts
 // the purge's deleted and failed counts on its run row's own columns
@@ -87,7 +97,8 @@ import {
   alertAdminsOfExport, destinationConfirmation, unconfirmedNote as unconfirmedNoteFor,
   unconfirmedGraceTonight, graceSentence, graceNightStep, graceUnverifiedStep, pausedNote, pausedUnverifiedNote,
   pausedCountUnreadSentence, pausedAtLastRun, savedSince, SAVED_SINCE_PAUSE_NOTE, PAUSE_ANNOUNCED_EARLIER,
-  GRACE_PAUSED_STEP, GRACE_PAUSE_ANNOUNCED_STEP, ALERT_UNSENT_STEP, UNCONFIRMED_GRACE_NIGHTS, type UnconfirmedGrace,
+  GRACE_PAUSED_STEP, GRACE_PAUSE_ANNOUNCED_STEP, ALERT_UNSENT_STEP, ALERT_SENT_STEP, PAUSE_BELL_UNSURE_STEP, UNCONFIRMED_GRACE_NIGHTS,
+  pauseToKeep, withPauseKept, PAUSE_KEPT_SENTENCE, earlierBellFate, type UnconfirmedGrace,
 } from "@/lib/exportAlerts";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -230,13 +241,17 @@ async function handler(req: NextRequest) {
       const planLapsed = !gate.ok && enforceBilling && pushesToBucket(dest) && refusedOnBillingLimb(gate.reason)
         && await planNoLongerIncludesBuckets(sb, dest.org_id);
       const skipMsg = `skipped: ${refusal}${planLapsed ? " — the destination was disabled; an Admin re-enables it once the plan includes cloud backups" : ""}`;
+      // P14 integrator fix (DEC-90): a card that said paused keeps the pause
+      // (unless an Admin has saved it since), so a later night whose count
+      // cannot be read still finds it paused (pausedAtLastRun).
+      const keepPause = pauseToKeep(dest);
       const unrecorded: string[] = [];
       const { error: runErr } = await sb.from("export_runs").insert({
         org_id: dest.org_id,
         destination_id: dest.id,
         trigger_type: "scheduled",
         status: "cancelled",
-        error_message: skipMsg.slice(0, 1000),
+        error_message: keepPause ? withPauseKept(skipMsg, 1000) : skipMsg.slice(0, 1000),
         destination_type: dest.destination_type,
         diagnostics: [{ ts: at, step: "gate:skipped", detail: refusal }],
         started_at: at,
@@ -247,12 +262,12 @@ async function handler(req: NextRequest) {
       const { error: destErr } = await sb.from("export_destinations").update({
         last_run_at: at,
         last_run_status: "failed",
-        last_run_error: skipMsg.slice(0, 500),
+        last_run_error: keepPause ? withPauseKept(skipMsg) : skipMsg.slice(0, 500),
         ...(planLapsed ? { enabled: false } : {}),
       }).eq("id", dest.id);
       if (destErr) unrecorded.push(`last-run status not recorded: ${destErr.message}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
-      results.push({ destinationId: dest.id, ok: false, error: [skipMsg, ...unrecorded].join("; ") });
+      results.push({ destinationId: dest.id, ok: false, error: [keepPause ? `${skipMsg} ${PAUSE_KEPT_SENTENCE}` : skipMsg, ...unrecorded].join("; ") });
       continue;
     }
 
@@ -301,18 +316,24 @@ async function handler(req: NextRequest) {
         if (tonight.paused && tonight.announced) {
           announced.push({ ts: at, step: GRACE_PAUSE_ANNOUNCED_STEP, detail: PAUSE_ANNOUNCED_EARLIER });
         } else if (tonight.paused && confirmation.unconfirmed) {
+          // P14 integrator fix: when the record cannot say whether the
+          // pausing night's bell rang (its row never closed and holds no
+          // alert:sent), the late bell says it MAY not have been sent.
+          const unsure = tonight.unsure === true;
           const bell = await alertAdminsOfExport(sb, {
             orgId: dest.org_id, actorUserId: null, actorEmail: SCHEDULED_EXPORT_ACTOR.email,
             destination: dest.destination_type,
             scheduled: {
               destinationName: dest.name || dest.id, configuredBy: dest.updated_by || dest.created_by || null,
-              unconfirmed: confirmation.unconfirmed, pausedNotice: { of: UNCONFIRMED_GRACE_NIGHTS },
+              unconfirmed: confirmation.unconfirmed, pausedNotice: { of: UNCONFIRMED_GRACE_NIGHTS, ...(unsure ? { unsure: true } : {}) },
             },
           }).catch((err) => ({ ok: false, notified: 0, error: (err as Error).message }));
           if (bell.ok) {
-            announced.push({ ts: at, step: GRACE_PAUSE_ANNOUNCED_STEP, detail: `announced tonight to ${bell.notified} controller(s): the bell at its last push could not be sent` });
+            announced.push({ ts: at, step: GRACE_PAUSE_ANNOUNCED_STEP, detail: `announced tonight to ${bell.notified} controller(s): the bell at its last push ${earlierBellFate(unsure)}` });
           } else {
             announced.push({ ts: at, step: ALERT_UNSENT_STEP, detail: bell.error ?? "the alert could not be sent" });
+            // kept for the next try, which must not say the earlier bell failed either
+            if (unsure) announced.push({ ts: at, step: PAUSE_BELL_UNSURE_STEP, detail: "whether the bell at its last push was sent is not recorded" });
             warnings.push(`the pausing alert was not sent: ${bell.error}`);
             console.error(`[run-scheduled] destination ${dest.id}: the pausing alert was not sent: ${bell.error}`);
           }
@@ -379,11 +400,16 @@ async function handler(req: NextRequest) {
       // the clock, so this costs one cycle and is said on the card.
       const msg = `not run: the run record could not be opened (${runRowErr?.message ?? "no run id returned"}); retried next cycle`;
       console.error(`[run-scheduled] destination ${dest.id}: ${msg}`);
+      // P14 integrator fix (DEC-90): for a destination the grace was read for,
+      // a card that said paused keeps the pause (unless an Admin has saved it
+      // since), so a later unreadable night still finds it paused.
+      const keepPause = (confirmation.unconfirmed !== undefined || unverified !== null) && pauseToKeep(dest);
       const { error: destErr } = await sb.from("export_destinations").update({
-        last_run_at: startedAt, last_run_status: "failed", last_run_error: msg.slice(0, 500),
+        last_run_at: startedAt, last_run_status: "failed", last_run_error: keepPause ? withPauseKept(msg) : msg.slice(0, 500),
       }).eq("id", dest.id);
       if (destErr) console.error(`[run-scheduled] destination ${dest.id}: last-run status not recorded: ${destErr.message}`);
-      results.push({ destinationId: dest.id, ok: false, error: destErr ? `${msg}; last-run status not recorded: ${destErr.message}` : msg });
+      const said = keepPause ? `${msg} ${PAUSE_KEPT_SENTENCE}` : msg;
+      results.push({ destinationId: dest.id, ok: false, error: destErr ? `${said}; last-run status not recorded: ${destErr.message}` : said });
       continue;
     }
 
@@ -422,6 +448,9 @@ async function handler(req: NextRequest) {
         },
       }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
       if (!alert.ok) console.error(`[run-scheduled] destination ${dest.id}: the export alert was not sent: ${alert.error}`);
+      // P14 integrator fix (DEC-90): the pausing night's delivered bell is on its run row before the close.
+      const bellMark = alert.ok && grace?.pausing ? await recordPauseBellSent(sb, runId, graceStep, alert.notified) : null;
+      if (bellMark?.error) console.error(`[run-scheduled] destination ${dest.id}: ${bellMark.error}`);
       // BKP-6: a retention purge that did not finish is said on the run row and the card.
       const retentionNote = retentionProblem(result.retention);
       // P14 fix pass: cut so the unconfirmed note (the night that pauses it
@@ -451,6 +480,7 @@ async function handler(req: NextRequest) {
             ...graceNotes.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
             ...result.diagnostics,
             ...(alert.ok ? [] : [{ ts: completedAt, step: "alert:unsent", detail: alert.error }]),
+            ...(bellMark ? [bellMark.step] : []),
           ],
           ...(retentionNote ? { error_message: retentionNote.slice(0, 1000) } : {}),
           completed_at: completedAt,
@@ -473,7 +503,7 @@ async function handler(req: NextRequest) {
       }).eq("id", dest.id);
       if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
-      const warnings = [...notices, ...(alert.ok ? [] : [`the export alert was not sent: ${alert.error}`]), ...unrecorded];
+      const warnings = [...notices, ...(alert.ok ? [] : [`the export alert was not sent: ${alert.error}`]), ...(bellMark?.error ? [bellMark.error] : []), ...unrecorded];
 
       results.push({
         destinationId: dest.id, ok: true, bytes: result.bytes,
@@ -507,6 +537,9 @@ async function handler(req: NextRequest) {
         }).catch((err) => ({ ok: false, notified: 0, error: (err as Error).message }))
         : null;
       if (graceAlert && !graceAlert.ok) console.error(`[run-scheduled] destination ${dest.id}: the unconfirmed-night alert was not sent: ${graceAlert.error}`);
+      // P14 integrator fix (DEC-90): the pausing night's delivered bell is on its run row before the close.
+      const bellMark = graceAlert?.ok && grace?.pausing ? await recordPauseBellSent(sb, runId, graceStep, graceAlert.notified) : null;
+      if (bellMark?.error) console.error(`[run-scheduled] destination ${dest.id}: ${bellMark.error}`);
       // Checked like the success path: a refused write is logged and named on
       // the result, never swallowed (a run row left "running" stays stuck).
       const unrecorded: string[] = [];
@@ -522,6 +555,7 @@ async function handler(req: NextRequest) {
               ...(graceStep ? [graceStep] : []),
               ...graceNotes.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
               ...(graceAlert && !graceAlert.ok ? [{ ts: completedAt, step: "alert:unsent", detail: graceAlert.error }] : []),
+              ...(bellMark ? [bellMark.step] : []),
             ],
           } : {}),
           completed_at: completedAt,
@@ -545,7 +579,10 @@ async function handler(req: NextRequest) {
       }).eq("id", dest.id);
       if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
-      const failWarnings = [...notices, ...(graceAlert && !graceAlert.ok ? [`the unconfirmed-night alert was not sent: ${graceAlert.error}`] : [])];
+      const failWarnings = [
+        ...notices, ...(graceAlert && !graceAlert.ok ? [`the unconfirmed-night alert was not sent: ${graceAlert.error}`] : []),
+        ...(bellMark?.error ? [bellMark.error] : []),
+      ];
       results.push({
         destinationId: dest.id, ok: false, error: [msg, ...(unconfirmedNote ? [unconfirmedNote] : []), ...unrecorded].join("; "),
         ...(failWarnings.length ? { warnings: failWarnings } : {}),
@@ -554,6 +591,26 @@ async function handler(req: NextRequest) {
   }
 
   return NextResponse.json({ processed: results.length, results });
+}
+
+/** P14 integrator fix (DEC-90): the night that pauses a destination records
+ *  its delivered bell on its run row (ALERT_SENT_STEP) right after the bell
+ *  and before the close — a checked write, the row's diagnostics as opened
+ *  plus the marker (the column is written whole) — so a refused closing write
+ *  (the row left "running") is not read as a bell that never rang. A refused
+ *  marker is answered as `error`, for the log and the sweep result; the next
+ *  paused night then reads that row as unsure, never as a failed bell. */
+async function recordPauseBellSent(
+  sb: SupabaseClient, runId: string, opened: { ts: string; step: string; detail: string } | null, notified: number,
+): Promise<{ step: { ts: string; step: string; detail: string }; error?: string }> {
+  const step = { ts: new Date().toISOString(), step: ALERT_SENT_STEP, detail: `the bell reached ${notified} controller(s)` };
+  const refused = (why: string) => `the pausing alert was sent, but recording that on the run row failed (${why}); if the run's closing write is refused too, the next paused night says that alert may not have been sent`;
+  try {
+    const { error } = await sb.from("export_runs").update({ diagnostics: [...(opened ? [opened] : []), step] }).eq("id", runId);
+    return error ? { step, error: refused(error.message) } : { step };
+  } catch (e) {
+    return { step, error: refused((e as Error).message) };
+  }
 }
 
 /** BILL-3: did the scheduled gate refuse on its subscription or plan limb?
