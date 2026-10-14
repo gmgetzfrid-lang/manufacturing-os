@@ -9,7 +9,10 @@
 //            apart by identity; a label issued twice cannot be confirmed by
 //            label alone. Never greener.
 //   EDGE-2 observation  a CLOSED ticket whose issued package was sent back
-//            (reject_final) and force-closed scans "cannot confirm", not green.
+//            (reject_final) and force-closed scans "cannot confirm", not green
+//            — on its issued label (any row), and, for a proven issue, after a
+//            reopen (revision_count above N) or on a new review label (round N
+//            recorded after the issue; 20261221's second limb). Review fix.
 //   LEAK-7 (a)  20261222: the repair's DEC-30 shape (exercised at runtime in
 //            lib/__tests__/rls/dfP12DeliverableRails.test.ts).
 //   PHYS-17 / PHYS-8 dw3  20261223 + recordTicketCopy writes ticket_id /
@@ -26,7 +29,7 @@ import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { PDFDocument } from "pdf-lib";
 import {
-  ticketVerdict, ticketVerifyUrl, provenIssueFromHistory, issueInForce, issuedMoreThanOnce, TICKET_ATTACHMENT_ID_RE,
+  ticketVerdict, ticketVerifyUrl, provenIssueFromHistory, provenSentBackAfterIssue, issueInForce, issuedMoreThanOnce, TICKET_ATTACHMENT_ID_RE,
 } from "@/lib/verifyTicketVerdict";
 import { ticketCopyPlan, ticketCopyStanding, recordTicketCopy, isMissingTicketCopyColumn } from "@/lib/ticketDeliverableCopy";
 import { computeTransition } from "@/lib/ticketTransitions";
@@ -173,6 +176,8 @@ describe("20261221 — ticket_update_guard re-created from its NEWEST earlier bo
       "  IF v_guarded_from_in IS DISTINCT FROM OLD.history_guarded_from THEN v_bad := array_append(v_bad, 'history_guarded_from'); END IF;",
       "      IF COALESCE(v_entry->>'action', '') ~* 'issued Rev [[:digit:]]' THEN",
       "        RAISE EXCEPTION 'tickets: an \"issued Rev\" history entry is written only by the request workflow';",
+      "      IF v_entry ? 'revisionRound' THEN",
+      "        RAISE EXCEPTION 'tickets: a revision-round history entry is written only by the request workflow';",
     ]);
   });
   it("the body minus DF-P12's four insertions IS the base, byte for byte (order and placement pinned)", () => {
@@ -186,12 +191,14 @@ describe("20261221 — ticket_update_guard re-created from its NEWEST earlier bo
     t = cut(t, "  v_guarded_from_in INT := NEW.history_guarded_from;\n", "  v_guarded_from_in INT := NEW.history_guarded_from;\n");
     t = cut(t, "  -- DF-P12 (drafting-flow SM-5 / EDGE-2, 20261221): history_guarded_from is\n", "    END;\n  END IF;\n\n");
     t = cut(t, "  -- DF-P12 (drafting-flow SM-5 / EDGE-2, 20261221): the history trust index\n", "'history_guarded_from'); END IF;\n");
-    t = cut(t, "      -- DF-P12 (drafting-flow SM-5 / EDGE-2 / PHYS-2, 20261221): an \"issued\n", "request workflow';\n      END IF;\n");
+    t = cut(t, "      -- DF-P12 (drafting-flow SM-5 / EDGE-2 / PHYS-2, 20261221): an \"issued\n", "a revision-round history entry is written only by the request workflow';\n      END IF;\n");
     expect(t).toBe(live);
     // placements: the stamp precedes every early return; the limb sits in the append loop after "must name you"
     expect(next.indexOf("NEW.history_guarded_from := CASE")).toBeLessThan(next.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;"));
     expect(next.indexOf("NEW.history_guarded_from := CASE")).toBeLessThan(next.indexOf("app.ticket_departure"));
     expect(next.indexOf("issued Rev [[:digit:]]")).toBeGreaterThan(next.indexOf("a history entry you add must name you"));
+    expect(next.indexOf("IF v_entry ? 'revisionRound' THEN")).toBeGreaterThan(next.indexOf("issued Rev [[:digit:]]"));
+    expect(next.indexOf("IF v_entry ? 'revisionRound' THEN")).toBeLessThan(next.indexOf("END LOOP;"));
     expect(next.indexOf("'history_guarded_from'); END IF;")).toBeLessThan(next.indexOf("IF array_length(v_bad, 1) > 0 THEN"));
   });
   it("every re-creation keeps the departure pass, library_id, outcome and the last_modified rule; DRLS-16 (definer, pinned, trigger restated, EXECUTE revoked)", () => {
@@ -199,6 +206,18 @@ describe("20261221 — ticket_update_guard re-created from its NEWEST earlier bo
     expect(next).toContain("RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
     expect(M).toContain("CREATE TRIGGER trg_ticket_update_guard\n  BEFORE UPDATE ON tickets\n  FOR EACH ROW EXECUTE FUNCTION ticket_update_guard();");
     expect(M).toContain("REVOKE ALL ON FUNCTION ticket_update_guard() FROM PUBLIC, anon, authenticated, service_role;");
+  });
+  it("FOLDER SCAN: the NEWEST ticket_update_guard in the sequence keeps both limbs and the index stamp (a later re-creation that drops them must drop the index too)", () => {
+    // A re-creation numbered after 20261221 that started from an older body
+    // (20261208) would leave tickets.history_guarded_from vouching for lines
+    // nobody guarded: provenIssueFromHistory would read a member's appended
+    // "issued Rev N" as proof. Whatever file is newest must carry all three.
+    const newest = definers.at(-1)!;
+    const body = between(mig(newest), GUARD, "\n$$;");
+    expect(body, newest).toContain("~* 'issued Rev [[:digit:]]'");
+    expect(body, newest).toContain("IF v_entry ? 'revisionRound' THEN");
+    expect(body, newest).toContain("NEW.history_guarded_from := CASE");
+    expect(body, newest).toContain("array_append(v_bad, 'history_guarded_from')");
   });
   it("the limb is never narrower than the readers: every text the readers read as an issue line is refused", () => {
     const READER = /\bissued Rev (\d+)\b/;
@@ -264,13 +283,28 @@ describe("20261222 — the LEAK-7 (a) repair: counts first, one UPDATE, one resu
 
 describe("20261223 — download_audits.ticket_id / attachment_id (PHYS-17)", () => {
   const M = mig("20261223_df_roundG_download_audits_ticket_copy.sql");
-  it("two plain nullable columns (no foreign key), an index, the policies untouched; prerequisite 20261068; DEC-30 shape", () => {
+  it("two plain nullable columns (no foreign key), an index, the permissive policies untouched; prerequisite 20261068; DEC-30 shape", () => {
     const tx = between(M, "\nBEGIN;\n", "\nCOMMIT;\n");
     expect(tx).toContain("ALTER TABLE download_audits ADD COLUMN IF NOT EXISTS ticket_id UUID;");
     expect(tx).toContain("ALTER TABLE download_audits ADD COLUMN IF NOT EXISTS attachment_id TEXT;");
-    expect(stripComments(tx)).not.toMatch(/REFERENCES|POLICY/);
+    expect(stripComments(tx)).not.toMatch(/REFERENCES/);
+    // the only policy statement is the RESTRICTIVE read scope (it narrows; nothing permissive is created or dropped)
+    const policyStmts = stripComments(tx).match(/(CREATE|DROP|ALTER) POLICY[^;]*;/g) ?? [];
+    expect(policyStmts.map((x) => x.replace(/\s+/g, " "))).toEqual([
+      "DROP POLICY IF EXISTS download_audits_ticket_read_scope ON download_audits;",
+      "CREATE POLICY download_audits_ticket_read_scope ON download_audits AS RESTRICTIVE FOR SELECT TO authenticated USING (ticket_id IS NULL OR EXISTS (SELECT 1 FROM tickets t WHERE t.id = download_audits.ticket_id));",
+    ]);
     expect(M.indexOf("RAISE EXCEPTION '20261223 needs 20261068")).toBeLessThan(M.indexOf("CREATE TEMP TABLE df_round_g_223_before"));
     expect(oneFinalSelect(M)).toBe(1);
+    // counts only before the transaction: the rows the narrowing affects and the callers it narrows
+    const inv = between(M, "CREATE TEMP TABLE df_round_g_223_before", "\nBEGIN;");
+    expect((inv.match(/'inventory \(before apply\): /g) ?? []).length).toBe(5);
+    expect(inv).toContain("to_jsonb(d) ->> 'ticket_id' IS NOT NULL");
+    // the probe reads the DEPARSED qual (no cast inside a LIKE pattern)
+    const after = M.slice(M.indexOf("\nCOMMIT;\n"));
+    expect(after).toContain("permissive = 'RESTRICTIVE'");
+    expect(after).toContain("qual LIKE '%t.id = download_audits.ticket_id%'");
+    expect(after).not.toMatch(/LIKE '[^']*::[^']*'/);
   });
   it("the source comment restates every channel 20261068 named and adds the two unstamped drafting channels the app writes", () => {
     const old = between(mig("20261068_dc_roundF_download_audits_record.sql"), "COMMENT ON COLUMN download_audits.source IS", "';\n");
@@ -376,7 +410,7 @@ describe("SM-5 guard limb — after 20261221, an issue line at or after the row'
 
 describe("SM-5 done-when 3 / LEAK-7 (b) — the printed file's identity on the QR", () => {
   const atIfc = (attachments: unknown, history: unknown[] = [issued(1)]) => ({ status: "PENDING_IFC", deliverable_rev: "1", revision_count: 0, history, attachments });
-  it("ticketVerifyUrl carries ?a= only for an id the app mints; the plan passes the file's id", () => {
+  it("ticketVerifyUrl carries ?a= only for an id of the accepted shape; the plan passes the file's id", () => {
     expect(ticketVerifyUrl(ORIGIN, T, "1", "0f7a-uuid_like")).toBe(`${ORIGIN}/verify-ticket/${T}?r=1&a=0f7a-uuid_like`);
     expect(ticketVerifyUrl(ORIGIN, T, null, "f-1")).toBe(`${ORIGIN}/verify-ticket/${T}?a=f-1`);
     expect(ticketVerifyUrl(ORIGIN, T, "1", "../x")).toBe(`${ORIGIN}/verify-ticket/${T}?r=1`);
@@ -409,7 +443,7 @@ describe("SM-5 done-when 3 / LEAK-7 (b) — the printed file's identity on the Q
   });
 });
 
-describe("EDGE-2's observation — reject_final then Force Close: the rejected package never scans green on CLOSED (decided fail-safe, DEC-90)", () => {
+describe("EDGE-2's observation — reject_final then Force Close on the issued label: the rejected package does not scan green (decided fail-safe, DEC-90)", () => {
   it("walked through the workflow: Rev 1 issued, final submitted, rejected, force-closed → print of Rev 1 'cannot confirm'; a normal close stays current", () => {
     let r: Row = { status: "PENDING_REVIEW", deliverable_rev: "1A", revision_count: 0, draft_iteration: 1, history: [] };
     r = step(r, "approve_draft_ifc", "Approve (Issue for Construction)");
@@ -425,6 +459,83 @@ describe("EDGE-2's observation — reject_final then Force Close: the rejected p
     expect(ticketVerdict(forced, "1A").verdict).toBe("draft_copy");
     // an older issue on such a row stays red
     expect(ticketVerdict({ status: "CLOSED", deliverable_rev: "2", revision_count: 2, history: [issued(1), issued(2)] }, "1").verdict).toBe("superseded");
+  });
+});
+
+describe("DEC-44 (DF-P12) item 2 after 20261221 — a package sent back after its PROVEN issue does not scan green, whichever label the ticket closes on (review fix)", () => {
+  // Rev 1 issued after the paste: the trust index is the history length before the issue (0 here).
+  const issuedAfterPaste = (): Row => step({ status: "PENDING_REVIEW", deliverable_rev: "1A", revision_count: 0, draft_iteration: 1, history: [] }, "approve_draft_ifc", "Approve (Issue for Construction)");
+  const withIndex = (r: Row, g: number | null = 0) => ({ ...r, history_guarded_from: g });
+  it("reject_final → Force Close → reopen → Force Close: Rev 1 'cannot confirm' with the index (it read green before this fix) and without it (base)", () => {
+    let r = step(issuedAfterPaste(), "submit_final", "Submit Final");
+    r = step(r, "reject_final", "Reject Final (Re-Open)");
+    expect(r.history.at(-1)).toMatchObject({ revisionRound: 1 }); // the round reject_final opens for issue 1
+    r = step(r, "close_ticket", "Force Close (Admin)");
+    expect(ticketVerdict(withIndex(r), "1").verdict).toBe("unknown"); // the issued-label rule (DEC-44 (DF-P12) item 2)
+    r = step(r, "reopen_ticket", "Reopen Ticket");
+    r = step(r, "close_ticket", "Force Close (Admin)");
+    expect([r.status, r.deliverable_rev, r.revision_count]).toEqual(["CLOSED", null, 2]);
+    expect(provenIssueFromHistory(r.history, 0, r.revision_count, r.deliverable_rev)).toBe("1");
+    expect(ticketVerdict(withIndex(r), "1")).toMatchObject({ verdict: "unknown", latestIssuedRev: "1" });
+    expect(ticketVerdict(withIndex(r, null), "1").verdict).toBe("unknown");
+    expect(ticketVerdict(withIndex(r), "1A").verdict).toBe("draft_copy");
+  });
+  it("the same walk after a Rev 2: the sent-back Rev 2 'cannot confirm', the older Rev 1 stays superseded (red)", () => {
+    let r = step(issuedAfterPaste(), "submit_final", "Submit Final");
+    r = step(r, "close_ticket", "Close");
+    r = step(r, "reopen_ticket", "Reopen Ticket"); // rc 1
+    r = step(r, "submit_draft", "Submit for Review"); // 2A
+    r = step(r, "approve_draft_ifc", "Approve (Issue for Construction)"); // Rev 2 at rc 1
+    expect(r.deliverable_rev).toBe("2");
+    r = step(step(r, "submit_final", "Submit Final"), "reject_final", "Reject Final (Re-Open)"); // rc 2
+    r = step(step(step(r, "close_ticket", "Force Close (Admin)"), "reopen_ticket", "Reopen Ticket"), "close_ticket", "Force Close (Admin)"); // rc 3
+    expect(ticketVerdict(withIndex(r), "2").verdict).toBe("unknown");
+    expect(ticketVerdict(withIndex(r), "1").verdict).toBe("superseded");
+  });
+  it("reject_final → 2A submitted → Force Close on 2A: Rev 1 'cannot confirm' when its issue is proven; without the index the ladder stays green (base — recorded, DEC-29)", () => {
+    let r = step(issuedAfterPaste(), "submit_final", "Submit Final");
+    r = step(r, "reject_final", "Reject Final (Re-Open)");
+    r = step(r, "submit_draft", "Submit for Review");
+    expect(r.deliverable_rev).toBe("2A");
+    r = step(r, "close_ticket", "Force Close (Admin)");
+    expect(provenSentBackAfterIssue(r.history, 0, "1")).toBe(true);
+    expect(ticketVerdict(withIndex(r), "1")).toMatchObject({ verdict: "unknown", latestIssuedRev: "1" });
+    expect(ticketVerdict(withIndex(r), "2A").verdict).toBe("draft_copy");
+    expect(ticketVerdict(withIndex(r, null), "1").verdict).toBe("current");
+    // live (not closed) it was never green: the drawing is being re-worked
+    const live = step(step(step(issuedAfterPaste(), "submit_final", "Submit Final"), "reject_final", "Reject Final (Re-Open)"), "submit_draft", "Submit for Review");
+    expect(ticketVerdict(withIndex(live), "1").verdict).toBe("revision_in_progress");
+  });
+  it("REGRESSION — a normal close, a reopen with no new issue, and a reopen whose new draft is force-closed keep Rev 1 green", () => {
+    const closed = step(step(issuedAfterPaste(), "submit_final", "Submit Final"), "close_ticket", "Close");
+    expect(ticketVerdict(withIndex(closed), "1").verdict).toBe("current");
+    const reclosed = step(step(closed, "reopen_ticket", "Reopen Ticket"), "close_ticket", "Force Close (Admin)");
+    expect([reclosed.deliverable_rev, reclosed.revision_count]).toEqual([null, 1]); // the reopen is the one bump since the issue
+    expect(ticketVerdict(withIndex(reclosed), "1")).toMatchObject({ verdict: "current", latestIssuedRev: "1" });
+    // reopened, a new draft submitted and rejected (its round is 2, not the issue's 1), resubmitted, force-closed
+    let r = step(closed, "reopen_ticket", "Reopen Ticket");
+    r = step(r, "submit_draft", "Submit for Review"); // 2A
+    r = step(r, "reject", "Reject");
+    expect(r.history.at(-1)).toMatchObject({ revisionRound: 2 });
+    r = step(step(r, "submit_draft", "Submit for Review"), "close_ticket", "Force Close (Admin)"); // 3A
+    expect(r.deliverable_rev).toBe("3A");
+    expect(provenSentBackAfterIssue(r.history, 0, "1")).toBe(false);
+    expect(ticketVerdict(withIndex(r), "1").verdict).toBe("current");
+    // reopened twice with no issue between: revision_count moved past the reopen — "cannot confirm", as base answered
+    const twice = step(step(reclosed, "reopen_ticket", "Reopen Ticket"), "close_ticket", "Force Close (Admin)");
+    expect(ticketVerdict(withIndex(twice), "1").verdict).toBe("unknown");
+    // a CLOSED no-label row whose revision_count is unknown (an older caller) stays "cannot confirm"
+    expect(ticketVerdict({ ...withIndex(reclosed), revision_count: undefined as unknown as number }, "1").verdict).toBe("unknown");
+  });
+  it("provenSentBackAfterIssue reads only rounds AFTER the proven issue's line, at or after the index; round N only", () => {
+    const sent = { action: "Reject Final (Re-Open)", user: "r@x", revisionRound: 1 };
+    expect(provenSentBackAfterIssue([issued(1), sent], 0, "1")).toBe(true);
+    expect(provenSentBackAfterIssue([sent, issued(1)], 0, "1")).toBe(false); // before the issue: a round of an earlier cycle
+    expect(provenSentBackAfterIssue([issued(1), sent], 1, "1")).toBe(false); // the issue line predates the index: not proven
+    expect(provenSentBackAfterIssue([issued(1), { ...sent, revisionRound: 2 }], 0, "1")).toBe(false);
+    expect(provenSentBackAfterIssue([issued(1), { ...sent, revisionRound: "1" }], 0, "1")).toBe(false);
+    for (const g of [undefined, null, -1, 0.5]) expect(provenSentBackAfterIssue([issued(1), sent], g as number, "1")).toBe(false);
+    expect(provenSentBackAfterIssue([issued(1), sent], 0, "1A")).toBe(false);
   });
 });
 
@@ -488,6 +599,31 @@ describe("PHYS-17 / PHYS-8 dw3 — lib/staleCopies.ts gains a ticket arm keyed o
     expect(by["u-c"]).toMatchObject({ outdated: true, hasCurrent: false }); // a review draft of an issued cycle
     expect(r.holders[0].userId).not.toBe("u-b");
     expect(st.recallFilters).toEqual(expect.arrayContaining([["org_id", ORG], ["ticket_id", T]]));
+  });
+  it("a copy of the draft UNDER REVIEW now is the reviewers' working copy — neither outdated nor nudged; a review draft is outdated once the ticket has moved past it", async () => {
+    const { getTicketCopyRecall, nudgeStaleTicketHolders } = await import("@/lib/staleCopies");
+    const inReview = {
+      id: T, orgId: ORG, status: "PENDING_REVIEW", deliverableRev: "2B", revisionCount: 1, history: [issued(1)],
+      attachments: [{ id: "f-1", type: "Final", rev: "1" }, { id: "d-a", type: "Draft", rev: "2A" }, { id: "d-b", type: "Draft", rev: "2B" }],
+    };
+    st.recall = { data: [
+      { user_id: "u-rev", user_email: "rev@x", attachment_id: "d-b", created_at: "2026-10-05T00:00:00Z", source: "drafting_print" },
+      { user_id: "u-old", user_email: "old@x", attachment_id: "d-a", created_at: "2026-10-04T00:00:00Z", source: "drafting_print" },
+    ], error: null };
+    const r = await getTicketCopyRecall(inReview);
+    const by = Object.fromEntries(r.holders.map((h) => [h.userId, h]));
+    expect(by["u-rev"]).toMatchObject({ outdated: false, hasCurrent: false });
+    expect(by["u-rev"].copies[0]).toMatchObject({ rev: "2B", verdict: "draft_copy", underReview: true });
+    expect(by["u-old"]).toMatchObject({ outdated: true }); // 2A: the label has moved on to 2B
+    expect(by["u-old"].copies[0]).toMatchObject({ rev: "2A", underReview: false });
+    expect(await nudgeStaleTicketHolders({ orgId: ORG, ticketId: T, ticketNumber: "KE-1", latestIssuedRev: r.latestIssuedRev, holders: r.holders, actorUserId: "u-boss" })).toBe(1);
+    expect(st.emits[0]).toMatchObject({ audience: { involved: ["u-old"] } });
+    // once the review ends (approved → an issued label, or the request closed on that label), the 2B copy is outdated too
+    st.emits = []; st.audits = [];
+    for (const after of [{ status: "PENDING_IFC", deliverableRev: "2", revisionCount: 1, history: [issued(1), issued(2)] }, { status: "CLOSED", deliverableRev: "2B" }]) {
+      const r2 = await getTicketCopyRecall({ ...inReview, ...after });
+      expect(r2.holders.find((h) => h.userId === "u-rev"), JSON.stringify(after)).toMatchObject({ outdated: true });
+    }
   });
   it("an unreadable record (before 20261223, or any failure) is a GAP — never 'nobody holds a copy'", async () => {
     const { getTicketCopyRecall } = await import("@/lib/staleCopies");
@@ -669,6 +805,23 @@ describe("EVID-16 — the ticket copy is stamped and recorded in the server requ
     st.ticket = ticketRow({ attachments: [{ id: "f-1", name: "x.pdf", url: `orgs/${ORG}/libraries/l/x.pdf`, type: "Final", rev: "1" }] });
     expect((await post({ ticketId: T, attachmentId: "f-1", channel: "print" })).status).toBe(409);
     expect(ins("download_audits")).toEqual([]);
+  });
+  it("a creation-time file left at the REQUESTER's staged key (its re-key never ran) is issued like any other; another member's staged key, or another workspace's, is not", async () => {
+    const REQ = "22222222-2222-2222-2222-222222222222";
+    const STAGED = `orgs/${ORG}/tickets/pending/${REQ}/33333333-3333-3333-3333-333333333333/1760000000000_source.pdf`;
+    st.objects[STAGED] = await pdfBytes();
+    st.ticket = ticketRow({ requester_id: REQ, attachments: [{ id: "s-1", name: "source.pdf", url: STAGED, type: "Source", status: "submitted", rev: null }] });
+    const ok = await post({ ticketId: T, attachmentId: "s-1", channel: "download" });
+    expect(ok.status).toBe(200);
+    expect(ins("download_audits")).toEqual([expect.objectContaining({ ticket_id: T, attachment_id: "s-1" })]);
+    // staged by somebody else (the row names a key under another member's staging folder)
+    st.ticket = ticketRow({ requester_id: "44444444-4444-4444-4444-444444444444", attachments: [{ id: "s-1", name: "source.pdf", url: STAGED, type: "Source", rev: null }] });
+    expect((await post({ ticketId: T, attachmentId: "s-1", channel: "download" })).status).toBe(409);
+    // another workspace's staging folder
+    const FOREIGN = `orgs/55555555-5555-5555-5555-555555555555/tickets/pending/${REQ}/33333333-3333-3333-3333-333333333333/1760000000000_source.pdf`;
+    st.ticket = ticketRow({ requester_id: REQ, attachments: [{ id: "s-1", name: "source.pdf", url: FOREIGN, type: "Source", rev: null }] });
+    expect((await post({ ticketId: T, attachmentId: "s-1", channel: "download" })).status).toBe(409);
+    expect(ins("download_audits")).toHaveLength(1);
   });
   it("the plan is the page's (lib/ticketDeliverableCopy.ts) — read with the ticket as it stands, and 20261221's index when the column exists", () => {
     const s = src("app/api/tickets/copy/route.ts");

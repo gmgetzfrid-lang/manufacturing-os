@@ -28,7 +28,8 @@
 // drafting-flow DF-P12: a QR printed since DF-P12 also names the FILE
 // (?a=<attachment id>, SM-5 done-when 3). The verdict then checks the file is
 // this ticket's, once, carrying the printed revision, and the scan row records
-// it as the printing (printed_ref, when it is a UUID — the ids the app mints).
+// it as the printing (printed_ref, when it is a UUID — the shape of the ids
+// the app mints for its own uploads).
 // `attachments` is selected only for such a QR. `history_guarded_from`
 // (20261221) is read for the verdict — an "issued Rev N" line at or after it
 // is the workflow's own — and never returned; before that paste the column is

@@ -18,6 +18,12 @@
 --             `action`; the match here is wider, never narrower. Before this
 --             paste any member could append such a line in their own name
 --             (20261166's append-only rule names the caller, nothing more).
+--             Likewise an appended entry carrying a `revisionRound` key — the
+--             marker lib/ticketTransitions.ts computeTransition records on the
+--             round a request for revision, a reject or reject_final opens; the
+--             verdict reads round N after a proven issue N as "the issued
+--             package was sent back" (DEC-44 (DF-P12) item 2). No browser path
+--             writes one either.
 --         (b) tickets.history_guarded_from — the index in `history` from
 --             which every "issued Rev N" line is the workflow's own. Stamped
 --             once by the guard, on the row's first write after this paste,
@@ -50,17 +56,21 @@
 -- DF-P12 app reads history_guarded_from and, without the column (42703 /
 -- PGRST204), reads the ticket exactly as today — the verdict keeps today's
 -- behaviour until the paste. The app before DF-P12 never selects the column.
--- No browser path appends an "issued Rev" line (the workflow route writes it
--- as the service role; the one browser history writer, lib/projects.ts
--- convertTicketToProject, appends "Converted to Project"), so nothing that
--- works today is refused.
+-- No browser path appends an "issued Rev" line or a `revisionRound` marker
+-- (the workflow route writes both as the service role; the one browser
+-- history writer, lib/projects.ts convertTicketToProject, appends "Converted
+-- to Project"), so nothing that works today is refused.
 -- Never re-paste 20261208, 20261195, 20261166 or 20261038 after this file
 -- (each would put back a guard without the limb and without the index
 -- stamp). Every later re-creation of ticket_update_guard starts from THIS
--- file's body.
+-- file's body and keeps both limbs and the index stamp — a re-creation that
+-- drops a limb must also drop (or clear) tickets.history_guarded_from in the
+-- same paste, or the index would vouch for lines nobody guarded
+-- (lib/__tests__/dfRoundG_P12_deliverable.test.ts scans the folder for the
+-- newest body and refuses one without them).
 --
 -- Not a widening (it narrows: a client can no longer append an issue line or
--- write the index). Re-runnable: ADD COLUMN IF NOT EXISTS, the CHECK is added
+-- a revision-round marker, or write the index). Re-runnable: ADD COLUMN IF NOT EXISTS, the CHECK is added
 -- once, the functions are CREATE OR REPLACE, the triggers DROP-then-CREATE.
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
@@ -269,6 +279,14 @@ BEGIN
       IF COALESCE(v_entry->>'action', '') ~* 'issued Rev [[:digit:]]' THEN
         RAISE EXCEPTION 'tickets: an "issued Rev" history entry is written only by the request workflow';
       END IF;
+      -- So is a revision round's marker: computeTransition records
+      -- `revisionRound` on the entry of the round a request for revision, a
+      -- reject or reject_final opens, and the verdict reads round N after a
+      -- proven issue N as "the issued package was sent back" (DEC-44
+      -- (DF-P12) item 2). Matched on the key in any JSON shape.
+      IF v_entry ? 'revisionRound' THEN
+        RAISE EXCEPTION 'tickets: a revision-round history entry is written only by the request workflow';
+      END IF;
     END LOOP;
   END IF;
 
@@ -331,12 +349,13 @@ SELECT 'SM-5: tickets.history_guarded_from exists (integer, never negative)' AS 
                      WHERE conname = 'tickets_history_guarded_from_nonnegative' AND conrelid = 'public.tickets'::regclass AND contype = 'c')) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'ticket_update_guard: refuses a client-appended "issued Rev" line, stamps and owns history_guarded_from; library_id, outcome, the departure pass and the last_modified rule kept; SECURITY DEFINER, search_path pinned, trigger enabled',
+SELECT 'ticket_update_guard: refuses a client-appended "issued Rev" line or revisionRound marker, stamps and owns history_guarded_from; library_id, outcome, the departure pass and the last_modified rule kept; SECURITY DEFINER, search_path pinned, trigger enabled',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_trigger tg ON tg.tgfoid = p.oid
                 WHERE p.proname = 'ticket_update_guard' AND p.prosecdef
                   AND p.proconfig @> ARRAY['search_path=public']
                   AND tg.tgrelid = 'public.tickets'::regclass AND tg.tgname = 'trg_ticket_update_guard' AND tg.tgenabled = 'O'
                   AND p.prosrc LIKE '%IF COALESCE(v_entry->>''action'', '''') ~* ''issued Rev [[:digit:]]'' THEN%'
+                  AND p.prosrc LIKE '%IF v_entry ? ''revisionRound'' THEN%'
                   AND p.prosrc LIKE '%NEW.history_guarded_from := CASE%'
                   AND p.prosrc LIKE '%v_bad := array_append(v_bad, ''history_guarded_from'');%'
                   AND p.prosrc LIKE '%v_bad := array_append(v_bad, ''library_id'');%'

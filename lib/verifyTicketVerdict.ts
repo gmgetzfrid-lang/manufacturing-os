@@ -102,9 +102,26 @@
 // not an approval's. For such a ticket the fail-safe "cannot confirm" rules
 // that exist only because a line might be forged are lifted (the integrator's
 // DEC-90 ruling: history the server did not write is never trusted — and here
-// the server provably wrote it). A ticket with no proven issue — every ticket
-// before the paste, or one whose issues all predate it — reads exactly as
-// before (a database without the column answers as before the paste).
+// the server provably wrote it) — for a CLOSED row with no label only when
+// its revision_count shows the reopen as the one cycle bump since that issue
+// (revision_count N for issue N). A ticket with no proven issue — every
+// ticket before the paste, or one whose issues all predate it — reads exactly
+// as before (a database without the column answers as before the paste).
+//
+// A package sent back after its issue (DEC-44 (DF-P12) item 2): the
+// requester's reject_final returns an issued package (FINAL_DRAFT →
+// REVISION_REQ, the label kept, the cycle bumped). A CLOSED ticket whose last
+// issue N was returned and that closed with no newer issue answers "cannot
+// confirm" for a print of Rev N, never green; older prints stay superseded.
+// The evidence, by shape of the row: still on issued label N with
+// revision_count N or more (any row); no label, a proven issue N and
+// revision_count above N (the cycle moved after the issue by more than the
+// reopen); a review label after a proven issue N, and a history entry after
+// that issue's line opening revision round N — the round reject_final opens
+// (computeTransition's `revisionRound`; 20261221 makes that marker the
+// workflow's own too). A review label on a ticket with no proven issue keeps
+// the ladder (base behaviour; the row cannot tell a reject cycle from a
+// reopen cycle without trusting a line a member could have written).
 //
 // Identity on the QR (SM-5 done-when 3, LEAK-7 (b); DF-P12): a print's QR
 // also carries the FILE's id (?a=). When it does, the file must be on the
@@ -267,8 +284,36 @@ export function issuedMoreThanOnce(history: unknown, revisionCount: number | nul
   return seen > 1;
 }
 
-/** An attachment id a QR may carry (?a=): ticket files are ids the app mints
- *  (crypto.randomUUID); anything else is refused at the door. */
+/** DF-P12 (DEC-44 (DF-P12) item 2): was the package issued as Rev `issued`
+ *  SENT BACK after its proven issue? reject_final — the only action that
+ *  returns an issued package — opens revision round N for an issue N (a real
+ *  issue N leaves revision_count N − 1, and computeTransition records
+ *  `revisionRound` = revision_count + 1 on the round's history entry). Read
+ *  only AFTER that issue's line, itself at or after the trust index: from
+ *  20261221 a client can append neither an "issued Rev" entry nor one
+ *  carrying `revisionRound`, so both are the workflow's. A round opened after
+ *  a reopen is N + 1 (the reopen moved the cycle to N first): a round on the
+ *  reopened request, not a return of the issued package. */
+export function provenSentBackAfterIssue(history: unknown, guardedFrom: number | null | undefined, issued: string): boolean {
+  if (!Array.isArray(history) || typeof guardedFrom !== "number" || !Number.isInteger(guardedFrom) || guardedFrom < 0 || !isIssuedTicketRev(issued)) return false;
+  const want = parseInt(issued, 10);
+  let at = -1;
+  for (let i = history.length - 1; i >= guardedFrom; i -= 1) {
+    const m = ISSUED_LINE.exec(String((history[i] as { action?: unknown } | null)?.action ?? ""));
+    if (m && parseInt(m[1], 10) === want) { at = i; break; }
+  }
+  if (at < 0) return false;
+  for (let j = at + 1; j < history.length; j += 1) {
+    if ((history[j] as { revisionRound?: unknown } | null)?.revisionRound === want) return true;
+  }
+  return false;
+}
+
+/** An attachment id a QR may carry (?a=). The app mints one for every file it
+ *  uploads (crypto.randomUUID), but the workflow route keeps an `id` the
+ *  client sends with a file (drafting-flow SM-15), so an id is not guaranteed
+ *  unique on a ticket: a file named twice is never confirmed (fail-safe,
+ *  "cannot confirm"). Anything outside this shape is refused at the door. */
 export const TICKET_ATTACHMENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** SM-5 done-when 3: is the printed file this ticket's, once, carrying the
@@ -332,6 +377,7 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string, pri
   let inReview: boolean;
   let noRecord = false; // the ticket holds no revision record to compare against
   let withdrawn = false;
+  let sentBack = false; // DF-P12: the last issue's package was returned after it (DEC-44 (DF-P12) item 2)
   if (terminal) {
     // CLOSED. Closed on an issue (issued label), or force-closed on a review
     // label after one: the last issue is the one in force, an older print
@@ -345,14 +391,23 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string, pri
     // real "issued Rev N" from a forged one. DF-P12 (20261221): once the
     // guard makes "issued Rev" lines server-only, an issue line at or after
     // the row's index is proven — a CLOSED row with no label whose last issue
-    // is proven reads the ladder on it (current for that issue, superseded
-    // for older); with no proven issue it stays "cannot confirm".
+    // N is proven reads the ladder on it (current for that issue, superseded
+    // for older), provided revision_count is a number (an older caller's row
+    // without it stays "cannot confirm"). The issue left revision_count
+    // N − 1 and the reopen that nulled the label bumped it to N; above N,
+    // something else moved the cycle after the issue — the package was sent
+    // back (reject_final keeps the label, a reopen then nulls it), a revision
+    // was asked of the reopened request, or it was reopened again — and the
+    // print of Rev N cannot be confirmed (sentBack, below); older prints stay
+    // superseded. With no proven issue it stays "cannot confirm".
     latestIssued = issuedLabel ? currentRev : letterLabel ? issueBeforeLetter : null;
     inReview = false;
-    if (!currentRev && proven) {
+    const count = typeof row.revision_count === "number" && Number.isFinite(row.revision_count) ? row.revision_count : null;
+    if (!currentRev && proven && count !== null) {
       // Reopened and closed again (or force-closed) after a PROVEN issue:
       // that issue is the last one, and nothing newer was issued.
       latestIssued = proven;
+      sentBack = count > cycleOf(proven);
     } else if (!currentRev) {
       // No label: closed before revisions were recorded (20260827), an RFI
       // closed by close_rfi, or reopened and closed again — cannot confirm,
@@ -418,17 +473,22 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string, pri
     verdict = "unknown";
   }
 
-  // DF-P12 (EDGE-2's observation; decided fail-safe under DEC-90): a CLOSED
-  // ticket still carrying issued label N whose cycle has moved past it
-  // (revision_count >= N — reject_final, or a request for revision, sent the
-  // package back after the issue) and that closed with no new issue: the
-  // requester rejected that package, and a close (a Force Close) is not an
-  // approval of it. Its print is neither green nor red — "cannot confirm".
-  // Base answered green. Older prints stay superseded.
-  if (verdict === "current" && terminal && issuedLabel
-      && typeof row.revision_count === "number" && Number.isFinite(row.revision_count)
-      && row.revision_count >= cycleOf(currentRev)) {
-    verdict = "unknown";
+  // DF-P12 (EDGE-2's observation; decided fail-safe under DEC-90, DEC-44
+  // (DF-P12) item 2): a CLOSED ticket whose last issue N was sent back after
+  // it and that closed with no newer issue — the requester rejected that
+  // package, and a close (a Force Close) is not an approval of it. Its print
+  // is neither green nor red: "cannot confirm". Older prints stay superseded.
+  // The evidence (the header's "A package sent back after its issue"): still
+  // on issued label N with revision_count >= N (base answered green); no
+  // label, proven N, revision_count above N (sentBack, set above); a review
+  // label after a proven issue N whose package a later round N returned.
+  if (verdict === "current" && terminal && latestIssued) {
+    const count = typeof row.revision_count === "number" && Number.isFinite(row.revision_count) ? row.revision_count : null;
+    if ((issuedLabel && count !== null && count >= cycleOf(currentRev))
+        || sentBack
+        || (letterLabel && proven === latestIssued && provenSentBackAfterIssue(row.history, row.history_guarded_from, proven))) {
+      verdict = "unknown";
+    }
   }
 
   // SM-5 done-when 3 / LEAK-7 (b) (DF-P12): the printed file's identity.
@@ -473,7 +533,7 @@ export function ticketRevInReview(r: Pick<TicketVerdictResult, "currentRev" | "l
  *  with none, the link carries no `?r=` and the scan answers "cannot
  *  confirm". `attachmentId` is the FILE's id (SM-5 done-when 3, DF-P12):
  *  the scan checks it against the ticket's files, so two prints of one label
- *  are told apart; an id the app did not mint is left off. `undefined` when
+ *  are told apart; an id outside TICKET_ATTACHMENT_ID_RE is left off. `undefined` when
  *  there is no public origin or no ticket id (DEC-64 §2: no origin, no QR). */
 export function ticketVerifyUrl(origin: string, ticketRowId: string | null | undefined, rev: string | null | undefined, attachmentId?: string | null): string | undefined {
   if (!origin || !ticketRowId) return undefined;

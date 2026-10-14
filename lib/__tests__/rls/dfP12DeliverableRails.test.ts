@@ -4,7 +4,8 @@
 // `service_role` with none, which is how the workflow route writes).
 //
 //   20261221  ticket_update_guard refuses a client-appended "issued Rev N"
-//             history line (SM-5's guard limb); every legitimate client write
+//             history line (SM-5's guard limb) and a client-appended
+//             revision-round marker (DEC-44 (DF-P12) item 2's evidence); every legitimate client write
 //             still lands; the service role still writes the issue line; the
 //             history trust index (history_guarded_from) is stamped once, by
 //             the guard, and is never a client's to write; an INSERT clears it.
@@ -14,12 +15,14 @@
 //             nothing.
 //   20261223  download_audits.ticket_id / attachment_id: a member records
 //             their own ticket copy naming the file; the insert-own policy is
-//             unchanged (no row in another member's name, no UPDATE / DELETE).
+//             unchanged (no row in another member's name, no UPDATE / DELETE);
+//             a row naming a ticket is read under the caller's ticket scope
+//             (a Contractor-only member outside it does not see it).
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { admin, asCaller, mosDb, seedOrg, skipReason, type Caller, type SeededMember } from "./dbKit";
+import { admin, asCaller, mosDb, seedOrg, selectAs, skipReason, type Caller, type SeededMember } from "./dbKit";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
 
@@ -50,7 +53,7 @@ describe.skipIf(skip !== null)("DF-P12 — issue lines are the workflow's, the t
     asCaller(db, who, `UPDATE tickets SET history = COALESCE(history, '[]'::jsonb) || jsonb_build_array('${JSON.stringify(entry).replace(/'/g, "''")}'::jsonb) WHERE id = '${id}'`);
 
   beforeAll(() => {
-    const s = seedOrg(db, { requester: { role: "Requester" }, drafter: { role: "Drafter" }, admin: { role: "Admin" } });
+    const s = seedOrg(db, { requester: { role: "Requester" }, drafter: { role: "Drafter" }, admin: { role: "Admin" }, contractor: { role: "Contractor" } });
     orgId = s.orgId;
     m = s.m;
   });
@@ -88,6 +91,22 @@ describe.skipIf(skip !== null)("DF-P12 — issue lines are the workflow's, the t
     expect(read(id, "jsonb_array_length(history)")).toBe("1");
     // a near miss the readers never read as an issue is not refused
     expect(append(m.requester.caller, id, { action: "Revision issued to the field (see Rev 2A notes)", user: m.requester.email })).toEqual({ ok: true, rows: 1 });
+  });
+
+  it("a revision round's marker is the workflow's too: a member's entry carrying revisionRound is refused (any value, any shape); the service role writes one", () => {
+    const id = ticket({ status: "'FINAL_DRAFT'" });
+    for (const entry of [
+      { action: "Reject Final (Re-Open)", user: m.requester.email, revisionRound: 1 },
+      { action: "note", user: m.requester.email, revisionRound: "1" },
+      { action: "note", user: m.requester.email, revisionRound: null },
+    ]) {
+      const r = append(m.requester.caller, id, entry);
+      expect(r.ok, JSON.stringify(entry)).toBe(false);
+      if (!r.ok) expect(r.message).toMatch(/a revision-round history entry is written only by the request workflow/);
+    }
+    expect(read(id, "jsonb_array_length(history)")).toBe("1");
+    expect(append(SERVICE, id, { action: "Reject Final (Re-Open)", user: "r@harness.test", revisionRound: 1 })).toEqual({ ok: true, rows: 1 });
+    expect(read(id, "history->-1->>'revisionRound'")).toBe("1");
   });
 
   it("the workflow (the service role) still appends the issue line; the trust index is stamped once, at the row's history length before that write", () => {
@@ -182,8 +201,25 @@ describe.skipIf(skip !== null)("DF-P12 — issue lines are the workflow's, the t
     expect(asCaller(db, m.drafter.caller, `UPDATE download_audits SET attachment_id = 'att-2' WHERE ticket_id = '${id}'`)).toEqual({ ok: true, rows: 0 });
     expect(asCaller(db, m.admin.caller, `DELETE FROM download_audits WHERE ticket_id = '${id}'`)).toEqual({ ok: true, rows: 0 });
     expect(admin(db, `SELECT count(*) FROM download_audits WHERE ticket_id = '${id}'`)).toBe("1");
-    // not a foreign key: the record outlives the ticket
+    // not a foreign key: the record outlives the ticket (read by the service role; a member reads it only while they can read the ticket)
     admin(db, `DELETE FROM tickets WHERE id = '${id}'`);
     expect(admin(db, `SELECT count(*) FROM download_audits WHERE ticket_id = '${id}'`)).toBe("1");
+    expect(selectAs(db, m.drafter.caller, `SELECT count(*) FROM download_audits WHERE ticket_id = '${id}'`)).toEqual(["0"]);
+  });
+
+  it("PHYS-17 review fix: a row naming a ticket is read under the caller's ticket scope — a Contractor-only member outside it does not see it; rows naming no ticket are untouched", () => {
+    const theirs = ticket({ assigned_drafter_id: `'${m.contractor.uid}'` });
+    const other = ticket();
+    for (const [tid, att] of [[theirs, "att-c"], [other, "att-o"]] as const) {
+      expect(asCaller(db, m.drafter.caller, `INSERT INTO download_audits (org_id, user_id, user_email, source, ticket_id, attachment_id) VALUES ('${orgId}', '${m.drafter.uid}', '${m.drafter.email}', 'drafting', '${tid}', '${att}')`)).toEqual({ ok: true, rows: 1 });
+    }
+    const docRow = randomUUID();
+    admin(db, `INSERT INTO download_audits (id, org_id, user_id, user_email) VALUES ('${docRow}', '${orgId}', '${m.drafter.uid}', '${m.drafter.email}')`);
+    const seen = (who: Caller) => selectAs(db, who, `SELECT COALESCE(attachment_id, 'doc') FROM download_audits WHERE ticket_id IN ('${theirs}', '${other}') OR id = '${docRow}' ORDER BY 1`);
+    // the Contractor-only member reads the ticket they work on, and the document copy, but not the other ticket's row
+    expect(seen(m.contractor.caller)).toEqual(["att-c", "doc"]);
+    // every other member reads the tickets of their org: all three
+    expect(seen(m.requester.caller)).toEqual(["att-c", "att-o", "doc"]);
+    expect(seen(m.admin.caller)).toEqual(["att-c", "att-o", "doc"]);
   });
 });

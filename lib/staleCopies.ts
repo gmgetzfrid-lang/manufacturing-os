@@ -16,7 +16,8 @@
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";
 import { logAuditAction, logRevisionEvent } from "@/lib/audit";
-import { ticketVerdict, issueInForce, type TicketVerdict } from "@/lib/verifyTicketVerdict";
+import { ticketVerdict, issueInForce, isIssuedTicketRev, type TicketVerdict } from "@/lib/verifyTicketVerdict";
+import { isTerminalTicketStatus } from "@/lib/ticketShed";
 
 /** How far back a download is considered "a copy someone may still hold".
  *  PERSONAL list: 60 days — beyond that, self-service noise outweighs value.
@@ -548,8 +549,11 @@ export async function nudgeStaleHolders(input: {
 // verify verdict of THAT file against the ticket now (lib/verifyTicketVerdict.ts
 // ticketVerdict with the file's own revision and id — PHYS-2, SM-5): a copy
 // whose scan would answer superseded, withdrawn or "review draft" is
-// outdated; one that answers current is current. Same window, cap, gap rule
-// and recall record as a document's.
+// outdated; one that answers current is current. A review draft is outdated
+// only once the ticket has moved past it: a copy of the draft UNDER REVIEW
+// now (the ticket is live and its label is that draft's) is the copy its
+// reviewers work from — neither outdated nor nudged. Same window, cap, gap
+// rule and recall record as a document's.
 
 /** The ticket as the recall reads it (the columns the verdict reads). */
 export interface TicketForRecall {
@@ -572,6 +576,9 @@ export interface TicketCopy {
   source: string | null;
   /** What a scan of this copy answers now. */
   verdict: TicketVerdict;
+  /** A copy of the review draft under review right now (the live label is
+   *  this file's revision): a "review draft" verdict that is not outdated. */
+  underReview: boolean;
 }
 
 export interface TicketCopyHolder {
@@ -580,7 +587,8 @@ export interface TicketCopyHolder {
   lastCopiedAt: string;
   /** Every copy of this ticket's files the member took in the window, latest first. */
   copies: TicketCopy[];
-  /** Holds a copy whose scan answers superseded, withdrawn or review draft. */
+  /** Holds a copy whose scan answers superseded or withdrawn, or a review
+   *  draft the ticket has moved past (never the draft under review now). */
   outdated: boolean;
   /** Took a copy that scans current (the latest issue) — the document arm's
    *  "re-pulled the current revision". */
@@ -600,6 +608,9 @@ export interface TicketCopyRecall {
 
 /** The standing of one copy: an outdated verdict is one the field must not work from. */
 const OUTDATED_VERDICTS: ReadonlySet<TicketVerdict> = new Set<TicketVerdict>(["superseded", "withdrawn", "draft_copy"]);
+/** Outdated: its scan answers superseded or withdrawn, or it is a review
+ *  draft the ticket has moved past (never the draft under review now). */
+const isOutdatedCopy = (c: Pick<TicketCopy, "verdict" | "underReview">): boolean => OUTDATED_VERDICTS.has(c.verdict) && !c.underReview;
 
 /** The copy's own revision, read from the ticket's files by id. */
 function fileRevOf(attachments: unknown, attachmentId: string | null): string | null {
@@ -637,15 +648,19 @@ export async function getTicketCopyRecall(
       revision_count: ticket.revisionCount ?? null, history_guarded_from: ticket.historyGuardedFrom ?? null,
       attachments: ticket.attachments,
     };
+    // The review label being worked now: the live ticket's own letter label.
+    const live = typeof ticket.deliverableRev === "string" ? ticket.deliverableRev.trim().toUpperCase() : "";
+    const reviewLabel = !isTerminalTicketStatus(ticket.status) && live !== "" && !isIssuedTicketRev(live) ? live : null;
     const byUser = new Map<string, TicketCopyHolder>();
     for (const r of rows) {
       if (!r.user_id) continue; // a ticket copy is always a member's own pull
       const rev = fileRevOf(ticket.attachments, r.attachment_id);
       const verdict = ticketVerdict(row, rev ?? "", r.attachment_id ?? "").verdict;
-      const copy: TicketCopy = { attachmentId: r.attachment_id ?? null, rev, copiedAt: r.created_at, source: r.source ?? null, verdict };
+      const underReview = verdict === "draft_copy" && reviewLabel !== null && rev === reviewLabel;
+      const copy: TicketCopy = { attachmentId: r.attachment_id ?? null, rev, copiedAt: r.created_at, source: r.source ?? null, verdict, underReview };
       const h = byUser.get(r.user_id) ?? { userId: r.user_id, userEmail: r.user_email ?? null, lastCopiedAt: r.created_at, copies: [], outdated: false, hasCurrent: false };
       h.copies.push(copy);
-      if (OUTDATED_VERDICTS.has(verdict)) h.outdated = true;
+      if (isOutdatedCopy(copy)) h.outdated = true;
       if (verdict === "current") h.hasCurrent = true;
       byUser.set(r.user_id, h);
     }
@@ -688,7 +703,7 @@ export async function nudgeStaleTicketHolders(input: {
         ticketNumber: input.ticketNumber,
         latestIssuedRev: input.latestIssuedRev,
         recipientCount: recipients.length,
-        recipients: recipients.map((h) => ({ userId: h.userId, email: h.userEmail, heldRevs: [...new Set(h.copies.filter((c) => OUTDATED_VERDICTS.has(c.verdict)).map((c) => c.rev))] })),
+        recipients: recipients.map((h) => ({ userId: h.userId, email: h.userEmail, heldRevs: [...new Set(h.copies.filter(isOutdatedCopy).map((c) => c.rev))] })),
         ...(unavailable ? { unavailable: true } : {}),
       },
     });

@@ -20,6 +20,18 @@
 --   download_audits_insert_own is UNCHANGED (a member records only their own
 --   pull, user_id = auth.uid(), in an org they belong to); the server stamping
 --   route (/api/tickets/copy) writes as the service role.
+--   download_audits_ticket_read_scope (new, AS RESTRICTIVE, FOR SELECT, TO
+--   authenticated): download_audits_select admits every member of the org to
+--   every row, and a row naming a ticket now carries that ticket's id — the
+--   public verify key (/api/verify-ticket?t=<id> answers its number, title
+--   and revision status). A member who may not read the ticket (a
+--   Contractor-only member outside drafting-flow AUTHZ-13's scope —
+--   20261166 tickets_read_scope) must not learn it from the record either:
+--   a row naming a ticket is visible only when the caller can read that
+--   ticket (the EXISTS runs under the caller's own tickets policies). A row
+--   naming no ticket (every document copy) is untouched; a row whose ticket
+--   was deleted is readable by the service role only. It narrows; it admits
+--   nothing.
 --   The `source` column comment (20261068) is restated with the four drafting
 --   channel values the app writes: drafting / drafting_print (20261068
 --   already named them) and drafting_unstamped / drafting_print_unstamped (a
@@ -34,8 +46,11 @@
 -- "nobody holds a copy") until the paste. The app before DF-P12 never writes
 -- the columns.
 --
--- Not a widening (two nullable columns; no policy changes). Re-runnable:
--- ADD COLUMN / INDEX IF NOT EXISTS; COMMENT replaces.
+-- Not a widening (two nullable columns and one RESTRICTIVE read policy that
+-- only narrows). Re-runnable: ADD COLUMN / INDEX IF NOT EXISTS; COMMENT
+-- replaces; the policy is DROP-then-CREATE. A later re-paste of 20261068
+-- leaves the new policy in place, but its first probe ("exactly two
+-- policies") then reads false — the count is three from this paste on.
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30).
@@ -63,9 +78,21 @@ SELECT 2, 'inventory (before apply): drafting-ticket copies recorded without the
   FROM download_audits
  WHERE source IN ('drafting', 'drafting_print', 'drafting_unstamped', 'drafting_print_unstamped')
 UNION ALL
-SELECT 3, 'inventory (before apply): policies on download_audits (expect 2: download_audits_select, download_audits_insert_own — unchanged by this paste)',
+SELECT 3, 'inventory (before apply): policies on download_audits (expect 2 on a first paste: download_audits_select, download_audits_insert_own; 3 on a re-paste)',
        COUNT(*)::text
-  FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits';
+  FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits'
+UNION ALL
+SELECT 4, 'inventory (before apply): rows naming a ticket, readable by every member of their org until this paste (0 on a first paste — the column is new)',
+       COUNT(*) FILTER (WHERE to_jsonb(d) ->> 'ticket_id' IS NOT NULL)::text
+  FROM download_audits d
+UNION ALL
+SELECT 5, 'inventory (before apply): active Contractor-only members (the callers download_audits_ticket_read_scope narrows; every other member reads the tickets of their org)',
+       COUNT(*)::text
+  FROM org_members m
+ WHERE m.status = 'active'
+   AND COALESCE((SELECT bool_and(btrim(h.r) = 'Contractor')
+                   FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(r)
+                  WHERE btrim(h.r) <> ''), false);
 
 BEGIN;
 
@@ -79,6 +106,12 @@ COMMENT ON COLUMN download_audits.attachment_id IS
   'drafting-flow PHYS-17 (20261223): the file on that ticket (TicketAttachment.id). Its revision is read from the ticket''s attachments by the stale-copies ticket arm.';
 COMMENT ON COLUMN download_audits.source IS
   'DEC-44: the channel the copy left through (app writers: NULL; share_link / share_link_unstamped; transmittal_portal; drafting / drafting_print; drafting_unstamped / drafting_print_unstamped - a ticket copy that left without its stamp).';
+
+-- A row naming a ticket is read under the caller's ticket scope (header).
+DROP POLICY IF EXISTS download_audits_ticket_read_scope ON download_audits;
+CREATE POLICY download_audits_ticket_read_scope ON download_audits
+  AS RESTRICTIVE FOR SELECT TO authenticated
+  USING (ticket_id IS NULL OR EXISTS (SELECT 1 FROM tickets t WHERE t.id = download_audits.ticket_id));
 
 COMMIT;
 
@@ -94,11 +127,23 @@ SELECT 'PHYS-17: download_audits.ticket_id (uuid) and attachment_id (text) exist
         AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'download_audits' AND indexname = 'download_audits_ticket_idx')) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'the policy set is unchanged: download_audits_select (SELECT) and download_audits_insert_own (INSERT, user_id = auth.uid()), and nothing admits UPDATE, DELETE or ALL',
-       (SELECT COUNT(*) = 2 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits')
+SELECT 'the permissive policies are unchanged: download_audits_select (SELECT) and download_audits_insert_own (INSERT, user_id = auth.uid()), and nothing admits UPDATE, DELETE or ALL',
+       (SELECT COUNT(*) = 2 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits' AND permissive = 'PERMISSIVE')
+       AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits'
+                    AND policyname = 'download_audits_select' AND cmd = 'SELECT' AND permissive = 'PERMISSIVE')
        AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits'
                     AND policyname = 'download_audits_insert_own' AND cmd = 'INSERT' AND with_check LIKE '%user_id = auth.uid()%')
        AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits' AND cmd IN ('UPDATE', 'DELETE', 'ALL')),
+       NULL
+UNION ALL
+SELECT 'download_audits_ticket_read_scope: RESTRICTIVE, SELECT, authenticated only; a row naming a ticket is read only when the caller can read the ticket (deparsed)',
+       EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits'
+                AND policyname = 'download_audits_ticket_read_scope' AND permissive = 'RESTRICTIVE' AND cmd = 'SELECT'
+                AND roles = ARRAY['authenticated']::name[]
+                AND qual LIKE '%ticket_id IS NULL%'
+                AND qual LIKE '%FROM tickets t%'
+                AND qual LIKE '%t.id = download_audits.ticket_id%')
+       AND (SELECT COUNT(*) = 3 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'download_audits'),
        NULL
 UNION ALL
 SELECT 'the source comment names every drafting channel the app writes',

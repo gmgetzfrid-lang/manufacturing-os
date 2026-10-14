@@ -14,8 +14,14 @@
 //      answered as "not found" otherwise); an archived stub has no file;
 //   2. the file is THIS ticket's (one attachment with that id) and stored
 //      under the ticket's own prefix (orgs/<org>/tickets/<number>/ — what
-//      uploadTicketAttachment mints and the workflow route vets); a legacy
-//      absolute URL is refused (this route never fetches a URL a row names);
+//      uploadTicketAttachment mints and the workflow route vets) or, for a
+//      file the requester attached at creation whose re-key under that
+//      prefix never ran (app/api/tickets/create/route.ts step 7: such files
+//      "stay at their staged keys (the row names them there)"), at the
+//      requester's own staged key (lib/ticketCreate.ts isStagedKeyOf for the
+//      ticket's org and requester — the row naming it is workflow-owned); a
+//      legacy absolute URL is refused (this route never fetches a URL a row
+//      names);
 //   3. the copy's plan is the page's own (lib/ticketDeliverableCopy.ts
 //      ticketCopyPlan): the FILE's revision and id on the QR (PHYS-2,
 //      SM-5 done-when 3), one control state for both marks (PHYS-9), the
@@ -57,6 +63,7 @@ import { configuredPublicOrigin, isUnreachableRecipientHost } from "@/lib/public
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { ticketCopyPlan, recordTicketCopy, type TicketCopyChannel } from "@/lib/ticketDeliverableCopy";
 import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
+import { isStagedKeyOf } from "@/lib/ticketCreate";
 import type { TicketAttachment } from "@/types/schema";
 
 export const maxDuration = 60;
@@ -181,7 +188,10 @@ export async function POST(req: NextRequest) {
     return json({ error: "legacy_file", message: "This file was recorded before files were stored by path, so the server cannot issue a copy of it. Ask Document Control to re-attach it." }, 409);
   }
   const prefix = `orgs/${t.org_id}/tickets/${t.ticket_id ?? ""}/`;
-  if (!key || !t.ticket_id || !isSafeStorageKey(key) || !key.startsWith(prefix) || key.length <= prefix.length) {
+  const underTicket = key.startsWith(prefix) && key.length > prefix.length;
+  // A creation-time file whose re-key never ran stays at the requester's staged key.
+  const staged = !!t.requester_id && isStagedKeyOf(key, t.org_id, t.requester_id);
+  if (!key || !t.ticket_id || !isSafeStorageKey(key) || !(underTicket || staged)) {
     return json({ error: "That file is not stored under this request" }, 409);
   }
 
