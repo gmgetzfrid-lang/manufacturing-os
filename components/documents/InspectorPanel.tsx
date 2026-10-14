@@ -48,6 +48,7 @@ import { holdAffordances, canForceReleaseCheckout, affordancePolicyFault } from 
 import { collectTagGroups } from "@/lib/documentTags";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
+import { auditActorNote } from "@/lib/auditActions";
 
 interface InspectorPanelProps {
   selectedDoc: DocumentRecord | null;
@@ -396,6 +397,7 @@ export default function InspectorPanel({
           userRole: r.user_role,
           details: r.details,
           timestamp: r.timestamp,
+          actorKind: r.actor_kind ?? null, // ALOG-7: whose word the identity is
         } as AuditEntry)));
       }
     })();
@@ -966,6 +968,7 @@ export default function InspectorPanel({
               <div key={i} className="flex flex-col gap-0.5 border-l-2 border-[var(--color-border)] pl-3">
                 <span className="text-[10px] font-bold text-[var(--color-text)] uppercase">{log.action.replace(/_/g, ' ')}</span>
                 <span className="text-[10px] text-[var(--color-text-muted)]">by {log.userEmail?.split('@')[0]}</span>
+                <span className={`text-[9px] ${log.actorKind ? "text-[var(--color-text-faint)]" : "text-amber-700"}`} title="ALOG-7: whose word the email and role on this row are">{auditActorNote(log.actorKind)}</span>
                 <span className="text-[9px] text-[var(--color-text-faint)] font-mono">{formatTs(log.timestamp)}</span>
               </div>
             ))}

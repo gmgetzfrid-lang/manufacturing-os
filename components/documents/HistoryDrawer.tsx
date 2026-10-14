@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { X, History, Shield, Eye, FileDiff, CheckCircle2, Lock, Clock, Users, ArrowRight } from "lucide-react";
 import type { DocumentRecord, DocumentVersion, CheckoutSession } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
+import { auditActorNote } from "@/lib/auditActions";
 import { supabase } from "@/lib/supabase";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import TimelineFeed from "@/components/documents/TimelineFeed";
@@ -85,6 +86,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
         action: r.action, resourceId: r.resource_id, resourceType: r.resource_type,
         orgId: r.org_id, userId: r.user_id, userEmail: r.user_email,
         userRole: r.user_role, details: r.details, timestamp: r.timestamp,
+        actorKind: r.actor_kind ?? null, // ALOG-7: whose word the identity is
       } as AuditEntry)));
     } catch (e) {
       console.error("Data load failed", e);
@@ -450,6 +452,9 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                       </div>
                       <span className="text-xs font-bold text-[var(--color-text)]">{log.userEmail}</span>
                       <span className="text-[10px] text-[var(--color-text-faint)]">({log.userRole})</span>
+                      <span className={`text-[10px] ${log.actorKind ? "text-[var(--color-text-faint)]" : "text-amber-700"}`} title="ALOG-7: whose word the email and role on this row are">
+                        · {auditActorNote(log.actorKind)}
+                      </span>
                     </div>
                     {log.details && (
                       <div className="mt-2 text-xs text-[var(--color-text-muted)] font-mono bg-[var(--color-surface-2)] p-2 rounded">

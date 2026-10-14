@@ -18,6 +18,13 @@ export interface AuditEntry {
    *  writer puts here is not written. The exported signature is kept
    *  (logAuditAction(entry: AuditEntry), the P7 brief: every writer unchanged). */
   timestamp?: string;
+  /** admin-and-org ALOG-7 (P13): the STORED row's audit_logs.actor_kind
+   *  (20261201: member / server / system; null on a row written before that
+   *  paste), for the readers that build an AuditEntry from a row
+   *  (HistoryDrawer, InspectorPanel) and label whose word the identity is
+   *  (lib/auditActions.ts auditActorNote). Never written: the database sets
+   *  it, and logAuditAction's insert names no actor_kind. */
+  actorKind?: string | null;
 }
 
 /** The stand-ins call sites pass when there is no member to name (a cron

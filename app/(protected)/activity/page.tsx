@@ -45,7 +45,7 @@ import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
-import { foldTicketFeed } from "@/lib/auditActions";
+import { foldTicketFeed, auditActorNote } from "@/lib/auditActions";
 
 interface ActivityRow {
   id: string;
@@ -54,6 +54,8 @@ interface ActivityRow {
   resourceId: string;
   userEmail: string | null;
   userRole: string | null;
+  /** ALOG-7 (P13): audit_logs.actor_kind (20261201) — null before that paste. */
+  actorKind: string | null;
   details: Record<string, unknown> | null;
   timestamp: string;
 }
@@ -139,6 +141,7 @@ export default function ActivityFeedPage() {
         resourceId: String(r.resource_id),
         userEmail: (r.user_email as string | null) ?? null,
         userRole: (r.user_role as string | null) ?? null,
+        actorKind: (r.actor_kind as string | null | undefined) ?? null,
         details: (r.details as Record<string, unknown> | null) ?? null,
         timestamp: String(r.timestamp),
       }));
@@ -320,6 +323,7 @@ export default function ActivityFeedPage() {
                         )}
                         <div className="flex-1 min-w-0 text-xs leading-relaxed">
                           <span className="font-bold text-[var(--color-text)]">{r.userEmail?.split("@")[0] ?? "Someone"}</span>
+                          <span className={`ml-1 text-[10px] ${r.actorKind ? "text-[var(--color-text-faint)]" : "text-amber-700"}`} title="ALOG-7: whose word the name on this row is">({auditActorNote(r.actorKind)})</span>
                           {" "}<span className="text-[var(--color-text-muted)]">{verb}</span>{" "}
                           {href ? (
                             <Link href={href} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] underline-offset-2 hover:underline transition-colors">
