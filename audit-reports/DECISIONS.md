@@ -5748,7 +5748,7 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 - *Fix pass (2026-10-14, the review of N10).*
   - *Ruling (3) is now held by construction. A server emit pushes only when its caller passes `EmitInput.serverPush`. There is no module-level sender, so the maintenance cron's `scanStaleHolds` nudge (`hold_opened`) never pushes, whatever else the process has loaded. The first pass's load-order registration let it push.*
   - *Ruling (2) is now enforced in the schema. `20261211` (PASTE pending) drops `push_sub_insert_own`, so a device row exists only because the opt-in route stored it.*
-  - *A push goes only to a browser push service's host (`lib/push/endpoints.ts`). See `DEC-44 (N10-push)` §4–§7.*
+  - *A push goes only to a browser push service's host (`lib/push/endpoints.ts`). See `DEC-44 (N10-push)` §4–§7.* *(Fix pass 2: that held only from the second fix pass on. The check reads the host the way both URL parsers do, `web-push`'s legacy `url.parse` included, and every request goes through a push-service-only agent — §7.)*
 
 <a id="dec-91"></a>
 ## DEC-91 · No role known is null, never a placeholder: what an audit row says, what a consumer allows, and what a browser keeps after sign-out
@@ -6462,7 +6462,11 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
    - the rows made before `PUSH_OPT_IN_SINCE`;
    - (fix pass) the rows naming no push service.
 
-   A subscription answered 404 / 410 is deleted by the sender at once. There is no time-based prune, because a device nobody pushed for months is still one its person turned on. Fix pass: the membership read goes 50 owners at a time. A read that comes back at PostgREST's row limit may have been cut short without an error, so the owners it did not name are asked one by one. An active member missing from a cut-short read is never taken for a departed one.
+   A subscription answered 404 / 410 is deleted by the sender at once. There is no time-based prune, because a device nobody pushed for months is still one its person turned on. Fix pass: the membership read goes 50 owners at a time. A read that comes back at PostgREST's row limit may have been cut short without an error, so the owners it did not name are asked one by one. An active member missing from a cut-short read is never taken for a departed one. Fix pass 2: it also removes:
+   - the rows dated later than the run's clock plus `PUSH_FUTURE_SKEW_MS` (5 min), which the route did not stamp;
+   - each person's rows past their newest `PUSH_DEVICE_CAP` (`trimDevicesPastCap`). The trim deletes only rows no newer than the cap's boundary row, so a row the route re-stamps meanwhile is never taken.
+
+   Rows a member wrote by hand before `20261211` therefore come down to ten. On the sender's side, a device read that reaches PostgREST's row limit is read again person by person, ten rows each, so one person's rows never cost a neighbour in the same read their push.
 6. **Who decides a server push** (rewritten at the fix pass). The first pass registered the sender in module-global state when `lib/push/sendPush.ts` loaded. In a long-lived process, whether a server emit pushed then depended on which routes had run before it, and the cron's `hold_opened` nudge could push. Now:
    - `EmitInput.serverPush` is passed per call (`lib/push/sendPush.ts` `pushFromServer`), only by a server caller allowed to push.
    - A server emit without it attempts no push and says so once.
@@ -6476,6 +6480,14 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 
    The URL must be https, on the default port, with no user-info. It is checked at subscribe and again before every send, and a row that fails is deleted unsent. A browser that pushes through another service is refused at the opt-in ("That is not a browser push subscription."). It is never silently stored.
 
+   *Corrected at fix pass 2 (the second review's blocker).* As first written, §7 did not hold. The check read the host with the WHATWG parser, while `web-push` 3.6.7 connects by Node's legacy `url.parse`. For a host holding `;`, `{`, `}`, `'`, a backtick or `"`, the two name different hosts: `https://10.0.3.7;.push.apple.com/x` passed and `web-push` addressed `10.0.3.7`. Now `pushEndpointAllowed` accepts only a string that both parsers must read the same way:
+   - printable ASCII only;
+   - the raw text, lower-cased, is exactly `https://` + host + `/` or `?`, with no port (not even `:443`) and no user-info;
+   - the host is plain LDH labels on the list above;
+   - `new URL` and `url.parse` both give that host, with no port and no user-info.
+
+   Defence in depth: every request goes through `pushServiceAgent()`. It connects only to a listed host, judged on the host the request was actually addressed to (an IP literal never passes), and only on port 443. It connects only to a public address: its DNS lookup refuses any loopback, private, link-local, CGNAT, multicast, mapped or reserved answer. `lib/push/endpoints.ts` is server-only from now on, and `PUSH_KEYS_MISMATCH` lives in `lib/notify/dispatch.ts`.
+
 **Rationale.** Push is the loudest rung of the signal ladder, and it shows on a lock screen. The fail-safe choices are the ones where a fault means fewer or emptier notifications, never more or fuller ones:
 - a push must point at something the person can already find in the app;
 - no member can turn another person's phone into a pager;
@@ -6485,7 +6497,12 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 
 **Implementation.** `lib/push/sendPush.ts` (+ `lib/push/web-push.d.ts`), `lib/push/endpoints.ts` (fix pass), `lib/notify/dispatch.ts`, `lib/notificationKinds.ts` (six `pushWorthy` lines), `app/api/push/notify/route.ts`, `app/api/push/subscribe/route.ts`, `app/api/push/unsubscribe/route.ts`, `components/settings/PushOptIn.tsx`, `app/(protected)/settings/notifications/page.tsx` (the mount), `public/sw.js` (comment only), `app/api/cron/maintenance/route.ts` (step 7c), `.env.example`, `package.json` / `package-lock.json`, `supabase/migrations/20261211_notif_roundG_push_subscriptions_writer.sql` (fix pass; PASTE pending).
 
-**Acceptance.** `lib/__tests__/pushChannel.test.ts`, `lib/__tests__/pushOptIn.test.ts`, `lib/__tests__/sw.test.ts` (push / notificationclick), `lib/__tests__/maintenanceDrain.test.ts` (step 7c), `lib/__tests__/notificationWriteRails.test.ts` (the sender's read classified: not a dedupe), `lib/__tests__/notifRoundGPushWriterMigration.test.ts` (fix pass: `20261211`'s shape), and the PostgreSQL 16 run recorded in `20261211`'s header.
+**Acceptance.** `lib/__tests__/pushChannel.test.ts`, `lib/__tests__/pushOptIn.test.ts`, `lib/__tests__/sw.test.ts` (push / notificationclick), `lib/__tests__/maintenanceDrain.test.ts` (step 7c), `lib/__tests__/notificationWriteRails.test.ts` (the sender's read classified: not a dedupe), `lib/__tests__/notifRoundGPushWriterMigration.test.ts` (fix pass: `20261211`'s shape), and the PostgreSQL 16 run recorded in `20261211`'s header. Fix pass 2 adds:
+- in `pushChannel.test.ts`, the real `web-push` run with `https.request` stubbed: every endpoint the check accepts is addressed to a listed host, over a thousand candidate strings;
+- the agent's host and address refusals;
+- the 1,200-row neighbour test, and the future-dated row tests (here and in `maintenanceDrain.test.ts`);
+- the per-person trim;
+- `pushOptIn.test.ts`'s census pinning each line on the card to a producer that browser modules call.
 
 **Reversal.**
 - (1) and (2): `sendPush`'s evidence, cap and claim block.
@@ -6493,7 +6510,7 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 - (4): `PushOptIn` and the subscribe route's conditional takeover and `keepNewestDevices`.
 - (5): `prunePushSubscriptions` / `ownersStillMembers`.
 - (6): `EmitInput.serverPush`.
-- (7): `lib/push/endpoints.ts`. A new push service is one host there; a test pins the list, and `20261211`'s inventory pattern names the same hosts.
+- (7): `lib/push/endpoints.ts`. A new push service is one host there; a test pins the list, and `20261211`'s inventory pattern names the same hosts. Fix pass 2: the both-parsers check and `PushServiceAgent` live there too. Never loosen the check to one parser while `web-push` connects by `url.parse`.
 - Re-creating `push_sub_insert_own` would re-open the hand-written row. Do not, while the sender posts from the server.
 - Turning the whole channel off needs no code: unset the VAPID variables.
 - Removing the channel (the fork's other arm) removes `lib/push/`, the three routes, the card and the `pushWorthy` lines; `public/sw.js` keeps its receiver.
@@ -6506,9 +6523,11 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
   - a shared browser keeps the signed-out person's subscription until someone changes it (`OS-15`);
   - four push-worthy producers write outside `emit()` and are not pushed yet (`OS-14`). The card says so;
   - a browser whose push service is not on the list cannot turn the channel on (it is told so);
-  - until `20261211` is pasted, a member can still insert their own row by hand. It is sent to only if it names a push service's host, and no more than 10 rows are read per person.
+  - until `20261211` is pasted, a member can still insert their own row by hand. It is sent to only if it names a push service's host, and no more than 10 rows are read per person (fix pass 2: per person, so a neighbour is never crowded out; a future date wins nothing; the cron trims to ten);
+  - (fix pass 2) a browser whose push endpoint carries an explicit `:443`, or no path after the host, is refused at the opt-in. No supported browser's service issues one;
+  - (fix pass 2) a deployment whose DNS answers a push service's host with a translated (NAT64 `64:ff9b::/96`) or other reserved address cannot push. That is the fail-safe side.
 
 **For the integrator to ratify** (departures from the brief, each taken on the fail-safe side):
-- (a) `RT-7` done-when 1: the VAPID public key is served by `GET /api/push/subscribe` under the brief's variable names, not exposed as a `NEXT_PUBLIC_` variable. It is recorded as a deviation on `RT-7`.
+- (a) `RT-7` done-when 1: the VAPID public key is served by `GET /api/push/subscribe` under the brief's variable names, not exposed as a `NEXT_PUBLIC_` variable. It is recorded as a deviation on `RT-7`. Fix pass 2: `RT-7` stays OPEN with a Partial block, owned by the integrator, until this is ratified. Record it RESOLVED at merge on ratification.
 - (b) The cron's step 7c prunes by membership, by the opt-in instant and by push-service host, not by "stale `last_reminded_at`" as the brief's cron step said. A device nobody was pushed for is still one its person turned on (§5).
 - (c) `20261211`, this package's reserved number, is used at the fix pass for one policy drop and nothing else.

@@ -351,7 +351,7 @@ default:
 ## RT-7 · The OS-level notification path is fully built on the service-worker side and completely unwired on the client side — no subscribe, no VAPID key, no sender
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:222-238`, `public/sw.js:240-256`, `supabase/migrations/20260804_push_subscriptions.sql`, `lib/schemaExpectations.ts:99`, `components/pwa/ServiceWorkerManager.tsx:30-50`, `app/layout.tsx:93`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide absence search. The SW handler and the push_subscriptions table exist; there is no subscribe call, no VAPID key, and no sender, so no push can ever be delivered.
@@ -376,7 +376,7 @@ self.addEventListener("push", (event) => {
 - [ ] a server sender (in the existing maintenance cron, or alongside `emit()`'s inapp branch) posts to the stored endpoints, with 404/410 responses pruning dead subscriptions
 - [ ] either `task_reminder` gains a producer or the kind is deleted from the union
 
-**Resolution (2026-10-14, notifications Round G).** Package N10 PUSH, branch `fleet/N10-push` (base `ce5a053`), commits `3f53779` (`web-push` 3.6.7), `b3358d9` (the channel) and `669afad` (no push for a registration older than the opt-in control). The build is recorded in full on `OS-2` / `OS-3` / `OS-9` / `OS-10` (`07-os-notifications-and-nudges.md`): one build closes the four lenses that found the same decapitated stack (the plan's sequencing note).
+**Partial (2026-10-14, notifications Round G).** *(Marked RESOLVED at the first pass and the fix pass; set back to OPEN with this Partial block at fix pass 2, because done-when 1 does not hold as written until the integrator ratifies its deviation — DEC-29 / DEC-31.)* **Partial — owner: integrator (ratify `DEC-44 (N10-push)` "For the integrator to ratify" (a)); the integrator records RESOLVED at merge on ratification.** Package N10 PUSH, branch `fleet/N10-push` (base `ce5a053`), commits `3f53779` (`web-push` 3.6.7), `b3358d9` (the channel) and `669afad` (no push for a registration older than the opt-in control). The build is recorded in full on `OS-2` / `OS-3` / `OS-9` / `OS-10` (`07-os-notifications-and-nudges.md`): one build closes the four lenses that found the same decapitated stack (the plan's sequencing note).
 **Reproduced first** on `ce5a053`, with both of the finding's search shapes:
 - no `pushManager`, `requestPermission`, `new Notification(` or `Notification.permission` outside `node_modules`;
 - `sendNotification`, `webpush`, `push_sub`, `'push'` and `"push"` appeared in `lib/` and `app/api/` only in the three bookkeeping lines (`lib/schemaExpectations.ts:161`, `lib/exportTables.ts:319`, `lib/dataRestore.ts:160`).
@@ -393,10 +393,10 @@ self.addEventListener("push", (event) => {
   - Deviation: the public half reaches the browser through `GET /api/push/subscribe`. No `NEXT_PUBLIC_VAPID_PUBLIC_KEY` exists — do not look for one in the build env. A VAPID public key is public by design, and a key inlined at build would need a rebuild to rotate.
   - The private key is read only by `lib/push/sendPush.ts` on the server. The route returns the public key only (pinned: `pushChannel.test.ts` "GET says whether push is configured and gives the PUBLIC key only").
 - ✓ A client surface calls `Notification.requestPermission()` at a deliberate moment (not on load) and, on grant, `registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`, persisting the result to `push_subscriptions` keyed by user and endpoint (`pushOptIn.test.ts`; `pushChannel.test.ts`).
-- ✓ A server sender, alongside `emit()`'s in-app branch, posts to the stored endpoints, and 404 / 410 responses prune dead subscriptions. Fix pass: it posts only to an endpoint on a browser push service's host (`lib/push/endpoints.ts`), and deletes any other row unsent (`OS-2`).
+- ✓ A server sender, alongside `emit()`'s in-app branch, posts to the stored endpoints, and 404 / 410 responses prune dead subscriptions. Fix pass: it posts only to an endpoint on a browser push service's host (`lib/push/endpoints.ts`), and deletes any other row unsent (`OS-2`). *(Corrected at fix pass 2: as the fix pass left it, that host claim did not hold. The check read the host with the WHATWG parser, `web-push` connects by the legacy `url.parse`, and the two disagree on some strings. Since fix pass 2 the check accepts only an endpoint both parsers read the same host from, and every request goes through `pushServiceAgent()`, which connects only to a push service's host and a public address — `OS-2`'s fix-pass-2 block.)*
 - ✓ (by record) `task_reminder` is deleted from the union. It was removed before this package: `lib/inAppNotifications.ts:47` records it, and `lib/__tests__/notificationKinds.test.ts`'s `RETIRED` list pins it gone.
 
-**Scope / residual.** Done-when 1 is a recorded deviation: the public key is served by `GET /api/push/subscribe`, not a `NEXT_PUBLIC_` variable. The integrator ratifies it (`DEC-44 (N10-push)`, "For the integrator to ratify"). The producers outside `emit()` are `OS-14`.
+**Scope / residual.** Done-when 1 is a recorded deviation: the public key is served by `GET /api/push/subscribe`, not a `NEXT_PUBLIC_` variable. The integrator ratifies it (`DEC-44 (N10-push)`, "For the integrator to ratify" (a)). Until then this finding stays OPEN with this Partial block. Done-when 2–4 hold. On ratification the integrator records RESOLVED. If the deviation is refused, the remainder is a `NEXT_PUBLIC_VAPID_PUBLIC_KEY` read by the card in place of the route's key, owned by the integrator. The producers outside `emit()` are `OS-14`.
 
 ---
 
