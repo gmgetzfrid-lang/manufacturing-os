@@ -220,6 +220,25 @@
 - R9.3 Nothing outside linked sources is read without a human pressing a
   priced button, except names and paths.
 
+### R11 — Activity awareness ("what is going on with X35 / in the crude tank farm?")
+- R11.1 The find service has an **activity layer** alongside documents:
+  for the resolved entity (asset, unit, area, project) and the documents
+  linked to it, return work in flight — open drafting requests (tickets)
+  that name it or sit on its documents or unit; active checkouts of its
+  drawings (who, since when, under which project); markup requests; holds;
+  projects scoped to it (R6); upcoming milestones. Grouped as "Happening
+  now", each with who and when.
+- R11.2 Unit- and area-level roll-up: "all projects in the crude tank
+  farm" is the union of projects scoped to that unit/area (R6) and projects
+  whose checked-out or linked documents are drawn on / filed under it.
+- R11.3 Privacy posture: the system reports **work that touches controlled
+  records, units, and projects** — things that already carry an audit
+  trail — never personal content. A markup on someone's desk is unknown
+  until it is a markup request or a checkout in the system; the product's
+  job is to make the sanctioned path the easiest one, not to watch people.
+- R11.4 A supervisor-facing "What's going on in <unit>" view is a lens of
+  the same data (R2.4), not a new report.
+
 ### R10 — Verification
 - R10.1 Golden queries, pinned as tests, grow with every real query the
   owner types. Current set: U1-A born heater pilot valve 2018; 10-1-15 vs
@@ -266,3 +285,48 @@
 4. Should `asset_aliases` and `finder_aliases` be merged into one table,
    or bridged? (Recommendation: merge; one place to teach.)
 5. Retention of drive listings: keep forever, or expire after import?
+
+---
+
+## Appendix A — Operating procedure today: syncing a unit without burning tokens
+
+Scope is the whole cost control. Nothing outside a linked **source** is
+ever read. An invoices folder that is never linked costs nothing, forever.
+
+1. **Intelligence › Setup.** Connect the AI key (your money, your cap), set
+   the monthly cap, and make sure the Site Codebook knows the unit codes,
+   equipment prefixes, and drawing-number format. The codebook is what
+   turns "2002-D-2001" into "Crude, P&ID" for free.
+2. **Intelligence › Knowledge › New library**, e.g. "Crude unit drawings".
+   One library per purpose keeps answers and costs legible.
+3. **Sources panel › Link a source.** Link the *folder subtrees* that
+   matter — `Drawings / P&IDs / 20 - Crude` and `Equipment / Crude` — not
+   the whole document library. Linking queues every controlled PDF in
+   those folders as a pending mirror (same bytes, no copy). This is the
+   moment cost is decided.
+4. **Index.** Text-layer pages are extracted with no AI call. Vision runs
+   only on pages that have no readable text (SHX AutoCAD exports, scans),
+   on the cheap tier, on the sponsor's key, and stops at the monthly cap.
+   The library option "read every page with vision" is off unless you turn
+   it on. Index while you watch (the library page, resumable) or let the
+   nightly maintenance cron drain it.
+5. **Bridge (automatic on index completion).** Tags read on each sheet are
+   decoded to the unit via the drawing number, reconciled against the
+   registry (unknown tags become *discovered* assets with provenance), and
+   written onto the document's equipment column. Anything that can't apply
+   waits in **Intelligence › Review**.
+6. **Review.** Approve or dismiss the proposed equipment links and document
+   links. Dismissals are remembered; the engine never nags twice.
+7. **Teach aliases** as you notice them (Equipment page today; Documents ›
+   Graph › Aliases for finder terms). Every alias improves every later step.
+8. **Semantic index (optional, priced).** Intelligence › Knowledge ›
+   library › Semantic index. Only needed for meaning questions ("what holds
+   the pump down"); tag and code search never needs it.
+9. **Re-sync is automatic.** A rev-up of a linked drawing re-indexes only
+   that document. A document moved out of the source is dropped. The cron
+   keeps sources in lockstep nightly.
+
+What the roadmap changes: steps 3–6 become one resolver event on upload
+(R3) so the bridge runs for every container, step 7 gets ingestion-time
+alias proposals (R3.5), and the find service (R4) reads what steps 4–5
+produced from every search box, not only Ask.
