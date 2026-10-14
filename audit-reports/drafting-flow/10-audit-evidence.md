@@ -701,6 +701,8 @@ Tests: `lib/__tests__/auditViewers.test.ts` "drafting-flow EVID-12 — …" (the
 
 **Scope / residual.** None for P7. Status stays OPEN for DF-P5. **For the integrator (citation drift):** document-control `DCK-9` (RESOLVED, Round F; `01-checkout.md` Locations, the verifier correction and the Resolution) and `LIFE-*`'s FIELD_VERIFIED resolution in the same file cite `app/(protected)/activity/page.tsx:195` for the pulse's lock bucket. P7's header copy (ALOG-5's rule, this reading rule) and the one import moved that line to `:227` (`:221` at the second review fix pass; the third pass's corrected ALOG-5 comment moved it again); the code there is unchanged (`lib/__tests__/timelineHolds.test.ts` still pins it by content). The citation is the only thing that moved; P7 does not edit DC records (DEC-31).
 
+*Page half landed (2026-10-14, drafting-flow Round G, DF-P9 TICKET-PAGE) — `99-fix-sequencing.md`, "EVID-12 / LIFE-6 (the request page)".* After an action lands, the ticket page reads the 200's `warning` / `holdsNotReleased` and shows a warning toast — "Done — but a hold is still active" when holds were not released, "Done, with a warning" otherwise (e.g. the library that could not be recorded before `20261208`) — instead of dropping it (`app/(protected)/requests/[id]/page.tsx:1702-1709`). `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` (the assign modal tests: both titles). The record stays OPEN for DF-P5's e-signature limb, as assigned.
+
 ---
 
 <a id="evid-13"></a>

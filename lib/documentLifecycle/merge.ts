@@ -12,6 +12,7 @@ import { logRevisionEvent } from "@/lib/audit";
 import {
   revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
   canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp, describeControllerOnlyFirstIssue,
+  recallOnRetirement, skipsRetirementRecall, recallsCopyHolders,
   type RevUpInput,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
@@ -511,6 +512,36 @@ async function finishMerge(
     await notifyHolderOfRetirement({
       preState: pre, documentId: src.id!, libraryId: src.libraryId || target.libraryId, orgId, actorUserId, actorEmail,
       verb: "merged", action: "merge", reason: reason.trim(),
+    });
+  }
+
+  // PROD-17 (document-control P26): each absorbed source's watchers are
+  // told and, when the merge takes away a controlled issue, its copy
+  // holders recalled — one call per retired source, never awaited; a
+  // source already Superseded or Archived before the merge (its status read
+  // fresh before the flip; skipsRetirementRecall) gets neither again. P26
+  // fix pass 4 (the integrator's ruling under DEC-90): the copy holders
+  // are recalled only out of a controlled issue (recallsCopyHolders) — a
+  // Draft, In Review or Void source gets the watchers' FYI only. Its
+  // checkout holder was told above; no package owner is. A person who
+  // holds copies of several issued sources gets one recall per source:
+  // ACCEPTED by the integrator under DEC-90 (2026-10-14) — each source is
+  // a distinct document its holders may have printed (PROD-17).
+  const mergedInto = target.kind === "create_new"
+    ? target.documentNumber.trim()
+    : String(target.target.documentNumber || target.target.title || target.target.name || "the kept document");
+  const priorStatusOf = new Map(retired.map((r) => [r.sourceDocId, r.priorStatus]));
+  for (const src of absorbed) {
+    const priorStatus = priorStatusOf.get(src.id!);
+    if (skipsRetirementRecall(priorStatus)) continue;
+    recallOnRetirement({
+      orgId, documentId: src.id!, libraryId: src.libraryId || target.libraryId,
+      docLabel: String(src.documentNumber || src.title || src.name || "document"),
+      newStatus: "Superseded",
+      replacementNote: `Replaced by ${mergedInto}.`,
+      actorUserId, actorName: actorEmail || actorUserId,
+      personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
+      recallCopyHolders: recallsCopyHolders(priorStatus),
     });
   }
 

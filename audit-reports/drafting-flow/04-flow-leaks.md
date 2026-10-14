@@ -233,6 +233,13 @@ compare-and-set and audit path as every other ticket mutation.
 
 **Scope / residual.** Handed on, binding (fleet plan): the `requests/page.tsx` priority writes and the page's `unread_by` write → **DF-P9** (under `PERS-3`: a `set_priority` action, or `{error}` + CAS). Found on HEAD and not named in the plan: the `lib/projects.ts` history push → **DF-P8** (the project link becomes a server action, `GAP-114`). The in-place history rewrite risk itself is `SM-2`'s residual (DF-P1).
 
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the two client writers handed to it. The queue's priority write compare-and-sets on `last_modified` and says a lost race or refusal, with its audit row after a confirmed write; the page's `unread_by` clear is checked (`PERS-3`'s resolution; `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts`, `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts`). Neither rewrites an array or bypasses a guard the route keeps.
+
+**Done-when.**
+- ✗ in part — attachment writes go through the route's CAS and audit (✓, WF-9); the request pages' remaining writes are checked and race-safe (✓, this package); history: `lib/projects.ts:1603` still pushes a "Converted to Project" entry from the browser (dormant). **Owner:** drafting-flow **DF-P8** (`GAP-114`), as recorded.
+
+**Scope / residual.** The `lib/projects.ts` history push → DF-P8.
+
 ---
 
 ## LEAK-5 · Field markup is destroyed by a page refresh
@@ -434,7 +441,7 @@ with no Final attachment. The requester acknowledges, the ticket closes, and
 ## LEAK-9 · There is no record of work that left the app
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-whens 1–2: the cancel dialog's category picker from the engine action's `outcomes`; the leak rate then measures) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
 - **Blast radius:** process visibility
@@ -487,6 +494,15 @@ worth doing early despite being MEDIUM.
 3. ✓ `CANCELED` is reachable (DEC-14, Round E).
 
 **Scope / residual.** Done-when 1's UI half → DF-P9. Org-configurable vocabulary: later (recorded on `DEC-103`). Pending migration: `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` — until pasted, outcomes are not stored and the analytics block counts every ended request as not recorded.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — done-whens 1–2's UI half. The cancel dialog asks **how the request ends**: a required select (`data-testid="outcome-picker"`) from the engine action's own `outcomes` (`CANCEL_OUTCOMES` — withdrawn, duplicate, handled outside the app, rejected; labels from `lib/ticketOutcome.ts` `OUTCOME_LABEL`), passed when the action `requiresOutcome` (`app/(protected)/requests/[id]/page.tsx`:1997); Confirm stays disabled until one is chosen, the reason stays the comment, and the action is refused client-side without one (`app/(protected)/requests/[id]/page.tsx`:1563). The workflow route receives `outcome` and records it (DF-P3).
+
+**Done-when.**
+1. ✓ A request can be closed as withdrawn, duplicate, handled out of band or rejected, with a reason, from the product — `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "LEAK-9 — Cancel asks how the request ends" (rendered: the picker lists the outcomes, Confirm disabled until chosen, the post carries `outcome` and the comment).
+2. ✓ The outcomes are reportable: `/admin/analytics` "How Requests Ended" (DF-P3) now receives categorized cancels from the UI, so the leak rate is measured once cancels carry them.
+3. ✓ `CANCELED` is reachable (unchanged).
+
+**Scope / residual.** The route still accepts a `cancel_request` with no category (the `outcomeDefaulted` branch, recorded as "Not recorded"); making it a 400 now that the UI always sends one is the workflow route's owner's one-line change (drafting-flow DF-P1 / the route's next package) — the UI never sends one without it. Pending migration (DF-P3's): `20261195`.
 
 ---
 

@@ -9,10 +9,24 @@ import { uploadTicketAttachment, getSignedUrlForPath, ArchivedFileError } from '
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
-import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction } from '@/lib/workflow';
-import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord, type CustomCategoryConfig, type OrgDraftingSettings } from '@/types/schema';
+import { WorkflowEngine, WorkflowAction, ticketResource } from '@/lib/workflow';
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { affordancePolicyFault } from '@/lib/checkoutAffordances';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
+// drafting-flow Round G, DF-P9 TICKET-PAGE: the page's display layer and
+// decisions (UI-1 / UI-4 / UI-7, EDGE-6 / ROUTE-8, SM-13, DCW-1 / DCW-7,
+// PROJ-9, LEAK-9, HAND-7 / HAND-3, FRIC-3 / FRIC-8, DCW-5).
+import { ticketStatusLabel, ticketUnitDisplay } from '@/lib/ticketStatusLabels';
+import { attentionLabel, holdersFor, waitingSince, waitedFor, explainNoActions } from '@/lib/ticketAttention';
+import { drafterCandidates, NO_DRAFTER_CANDIDATES, missingRequiredFile, triagePayload, customCategorySections, projectRefOf, type DrafterCandidate } from '@/lib/ticketPage';
+import { loadPickerMembers } from '@/lib/ticketPickerMembers';
+import { loadRoutingContext, queuePool } from '@/lib/ticketRouting';
+import { unitOptionsFor, type UnitOption } from '@/lib/ticketCreate';
+import { loadCodebookUnitList } from '@/lib/ticketCreateClient';
+import { OUTCOME_LABEL, type TicketOutcome } from '@/lib/ticketOutcome';
+import LibraryPicker from '@/components/requests/LibraryPicker';
+import SourceDriftBanner from '@/components/requests/SourceDriftBanner';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
@@ -142,7 +156,7 @@ const REVISION_REASONS = [
 interface ActionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (text: string, category?: string) => void;
+  onSubmit: (text: string, category?: string, outcome?: TicketOutcome) => void;
   onRedline?: () => void;
   title: string;
   description: string;
@@ -150,11 +164,17 @@ interface ActionModalProps {
   isLoading?: boolean;
   defaultValue?: string;
   showCategorySelection?: boolean;
+  /** LEAK-9 (DF-P9): an action that ends the request (`requiresOutcome`)
+   *  must say HOW — one of the engine action's `outcomes` (lib/ticketOutcome.ts),
+   *  chosen here and sent as `outcome`; the free text stays the comment. */
+  outcomeOptions?: readonly TicketOutcome[];
 }
 
-const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description, isDestructive, isLoading, defaultValue, showCategorySelection }: ActionModalProps) => {
+const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description, isDestructive, isLoading, defaultValue, showCategorySelection, outcomeOptions }: ActionModalProps) => {
   const [comment, setComment] = useState('');
   const [category, setCategory] = useState(REVISION_REASONS[0]);
+  const [outcome, setOutcome] = useState<TicketOutcome | ''>('');
+  const needsOutcome = !!outcomeOptions && outcomeOptions.length > 0;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -163,6 +183,7 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
     void (async () => {
       setComment(defaultValue || '');
       setCategory(REVISION_REASONS[0]);
+      setOutcome('');
     })();
   }, [isOpen, defaultValue]);
 
@@ -176,6 +197,23 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
           <p className="text-xs text-[var(--color-text-muted)] mt-1">{description}</p>
         </div>
         <div className="p-6 space-y-4">
+          {needsOutcome && (
+            <div>
+              <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
+                How does this request end? <span className="text-red-500">*</span>
+              </label>
+              <select
+                data-testid="outcome-picker"
+                value={outcome}
+                onChange={(e) => setOutcome(e.target.value as TicketOutcome | '')}
+                className="w-full p-2.5 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface-2)] focus:ring-2 focus:ring-orange-500 outline-none"
+              >
+                <option value="">Choose one…</option>
+                {outcomeOptions!.map((o) => <option key={o} value={o}>{OUTCOME_LABEL[o]}</option>)}
+              </select>
+              <p className="text-[10px] text-[var(--color-text-muted)] mt-1">Recorded on the request and counted in Admin → Analytics (&ldquo;How Requests Ended&rdquo;). Your reason below stays in the thread.</p>
+            </div>
+          )}
           {showCategorySelection && (
             <div>
               <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
@@ -219,7 +257,7 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
             )}
             <div className="flex space-x-3 ml-auto">
               <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors" disabled={isLoading}>Cancel</button>
-              <button onClick={() => onSubmit(comment, showCategorySelection ? category : undefined)} disabled={!comment.trim() || isLoading} className={`px-6 py-2 text-sm font-bold text-white rounded-lg shadow-sm transition-all flex items-center ${isDestructive ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-300' : 'bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400'}`}>
+              <button onClick={() => onSubmit(comment, showCategorySelection ? category : undefined, outcome || undefined)} disabled={!comment.trim() || isLoading || (needsOutcome && !outcome)} className={`px-6 py-2 text-sm font-bold text-white rounded-lg shadow-sm transition-all flex items-center ${isDestructive ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-300' : 'bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400'}`}>
                 {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Confirm
               </button>
             </div>
@@ -236,32 +274,57 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
 interface AssignmentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (drafterId: string, drafterName: string, reason?: string) => void;
+  onSubmit: (drafterId: string, drafterName: string, reason?: string, triage?: { libraryId?: string; unit?: string }) => void;
   isLoading?: boolean;
   activeOrgId: string | null;
   isReassignment?: boolean;
+  /** The ticket being assigned: its resource decides who may draft it, and
+   *  triage reads its library and unit (DCW-1 / DCW-7). */
+  ticket: Ticket;
+  /** The org's capability policy (undefined → the shipped defaults, the
+   *  same fallback the action buttons use while it loads). */
+  policy: CapabilityPolicy | undefined;
+  /** DCW-1 / DCW-7 (DF-P9): the assign action at PENDING_ASSIGNMENT carries
+   *  the triage library and unit; a reassignment does not. */
+  triage: boolean;
+  /** The workspace's unit list (lib/ticketCreate.ts unitOptionsFor — the
+   *  list the form offers and the route checks), and whether it could be read. */
+  unitOptions: UnitOption[];
+  unitListState: 'loading' | 'ready' | 'unreadable';
+  /** Active members in the workspace: in an org of 3+ the route refuses the
+   *  requester as their own request's drafter (separation of duties). */
+  activeMemberCount: number;
 }
 
-const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, isReassignment }: AssignmentModalProps) => {
-  const [drafters, setDrafters] = useState<{uid: string, email: string, role: string}[]>([]);
+const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, isReassignment, ticket, policy, triage, unitOptions, unitListState, activeMemberCount }: AssignmentModalProps) => {
+  const [members, setMembers] = useState<Array<Record<string, unknown>>>([]);
   const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [reason, setReason] = useState('');
+  // DCW-1: the picker starts on the ticket's own library (sent back
+  // unchanged it is no change at the route); DCW-7: no unit change by default.
+  const [libraryId, setLibraryId] = useState<string | null>(ticket.libraryId ?? null);
+  const [unit, setUnit] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setReason(''); // Reset reason on open
+      setLibraryId(ticket.libraryId ?? null);
+      setUnit('');
       if (activeOrgId) {
         const fetchDrafters = async () => {
+          setListError(null);
           try {
-            const { data } = await supabase
-              .from('org_members')
-              .select('uid, email, role')
-              .eq('org_id', activeOrgId)
-              .eq('role', 'Drafter')
-              .eq('status', 'active');
-            setDrafters((data || []).map(r => ({ uid: r.uid, email: r.email, role: r.role })));
+            // EDGE-6 / ROUTE-8: the role COLLECTION, never the headline alone
+            // (the picker used to filter .eq('role', 'Drafter')) — so every
+            // active member is read, in keyset pages (lib/ticketPickerMembers.ts),
+            // so PostgREST's max-rows never hides someone the route accepts.
+            const read = await loadPickerMembers(activeOrgId);
+            if (!read.ok) { setListError(read.error); setMembers([]); return; }
+            setMembers(read.rows);
           } catch (error) {
             console.error("Error fetching drafters:", error);
+            setListError((error as Error)?.message || 'the members list could not be read');
           } finally {
             setLoadingList(false);
           }
@@ -269,9 +332,26 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
         fetchDrafters();
       }
     }
-  }, [isOpen, activeOrgId]);
+  }, [isOpen, activeOrgId, ticket.libraryId]);
+
+  // Who the route will accept: holders of drafting authority on THIS
+  // ticket (lib/ticketPage.ts drafterCandidates — the route's own test),
+  // less the route's per-ticket refusals: the drafter already assigned is
+  // not offered on a reassignment, and the requester (org of 3+) is shown
+  // disabled with the reason.
+  const drafters: DrafterCandidate[] = useMemo(
+    () => drafterCandidates(members, policy, ticketResource(ticket), {
+      requesterId: ticket.requesterId ?? null,
+      assignedDrafterId: ticket.assignedDrafterId ?? null,
+      isReassignment: !!isReassignment,
+      activeMemberCount,
+    }),
+    [members, policy, ticket, isReassignment, activeMemberCount],
+  );
 
   if (!isOpen) return null;
+
+  const currentUnit = ticketUnitDisplay(ticket.unit, ticket.metadata);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -297,28 +377,55 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
             </div>
           )}
 
+          {triage && (
+            <div data-testid="triage-fields" className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Triage details (optional)</p>
+              <LibraryPicker orgId={ticket.orgId} currentLibraryId={ticket.libraryId ?? null} value={libraryId} onChange={setLibraryId} />
+              <label className="block">
+                <span className="block text-xs font-bold text-[var(--color-text-muted)] mb-1">Unit <span className="font-normal">(now: {currentUnit.text}{currentUnit.note ? ` — ${currentUnit.note}` : ''})</span></span>
+                {unitListState === 'loading' ? (
+                  <span className="block text-[11px] text-[var(--color-text-muted)]">Loading the unit list…</span>
+                ) : unitListState === 'unreadable' ? (
+                  <span role="alert" className="block text-[11px] text-amber-700">Couldn&apos;t load this workspace&apos;s unit list — assign now with no unit change, or set the unit later.</span>
+                ) : unitOptions.length > 0 ? (
+                  <select data-testid="triage-unit" value={unit} onChange={(e) => setUnit(e.target.value)} className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm">
+                    <option value="">No change</option>
+                    {unitOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                ) : (
+                  <input data-testid="triage-unit" value={unit} onChange={(e) => setUnit(e.target.value.toUpperCase())} placeholder="No change (this workspace has no unit list yet)" className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm" />
+                )}
+              </label>
+            </div>
+          )}
+
           <div className="max-h-[300px] overflow-y-auto custom-scrollbar border border-[var(--color-border)] rounded-lg">
             {loadingList ? (
               <div className="flex justify-center py-8"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>
+            ) : listError ? (
+              <div role="alert" className="p-4 text-center text-amber-800 text-sm">Couldn&apos;t load who can draft — {listError}. Close and try again.</div>
             ) : drafters.length === 0 ? (
-              <div className="p-4 text-center text-[var(--color-text-muted)] italic">No drafters found in the system.</div>
+              <div data-testid="no-drafters" className="p-4 text-center text-[var(--color-text-muted)] text-sm">{NO_DRAFTER_CANDIDATES}</div>
             ) : (
               <div className="grid grid-cols-1 gap-1">
                 {drafters.map(drafter => (
                   <button 
                     key={drafter.uid} 
+                    data-refused={drafter.refusedReason ? 'true' : undefined}
+                    title={drafter.refusedReason}
                     onClick={async () => {
+                      if (drafter.refusedReason) return;
                       if (isReassignment && !reason.trim()) {
                         await appAlert({ message: "Please provide a reason for reassignment." });
                         return;
                       }
-                      onSubmit(drafter.uid, drafter.email.split('@')[0], reason);
+                      onSubmit(drafter.uid, drafter.name, reason, triage ? triagePayload(ticket, { libraryId, unit }) : undefined);
                     }}
-                    disabled={isLoading} 
-                    className="flex items-center p-3 hover:bg-orange-50 rounded-lg transition-colors group text-left w-full border border-transparent hover:border-orange-100"
+                    disabled={isLoading || !!drafter.refusedReason} 
+                    className="flex items-center p-3 hover:bg-orange-50 rounded-lg transition-colors group text-left w-full border border-transparent hover:border-orange-100 disabled:opacity-60 disabled:hover:bg-transparent disabled:cursor-not-allowed"
                   >
                     <div className="h-10 w-10 rounded-full bg-[var(--color-surface-2)] group-hover:bg-[var(--color-surface)] flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-orange-600 mr-4 border border-[var(--color-border)]"><User className="w-5 h-5" /></div>
-                    <div><p className="font-bold text-[var(--color-text)] text-sm">{drafter.email}</p><p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wide">Drafter</p></div>
+                    <div className="min-w-0"><p className="font-bold text-[var(--color-text)] text-sm truncate">{drafter.name}</p><p className="text-xs text-[var(--color-text-muted)] truncate">{drafter.email}{drafter.roles.length > 0 ? ` · ${drafter.roles.join(', ')}` : ''}</p>{drafter.refusedReason && <p className="text-[11px] text-amber-700">{drafter.refusedReason}</p>}</div>
                     <ChevronDown className="w-4 h-4 ml-auto text-slate-300 group-hover:text-orange-400 -rotate-90" />
                   </button>
                 ))}
@@ -832,6 +939,23 @@ export default function TicketDetailView() {
   // workflow-action route will actually allow (it re-derives with the same
   // policy). Undefined until loaded → defaults, which mirror historic rules.
   const [capPolicy, setCapPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  // AUTHZ-15 (DF-P9; the integrator's ruling under DEC-89): the policy could
+  // not be read and no last good copy was served (`unreadable`, or a read
+  // that threw). Which actions this viewer may take is the policy's answer,
+  // so the page offers none — it says why and offers Try again — instead of
+  // drawing the shipped defaults as if they were the org's. (The workflow
+  // route reads the policy on its own, through the service role, and refuses
+  // every action when ITS read fails — DEC-89 item 3; the page cannot know
+  // whether that read fails too, so it claims nothing about it.) A `stale`
+  // answer is the last good policy and is drawn as is.
+  const [policyFault, setPolicyFault] = useState<string | null>(null);
+  const [policyAttempt, setPolicyAttempt] = useState(0);
+  // DCW-7 (DF-P9): the unit list triage picks from — the list the request
+  // form offers and the route checks (lib/ticketCreate.ts unitOptionsFor).
+  const [unitOptions, setUnitOptions] = useState<UnitOption[]>([]);
+  const [unitListState, setUnitListState] = useState<'loading' | 'ready' | 'unreadable'>('loading');
+  // PROJ-9: the request form's custom categories, to label the answers.
+  const [customCategoryConfig, setCustomCategoryConfig] = useState<CustomCategoryConfig[]>([]);
   // Separation-of-duties binds at >= 3 active members, and close-without-review
   // is a property of the configured request type — both fetched here so the
   // buttons match the workflow-action route's evaluation of the same context.
@@ -846,7 +970,16 @@ export default function TicketDetailView() {
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
-    void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setCapPolicy(p); }).catch(() => {});
+    void loadCapabilityPolicyEntry(activeOrgId).then((entry) => {
+      if (!alive) return;
+      const fault = affordancePolicyFault(entry);
+      setPolicyFault(fault);
+      setCapPolicy(fault ? undefined : entry.policy);
+    }).catch((e: unknown) => {
+      if (!alive) return;
+      setPolicyFault((e as Error)?.message || 'the capability policy could not be read');
+      setCapPolicy(undefined);
+    });
     void supabase
       .from('org_members')
       .select('uid', { count: 'exact', head: true })
@@ -859,16 +992,29 @@ export default function TicketDetailView() {
       .eq('org_id', activeOrgId)
       .eq('key', 'drafting')
       .maybeSingle()
-      .then(({ data: cfgRow }) => {
+      .then(({ data: cfgRow, error: cfgErr }) => {
         if (!alive) return;
         const opts = ((cfgRow?.data as { requestTypes?: { options?: Array<{ value?: string; closeWithoutReview?: boolean }> } } | null)
           ?.requestTypes?.options) ?? [];
         const flagged = opts.filter((o) => o.closeWithoutReview === true).map((o) => String(o.value ?? '')).filter(Boolean);
         if (flagged.length > 0) setCloseWithoutReviewTypes(flagged);
         setEngineeringFirstTypes(flaggedRequestTypes(cfgRow?.data, 'engineeringFirst'));
+        const cfg = (cfgRow?.data ?? null) as OrgDraftingSettings | null;
+        setCustomCategoryConfig(Array.isArray(cfg?.customCategories) ? cfg!.customCategories! : []);
+        // DCW-7: the list the route checks a triage unit against — the saved
+        // units, else the Site Codebook's. A list that cannot be read offers
+        // no unit (the route would 503 an unchecked one).
+        if (cfgErr) { setUnitListState('unreadable'); setUnitOptions([]); return; }
+        void loadCodebookUnitList(activeOrgId).then(({ units, failure }) => {
+          if (!alive) return;
+          const options = unitOptionsFor(cfg, units);
+          if (failure === 'unreadable' && options.length === 0) { setUnitListState('unreadable'); setUnitOptions([]); return; }
+          setUnitOptions(options);
+          setUnitListState('ready');
+        });
       });
     return () => { alive = false; };
-  }, [activeOrgId]);
+  }, [activeOrgId, policyAttempt]);
   const { showToast } = useToast();
   const ticketId = params.id as string;
 
@@ -946,7 +1092,8 @@ export default function TicketDetailView() {
     const fromRow = (r: Record<string, unknown>): Ticket => ({
       id: r.id as string, orgId: r.org_id as string, ticketId: r.ticket_id as string,
       title: r.title as string, description: r.description as string | undefined,
-      unit: r.unit as string, requestType: r.request_type as string,
+      // PERS-6: a NULL unit is a designed value ("Unit unknown"), never cast.
+      unit: typeof r.unit === 'string' ? r.unit : null, requestType: r.request_type as string,
       status: r.status as Ticket['status'], priority: r.priority as number | undefined,
       requesterId: r.requester_id as string, requesterName: r.requester_name as string | undefined,
       requesterEmail: r.requester_email as string | undefined,
@@ -956,6 +1103,9 @@ export default function TicketDetailView() {
       assignedEngineerId: r.assigned_engineer_id as string | null | undefined,
       assignedEngineerName: r.assigned_engineer_name as string | null | undefined,
       assignedEngineerEmail: r.assigned_engineer_email as string | null | undefined,
+      // DCW-1: the triage picker starts on the ticket's library (20261208;
+      // absent before the paste — no library, as today).
+      libraryId: typeof r.library_id === 'string' ? r.library_id : null,
       engineerReviewRequestedAt: r.engineer_review_requested_at as string | null | undefined,
       engineerApprovedAt: r.engineer_approved_at as string | null | undefined,
       engineerReviewReason: r.engineer_review_reason as string | null | undefined,
@@ -985,17 +1135,29 @@ export default function TicketDetailView() {
       const t = fromRow(data as Record<string, unknown>);
       if (activeOrgId && t.orgId && t.orgId !== activeOrgId) { router.push('/requests'); return; }
       setTicket(t);
+      // PERS-3 / LEAK-4 (DF-P9): clearing MY unread marker is the one ticket
+      // write this page still makes (20261208's guard lets a client remove
+      // only its own uid). It is checked now: a refusal, or a write that
+      // matched no row, is said instead of passing as read.
       if (uid && t.unreadBy?.includes(uid)) {
-        supabase.from('tickets').update({ unread_by: t.unreadBy.filter(id => id !== uid) }).eq('id', ticketId).then(() => {});
+        void supabase.from('tickets').update({ unread_by: t.unreadBy.filter(id => id !== uid) }).eq('id', ticketId).select('id')
+          .then(({ data: hit, error }) => {
+            if (!alive) return;
+            if (error || !hit || hit.length === 0) {
+              showToast({ type: 'warning', title: 'Not marked as read', message: `This request still shows as unread for you: ${error?.message || 'the update matched no row'}.` });
+            }
+          }, () => {});
       }
       // Opening the ticket counts as reviewing its activity: mark this ticket's
       // in-app notifications read so the bell + sidebar bubble actually clears
       // (clearing unread_by alone left the notification rows unread).
       if (uid) {
-        supabase.from('notifications')
+        void supabase.from('notifications')
           .update({ read_at: new Date().toISOString() })
           .eq('user_id', uid).eq('resource_id', ticketId).is('read_at', null)
-          .then(() => {});
+          .then(({ error }) => {
+            if (error) console.warn('[ticket] notifications for this request were not marked read:', error.message);
+          }, () => {});
       }
       setLoading(false);
     };
@@ -1008,6 +1170,8 @@ export default function TicketDetailView() {
       .subscribe();
 
     return () => { alive = false; supabase.removeChannel(channel); };
+    // showToast is the provider's stable callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketId, router, activeOrgId, uid]);
 
   // The ticket's source-document backlink (metadata.source_document), plus a
@@ -1019,8 +1183,8 @@ export default function TicketDetailView() {
   const sourceRef = useMemo(() => parseSourceDocument(ticket?.metadata), [ticket?.metadata]);
   const sourceRefId = sourceRef?.id ?? null;
   const [sourceDoc, setSourceDoc] = useState<{
-    state: 'idle' | 'loading' | 'loaded' | 'unavailable';
-    doc?: { id: string; libraryId: string | null; rev: string | null; documentNumber: string | null; title: string | null; collectionId?: string | null };
+    state: 'idle' | 'loading' | 'loaded' | 'unavailable' | 'error';
+    doc?: { id: string; libraryId: string | null; rev: string | null; documentNumber: string | null; title: string | null; collectionId?: string | null; currentVersionId?: string | null };
     /** LIFE-12: the document's review requirement — a ticket approval never
      *  satisfies it, and the drafter should see that before the deliverable
      *  is approved. */
@@ -1033,15 +1197,19 @@ export default function TicketDetailView() {
     setSourceDoc((s) => (s.state === 'loaded' && s.doc?.id === sourceRefId ? s : { state: 'loading' }));
     supabase
       .from('documents')
-      .select('id, library_id, collection_id, rev, document_number, title')
+      .select('id, library_id, collection_id, rev, document_number, title, current_version_id')
       .eq('id', sourceRefId)
       // Scoped to the TICKET's org, not just RLS: a viewer who belongs to two
       // workspaces can otherwise resolve a same-id document from the other
       // one and render it as this ticket's source.
       .eq('org_id', ticketOrgId)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
         if (!alive) return;
+        // A failed read proves nothing about access — it is not "restricted".
+        if (error) { setSourceDoc({ state: 'error' }); return; }
+        // DCW-5: no row = the viewer may not discover it (documents_acl_select),
+        // or it is no longer in this workspace.
         if (!data) { setSourceDoc({ state: 'unavailable' }); return; }
         const d = data as Record<string, unknown>;
         const doc = {
@@ -1051,6 +1219,7 @@ export default function TicketDetailView() {
           rev: (d.rev as string | null) ?? null,
           documentNumber: (d.document_number as string | null) ?? null,
           title: (d.title as string | null) ?? null,
+          currentVersionId: (d.current_version_id as string | null) ?? null,
         };
         setSourceDoc({ state: 'loaded', doc });
         if (doc.libraryId) {
@@ -1066,13 +1235,52 @@ export default function TicketDetailView() {
     return () => { alive = false; };
   }, [sourceRefId, ticketOrgId]);
 
+  // UI-1 / GAP-108: who the ticket waits on — the assignment queue named by
+  // its members when the current step is the queue's (lib/ticketRouting.ts
+  // queuePool over the org's active members, read through RLS).
+  const [queueNames, setQueueNames] = useState<string[] | null>(null);
+  const waitsOnQueue = !!ticket && holdersFor(ticket).some((h) => h.kind === 'queue');
+  useEffect(() => {
+    let alive = true;
+    if (!waitsOnQueue || !ticketOrgId) { setQueueNames(null); return; }
+    void loadRoutingContext(ticketOrgId).then((ctx) => {
+      if (!alive) return;
+      if (!ctx.ok) { setQueueNames(null); return; }
+      const pool = new Set(queuePool(ctx));
+      setQueueNames(ctx.members.filter((m) => pool.has(m.uid))
+        .map((m) => (m.name || m.email?.split('@')[0] || '').trim()).filter(Boolean));
+    }, () => { if (alive) setQueueNames(null); });
+    return () => { alive = false; };
+  }, [waitsOnQueue, ticketOrgId]);
+
+  // PROJ-9: the project a request is linked to (an intake collision names it),
+  // read through RLS — a project the viewer cannot see shows as a reference only.
+  const projectRef = useMemo(() => projectRefOf(ticket?.metadata), [ticket?.metadata]);
+  const [projectName, setProjectName] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (!projectRef || !ticketOrgId) { setProjectName(null); return; }
+    void supabase.from('projects').select('name').eq('id', projectRef).eq('org_id', ticketOrgId).maybeSingle()
+      .then(({ data }) => { if (alive) setProjectName(((data as { name?: string } | null)?.name ?? '').trim() || null); }, () => { if (alive) setProjectName(null); });
+    return () => { alive = false; };
+  }, [projectRef, ticketOrgId]);
+
   const requesterId = ticket?.requesterId ?? null;
   useEffect(() => {
     let alive = true;
     if (!requesterId || !ticketOrgId) { setRequesterRoles(null); return; }
+    // FRIC-7 (DF-P9 fix pass): a failed read never invents a departure — an
+    // error is "unknown, assumed present" (null), exactly as
+    // lib/ticketRequesterRoles.ts loadRequesterRoles answers; `[]` (left the
+    // workspace) only when the read SUCCEEDED and found no active row. The
+    // waiting line and explainNoActions show what this decides.
     supabase.from('org_members').select('role, roles')
       .eq('org_id', ticketOrgId).eq('uid', requesterId).eq('status', 'active').maybeSingle()
-      .then(({ data }) => { if (alive) setRequesterRoles(data ? heldRoles(data as { role?: unknown; roles?: unknown }) : []); })
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { setRequesterRoles(null); return; }
+        setRequesterRoles(data ? heldRoles(data as { role?: unknown; roles?: unknown }) : []);
+      })
       .then(undefined, () => { if (alive) setRequesterRoles(null); });
     return () => { alive = false; };
   }, [requesterId, ticketOrgId]);
@@ -1256,10 +1464,12 @@ export default function TicketDetailView() {
     }
     // WF-18: reassignment collects the new drafter AND the reason in one modal.
     if (action.action === 'reassign_drafter') { handleReassignClick(action); return; }
-    if (action.requiresFile) {
-      const hasFiles = ticket.attachments && ticket.attachments.length > 0;
-      if (!hasFiles) { await appAlert({ message: "Compliance Check Failed: You must upload at least one file before proceeding.", tone: "danger" }); return; }
-    }
+    // SM-13 (DF-P9): the file the action needs, by TYPE — Submit Draft needs
+    // a Draft on the ticket; Issue Final gets its Final from the IFC upload
+    // that opens next (checked again before it is sent). Any attachment at
+    // all used to pass.
+    const missingFile = missingRequiredFile(action, ticket.attachments);
+    if (missingFile) { await appAlert({ message: `Compliance Check Failed: ${missingFile}`, tone: "danger" }); return; }
     
     // Open IFC Upload Modal
     if (action.action === 'submit_final') {
@@ -1338,9 +1548,22 @@ export default function TicketDetailView() {
     assignmentData?: {id: string, name: string},
     newFinalFile?: TicketAttachment,
     category?: string,
-    engineerData?: {id: string, name: string, email: string}
+    engineerData?: {id: string, name: string, email: string},
+    triage?: { libraryId?: string; unit?: string },
+    outcome?: TicketOutcome,
   ) => {
     if (!ticket) return;
+    // SM-13: Issue Final carries a file typed Final, or nothing is sent.
+    if (action.action === 'submit_final') {
+      const missingFinal = missingRequiredFile(action, ticket.attachments, newFinalFile ?? null);
+      if (missingFinal) { await appAlert({ message: `Compliance Check Failed: ${missingFinal}`, tone: "danger" }); return; }
+    }
+    // LEAK-9: an action that ends the request says how (the engine's
+    // `requiresOutcome`); the dialog requires the choice before it sends.
+    if (action.requiresOutcome && !outcome) {
+      await appAlert({ message: "Choose how this request ends before confirming.", tone: "danger" });
+      return;
+    }
     setActionLoading(action.action);
     try {
       // Handle Redline Upload if pending — files upload from the client;
@@ -1348,8 +1571,18 @@ export default function TicketDetailView() {
       let finalComment = comment;
       let redlineAttachment: TicketAttachment | null = null;
 
+      // PERS-7 (DF-P9; integrator fix pass): the session the action is sent
+      // with is read FIRST — before any redline goes to storage — so an action
+      // that cannot be sent leaves no orphaned file behind.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error(pendingRedlineBlob && fileToRedline ? "Not authenticated, so the redline was not uploaded." : "Not authenticated");
+
       if (pendingRedlineBlob && fileToRedline) {
+         // PERS-7 (DF-P9): no workspace or signed-in member, no action — and
+         // checked BEFORE the redline goes to storage, so a refused action
+         // leaves no orphaned file behind.
          if (!activeOrgId) throw new Error("No active workspace.");
+         if (!uid) throw new Error("You're not signed in, so the redline was not uploaded.");
          const fileName = `REDLINE_${Date.now()}_${fileToRedline.name}`;
          const redlineFile = new File([pendingRedlineBlob], fileName, { type: pendingRedlineBlob.type });
          const result = await uploadTicketAttachment({ file: redlineFile, orgId: activeOrgId, ticketId: ticket.ticketId });
@@ -1367,21 +1600,14 @@ export default function TicketDetailView() {
 
          // Append system note to comment
          finalComment = `${comment || ''}\n\n[System: Attached Redlines for ${fileToRedline.name}]`;
-
-         await logAuditAction({
-            action: 'TICKET_REDLINE_CREATED', resourceId: ticketId, resourceType: 'ticket',
-            orgId: activeOrgId, userId: uid || 'unknown', userRole: activeRole ?? undefined,
-            details: { originalFile: fileToRedline.name, newFile: fileName }
-         });
       }
 
       // Server-enforced transition: /api/tickets/workflow-action validates this
       // action against the state machine for our role and the ticket's CURRENT
       // status, recomputes the update server-side, applies it compare-and-set,
       // writes the audit row, and fans out notifications + emails — none of
-      // which a tampered client or a closed tab can skip.
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error("Not authenticated");
+      // which a tampered client or a closed tab can skip. (The session was
+      // read above, before the redline upload.)
       // LIFE-6 / DEC-25: a close over a hold this ticket opened comes back
       // 409 holds_open; the closer chooses — release now, or keep with a
       // stated reason — and the action is re-sent with that resolution.
@@ -1401,6 +1627,12 @@ export default function TicketDetailView() {
           redlineAttachment,
           finalAttachment: newFinalFile || null,
           holdResolution,
+          // DCW-1 / DCW-7: the triage library and unit (assign at
+          // PENDING_ASSIGNMENT only; the route validates both, neither required).
+          ...(triage?.libraryId ? { libraryId: triage.libraryId } : {}),
+          ...(triage?.unit ? { unit: triage.unit } : {}),
+          // LEAK-9: how the request ended (cancel_request).
+          ...(outcome ? { outcome } : {}),
         }),
       });
       let res = await send();
@@ -1447,6 +1679,33 @@ export default function TicketDetailView() {
       // status, so without a message users couldn't tell it worked.
       if (action.action === 'save_progress') {
         showToast({ type: "success", title: "Progress saved", message: "Files staged. The request stays in Drafting until you submit." });
+      }
+      // PERS-7 (DF-P9): the redline's audit row follows the action that
+      // attached it — written only once the route accepted the request with
+      // the redline on it (never an 'unknown' stand-in), and a refused row is
+      // said. Before, it was written (and its refusal toasted as "attached")
+      // before the action was even sent, which could still 409 or 403.
+      if (redlineAttachment && fileToRedline && uid && activeOrgId) {
+        const redlineAudit = await logAuditAction({
+          action: 'TICKET_REDLINE_CREATED', resourceId: ticketId, resourceType: 'ticket',
+          orgId: activeOrgId, userId: uid, userRole: activeRole ?? undefined,
+          details: { originalFile: fileToRedline.name, newFile: redlineAttachment.name }
+        });
+        if (!redlineAudit.ok) {
+          showToast({ type: 'warning', title: 'Redline attached, record not written', message: `The redline is attached to the request, but its audit record could not be written: ${redlineAudit.error}` });
+        }
+      }
+      // DF-P1's hand-off (EVID-12 / LIFE-6): an action that landed can still
+      // carry a warning — a close whose hold could not be released (the
+      // document stays blocked: `holdsNotReleased`), a library the database
+      // could not record yet. It is said, never dropped.
+      const landed = await res.json().catch(() => ({})) as { warning?: string; holdsNotReleased?: string[] };
+      if (landed.warning) {
+        showToast({
+          type: 'warning',
+          title: Array.isArray(landed.holdsNotReleased) && landed.holdsNotReleased.length > 0 ? 'Done — but a hold is still active' : 'Done, with a warning',
+          message: landed.warning,
+        });
       }
 
       setActionLoading(null);
@@ -1623,13 +1882,32 @@ export default function TicketDetailView() {
     closeWithoutReviewTypes,
     requesterRoles,
   });
+  // AUTHZ-15: an unreadable policy → the route refuses every action (503
+  // policy_unreadable), so none is offered; the header says why.
+  const liveActions = policyFault ? [] : availableActions;
   // WF-9 / WF-18: the upload affordance and the Reassign button are derived
   // from the engine's actions, never from a role list of their own — they
   // exist exactly when the route will accept the write. Both have their own
   // UI, so they are not rendered as generic action buttons.
-  const canAttach = availableActions.some((a) => a.action === 'attach_file');
-  const reassignAction = availableActions.find((a) => a.action === 'reassign_drafter');
-  const buttonActions = availableActions.filter((a) => a.action !== 'attach_file' && a.action !== 'reassign_drafter');
+  const canAttach = liveActions.some((a) => a.action === 'attach_file');
+  const reassignAction = liveActions.find((a) => a.action === 'reassign_drafter');
+  const buttonActions = liveActions.filter((a) => a.action !== 'attach_file' && a.action !== 'reassign_drafter');
+
+  // UI-1 / GAP-108: what the request is waiting for, on whom, since when —
+  // and whether the ball is in the viewer's court (the engine offers them a
+  // live, non-optional action: the attention rule).
+  const requesterRolesCtx = requesterRoles !== null && ticket.requesterId ? new Map([[ticket.requesterId, requesterRoles]]) : null;
+  const holders = holdersFor(ticket, { queueNames, requesterRoles });
+  const waitingLabel = attentionLabel(ticket.status, { hasDrafter: !!ticket.assignedDrafterId });
+  const waited = waitedFor(waitingSince(ticket));
+  const yourTurn = liveActions.some((a) => !a.optional && !a.disabledReason);
+  const isTerminalStatus = ticket.status === 'CLOSED' || ticket.status === 'CANCELED';
+  // UI-4: why there is nothing to do here, naming who to talk to.
+  const noActionsWhy = buttonActions.length === 0 && !policyFault
+    ? explainNoActions(ticket, { uid, roles, policy: capPolicy, activeMemberCount, engineeringFirstTypes, closeWithoutReviewTypes, requesterRoles: requesterRolesCtx, holders })
+    : null;
+  const unitShown = ticketUnitDisplay(ticket.unit, ticket.metadata);
+  const customSections = customCategorySections(ticket.metadata, customCategoryConfig);
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
   
   // LOGIC: DRAFTS SORTING & VERSIONING
@@ -1705,18 +1983,19 @@ export default function TicketDetailView() {
         archiveId={ticket?.archiveId}
         liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}
         onApprove={(() => {
-          const action = availableActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
+          const action = liveActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;
         })()}
       />
       <ActionModal 
         isOpen={showCommentModal} 
         onClose={() => setShowCommentModal(false)} 
-        title={pendingAction?.action === 'approve_minor_correction' ? 'Approve with Minor Correction' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Request Revision' : pendingAction?.variant === 'destructive' ? 'Reject & Return' : 'Workflow Comment'}
-        description={pendingAction?.action === 'approve_minor_correction' ? 'Describe the small fix (typo, mislabel). The deliverable is approved NOW — your note goes to the drafter to fold into the issued file, with no new review round.' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Please provide feedback on what needs to be revised.' : pendingAction?.variant === 'destructive' ? 'Please explain why this request is being returned or rejected.' : 'Add an optional comment to this action.'}
+        title={pendingAction?.action === 'approve_minor_correction' ? 'Approve with Minor Correction' : pendingAction?.action === 'cancel_request' ? 'Cancel this request' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Request Revision' : pendingAction?.variant === 'destructive' ? 'Reject & Return' : 'Workflow Comment'}
+        description={pendingAction?.action === 'approve_minor_correction' ? 'Describe the small fix (typo, mislabel). The deliverable is approved NOW — your note goes to the drafter to fold into the issued file, with no new review round.' : pendingAction?.action === 'cancel_request' ? 'Say how this request ends and why. It is closed as canceled and cannot be reopened — a new request can be filed.' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Please provide feedback on what needs to be revised.' : pendingAction?.variant === 'destructive' ? 'Please explain why this request is being returned or rejected.' : 'Add an optional comment to this action.'}
         isDestructive={pendingAction?.variant === 'destructive' || pendingAction?.action === 'request_revision'} 
         showCategorySelection={pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject'}
-        onSubmit={(comment, category) => pendingAction && executeWorkflowAction(pendingAction, comment, undefined, undefined, category)}
+        outcomeOptions={pendingAction?.requiresOutcome ? pendingAction.outcomes : undefined}
+        onSubmit={(comment, category, outcome) => pendingAction && executeWorkflowAction(pendingAction, comment, undefined, undefined, category, undefined, undefined, outcome)}
         isLoading={!!actionLoading} 
         defaultValue={preFilledComment}
         onRedline={
@@ -1737,7 +2016,20 @@ export default function TicketDetailView() {
           : undefined
         }
       />
-      <AssignmentModal isOpen={showAssignModal} onClose={() => { setShowAssignModal(false); setIsReassigning(false); }} onSubmit={(id, name, reason) => pendingAction && executeWorkflowAction(pendingAction, reason, {id, name})} isLoading={!!actionLoading} activeOrgId={activeOrgId} isReassignment={isReassigning} />
+      <AssignmentModal
+        isOpen={showAssignModal}
+        onClose={() => { setShowAssignModal(false); setIsReassigning(false); }}
+        onSubmit={(id, name, reason, triage) => pendingAction && executeWorkflowAction(pendingAction, reason, {id, name}, undefined, undefined, undefined, triage)}
+        isLoading={!!actionLoading}
+        activeOrgId={activeOrgId}
+        isReassignment={isReassigning}
+        ticket={ticket}
+        policy={capPolicy}
+        triage={pendingAction?.action === 'assign' && ticket.status === 'PENDING_ASSIGNMENT' && !isReassigning}
+        unitOptions={unitOptions}
+        unitListState={unitListState}
+        activeMemberCount={activeMemberCount}
+      />
       <UploadIFCModal isOpen={showUploadIFC} onClose={() => setShowUploadIFC(false)} onSubmit={handleIFCUpload} isLoading={!!actionLoading} />
 
       {showWorkflowDiagram && (
@@ -1791,14 +2083,25 @@ export default function TicketDetailView() {
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-xl font-bold text-[var(--color-text)] tracking-tight">{ticket.ticketId}</h1>
+                {/* UI-7: the status in words (lib/ticketStatusLabels.ts) — the
+                    enum value stays the database's. UI-2: it opens the map. */}
+                <button
+                  type="button"
+                  data-testid="status-pill"
+                  onClick={() => setShowWorkflowDiagram(true)}
+                  title="See where this request is in the workflow"
+                  aria-label={`Status: ${ticketStatusLabel(ticket.status)} — see where this request is in the workflow`}
+                  className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider inline-flex items-center gap-1.5 hover:brightness-95 transition ${getStatusStyle(ticket.status)}`}
+                >
+                  {ticketStatusLabel(ticket.status)}
+                  <HelpCircle className="w-3 h-3 opacity-70" />
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowWorkflowDiagram(true)}
-                  title="See where this request is in the workflow"
-                  className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider inline-flex items-center gap-1.5 hover:brightness-95 transition ${getStatusStyle(ticket.status)}`}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline"
                 >
-                  {ticket.status.replace(/_/g, ' ')}
-                  <HelpCircle className="w-3 h-3 opacity-70" />
+                  See the workflow
                 </button>
                 {ticket.deliverableRev && (
                   <span
@@ -1831,6 +2134,22 @@ export default function TicketDetailView() {
                 {ticket.requestType === 'RFI' && <span className="px-2 py-0.5 bg-pink-100 text-pink-700 text-[10px] font-bold rounded border border-pink-200 flex items-center"><Flag className="w-3 h-3 mr-1" /> RFI</span>}
               </div>
               <p className="text-sm text-[var(--color-text-muted)] mt-1 font-medium">{ticket.title}</p>
+              {/* UI-1 / GAP-108: where the request is, on whom, since when — and
+                  whether it is the viewer's move. */}
+              <p data-testid="waiting-on" className="text-xs mt-1.5 flex flex-wrap items-center gap-x-1.5">
+                {isTerminalStatus ? (
+                  <span className="text-[var(--color-text-muted)]">{ticket.status === 'CANCELED' ? 'Canceled' : 'Closed'} — nothing is waiting on anyone.</span>
+                ) : yourTurn ? (
+                  <span className="font-bold text-orange-700">Your turn: {waitingLabel.toLowerCase()}.</span>
+                ) : (
+                  <span className="text-[var(--color-text)]">
+                    <span className="font-bold">Waiting on {holders.map((h) => h.name).join(', ') || 'nobody'}</span>
+                    {holders[0] && <span className="text-[var(--color-text-muted)]"> ({holders[0].part})</span>}
+                    <span className="text-[var(--color-text-muted)]"> — {waitingLabel.toLowerCase()}</span>
+                  </span>
+                )}
+                {!isTerminalStatus && waited && <span className="text-[var(--color-text-faint)]">· for {waited}</span>}
+              </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2 justify-end">
@@ -1843,7 +2162,9 @@ export default function TicketDetailView() {
                   ticketRowId: ticketId,
                   ticketNumber: ticket.ticketId ?? null,
                   title: ticket.title,
-                  status: ticket.status,
+                  // UI-7 (DF-P9 integrator fix pass): "Status at printing" in
+                  // words — the pill's label, never the stored identifier.
+                  status: ticketStatusLabel(ticket.status),
                   requesterName: ticket.requesterName ?? null,
                   drafterName: ticket.assignedDrafterName ?? null,
                   createdAt: ticket.createdAt ? String(ticket.createdAt) : null,
@@ -1914,8 +2235,16 @@ export default function TicketDetailView() {
                 <UserPlus className="w-4 h-4 mr-2" /> Reassign
               </button>
             )}
-            {buttonActions.length === 0 ? (
-               <div className="flex items-center px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-faint)] italic"><ShieldAlert className="w-4 h-4 mr-2" /> View Only - No Actions Available</div>
+            {policyFault ? (
+               // AUTHZ-15: held back, said, retryable — never the defaults.
+               <div role="alert" data-testid="ticket-policy-fault" className="flex items-center gap-2 px-4 py-2 bg-amber-50 rounded-lg border border-amber-300 text-xs text-amber-900 max-w-md">
+                 <ShieldAlert className="w-4 h-4 shrink-0 text-amber-600" />
+                 <span><span className="font-bold">Permissions could not be read</span> — {policyFault}. They decide which actions you may take here, so none is offered until they can be read.</span>
+                 <button type="button" onClick={() => setPolicyAttempt((n) => n + 1)} className="shrink-0 px-2 py-1 rounded border border-amber-300 bg-[var(--color-surface)] font-bold text-amber-800 hover:bg-amber-100">Try again</button>
+               </div>
+            ) : buttonActions.length === 0 ? (
+               // UI-4: why there is nothing to do here, and who to talk to.
+               <div data-testid="no-actions-why" className="flex items-start px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-muted)] max-w-md"><ShieldAlert className="w-4 h-4 mr-2 mt-0.5 shrink-0" /> <span>{noActionsWhy?.text ?? 'No action is open to you on this request.'}</span></div>
             ) : (
               buttonActions.map((action, idx) => (
                 action.disabledReason ? (
@@ -1970,7 +2299,7 @@ export default function TicketDetailView() {
              </div>
              <button 
                onClick={() => {
-                 const submitAction = availableActions.find(a => a.action === 'submit_draft');
+                 const submitAction = liveActions.find(a => a.action === 'submit_draft');
                  if (submitAction) initiateWorkflowAction(submitAction);
                }}
                className="px-4 py-1 bg-[var(--color-surface)] text-orange-600 text-xs font-bold rounded hover:bg-orange-50 transition-colors shadow-sm"
@@ -2063,7 +2392,7 @@ export default function TicketDetailView() {
             <div className="absolute top-0 left-0 w-1 h-full bg-orange-500" />
             <div className="flex items-center justify-between mb-6 border-b border-[var(--color-border)] pb-4"><h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide flex items-center"><FileText className="w-4 h-4 mr-2 text-orange-500" /> Project Specifications</h2><span className="text-xs text-[var(--color-text-faint)] font-mono">ID: {ticket.id}</span></div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Unit</label><div className="font-mono text-sm font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-2 py-1 rounded w-fit mt-1 border border-[var(--color-border)]">{ticket.unit}</div></div>
+              <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Unit</label><div data-testid="ticket-unit" className={`text-sm font-bold bg-[var(--color-surface-2)] px-2 py-1 rounded w-fit mt-1 border border-[var(--color-border)] ${unitShown.unknown ? 'italic text-[var(--color-text-muted)]' : 'font-mono text-[var(--color-text)]'}`}>{unitShown.text}</div>{unitShown.note && <div className="text-[10px] text-amber-700 mt-0.5">{unitShown.note}</div>}</div>
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Requester</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1 flex items-center group cursor-help" title={ticket.requesterId}><User className="w-4 h-4 mr-2 text-slate-300 group-hover:text-orange-500 transition-colors shrink-0" /><span className="truncate">{ticket.requesterName}</span></div></div>
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Assigned Lead</label><div className="min-w-0 text-sm text-[var(--color-text)] mt-1">{ticket.assignedDrafterName ? (<div className="flex items-center text-orange-700"><div className="w-2 h-2 rounded-full bg-green-500 mr-2 shrink-0" /><span className="truncate">{ticket.assignedDrafterName}</span></div>) : <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div></div>
               <div>
@@ -2112,6 +2441,26 @@ export default function TicketDetailView() {
               </div>
             </div>
             <div className="mt-6 pt-6 border-t border-[var(--color-border)]"><label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider mb-2 block">Scope of Work</label><div className="bg-[var(--color-surface-2)] rounded-lg p-4 text-sm text-[var(--color-text)] leading-relaxed border border-[var(--color-border)] shadow-inner">{ticket.description}</div></div>
+            {/* PROJ-9: what the request form collected, and the project the
+                request is linked to — no longer write-only. */}
+            {customSections.map((sec) => (
+              <div key={sec.id} data-testid="custom-category" className="mt-6 pt-6 border-t border-[var(--color-border)]">
+                <label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider mb-2 block">{sec.label}</label>
+                <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
+                  {sec.fields.map((f) => (
+                    <div key={f.key} className="min-w-0"><dt className="text-[11px] text-[var(--color-text-faint)] font-medium">{f.label}</dt><dd className="text-sm text-[var(--color-text)] break-words">{f.value}</dd></div>
+                  ))}
+                </dl>
+              </div>
+            ))}
+            {projectRef && (
+              <div data-testid="project-link" className="mt-6 pt-6 border-t border-[var(--color-border)]">
+                <label className="text-[10px] text-[var(--color-text-faint)] font-bold uppercase tracking-wider mb-2 block">Project</label>
+                <Link href={`/projects/${projectRef}`} className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 border border-blue-200 bg-blue-50 rounded-md px-2 py-1">
+                  {projectName ?? 'Open the linked project'}
+                </Link>
+              </div>
+            )}
           </div>
 
           <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden flex flex-col">
@@ -2121,12 +2470,23 @@ export default function TicketDetailView() {
 
              <div className="p-4 bg-slate-50/50 border-b border-[var(--color-border)] order-1">
                <h3 className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Incoming Assets (Source)</h3>
+               {/* HAND-7 / HAND-3 (DF-P2's component): the source revision has moved. */}
+               <div className="mb-3"><SourceDriftBanner metadata={ticket.metadata} orgId={ticket.orgId} /></div>
                {sourceRef && (
                  <div className="mb-3 bg-[var(--color-surface)] p-3 rounded-lg border border-[var(--color-border)] shadow-sm">
                    <div className="flex items-center justify-between gap-3 flex-wrap">
                      <div className="flex items-center space-x-3 overflow-hidden">
                        <div className="p-1.5 bg-blue-50 rounded text-blue-600"><FileText className="w-4 h-4" /></div>
                        <div className="min-w-0">
+                         {/* DCW-5 (DEC-107 item 4 as amended): a viewer who may not
+                             discover the source sees it marked restricted — its
+                             recorded number and title under that label, never a link.
+                             No row back means EITHER restricted OR gone from the
+                             workspace (the read cannot tell them apart), and who else
+                             can open it is per person — so the label claims neither. */}
+                         {sourceDoc.state === 'unavailable' && (
+                           <p data-testid="source-restricted" className="text-[10px] font-black uppercase tracking-wider text-rose-700">Restricted or no longer in this workspace — you can&apos;t open it here; ask whoever runs its library</p>
+                         )}
                          <p className="text-xs font-bold text-[var(--color-text)] truncate">
                            {sourceRef.documentNumber || sourceDoc.doc?.documentNumber || 'Controlled document'}
                            {(sourceRef.title || sourceDoc.doc?.title) && (
@@ -2147,7 +2507,12 @@ export default function TicketDetailView() {
                      </div>
                      <div className="flex items-center gap-2 shrink-0">
                        {sourceDoc.state === 'loaded' && (() => {
-                         const drift = revDrift(sourceRef.rev, sourceDoc.doc?.rev ?? null);
+                         // HAND-3 done-when 3: version ids decide when the request
+                         // captured one (a relabelled or re-issued rev cannot fool it).
+                         const drift = revDrift(
+                           { versionId: sourceRef.versionId, rev: sourceRef.rev },
+                           { versionId: sourceDoc.doc?.currentVersionId ?? null, rev: sourceDoc.doc?.rev ?? null },
+                         );
                          if (drift === 'drifted') {
                            return (
                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
@@ -2198,6 +2563,8 @@ export default function TicketDetailView() {
                          </Link>
                        ) : sourceDoc.state === 'unavailable' ? (
                          <span className="text-[10px] text-[var(--color-text-faint)] italic">Document not accessible to you</span>
+                       ) : sourceDoc.state === 'error' ? (
+                         <span className="text-[10px] text-amber-700 italic">Couldn&apos;t check the source document right now</span>
                        ) : null}
                      </div>
                    </div>

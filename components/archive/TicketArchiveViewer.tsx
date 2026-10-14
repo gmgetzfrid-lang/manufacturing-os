@@ -14,6 +14,7 @@ import {
   MessageSquare, Clock, Paperclip, FileText, Image as ImageIcon, File as FileIcon,
 } from "lucide-react";
 import { findInBackup } from "@/lib/archive";
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 
 type ZipFile = { async(type: "blob"): Promise<Blob>; async(type: "string"): Promise<string> };
 type ZipLike = {
@@ -154,7 +155,8 @@ export default function TicketArchiveViewer({
               <div>
                 <div className="text-base font-black text-[var(--color-text)]">{row.title || ticketLabel}</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  {row.status} {row.requester_name ? `· ${row.requester_name}` : ""} {row.closed_at ? `· closed ${fmtDate(row.closed_at)}` : ""}
+                  {/* UI-7 (drafting-flow DF-P9 integrator fix pass): the status in words. */}
+                  <span data-testid="archived-status">{row.status ? ticketStatusLabel(row.status) : null}</span> {row.requester_name ? `· ${row.requester_name}` : ""} {row.closed_at ? `· closed ${fmtDate(row.closed_at)}` : ""}
                 </div>
               </div>
 

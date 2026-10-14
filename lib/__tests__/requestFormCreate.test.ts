@@ -484,3 +484,30 @@ describe("EDGE-13 — the form's own checks run before any upload", () => {
     expect(s.alert).toHaveBeenCalledWith(expect.objectContaining({ message: "Failed to create ticket: network" }));
   });
 });
+
+// drafting-flow Round G, DF-P9 fix pass — UI-2 done-when 2: the workflow map
+// is reachable from the request form BEFORE anyone files, by a click (not a
+// hover), with the shared stage labels.
+describe("UI-2 (DF-P9) — the form opens the workflow map before filing", () => {
+  it("'See how a request flows' opens the map; its stages read in words; closing it leaves the form as it was", async () => {
+    await mount();
+    const mapHeading = () => Array.from(host!.querySelectorAll("h2")).find((h) => /How a drafting request flows/.test(h.textContent ?? "")) ?? null;
+    expect(mapHeading()).toBeNull();
+    const link = Array.from(host!.querySelectorAll("button")).find((b) => /See how a request flows/.test(b.textContent ?? "")) as HTMLButtonElement;
+    expect(link).toBeTruthy();
+    expect(link.type).toBe("button"); // never submits the form
+    await act(async () => { link.click(); });
+    await flush();
+    expect(mapHeading()).toBeTruthy();
+    const text = host!.textContent ?? "";
+    expect(text).toMatch(/Awaiting drafter/);
+    expect(text).toMatch(/Ready to issue \(IFC\)/);
+    expect(text).toMatch(/Issued — awaiting acknowledgement/);
+    expect(text).not.toMatch(/PENDING_ASSIGNMENT|FINAL_DRAFT/);
+    expect(s.submit).not.toHaveBeenCalled();
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
+    await flush();
+    expect(mapHeading()).toBeNull();
+    expect(el<HTMLFormElement>("form")).toBeTruthy();
+  });
+});

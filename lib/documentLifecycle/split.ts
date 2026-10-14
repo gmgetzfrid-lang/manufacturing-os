@@ -10,6 +10,7 @@
 import { supabase } from "@/lib/supabase";
 import {
   authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
+  recallOnRetirement, skipsRetirementRecall, recallsCopyHolders,
 } from "@/lib/revisions";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
@@ -298,6 +299,28 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     preState, documentId: sourceId, libraryId, orgId, actorUserId, actorEmail,
     verb: "split", action: "split", reason: reason.trim(),
   });
+
+  // PROD-17 (document-control P26): the retired source's watchers are told
+  // and, when the split takes away a controlled issue, its copy holders
+  // recalled, once, never awaited — unless it was already Superseded or
+  // Archived (the status read fresh before the flip; skipsRetirementRecall):
+  // then neither goes again (whether its earlier retirement sent them
+  // depends on the door that retired it — PROD-17 residual). P26 fix pass 4
+  // (the integrator's ruling under DEC-90): the copy holders are recalled
+  // only out of a controlled issue (recallsCopyHolders) — a Draft, In
+  // Review or Void source gets the watchers' FYI only. The checkout holder
+  // was told above (notifyHolderOfRetirement); no package owner is.
+  if (!skipsRetirementRecall(retired.priorStatus)) {
+    recallOnRetirement({
+      orgId, documentId: sourceId, libraryId: sourceLibraryId,
+      docLabel: String(source.documentNumber || source.title || source.name || "document"),
+      newStatus: "Superseded",
+      replacementNote: `Replaced by ${targets.map((t) => t.documentNumber.trim()).join(", ")}.`,
+      actorUserId, actorName: actorEmail || actorUserId,
+      personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
+      recallCopyHolders: recallsCopyHolders(retired.priorStatus),
+    });
+  }
 
   return {
     supersededSourceId: sourceId,

@@ -12,17 +12,17 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 127,
+    "findings": 128,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
-      "MEDIUM": 78,
+      "MEDIUM": 79,
       "LOW": 30
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 96,
+      "RESOLVED": 97,
       "OPEN": 26,
       "RESOLVED (2026-10-14, notifications Round G, N10 PUSH — done-when 1 met as narrowed by the integrator, `DEC-90`)": 1,
       "RESOLVED (2026-10-13, notifications N15; PASTE pending (both pastes): `20261206` — once BEFORE the N15 deploy and again, REQUIRED, after the next maintenance run following that deploy)": 1
@@ -835,6 +835,31 @@
       "report": "audit-reports/notifications/02-delivery-integrity.md"
     },
     {
+      "id": "DELIV-17",
+      "title": "A retirement recall whose copy-holder read fails is dropped without a trace: no recall, no audit row, no log line, and the door reports success",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code on `fleet/DC-P26-status-doors` (base `ce5a053` plus P26).",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/staleCopies.ts",
+        "lib/revisions.ts:3446-3456",
+        "lib/revisions.ts:506-530",
+        "lib/documentLifecycle/split.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A DocCtrl archives P-101, or splits it, during a transient 503 on downloadaudits. - The archive lands and the dialog closes as usual. - None of the nine people holding a print is told P-101 is retired. The watchers get their FYI. - The audit trail shows ARCHIVEDOC and no DISTRIBUTIONRECALL, and there is no log line. - Later, an incident investigation finds no recall on record and no sign one was a",
+      "area": "notifications",
+      "report": "audit-reports/notifications/02-delivery-integrity.md"
+    },
+    {
       "id": "NEDGE-6",
       "title": "Notification titles broadcast document numbers and free-text hold reasons to every Admin and DocCtrl and out through Resend, with no ACL consultation anywhere on the notify path — defeating the 'hidden' node visibility the ACL layer implements",
       "severity": "MEDIUM",
@@ -1329,7 +1354,7 @@
       "id": "PROD-4",
       "title": "13 of 17 emit() call sites hardcode their audience; the follower/watcher machinery is bypassed and audience.projectId is never used at all",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
