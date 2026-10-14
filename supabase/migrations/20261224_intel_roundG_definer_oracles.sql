@@ -91,15 +91,39 @@
 -- 42883 or PGRST202 can arise from it.
 --
 -- PASTE FACTS.
---   ORDER: after 20261199, 20261159 and 20261137, and after the newest bodies
---   it re-creates (20261059, 20261042, 20261052, 20261025, 20260913). The
---   apply-order check at the top refuses, changing nothing, when one is
---   missing. Independent of 20261217 and 20261212 (either order).
---   ⚠ Re-pasting an EARLIER file that re-creates one of these functions
---   (20261059, 20261042, 20261052, 20261025, 20260913, 20261159 or 20261199;
---   or 20261137, whose GRANT gives authenticated org_capability_allows_for
---   back) undoes this file for that function: re-paste this file after it.
---   DEPLOY GATE: none. Either order with any deploy (the app is unchanged).
+--   ORDER: after 20261199, 20261159, 20261137 and 20261136, and after the
+--   newest bodies it re-creates (20261059, 20261042, 20261052, 20261025,
+--   20260913). The apply-order check at the top refuses, changing nothing,
+--   when one is missing: it reads each re-created body's own marker,
+--   20261137's ai.manage_caps row in org_capability_allows_for, and
+--   quality_signoff_granted_for, which only 20261136 creates. (Both of those
+--   files end by granting authenticated the evaluator, so neither may come
+--   after this file.) Independent of 20261217 and 20261212 (either order).
+--   HOLDS: inherits the holds of 20261159 (the Intake force deployed,
+--   projects-and-cost INTK-18) and 20261199 (the app carrying
+--   document-control P24 deployed). Paste only after both are lifted and
+--   pasted. Until then the apply-order check refuses and changes nothing.
+--   DEPLOY GATE: none of its own. Either order with any deploy (the app is
+--   unchanged), once the holds above are lifted.
+--   ⚠ NEVER RE-PASTE 20261159, 20261199, 20261133 OR 20261027 AFTER THIS FILE.
+--   Re-pasting 20261199 or 20261133 puts back a transmittals_guard that asks
+--   org_capability_allows_for as the signed-in member: it BREAKS every
+--   transmit authority's issue, void and revoke (42501, permission denied for
+--   function org_capability_allows_for). Re-pasting 20261159 puts back a
+--   review_signoff_owner_stamp that asks user_is_effective_owner about other
+--   candidates: it BREAKS signed-in roster opening on a document whose review
+--   control needs the owner (42501 from user_is_effective_owner). Each stays
+--   broken until this file is pasted again in the same sitting. After
+--   20261133, paste 20261199 first: this file's apply-order check refuses
+--   over 20261133's older guard. 20261027's transmittals_guard predates TRX-1
+--   and names no evaluator: re-pasted, it raises nothing, but takes TRX-1 and
+--   TRX-17 away (it is already never re-pasted after 20261133).
+--   Re-pasting 20261059, 20261042, 20261052, 20261025 or 20260913 only puts
+--   that function's earlier, unbound body back, and re-pasting 20261137 (or
+--   20261136) only gives authenticated org_capability_allows_for back: each
+--   undoes this file for that function and breaks nothing this file
+--   changed; re-paste this file after it. (20261052, 20261136 and 20261137
+--   keep their own never-re-paste rules for the evaluator's rows.)
 --   EXPECTED RESULT (one result set, 44 rows): 13 probes with ok = true, n
 --   NULL; then 2 after-counts and 29 inventory counts (ok NULL). On the
 --   harness's replay the anon- and authenticated-executable SECURITY DEFINER
@@ -125,13 +149,14 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'transmittals_guard' AND prosrc LIKE '%TRX-17 (20261199)%')
      OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'review_signoff_owner_stamp' AND prosrc LIKE '%opened_owner_slot%')
-     OR to_regprocedure('public.org_capability_allows_for(uuid,text,uuid,jsonb)') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('public.org_capability_allows_for(uuid,text,uuid,jsonb)') AND prosrc LIKE '%WHEN ''ai.manage_caps''%')
+     OR to_regprocedure('public.quality_signoff_granted_for(uuid,uuid,uuid)') IS NULL
      OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'user_can_publish_on_library' AND prosrc LIKE '%(v_idx->''allow''->''orgs''->''publish'') ? p_org::text%')
      OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'user_is_effective_owner' AND prosrc LIKE '%member_is_active(v_org, p_doc_owner)%')
      OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'org_capability_allows' AND prosrc LIKE '%org_capability_allows_for(p_org, p_cap, p_uid, ''{}''::jsonb)%')
      OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'acl_index_denies' AND prosrc LIKE '%tm.uid = p_uid%')
      OR to_regprocedure('public.project_org(uuid)') IS NULL THEN
-    RAISE EXCEPTION '20261224 needs 20260913, 20261025, 20261042, 20261052, 20261059, 20261137, 20261159 and 20261199 pasted first; nothing was changed.';
+    RAISE EXCEPTION '20261224 needs 20260913, 20261025, 20261042, 20261052, 20261059, 20261136, 20261137, 20261159 and 20261199 pasted first; nothing was changed.';
   END IF;
 END
 $$;

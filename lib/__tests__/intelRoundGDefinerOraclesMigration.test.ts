@@ -17,8 +17,13 @@
 //     revoked from PUBLIC and anon (effective_owner_matches from every client
 //     role and the service role); org_capability_allows_for's REVOKE runs
 //     only inside the live-database precondition.
-//   * DEC-30: the apply-order check, then the counts-only inventory TEMP
-//     TABLE, before one BEGIN … COMMIT; one final SELECT (check, ok, n).
+//   * DEC-30: the apply-order check (a marker of every file it needs,
+//     20261137's ai.manage_caps row and 20261136's quality_signoff_granted_for
+//     included), then the counts-only inventory TEMP TABLE, before one
+//     BEGIN … COMMIT; one final SELECT (check, ok, n).
+//   * The header's paste facts: the holds it inherits from 20261159 and
+//     20261199, and the never-re-paste rule (20261159, 20261199, 20261133 and
+//     20261027 BREAK what it keeps working; the others only undo it).
 //   * node_visible and every policy are untouched (DEC-90: intelligence I-30
 //     re-creates node_visible once); effective_owner_matches names no
 //     member_is_active, so 20261217's precondition holds in either order.
@@ -266,7 +271,7 @@ describe("20261224 — what it creates and re-creates, and nothing else (DEC-31)
 describe("20261224 — the one-paste shape (DEC-30)", () => {
   it("apply-order check → counts-only inventory TEMP TABLE → one BEGIN/COMMIT → ONE final SELECT (check, ok, n)", () => {
     const code = stripComments(M);
-    const order = code.indexOf("RAISE EXCEPTION '20261224 needs 20260913, 20261025, 20261042, 20261052, 20261059, 20261137, 20261159 and 20261199 pasted first; nothing was changed.';");
+    const order = code.indexOf("RAISE EXCEPTION '20261224 needs 20260913, 20261025, 20261042, 20261052, 20261059, 20261136, 20261137, 20261159 and 20261199 pasted first; nothing was changed.';");
     const temp = code.indexOf("CREATE TEMP TABLE intel_i28_20261224_inventory");
     const begin = code.search(/^BEGIN;/m);
     const commit = code.search(/^COMMIT;/m);
@@ -301,11 +306,45 @@ describe("20261224 — the one-paste shape (DEC-30)", () => {
     expect(M).toContain("EXPECTED RESULT (one result set, 44 rows): 13 probes with ok = true");
   });
 
-  it("the header states the paste facts: order, independence of 20261217 and 20261212, no deploy gate, the re-paste caveat, the rollback", () => {
-    expect(M).toContain("--   ORDER: after 20261199, 20261159 and 20261137");
-    expect(M).toContain("Independent of 20261217 and 20261212 (either order).");
-    expect(M).toContain("--   DEPLOY GATE: none. Either order with any deploy (the app is unchanged).");
-    expect(M).toContain("--   ⚠ Re-pasting an EARLIER file that re-creates one of these functions");
+  it("the apply-order check reads a marker of every file it needs, 20261137 and 20261136 included (each ends by granting authenticated the evaluator)", () => {
+    const check = M.slice(M.indexOf("-- ── 0. apply order"), M.indexOf("-- ── 1. pre-apply inventory"));
+    // 20261137: the ai.manage_caps row of the evaluator (its signature alone has existed since 20261052)
+    expect(check).toContain("OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('public.org_capability_allows_for(uuid,text,uuid,jsonb)') AND prosrc LIKE '%WHEN ''ai.manage_caps''%')");
+    expect(check).not.toMatch(/OR to_regprocedure\('public\.org_capability_allows_for/);
+    // 20261136: quality_signoff_granted_for, which no other file creates
+    expect(check).toContain("OR to_regprocedure('public.quality_signoff_granted_for(uuid,uuid,uuid)') IS NULL");
+    const evaluatorRow = /WHEN 'ai\.manage_caps'/;
+    expect(fnBody(read("20261137_intel_roundG_ai_manage_caps.sql"), "CREATE OR REPLACE FUNCTION org_capability_allows_for(")).toMatch(evaluatorRow);
+    for (const f of numbered.filter((x) => x < "20261137")) expect(stripComments(read(f)), f).not.toMatch(evaluatorRow);
+    expect(numbered.filter((f) => f < FILE && /CREATE OR REPLACE FUNCTION quality_signoff_granted_for\(/.test(stripComments(read(f))))).toEqual(["20261136_prj_roundG_quality_signoff.sql"]);
+    // both files grant authenticated the evaluator: neither may come after this file
+    expect(read("20261136_prj_roundG_quality_signoff.sql")).toContain("GRANT EXECUTE ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) TO authenticated, service_role;");
+    expect(read("20261137_intel_roundG_ai_manage_caps.sql")).toContain("GRANT EXECUTE ON FUNCTION org_capability_allows_for(UUID, TEXT, UUID, JSONB) TO authenticated, service_role;");
+  });
+
+  it("the header states the paste facts: order, the inherited holds, independence of 20261217 and 20261212, no deploy gate of its own, the never-re-paste rule, the rollback", () => {
+    const header = M.slice(0, M.indexOf("-- ── 0. apply order"));
+    const flat = header.replace(/\n--\s*/g, " ");
+    expect(header).toContain("--   ORDER: after 20261199, 20261159, 20261137 and 20261136, and after the");
+    expect(flat).toContain("Independent of 20261217 and 20261212 (either order).");
+    expect(flat).toContain("HOLDS: inherits the holds of 20261159 (the Intake force deployed, projects-and-cost INTK-18) and 20261199 (the app carrying document-control P24 deployed). Paste only after both are lifted and pasted. Until then the apply-order check refuses and changes nothing.");
+    expect(flat).toContain("DEPLOY GATE: none of its own.");
+    expect(flat).not.toMatch(/DEPLOY GATE: none\. /);
+    // the re-pastes that BREAK what this file keeps working (INTK-19 review fix pass)
+    expect(header).toContain("--   ⚠ NEVER RE-PASTE 20261159, 20261199, 20261133 OR 20261027 AFTER THIS FILE.");
+    expect(flat).toContain("Re-pasting 20261199 or 20261133 puts back a transmittals_guard that asks org_capability_allows_for as the signed-in member: it BREAKS every transmit authority's issue, void and revoke (42501, permission denied for function org_capability_allows_for).");
+    expect(flat).toContain("Re-pasting 20261159 puts back a review_signoff_owner_stamp that asks user_is_effective_owner about other candidates: it BREAKS signed-in roster opening on a document whose review control needs the owner (42501 from user_is_effective_owner).");
+    expect(flat).toContain("Each stays broken until this file is pasted again in the same sitting. After 20261133, paste 20261199 first: this file's apply-order check refuses over 20261133's older guard.");
+    // the re-pastes that only revert
+    expect(flat).toContain("Re-pasting 20261059, 20261042, 20261052, 20261025 or 20260913 only puts that function's earlier, unbound body back, and re-pasting 20261137 (or 20261136) only gives authenticated org_capability_allows_for back: each undoes this file for that function and breaks nothing this file changed; re-paste this file after it.");
+    // "undoes" is never said of the files that break
+    const reverts = flat.slice(flat.indexOf("Re-pasting 20261059"), flat.indexOf("re-paste this file after it.", flat.indexOf("Re-pasting 20261059")));
+    for (const f of ["20261159", "20261199", "20261133", "20261027"]) expect(reverts, f).not.toContain(f);
+    // the facts behind the rule: those files' bodies ask the narrowed helpers
+    expect(fnBody(read("20261199_dc_roundF_transmittal_issue_verdict.sql"), "CREATE OR REPLACE FUNCTION transmittals_guard()")).toContain("org_capability_allows_for(NEW.org_id, 'transmittal.issue', v_uid");
+    expect(fnBody(read("20261133_dc_roundF_transmittal_rails.sql"), "CREATE OR REPLACE FUNCTION transmittals_guard()")).toContain("org_capability_allows_for(NEW.org_id, 'transmittal.issue', v_uid");
+    expect(fnBody(read("20261159_dc_roundF_guard_owner_and_held_pointer.sql"), "CREATE OR REPLACE FUNCTION review_signoff_owner_stamp()")).toContain("user_is_effective_owner(v_doc_owner, v_collection, v_library, c.uid)");
+    expect(fnBody(read("20261027_dc_phase1_unguarded_doors.sql"), "CREATE OR REPLACE FUNCTION transmittals_guard()")).not.toMatch(/org_capability_allows/);
     expect(M).toMatch(/^--\s+GRANT EXECUTE ON FUNCTION public\.org_capability_allows_for\(uuid, text, uuid, jsonb\) TO authenticated;$/m);
     // the size the harness sends as one message (psql -c), with room to spare
     expect(Buffer.byteLength(M)).toBeLessThan(120_000);

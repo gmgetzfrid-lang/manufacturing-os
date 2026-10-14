@@ -28,7 +28,12 @@
 //   · The paste itself, as the SQL editor sends it, on a copy of the
 //     snapshot: one result set of 44 rows, every probe true; a re-paste is
 //     clean; each live-database precondition blocks only the REVOKE; the
-//     apply-order check refuses on a database without the newest bodies.
+//     apply-order check refuses on a database without the newest bodies, or
+//     without 20261137 or 20261136 (each grants authenticated the evaluator).
+//   · The never-re-paste rule: 20261199, 20261133 and 20261159 pasted after
+//     it BREAK transmittals and roster opening (42501) until it is pasted
+//     again (after 20261133, 20261199 first); 20261137 pasted after it only
+//     undoes the narrowing.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -239,10 +244,25 @@ const CASES: readonly Case[] = [
     // Engineer-1 holder of quality.sign_off (eligible ONLY through org_capability_allows_for)
     stmt: (w) => `SELECT generate_series(1, (SELECT (quality_signoff_status('${w.project}')->>'otherSigners')::int))`,
     expect: { anon: "err:42501", outsider: "ok:0", viewer: "ok:4", denied: "ok:3", manager: "ok:3", docctrl: "ok:3" } },
-  { name: "the app's own calls (lib/ownership.ts, lib/revisions.ts, lib/documentShares.ts): a signed-in caller asks about itself",
-    stmt: (w) => `SELECT concat_ws(',', user_is_effective_owner('${w.uid.owner}', NULL, '${w.lib1}', '@ME'), user_is_effective_owner('${w.uid.gone}', '${w.folder}', '${w.lib1}', '@ME'), user_is_effective_owner(NULL, NULL, '${w.lib2}', '@ME'), user_can_publish_on_library('${w.lib1}', '@ME', '${w.org}'), org_capability_allows('${w.org}', 'checkout.force_release', '@ME')) WHERE '@ME' <> '${NIL}'`,
-    after: () => "SELECT 'done';",
-    expect: { owner: "ok:1", folderowner: "ok:1", publisher: "ok:1" } },
+  { name: "the app's own calls (lib/ownership.ts, lib/revisions.ts, lib/documentShares.ts): a signed-in caller asks about itself, and every answer is pinned per caller",
+    // The row count is a bitmask of the five answers, so the before/after
+    // comparison compares the answers themselves (not that a call returned):
+    //   1  user_is_effective_owner(D1's owner, no folder, L1)   — the document owner
+    //   2  user_is_effective_owner(suspended owner, C1, L1)      — the folder owner (the suspended owner skipped)
+    //   4  user_is_effective_owner(no owner, no folder, L2)      — the owning team's supervisor (lib/revisions.ts)
+    //   8  user_can_publish_on_library(L1)                       — the granted publisher, and the controllers (lib/documentShares.ts)
+    //   16 org_capability_allows(checkout.force_release)         — the controllers' shipped default
+    // A caller with no uid (the anon key, the service role) has nothing to ask about itself: 0 rows.
+    // The mask is a scalar subquery: the planner's row estimate for generate_series
+    // evaluates plain STABLE arguments while planning, before the signed-in filter.
+    stmt: (w) => `SELECT generate_series(1, (SELECT user_is_effective_owner('${w.uid.owner}', NULL, '${w.lib1}', '@ME')::int
+                    + 2 * user_is_effective_owner('${w.uid.gone}', '${w.folder}', '${w.lib1}', '@ME')::int
+                    + 4 * user_is_effective_owner(NULL, NULL, '${w.lib2}', '@ME')::int
+                    + 8 * user_can_publish_on_library('${w.lib1}', '@ME', '${w.org}')::int
+                    + 16 * org_capability_allows('${w.org}', 'checkout.force_release', '@ME')::int))
+                    FROM (SELECT 1 WHERE '@ME' <> '${NIL}') signed_in`,
+    expect: { anon: "ok:0", outsider: "ok:0", viewer: "ok:0", denied: "ok:0", owner: "ok:1", folderowner: "ok:2", supervisor: "ok:4", publisher: "ok:8",
+              libowner: "ok:0", gone: "ok:0", manager: "ok:0", docctrl: "ok:24", admin: "ok:24", service: "ok:0" } },
 ];
 
 /** An outcome with the world's own ids and tag written as names, so two worlds compare. */
@@ -288,7 +308,8 @@ describe.skipIf(skip !== null)("INTK-19 (20261224): every policy and invoker cal
     it(c.name, () => {
       const { mismatches, outcomes } = compare(before(), after, w0, w1, c);
       expect(mismatches).toEqual([]);
-      for (const [who, want] of Object.entries(c.expect)) expect(outcomes[who], `${who} (both sides)`).toMatch(new RegExp(`^${want.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`));
+      // an outcome's prefix; a bare row count ("ok:2") is the whole outcome, so ok:2 never passes for ok:24
+      for (const [who, want] of Object.entries(c.expect)) expect(outcomes[who], `${who} (both sides)`).toMatch(new RegExp(`^${want.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${/^ok:\d+$/.test(want) ? "(?!\\d)" : ""}`));
     });
   }
 
@@ -446,16 +467,117 @@ describe.skipIf(skip !== null)("20261224 pasted as the SQL editor sends it (one 
     });
   }
 
-  it("the apply-order check: on a database whose transmittals_guard is older than 20261199 the paste raises and changes nothing", () => {
-    withCopy("mos_224_order", (db) => {
-      admin(db, `UPDATE pg_proc SET prosrc = replace(prosrc, 'TRX-17 (20261199)', 'TRX-17 (pending)') WHERE proname = 'transmittals_guard'`);
-      const body = () => admin(db, `SELECT md5(prosrc) FROM pg_proc WHERE proname = 'user_can_publish_on_library'`);
-      const was = body();
-      const p = paste(db);
-      expect(p.ok).toBe(false);
-      expect(p.error).toMatch(/20261224 needs 20260913, 20261025, 20261042, 20261052, 20261059, 20261137, 20261159 and 20261199 pasted first; nothing was changed\./);
-      expect(body()).toBe(was);
-      expect(admin(db, `SELECT to_regprocedure('public.caller_capability_allows(uuid,text,jsonb)') IS NULL`)).toBe("t");
+  // Each case takes away ONE file the paste needs: it raises, and changes
+  // nothing. 20261137 and 20261136 each end by granting authenticated the
+  // evaluator, so a paste before either would be undone silently by it.
+  const missing: Record<string, string> = {
+    "whose transmittals_guard is older than 20261199": `UPDATE pg_proc SET prosrc = replace(prosrc, 'TRX-17 (20261199)', 'TRX-17 (pending)') WHERE proname = 'transmittals_guard'`,
+    "whose evaluator has no ai.manage_caps row (20261137 not pasted)": `UPDATE pg_proc SET prosrc = replace(prosrc, 'WHEN ''ai.manage_caps''', 'WHEN ''ai.pending''') WHERE proname = 'org_capability_allows_for'`,
+    "without quality_signoff_granted_for (20261136 not pasted)": `ALTER FUNCTION public.quality_signoff_granted_for(uuid, uuid, uuid) RENAME TO quality_signoff_granted_for_pending`,
+  };
+  for (const [what, ddl] of Object.entries(missing)) {
+    it(`the apply-order check: on a database ${what} the paste raises and changes nothing`, () => {
+      withCopy("mos_224_order", (db) => {
+        admin(db, ddl);
+        const body = () => admin(db, `SELECT md5(prosrc) FROM pg_proc WHERE proname = 'user_can_publish_on_library'`);
+        const was = body();
+        const p = paste(db);
+        expect(p.ok).toBe(false);
+        expect(p.error).toMatch(/20261224 needs 20260913, 20261025, 20261042, 20261052, 20261059, 20261136, 20261137, 20261159 and 20261199 pasted first; nothing was changed\./);
+        expect(body()).toBe(was);
+        expect(admin(db, `SELECT to_regprocedure('public.caller_capability_allows(uuid,text,jsonb)') IS NULL`)).toBe("t");
+        expect(admin(db, `SELECT has_function_privilege('authenticated', 'public.org_capability_allows_for(uuid,text,uuid,jsonb)', 'EXECUTE')`)).toBe("t");
+      });
+    });
+  }
+
+  // The header's never-re-paste rule (INTK-19, review fix pass): an earlier
+  // body of a caller this file moved does not revert the file, it BREAKS that
+  // caller against the narrowed helper; pasting 20261224 again in the same
+  // sitting mends it (after 20261133, 20261199 first: the apply-order check
+  // refuses over 20261133's older guard). 20261137 only gives authenticated
+  // the evaluator back.
+  const pasteFile = (db: string, file: string) => {
+    const r = runPsql(mosDb().conn!, db, "postgres", { sql: readFileSync(join(process.cwd(), "supabase", "migrations", file), "utf8") });
+    expect(r.ok, `${file}: ${r.error ?? r.stderr}`).toBe(true);
+  };
+  const seeded = (name: string, fn: (db: string, w: World) => void) => withCopy(name, (db) => {
+    const w = ids();
+    seed(db, w);
+    const p = paste(db);
+    expect(p.ok, p.error ?? "").toBe(true);
+    fn(db, w);
+  });
+  const trx = (w: World) => ({
+    void: `UPDATE transmittals SET status = 'voided' WHERE id = '${w.tr}'`,
+    issue: `UPDATE transmittals SET status = 'issued' WHERE id = '${w.draft}'`,
+    revoke: `UPDATE transmittals SET portal_revoked_at = now() WHERE id = '${w.tr}'`,
+  });
+
+  const broken = (db: string, w: World) => {
+    for (const who of ["docctrl", "admin"] as const) {
+      for (const [k, q] of Object.entries(trx(w))) expect(probe(db, w, who, q), `${who} ${k}`).toMatch(/^err:42501:permission denied for function org_capability_allows_for/);
+    }
+    expect(probe(db, w, "service", trx(w).void)).toBe("ok:1");
+  };
+  const mended = (db: string, w: World) => {
+    const again = paste(db);
+    expect(again.ok, again.error ?? "").toBe(true);
+    expect(again.rows.slice(0, 13).map((r) => r.ok)).toEqual(Array(13).fill("t"));
+    for (const [k, q] of Object.entries(trx(w))) expect(probe(db, w, "docctrl", q), `${k} after 20261224 again`).toBe("ok:1");
+  };
+
+  it("never re-paste 20261199 after it: a transmit authority's issue, void and revoke then fail 42501 on org_capability_allows_for, until 20261224 is pasted again", () => {
+    seeded("mos_224_then_199", (db, w) => {
+      for (const [k, q] of Object.entries(trx(w))) expect(probe(db, w, "docctrl", q), `${k} before the re-paste`).toBe("ok:1");
+      pasteFile(db, "20261199_dc_roundF_transmittal_issue_verdict.sql");
+      broken(db, w);
+      mended(db, w);
+    });
+  });
+
+  it("never re-paste 20261133 after it: the same break; 20261224 alone is refused over 20261133's older guard, so 20261199 and then 20261224 mend it", () => {
+    seeded("mos_224_then_133", (db, w) => {
+      for (const [k, q] of Object.entries(trx(w))) expect(probe(db, w, "docctrl", q), `${k} before the re-paste`).toBe("ok:1");
+      pasteFile(db, "20261133_dc_roundF_transmittal_rails.sql");
+      broken(db, w);
+      const refused = paste(db);
+      expect(refused.ok).toBe(false);
+      expect(refused.error).toMatch(/^.*20261224 needs .* pasted first; nothing was changed\./);
+      broken(db, w);
+      pasteFile(db, "20261199_dc_roundF_transmittal_issue_verdict.sql");
+      broken(db, w);
+      mended(db, w);
+    });
+  });
+
+  it("never re-paste 20261159 after it: a signed-in roster opening that needs the owner then fails 42501 from user_is_effective_owner, until 20261224 is pasted again", () => {
+    seeded("mos_224_then_159", (db, w) => {
+      const open = `INSERT INTO document_review_signoffs (org_id, document_id, document_version_id, reviewer_user_id) VALUES ('${w.org}', '${w.d2}', '${w.v2}', '${w.uid.viewer}')`;
+      const slot = `SELECT 'slot=' || COALESCE(opened_owner_slot, '-') FROM document_review_signoffs WHERE document_version_id = '${w.v2}';`;
+      for (const who of ["docctrl", "folderowner"] as const) expect(normalise(probe(db, w, who, open, slot), w), who).toBe("ok:1 / slot=owner:<folderowner>");
+      pasteFile(db, "20261159_dc_roundF_guard_owner_and_held_pointer.sql");
+      for (const who of ["docctrl", "folderowner"] as const) {
+        expect(probe(db, w, who, open), who).toMatch(/^err:42501:user_is_effective_owner answers a client only about the signed-in caller \(INTK-19\)\.$/);
+      }
+      // the service role is not a client role (and the stamp leaves a session with no uid alone)
+      expect(probe(db, w, "service", open)).toBe("ok:1");
+      const again = paste(db);
+      expect(again.ok, again.error ?? "").toBe(true);
+      for (const who of ["docctrl", "folderowner"] as const) expect(normalise(probe(db, w, who, open, slot), w), who).toBe("ok:1 / slot=owner:<folderowner>");
+    });
+  });
+
+  it("re-pasting 20261137 after it only gives authenticated org_capability_allows_for back: the narrowing is undone, nothing breaks", () => {
+    seeded("mos_224_then_137", (db, w) => {
+      const signedIn = () => admin(db, `SELECT has_function_privilege('authenticated', 'public.org_capability_allows_for(uuid,text,uuid,jsonb)', 'EXECUTE')`);
+      expect(signedIn()).toBe("f");
+      pasteFile(db, "20261137_intel_roundG_ai_manage_caps.sql");
+      expect(signedIn()).toBe("t");
+      for (const [k, q] of Object.entries(trx(w))) expect(probe(db, w, "docctrl", q), k).toBe("ok:1");
+      expect(probe(db, w, "viewer", trx(w).void)).toMatch(/^err:42501/);
+      expect(paste(db).ok).toBe(true);
+      expect(signedIn()).toBe("f");
     });
   });
 });
