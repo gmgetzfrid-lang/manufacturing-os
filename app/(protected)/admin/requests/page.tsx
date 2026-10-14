@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
+import { DRAFTING_CONFIG_EDITORS } from '@/lib/adminSurfaces';
 import { OrgDraftingSettings, FormFieldConfig, SelectOption, CustomCategoryConfig, CustomFieldDef, CustomFieldType } from '@/types/schema';
 import {
   Settings,
@@ -55,20 +55,17 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
 };
 
 export default function DraftingConfigPage() {
-  const router = useRouter();
-  const { activeRole, hasAnyRole, activeOrgId } = useRole();
+  const { activeOrgId } = useRole();
   const [settings, setSettings] = useState<OrgDraftingSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // --- ACCESS GUARD ---
-  useEffect(() => {
-    // ADD-1: authority by the role COLLECTION; `activeRole` only says the
-    // membership has resolved.
-    if (activeRole && !hasAnyRole(['Admin', 'DocCtrl'])) {
-      router.push('/dashboard');
-    }
-  }, [activeRole, router, hasAnyRole]);
+  // --- ACCESS ---
+  // AUTHZ-10 (drafting-flow DF-P4): no client redirect. The admin layout's
+  // server gate (lib/adminGate.ts, the `requests` surface of
+  // lib/adminSurfaces.ts — DRAFTING_CONFIG_EDITORS) decides who opens this
+  // page, and the database's org_config_key_writes_* policies (20261209)
+  // admit the same set to the save.
 
   // --- DATA FETCHING ---
   useEffect(() => {
@@ -103,7 +100,16 @@ export default function DraftingConfigPage() {
       await appAlert("Configuration saved successfully.");
     } catch (e) {
       console.error("Save failed:", e);
-      await appAlert({ message: "Failed to save configuration.", tone: "danger" });
+      // AUTHZ-10: the database's own reason, never a generic line — a refusal
+      // says who may save.
+      const reason = (e as { message?: unknown })?.message;
+      const refused = typeof reason === "string" && /row-level security|permission denied|42501/i.test(reason);
+      await appAlert({
+        message: refused
+          ? `Not saved: the database refused the change (${reason}). Request forms are saved by ${DRAFTING_CONFIG_EDITORS.join(", ")}.`
+          : `Not saved: ${typeof reason === "string" && reason ? reason : "the configuration could not be written"}.`,
+        tone: "danger",
+      });
     } finally {
       setSaving(false);
     }

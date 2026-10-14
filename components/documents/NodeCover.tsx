@@ -13,6 +13,7 @@
 import React, { useEffect, useState } from "react";
 import { NodeIcon } from "@/lib/nodeIcons";
 import { peekSignedUrl, subscribeSignedUrl } from "@/lib/storage";
+import { safeNodeColor } from "@/lib/nodeColor";
 
 export interface NodeAppearanceLike {
   color?: string | null;
@@ -56,7 +57,9 @@ export default function NodeCover({
   iconSize?: string;
   showIcon?: boolean;
 }) {
-  const color = appearance.color || undefined;
+  // ORG-21: only a hex colour (#rgb / #rrggbb) is drawn into the gradient;
+  // any other stored value draws the theme gradient, as no colour does.
+  const color = safeNodeColor(appearance.color);
   const cover = appearance.coverImageUrl || undefined;
   const tint = appearance.coverTint ?? "none";
   const coverSrc = useCoverSrc(cover);

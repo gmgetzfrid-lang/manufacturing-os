@@ -562,7 +562,9 @@ describe("20261038 ticket_insert_integrity, replicated for the service-role inse
     // drafting-flow DF-P3's 20261195 §2b re-created it from 20261038 with three lines that NULL
     // the SLA stamps and the outcome on a client insert (integrator, at the DF-P3 merge); every
     // rule the create route copies is unchanged, so the newest body is read whichever file holds it.
-    expect(defining.slice(-2)).toEqual(["20261038_rp_phase4_ticket_workflow_rails.sql", "20261195_df_roundG_outcome_and_departure.sql"]);
+    // drafting-flow DF-P4's 20261208 re-created it again from 20261195 (a client insert is born
+    // with no library and the member's own name); the copied rules are still unchanged.
+    expect(defining.slice(-3)).toEqual(["20261038_rp_phase4_ticket_workflow_rails.sql", "20261195_df_roundG_outcome_and_departure.sql", "20261208_df_roundG_ticket_library.sql"]);
     const sql = readFileSync(join(dir, defining.at(-1)!), "utf8");
     expect(sql).toContain("NEW.requester_id := auth.uid();");
     expect(sql).toContain("IF NEW.requester_role IS NULL OR NOT (NEW.requester_role = ANY(v_roles)) THEN\n    NEW.requester_role := v_role;");
@@ -1705,5 +1707,119 @@ describe("FRIC-8 / LEAK-6 — a legacy check-in retried after its checkout close
     s.tables.checkout_sessions = s.tables.checkout_sessions.filter((x) => x.document_id !== DOC);
     const res = await POST(req(checkin({}, { episodeId: null })));
     expect((await res.json()).error).toBe("Only the person who checked this document out can file its check-in request.");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// drafting-flow Round G, DF-P4 LIBRARY — the create route's library, due date
+// and the columns it never writes.
+const LIB = "1b000000-0000-4000-8000-000000000001";
+describe("DF-P4 — GAP-105 / DCW-1: the library is derived from the source document, never asked for", () => {
+  it("a request raised from a document carries the document's library", async () => {
+    (s.tables.documents.find((d) => d.id === DOC) as Row).library_id = LIB;
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    expect(tickets()[0].library_id).toBe(LIB);
+  });
+  it("REGRESSION: a request with no source document files exactly as before — no library, never refused for it", async () => {
+    const res = await POST(req(portal({ sourceDocuments: [], attachments: [] })));
+    expect(res.status).toBe(201);
+    expect("library_id" in tickets()[0]).toBe(false);
+  });
+  it("a source document the requester cannot see lends no library (it is dropped, as before — DEC-101 item 5)", async () => {
+    const d = s.tables.documents.find((x) => x.id === DOC) as Row;
+    d.library_id = LIB; d.visible_to = ["someone-else"];
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    expect("library_id" in tickets()[0]).toBe(false);
+  });
+  it("before 20261208 is pasted (the column is not there) the same number is retried without the library — today's path", async () => {
+    (s.tables.documents.find((d) => d.id === DOC) as Row).library_id = LIB;
+    s.errors["tickets.insert"] = [{ code: "PGRST204", message: "Could not find the 'library_id' column of 'tickets' in the schema cache" }];
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    expect(tickets()).toHaveLength(1);
+    expect("library_id" in tickets()[0]).toBe(false);
+    expect(nextTicketRpc()).toHaveLength(1);
+    expect(tickets()[0].ticket_id).toBe(`KE-DDRT-${YY}-0001`);
+  });
+});
+
+describe("DF-P4 — EDGE-7 done-when 2 / ROUTE-9 done-when 4: the due date comes from the org's sla_defaults first", () => {
+  it("the org's window for the type sets target_completion_at; the requester's own date still wins; no row → the built-in window", async () => {
+    s.tables.sla_defaults = [{ org_id: ORG, request_type: "ISO", default_days: 3 }];
+    await POST(req(portal()));
+    const days = (Date.parse(String(tickets()[0].target_completion_at)) - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(2); expect(days).toBeLessThan(4);
+
+    seed(); s.counter = new Map();
+    s.tables.sla_defaults = [{ org_id: ORG, request_type: "ISO", default_days: 3 }];
+    const mine = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    await POST(req(portal({ targetCompletionAt: mine })));
+    expect(tickets()[0].target_completion_at).toBe(mine);
+
+    seed(); s.counter = new Map();
+    await POST(req(portal()));
+    const builtIn = (Date.parse(String(tickets()[0].target_completion_at)) - Date.now()) / 86_400_000;
+    expect(builtIn).toBeGreaterThan(13); expect(builtIn).toBeLessThan(15);   // ISO: 14 days (DEFAULT_SLA_DAYS)
+  });
+  it("an sla_defaults read that fails falls back to the built-in window — the request is still filed", async () => {
+    s.errors["sla_defaults.select"] = [{ code: "57014", message: "statement timeout" }];
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    const builtIn = (Date.parse(String(tickets()[0].target_completion_at)) - Date.now()) / 86_400_000;
+    expect(builtIn).toBeGreaterThan(13);
+  });
+  it("DF-P4 fix pass: a member-written default_days outside 1..3650 whole days (2e9, 0, negative, fractional, text) is the built-in window — never a 500", async () => {
+    for (const bad of [2_000_000_000, 3651, 0, -5, 2.5, "soon", Number.NaN]) {
+      seed(); s.counter = new Map();
+      s.tables.sla_defaults = [{ org_id: ORG, request_type: "ISO", default_days: bad }];
+      const res = await POST(req(portal()));
+      expect(res.status, String(bad)).toBe(201);
+      const builtIn = (Date.parse(String(tickets()[0].target_completion_at)) - Date.now()) / 86_400_000;
+      expect(builtIn, String(bad)).toBeGreaterThan(13); expect(builtIn, String(bad)).toBeLessThan(15);   // ISO: 14 days
+    }
+    seed(); s.counter = new Map();
+    s.tables.sla_defaults = [{ org_id: ORG, request_type: "ISO", default_days: 3650 }];
+    expect((await POST(req(portal()))).status).toBe(201);
+    const longest = (Date.parse(String(tickets()[0].target_completion_at)) - Date.now()) / 86_400_000;
+    expect(longest).toBeGreaterThan(3648); expect(longest).toBeLessThan(3651);
+  });
+  it("boundedSlaDays: whole days 1..SLA_DEFAULT_DAYS_MAX pass; everything else is null", async () => {
+    const { boundedSlaDays, SLA_DEFAULT_DAYS_MAX } = await import("@/lib/notifications");
+    expect(SLA_DEFAULT_DAYS_MAX).toBe(3650);
+    expect([1, 7, "21", 3650].map(boundedSlaDays)).toEqual([1, 7, 21, 3650]);
+    expect([0, -1, 1.5, 3651, 2e9, Infinity, NaN, null, undefined, "", "x", true].map(boundedSlaDays)).toEqual(Array(12).fill(null));
+  });
+  it("the service-role insert never writes sla_breached_at, sla_breach_warned_at or outcome (ticket_insert_integrity does not run for it)", async () => {
+    for (const body of [portal(), checkin(), collision()]) {
+      seed(); s.counter = new Map();
+      const res = await POST(req(body));
+      expect(res.status).toBe(201);
+      for (const col of ["sla_breached_at", "sla_breach_warned_at", "outcome"]) expect(col in tickets()[0], col).toBe(false);
+    }
+    const src = readFileSync(join(process.cwd(), "app", "api", "tickets", "create", "route.ts"), "utf8").replace(/\/\/[^\n]*/g, "");
+    expect(src).not.toMatch(/^\s*(sla_breached_at|sla_breach_warned_at|outcome)\s*:/m);
+    expect(src).not.toMatch(/row\.(sla_breached_at|sla_breach_warned_at|outcome)\s*=/);
+  });
+});
+
+describe("DF-P4 — EDGE-8: every filed request records that its creation notice is owed; the stamp settles it", () => {
+  it("announced: owed and stamped; nobody to tell: owed and NOT stamped (creationNoticeOwed reads the pair)", async () => {
+    const { creationNoticeOwed } = await import("@/lib/ticketLibrary");
+    await POST(req(portal()));
+    const m = tickets()[0].metadata as Row;
+    expect(m.created_notice_owed).toBe(true);
+    expect(typeof m.created_notice_at).toBe("string");
+    expect(creationNoticeOwed("PENDING_ASSIGNMENT", m)).toBe(false);
+
+    seed(); s.counter = new Map();
+    s.tables.org_members = s.tables.org_members.filter((x) => x.uid === REQ);
+    const res = await POST(req(portal()));
+    expect((await res.json()).notified).toBe(false);
+    const m2 = tickets()[0].metadata as Row;
+    expect(m2.created_notice_owed).toBe(true);
+    expect(m2.created_notice_at).toBeUndefined();
+    expect(creationNoticeOwed("PENDING_ASSIGNMENT", m2)).toBe(true);
   });
 });

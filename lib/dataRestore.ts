@@ -341,6 +341,15 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   table_views: fkRules("library_id>libraries collection_id>collections"),
   team_members: fkRules("team_id>teams"),
   ticket_comments: fkRules("ticket_id>tickets"),
+  // drafting-flow DF-P4 (GAP-105, 20261208): a ticket's library. CLEARED,
+  // not refused, when it is not a library of this workspace — exactly what
+  // the live database does when a library is deleted (ON DELETE SET NULL),
+  // and a ticket with no library is a fully supported state (DEC-107
+  // item 2). The pointer confers no access and places the ticket under no
+  // ACL: the library is not in the ticket's capability resource
+  // (lib/workflow.ts ticketResource) — whoever adds it there (DF-P5) revisits
+  // this rule. Refusing would drop the whole ticket, with its history.
+  tickets: fkRules("library_id>libraries?"),
   transmittals: fkRules("project_id>projects"),
   turnover_items: fkRules("project_id>projects party_id>project_parties document_id>documents"),
   units: fkRules("plant_id>plants"),
@@ -991,6 +1000,91 @@ export function conflictTargetFor(table: string): string {
   return has(CONFLICT_TARGETS, table) ? CONFLICT_TARGETS[table] : "id";
 }
 
+/** intelligence ILIFE-10 (admin-and-org Round G, P14): tables whose real
+ *  business unique key is NOT the conflict target the upsert can name. The
+ *  restore keeps ON CONFLICT (id) for them, and before the write it reads the
+ *  rows THIS workspace already holds under the business key: a backup row
+ *  whose business key a live row holds is not written (counted `existing` —
+ *  the live row is kept exactly as it is, DEC-75 §5), instead of being
+ *  refused 23505. No unique index is added (DEC-90's recorded default).
+ *  - process_flows: UNIQUE (org_id, from_kind, from_ref, to_kind, to_ref)
+ *    (20261017_process_flows.sql);
+ *  - proposed_links: proposed_links_pair_idx (document_id,
+ *    target_document_id, proposer) (20260807_link_proposals.sql);
+ *  - entity_mentions: (asset_id, knowledge_document_id, page), and
+ *    (asset_id, document_id, page) for a row with no knowledge document
+ *    (20261126's two plain indexes; before it, the expression index
+ *    (asset_id, COALESCE(knowledge_document_id, document_id), page) of
+ *    20260929, the same identity) — an expression / partial key no
+ *    `onConflict` column list can name.
+ *  `decision`: a person's decision the backup row records that the kept live
+ *  row does not. DEC-90's default for `is_explicit` (a mention a person made
+ *  by hand): the live row is kept as it is, and the backup's explicit link is
+ *  reported as not applied (per table and key, `notApplied`), never raised on
+ *  the live row; the same for a flow or a link proposal a person confirmed /
+ *  approved or dismissed in the backup whose live row says otherwise.
+ *  lib/__tests__/aoRoundGP14RestoreBusinessKeys.test.ts pins each key to its
+ *  migration. */
+export interface RestoreBusinessKey {
+  /** Columns read back for the live rows (besides `id`). */
+  columns: readonly string[];
+  /** The key columns the live read is narrowed by for this row (one `.in()`
+   *  each, besides org_id): every column of the key the row is matched on
+   *  (P14 fix pass: was one column, so a hub asset's whole mention set was
+   *  read again for every chunk). The read is a superset; keyOf decides. */
+  narrowBy: (row: Record<string, unknown>) => readonly string[];
+  /** The row's business-key identity, or null when a key column is unset. */
+  keyOf: (row: Record<string, unknown>) => string | null;
+  /** What a backup row's decision the kept live row lacks, or null. */
+  decision?: (backup: Record<string, unknown>, live: Record<string, unknown>) => { code: string; message: string } | null;
+}
+const bkPart = (v: unknown): string | null => (typeof v === "string" || typeof v === "number" ? String(v) : null);
+const bkJoin = (parts: Array<string | null>): string | null => (parts.every((p) => p !== null) ? parts.join("\u0000") : null);
+/** The code of a backup row whose explicit link (entity_mentions.is_explicit) was not applied. */
+export const EXPLICIT_LINK_NOT_APPLIED = "explicit_link_not_applied";
+/** The code of a backup row whose recorded decision (a status a person set) was not applied. */
+export const DECISION_NOT_APPLIED = "decision_not_applied";
+const statusDecision = (decided: readonly string[], noun: string) =>
+  (backup: Record<string, unknown>, live: Record<string, unknown>): { code: string; message: string } | null => {
+    const b = typeof backup.status === "string" ? backup.status : null;
+    if (!b || !decided.includes(b) || b === live.status) return null;
+    return {
+      code: DECISION_NOT_APPLIED,
+      message: `the backup's ${noun} was "${b}"; this workspace holds the same ${noun} (row ${String(live.id)}) as "${String(live.status ?? "")}", and the live row was kept as it is — decide it again where it lives if the backup's decision should stand`,
+    };
+  };
+export const RESTORE_BUSINESS_KEYS: Readonly<Record<string, RestoreBusinessKey>> = {
+  process_flows: {
+    columns: ["org_id", "from_kind", "from_ref", "to_kind", "to_ref", "status"],
+    narrowBy: () => ["from_kind", "from_ref", "to_kind", "to_ref"],
+    keyOf: (r) => bkJoin([bkPart(r.org_id), bkPart(r.from_kind), bkPart(r.from_ref), bkPart(r.to_kind), bkPart(r.to_ref)]),
+    decision: statusDecision(["confirmed", "dismissed"], "process flow"),
+  },
+  proposed_links: {
+    columns: ["document_id", "target_document_id", "proposer", "status"],
+    narrowBy: () => ["document_id", "target_document_id", "proposer"],
+    keyOf: (r) => bkJoin([bkPart(r.document_id), bkPart(r.target_document_id), bkPart(r.proposer)]),
+    decision: statusDecision(["approved", "dismissed"], "link proposal"),
+  },
+  entity_mentions: {
+    columns: ["asset_id", "knowledge_document_id", "document_id", "page", "is_explicit"],
+    narrowBy: (r) => (bkPart(r.knowledge_document_id) !== null ? ["asset_id", "knowledge_document_id", "page"] : ["asset_id", "document_id", "page"]),
+    keyOf: (r) => {
+      const kdoc = bkPart(r.knowledge_document_id);
+      return bkJoin([bkPart(r.asset_id), kdoc !== null ? `k:${kdoc}` : (bkPart(r.document_id) !== null ? `d:${bkPart(r.document_id)}` : null), bkPart(r.page)]);
+    },
+    decision: (backup, live) => (backup.is_explicit === true && live.is_explicit !== true
+      ? {
+        code: EXPLICIT_LINK_NOT_APPLIED,
+        message: `the backup's explicit link was not applied: this workspace holds the same mention (row ${String(live.id)}) as not explicit, and the live row was kept as it is — confirm the link again where it lives`,
+      }
+      : null),
+  },
+};
+export function restoreBusinessKeyFor(table: string): RestoreBusinessKey | null {
+  return has(RESTORE_BUSINESS_KEYS, table) ? RESTORE_BUSINESS_KEYS[table] : null;
+}
+
 /** Order a set of table names for safe insertion (known FK order first, any
  *  unknown tables appended alphabetically). Pure. */
 export function orderTablesForRestore(names: string[]): string[] {
@@ -1088,6 +1182,20 @@ export interface RestoreChunkResult {
   rowsAfterFilters: number;
   /** Rows dropped by those filters — counted, never silently lost. */
   filtered: number;
+  /** ILIFE-10 (P14): backup rows not written because this workspace holds a
+   *  live row under the same business key (counted in `existing`), whose
+   *  recorded decision the kept live row does not carry — DEC-90's default:
+   *  the backup's explicit link (or decision) is reported as not applied, per
+   *  key, never applied to the live row. */
+  notApplied: RestoreRowRefusal[];
+  /** ILIFE-11 (P14): for knowledge_chunks, the libraries (id → passages) of
+   *  this workspace whose passages the backup said had a meaning-index vector
+   *  and which, after this chunk, hold none (`embedding_model` set,
+   *  `embedding` NULL — an export leaves vectors out). Each needs a person to
+   *  start a meaning-index Build on their own key (DEC-90). */
+  meaningIndex?: Record<string, number>;
+  /** ILIFE-11 (P14): the check above could not be read (the restore went on). */
+  meaningIndexUnchecked?: string;
 }
 
 /** admin-and-org P1 (fix pass 5): numbering counters, by table → the counter
@@ -1312,8 +1420,9 @@ export async function applyRestoreChunk(
   let heldElsewhere = 0;
   let uncounted = 0;
   let advanced = 0;
+  const notApplied: RestoreRowRefusal[] = [];
   const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0, code?: string | null): RestoreChunkResult =>
-    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters });
+    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters, notApplied });
 
   const refusal = restoreTableRefusal(table);
   if (refusal) return fail(400, refusal, 0, params.rows.length);
@@ -1550,6 +1659,26 @@ export async function applyRestoreChunk(
     return out;
   });
 
+  // ILIFE-10 (P14): a row whose BUSINESS key a live row of this workspace
+  // holds (RESTORE_BUSINESS_KEYS) is kept here as it is — counted existing,
+  // never written, never refused 23505 — and a decision it records that the
+  // live row lacks is reported (notApplied). A read that fails stops the
+  // chunk before any write: nothing is written on a guess.
+  const businessKey = restoreBusinessKeyFor(table);
+  if (businessKey && mapped.length) {
+    const live = await liveBusinessKeyRows(sb, table, orgId, mapped, businessKey);
+    if (!live.ok) return fail(500, `Could not check the ${table} rows this workspace already holds under the same key: ${live.error}`, 0, rowsAfterFilters);
+    mapped = mapped.filter((r) => {
+      const k = businessKey.keyOf(r);
+      const held = k === null ? undefined : live.rows.get(k);
+      if (!held) return true;
+      existing++;
+      const why = businessKey.decision?.(r, held);
+      if (why) notApplied.push({ id: label(r), code: why.code, message: why.message });
+      return false;
+    });
+  }
+
   // BKP-12: the upsert's own refusal is the answer. There is no plain-insert
   // retry of a chunk the upsert already rejected — every conflict target is a
   // real key (census test). A refusal about ONE row (ROW_LEVEL_SQLSTATES) is
@@ -1670,7 +1799,136 @@ export async function applyRestoreChunk(
       }
     }
   }
-  return { ok: true, inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters };
+  // ILIFE-11 (P14): which libraries now hold passages the backup said had a
+  // vector and that hold none here — a person must start a meaning-index
+  // Build on each (DEC-90). Informational: a read that fails is said
+  // (meaningIndexUnchecked), never a failed chunk.
+  const meaning = table === "knowledge_chunks" ? await meaningIndexAfterChunk(sb, orgId, mapped) : null;
+  return {
+    ok: true, inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters, notApplied,
+    ...(meaning && "libraries" in meaning && Object.keys(meaning.libraries).length ? { meaningIndex: meaning.libraries } : {}),
+    ...(meaning && "error" in meaning ? { meaningIndexUnchecked: meaning.error } : {}),
+  };
+}
+
+/** ILIFE-10 (P14 fix pass): the encoded length the business-key read's
+ *  `.in()` lists may take in one request (lib/storageOrphans.ts's re-check
+ *  bound, which the gateway accepts), and the most rows one request asks for
+ *  (locateRestoreKeys's batch). */
+const BUSINESS_KEY_READ_URL_BUDGET = 6000;
+const BUSINESS_KEY_READ_ROWS = 100;
+
+/** ILIFE-10 (P14 fix pass): `rows` (sorted by their narrowing values) cut into
+ *  batches whose distinct values per column fit the URL budget, each batch
+ *  one value list per column of `cols`. */
+export function businessKeyReadBatches(
+  rows: ReadonlyArray<Record<string, unknown>>, cols: readonly string[],
+  budget = BUSINESS_KEY_READ_URL_BUDGET, maxRows = BUSINESS_KEY_READ_ROWS,
+): Array<Array<Array<string | number>>> {
+  const out: Array<Array<Array<string | number>>> = [];
+  let sets = cols.map(() => new Set<string | number>());
+  let size = 0;
+  let n = 0;
+  const flush = () => {
+    if (n > 0) out.push(sets.map((x) => Array.from(x)));
+    sets = cols.map(() => new Set<string | number>());
+    size = 0;
+    n = 0;
+  };
+  for (const r of rows) {
+    const cost = () => cols.reduce((sum, c, i) => sum + (sets[i].has(r[c] as string | number) ? 0 : encodeURIComponent(String(r[c])).length + 3), 0);
+    let extra = cost();
+    if (n > 0 && (size + extra > budget || n >= maxRows)) {
+      flush();
+      extra = cost();
+    }
+    cols.forEach((c, i) => sets[i].add(r[c] as string | number));
+    size += extra;
+    n++;
+  }
+  flush();
+  return out;
+}
+
+/** ILIFE-10 (P14): the live rows of `orgId` holding any business key of
+ *  `rows`, by key. Narrowed on EVERY column of each row's key (narrowBy; P14
+ *  fix pass: was the first column alone, so each chunk re-read a hub asset's
+ *  whole live mention set, growing as the restore wrote it), the rows cut
+ *  into batches by URL budget (businessKeyReadBatches), and read in keyset
+ *  pages (id order) until an empty page, so a server row cap below the page
+ *  size cannot cut the read short. */
+async function liveBusinessKeyRows(
+  sb: RestoreDb, table: string, orgId: string, rows: ReadonlyArray<Record<string, unknown>>, bk: RestoreBusinessKey,
+): Promise<{ ok: true; rows: Map<string, Record<string, unknown>> } | { ok: false; error: string }> {
+  const wanted = new Set<string>();
+  // the rows by the columns their key is read on (a mention with a knowledge document, one without)
+  const groups = new Map<string, { cols: readonly string[]; rows: Array<Record<string, unknown>> }>();
+  for (const r of rows) {
+    const k = bk.keyOf(r);
+    if (k === null) continue;
+    const cols = bk.narrowBy(r);
+    if (!cols.every((c) => isKeyValue(r[c]))) continue;
+    wanted.add(k);
+    const sig = cols.join(",");
+    const g = groups.get(sig);
+    if (g) g.rows.push(r); else groups.set(sig, { cols, rows: [r] });
+  }
+  const out = new Map<string, Record<string, unknown>>();
+  const select = Array.from(new Set(["id", ...bk.columns])).join(",");
+  for (const { cols, rows: group } of groups.values()) {
+    const tuple = (r: Record<string, unknown>) => cols.map((c) => String(r[c])).join("\u0000");
+    const sorted = [...group].sort((a, b) => { const x = tuple(a); const y = tuple(b); return x < y ? -1 : x > y ? 1 : 0; });
+    for (const values of businessKeyReadBatches(sorted, cols)) {
+      let last: string | null = null;
+      for (;;) {
+        let q = sb.from(table).select(select).eq("org_id", orgId);
+        for (const [i, c] of cols.entries()) q = q.in(c, values[i]);
+        q = q.order("id", { ascending: true });
+        if (last !== null) q = q.gt("id", last);
+        const { data, error } = await q.limit(KEY_PAGE);
+        if (error) return { ok: false, error: error.message };
+        const page = (data ?? []) as unknown as Array<Record<string, unknown>>;
+        if (page.length === 0) break;
+        for (const row of page) {
+          const k = bk.keyOf(row);
+          if (k !== null && wanted.has(k) && !out.has(k)) out.set(k, row);
+        }
+        const id = page[page.length - 1].id;
+        if (id === null || id === undefined || String(id) === last) break;
+        last = String(id);
+      }
+    }
+  }
+  return { ok: true, rows: out };
+}
+
+/** ILIFE-11 (P14): of the chunk's knowledge_chunks rows the backup said had
+ *  a vector (`embedding_model` set) but carried none (an export leaves
+ *  `embedding` out; a backup taken before that change carries it, and is
+ *  written back with it), which now hold no vector in this workspace — by
+ *  library. `embedding_model` set with `embedding` NULL is the state an
+ *  export-and-restore leaves: the embed writer sets both together and the
+ *  Rebuild clears both together. A database without the column answers
+ *  42703: nothing to rebuild there, and it is said. */
+async function meaningIndexAfterChunk(
+  sb: RestoreDb, orgId: string, rows: ReadonlyArray<Record<string, unknown>>,
+): Promise<{ libraries: Record<string, number> } | { error: string }> {
+  const ids = rows
+    .filter((r) => typeof r.id === "string" && r.embedding_model !== null && r.embedding_model !== undefined
+      && (r.embedding === null || r.embedding === undefined))
+    .map((r) => r.id as string);
+  const libraries: Record<string, number> = {};
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await sb.from("knowledge_chunks").select("id, library_id")
+      .in("id", ids.slice(i, i + 200)).eq("org_id", orgId)
+      .is("embedding", null).not("embedding_model", "is", null);
+    if (error) return { error: error.message };
+    for (const row of ((data ?? []) as Array<{ library_id?: unknown }>)) {
+      if (typeof row.library_id !== "string") continue;
+      libraries[row.library_id] = (libraries[row.library_id] ?? 0) + 1;
+    }
+  }
+  return { libraries };
 }
 
 /** BKP-5: what a restore of these rows WOULD do, read-only — how many already
@@ -1704,11 +1962,22 @@ export async function previewRestoreChunk(
   const mapped = params.rows.map((r) => bindRestoredRow(table, remapRow(r, idRemap), orgId));
   const where = await locateRestoreKeys(sb, table, orgId, mapped);
   if (!where.ok) return { ok: false, status: 500, error: where.error, rows: mapped.length, existing: 0, heldElsewhere: 0, wouldInsert: 0 };
+  // ILIFE-10 (P14): a row whose business key a live row here holds is kept
+  // here too (RESTORE_BUSINESS_KEYS) — counted existing, as the write counts it.
+  const businessKey = restoreBusinessKeyFor(table);
+  let liveByKey: Map<string, Record<string, unknown>> | null = null;
+  if (businessKey && mapped.length) {
+    const live = await liveBusinessKeyRows(sb, table, orgId, mapped, businessKey);
+    if (!live.ok) return { ok: false, status: 500, error: live.error, rows: mapped.length, existing: 0, heldElsewhere: 0, wouldInsert: 0 };
+    liveByKey = live.rows;
+  }
   let existing = 0;
   let heldElsewhere = 0;
   const seen = new Set<string>();
   for (const r of mapped) {
     const k = restoreKeyOf(table, r);
+    const bk = businessKey && liveByKey ? businessKey.keyOf(r) : null;
+    if (bk !== null && liveByKey?.has(bk)) { existing++; if (k !== null) seen.add(k); continue; }
     if (k === null) continue; // no key yet (a defaulted id): always new
     if (where.elsewhere.has(k)) heldElsewhere++;
     else if (where.here.has(k) || seen.has(k)) existing++;
@@ -1752,6 +2021,81 @@ export const RESTORE_HELD_ELSEWHERE_NOTE =
 
 export const RESTORE_CHUNK_ROWS = 500;
 
+/** intelligence ILIFE-15 (measured and fixed by the integrator at the P14
+ *  merge, under DEC-90's fail-safe rule): the most bytes one chunked-restore
+ *  request may carry — its JSON body as sent, UTF-8. The hosting platform
+ *  caps a function's request body at 4.5 MB (app/api/admin/restore/begin/
+ *  route.ts; read here at its lower reading, 4,500,000 bytes), and a backup
+ *  taken before the vector omission (ILIFE-11) carries the 1,024-number
+ *  vector inline on every knowledge_chunks row: measured at about 17 KB a
+ *  row, a 500-row slice is about 8.5 MB, so the platform refused it before
+ *  the route ran and the restore stopped at knowledge_chunks. A slice is now
+ *  cut early when its body would pass this budget (11% under the cap). A
+ *  slice that fits is exactly the 500-row slice it always was, so every
+ *  restore that fitted sends the same requests. */
+export const RESTORE_CHUNK_BYTES = 4_000_000;
+
+const utf8 = new TextEncoder();
+/** The UTF-8 length of `value` as JSON.stringify writes it (what fetch sends). */
+const jsonBytes = (value: unknown): number => utf8.encode(JSON.stringify(value) ?? "null").byteLength;
+
+/** ILIFE-15: `rows` cut into the slices the chunked restore posts, in order —
+ *  at most `maxRows` rows (RESTORE_CHUNK_ROWS, as always), and no more rows
+ *  than keep the request body (`bodyFor(slice)`, measured exactly: its
+ *  envelope once, each row's JSON, a comma between rows) within `maxBytes`.
+ *  A row that alone passes the budget is sent alone (it cannot be split;
+ *  the server's answer for it is reported as for any slice). Pure. */
+export function restoreSlices<T>(
+  rows: readonly T[], bodyFor: (slice: T[]) => unknown,
+  maxRows = RESTORE_CHUNK_ROWS, maxBytes = RESTORE_CHUNK_BYTES,
+): T[][] {
+  const envelope = jsonBytes(bodyFor([]));
+  const out: T[][] = [];
+  let slice: T[] = [];
+  let size = envelope;
+  for (const row of rows) {
+    const bytes = jsonBytes(row);
+    if (slice.length > 0 && (slice.length >= maxRows || size + 1 + bytes > maxBytes)) {
+      out.push(slice);
+      slice = [];
+      size = envelope;
+    }
+    size += (slice.length > 0 ? 1 : 0) + bytes;
+    slice.push(row);
+  }
+  if (slice.length > 0) out.push(slice);
+  return out;
+}
+
+/** intelligence ILIFE-11 criteria 1 and 3 (admin-and-org Round G, P14; the
+ *  DEC-90 ruling): an export leaves the meaning-index vectors out (derived
+ *  data), and a restore writes none back. What the page says, after a
+ *  restore, for each restored library whose passages had vectors in the
+ *  backup and hold none here. The Build is a person's act, on their own
+ *  embedding key (DEC-58's consent rule): nothing re-embeds automatically. */
+export const MEANING_INDEX_REBUILD_NOTE =
+  "Keyword search works on these passages now. Meaning search stays off for them until someone opens the library and starts a " +
+  "meaning-index Build, which re-embeds them on that person's own embedding key (their own AI spend). Nothing re-embeds them automatically.";
+
+/** ILIFE-11 (P14): the libraries the restore page prompts a rebuild for —
+ *  each restored library (by id) the run reported, named from the backup's
+ *  knowledge_libraries rows (the id when the backup does not name it), most
+ *  passages first. Pure. */
+export function meaningIndexRebuildList(
+  result: Pick<ChunkedRestoreResult, "meaningIndexRebuild">,
+  envelope: Pick<RestoreEnvelopeLike, "tables"> | null,
+): Array<{ libraryId: string; name: string; passages: number }> {
+  const raw = envelope && has(envelope.tables, "knowledge_libraries") ? envelope.tables.knowledge_libraries : [];
+  const names = new Map<string, string>();
+  for (const row of (Array.isArray(raw) ? raw : []) as Array<Record<string, unknown>>) {
+    if (typeof row.id === "string" && typeof row.name === "string" && row.name.trim()) names.set(row.id, row.name.trim());
+  }
+  return Object.entries(result.meaningIndexRebuild ?? {})
+    .filter(([, n]) => typeof n === "number" && n > 0)
+    .map(([libraryId, passages]) => ({ libraryId, name: names.get(libraryId) ?? libraryId, passages }))
+    .sort((a, b) => b.passages - a.passages || a.name.localeCompare(b.name));
+}
+
 export type RestorePost = (path: string, body: unknown) => Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }>;
 
 export interface RestoreRunProgress {
@@ -1778,6 +2122,8 @@ export interface RestoreTableOutcome {
   cleared: RestoreRowRefusal[];
   /** Numbering counters advanced past the restored numbers (see RestoreChunkResult.advanced). */
   advanced: number;
+  /** ILIFE-10 (P14): kept live rows whose backup decision was not applied (see RestoreChunkResult.notApplied). */
+  notApplied: RestoreRowRefusal[];
   error?: string;
 }
 
@@ -1804,6 +2150,15 @@ export interface ChunkedRestoreResult {
   totalDanglingFlows: number;
   totalCleared: number;
   totalAdvanced: number;
+  /** ILIFE-10 (P14): backup decisions not applied, every table. */
+  totalNotApplied: number;
+  /** ILIFE-11 (P14): library id → restored passages that had a vector in the
+   *  backup and hold none here. Each library needs a person to start a
+   *  meaning-index Build, on their own key (DEC-90); nothing re-embeds them
+   *  automatically. */
+  meaningIndexRebuild: Record<string, number>;
+  /** ILIFE-11 (P14): why that check could not be read, when it could not. */
+  meaningIndexUnchecked: string[];
   tables: RestoreTableOutcome[];
   /** BKP-5 Done-when 2: the table the restore STOPPED at (tables are
    *  FK-ordered, so nothing after it was attempted), and why. */
@@ -1828,6 +2183,10 @@ const tableRows = (envelope: RestoreEnvelopeLike, table: string): Array<Record<s
 const keyProjection = (table: string, row: Record<string, unknown>) => {
   const out: Record<string, unknown> = {};
   for (const c of conflictCols(table)) if (c in row) out[c] = row[c];
+  // ILIFE-10 (P14): and the business key's columns, so the check counts a
+  // row a live one holds under that key as the write will.
+  const bk = restoreBusinessKeyFor(table);
+  if (bk) for (const c of bk.columns) if (c in row && c !== "status" && c !== "is_explicit") out[c] = row[c];
   return out;
 };
 
@@ -1849,10 +2208,11 @@ export async function previewChunkedRestore(params: {
   for (const [tablesDone, table] of order.entries()) {
     const rows = tableRows(envelope, table);
     const acc = { rows: 0, existing: 0, heldElsewhere: 0, wouldInsert: 0 };
-    for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
+    // ILIFE-15: sliced by bytes too (key columns only, so a slice fits as before)
+    const body = (chunk: Array<Record<string, unknown>>) => ({ table, rows: chunk, idRemap: plan.idRemap, preview: true, manifest });
+    for (const chunk of restoreSlices(rows.map((r) => keyProjection(table, r)), body)) {
       params.onProgress?.({ phase: "checking", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
-      const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS).map((r) => keyProjection(table, r));
-      const res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, { table, rows: chunk, idRemap: plan.idRemap, preview: true, manifest });
+      const res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, body(chunk));
       if (!res.ok) throw new Error(`Could not check ${table} against this workspace: ${String(res.body?.error ?? `HTTP ${res.status}`)}`);
       acc.rows += num(res.body?.rows);
       acc.existing += num(res.body?.existing);
@@ -1897,18 +2257,22 @@ export async function runChunkedRestore(params: {
     placeholdersWithoutProfile: num(begin.body?.placeholdersWithoutProfile),
     unmappedMembers: num(begin.body?.unmappedMembers),
     totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0, totalDanglingFlows: 0, totalCleared: 0, totalAdvanced: 0,
+    totalNotApplied: 0, meaningIndexRebuild: {}, meaningIndexUnchecked: [],
     tables: [], stoppedAt: null, notAttempted: [],
   };
   let rowsDone = 0;
   for (const [tablesDone, table] of order.entries()) {
     const rows = tableRows(envelope, table);
-    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, heldElsewhere: 0, uncounted: 0, filtered: 0, refused: [], cleared: [], advanced: 0 };
-    for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
+    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, heldElsewhere: 0, uncounted: 0, filtered: 0, refused: [], cleared: [], advanced: 0, notApplied: [] };
+    // ILIFE-15: at most RESTORE_CHUNK_ROWS rows a request, as always, and cut
+    // earlier when the body would pass RESTORE_CHUNK_BYTES (an old backup's
+    // inline vectors); a slice that fits is the 500-row slice it always was.
+    const body = (chunk: Array<Record<string, unknown>>) => ({ table, rows: chunk, idRemap, manifest });
+    for (const chunk of restoreSlices(rows, body)) {
       params.onProgress?.({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
-      const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS);
       let res: Awaited<ReturnType<RestorePost>>;
       try {
-        res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, { table, rows: chunk, idRemap, manifest });
+        res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, body(chunk));
       } catch (e) {
         // The request never got an answer: whether this chunk landed is
         // unknown — a re-run skips whatever did.
@@ -1924,6 +2288,14 @@ export async function runChunkedRestore(params: {
       t.advanced += num(res.body?.advanced);
       if (Array.isArray(res.body?.refused)) t.refused.push(...(res.body.refused as RestoreRowRefusal[]));
       if (Array.isArray(res.body?.cleared)) t.cleared.push(...(res.body.cleared as RestoreRowRefusal[]));
+      if (Array.isArray(res.body?.notApplied)) t.notApplied.push(...(res.body.notApplied as RestoreRowRefusal[]));
+      const meaning = res.body?.meaningIndex;
+      if (meaning && typeof meaning === "object" && !Array.isArray(meaning)) {
+        for (const [lib, n] of Object.entries(meaning as Record<string, unknown>)) {
+          if (num(n) > 0) result.meaningIndexRebuild[lib] = (result.meaningIndexRebuild[lib] ?? 0) + num(n);
+        }
+      }
+      if (typeof res.body?.meaningIndexUnchecked === "string") result.meaningIndexUnchecked.push(res.body.meaningIndexUnchecked);
       if (!res.ok) { t.error = String(res.body?.error ?? `HTTP ${res.status}`); break; }
       rowsDone += chunk.length;
     }
@@ -1938,6 +2310,7 @@ export async function runChunkedRestore(params: {
     result.totalDanglingFlows += dangling;
     result.totalCleared += t.cleared.length;
     result.totalAdvanced += t.advanced;
+    result.totalNotApplied += t.notApplied.length;
     if (t.error) {
       result.stoppedAt = { table, error: t.error };
       result.notAttempted = order.slice(order.indexOf(table) + 1);

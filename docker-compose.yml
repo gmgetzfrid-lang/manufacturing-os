@@ -23,6 +23,8 @@ services:
         NEXT_PUBLIC_FACILITY_TIME_ZONE: ${NEXT_PUBLIC_FACILITY_TIME_ZONE:-}
         # The field-pack budget switch (lib/docPack.ts, PKG-12): off unless "on".
         NEXT_PUBLIC_FIELD_PACK_BUDGET: ${NEXT_PUBLIC_FIELD_PACK_BUDGET:-}
+        # The workspace-zone switch for effective dates (VFY-15): "20261203" after that paste.
+        NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE: ${NEXT_PUBLIC_EFFECTIVE_DATE_WORKSPACE_ZONE:-}
     image: manufacturing-os/app:latest
     container_name: manufacturing-os
     restart: unless-stopped

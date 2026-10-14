@@ -82,7 +82,11 @@ export async function POST(req: NextRequest) {
   const history = [...(ticket.history ?? []), entry];
 
   let q = supabaseAdmin.from("tickets").update({ metadata, history, last_modified: now }).eq("id", ticketId);
-  if (ticket.lastModified) q = q.eq("last_modified", String(ticket.lastModified));
+  // SM-9 / EDGE-15 (DF-P4): a row with no token compare-and-sets on the null
+  // itself (the workflow route's leg since DF-P1) — the first writer stamps
+  // it and a concurrent second matches no row (409) — never a write with no
+  // compare-and-set at all.
+  q = ticket.lastModified ? q.eq("last_modified", String(ticket.lastModified)) : q.is("last_modified", null);
   const { data: updated, error: updErr } = await q.select("id").maybeSingle();
   if (updErr) return bad(updErr.message, 500);
   if (!updated) return NextResponse.json({ error: "The ticket changed while you were acting — refresh and try again", conflict: true }, { status: 409 });

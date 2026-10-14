@@ -36,6 +36,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { supabase, setPreferMicrosoft } from '@/lib/supabase';
 import { clearServiceWorkerSession } from '@/lib/swSession';
 import { useRole } from '@/components/providers/RoleContext';
+import { DRAFTING_CONFIG_EDITORS } from '@/lib/adminSurfaces';
+import type { Role } from '@/types/schema';
 import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
   LayoutDashboard, Settings, Users, LogOut, FileText,
@@ -259,12 +261,17 @@ export default function Sidebar({
     // Users page admits Admin / Manager / DocCtrl, so a Manager gets exactly
     // that entry; the rest of the section stays controller-only.
     const usersEntry: NavLeaf = { label: 'Users', href: '/admin/users', icon: Users, tone: 'blue' };
+    // AUTHZ-10 (drafting-flow DF-P4): the same rule for Request forms — the
+    // page admits lib/adminSurfaces.ts DRAFTING_CONFIG_EDITORS (Admin, DocCtrl,
+    // DraftingSupervisor), so a Drafting Supervisor who is not a controller
+    // gets exactly that entry.
+    const requestsEntry: NavLeaf = { label: 'Request forms', href: '/admin/requests', icon: FileText, tone: 'orange' };
     const admin: NavLeaf[] = isAdmin ? [
       { label: 'Facility setup',    href: '/setup',             icon: Compass,    tone: 'violet'  },
       usersEntry,
       { label: 'Teams',             href: '/admin/teams',       icon: UsersRound, tone: 'cyan'    },
       { label: 'Library config',    href: '/admin/libraries',   icon: Settings,   tone: 'indigo'  },
-      { label: 'Request forms',     href: '/admin/requests',    icon: FileText,   tone: 'orange'  },
+      requestsEntry,
       { label: 'Permissions',       href: '/admin/permissions', icon: KeyRound,   tone: 'amber'   },
       { label: 'Operational scope', href: '/admin/scope',       icon: Factory,    tone: 'emerald' },
       { label: 'Site codebook',     href: '/admin/codebook',    icon: BookMarked, tone: 'violet'  },
@@ -279,6 +286,7 @@ export default function Sidebar({
       { label: 'Branding',          href: '/admin/branding',    icon: Palette,    tone: 'violet'  },
       { label: 'Workspace settings', href: '/admin/settings',   icon: Settings,   tone: 'slate'   },
     ] : hasAnyRole(['Manager']) ? [usersEntry] : [];
+    if (!isAdmin && hasAnyRole(DRAFTING_CONFIG_EDITORS as Role[])) admin.push(requestsEntry);
 
     return [
       { id: 'work', title: 'Work', hint: 'Day-to-day modules', icon: FolderKanban, tone: 'blue', items: work },

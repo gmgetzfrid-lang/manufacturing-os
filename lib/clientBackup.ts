@@ -48,6 +48,11 @@ export interface BackupProgress {
   errors: Array<{ path: string; error: string }>;
   /** Set when the whole run died (envelope failure etc.). */
   fatalError?: string;
+  /** intelligence ILIFE-11 criterion 2 (admin-and-org Round G, P14): the
+   *  server's measured size of the records (X-Export-Bytes), said BEFORE the
+   *  browser parses them or builds a part, when it reaches
+   *  EXPORT_SIZE_WARN_BYTES. The run goes on either way. */
+  sizeWarning?: string;
 }
 
 export interface BackupResult {
@@ -65,6 +70,23 @@ export interface BackupResult {
 /** Per-part embedded-bytes cap. A building zip lives in tab memory; 300MB
  *  of STORE-packed input keeps even modest laptops comfortable. */
 const PART_CAP_BYTES = 300 * 1024 * 1024;
+
+/** ILIFE-11 criterion 2 (P14): the records' size (the structured export's
+ *  measured X-Export-Bytes) at which the browser says, before it parses them
+ *  or builds a part, that a backup this large may be slow or run the tab out
+ *  of memory — a visible warning, not a silent hang. The records are parsed
+ *  and held in the tab, and then written into part 1. */
+export const EXPORT_SIZE_WARN_BYTES = 200 * 1024 * 1024;
+
+/** ILIFE-11 (P14): the warning for a measured records size, or null below
+ *  EXPORT_SIZE_WARN_BYTES (or when the server did not measure it). */
+export function exportSizeWarning(bytesHeader: string | null): string | null {
+  const bytes = bytesHeader != null && /^\d+$/.test(bytesHeader.trim()) ? Number(bytesHeader) : null;
+  if (bytes == null || bytes < EXPORT_SIZE_WARN_BYTES) return null;
+  const mb = Math.round(bytes / (1024 * 1024));
+  return `This workspace's records are ${mb} MB before any file. The browser holds them while it builds the backup, so it may be slow ` +
+    "or run this tab out of memory. If it stalls, a scheduled export to a bucket (Admin → Data export) builds the archive on the server instead.";
+}
 
 /** The entry names of the archive layout (see the header). /admin/restore's
  *  reader (lib/dataRestore.ts readBackupArchive) finds the same names, and
@@ -136,6 +158,10 @@ export async function runFullBackup(orgId: string, opts: {
   if (!res.ok) {
     throw new Error((await res.text().catch(() => "")) || `Export envelope failed (HTTP ${res.status})`);
   }
+  // ILIFE-11 criterion 2 (P14): the measured size, said before the body is
+  // read and parsed and before any part is built.
+  const sizeWarning = exportSizeWarning(res.headers.get("X-Export-Bytes"));
+  if (sizeWarning) { progress.sizeWarning = sizeWarning; emit(); }
   const envelope = await res.json() as {
     manifest: { orgId?: string; orgName?: string; exportedAt: string; complete?: boolean; notes?: string[] };
     tables?: Record<string, unknown[]>;

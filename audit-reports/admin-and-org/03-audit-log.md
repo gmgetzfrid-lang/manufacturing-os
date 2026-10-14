@@ -548,6 +548,15 @@ Tests: `lib/__tests__/auditRoutesP7.test.ts` (purge: a refused DATA_PURGE row is
 
 **Scope / residual.** The four sites above. **Proposed owner: the integrator re-routes them** (DC P9 RECORDS merged without them) — each is the archive-cancel pattern, a checked `{ error }` carried into the answer, in four files no other package lists this round. Separately — **owner: the integrator, to route** (named at the P7 review fix pass; DEC-31): `app/(protected)/admin/storage/page.tsx` treats any 2xx from purge / archive-cancel as success and does not show their `auditError` — the route's answer carries it (done-when 1's "response body" form; the routes' half is done), the page should say it. This round the file belonged to A&O P6 (label region, export buttons) and DC P9 (the Reclaim region), both merged, and P7's brief does not list it, so no package holds this display; the integrator adds it to the next package that lists the storage page (proposed: an A&O follow-up beside the four sites above, since it is the same `auditError` contract). Status stays OPEN for the four sites and the display.
 
+**Partial (2026-10-14, admin-and-org Round G).** Package P14 — the orphans site only (`app/api/admin/orphans/route.ts`, beside intelligence `ILIFE-1` criterion 3). Reproduced on base `700f1fc`: the `STORAGE_ORPHANS_PURGED` insert was `await actor.admin.from("audit_logs").insert({…}).then(() => undefined, () => undefined)` (`:52-58` at base), so a refusal was discarded. Now a checked write (`:62-75`): `const { error } = await …insert(…)`, and a refused (or thrown) row is answered as `auditError` ("the purge deleted N file(s) but its STORAGE_ORPHANS_PURGED audit row was not written: …") and logged (`[admin/orphans] the STORAGE_ORPHANS_PURGED audit row was not written`). The purge has happened either way, so the answer stays 200 with the counts (the purge's and archive-cancel's rule). The row also carries `user_email`, the admitted role (`user_role`) and the deleted keys (`ILIFE-1` criterion 3). `STORAGE_ORPHANS_PURGED` is already registered in `lib/auditActions.ts`. Test: `lib/__tests__/aoRoundGP14Orphans.test.ts` "a refused audit row is said in the answer and logged — never a silent success" and the regression case.
+
+**Done-when.**
+1. ✗ (in part) — the orphans site ✓ (above). Still open: `app/api/admin/shed/commit/route.ts`, `ticket-shed/commit/route.ts`, `ticket-shed/restore/route.ts` (admin-and-org P13, per this record's Assigned line; P14's brief does not list them and they are not edited here).
+2. ✓ — P7 (the drawer).
+3. ✓ — P7, and for the orphans purge this package's test.
+
+**Scope / residual.** The three shed sites and `app/(protected)/admin/storage/page.tsx`'s display of `auditError` (which the orphans answer now carries too, beside the purge's and archive-cancel's) stay with admin-and-org P13. Status stays OPEN for them.
+
 ---
 
 <a id="alog-9"></a>

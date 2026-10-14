@@ -137,10 +137,12 @@ describe("REV-9 — one definition of 'today' for the badge, the watermark, the 
     const src = readFileSync(`${process.cwd()}/lib/effectiveDate.ts`, "utf8").replace(/\/\/[^\n]*/g, "");
     expect(src).not.toMatch(/setHours\(0,\s*0,\s*0,\s*0\)/);
     expect(src).not.toMatch(/T00:00:00`/);
-    // the scan and the watermark both route through the one helper
-    expect(src).toMatch(/const todayISO = \(\) => effectiveTodayISO\(\);/);
-    expect(src).toMatch(/const suppress = !eff \|\| eff <= todayISO\(\);/);
-    expect(src).toMatch(/\.lte\("effective_date", todayISO\(\)\)/);
+    // the scan and the watermark both route through the one helper — since
+    // VFY-15 (admin-and-org P12) each in the document's workspace calendar
+    // (`zone`, workspaceEffectiveDateTimeZone), the deployment's when none.
+    expect(src).toMatch(/const todayISO = \(timeZone\?: string\) => effectiveTodayISO\(new Date\(\), timeZone\);/);
+    expect(src).toMatch(/const suppress = !eff \|\| eff <= todayISO\(zone\);/);
+    expect(src).toMatch(/\.lte\("effective_date", todayISO\(zone\)\)/);
     // the literal reference Next inlines into the browser bundle
     expect(src).toMatch(/process\.env\.NEXT_PUBLIC_FACILITY_TIME_ZONE/);
   });

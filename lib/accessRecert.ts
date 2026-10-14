@@ -88,13 +88,24 @@ export interface AccessGrant {
   /** Why this person has access (every reason that applies). */
   via?: string[];
   source?: AccessGrantSource;
-  status?: "active" | "expired";
+  /** ORG-7: "suspended" — a personal grant naming a member whose membership
+   *  is not active (suspended, invited or inactive). */
+  status?: "active" | "expired" | "suspended";
+  /** ORG-7: the membership status of a "suspended" grant's person, as read. */
+  memberStatus?: string;
 }
 export interface EffectiveAccess {
   /** People who can read the library today. */
   live: AccessGrant[];
   /** Allow-rules whose expiresAt has passed — reported separately, never attested as current. */
   expired: AccessGrant[];
+  /** ORG-7 (admin-and-org P12): personal grants (a user rule the index
+   *  lists) naming a member whose membership is NOT active — suspended,
+   *  invited or inactive. They cannot read while it lasts (every evaluator
+   *  and RLS refuse a non-active member), but the grant comes back with
+   *  them, so the reviewer sees each one, under the person's name and
+   *  status, and can revoke it. Never counted as current access. */
+  suspended: AccessGrant[];
   /** False when any read the resolution needs failed; recertifyAccess refuses to attest. */
   complete: boolean;
   issues: string[];
@@ -102,6 +113,7 @@ export interface EffectiveAccess {
 }
 
 type MemberRow = { uid: string; display_name: string | null; email: string | null; role: string | null; roles: string[] | null };
+type OtherMemberRow = { uid: string; display_name: string | null; email: string | null; status: string | null };
 type BucketSide = { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]>; orgs?: Record<string, string[]> } | null | undefined;
 
 const ruleExpired = (r: AccessRule, nowMs: number) => !!r.expiresAt && new Date(String(r.expiresAt)).getTime() <= nowMs;
@@ -119,18 +131,22 @@ const bucketIds = (side: BucketSide, kind: "users" | "roles" | "teams"): Map<str
 
 export async function listAccessGrantsDetailed(orgId: string, libraryId: string, nowMs: number = Date.now()): Promise<EffectiveAccess> {
   const issues: string[] = [];
-  const [{ data: lib, error: libErr }, { data: members, error: memErr }, { data: teamRows, error: teamErr }, { data: teams, error: supErr }] = await Promise.all([
+  const [{ data: lib, error: libErr }, { data: members, error: memErr }, { data: teamRows, error: teamErr }, { data: teams, error: supErr }, { data: others, error: otherErr }] = await Promise.all([
     supabase.from("libraries").select("visibility, acl, acl_index, owner_user_id, owner_team_id").eq("id", libraryId).maybeSingle(),
     supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", orgId).eq("status", "active"),
     supabase.from("team_members").select("team_id, uid").eq("org_id", orgId),
     supabase.from("teams").select("id, supervisor_user_id").eq("org_id", orgId),
+    // ORG-7: the members who are NOT active — a personal grant naming one
+    // is listed under their name and status, never hidden, never a bare uid.
+    supabase.from("org_members").select("uid, display_name, email, status").eq("org_id", orgId).neq("status", "active"),
   ]);
   if (libErr) issues.push(`library: ${libErr.message}`);
   if (!lib && !libErr) issues.push("library: not found");
   if (memErr) issues.push(`members: ${memErr.message}`);
   if (teamErr) issues.push(`teams: ${teamErr.message}`);
   if (supErr) issues.push(`team supervisors: ${supErr.message}`);
-  if (issues.length) return { live: [], expired: [], complete: false, issues, visibility: null };
+  if (otherErr) issues.push(`suspended members: ${otherErr.message}`);
+  if (issues.length) return { live: [], expired: [], suspended: [], complete: false, issues, visibility: null };
 
   const visibility = (lib?.visibility as string | null) ?? null;
   const acl = (lib?.acl as AccessControl | null) ?? null;
@@ -140,7 +156,10 @@ export async function listAccessGrantsDetailed(orgId: string, libraryId: string,
   const people = ((members ?? []) as MemberRow[]);
   const byUid = new Map(people.map((m) => [m.uid, m]));
   const supervisorOf = new Map(((teams ?? []) as Array<{ id: string; supervisor_user_id: string | null }>).map((t) => [t.id, t.supervisor_user_id ?? null]));
-  const nameOf = (uid: string) => { const m = byUid.get(uid); return m ? (m.display_name || m.email || uid) : uid; };
+  // ORG-7: a member who is not active (and not also active — one row per
+  // person per workspace) is named from their own row.
+  const otherByUid = new Map(((others ?? []) as OtherMemberRow[]).filter((m) => m?.uid && !byUid.has(m.uid)).map((m) => [m.uid, m]));
+  const nameOf = (uid: string) => { const m = byUid.get(uid) ?? otherByUid.get(uid); return m ? (m.display_name || m.email || uid) : uid; };
   const holdsRole = (m: MemberRow, role: string) => (normalizeRoles(m.roles, m.role) as string[]).includes(role);
   const teamMembers = new Map<string, string[]>();
   for (const t of (teamRows ?? []) as Array<{ team_id: string; uid: string }>) {
@@ -199,8 +218,17 @@ export async function listAccessGrantsDetailed(orgId: string, libraryId: string,
   //    the finding.
   const allow = index?.allow ?? null;
   const explain = (key: string) => liveSubjects.has(key) ? "explicit" as const : expiredSubjects.has(key) ? null : "inherited" as const;
+  // ORG-7: a personal grant naming a member who is not active.
+  const suspendedGrants = new Map<string, { actions: Set<string>; source: AccessGrantSource; status: string }>();
   for (const [uid, actions] of bucketIds(allow, "users")) {
     const src = explain(`user:${uid}`); if (!src) continue;
+    const other = otherByUid.get(uid);
+    if (other) {
+      const cur = suspendedGrants.get(uid) ?? { actions: new Set<string>(), source: src, status: String(other.status ?? "inactive") };
+      for (const a of actions) cur.actions.add(a);
+      suspendedGrants.set(uid, cur);
+      continue;
+    }
     admit(uid, actions, "user rule", src);
   }
   for (const [role, actions] of bucketIds(allow, "roles")) {
@@ -220,13 +248,20 @@ export async function listAccessGrantsDetailed(orgId: string, libraryId: string,
   for (const uid of denied) {
     const cur = live.get(uid);
     if (cur && cur.source !== "controller" && cur.source !== "owner") live.delete(uid);
+    // A deny outranks the allow when the person comes back too.
+    suspendedGrants.delete(uid);
   }
 
   const grants: AccessGrant[] = [...live.entries()].map(([uid, g]) => ({
     subjectType: "user", subjectId: uid, subjectName: nameOf(uid),
     actions: [...g.actions], expiresAt: null, via: uniq(g.via), source: g.source, status: "active" as const,
   })).sort((a, b) => a.subjectName.localeCompare(b.subjectName));
-  return { live: grants, expired, complete: true, issues: [], visibility };
+  const suspended: AccessGrant[] = [...suspendedGrants.entries()].map(([uid, g]) => ({
+    subjectType: "user", subjectId: uid, subjectName: nameOf(uid),
+    actions: [...g.actions], expiresAt: null, source: g.source, status: "suspended" as const, memberStatus: g.status,
+    via: [`user rule — membership ${g.status}: no access while it lasts; the grant returns with them`],
+  })).sort((a, b) => a.subjectName.localeCompare(b.subjectName));
+  return { live: grants, expired, suspended, complete: true, issues: [], visibility };
 }
 
 /** The people who can read the library today (the EFFECTIVE population — see
@@ -318,6 +353,12 @@ export async function recertifyAccess(input: {
   // passed are in `effective.expired` and never counted or snapshotted as
   // current (RET-3), so grant_count and grants_snapshot exclude them.
   const grants = effective.live;
+  // ORG-7 (admin-and-org P12): the personal grants of members who are not
+  // active were shown to the reviewer, by name and status; the record keeps
+  // them beside the live population, each marked `status: "suspended"`, so
+  // the attestation says what the reviewer saw. They are not counted as
+  // current access (grant_count is the live population).
+  const snapshot = [...grants, ...(effective.suspended ?? [])];
   // ALOG-2: the library row is read CHECKED — an unread cadence used to be
   // taken as "no cadence" and the attestation then cleared the next date.
   // The prior attestation columns are kept so a refused record can put them
@@ -351,7 +392,7 @@ export async function recertifyAccess(input: {
   // attestation columns are put back before the refusal is said.
   const { error: evErr } = await supabase.from("access_recertification_events").insert({
     org_id: input.orgId, library_id: input.libraryId, action: "recertified",
-    grants_snapshot: grants, grant_count: grants.length, note: input.note ?? null,
+    grants_snapshot: snapshot, grant_count: grants.length, note: input.note ?? null,
     next_recertification_date: nextDate, performed_by: input.actorId ?? null, performed_by_name: input.actorName ?? null,
   });
   if (evErr) {
