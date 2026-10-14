@@ -6445,11 +6445,16 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 
 **Decision.**
 1. **A push follows a bell row.** A person is pushed only when a bell row of the push-worthy kind, about this resource, landed for them in the last two minutes (`PUSH_EVIDENCE_WINDOW_MS`). The sender reads it on the service role. For a browser's request (`POST /api/push/notify`) the row must name the caller as its actor, which `20261160` stamps on every browser row. A row carrying `metadata.redacted` (`DEC-106` item 2) never earns a push. The push's link is the bell row's own link, as a root-relative path (`safePushUrl`). `emit()` therefore runs the push leg only beside its in-app leg. Push is never a delivery record: nothing reads one to decide anything.
+
+   *Corrected at fix pass 3 (the third review's major).* As first written, §1 and §2 held only once `20261160` was pasted, and it is not pasted yet. Until it is, `notifications_org_insert` (`20260723`) checks only the writer, so a browser sets a bell row's `created_at` and its recipient freely. A row dated 2100 became the device's watermark and refused every later push to that person, and a member could push a person in another workspace. The sender now checks both itself, whether or not `20261160` is pasted:
+   - a bell row dated later than now plus `PUSH_FUTURE_SKEW_MS` (5 min) is not read and earns nothing (in the read and in code);
+   - only an active member of the workspace is pushed (`org_members`, read on the service role; unreadable = nothing sent).
 2. **Who can cause a push is bounded by what they already did.**
    - One member can cause one person at most `PUSH_WRITER_CAP` (5) pushes per ten minutes. Past that, the bell keeps the rows and no push goes.
    - A device is pushed once per bell row. `last_reminded_at` holds the `created_at` of the newest row it was pushed for. Fix pass: the device is CLAIMED for the row before the send, by a conditional update that lands only while `last_reminded_at` is null or older than the row. So a replayed request, or a second tab asking at the same moment, sends once. The first pass checked the column and wrote it after the send, and two overlapping requests both sent. A send that fails, other than with 404 / 410, puts the claim back.
    - The answer never says who was pushed. Fix pass: it never waits for the sends either. `POST /api/push/notify` answers once the caller is known to be a member, and sends after the response (`next/server` `after()`).
    - Without VAPID keys the route answers 204 before any database read.
+   - (fix pass 3) A forged bell row reaches only an active member of the workspace, and a row dated ahead earns nothing (§1). Until `20261160` is pasted, a row dated up to five minutes ahead can still hold that person's next pushes back for at most five minutes.
 3. **What a push says.** The title is one generic title per kind (`PUSH_TITLES`), and the body is always "Open the app to see the details." The tag is one per kind and resource, so a second push about the same thing replaces the first on the device. The service worker reads exactly `{ title, body, url, tag }`.
 4. **The per-device opt-in.**
    - **Asking.** The browser is asked only from `/settings/notifications`, after a panel has said what will be sent.
@@ -6504,8 +6509,10 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 - the per-person trim;
 - `pushOptIn.test.ts`'s census pinning each line on the card to a producer that browser modules call.
 
+Fix pass 3 adds, in `pushChannel.test.ts`: the future-dated bell row tests (the read's bound and the in-code check each pinned), the non-member and unreadable-membership tests, the membership read in parts, and the review's scenario through `POST /api/push/notify`.
+
 **Reversal.**
-- (1) and (2): `sendPush`'s evidence, cap and claim block.
+- (1) and (2): `sendPush`'s evidence, cap and claim block, and (fix pass 3) its date bound and membership step. Do not remove either while browser rows can carry their own `created_at` or recipient (before `20261160`).
 - (3): `PUSH_TITLES` / `pushPayloadFor`.
 - (4): `PushOptIn` and the subscribe route's conditional takeover and `keepNewestDevices`.
 - (5): `prunePushSubscriptions` / `ownersStillMembers`.
@@ -6525,7 +6532,8 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
   - a browser whose push service is not on the list cannot turn the channel on (it is told so);
   - until `20261211` is pasted, a member can still insert their own row by hand. It is sent to only if it names a push service's host, and no more than 10 rows are read per person (fix pass 2: per person, so a neighbour is never crowded out; a future date wins nothing; the cron trims to ten);
   - (fix pass 2) a browser whose push endpoint carries an explicit `:443`, or no path after the host, is refused at the opt-in. No supported browser's service issues one;
-  - (fix pass 2) a deployment whose DNS answers a push service's host with a translated (NAT64 `64:ff9b::/96`) or other reserved address cannot push. That is the fail-safe side.
+  - (fix pass 2) a deployment whose DNS answers a push service's host with a translated (NAT64 `64:ff9b::/96`) or other reserved address cannot push. That is the fail-safe side;
+  - (fix pass 3) until `20261160` is pasted, the sender's own date bound and membership check are the only defence against a browser's forged bell row (a row dated ahead, a recipient in another workspace). They hold on their own, so the VAPID keys may be set before that paste. One margin stays: a forged row dated up to five minutes ahead can hold that person's next pushes back for at most five minutes. `20261160` rule 1 (`created_at := now()` for a browser row) closes it, so pasting it first is preferred, not required.
 
 **For the integrator to ratify** (departures from the brief, each taken on the fail-safe side):
 - (a) `RT-7` done-when 1: the VAPID public key is served by `GET /api/push/subscribe` under the brief's variable names, not exposed as a `NEXT_PUBLIC_` variable. It is recorded as a deviation on `RT-7`. Fix pass 2: `RT-7` stays OPEN with a Partial block, owned by the integrator, until this is ratified. Record it RESOLVED at merge on ratification.
