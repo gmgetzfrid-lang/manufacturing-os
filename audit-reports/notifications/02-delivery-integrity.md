@@ -978,7 +978,7 @@ The service role writes both untouched. `ackRequest` (the nag's own key) and `au
 ## DELIV-14 · Web push is a phantom channel: table, preference column and service-worker handler all ship, but nothing subscribes a device and nothing sends — 100% of that channel is dropped
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:223-238`, `supabase/migrations/20260804_push_subscriptions.sql:7-35`, `supabase/migrations/20260723_notifications_unify.sql:85-87`, `lib/notify/dispatch.ts:20`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg: the SW receiver, the table+RLS, and the preference column all exist, and nothing anywhere calls pushManager.subscribe() or sends a push. The only in-session signal is indeed the toast at components/providers/NotificationListener.tsx:92.
@@ -1014,6 +1014,38 @@ export type NotifChannel = "inapp" | "email";
 - [ ] Either the push channel is built end-to-end (VAPID env, pushManager.subscribe writing push_subscriptions, a sender in the drain/cron, `"push"` added to NotifChannel and honored against push_enabled)
 - [ ] Or the dead scaffolding is removed: the sw.js push handlers, the push_subscriptions expectation, and push_enabled — so the schema stops promising a channel that drops everything
 - [ ] Whichever path, the notifications settings page states honestly what channels exist
+
+**Resolution (2026-10-14, notifications Round G).** Package N10 PUSH, branch `fleet/N10-push` (base `ce5a053`), commits `3f53779` (`web-push` 3.6.7), `b3358d9` (the channel) and `669afad` (no push for a registration older than the opt-in control). The build is recorded in full on `OS-2` / `OS-3` / `OS-9` / `OS-10` (`07-os-notifications-and-nudges.md`): one build closes the four lenses that found the same decapitated stack (the plan's sequencing note).
+**Reproduced first** on `ce5a053`, leg by leg as the finding states:
+- (a) no `pushManager`, `applicationServerKey`, `vapid` / `VAPID` or `web-push` anywhere outside `node_modules`;
+- (b) `push_subscriptions` appeared in `.ts` only in `lib/schemaExpectations.ts:161`, `lib/exportTables.ts:319` and `lib/dataRestore.ts:160`;
+- (c) no reader of `push_enabled`;
+- (d) `NotifChannel` was `"inapp" | "email"` (`lib/notify/dispatch.ts:24`);
+- (e) no VAPID keys in `.env.example`, no `web-push` in `package.json`.
+The chain reaction held too: the `CRON_SECRET` comment named `reminders/run`.
+
+**What landed.**
+- VAPID env in `.env.example`, with the `CRON_SECRET` comment corrected (`reminders/run` → the real `embed-drain`; the routes fail closed, they are not "world-callable").
+- `pushManager.subscribe` writes `push_subscriptions`: `components/settings/PushOptIn.tsx` → `app/api/push/subscribe/route.ts`.
+- The sender is `lib/push/sendPush.ts`, called from `emit()`'s third leg at event time.
+- `"push"` is in `NotifChannel` and honoured against `push_enabled` (`OS-9`, `OS-10`).
+- The settings page says which channels exist (below).
+- Verified (loop on `fleet/N10-push` at `669afad`, 2026-10-14): `npx tsc --noEmit` exit 0; `npx eslint` on the changed files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` in four shards (`--shard=N/4`), each exit 0 — 568 files, 12532 passed, 8 expected fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The push channel is built end-to-end:
+  - VAPID env ✓.
+  - `pushManager.subscribe` writing `push_subscriptions` ✓.
+  - `"push"` added to `NotifChannel` and honoured against `push_enabled` ✓.
+  - "A sender in the drain/cron" is met as the integrator ruled. The sender runs inside `emit()` at event time and the cron only prunes (`DEC-90`, the plan's `decisionsNeeded` item 3 for N10), so the sender is `lib/push/sendPush.ts`, reached from `emit()`. The maintenance cron's part is step 7c, the prune.
+- Not applicable: the removal arm ("Or the dead scaffolding is removed …") — the channel was built.
+- ✓ The notifications settings page states honestly what channels exist (as corrected at the fix pass):
+  - The subtitle reads "Control which events email you or reach your devices. In-app bell notifications are always on."
+  - The Device notifications card says what it sends. Fix pass (the review's major 3): the first pass's list named request mentions and assignments, which no producer pushes, and broader acknowledgment and sign-off lines than are pushed. That overstated this criterion. The card now lists only what is pushed today (`components/settings/PushOptIn.tsx` `PUSH_SENT_TODAY`, one line per producer that reaches `emit()`'s push leg). It then says what is not sent to devices yet (`PUSH_NOT_YET_NOTE`: mentions and assignments on requests, read-and-understood requests, sign-off requests from a review roster — "the bell and email still bring them").
+  - The card says so when the browser cannot show notifications, and when the server is not set up ("Device notifications are not set up on this server yet.").
+  - Pinned by `lib/__tests__/pushOptIn.test.ts`, including "major 3: the card's two lists split the push-worthy set exactly …", which checks from source that each listed kind has an `emit()` producer and each "not yet" kind has none.
+
+**Scope / residual.** Push reaches the producers that write through `emit()`. The ticket routes and the two rosters write their own bell rows outside it — `OS-14` (new), which also owns moving their lines onto the card when they are pushed. A shared browser stays subscribed after sign-out — `OS-15` (new). The fix pass's other changes (push only to a push service's host, `20261211`, explicit `serverPush`) are recorded on `OS-2` / `OS-9` / `OS-10`.
 
 ---
 

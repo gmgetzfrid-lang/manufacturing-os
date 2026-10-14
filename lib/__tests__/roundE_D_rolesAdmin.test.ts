@@ -211,11 +211,14 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
       const page = src(`app/(protected)/admin/${s.key}/page.tsx`);
       // storage is the ONE deliberate narrowing (SURF-9's resolution states it): the page never gated
       // entry, only its writes; its entry is its stats API's set — pinned below
-      if (s.entry !== "*" && !s.cap && s.key !== "storage") expect(sourceHasRoleSet(page, s.entry), `${s.key} entry`).toBe(true);
+      // drafting-flow DF-P4 (AUTHZ-10): the request-forms page reads its editor set from the registry's
+      // exported constant (one declaration, pinned equal to the database policy by dfRoundG_P4_library.test.ts)
+      const readsRegistrySet = s.key === "requests" && /from '@\/lib\/adminSurfaces'/.test(page) && page.includes("DRAFTING_CONFIG_EDITORS");
+      if (s.entry !== "*" && !s.cap && s.key !== "storage") expect(sourceHasRoleSet(page, s.entry) || readsRegistrySet, `${s.key} entry`).toBe(true);
       // DEC-35, ruled (b) by the integrator at the A&O P9 merge (ALOG-9 done-when 3): a page may READ its
       // writes set from this registry (`adminSurface("<key>")…writes`) instead of spelling it — one declaration.
       const derivesWrites = new RegExp(`adminSurface\\("${s.key}"\\)[!?]?\\.writes`).test(page);
-      if (s.writes) expect(sourceHasRoleSet(page, s.writes) || derivesWrites, `${s.key} writes`).toBe(true);
+      if (s.writes) expect(sourceHasRoleSet(page, s.writes) || derivesWrites || readsRegistrySet, `${s.key} writes`).toBe(true);
     }
     // the storage page's entry is what its stats API admits — since SURF-19 (A&O P6) the stats GET asks
     // the gate for exactly that entry rule, so the two cannot drift

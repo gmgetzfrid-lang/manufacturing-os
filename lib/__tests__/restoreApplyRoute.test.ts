@@ -525,16 +525,35 @@ describe("BKP-5 (fix pass) — a row the database refuses is isolated and report
     expect([...ROW_LEVEL_SQLSTATES].sort()).toEqual(["23502", "23503", "23505", "23514", "23P01"]);
   });
 
-  it("a mention colliding on its second unique key is refused (23505) while the rest of its chunk lands", async () => {
+  // admin-and-org Round G P14 (intelligence ILIFE-10): a mention whose
+  // BUSINESS key a live row holds is now pre-filtered — kept here as it is,
+  // counted existing — instead of refused 23505 (lib/__tests__/
+  // aoRoundGP14RestoreBusinessKeys.test.ts). The bisection this case pinned
+  // is pinned below on a collision the pre-filter cannot see: two rows of
+  // the same chunk sharing a key no live row holds.
+  it("a mention colliding on its second unique key with a LIVE row is kept as existing (ILIFE-10) while the rest of its chunk lands", async () => {
     const rows = [
       ...Array.from({ length: 6 }, (_, i) => ({ id: `m-new-${i}`, asset_id: "a1", knowledge_document_id: "k1", page: 10 + i })),
       { id: "m-old", asset_id: "a1", knowledge_document_id: "k1", page: 1 },
     ];
     const r = await chunk("entity_mentions", rows);
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ ok: true, inserted: 6, refused: [expect.objectContaining({ id: "m-old", code: "23505" })] });
+    expect(r.body).toMatchObject({ ok: true, inserted: 6, existing: 1 });
+    expect(r.body.refused).toBeUndefined();
     expect(rowsOf("entity_mentions").find((m) => m.id === "m-live")).toBeTruthy(); // the live row is kept
-    expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ inserted: 6, refused: [expect.objectContaining({ id: "m-old", code: "23505" })] });
+    expect(rowsOf("entity_mentions").find((m) => m.id === "m-old")).toBeUndefined();
+    expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ inserted: 6, existing: 1 });
+  });
+
+  it("a mention colliding on its second unique key within its own chunk is refused (23505) while the rest of its chunk lands", async () => {
+    const rows = [
+      ...Array.from({ length: 6 }, (_, i) => ({ id: `m-new-${i}`, asset_id: "a1", knowledge_document_id: "k1", page: 10 + i })),
+      { id: "m-twin", asset_id: "a1", knowledge_document_id: "k1", page: 12 }, // same key as m-new-2, no live row
+    ];
+    const r = await chunk("entity_mentions", rows);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, inserted: 6, refused: [expect.objectContaining({ id: "m-twin", code: "23505" })] });
+    expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ inserted: 6, refused: [expect.objectContaining({ id: "m-twin", code: "23505" })] });
   });
 
   it("a same-workspace repair restore no longer stops at a re-indexed mention: tickets and notes after it still land", async () => {
@@ -548,7 +567,8 @@ describe("BKP-5 (fix pass) — a row the database refuses is isolated and report
     };
     const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
     expect(result.stoppedAt).toBeNull();
-    expect(result).toMatchObject({ totalInserted: 2, totalRefused: 1 });
+    // ILIFE-10 (P14): the re-indexed mention is kept as it is (existing), no longer refused.
+    expect(result).toMatchObject({ totalInserted: 2, totalExisting: 1, totalRefused: 0 });
     expect(rowsOf("tickets").map((t) => t.id)).toEqual(["t1"]);
     expect(rowsOf("notes").map((t) => t.id)).toEqual(["n1"]);
   });

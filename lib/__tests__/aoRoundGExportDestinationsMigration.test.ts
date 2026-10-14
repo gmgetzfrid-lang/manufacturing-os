@@ -215,9 +215,12 @@ describe("20261154 — export_runs: the same coordinates, one row per run, narro
     // admin-and-org P3 fourth review fix pass: the JSON export opens a run row
     // of its own, and the hourly-cap count both export routes share lives in
     // lib/exportRunner.ts (server-only; it is handed the routes' service client)
+    // admin-and-org Round G P14: lib/exportAlerts.ts (server-only) reads a
+    // destination's scheduled runs for the bounded grace (DEC-87 §1, amended),
+    // handed run-scheduled's service client.
     expect(readers).toEqual([
       "app/api/data-export/run-scheduled/route.ts", "app/api/data-export/run/route.ts", "app/api/data-export/runs/route.ts",
-      "app/api/data-export/structured/route.ts", "lib/exportRunner.ts",
+      "app/api/data-export/structured/route.ts", "lib/exportAlerts.ts", "lib/exportRunner.ts",
     ]);
     for (const r of readers) expect(readFileSync(join(root, r), "utf8"), r).not.toMatch(/from\s+["']@\/lib\/supabase["']/);
     expect(readFileSync(join(root, "lib/exportRunner.ts"), "utf8")).toMatch(/export async function exportRateLimitRefusal\(\s*admin: Pick<SupabaseClient, "from">/);

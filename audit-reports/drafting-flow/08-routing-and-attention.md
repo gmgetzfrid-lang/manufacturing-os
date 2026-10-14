@@ -155,7 +155,7 @@ lib/capabilityPolicy.ts:70-71 —
 ## ROUTE-3 · Dead notification plumbing that the code documents as live: the ticket-follower resolver, the engineer-initial routing branch, and the entire web-push channel
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N10 PUSH (limb (c), through `TAX-12`) — restated by the integrator at the N15 merge, 2026-10-14 (DEC-31). Limb (a) was N15's and is done.
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (limb (a): `lib/notify/recipients.ts` `resolveFollowers`' ticket branch removed, or its header says the two ticket routes fold `tickets.watchers` themselves) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
@@ -229,6 +229,24 @@ self.addEventListener("push", (event) => {
 - Done-when 3 is not met: `TAX-12`, notifications N10.
 
 **Scope / residual.** Stays OPEN on (c) only (`TAX-12`, N10).
+
+**Resolution (2026-10-14, notifications Round G).** Package N10 PUSH, branch `fleet/N10-push` (base `ce5a053`), commits `3f53779` (`web-push` 3.6.7), `b3358d9` (the channel) and `669afad` (no push for a registration older than the opt-in control) — limb (c), through notifications `TAX-12`.
+
+**Re-verified** on `ce5a053`: limb (a) is N15's (✓ above); limb (b) is DF-P3's (✓ above); limb (c) held: the push handler in `public/sw.js`, the `push_subscriptions` table, and no subscriber or sender.
+
+**What landed (limb (c)).** Push subscription and a VAPID sender are implemented:
+- `components/settings/PushOptIn.tsx` subscribes a device after the person's click and the browser's permission;
+- `app/api/push/subscribe/route.ts` stores it;
+- `lib/push/sendPush.ts` sends with VAPID keys from `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`, called from `lib/notify/dispatch.ts` `emit()`'s third leg.
+The record is `TAX-12` / `OS-2` (notifications `03-taxonomy.md`, `07-os-notifications-and-nudges.md`). The migration header's "reach you even when the app is closed" is now true of the channel. Its "reminder cron reads every row" is not, and a migration is never edited; the sender's own header says who reads the table.
+- Verified (loop on `fleet/N10-push` at `669afad`, 2026-10-14): `npx tsc --noEmit` exit 0; `npx eslint` on the changed files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` in four shards (`--shard=N/4`), each exit 0 — 568 files, 12532 passed, 8 expected fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ 1 (N15, above).
+- ✓ 2 (DF-P3, above).
+- ✓ 3: push subscription and a VAPID sender are implemented (notifications `TAX-12`).
+
+**Scope / residual.** None in this finding. A request's mention or assignment is not yet pushed, because the two ticket routes write their bell rows outside `emit()`. That is notifications `OS-14` (new; the integrator routes it — the ticket routes are drafting-flow's).
 
 ---
 
@@ -526,7 +544,7 @@ contrast components/requests/EngineerPickerModal.tsx:77-89 —
 ## ROUTE-9 · The drafting-request SLA clock has no server-side reader — nothing ever fires an SLA warning, while the settings page promises one
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P4 LIBRARY (done-when 4: the create route stamps `target_completion_at` — re-owned from the merged DF-P2) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:216`, `lib/notifications.ts:224`, `lib/notifications.ts:245`, `lib/notify/dispatch.ts:56`, `app/(protected)/settings/notifications/page.tsx:143`, `app/api/cron/maintenance/route.ts:159`, `vercel.json:4`
@@ -586,6 +604,16 @@ const scans: Array<[string, (orgId: string) => Promise<number>]> = [
 4. ✗ in part — the scan reads `sla_defaults` for a ticket with no target, but creation does not seed from it and `lib/notifications.ts:321`'s "first fallback when an org hasn't configured sla_defaults rows" comment still describes a lookup creation never makes. **Owner: DF-P2** (the create route stamps from `sla_defaults` first, and corrects the comment).
 
 **Scope / residual.** Done-when 4 → DF-P2 (see `EDGE-7`). *Fix pass 2:* the clock starts at the first paste of `20261195`, which records the backlog already past its target without a notice each (one summary to each queue); before the paste the scan sends nothing and counts that backlog; step 5b stops 120 s before the run's end; a request waiting on its requester is worded as such (see `EDGE-7`).
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — done-when 4 (re-owned from the merged DF-P2). The create route seeds the due date from the org's `sla_defaults` row for the type before `DEFAULT_SLA_DAYS` (`app/api/tickets/create/route.ts:607-632`, recorded in full on `EDGE-7`), and the comment above `DEFAULT_SLA_DAYS` (`lib/notifications.ts`) now says the create route reads `sla_defaults` first and the clock never applies the built-in window retroactively. Tests: `lib/__tests__/ticketCreateRoute.test.ts` ("DF-P4 — EDGE-7 done-when 2 / ROUTE-9 done-when 4"). *DF-P4 fix pass:* `sla_defaults` is writable by every active member (`20260605` `sla_defaults_member_all`, FOR ALL) and `default_days` has no CHECK, so the value is bounded where the create route reads it — `lib/notifications.ts` `boundedSlaDays` admits a whole number of days from 1 to `SLA_DEFAULT_DAYS_MAX` (3650), and anything else (2e9 — which threw a `RangeError` and failed every request of the type with a 500 — 0, negative, fractional, text) is the built-in window, the computation itself wrapped the same way (`app/api/tickets/create/route.ts:607-632`; tests: "a member-written default_days outside 1..3650 …", "boundedSlaDays"). Who may write the table is the new [`EDGE-16`](./13-edges-and-invariants.md#edge-16) (owner admin-and-org).
+
+**Done-when.**
+1. ✓ Unchanged (DF-P3) — the clock starts at the first paste of `20261195` (pending), as recorded.
+2. ✓ Unchanged.
+3. ✓ Unchanged.
+4. ✓ `sla_defaults` is read to seed per-org SLA windows — at creation (this package) and by the scan (DF-P3) — and the comment no longer describes a lookup the code does not make.
+
+**Scope / residual.** An admin editor for `sla_defaults` is `EDGE-7` done-when 2's remainder (admin-and-org); it is not a done-when of this finding.
 
 ---
 

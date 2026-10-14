@@ -122,6 +122,11 @@ export default function BackupIndicator() {
         </>
       )}
 
+      {/* intelligence ILIFE-11 criterion 2 (admin-and-org Round G, P14): the
+          measured size, said before the records are parsed or packed. */}
+      {p.sizeWarning && (
+        <div data-testid="backup-size-warning" className="mt-1.5 text-[10px] text-amber-700">{p.sizeWarning}</div>
+      )}
       {p.phase === "failed" && p.fatalError && (
         <div className="text-[10px] text-rose-600">{p.fatalError}</div>
       )}

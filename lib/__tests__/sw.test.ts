@@ -46,6 +46,7 @@ import { resolveBuildId, stampSource, UNSTAMPED } from "../../scripts/stamp-sw-v
 import {
   applyServiceWorkerUpdate, loadLatestBuild, networkSignal, OFFLINE_PILL_TEXT, UPDATE_RELOAD_FALLBACK_MS,
 } from "@/components/pwa/ServiceWorkerManager";
+import { pushPayloadFor, PUSH_TITLES } from "@/lib/push/sendPush";
 
 type Handler = (event: unknown) => void;
 type Store = {
@@ -1183,5 +1184,73 @@ describe("OFF-3 / OFF-4 — the page side: honest offline copy, an update button
     for (const f of ["components/system/UpdatePill.tsx", "components/pwa/ServiceWorkerManager.tsx"]) {
       expect(readFileSync(resolve(process.cwd(), f), "utf8"), f).not.toMatch(/window\.location\.reload\(\)/);
     }
+  });
+});
+
+// notifications Round G — N10 PUSH (GAP-205). The push / notificationclick
+// block is unchanged code (its comment now names the real sender); these
+// pin that it shows exactly what lib/push/sendPush.ts sends and that a click
+// reuses an open tab (acceptance 4), without touching the caching sections
+// or SW_SCHEMA (the fingerprint above is unchanged).
+describe("Web Push (N10 — GAP-205): the worker shows what the sender sends, and a click reuses a tab", () => {
+  type Pending = { done?: Promise<unknown> };
+  const event = (extra: Record<string, unknown>, box: Pending) => ({ ...extra, waitUntil: (p: Promise<unknown>) => { box.done = p; } });
+
+  it("push: the notification is pushPayloadFor's title, body and tag, with its url kept for the click (data.title / body / url / tag)", async () => {
+    const { handlers, self } = loadServiceWorker({ fetchImpl: offline });
+    const showNotification = vi.fn(async () => undefined);
+    (self as unknown as { registration: unknown }).registration = { showNotification };
+    const payload = pushPayloadFor("hold_opened", { id: "n1", link: "/documents/lib-1?doc=d-1", resource_id: "d-1" });
+    const box: Pending = {};
+    handlers.push!(event({ data: { json: () => payload } }, box));
+    await box.done;
+    expect(showNotification).toHaveBeenCalledWith(PUSH_TITLES.hold_opened, expect.objectContaining({
+      body: payload.body, tag: payload.tag, data: { url: "/documents/lib-1?doc=d-1" }, icon: "/icon-192.png", badge: "/icon-192.png",
+    }));
+    // the block reads the payload's four fields by these names
+    const block = SW_SOURCE.slice(SW_SOURCE.indexOf('self.addEventListener("push"'));
+    for (const f of ["data.title", "data.body", "data.url", "data.tag"]) expect(block).toContain(f);
+    expect(Object.keys(payload).sort()).toEqual(["body", "tag", "title", "url"]);
+  });
+
+  it("an unreadable payload still shows a notification (the app's name), never throws", async () => {
+    const { handlers, self } = loadServiceWorker({ fetchImpl: offline });
+    const showNotification = vi.fn(async () => undefined);
+    (self as unknown as { registration: unknown }).registration = { showNotification };
+    const box: Pending = {};
+    handlers.push!(event({ data: { json: () => { throw new SyntaxError("bad"); } } }, box));
+    await box.done;
+    expect(showNotification).toHaveBeenCalledWith("Manufacturing OS", expect.objectContaining({ data: { url: "/" } }));
+  });
+
+  it("acceptance 4: a click focuses an existing tab and navigates it to the url — no duplicate window", async () => {
+    const { handlers, self } = loadServiceWorker({ fetchImpl: offline });
+    const client = { url: `${ORIGIN}/dashboard`, focus: vi.fn(async () => client), navigate: vi.fn(async () => client) };
+    const openWindow = vi.fn(async () => null);
+    Object.assign(self.clients, { matchAll: vi.fn(async () => [client]), openWindow });
+    const close = vi.fn();
+    const box: Pending = {};
+    handlers.notificationclick!(event({ notification: { close, data: { url: "/documents/lib-1?doc=d-1" } } }, box));
+    await box.done;
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(client.navigate).toHaveBeenCalledWith("/documents/lib-1?doc=d-1");
+    expect(client.focus).toHaveBeenCalledTimes(1);
+    expect(openWindow).not.toHaveBeenCalled();
+    expect(self.clients.matchAll).toHaveBeenCalledWith({ type: "window", includeUncontrolled: true });
+  });
+
+  it("with no tab open, a click opens one at the url", async () => {
+    const { handlers, self } = loadServiceWorker({ fetchImpl: offline });
+    const openWindow = vi.fn(async () => null);
+    Object.assign(self.clients, { matchAll: vi.fn(async () => []), openWindow });
+    const box: Pending = {};
+    handlers.notificationclick!(event({ notification: { close: vi.fn(), data: { url: "/requests/t-1" } } }, box));
+    await box.done;
+    expect(openWindow).toHaveBeenCalledWith("/requests/t-1");
+  });
+
+  it("the block names its real sender (no 'reminder cron' — the cron only prunes)", () => {
+    expect(SW_SOURCE).not.toMatch(/reminder cron/);
+    expect(SW_SOURCE).toMatch(/lib\/push\/sendPush\.ts, called from emit\(\) at the moment of\s*\n\s*\* the event/);
   });
 });

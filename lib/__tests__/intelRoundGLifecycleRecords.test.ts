@@ -24,6 +24,13 @@
 //                       dataExportRoutes.test.ts "still RUNS"). When that
 //                       rule is bounded, this pin fails and the records
 //                       must be revisited.
+//                       (admin-and-org Round G P14, 2026-10-14: the rule is
+//                       now bounded in run-scheduled, not here — DEC-87 §1
+//                       as amended under DEC-90: paused after 7 consecutive
+//                       unconfirmed nights, pinned by dataExportRoutes.test.ts
+//                       "P14 — an unconfirmed legacy destination is paused".
+//                       This read still reports, never refuses, which is what
+//                       the bounded grace counts; the records are revisited.)
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Role } from "@/types/schema";

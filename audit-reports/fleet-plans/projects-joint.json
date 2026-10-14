@@ -1252,6 +1252,9 @@
   "integrator 2026-10-07 (DEC-90): J18 last, after notifications N3 and N4"
  ],
  "userHeld": {
-  "PERF-6": "measure: time one real ten-page scanned PDF through /api/projects/cost-docs on the deployed app (done-when 1; CI has no real scan) \u2014 closes PERF-6 if inside the limit"
+  "PERF-6": "measure: time one real ten-page scanned PDF through /api/projects/cost-docs on the deployed app (done-when 1; CI has no real scan) \u2014 closes PERF-6 if inside the limit",
+  "SEC-23": "paste 20261205 (document-control P23; deploy its app first, paste guide row 157) and send back its result set, including the document_versions insert-policy rows \u2014 the integrator sets RESOLVED then (J20 merge, 2026-10-14)",
+  "SEC-24": "paste 20261215 (paste guide row 168, after 20261198 and 20261157) and send back its candidates row; if not 0, take the operator step in the row and send the counts back \u2014 the integrator sets RESOLVED then (J20 merge, 2026-10-14)",
+  "SEC-21": "resolves by record with SEC-24 once 20261215's candidates row is sent back (exceptions (i) and (ii) ruled accepted at the J19 merge) (J20 merge, 2026-10-14)"
  }
 }

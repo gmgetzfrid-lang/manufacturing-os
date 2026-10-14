@@ -224,7 +224,7 @@ app/api/admin/ticket-shed/commit/route.ts:136-139 (the only code that knows how 
 ## PERS-5 · The ticket→document-intent bridge is permanently dead: rowToTicket never maps `metadata`, so the overlap advisory for a drafter working a source drawing is never registered or cleared
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:50-81`, `app/api/tickets/workflow-action/route.ts:230-274`, `app/api/tickets/workflow-action/route.ts:245-261`, `components/documents/EditOverlapBanner.tsx:49-52`
 - **Also surfaced independently as** [`SM-11`](./06-state-machine.md#sm-11) — two lenses found this separately, which raises confidence. Fix once.
@@ -267,6 +267,17 @@ app/api/tickets/workflow-action/route.ts:231-233 —
 - ✓ A test asserts `metadata.source_document.id` round-trips through `rowToTicket` and that the transition to `DRAFTING` produces a `document_intents` upsert (`lib/__tests__/dfRoundG_P0.test.ts:441`, `lib/__tests__/dfRoundG_P0.test.ts:448`).
 
 **Scope / residual.** Remove the cast (map the remaining columns the server path reads, or narrow the return type so omissions are compile errors) → **DF-P4**, the next package whose brief edits `rowToTicket` (it maps `library_id`). Not in the handed-on list — found on re-verification.
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — the re-owned residual (remove the cast).
+- `lib/ticketTransitions.ts:73` `rowToTicket` builds `const ticket: Ticket = { … }` and returns it — no `as Ticket`, so the literal is checked against the type: a required `Ticket` field not mapped, or a mapped key the type does not have, is a compile error. It now also maps every column a server reader takes through it: `library_id` (DCW-1), `closed_at` (new `Ticket.closedAt`), `archived_at`, `archive_id`, `updated_at`, `search_keywords`; `unit` is `null` when NULL (PERS-6). (The SLA clocks and the outcome were mapped by DF-P3.)
+- Tests: `lib/__tests__/dfRoundG_P4_library.test.ts` ("PERS-5 / PERS-6 — rowToTicket has no cast…": the mapped columns, and a source pin that `} as Ticket;` is gone and the literal is typed); `npx tsc --noEmit` exit 0.
+
+**Done-when.**
+- ✓ `rowToTicket` maps `metadata` (DF-P0 era) and the other columns the server path reads.
+- ✓ The `as Ticket` cast is removed.
+- ✓ Unchanged (`dfRoundG_P0.test.ts:441`, `:448`).
+
+**Scope / residual.** None.
 
 ---
 
@@ -322,6 +333,18 @@ supabase/schema.sql:402 —
 - ✗ (3) The row mappers still cast `row.unit as string` (`lib/ticketTransitions.ts` `rowToTicket`, the request pages' `fromRow`). Not in DF-P2's files.
 
 **Scope / residual.** (2) and `rowToTicket` → **DF-P4** (it edits `types/schema.ts` and `rowToTicket` for `PERS-5`); the pages' `fromRow` → **DF-P9**. Proposed in `99-fix-sequencing.md`, "Hand-offs from DF-P2".
+
+**Partial (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — done-whens 2–3 for `types/schema.ts` and `rowToTicket`.
+- `types/schema.ts` `Ticket.unit` is `string | null` — NULL is the designed "Unit unknown, triage assigns" (DEC-101 item 1). `npx tsc --noEmit` stays exit 0 (every reader already guards the value).
+- `lib/ticketTransitions.ts` `rowToTicket`: `unit: typeof row.unit === "string" ? row.unit : null` — no `as string`.
+- Test: `lib/__tests__/dfRoundG_P4_library.test.ts` ("a NULL unit stays NULL").
+
+**Done-when.**
+- ✓ (1) Unchanged (DF-P2).
+- ✓ (2) The TypeScript type is relaxed to `string | null`, agreeing with the nullable column.
+- ✗ (3) in part — `rowToTicket` no longer casts; the request pages' `fromRow` (`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`) still cast `row.unit as string`. Those files are DF-P9's / DF-P10's.
+
+**Scope / residual.** The pages' `fromRow` → **DF-P9** (already in its plan entry).
 
 ---
 

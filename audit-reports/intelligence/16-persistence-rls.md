@@ -1,6 +1,6 @@
 # 16 · Persistence & RLS across the layer
 
-**16 findings** — 1 CRITICAL · 4 HIGH · 7 MEDIUM · 4 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30; `IRLS-16` opened by I-23, 2026-10-07).
+**20 findings** — 1 CRITICAL · 4 HIGH · 9 MEDIUM · 6 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30; `IRLS-16` opened by I-23, 2026-10-07; `IRLS-17` (MEDIUM), `IRLS-18` (LOW) and `IRLS-19` (MEDIUM) opened by I-17, 2026-10-14; `IRLS-20` (LOW) opened by I-27, 2026-10-14).
 
 Table by table: who can write what, and which writes carry authority.
 
@@ -244,8 +244,9 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 ## IRLS-6 · 20260806_intelligence_layer.sql ALTERs a table that is not created until 20260911 — the whole file rolls back on a fresh database
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-17 DATABASE HARNESS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (done-when 2 and 3) — by the integrator, 2026-10-14 (at the I-17 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260806_intelligence_layer.sql:57-61`, `supabase/migrations/20260911_knowledge_ai.sql:91`, `lib/schemaExpectations.ts:1-13`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on a fresh DB: knowledge_questions does not exist in supabase/schema.sql (grep over its 1341 lines returns nothing), there is no README or ordering manifest in supabase/migrations, and lib/schemaExpectations.ts:4-5 states migrations are "applied BY HAND in the Supabase SQL editor" — where a multi-statement script runs as one implicit transaction, so the whole file rolls back. The knock-on is real too: 20260807_link_proposals.sql:95 does `ALTER TABLE document_related_resources ADD COLUMN…` on a table only created at 20260806:68, inside the file that just aborted.
@@ -286,6 +287,48 @@ Tests: `lib/__tests__/intelRoundGMigrationOrder.test.ts`:
 - ✗ Not verified: running `/api/admin/schema-health` against a fresh install. Same reason; it belongs to the same replay.
 
 **Scope / residual.** Pending migration: `20261123_intel_roundG_knowledge_questions_order.sql`. On live deployments it is a no-op, and its SELECT confirms the column and indexes. The census only checks ALTER-before-CREATE ordering; other fresh-replay hazards (a function body referencing a later table, say) are outside it. I-07's DWG-9 (`20261009_trace_method.sql`) is the same class, in a separate file. OPEN until someone replays the numbered sequence into an empty project and runs schema-health against it.
+
+**Partial (2026-10-14, intelligence Round G).** The fresh-database replay is now automated in the database harness (intelligence I-17, `npm run test:db`: a real PostgreSQL 16 started under a scratch directory, `supabase/schema.sql` and every numbered migration replayed in filename order onto a Supabase stand-in, the cluster deleted afterwards; with no PostgreSQL the run skips with one line naming the missing binary; the default suite and CI are unchanged). `lib/__tests__/rls/replay.ts` sends each numbered migration as ONE simple-query message, which is how the Supabase SQL editor sends a paste: one implicit transaction unless the file opens its own, the first error stops the rest, and a syntax error anywhere means nothing in the file runs. `lib/__tests__/rls/freshReplay.test.ts` holds the outcome to `lib/__tests__/rls/replayKnownDefects.ts`, in both directions. A failure that is not listed fails the opt-in run, and so does a listed failure that no longer happens, so each entry is removed when its owner lands the fix.
+
+Measured 2026-10-14, PostgreSQL 16.13 with pgvector 0.6.0, 299 numbered files:
+- **This finding's own defect is gone.** `20260806`, `20260807` and `20261123` replay clean. `knowledge_questions.search_tsv` is a STORED generated column, and `org_ai_instructions`, `document_related_resources`, `recently_viewed_docs` and `library_numbering` all exist.
+- **Three files do not replay**, each opened as its own finding (DEC-31, owner: the integrator, to route):
+  - `supabase/schema.sql` cannot run as one script on an empty database. It stops at `:328`, and 16 of its statements fail even when it is run statement by statement → `IRLS-17`.
+  - `20260630_perf_indexes.sql` indexes `team_members` a week before `20260707` creates it, so the whole file rolls back. A re-run after the sequence succeeds → `IRLS-18`.
+  - `20261075_dc_roundF_checkout_episode_seal.sql`'s final SELECT names its `check` column bare, a syntax error. PostgreSQL parses the whole script first, so nothing in the file applies, and its guard is absent from the replay → `IRLS-19`.
+- **One file refuses by design.** `20261141` refuses until its operator switch is set. The harness supplies exactly the documented switch (`app.j11_deployed = 'yes'`) for that file only, and a test proves the file still refuses without it.
+- **How the harness works around them.** `schema.sql` is run statement by statement, with its failing statements held to the recorded set of 16 messages. `20260630` is re-run once after the sequence.
+
+`/api/admin/schema-health` was run against that fresh install. The route's own `GET` handler (`app/api/admin/schema-health/route.ts`) was called with `supabaseAdmin` replaced by a PostgREST stand-in that the replayed database itself answers as `service_role`: a table probe is `SELECT … LIMIT 0`, and an RPC probe is a named-argument call whose untyped literals PostgreSQL resolves against the function's parameters. The answer: `healthy: true`; no missing table, column or function; `migrationsToRun` empty; more than 100 tables checked. A copy with `library_numbering` and `bump_share_access(uuid)` dropped is reported unhealthy and names both, so the stand-in is not vacuous.
+
+**Done-when.**
+- ✓ (2026-09-30) The `knowledge_questions` ALTER is guarded in `20260806` and carried by `20261123`. The replay confirms both run clean.
+- ✗ Not met as written: "a fresh-database replay of migrations in filename order completes with zero errors". The replay now runs on every `npm run test:db`, and it reports two numbered files that fail in filename order (`IRLS-18`, `IRLS-19`) plus the baseline's own failure (`IRLS-17`). None of the three is this finding's defect.
+- ✗ Not met (re-checked at the I-17 integrator fix pass, 2026-10-14). On the harness's install, `/api/admin/schema-health` reports every `EXPECTED_TABLE`, and every expected column and function, present (`healthy: true`). The integrator's narrowing (DEC-90) would count that as met if the install differed from a literal fresh install only in ways the route does not read. That is not true. The install differs in four ways, and the route reads two of them:
+  - **Read:** it runs `schema.sql` statement by statement (`IRLS-17`). Sent as one script, the way the editor sends a paste, `schema.sql` stops at `:328` and its one implicit transaction rolls back, so none of its tables exist (measured on PostgreSQL 16.13: 0 tables in `public` afterwards). 16 of the route's `EXPECTED_TABLES` rows, and one `EXPECTED_COLUMNS` row (`org_configurations.data`), name `schema.sql (base schema)` as their source, and the route reads every one of them.
+  - **Read:** the route's `GET` handler is answered through a PostgREST stand-in that the replayed database serves, not a real Supabase project. Every read the route makes goes through it.
+  - Not read: it re-runs `20260630` after the sequence (`IRLS-18`). That file creates four indexes, and the route probes tables, columns and functions only.
+  - Not read: it lacks everything in `20261075`, which cannot be parsed (`IRLS-19`). Its trigger function `enforce_checkout_episode_guard()` and its trigger are in none of `EXPECTED_TABLES`, `EXPECTED_COLUMNS` or `EXPECTED_FUNCTIONS`.
+  Done-when 3 can be met once `IRLS-17` lands and the route is run against that install, through the stand-in only if the integrator accepts it in place of a real Supabase project.
+
+**Scope / residual.** IRLS-6 stays OPEN on done-when 2 and done-when 3. Done-when 2 closes by record once `IRLS-17`, `IRLS-18` and `IRLS-19` land: at that point `replayKnownDefects.ts` lists nothing and `freshReplay.test.ts` reads zero errors. Done-when 3 closes once `IRLS-17` lands and the route is run as above. Owner of the remainder: intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge), which holds all three findings. No migration from this package touches it.
+
+**Resolution (2026-10-14, intelligence Round G).** Closed by intelligence I-27 FRESH-INSTALL REPLAY, by record. The three findings that held done-when 2 and 3 open landed first, in this package, each in its own commit: `IRLS-19` (`20261075` quoted in place), `IRLS-18` (`20260630`'s `team_members` index guarded) and `IRLS-17` (`schema.sql` runs as one script). This finding needed no further code. Its own fix stands as recorded at 2026-09-30: `20260806`'s guard plus `20261123`.
+
+*Ratified by the integrator under the user's delegation, 2026-10-14 (DEC-90), in the I-27 brief: the database harness's PostgREST stand-in counts in place of a real Supabase project for the schema-health route's reads.* The reason:
+- The route reads only through `supabaseAdmin`. It sends a table probe (`select(cols).limit(0)`) and named-argument RPC probes, and the stand-in sends exactly those to the replayed catalog as `service_role`: `SELECT cols FROM public.<table> LIMIT 0`, and `SELECT public.<fn>(arg => literal)`, with untyped literals resolved against the function's parameters, as PostgREST does.
+- The stand-in answers a missing function as `PGRST202`, PostgREST's own code.
+- It cannot hide a missing object, because every answer comes from the real catalog. The companion test shows a dropped table and a dropped function reported missing, so a gap is reported, never masked (fail-safe).
+- Testing a route against a faithful local copy of its datastore is the standard practice: Supabase's own local stack is PostgreSQL plus PostgREST.
+
+**Done-when.**
+- ✓ (2026-09-30) The `knowledge_questions` ALTER and its two indexes are guarded in `20260806` and carried by `20261123`. The replay confirms both run clean (`freshReplay.test.ts`, "IRLS-6's own defect is gone …").
+- ✓ A fresh-database replay of the migrations in filename order completes with zero errors. Measured with `npm run test:db` on PostgreSQL 16.13 with pgvector 0.6.0, exit 0, 2026-10-14. `supabase/schema.sql` is sent as one script, then all 303 numbered migrations, each as one simple-query message (a paste), in filename order. No file fails, none is re-run, and nothing is skipped: `BASELINE_KNOWN_ERRORS` and `OUT_OF_ORDER_FILES` are both empty. The only setting supplied is `20261141`'s documented operator switch (`app.j11_deployed`), for that file alone. The file refuses on purpose until its deploy is live, and a test proves it still refuses without the switch. Test: `freshReplay.test.ts`, "IRLS-6 done-when 2: zero errors — schema.sql as one script, then every numbered migration in filename order, nothing re-run".
+- ✓ `/api/admin/schema-health` was run against that fresh install and reports every `EXPECTED_TABLE` present (met under the ruling above). The route's own `GET` handler, answered through the PostgREST stand-in by the replayed database, returns `healthy: true`, `missingTables: []`, `missingColumns: []` and `migrationsToRun: []`, with more than 100 tables and more than 5 functions checked. The test first asserts the install is the literal one: one-script baseline, every file `ok`, no re-run. Of the four differences the I-17 fix pass listed, three are gone: `schema.sql` now runs as one script (`IRLS-17`), `20260630` is no longer re-run (`IRLS-18`), and `20261075` applies (`IRLS-19`). The fourth, the PostgREST stand-in, is counted under the ruling. The `org_configurations.data` column and the 16 base-schema tables, which the I-17 pass found absent from a one-script install, are present and reported. Tests: `freshReplay.test.ts`, "/api/admin/schema-health against the fresh install" (both cases, the non-vacuous one included).
+
+**Pending migration:** `20261123_intel_roundG_knowledge_questions_order.sql` (paste guide row 91, PASTE). It is a no-op on live deployments, and its SELECT confirms the column and indexes. `20260630`'s and `schema.sql`'s edits need no paste (see `IRLS-18`, `IRLS-17`). `20261075`'s paste is row 70 (see `IRLS-19`).
+
+**Scope / residual.** None in this finding. What the harness does not exercise is a hosted project's own services (auth, storage, PostgREST's schema cache). The ruling above covers that for the route's reads.
 
 ---
 
@@ -791,5 +834,253 @@ No page calls this branch today (the graph posts `{ orgId }` only), so nothing a
 
 - [ ] The `documentId` branch wraps its build like `rebuildDocumentMentions`: `startMentionRun(supabaseAdmin, orgId, "map", documentId)` before the build; after it, `clearStandingFailure` when the standing failure is this document's, then `finishMentionRun(…, { outcome: "succeeded" })`; on a throw, `finishMentionRun(…, { outcome: "failed", error })` before the route answers the error exactly as today.
 - [ ] A route test: a failed per-document rebuild is recorded (source `map`, the document, plain words) and still answers the same 500; a success clears that document's standing failure; with `mention_index_runs` absent the route answers exactly as before.
+
+---
+
+## IRLS-17 · `supabase/schema.sql` cannot run on an empty database — the documented first step of a fresh install fails at line 328
+
+- **Severity:** MEDIUM
+- **Status:** RESOLVED
+- **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). `schema.sql` is the shared pre-migration baseline, last reshaped by document-control `PKG-14` / `HLD-12`. Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness, `npm run test:db`)
+- **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-17 on its PostgreSQL 16 replay; confirmed by the integrator by reading at the I-17 merge; not yet challenged by a second party).
+- **Locations:** `supabase/schema.sql:319-331`, `:400`, `:501-502`, `:656-663`, `:933`, `:1392-1395`; `lib/__tests__/rls/replayKnownDefects.ts` (`BASELINE_KNOWN_ERRORS`)
+
+**Mechanism.** The file's header says: "To set up a database: run this file FIRST, then EVERY file in supabase/migrations/ whose name starts with a date, in filename order." Sent as one script, the way the SQL editor sends a paste, it stops at `:328`: `project_documents` references `projects(id)`, but `projects` is created at `:933`. The whole paste then rolls back. Run statement by statement, 16 statements still fail:
+- `:328-331`: `project_documents` and its three indexes (`projects` does not exist yet).
+- `:400`: an index on `document_versions(org_id, archived_at)`, but `document_versions` has no `archived_at` column in this file.
+- `:501-502`: the trigram index. Its `CREATE EXTENSION IF NOT EXISTS pg_trgm;` sits at the end of the comment line above it, so it never runs.
+- `:656-663`: `milestones` and its six indexes (`projects` again).
+- `:1392`, `:1393`, `:1395`: `ENABLE ROW LEVEL SECURITY` on `project_documents`, `document_assets` and `milestones`. The first and third were never made; `document_assets` lives only in a migration.
+
+**Failure scenario.** A disaster-recovery or self-host install follows the header. The first paste fails with `relation "projects" does not exist`, and nothing is created. The operator has no documented way forward; the numbered migrations assume the baseline.
+
+**Evidence.**
+
+```
+lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements that fail on an empty database are exactly the recorded IRLS-17 set" (16 messages). psql -f supabase/schema.sql on an empty database: ERROR: relation "projects" does not exist (schema.sql:328).
+```
+
+**Done when.**
+
+- [ ] `supabase/schema.sql` runs as ONE script on an empty Supabase project with zero errors (forward references reordered or moved to their migrations; the `pg_trgm` extension statement on its own line; the `archived_at` index removed or its column added). No live database is touched: the file is never re-run on one (DB-8).
+- [ ] `BASELINE_KNOWN_ERRORS` in `lib/__tests__/rls/replayKnownDefects.ts` is empty, and `npm run test:db` passes.
+
+
+**Resolution (2026-10-14, intelligence Round G).** `supabase/schema.sql` now runs as one script on an empty database with zero errors (intelligence I-27 FRESH-INSTALL REPLAY; the integrator's exception for this package allowed the edit). Reproduced first on HEAD `e13bc7b`. Sent as one script onto the harness's stand-in, the file failed with `relation "projects" does not exist` and applied nothing. Statement by statement, the harness recorded 16 failing statements.
+
+**Is `schema.sql` ever re-run on an existing database?** No. Its header says "Never re-run this file on a live database" (DB-8: its frozen policy and function bodies would restore over later hardening), and `schemaBootstrapCensus.test.ts` requires that sentence. The file's only use is the first step of a fresh install: an empty project gets this file, then every numbered migration. The Docker image does not run it (`docs/SELF_HOST_DOCKER.md` points the app at an existing Supabase project, which is set up this way), and data exports bundle it as `schema/schema.sql` (`lib/exportRunner.ts`). Each change below would still be harmless if the file were re-run (tested below).
+
+**What landed, failure by failure (all 16):**
+- `:319-331` (4 statements): the `project_documents` copy and its three indexes are removed. `migrations/20260609_phase1_normalization.sql:66-78` carries the same text byte for byte, and `:192` turns RLS on. `projects` is made at `:933`, so the copy could not run where it stood.
+- `:400` (1): the `document_versions_archived_idx` line is removed. This file's `document_versions` has no `archived_at` column. `20260808_archive_foundation.sql` adds `archived_at` and `archive_id` and builds this same index.
+- `:501` (1): `CREATE EXTENSION IF NOT EXISTS pg_trgm;` now sits on its own line. It was glued to the end of the comment line above (`….sql).CREATE EXTENSION …`), so it never ran. `20260724` creates the same extension and the same `tickets_ticket_id_trgm_idx`; with this change the file builds them first, and 20260724's statements are no-ops.
+- `:656-663` (7): the `milestones` copy and its six indexes are removed. `20260614_phase7_milestones.sql` and the milestone migrations after it make every column and index the copy named. The copy was a partial mirror (it had `first_completed_at`, which `20260718` adds), and it also referenced `projects` ahead of `:933`.
+- `:1392`, `:1393`, `:1395` (3): in the bootstrap RLS block, the `project_documents` and `milestones` lines are gone (their migrations turn RLS on). `document_assets` became `ALTER TABLE IF EXISTS document_assets ENABLE ROW LEVEL SECURITY;`. That table is made here only inside the DO block that checks for `assets`, so on a fresh install the statement is a NOTICE, not an error.
+
+The header no longer lists `milestones` among the tables the file creates, and it gains a paragraph: the file runs as ONE script on an empty database (IRLS-17), and nothing in it may reference a table created further down. Every other statement is unchanged: no function, policy or trigger was added or removed, so the frozen set of 4 functions and 27 policies holds.
+
+**Why remove the copies rather than move them below `projects`.** Both were measured on PostgreSQL 16.13 by comparing a `pg_dump --schema-only` of the full fresh install (`schema.sql` as one script, then all 303 migrations) with HEAD's harness install (the baseline run statement by statement, then `20260630` re-run):
+- Removing them gives an end state identical to HEAD's harness install. The only differences are IRLS-19's `20261075` objects and the apply-time timestamp `20261104` writes into `project_intake_links_ttl`.
+- Moving them puts `milestones.first_completed_at` in a different column position, because the copy did not match the table the migrations build.
+
+Under DB-8 the migrations are the single source of truth, and the header already says everything added since the baseline "lives ONLY in the numbered migrations". So the copies went to the files that already make them.
+
+**The harness now replays the literal install.** `lib/__tests__/rls/replay.ts` sends `schema.sql` as ONE simple-query message, the editor's way, through the same transport and size stop as each migration (`runAsPaste`; 63 kB, under the 120 kB limit). It no longer runs the file statement by statement. `lib/__tests__/rls/replayKnownDefects.ts`: `BASELINE_KNOWN_ERRORS` is empty, and its comment keeps the history.
+
+**Tests.**
+- `lib/__tests__/intelRoundGFreshInstallReplay.test.ts` (default suite), "IRLS-17: supabase/schema.sql runs as one script on an empty database":
+  - A top-to-bottom census: no `REFERENCES`, index or `ALTER TABLE` without `IF EXISTS` reaches a table the file has not made yet, and a table made only inside a DO block does not count outside it.
+  - No index names a column the table does not have yet.
+  - The census catches each shape it guards (a hand-made fixture), so it is not vacuous.
+  - No statement is glued to the end of a comment line, and `pg_trgm` is created before the first trigram index.
+  - The three removed copies are made, unchanged in effect, by their migrations: `20260609` holds the `project_documents` copy byte for byte; every `milestones` column is in the sequence's census (`helpers/schemaKeys.ts`) and every index is in a migration; `20260808` holds the `archived_at` column and index.
+  - The header says the file runs as one script and is never re-run.
+  - Against HEAD's `schema.sql`, four of these tests fail, naming `REFERENCES projects`, the `archived_at` index, `document_assets` and the hidden `CREATE EXTENSION`.
+- `lib/__tests__/intelRoundGDbHarness.test.ts` (default suite): `BASELINE_KNOWN_ERRORS` and `OUT_OF_ORDER_FILES` are pinned empty (the pin used to require a non-empty list), and the replay is pinned to send `schema.sql` as one message.
+- `lib/__tests__/rls/freshReplay.test.ts` (opt-in):
+  - "IRLS-17: supabase/schema.sql, sent as ONE script (the editor's way), runs on the empty stand-in with zero errors".
+  - "IRLS-17: schema.sql alone, pasted as one script on an empty database, ends with its bootstrap census". The last result set lists only `locked — no policy yet: apply the migrations` rows (`projects` among them) and no `RLS DISABLED` row. Every table has RLS on. The trigram index is built. `project_documents`, `milestones`, `document_assets` and `document_versions_archived_idx` are absent until their migrations run.
+  - "IRLS-17: every statement schema.sql gained is a no-op on an existing (fully migrated) database". The three statements run with no error on a copy of the full replay, and the extension oid and version, the index oid and definition, and `document_assets`' RLS flag are unchanged.
+  - Against HEAD's `schema.sql`, 15 of the file's 19 tests fail, because the one-script baseline applies nothing and every later file then fails.
+
+`schemaBootstrapCensus.test.ts` still passes unchanged: the header sentences, RLS on every table the file creates, the census as the last statement, and the frozen function and policy set.
+
+Measured 2026-10-14 on PostgreSQL 16.13 with pgvector 0.6.0, `npm run test:db` exit 0. The replay logged `baseline supabase/schema.sql as one script: ok` and 303 migrations with no failure line; the four suites pass (59 tests); the scratch cluster was deleted afterwards.
+
+**Done-when.**
+- ✓ `supabase/schema.sql` runs as ONE script with zero errors on an empty database carrying the harness's Supabase stand-in (PostgreSQL 16.13: its roles, default privileges, `auth` schema, publication and pgvector). Of the four routes the record offered: the forward references moved to their migrations, which already carried them; the `pg_trgm` statement is on its own line; and the `archived_at` index is removed, its column and index coming from `20260808`. No live database is touched: the file is never re-run on one (DB-8, above).
+  - **"An empty Supabase project": met on the harness's empty stand-in, not on a hosted project.** The run was on PostgreSQL 16.13 carrying the stand-in's Supabase roles, `auth` schema, default privileges, publication and pgvector, with nothing else in it. **Counting that in place of an empty hosted project is this package's own call, not an integrator ruling.** The DEC-90 ruling in this package's brief covers only the PostgREST stand-in for `/api/admin/schema-health`'s reads (`IRLS-6` done-when 3). It does not cover this criterion, so this reading extends it, for the integrator to ratify or reverse at merge (listed on DEC-90's I-27 Landed line so the ratification has a home). The reason for the call:
+    - The defects the criterion names are in the file's own text: forward references, a statement glued to a comment line, and an index on a column the file never makes. PostgreSQL decides each of those the same way with or without a hosted project around it.
+    - Every outside object the file names is in the stand-in: `auth.uid()`, `auth.users`, the roles `anon`, `authenticated` and `service_role`, and the `supabase_realtime` publication. `pg_trgm` is the extension `20260724` already created on every live database. `gen_random_uuid()` is built into PostgreSQL from version 13.
+    - A hosted project adds services the file never touches: auth, storage and PostgREST's schema cache.
+    - On the pre-fix file (base `e13bc7b`), the stand-in reproduced the failure the record describes for a paste: `relation "projects" does not exist`, with nothing applied.
+
+    **If the call is not ratified:** done-when 1 is not met until the file is pasted once into an empty hosted project (a user step), and `IRLS-17` goes back to OPEN until then. Nothing in the code changes either way.
+
+    **RATIFIED by the integrator at the I-27 merge, 2026-10-14 (DEC-90, I-27 Landed line).** The reasons above hold: the criterion's defects live in the file's own text, every outside object it names is in the stand-in, and a hosted project adds only services the file never reads. Done-when 1 is met as ratified: on the harness's empty Supabase stand-in (PostgreSQL 16.13), not on a hosted project; no hosted paste is required. `IRLS-17` stays RESOLVED.
+  - **The three statements the file now runs that failed before.** Each is a no-op on a migrated database (`freshReplay.test.ts`, "IRLS-17: every statement schema.sql gained is a no-op …"), and each repeats a statement in a file older than the paste guide's range (`20261007` on), so one every live database has applied:
+    - `CREATE EXTENSION IF NOT EXISTS pg_trgm;` (`:502`), the same statement as `20260724:60`;
+    - `CREATE INDEX IF NOT EXISTS tickets_ticket_id_trgm_idx …` (`:503`), which failed before only because the extension never ran; it is the same statement as `20260724:61`;
+    - `ALTER TABLE IF EXISTS document_assets ENABLE ROW LEVEL SECURITY;` (`:1362`), which `20260609:185` already runs without `IF EXISTS`.
+- ✓ `BASELINE_KNOWN_ERRORS` in `lib/__tests__/rls/replayKnownDefects.ts` is empty, and `npm run test:db` passes (exit 0).
+
+**Scope / residual.** Two items remain, each with an owner:
+- **Done-when 1's reading of "an empty Supabase project"** is this package's own call, for the integrator to ratify or reverse at merge (above). Owner: the integrator.
+- **A conflicting instruction found during the work.** The header of `.github/workflows/ci.yml` (`:16-19`) still tells authors to mirror every schema change into `supabase/schema.sql`. That instruction predates DB-8 and contradicts this file's header. That file is in no package's list, so it was not edited here. It is opened as `IRLS-20` (LOW, DEC-31). Owner: the integrator, to route.
+
+---
+
+**Accepted residual (the integrator at the I-27 merge, 2026-10-14, DEC-90).** The default-suite one-script census (`lib/__tests__/intelRoundGFreshInstallReplay.test.ts` forwardReferences) checks the shapes the file uses today — REFERENCES, CREATE INDEX, ALTER TABLE without IF EXISTS — and `schemaBootstrapCensus.test.ts` freezes its functions, policies and triggers. A future forward reference of another shape (ALTER PUBLICATION … ADD TABLE, GRANT … ON, INSERT INTO, COMMENT ON, CREATE TRIGGER / POLICY … ON) is caught by the opt-in replay, which sends `schema.sql` as one script on every `npm run test:db`, and is barred at the source by DB-8 (nothing is added to the frozen baseline; `IRLS-20`'s CI header and pins). Widening the regex census is defence in depth with no defect behind it; accepted, no owner.
+
+## IRLS-18 · `20260630_perf_indexes.sql` indexes `team_members` before `20260707` creates it — the whole file rolls back on a fresh replay
+
+- **Severity:** LOW
+- **Status:** RESOLVED
+- **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness)
+- **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-17 on its PostgreSQL 16 replay; confirmed by the integrator by reading at the I-17 merge; not yet challenged by a second party).
+- **Locations:** `supabase/migrations/20260630_perf_indexes.sql:24-25`, `supabase/migrations/20260707_teams.sql` (creates `team_members`)
+
+**Mechanism.** `CREATE INDEX IF NOT EXISTS team_members_uid_idx ON team_members (uid);` at `:24`. The `IF NOT EXISTS` guards the index, not the table, so a missing relation raises `42P01`. As one paste the file rolls back entirely, so none of its indexes exist on a fresh install (`collections_org_library_idx`, `org_members_uid_org_active_idx` and the rest). This is the same class as `IRLS-6`. Existing deployments are not affected: they applied the file after `team_members` existed, or re-pasted it.
+
+**Failure scenario.** A fresh install replays the sequence in filename order and gets the RLS hot-path indexes the file was written for (`node_visible()`'s per-row lookups) only if the operator notices the error and re-pastes the file later.
+
+**Done when.**
+
+- [ ] The `team_members` index is guarded with `to_regclass('public.team_members') IS NOT NULL` in `20260630`, or carried by a migration dated after `20260707`, without changing what a live database ends up with.
+- [ ] The `20260630_perf_indexes.sql` entry leaves `OUT_OF_ORDER_FILES` in `lib/__tests__/rls/replayKnownDefects.ts`, and `npm run test:db` passes.
+
+
+**Resolution (2026-10-14, intelligence Round G).** Fixed by guarding the statement in `20260630` (intelligence I-27 FRESH-INSTALL REPLAY; the integrator's exception for this package allowed the edit). No new numbered file was needed.
+
+Reproduced first on HEAD `e13bc7b`: `npm run test:db` logged `20260630_perf_indexes.sql: relation "team_members" does not exist`, and the harness had to re-run the file after the sequence.
+
+**The decision, from the replay.** `20260707_teams.sql:27` already builds the identical index with the table (`CREATE INDEX IF NOT EXISTS team_members_uid_idx ON team_members(uid);`). So a fresh install only needs `20260630` to stop failing; no later file has to carry the index. The options weighed:
+- A new file `20261218` would carry nothing `20260707` does not already create, and it would add a paste that does nothing on every live deployment.
+- Deleting the statement would be equally harmless, but it loses the original text.
+- Guarding it is the `IRLS-6` / `20260806` pattern: on any database that has the table, it is the original statement.
+
+**What landed.**
+- `supabase/migrations/20260630_perf_indexes.sql`: the last statement now sits in `DO $$ BEGIN IF to_regclass('public.team_members') IS NOT NULL THEN … END IF; END $$;`. Inside the guard it is byte-for-byte the original (`CREATE INDEX IF NOT EXISTS team_members_uid_idx\n  ON team_members (uid);`), and a comment says why. The file's other three indexes are untouched. `20260707` is not edited.
+- `lib/__tests__/rls/replayKnownDefects.ts`: `OUT_OF_ORDER_FILES` is now empty, and its comment records both files that left it. The re-run machinery in `replay.ts` stays for any future entry.
+
+**Tests.**
+- `lib/__tests__/rls/freshReplay.test.ts` (opt-in):
+  - "no file needed a re-run after the sequence (IRLS-18) …": `20260630` replays in filename order, `retries` is empty, and all four of its indexes exist. `team_members_uid_idx` reads `CREATE INDEX team_members_uid_idx ON public.team_members USING btree (uid)`, the definition the old re-paste produced.
+  - "IRLS-18: on an already-migrated database, re-pasting 20260630 — as corrected, or as it stood — changes nothing …": on a copy of the full replay, every index on `documents`, `collections`, `org_members` and `team_members` keeps its oid and its `pg_get_indexdef`, after either text.
+- `lib/__tests__/intelRoundGFreshInstallReplay.test.ts` (new, default suite, so CI catches the class without a database):
+  - "no CREATE INDEX reaches a table the sequence creates later (unguarded)". This is the sibling of IRLS-6's `ALTER TABLE` census, which did not look at indexes. It fails on the pre-fix `20260630` with "20260630_perf_indexes.sql indexes team_members, created only in 20260707_teams.sql", and a guard on the wrong table does not count.
+  - "20260630 runs the team_members index only when the table exists, byte-for-byte the original …".
+  - `20260707` builds the same index with the table.
+
+**Equivalence, measured on PostgreSQL 16.13.** A `pg_dump --schema-only` of HEAD's replay (the old way: `20260630` failing, then re-run) was compared with this commit's replay (`20260630` in order, plus IRLS-19). The only differences are `20261075`'s function, trigger and their ACL, and the apply-time timestamp `20261104` writes into `project_intake_links_ttl`. Index for index, the end state is identical.
+
+**Already-migrated databases:** nothing to paste. `20260630` predates the paste guide (it starts at `20261007`). The working assumption is that every live deployment applied the file after `team_members` existed, or re-pasted it; the squashed history (root commit `a4ea830` adds `20260630` and `20260707` together) cannot show it, so it is an assumption, not an observed fact (corrected by the integrator at the I-27 merge, 2026-10-14). A counts-only check the paste guide now carries (§3C, optional): `SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname IN ('documents_folder_listing_idx', 'collections_org_library_idx', 'org_members_uid_org_active_idx', 'team_members_uid_idx');` — expected 4. Fewer means `20260630` never fully applied there: paste the corrected `20260630`, now safe in any order. Pasting the corrected file again is a no-op (above).
+
+**Done-when.**
+- ✓ The `team_members` index is guarded with `to_regclass('public.team_members') IS NOT NULL` in `20260630`. It is also carried after the table by `20260707:27`, which was already there. What a live database ends up with does not change: a re-paste of either text leaves every index's oid and definition as they were, and a fresh replay ends index-for-index identical to the old re-paste path.
+- ✓ The `20260630_perf_indexes.sql` entry has left `OUT_OF_ORDER_FILES`, and `npm run test:db` passes (exit 0, PostgreSQL 16.13; the replay logs no `20260630` line).
+
+**Scope / residual.** None.
+
+---
+
+## IRLS-19 · `20261075`'s final SELECT names its `check` column bare — a syntax error, so the pasted file changes nothing and the checkout-episode seal never installs
+
+- **Severity:** MEDIUM
+- **Status:** RESOLVED
+- **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). The file is document-control's (`DCK-14`, P6). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
+- **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness; the paste protocol is the editor's single simple-query message)
+- **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-17 on its PostgreSQL 16 replay; confirmed by the integrator by reading at the I-17 merge; not yet challenged by a second party).
+- **Locations:** `supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql:126` (`SELECT check, NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;`), `:43` (the column is created as `AS check`); `audit-reports/MIGRATION-PASTE-ORDER.md` row 70 (PASTE)
+
+**Mechanism.** `check` is a reserved word. `AS check` is legal as a column label, but a bare `check` in the select list is not: `ERROR: syntax error at or near "check"`. PostgreSQL parses the whole query string before running any of it, so a syntax error anywhere means none of the file runs. Its `BEGIN … COMMIT` never runs, so `enforce_checkout_episode_guard()` and `trg_checkout_episode_guard` are never installed. `lib/__tests__/dcRoundFCheckoutMigration.test.ts` checks the file's shape by text and does not parse it.
+
+**Failure scenario.** The operator pastes row 70 and sees a syntax error. DCK-14's seal (closed episodes immutable to signed-in writers; no seal over an active session) is not installed. Re-pasting does not help. `DCK-14`'s done-when 1 cannot be met until the file is fixed.
+
+**Evidence.**
+
+```
+lib/__tests__/rls/freshReplay.test.ts — "20261075 cannot be pasted as written: the editor parses the whole script first, so its final SELECT's syntax error leaves the guard uninstalled (IRLS-19)": pg_trigger has 0 rows named trg_checkout_episode_guard after the replay.
+```
+
+**What a paste does today** (measured 2026-10-14 at the I-17 integrator fix pass, PostgreSQL 16.13, on copies of the replay; `freshReplay.test.ts`, "IRLS-19: 20261075 sent as …"):
+- **As one script**, which is how the Supabase SQL editor sends a paste: the file fails with `syntax error at or near "check"`, and **no statement applies**. PostgreSQL parses the whole message before it runs any statement, so not even the opening inventory TEMP TABLE is made. `enforce_checkout_episode_guard()` and `trg_checkout_episode_guard` are both absent afterwards.
+- **Statement by statement** (`psql -f`, not the editor's way): every statement before the final SELECT applies, and only that verification SELECT fails, with the same error. The inventory is made, and the `BEGIN … COMMIT` installs the guard function (SECURITY DEFINER, `search_path` pinned) and its trigger.
+
+**What this decides: an in-place correction, not a new numbered file.** A paste in the editor has never applied any of the file, on any database. A statement-by-statement run applied exactly the DDL a corrected file applies, and that DDL re-runs cleanly (`DROP TABLE IF EXISTS` before the TEMP TABLE, `CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS` before `CREATE TRIGGER`). So quoting the column in `20261075` itself leaves no database in a state a later file would have to repair, whichever way the file was run.
+
+**Done when.**
+
+- [ ] `20261075`'s final SELECT quotes the column (`SELECT "check", NULL::boolean, n …`), in place (above), and the file parses and applies as one paste.
+- [ ] `20261075` leaves `OUT_OF_ORDER_FILES`, its definer trigger function `enforce_checkout_episode_guard()` joins the census (`TRIGGER_FUNCTIONS` in `lib/__tests__/rls/definerDecisions.ts`), and `npm run test:db` passes.
+
+
+**Resolution (2026-10-14, intelligence Round G).** Corrected in place, as the record decided (intelligence I-27 FRESH-INSTALL REPLAY; the integrator's exception for this package allowed the edit to `20261075`, never applied anywhere). Reproduced first on HEAD `e13bc7b` with `npm run test:db` (PostgreSQL 16.13): the replay logged `20261075_dc_roundF_checkout_episode_seal.sql: syntax error at or near "check"`, and the guard was absent. What landed, in its own commit, before anything else in the package:
+
+- `supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql:126`: `SELECT check, NULL::boolean, n …` became `SELECT "check", NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;`. That is the only bare reference in the file. The two `AS check` column labels (`:44`, `:97`) are legal and stay, so every existing shape pin on them holds. Nothing else in the file changed (a one-line diff).
+- `lib/__tests__/rls/replayKnownDefects.ts`: the `20261075` entry left `OUT_OF_ORDER_FILES` (its `mode: "unparseable"` is kept in the type for any future file).
+- `lib/__tests__/rls/definerDecisions.ts`: `enforce_checkout_episode_guard()` joined `TRIGGER_FUNCTIONS` (decision `trigger-only`). The opt-in census `lib/__tests__/rls/definerCensus.test.ts` now sees it on the replay and checks it.
+- `lib/__tests__/rls/freshReplay.test.ts`: the two IRLS-19 pins are flipped, and three proofs are added, each run on a copy of the replay with 20261075's objects removed (an operator who never pasted it):
+  - "20261075 replays in filename order: the checkout-episode guard is installed on the fresh install". The trigger is present, and the function is SECURITY DEFINER with `search_path` pinned.
+  - "20261075 sent as one script (the SQL editor's paste) …" and "… statement by statement (psql -f) …". Both modes apply with no error, and both leave the function and trigger installed (`1/1`). The one-script run returns exactly the file's final SELECT: five probes with `ok = t` and `n` NULL, then the four counts-only inventory rows with `ok` NULL and `n` a count. A second paste returns the same nine rows and leaves one guard ("Idempotent; safe to re-run").
+  - "a database that ran the pre-fix file statement by statement … takes the corrected paste cleanly and ends the same". Pasted as one script, the pre-fix text applies nothing (`syntax error at or near "check"`, `0/0`). Run with `psql -f`, it installed everything but its SELECT. The corrected paste then runs over that with no error, and the `pg_get_functiondef` / `pg_get_triggerdef` hashes are unchanged and equal the fresh replay's. So the edit is a no-op on the only kind of database where any of the file ever ran.
+  - "the installed guard does what DCK-14 asks". As a signed-in member, rewriting or reopening a closed episode is refused with `23514` ("sealed record and cannot be changed"). Closing an episode while a member session on it is active is refused with `23514` ("still has active sessions and cannot be sealed"). Today's legitimate flows still pass: a close with nobody left on it (1 row), and the service role on a closed episode (1 row).
+- `lib/__tests__/dcRoundFCheckoutMigration.test.ts`: the final-SELECT pin now reads `SELECT "check", …`. A new pin says `check` is never named bare once comments and string literals are stripped (exactly two `AS check` labels and one `"check"`). Against the pre-fix file it fails, and so does the old ONE-result-set pin, so the default suite (CI) now catches this class of defect without a database.
+
+Measured 2026-10-14 on PostgreSQL 16.13 with pgvector 0.6.0, `npm run test:db` exit 0. The replay logs no `20261075` line, and the four suites pass (55 tests). The existing 20261075 tests pass: `dcRoundFCheckoutMigration.test.ts`, `checkoutRoundF.test.ts` and `realtimePublication.test.ts`. The scratch cluster was deleted afterwards.
+
+**Pending migration:** `20261075_dc_roundF_checkout_episode_seal.sql`. Paste guide row 70 goes from HOLD back to PASTE, which the integrator writes at merge. Its order is unchanged: after `20261074`, before `20261077`. It does not widen anything, and it re-creates nothing that another file defines (the only definer of the guard is this file, which the shape test pins). Expected result: one result set of nine rows. Five probes have `ok = true` and `n` NULL: guard installed; closed episodes immutable; no seal over an active session; service role passes; `search_path` pinned. Four inventory rows have `ok` NULL and `n` a count: closed episodes still carrying an active member session; active episodes with no active member session; closed episodes; active episodes. It is safe to re-paste. The app works before and after the paste. Before it, a close takes today's path. After it, `closeEpisode` reads the guard's "still has active sessions" refusal as "reconcile, do not seal" (`lib/checkoutEpisodes.ts` `EPISODE_LIVE_SESSIONS_RAIL`: DCK-14's app half, in the code since document-control P6; the shape test holds the two texts equal), and the service-role sweep and admin routes pass the guard.
+
+**Done-when.**
+- ✓ `20261075`'s final SELECT quotes the column in place (`:126`). The file parses and applies as one paste: on PostgreSQL 16, sent as one simple-query message (the editor's way), it returns its nine-row final SELECT with no error (`freshReplay.test.ts`, "IRLS-19: 20261075 sent as one script …").
+- ✓ `20261075` has left `OUT_OF_ORDER_FILES`. `enforce_checkout_episode_guard()` is in `TRIGGER_FUNCTIONS`, and the opt-in census checks it against the replayed catalog. `npm run test:db` passes (exit 0).
+
+**Scope / residual.** None in this finding. Document-control `DCK-14` done-when 1 ("holds only once the SQL is applied") now waits only on the user's paste of row 70. That is document-control's record, and the integrator updates it at merge. This package does not edit it.
+
+---
+
+<a id="irls-20"></a>
+
+## IRLS-20 · The CI workflow's header tells authors to mirror every schema change into `supabase/schema.sql` — the opposite of DB-8 and of `IRLS-17`'s rule
+
+- **Severity:** LOW
+- **Status:** RESOLVED
+- **Assigned:** the integrator, to route (DEC-31). `.github/workflows/ci.yml` is in no package's file list. Opened 2026-10-14 by intelligence Round G I-27 as a defect found while resolving `IRLS-17`. Routed to and built by the integrator at the I-27 merge, 2026-10-14 (text only; widened to the two other places the re-review found).
+- **Verification:** CONFIRMED (read on branch `fleet/I-27-fresh-install-replay`; the comment is unchanged since 2026-08-18, before DB-8 resolved on 2026-09-17)
+- **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-27 by reading; not yet challenged by a second party).
+- **Locations:** `.github/workflows/ci.yml:16-19`; `app/data-portability/page.tsx:55`, `:102` (the public page; found by I-27's re-review); `docs/ARCHITECTURE.md:950` (found by I-27's re-review); `supabase/schema.sql:1-34` (the header); `lib/__tests__/schemaBootstrapCensus.test.ts`, `lib/__tests__/intelRoundGFreshInstallReplay.test.ts` (the default-suite guards on `schema.sql`)
+
+**Mechanism.** The comment block at the top of the CI workflow reads:
+
+```
+# Migration discipline (manual until a supabase CLI pipeline is set up):
+# every schema change ships as an idempotent file in supabase/migrations/ AND
+# is mirrored into supabase/schema.sql; apply migrations in the Supabase SQL
+# editor BEFORE merging code that depends on them.
+```
+
+Outside `audit-reports/`, it is the only place in the repository that states a "migration discipline" (`git grep`), and it predates DB-8. Since DB-8 (`roles-and-permissions/11-database-authority.md`), the numbered migrations are the single source of truth. `supabase/schema.sql` is the frozen pre-migration baseline. Its header says three things:
+- everything added since the baseline "lives ONLY in the numbered migrations";
+- "Never re-run this file on a live database";
+- since `IRLS-17`, the file runs as ONE script on an empty database, and nothing in it may reference a table created further down.
+
+**Failure scenario.** An author follows the CI comment and mirrors a new migration into `schema.sql`. The default suite catches two shapes of mirror:
+- a mirrored function, policy or trigger, through `schemaBootstrapCensus.test.ts`'s frozen set;
+- a mirrored table that references a table created further down, through `IRLS-17`'s one-script census in `intelRoundGFreshInstallReplay.test.ts`.
+
+It does not catch a mirrored table that references only earlier tables. That table is then made twice on a fresh install: first by `schema.sql`, and then the migration's `CREATE TABLE IF NOT EXISTS` is a no-op. If the copy differs from what the migrations build, a fresh install ends with a different table than a live database. `IRLS-17` measured this on the `milestones` copy, whose `first_completed_at` landed in a different column position. The instruction is also simply wrong for anyone reading it.
+
+**Done when.**
+
+- [x] `.github/workflows/ci.yml:16-19` states DB-8:
+  - every schema change ships as ONE idempotent numbered file in `supabase/migrations/`, the only source of truth, applied in the Supabase SQL editor before the code that depends on it merges;
+  - `supabase/schema.sql` is the frozen pre-migration baseline, run once on an empty database before the migrations, and never edited to mirror a migration or re-run on a live database.
+
+  Only the comment changes. No step changes, and the comment must not name `test:db`: `intelRoundGDbHarness.test.ts` ("CI runs the default suite only") refuses that string in the file.
+- [x] A default-suite pin: `ci.yml` no longer says a schema change "is mirrored into supabase/schema.sql", and it names the migrations as the source of truth.
+
+**Resolution (the integrator, at the I-27 merge, 2026-10-14).** `.github/workflows/ci.yml:16-22` now states DB-8 in the comment only: every schema change ships as ONE idempotent numbered file in `supabase/migrations/`, the only source of truth, applied in the SQL editor before the code that depends on it merges; `supabase/schema.sql` is the frozen pre-migration baseline, run once on an empty database and then every numbered migration in filename order, never edited to copy a migration and never re-run on a live database. No step changed, and the file still does not name the opt-in database run (`intelRoundGDbHarness.test.ts` "CI runs the default suite only" passes). The re-review's two further places are corrected the same way: the public `/data-portability` page (`app/data-portability/page.tsx:55`) says the complete schema is `supabase/schema.sql` (the starting baseline) followed by every numbered file in `supabase/migrations`, applied in filename order — the way `lib/exportRunner.ts` already says it — and its "View the database schema" link (`:102`) opens the `supabase/` folder instead of the baseline file alone; `docs/ARCHITECTURE.md:950` calls `schema.sql` the frozen pre-migration baseline (DB-8). Pinned in the default suite: `lib/__tests__/intelRoundGFreshInstallReplay.test.ts` "IRLS-20 …" (two tests: the CI header; the page and the doc). Done-when 1 ✓, 2 ✓.
 
 ---

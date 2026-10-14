@@ -583,6 +583,15 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue"])', keys: ["ackEscalation"] }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
+  // notifications N10 PUSH (GAP-205): the push sender reads the bell rows an emit() just wrote,
+  // to push only a person whose row landed (for a browser's request, a row naming that member as actor).
+  // N10 fix pass 3 (the third review's major): the note no longer leans on 20261160, which is not pasted
+  // yet — until it is, a browser row carries whatever created_at and recipient its writer chose, so the
+  // sender bounds the date and checks the membership itself.
+  // N10 fix pass 4 (the fourth review's minor): the note's "at most that margin" did not hold — the claim
+  // stored a forged date as the device's watermark, so re-forging every few minutes held pushes back for
+  // as long as it went on. The watermark is now never later than the server's clock (pushWatermarkFor).
+  "lib/push/sendPush.ts": [{ marks: '.in("kind", [...PUSH_KINDS])', none: "not a dedupe: the push channel sends a device notification only for a push-worthy bell row that landed for that person in the last two minutes and is dated no later than now plus PUSH_FUTURE_SKEW_MS (for a browser's request, one whose actor_user_id is the caller — 20261160, once pasted, stamps every browser row with its writer and the time), only to an active member of the row's workspace (the sender reads org_members itself, fail closed), never for a redacted notice, at most PUSH_WRITER_CAP rows per writer and person in ten minutes. A row a member forges can only cause a generic push to an active member of that workspace within those caps. The device's push watermark is never later than the server's clock (pushWatermarkFor: a row dated ahead stores its date less PUSH_FUTURE_SKEW_MS), so a forged row holds back no push for a row the database dates after the forged one was pushed — the same as a real row pushed at that moment. Until 20261160 is pasted, a forged row dated ahead can be pushed to a device at most twice (once while it is ahead of the clock, once after), and where the database's clock runs ahead of the server's, a real row dated ahead and no later than a forged one is held back, for at most PUSH_FUTURE_SKEW_MS; a row dated further ahead is never read. No bell row or email is withheld because one exists" }],
   "lib/storageAlerts.ts": [
     { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
     // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the quota bell is not sent the
