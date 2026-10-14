@@ -1201,10 +1201,10 @@ export default function RequestPortal() {
             <div className="flex items-center space-x-3">
               <span className="bg-orange-600 text-white text-xs font-bold px-2 py-1 rounded-md">{selectedTicketIds.size} Selected</span>
               {selection.outOfView.length + selection.gone.length > 0 ? (
-                // Fail-safe (DEC-90): said BEFORE the action — a bulk action
-                // touches only what is in the list on screen.
+                // Fail-safe (DEC-90), said BEFORE the action: Mark Urgent and Archive
+                // touch only what is on screen (Export writes the filtered list, as before).
                 <span data-testid="bulk-out-of-view" className="text-sm font-medium text-orange-900">
-                  {selection.outOfView.length + selection.gone.length} of them {selection.outOfView.length + selection.gone.length === 1 ? 'is' : 'are'} not in the list on screen — bulk actions act only on the {selection.inView.length} that {selection.inView.length === 1 ? 'is' : 'are'}
+                  {selection.outOfView.length + selection.gone.length} of them {selection.outOfView.length + selection.gone.length === 1 ? 'is' : 'are'} not in the list on screen — {policyFault ? 'Mark Urgent acts' : 'Mark Urgent and Archive act'} only on the {selection.inView.length} that {selection.inView.length === 1 ? 'is' : 'are'}
                 </span>
               ) : (
                 <span className="text-sm font-medium text-orange-900">Bulk actions active</span>

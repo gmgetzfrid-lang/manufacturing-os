@@ -445,7 +445,7 @@ describe("PERS-3 / PERS-7 (integrator fix pass) — a bulk action touches only w
     await selectRow("t2");
     await click(q("[data-testid=view-needs-me]")); // t2 needs nobody here — out of the list on screen
     expect(host!.textContent).toMatch(/2 Selected/);
-    expect(q("[data-testid=bulk-out-of-view]")?.textContent).toMatch(/1 of them is not in the list on screen — bulk actions act only on the 1 that is/);
+    expect(q("[data-testid=bulk-out-of-view]")?.textContent).toMatch(/1 of them is not in the list on screen — Mark Urgent and Archive act only on the 1 that is/);
     await click(byText("button", /Mark Urgent/));
     expect(writes().length).toBe(1);
     expect(writes()[0].calls).toEqual(expect.arrayContaining([{ m: "eq", a: ["id", "t1"] }]));
@@ -464,7 +464,7 @@ describe("PERS-3 / PERS-7 (integrator fix pass) — a bulk action touches only w
     const companion = s.channels[0].ons.find((o) => o.cfg.table === "tickets" && o.cfg.event === "DELETE")!;
     await act(async () => { companion.cb({ eventType: "DELETE", old: { id: "t2" } }); });
     await flush();
-    expect(q("[data-testid=bulk-out-of-view]")?.textContent).toMatch(/1 of them is not in the list on screen — bulk actions act only on the 0 that are/);
+    expect(q("[data-testid=bulk-out-of-view]")?.textContent).toMatch(/1 of them is not in the list on screen — Mark Urgent and Archive act only on the 0 that are/);
     await click(byText("button", /Mark Urgent/));
     expect(writes().length).toBe(0);
     expect(s.audit).not.toHaveBeenCalled();
