@@ -60,6 +60,10 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  // projects-tab UX-17: adoptDocument's equipmentNote (the matched equipment's
+  // links were not recorded, or a pair is still the equipment sweep's reading)
+  // is said on its own line under the adopt sentence, never folded into it.
+  const [equipMsg, setEquipMsg] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
   // Destination
@@ -136,6 +140,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   );
 
   const adoptOne = async (c: TransitionCandidate) => {
+    setEquipMsg(null);
     if (!destLib) { setMsg("Pick the destination library first."); return; }
     const impact = impacts.get(c.docId);
     const renum = (renumber.get(c.docId) ?? "").trim();
@@ -156,17 +161,19 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
       });
       if (!res.ok) throw new Error(res.error);
       setMsg(res.note ?? `${c.label} adopted into the controlled register.`);
+      setEquipMsg(res.equipmentNote ?? null);
       await refresh();
     } catch (e) { setMsg(userFacingCaughtError(e, { context: "TransitionInPanel" })); }
     finally { setBusy(null); }
   };
 
   const adoptAllClean = async () => {
+    setEquipMsg(null);
     if (!destLib) { setMsg("Pick the destination library first."); return; }
     const clean = candidates.filter(bulkable);
     if (!clean.length) return;
     setBusy("bulk"); setMsg(null);
-    let ok = 0; const failed: string[] = []; const unkeyed: string[] = [];
+    let ok = 0; const failed: string[] = []; const unkeyed: string[] = []; const equipment: string[] = [];
     for (const c of clean) {
       const res = await adoptDocument({
         orgId, projectId, docId: c.docId,
@@ -175,7 +182,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         linkAssets: impacts.get(c.docId)?.matchedAssets ?? [],
         actorId: uid, actorEmail: userEmail ?? null,
       });
-      if (res.ok) { ok++; if (res.note) unkeyed.push(c.label); } else failed.push(c.label);
+      if (res.ok) { ok++; if (res.note) unkeyed.push(c.label); if (res.equipmentNote) equipment.push(c.label); } else failed.push(c.label);
     }
     setBusy(null);
     const unkeyedText = unkeyed.length
@@ -184,6 +191,9 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     setMsg((failed.length
       ? `Adopted ${ok} of ${clean.length} — failed: ${failed.join(", ")}`
       : `Adopted ${ok} clean document${ok === 1 ? "" : "s"} into the controlled register. ${flaggedCount ? `${flaggedCount} flagged sheet${flaggedCount === 1 ? "" : "s"} stayed for resolution.` : ""}`) + unkeyedText);
+    setEquipMsg(equipment.length
+      ? `${equipment.length === 1 ? "1 adopted sheet's" : `${equipment.length} adopted sheets'`} equipment links need attention — they were not recorded, or are still the equipment sweep's reading rather than your link. Open each sheet's tags in the equipment registry and Link them: ${equipment.join(", ")}.`
+      : null);
     await refresh();
   };
 
@@ -208,7 +218,10 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         </button>
       </div>
 
-      <div aria-live="polite">{msg && <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}</div>
+      <div aria-live="polite">
+        {msg && <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+        {equipMsg && <div role="status" data-testid="transition-equipment-note" className="mt-1.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-xs font-bold text-[var(--color-text)]">{equipMsg}</div>}
+      </div>
 
       {canManage && !canAdopt && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 text-xs text-[var(--color-text-muted)]">
