@@ -366,7 +366,7 @@ app/api/verify-hold/route.ts:55 — `reason: (h.reason as string) ?? null,`  |  
 ## VFY-7 · /d/[number] is not punctuation-forgiving as documented, and silently redirects to a DIFFERENT drawing when the typed number is a substring of another
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (the chooser on app/(protected)/documents/page.tsx) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/d/[number]/route.ts:19-36`, `app/d/[number]/route.ts:24-25`
@@ -402,6 +402,16 @@ app/d/[number]/route.ts:20 — `const norm = raw.toLowerCase().replace(/[^a-z0-9
 4. ✓ Org-scoped: `activeOrgId` + RLS; the route holds no service-role client (`lib/__tests__/shortLinkRoute.test.ts`).
 
 **Scope / residual.** Stays OPEN for done-when 1 and 3 — the client-side resolver in `app/(protected)/documents/page.tsx` (with `lib/search.ts` for a normalized candidate match). No package in the current fleet plans owns that change; the integrator assigns it.
+
+**Resolution (2026-10-14, intelligence Round G).** Package I-12 (`app/(protected)/documents/page.tsx`, the client-side resolver). Reproduced on base `700f1fc`: two exact normalized matches were resolved by `rows.find(…)` to the newest-updated one, and a number typed with other separators that the search missed fell to the search page. Now, when the search finds no exact normalized match, a second candidate read (still the caller's own client: RLS, `activeOrgId`) matches the NORMALIZED number itself — `regexIMatch("document_number", normalizedNumberPattern(norm))` (`:125`; `lib/docNumberMatch.ts:15`): an anchored, case-insensitive pattern admitting the typed letters and digits in order with only separators around and between them, i.e. exactly the numbers whose normalized form is the one typed (checked on PostgreSQL 16's `~*`: "2002-D-10001", "2002_d_10001", " 2002 D 10001 " match "2002d10001"; "2002-D-100012", "X2002-D-10001", "SPEC-2002-D-10001-A" do not). Only an exact normalized match is ever taken; one deep-links into the viewer; two or more open a chooser listing each with its library (`setShortLinkChoices`, `:137`; `data-short-link-chooser`); none pre-fills the search. Tests: `lib/__tests__/intelRoundGDocAcl.test.ts` "VFY-7 — …" (source pins: the normalized read, exact matches only, the chooser, never `rows[0]`); `lib/__tests__/intelRoundGDocAclFinish.test.ts` "VFY-7 done-when 1 — the second candidate read matches the normalized number itself" (the pattern against matching and non-matching numbers).
+
+**Done-when.**
+1. ✓ The candidate query matches on a normalized expression (the anchored pattern), so the punctuation-forgiving promise is what runs.
+2. ✓ No `?? rows[0]` fallback (as recorded).
+3. ✓ More than one exact normalized match renders a chooser.
+4. ✓ Org-scoped (as recorded).
+
+**Scope / residual.** The pattern is matched without an index (a sequential filter on the org's documents under RLS); it runs only when the search found no exact match.
 
 ---
 
@@ -821,6 +831,15 @@ grep -n "visibility" app/api/verify*/route.ts → no match
 - **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (the document-ACL visibility limb: one read predicate, applied to the three verify routes once PS-VERIFY has merged — I-12 runs last) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 
 *Cross-note (2026-10-13, intelligence Round G, I-01 phase B): re-verified on `596d34e`: unchanged (`app/api/verify/route.ts:81`, `:212-213`; `app/api/verify-package/route.ts:236`; `app/api/verify-hold/route.ts:120`). Intelligence `DACL-8` criterion 1 and `DACL-3` criterion 3 stay OPEN pointing here, and `DACL-8` criteria 2 and 3 stay OPEN for I-12 beside `VFY-16`, on the fail-safe default recorded on that finding: `DEC-65` §2 does not stand in for a per-print token (corrected at the third review fix pass: this first said they "wait on a ruling").*
+
+**Partial (2026-10-14, intelligence Round G).** Package I-12, on the default `DACL-8` carried (`DEC-90`: for a private or hidden document the verdict is answered without the number or title). `lib/verifyDisclosure.ts` `verifyMayNameDocument` (`:18`): a public verify answer names a document only when its row was read WITH `visibility` and that is normal or NULL (the database's "normal"); private, hidden, any other value, or a row read without the column (treated as hidden) is labelled `RESTRICTED_DOCUMENT_LABEL` ("Restricted document"). Applied: `/api/verify-package` reads `visibility` with each sheet's document and labels a restricted sheet — the printed label included — and every off-paper sheet "Restricted document" (`app/api/verify-package/route.ts:244`); `/api/verify-hold` the same for the held document (`app/api/verify-hold/route.ts:124`). Verdicts, states, revisions and dates are unchanged. Tests: `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-16 (intelligence I-12) — …" (private, hidden, an unknown value and an unread visibility; an off-paper member; a normal and a NULL visibility keep their label); `lib/__tests__/verifyHold.test.ts` "VFY-16 (intelligence I-12) — …".
+
+**Done-when.**
+1. ◐ Each pack sheet and the hold's document label ✓; `/api/verify` ✗ — admin-and-org P12's file while P12 merges (this package's brief: do not edit it).
+2. ◐ Pinned on the two routes, including an unreadable visibility; `/api/verify` waits.
+3. ✗ `DACL-8` criterion 1 and `DACL-3` criterion 3 stay OPEN until 1 holds on `/api/verify`.
+
+**Remaining / owner.** The `/api/verify` limb: the integrator at the P12 merge — add `visibility` to the route's `documents` select and answer `docNumber` / `title` through `verifyMayNameDocument` (number null and title "Restricted document" otherwise), with a test on a private, a hidden and an unread visibility; then this finding, `DACL-8` criterion 1 and `DACL-3` criterion 3 close by pointer.
 
 ---
 

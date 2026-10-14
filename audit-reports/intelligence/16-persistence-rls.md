@@ -429,6 +429,17 @@ Tests: `lib/__tests__/processFlowsLib.test.ts` ("resolveAssetEndpoints — IRLS-
 
 **Scope / residual.** As `IEDGE-6`: open on I-12 (normal-visibility ACLs and private drafts inside `node_visible`) and on a database-backed test.
 
+**Partial (2026-10-14, intelligence Round G).** Package I-12. `20261212` (pending migration) brings explicit READ denies into `node_visible` for every subject and on a normal row (`DACL-12`, `IEDGE-12`), so a mention of a document such a deny names is hidden from that member through `entity_mentions_source_readable`, which reads the document row under the caller's RLS.
+
+**Done-when.**
+1. Partly — as `IEDGE-6` criterion 1: ✓ for a read deny; ✗ for a normal row's allow-list and a private draft.
+2. Partly — the same split.
+3. ✗ Not done: the suite still has no PostgreSQL. `20261212` was exercised on a throwaway PostgreSQL 16 (recorded on `DACL-12`) and its port is pinned by `lib/__tests__/intelRoundGNodeVisibleDeny.test.ts`; no test in the repository runs a policy against a database.
+
+**Remaining / owner.** Criteria 1–2: `DACL-1` criterion 1 (owner named there). Criterion 3: a database-backed test harness for RLS policies (a throwaway PostgreSQL in the test run) — in no fleet plan; owner: the integrator to queue under DEC-31 (proposed: a cross-area "RLS against a database" package; `DACL-12` and `DACL-6` criterion 3 wait on the same harness).
+
+**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`).
+
 ---
 
 <a id="irls-10"></a>

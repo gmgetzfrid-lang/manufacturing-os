@@ -104,8 +104,7 @@ app/api/graph/ask/route.ts:83 — `const { data: rawHits, error: askErr } = awai
 ## IEDGE-2 · Orchestrator read tools run on the service role and honour only the ai_excluded flag — never the per-asker ACL — so the Assistant answers any member from restricted documents
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
-
+- **Status:** RESOLVED
 **Resolution (2026-09-02, fixed under roles-and-permissions Phase 6 Round C1 as [`EGRESS-3`](../roles-and-permissions/10-content-egress.md) — the owning record; this one points there).** `ToolContext` carries the caller's ACL principal (`loadPrincipal`: role collection, teams, controller tier) and every read tool filters through `readableControlledDocIds` — `find_documents`, `search_documents` (mirror hop), `equipment_mentions` (mirror hop + direct `document_id`) and `trace_pid_lines` (graph built only from readable sheets). The readable set is evaluated per tool call through that one seam rather than cached once per run — same answer, and the failure path is the one asked for: if the set or the mirror hop cannot be computed, every source-linked result is dropped. `lib/__tests__/sweepRoundC.test.ts` drives each tool and the whole loop as a denied Viewer and asserts no passage from the denied document reaches the tool result or the next prompt. The intelligence area is unclaimed; its own pass re-verifies against these criteria (`DEC-29`: the reproduction here is unit-level, at the ACL seam, not a live tenant).
 
 - **Verification:** CONFIRMED
@@ -138,6 +137,15 @@ lib/orchestrator/tools.ts:133-135 — `const { data, error } = await supabaseAdm
 3. ✓ `sweepRoundC.test.ts` drives each tool and the loop as a denied Viewer at the ACL seam; `intelRoundGRecords.test.ts` adds a FOLDER-level deny through the real seam (both tools return nothing from the denied document; a controller sees it).
 
 **Remaining / owner.** Criterion 2 only = `KACL-12` (owner I-12, `lib/knowledgeAccess.ts`). This closes by pointer together with `KACL-2`, when KACL-12 is RESOLVED with every one of its Done-when holding (the container limb and the `team_members` limb). No plan package is told to record that close: the intelligence plan still lists this finding as RESOLVED by pointer, and I-12's list does not name it, so the integrator assigns IEDGE-2 and the KACL-2 pointer close to I-12 (to record when KACL-12 lands) or to I-01 phase B. `ORCH-3` (report `15`), whose criteria ask for the filter but not its failure mode, stays RESOLVED with a note.
+
+**Resolution (2026-10-14, intelligence Round G).** Closed by pointer together with [`KACL-2`](./05-knowledge-acl.md#kacl-2), as the 2026-09-30 Partial required: [`KACL-12`](./05-knowledge-acl.md#kacl-12) is RESOLVED with every done-when (package I-12), and its four `it.fails` cases in `lib/__tests__/intelRoundGRecords.test.ts` are flipped to `it` and pass. Criterion 2 now holds inside the seam: a failed `libraries` / `collections` / `teams` read throws `DcLandscapeUnreadableError` (`lib/knowledgeAccess.ts:133`) and a failed `team_members` read yields no principal for a non-controller (`:60`), so the readable set is never computed WIDER — the tools' own catch drops every controlled result (`lib/orchestrator/tools.ts:121`, `:145`).
+
+**Done-when.**
+1. ✓ (as recorded).
+2. ✓ Failure to compute the readable set — including a failed read inside the seam — drops every source-linked result.
+3. ✓ (as recorded).
+
+**Scope / residual.** None. `ORCH-3` stays RESOLVED; its "(fail closed)" now holds end to end.
 
 ---
 
@@ -323,6 +331,16 @@ supabase/migrations/20260929_mention_engine.sql:74-76 — `CREATE POLICY entity_
 2. ✓ The `/assets/[tag]` backlinks panel degrades honestly with the count (`describeWithheldMentions`, tested in `lib/__tests__/knowledgeMemoryAcl.test.ts`).
 
 **Scope / residual.** Stays OPEN with `KACL-7` on I-12: the sentence is exactly as visible as its document's row at the database; app-only restrictions on a normal-visibility row tighten here when I-12 lands them in `node_visible`. `MentionsPanel.tsx` is listed by no package; it is edited here for done-when 2 only. The write path and the indexes stay I-08's (`IRLS-4`).
+
+**Partial (2026-10-14, intelligence Round G).** Package I-12. `20261212` (pending migration) makes an explicit READ deny bind on a `normal` row at the database (by uid, any held role, a team in the node's org, or the workspace) and a role / team / org deny of read or discover bind on a private / hidden row (`DACL-12`). `entity_mentions_source_readable` reads the documents (and, through `20261120`'s `knowledge_documents_select`, the mirror) row under the caller's RLS, so a mention of a document such a deny names is hidden from that member with no change to this table's policy.
+
+**Done-when.**
+1. Partly — ✓ for mentions of a document a READ deny names the caller on (normal or restricted, once `20261212` is pasted). ✗ A normal row's allow-list (`DACL-1` criterion 1) and a private draft's creator-only rule are still not in `node_visible`, so those mentions still reach every member.
+2. ✓ (as recorded).
+
+**Remaining / owner.** Criterion 1's remainder is `DACL-1` criterion 1 and the private-draft rule `KACL-7` names (owner named on `DACL-1`).
+
+**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`).
 
 ---
 
@@ -550,5 +568,19 @@ lib/knowledgeAccess.ts:73-77 — `if (decision) { if (visibility === "hidden") r
 - [ ] One shared predicate decides 'can this principal read this document', used by knowledgeAccess, node_visible and the download-url guard alike
 - [ ] A normal-visibility document carrying an explicit read deny is refused by every path, not just by AI retrieval
 - [ ] A test proves the ask route and the download endpoint agree on the same document/principal pair
+
+**Partial (2026-10-14, intelligence Round G).** Package I-12. Reproduced on base `700f1fc`: for a normal document whose folder ACL allow-listed one team, the ask route's seam refused a member outside it while `/api/storage/download-url` served them the bytes (normal visibility skipped the guard). Now:
+- **One app predicate.** `lib/permissions.ts` `canReadNode` (`:219`): a controller and the effective owner read; wherever the chain says something (`lib/acl.ts` `aclSaysSomething`, `:187`) one of the asked actions must be granted and an explicit deny of it wins; with no ACL anywhere only a normal node is open. The knowledge seam asks it for `read` (`chainReadable`, `lib/knowledgeAccess.ts:90` — the ask route's exclusion set, the orchestrator, drawing, locate, share serving), and the bytes door asks it for `read` or `download` over the full chain on every visibility (`canServeContent`, `:297`; `app/api/storage/download-url/route.ts:59`). The plan's record-only half (`DOCACL-5` canServeContent) is subsumed: the bytes door no longer has a normal-visibility exemption.
+- **The database.** `20261212` (pending migration) makes `node_visible` refuse a normal row whose chain-resolved index carries a READ deny naming the caller (and binds role / team / org denies everywhere, `DACL-12`).
+Tests: `lib/__tests__/intelRoundGDocAcl.test.ts` "IEDGE-12 — the AI seam and the bytes door agree on the same document / principal pairs" (a matrix over the real seam and the real route, "…the matrix is not vacuous (both readable and refused pairs)"); `lib/__tests__/intelRoundGNodeVisibleDeny.test.ts` (the app-versus-database agreement matrix, pinned to a PostgreSQL 16 run).
+
+**Done-when.**
+1. ◐ One predicate in the app (`canReadNode`), used by `knowledgeAccess` and the download-url guard alike; `node_visible` is SQL and agrees with it on every deny and zero-rule case, but not on a normal row's allow-list (`DACL-1` criterion 1) — the matrix pins that residual.
+2. ✓ A normal-visibility document carrying an explicit read deny is refused by the AI seam, the bytes door, the library page and (once `20261212` is pasted) a direct PostgREST read and everything reading through it (`doc_is_visible`, the mirror and mention policies).
+3. ✓ A test proves the ask route's seam and the download endpoint agree on the same document / principal pairs.
+
+**Remaining / owner.** Criterion 1's database half is `DACL-1` criterion 1 (owner named there).
+
+**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`).
 
 ---

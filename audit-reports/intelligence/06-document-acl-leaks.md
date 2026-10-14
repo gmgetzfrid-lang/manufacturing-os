@@ -70,6 +70,20 @@
 
 **Remaining / owner.** As above: criterion 1 and the read-time half of 2, and criterion 3's document-move re-index. Owner: intelligence **I-12** (queued; it plans the `node_visible` re-creation for `DACL-12`). Its plan entry still lists "DEC-10 acl_index cache + nightly rebuild (DACL-1 closed on it)" as verified sound, which this re-verification contradicts for criterion 1, so the integrator adds `DACL-1` to I-12's findings.
 
+**Partial (2026-10-14, intelligence Round G).** Package I-12. Re-verified on base `700f1fc` (`node_visible` newest body `20261203_ao_roundG_team_members_org_rail.sql`, still opening a normal row before it reads `acl_index`). What landed:
+- **Read time (criterion 2's read-time half, for denies).** `20261212` (pending migration, below) re-creates `node_visible(text, jsonb, uuid, uuid, uuid, uuid)` from `20261203`: a `normal` row whose chain-resolved `acl_index` carries an explicit READ deny is judged — controller, effective owner, then the deny (naming the caller by uid, any held role, a team in the node's org, or the workspace); a caller the deny does not name keeps the row; a normal row with no read-deny list takes the old fast path with no table read. The index is the whole chain (DEC-10: rebuilt at the drawer's save, at a folder move, nightly — and now at a document move), so a READ deny on a folder or library reaches its normal children at the database. Exercised on a throwaway PostgreSQL 16 (the run is on `DACL-12`): before the paste an engineer read the five read-denied normal documents; after it, none of them; a controller and the effective owner unchanged.
+- **Criterion 3's document move.** `/api/documents/move` rebuilds the library's chain-resolved `acl_index` in the same request (`app/api/documents/move/route.ts:124`, `rebuildAclIndexes` with the library scope the drawer uses); a rebuild error is said in the response's `warning` and on the `DOCS_MOVED` audit row (the nightly rebuild stays the backstop). Tests: `lib/__tests__/intelRoundGDocAclFinish.test.ts` "DACL-1 criterion 3 — …" (the rebuild runs scoped to the library after the folder change; an error, and a throw, are said; a non-controller is refused before anything is written or rebuilt).
+- **The bytes door** of the failure scenario is `KACL-5`'s (the full chain, on every visibility).
+
+**Done-when.**
+1. ✗ for an ALLOW-LIST restriction (restrict a folder to team Engineering): its children stay readable at the database to members outside the list. ✓ for a READ DENY on the folder (once `20261212` is pasted). Not built by the plan's `DOCACL-2` default for this package ("app and DB agree on default-open for normal visibility") — see Remaining.
+2. ◐ `node_visible` still trusts the per-row index rather than walking the chain at read time (DEC-10's choice); the index is maintained by every writer named under criterion 3, and is now read for a normal row's read deny.
+3. ✓ `acl_index` is rebuilt when a folder's or library's ACL changes (drawer save), when a folder moves, and (new) when a document moves; `visibility` is not synced to children (`DOCACL-2`'s design residual).
+
+**Remaining / owner.** Criterion 1's allow-list half needs a ruling the plan's default does not give: whether a normal row's index allow-list binds at the database. If it does, `node_visible` must read the index's allow lists for a normal row — any action, as the private branch does (`DACL-12` criterion 2 is accepted by design), AND the `orgs` bucket, which `acl_subject_in_bucket` ignores (the library wizard's "Everyone" grant would otherwise lock every member out of every "Everyone" library) — and the risk to weigh is that the browser reads documents through RLS, so an index a cycle stale would hide a document a member opens today until the nightly rebuild. Owner: the integrator (a `DEC-90` ruling on `DOCACL-2`'s question), then a follow-up package to build it (proposed "I-12b NODE_VISIBLE ALLOW-LIST", which would also take the private-draft rule `KACL-7` names).
+
+**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (paste after `20261203`; narrows).
+
 ---
 
 <a id="dacl-2"></a>
@@ -164,6 +178,15 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 
 **Remaining / owner.** Criterion 3: public-surfaces **`VFY-16`** (OPEN, Assigned to intelligence **I-12**, queued), whose done-when 3 closes this criterion by pointer. The default it carries is this package's decision default: for a private or hidden document, answer the verdict without the number or title (fail-safe, less disclosure).
 
+**Partial (2026-10-14, intelligence Round G).** Package I-12. Criteria 1 and 2 hold as recorded. Criterion 3 closes by pointer through public-surfaces `VFY-16` done-when 3, and `VFY-16` is not yet RESOLVED: the shared rule (`lib/verifyDisclosure.ts` `verifyMayNameDocument`, `:18` — a document is named only when its row was read with `visibility` and that is normal or NULL) is applied on `/api/verify-package` and `/api/verify-hold`, but `/api/verify` itself is admin-and-org P12's file while P12 merges (this package's brief: do not edit it), so it still returns `docNumber` / `title` for a private or hidden document.
+
+**Done-when.**
+1. ✓ (as recorded).
+2. ✓ (as recorded).
+3. ✗ `/api/verify` — waits on `VFY-16`'s last limb.
+
+**Remaining / owner.** The `/api/verify` limb of `VFY-16`: the integrator wires it at the P12 merge (add `visibility` to the route's `documents` select; answer `docNumber: verifyMayNameDocument(d) ? … : null` and `title: verifyMayNameDocument(d) ? … : RESTRICTED_DOCUMENT_LABEL`, with a test on a private, a hidden and an unread visibility), then `VFY-16` and this criterion close by pointer. The "verify_tokens" alternative is `DACL-8` criterion 2 (owner named there).
+
 ---
 
 <a id="dacl-4"></a>
@@ -205,6 +228,19 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 **Partial (2026-10-13, intelligence Round G).** Package I-01 phase B, re-verified on base `596d34e`: unchanged since the record above. Criterion 1 holds. Criterion 2: `lib/shareServe.ts` still reads neither `documents.legal_hold` nor a hard acknowledgment gate (no `legal_hold`, `hardGate` or `assertAckGate` in the file), and the creator's re-check still rides the seam `KACL-12` describes. Criterion 3's database half waits on `20261080`, still a pending paste (`audit-reports/MIGRATION-PASTE-ORDER.md`, row 72).
 
 **Remaining / owner.** No running or queued package lists the two serve-time refusals: document-control P1 SHARE and P12 have merged, and no later document-control package takes share serving. Proposed owner: intelligence **I-12** (queued), for the integrator to assign. I-12 already owns this path's `KACL-12` limb (`shareStillAuthorized`, through the seam), and its plan names share serving among the seam's callers whose fail-closed shape it keeps. The direct-insert audit row goes with them. The tier and the 90-day ceiling at the database close when `20261080` is pasted (operator).
+
+**Partial (2026-10-14, intelligence Round G).** Package I-12: the two serve-time refusals and the seam limb the 2026-10-13 Partial named.
+- **Legal hold.** `resolveShareForServing` reads `documents.legal_hold` (with the document's folder and acknowledgment policy) apart from its main row read (`lib/shareServe.ts:187`): `legal_hold = true` refuses 423 `on_hold` (`:198`); a database without the column (42703 / PGRST204) serves exactly as before; any other read error refuses as held (fail closed, as the `document_holds` gate above it does).
+- **Hard acknowledgment gate.** A share whose CREATOR has a pending acknowledgment of the document under an effective policy (document > folder > library — `lib/acknowledgments` `resolveEffectiveAckPolicy`'s rule) that is enabled with `hardGate` refuses 410, recorded as `acknowledgment_outstanding` (`:212`; `creatorAckGate`, `:346`): a link never lets out a copy its creator could not download. An unreadable gate refuses (closed).
+- **The seam.** The creator's live re-check (`shareStillAuthorized`, through `readableControlledDocIds`) now fails closed on its own reads (`KACL-12`, RESOLVED).
+Tests: `lib/__tests__/shareRoutes.test.ts` "DACL-4 (intelligence I-12): a document under a LEGAL hold refuses (423 on_hold); a creator held by an outstanding HARD acknowledgment gate refuses (410 …); an unreadable gate refuses; a soft policy, or none, serves …"; `holds.test.ts` updated.
+
+**Done-when.**
+1. ✓ (as recorded).
+2. ✓ The sharer's live ACL at fetch time (through a seam that fails closed), the documents-row legal hold, the `document_holds` gate and the creator's hard acknowledgment gate.
+3. ◐ Unchanged: holds through `createShareLink` and the UI; the database half (the minting tier and the 90-day ceiling) closes when `20261080` is pasted (operator); a direct PostgREST insert by a minting-tier member still writes no `SHARE_LINK_CREATED` row.
+
+**Remaining / owner.** Criterion 3: the `20261080` paste (operator, `MIGRATION-PASTE-ORDER.md` row 72), and the direct-insert audit row (a trigger on `document_shares`, with `createShareLink` no longer writing its own row, or an equivalent) — not built here: it needs a migration and `lib/documentShares.ts`, neither this package's. Owner: the integrator to route (proposed: document-control's share remainders beside `SHR-14`).
 
 ---
 
@@ -304,6 +340,15 @@ lib/acl.ts:170 — `if (!chain.some(Boolean)) return null;` ; lib/permissions.ts
 - [ ] A user whose ACL evaluation returns false sees an explicit 'restricted — request access' state instead of an empty list
 - [ ] The DB and the app return the SAME answer for the same (visibility, rules, principal) triple; a shared fixture test asserts app-layer `canWithAclChain` and SQL `node_visible` agree on a matrix of cases
 
+**Partial (2026-10-14, intelligence Round G).** Package I-12. Reproduced on base `700f1fc`: a library ACL of `{inherit: true, visibility: "normal", rules: []}` blanked both explorer filters and the AI seam for every non-controller. `lib/acl.ts` `aclSaysSomething` (`:187`): a node with no rules and normal (or unset) visibility says nothing, and `evaluateAclChain` (`:197`) answers "no decision" for a chain made only of such nodes, so the caller's default applies — the database's own answer (`buildAclIndexFromRules` writes no index for zero rules; `node_visible` opens a normal row). Any rule, or a hidden / private node, makes the node count, and then the whole chain is evaluated exactly as before (a "Restrict" with no grants stays controllers-only). The Permissions drawer is not edited (admin-and-org P7's). On the library page, a folder whose every item the access rules keep from the reader says "Restricted" with how to request access (`app/(protected)/documents/[libraryId]/page.tsx:3189` counts them; the state at `:4154`), never "Nothing here yet". The shared fixture matrix (`lib/__tests__/intelRoundGNodeVisibleDeny.test.ts`, "the agreement matrix — app (canReadNode) vs 20261212's node_visible") judges 22 (visibility, rules, principal) cases with the app and with a line-for-line port of the new SQL body, the port pinned to what the SQL returned on a throwaway PostgreSQL 16 (`DACL-12`'s run). Tests: `lib/__tests__/intelRoundGDocAcl.test.ts` "DACL-6 — …" ("reproduction → fix: the library page's two filters and the AI seam answer as with no ACL", "what still counts: any rule, or a hidden / private node …") and "DACL-10 done-when 2 + 3 / DACL-6 done-when 2: …".
+
+**Done-when.**
+1. ✓ An ACL with zero rules (and normal visibility) is treated as no ACL.
+2. ✓ The explicit "Restricted — request access" state (and "You don't have access to this library" for a library the reader may not read).
+3. ◐ The app and the database agree on every deny case and on the zero-rule cases; they do not agree on four named residuals the matrix pins — a normal row's allow-list (`DACL-1` criterion 1), a private / hidden row listed for any allowed action (`DACL-12` criterion 2, accepted by design), and a discover deny on a private row (an under-disclosure, never a grant). The matrix runs a port in the suite; the SQL itself ran on PostgreSQL 16 outside it (the suite has no database).
+
+**Remaining / owner.** Criterion 3's normal allow-list residual is `DACL-1` criterion 1 (owner named there); a database-backed test in the suite is the same remainder as `IRLS-9` criterion 3 (owner named there).
+
 ---
 
 <a id="dacl-7"></a>
@@ -400,6 +445,18 @@ app/api/verify/route.ts:5-10 asserts the threat model — `UNAUTHENTICATED by de
 
 **Remaining / owner.** Criterion 1 is public-surfaces **`VFY-16`** (OPEN, Assigned to intelligence **I-12**, queued), with this package's decision default: for a private or hidden document, answer the verdict without the number or title (fail-safe, less disclosure). Criteria 2 and 3: *corrected at the third review fix pass,* they first said they "need a ruling". Under DEC-90 they take a stated fail-safe default instead, and nothing waits on a ruling. **Default:** `DEC-65` §2 (a version-keyed sheet QR; a legacy QR never green) does NOT stand in for a per-print token, so criteria 2 and 3 stay ◐ as written, and I-12 builds them beside `VFY-16` to the less-disclosing reading: (2) a sheet QR keyed to a per-print id recorded at stamping, as a pack's `?print=` is; (3) a cover QR without `?print=` answers the verdict without the live membership's numbers and titles. Fail-safe because it discloses less and ticks nothing by decision alone (DEC-90's rationale, `DEC-29`). *Ratification note for the integrator (not blocking: I-12 can start on the default):* the other reading, that `DEC-65` §2 suffices once `VFY-16` withholds a private or hidden document's title, would close criteria 2 and 3 on `VFY-16` alone, with an amendment of their wording. Owner: I-12, beside `VFY-16`.
 
+**Partial (2026-10-14, intelligence Round G).** Package I-12, on the defaults the 2026-10-13 Partial recorded (`DEC-90`: less disclosure).
+- **Criterion 1** (`VFY-16`): `lib/verifyDisclosure.ts` `verifyMayNameDocument` (`:18`) — a public verify answer names a document only when its row was read WITH `visibility` and that is normal or NULL; private, hidden, any other value, or a row read without the column is "Restricted document". Applied on `/api/verify-package` (each sheet's label, the printed label included, and every off-paper sheet — `app/api/verify-package/route.ts:244`) and `/api/verify-hold` (`app/api/verify-hold/route.ts:124`); the verdicts are unchanged. Not on `/api/verify`: admin-and-org P12's file while P12 merges (do not edit).
+- **Criterion 3**: a work-pack cover QR WITHOUT a print id names each sheet only by its place in the list ("Sheet 1", "Sheet 2" — `legacyCoverSheetLabel`, `lib/verifyDisclosure.ts:31`, used at `verify-package/route.ts:268`), never by the live membership's number or title; its verdict and per-sheet state are unchanged (it is never green, `DEC-65` §2). A cover QR that names its print still names every printed sheet.
+Tests: `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-16 (intelligence I-12) — …" and "DACL-8 criterion 3 (intelligence I-12) — a cover QR without a print id answers the verdict without the live membership's numbers or titles" (the reproduction and the print-keyed regression); `lib/__tests__/verifyHold.test.ts` "VFY-16 (intelligence I-12) — …".
+
+**Done-when.**
+1. ◐ Two of the three routes (above); `/api/verify` waits on the P12 merge.
+2. ✗ Not built: a sheet QR keyed to a per-print id recorded at stamping needs a print-record table, the stamping code and `/api/verify` (P12's file this round).
+3. ✓ With `?print=` the answer is exactly the printed sheets; without it, the verdict is answered without the live membership's numbers and titles.
+
+**Remaining / owner.** Criterion 1's `/api/verify` limb: the integrator at the P12 merge (the exact change is on `DACL-3`). Criterion 2: a new package the integrator queues under DEC-31 (proposed: public-surfaces "per-print sheet token" — a migration, the stamping path and `/api/verify`), on the less-disclosing default recorded above.
+
 ---
 
 <a id="dacl-9"></a>
@@ -430,6 +487,15 @@ app/(protected)/documents/[libraryId]/page.tsx:1673-1678 — `if (folder?.pathId
 - [ ] buildDocChain no longer double-pushes library.acl
 - [ ] A test covers 'hidden ancestor, visible descendant' and asserts the descendant is NOT shown
 
+**Partial (2026-10-14, intelligence Round G).** Package I-12. Reproduced on base `700f1fc`: with a private folder A (granted to a team the reader is not in) above a normal folder B, the browser received B alone, the truncated chain was empty, and B and its documents were listed. `lib/libraryAccess.ts` `folderAclChain` / `docAclChain` (`:103`, `:123`) push the library's ACL once and report whether the folder ancestry was resolved in full; when it was not, `explorerFolderVisible` / `explorerDocReadable` (`:153`, `:174`) decide on the row's chain-resolved `acl_index` (`lib/permissions.ts` `canReadViaIndex`, `:254` — built by the server from the WHOLE chain, DEC-10) instead of the truncated chain. The library page asks them (`app/(protected)/documents/[libraryId]/page.tsx:1880`, `:1900`), and its own `buildDocChain` no longer pushes the library's ACL twice. Tests: `lib/__tests__/intelRoundGDocAcl.test.ts` "DACL-9 / DACL-10 — …" ("reproduction → fix: 'hidden ancestor, visible descendant' — the descendant folder and its document are NOT shown …", "a complete chain is evaluated exactly as before …", "DACL-9 done-when 2: the document chain carries the library's ACL once"), and "DACL-9 helper — canReadViaIndex …".
+
+**Done-when.**
+1. ◐ A row under an unresolved ancestor is decided on the server's whole-chain index. A row with NO index under an unresolved ancestor keeps today's evaluation of what was received (no new lock-out: an un-indexed legacy row under a hidden folder the reader IS granted — the explorer hides hidden folders from non-controllers client-side — would otherwise vanish until the nightly rebuild). Such a row exists only before its first rebuild, or when the whole chain has no rule — a private / hidden ancestor with zero grants, whose children the database also returns (`DACL-1` criterion 1).
+2. ✓ `buildDocChain` pushes the library's ACL once.
+3. ✓ "hidden ancestor, visible descendant" is tested and the descendant is not shown.
+
+**Remaining / owner.** Criterion 1's no-index edge disappears when the database enforces the chain (this criterion's own first option) — `DACL-1` criterion 1 (owner named there).
+
 ---
 
 <a id="dacl-10"></a>
@@ -459,6 +525,36 @@ app/(protected)/documents/page.tsx:165 — `const visible = isController ? libs 
 - [ ] Either read_access/visible_to are retired in favour of libraries.acl (one model), or the detail page enforces the same predicate the home page uses AND a RESTRICTIVE RLS policy enforces it on `libraries`
 - [ ] A user without library read access lands on an explicit 'you don't have access to this library' page, not a populated one
 - [ ] No screen re-implements a library read check locally
+
+**Partial (2026-10-14, intelligence Round G).** Package I-12. Reproduced on base `700f1fc`: the documents home hid a library by its legacy read list (`computeCanRead`, on that one screen) and the library page applied nothing, so a direct URL rendered the library — and, for a legacy row whose read list is restricted while its ACL is empty, every document in it.
+- **One check.** The home page's rule moved to `lib/libraryAccess.ts` `libraryReadsByRole` (`:44`, unchanged) and the library page asks it too (`app/(protected)/documents/[libraryId]/page.tsx:3185`; SESS-6: no role known reads nothing by role).
+- **The contents follow it.** The library page evaluates its folders and documents under `effectiveLibraryAcl` (`:82`, used at page `:1822`): the library's ACL, or — for a legacy row whose ACL says nothing while its read list is restricted — the ACL that list stands for (an allow of discover / read / download to each listed role; a list naming NO role stands for a private rung with no grant, `legacyLibraryAcl` `:67` — continuation fix: a zero-rule rung said nothing and left the contents open). A grant deeper in the tree still merges in.
+- **The page says so.** A reader with no library access sees "You don't have access to this library" (page `:4154`).
+Tests: `lib/__tests__/intelRoundGDocAcl.test.ts` "DACL-10: a legacy library whose ACL says nothing while its read list is restricted …" and "DACL-10 done-when 2 + 3 / DACL-6 done-when 2: …"; `lib/__tests__/intelRoundGDocAclFinish.test.ts` "DACL-10 — a legacy library whose read list names no role binds its contents"; `sessSixRoleNull.test.ts` (both pages' guard).
+
+**Done-when.**
+1. ◐ The library page enforces the home page's predicate; **no RESTRICTIVE policy on `libraries`** — BLOCKED per DEC-30 (the plan's default: "lands only after the inventory shows no member newly loses a library they use"), and read_access / visible_to are not retired as enforcement (the wizard / console half is admin-and-org P8's). The blocking facts: a RESTRICTIVE policy through `node_visible` would OPEN every legacy restricted library whose ACL says nothing (a normal row with no index is open there) while hiding a library ROW from a member who reads documents in it through a deeper grant (every page that joins `libraries` would then lose it). The inventory to run before any such policy (read-only, counts only; paste into the SQL editor):
+
+```sql
+SELECT 'libraries whose read list is restricted (read_access is not "ALL")' AS check, COUNT(*)::text AS n
+  FROM libraries WHERE read_access IS NOT NULL AND read_access <> '"ALL"'::jsonb
+UNION ALL
+SELECT 'of those, libraries whose ACL says nothing (no rule, normal visibility) — a policy through node_visible would open them', COUNT(*)::text
+  FROM libraries WHERE read_access IS NOT NULL AND read_access <> '"ALL"'::jsonb
+   AND COALESCE(jsonb_array_length(CASE WHEN jsonb_typeof(acl->'rules') = 'array' THEN acl->'rules' END), 0) = 0
+   AND COALESCE(visibility, 'normal') = 'normal'
+UNION ALL
+SELECT 'libraries of private / hidden visibility (a policy would hide each from every member it grants nothing)', COUNT(*)::text
+  FROM libraries WHERE visibility IN ('private', 'hidden')
+UNION ALL
+SELECT 'active non-controller members', COUNT(*)::text
+  FROM org_members WHERE status = 'active'
+   AND NOT (role IN ('Admin', 'DocCtrl') OR COALESCE(roles, '{}'::text[]) && ARRAY['Admin', 'DocCtrl']::text[]);
+```
+2. ✓ "You don't have access to this library", not a populated page.
+3. ✓ No screen re-implements a library read check: both pages ask `lib/libraryAccess.ts` (the admin library screens edit the columns; they do not decide reads).
+
+**Remaining / owner.** Criterion 1's database half: the integrator runs the inventory above (operator) and rules under DEC-90 between (a) retiring read_access / visible_to into `libraries.acl` (admin-and-org P8's wizard half writes the ACL already) and (b) a RESTRICTIVE policy, which needs the library row to stay visible to a member granted deeper in its tree; then a follow-up package builds it (proposed with "I-12b", `DACL-1`).
 
 ---
 
@@ -530,5 +626,16 @@ The impact panel (`lib/impact.ts`), revision fanout (`lib/revisionImpact.ts`) an
 - [ ] node_visible evaluates deny for user, role AND team subjects before any allow
 - [ ] The allow test is per-action ('read' or 'discover' as appropriate), not bool_or across every action list
 - [ ] A SQL-level test matrix mirrors lib/__tests__/acl.test.ts so the two engines are proven to agree
+
+**Partial (2026-10-14, intelligence Round G).** Package I-12. Reproduced on a throwaway PostgreSQL 16 carrying `20261203`'s `node_visible` (verbatim), `20260708`'s `acl_subject_in_bucket`, `20260814`'s `is_org_controller`, `20261037`'s 3-arg wrapper and the RESTRICTIVE `documents_acl_select` / `collections_acl_select` (6-arg call); the owner cascade stubbed to its document-owner arm. Before the paste, an engineer (Engineer + Viewer, in team c1 of the org, and in a team of another org) read the private rows denied to their secondary role (case 2), to their team (case 3, the finding's scenario) and to the workspace (case 4), and the five read-denied normal rows. `20261212` (pending migration) re-creates `node_visible/6` from its newest definition (`20261203`, found by scanning; a lineDiff test pins exactly the lines that changed): the deny of read — and, on a private / hidden row, of discover — names the caller by uid, by ANY held role, by each of their teams in the node's org, and by the workspace, BEFORE any allow is read; a normal row whose index carries a read deny is judged too (`IEDGE-12`); the normal fast path reads no table. After the paste (applied as the user will paste it, and a second time): the engineer reads exactly cases 1, 7, 8, 9, 11, 16, 17, 21, 22, 23 — the app's answer on every case except the four named residuals; the controller (DocCtrl held additively) reads every row; a stranger none; the team of another org binds nothing (ORG-13 kept); six probes true on both applies; the inventory reported 6 / 6 / 8 / 8 / 2 on the fixture. `EXECUTE` is deliberately left as it is (`20261203`'s recorded exception to DRLS-16: a policy written for every role calls it); `SET search_path = public` is kept on both arities. Tests: `lib/__tests__/intelRoundGNodeVisibleDeny.test.ts` (the DEC-30 one-paste shape; the lineDiff against the newest earlier definition; the branch order; a tripwire that the newest `node_visible/6` in the folder keeps the every-subject deny; the 22-case agreement matrix, each case pinned to the PostgreSQL 16 result).
+
+**Done-when.**
+1. ✓ `node_visible` evaluates deny for user, role (every held role), team and workspace subjects before any allow (once `20261212` is pasted).
+2. Not built — accepted by design: the plan records this half closed on roles-and-permissions `DOCACL-5` (row visibility stays coarse: RLS answers "may this row be listed", which the app grants on discover OR read; read-vs-discover stays in the app layer, where `canReadNode` asks `read`).
+3. ◐ The agreement matrix mirrors the app engine on 22 cases and pins the four residuals; it runs a port in the suite, and the SQL itself ran on PostgreSQL 16 outside it — the suite has no database.
+
+**Remaining / owner.** Criterion 3's database-backed test: the same remainder as `IRLS-9` criterion 3 (owner named there).
+
+**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` — paste after `20261203` (it carries that file's org-scoped team lookup); independent of every other pending file; narrows (a member a deny names stops seeing a row the UI already hid from them; no one else changes); the app works before and after (the function's signature and grants are unchanged — no 42883 / PGRST202 path); re-running is safe. Rollback: re-paste `20261203`'s section 3.
 
 ---

@@ -96,7 +96,7 @@ The four items are met for what a row records, its citations. It stays OPEN on w
 ## KACL-2 · The orchestrator reads every indexed document in the org with no ACL check at all — its own file header says this is a data leak
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (closes by pointer once `KACL-12` is RESOLVED with every done-when and its cases flipped) — by the integrator, 2026-10-13 (I-01B merge, DEC-31; fleet plan `audit-reports/fleet-plans/intelligence.json`)
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/orchestrator/route.ts:40-66`, `lib/orchestrator/tools.ts:1-19`, `lib/orchestrator/tools.ts:85-116`, `lib/orchestrator/tools.ts:119-168`, `supabase/migrations/20260929_mention_engine.sql:99-131`
@@ -137,6 +137,16 @@ tools.ts:97-101 — `.eq("org_id", ctx.orgId)\n      // PILLAR A. `ai_excluded` 
 
 **Remaining / owner.** As above: closes by pointer when `KACL-12` is RESOLVED with every done-when and those cases are flipped to `it`. Owner: intelligence **I-12** (queued; `KACL-12` and `IEDGE-2` are on its findings list).
 
+**Resolution (2026-10-14, intelligence Round G).** Closed by pointer, as both Remaining blocks required: [`KACL-12`](#kacl-12) is RESOLVED below with every one of its six done-when, and its four cases in `lib/__tests__/intelRoundGRecords.test.ts` are flipped from `it.fails` to `it` and pass (describe "KACL-12 (owner I-12): the seam's own reads fail CLOSED — flipped from it.fails to it by intelligence I-12 (2026-10-14)"). Package I-12, re-verified on its branch (base `700f1fc`). Criterion 2's open limb: `loadDcLandscape` now throws `DcLandscapeUnreadableError` on any `libraries` / `collections` / `teams` read error (`lib/knowledgeAccess.ts:133-157`, `readAllPages`), `readableControlledDocIds` lets it propagate, and the tools' own catch (`readableIds`, `lib/orchestrator/tools.ts:121`; `unreadableMirrors`, `:145`) then drops every controlled result; `loadPrincipal` answers no principal for a non-controller whose `team_members` read fails (`lib/knowledgeAccess.ts:60`), which both routes refuse (403). A document or folder whose library or folder rung is absent from the landscape is unreadable (`folderChain` `:261`, `documentContainerChain` `:344`). Criterion 4: "NOTHING WIDENS ACCESS" (`tools.ts:9-12`) now holds inside the seam too.
+
+**Done-when.**
+1. ✓ Unchanged since the 2026-09-30 Partial (`ToolContext.principal`, the 403 on a null principal).
+2. ✓ Both tools drop every candidate the caller cannot read and fail closed when the seam throws, when the mirror hop errors, when the seam's own `documents` read errors, AND (new) when a `libraries`, `collections`, `teams` or `team_members` read inside the seam errors — the KACL-12 cases, now `it`.
+3. ✓ Unchanged (`intelRoundGRecords.test.ts` "KACL-2 … Done-when 2 and 3").
+4. ✓ `tools.ts:9-12` is true end to end; `route.ts:6-10` claims governance parity (the verifier's reading) and the ACL rides the same seam as the ask route.
+
+**Scope / residual.** None for this finding. Beside it (not a criterion here): the tools' mirror hop and the mention tool now also ask the AI boundary at query time (`KACL-9` / `KACL-10`).
+
 ---
 
 <a id="kacl-3"></a>
@@ -144,7 +154,7 @@ tools.ts:97-101 — `.eq("org_id", ctx.orgId)\n      // PILLAR A. `ai_excluded` 
 ## KACL-3 · A HIDDEN document is treated MORE permissively than a normal one: 'discover' alone makes its full text AI-readable
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeAccess.ts:54-78`, `lib/acl.ts:139-154`, `lib/acl.ts:207-214`, `lib/permissions.ts:108-132`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the inversion is actually wider than claimed: the `visibility` argument is the document's own column while `decision.visibility` comes from the merged chain, so a doc with visibility='hidden' but a chain whose acl.visibility is 'normal' hits lib/acl.ts:142-153, where `upload`, `editMetadata` or `publish` alone also satisfy isDiscoverable() and unlock full text.
@@ -166,6 +176,15 @@ lib/knowledgeAccess.ts:54-57 — the doc comment states the opposite of the code
 - [ ] chainReadable's hidden branch requires read: `if (visibility === "hidden") return decision.can("read");` — or reuses canBlindDrill's both-of semantics
 - [ ] A unit test in lib/__tests__ covers: hidden doc + discover-only grant ⇒ NOT in readableControlledDocIds; hidden doc + discover+read ⇒ in it
 - [ ] The same hidden-branch logic is checked in every caller of chainReadable (containerReadable at knowledgeAccess.ts:138-152 has the identical construct)
+
+**Resolution (2026-10-14, intelligence Round G).** Package I-12. Reproduced on base `700f1fc`: a hidden document with a discover-only grant was in `readableControlledDocIds` (the `|| decision.isDiscoverable()` arm). `chainReadable` (`lib/knowledgeAccess.ts:90`, now exported) asks `lib/permissions.ts` `canReadNode` (`:219`) for `read` — the one read predicate the bytes door also asks (`IEDGE-12`): a controller and the effective owner read; wherever the chain says something, `read` must be granted and an explicit deny of it wins; a discover-only grant is never a read, on any visibility. That also closes the verifier's latent divergence (a hidden column under a normal merged chain): an `upload` / `editMetadata` grant is not a read either. `containerReadable` (`:277`) goes through the same function. Tests (`lib/__tests__/intelRoundGDocAcl.test.ts`, "KACL-3 — …"): "reproduction → fix: a hidden document with a discover-only grant is NOT in readableControlledDocIds; discover + read is", "…and an inherited discover-only grant on a hidden FOLDER is not a read of the document inside it", "the latent divergence …: a bare upload / editMetadata grant is not a read either", "containerReadable has the same construct fixed …", and the regression "a controller and the effective owner still read a hidden document with no grant".
+
+**Done-when.**
+1. ✓ The hidden branch requires `read` (`canReadNode` asks `["read"]`; `isDiscoverable` is no longer consulted).
+2. ✓ Unit tests: hidden + discover-only ⇒ not readable; hidden + discover + read ⇒ readable.
+3. ✓ `containerReadable` uses the same `chainReadable`, tested.
+
+**Scope / residual.** None. The library explorer's folder LISTING keeps `canDiscover` (a discover grant lists a folder by design — blind drilling); only content reads ask `read`.
 
 ---
 
@@ -256,6 +275,16 @@ download-url/route.ts:76-88 — `const allowed = canDiscover({ principal: {…},
 - [ ] It evaluates the full library → folder lineage → document chain (reuse lib/knowledgeAccess.folderChain / readableControlledDocIds rather than a second implementation) and requires read (and download where the action implies bytes), not discover
 - [ ] The catch block fails CLOSED for documents that resolve to a record, and only fails open for keys with no document behind them
 - [ ] knowledge_documents.file_key is no longer exposed to the browser for source-linked mirrors (either column-level RLS or the ask/locate routes become the only source of fileKey)
+
+**Partial (2026-10-14, intelligence Round G).** Package I-12, after document-control P2 EGRESS merged (its clamp / no-store / 400 edits are kept). Reproduced on base `700f1fc`: an allow-list on a normal document's folder served the bytes to a member outside it (the guard ran for private / hidden only, on the document's own ACL), and a revision's native-source key resolved no record and was served on membership alone. `app/api/storage/download-url/route.ts` now resolves every org key to EVERY document naming it — as a revision's `file_url` or its `source_file_key` (`documentsNamingKey`, `:34`; two exact-equality reads, never a `.or()` string) — and serves only when the caller may read one of them: `canServeContent` (`lib/permissions.ts:297`, which is `canReadNode` asking `read` or `download`) over the FULL library → folder lineage → document chain (`loadContainerAclChain`, `lib/docFileServer.ts`), on every visibility (`documentKeyGate`, `:59`). DEC-43's bypass record (written only when the controller tier alone served a restricted node and the ownership cascade would not have) and DEC-7's ownership cascade are kept, then the explicit download deny (`lib/downloadDeny.ts`) binds everyone. A lookup that cannot be made answers 503 (`:173`), a chain whose rung does not exist answers 409 naming it (`:96`); only a key with no document behind it keeps the membership check. Tests (`lib/__tests__/intelRoundGDocAcl.test.ts`, "KACL-5 — …": the folder allow-list refusal, a library-level deny, discover ≠ read, a download grant serves, a normal document with no ACL anywhere serves (regression), DEC-43 kept, DEC-7 kept, the native-source key, 503 closed / 200 for a key with no record); `docFileServer.test.ts`, `downloadDeny.test.ts` and `shareRoutes.test.ts` updated to the one predicate. The ACL drawer snapshot row (`components/permissions/PermissionsExplorer.tsx`, "Download / print") states the new rule (`auditExplorerSnapshot.test.ts`).
+
+**Done-when.**
+1. ✓ The guard runs for every org-prefixed key that resolves to a document, on every visibility.
+2. ✓ The full chain, through the one predicate, asking `read` or `download` — never `discover`.
+3. ✓ Fails CLOSED (503 / 409) for a key behind a record; open (membership) only for a key with no document behind it.
+4. ✗ Not done: `knowledge_documents.file_key` is still returned to the browser for source-linked mirrors (`lib/knowledge.ts` `listKnowledgeDocuments`, `select("*")`; the viewer opens a cited page with it). The key alone no longer yields bytes (criteria 1–3), and since `20261120` a mirror row reaches only readers of its controlled document's row (`KACL-7`).
+
+**Remaining / owner.** Criterion 4 — moving the mirror's `file_key` off the browser (a server route that resolves a cited page for a mirror, or a column the browser cannot select) touches `lib/knowledge.ts`, the knowledge library page and `CitedPageViewer`, none of them this package's files. Owner: the integrator to route (proposed: an intelligence knowledge-viewer follow-up, with `KACL-7` criterion 3, which is the same remainder).
 
 ---
 
@@ -349,6 +378,17 @@ What landed: the library page says it where files are added (controllers): "PDFs
 
 **Scope / residual.** Stays OPEN on two dependencies: I-12 (allow-list ACLs, role / team denies and the private-draft rule inside `node_visible`) and the `file_key` residual (`KACL-5`, the bytes door). The mirror is exactly as visible as the controlled document's own ROW at the database. Restrictions the app enforces on a normal-visibility row — an allow-list ACL, a role / team deny (`DACL-6` / `DACL-12`), a private draft's creator-only rule — are enforced by the app and the history route but not by this policy; they tighten here automatically when I-12 brings them into `node_visible`, because the clause reads through the documents RLS rather than beside it.
 
+**Partial (2026-10-14, intelligence Round G).** Package I-12. `20261212` (pending migration, below) brings one of the three rules the 2026-09-30 Partial named into `node_visible`: an explicit READ deny — naming the caller by uid, by any held role, by a team in the node's org or by the workspace — now binds on a `normal`-visibility row whose chain-resolved `acl_index` carries it (and a role / team / org deny of read or discover binds on a private / hidden row, `DACL-12`). Because `20261120`'s `knowledge_documents_select` reads through the documents RLS, a mirror of such a document is hidden from the member the deny names, with no change to this table's policy. Verified on a throwaway PostgreSQL 16 for the documents rows (`DACL-12`'s run); the mirror hop is the positive `EXISTS` that run of `20261120` already exercised.
+
+**Done-when.**
+1. Partly — ✓ for a role / team / user / workspace READ deny on a normal row (once `20261212` is pasted). ✗ An allow-list on a normal row (the app's "the chain says something, so read must be granted") is not mirrored at the database (`DACL-1` criterion 1 — the plan's `DOCACL-2` default keeps a normal row open to anyone its index does not deny), and a private draft's creator-only rule (`is_private` / `scope`) is not an argument of `node_visible`.
+2. Partly — the same split as 1.
+3. ✗ Not done — the same remainder as `KACL-5` criterion 4.
+
+**Remaining / owner.** Criteria 1–2's allow-list half: `DACL-1` criterion 1 (owner named there). The private-draft rule: a `node_visible` signature change (the documents policy would pass `is_private`, `scope`, `created_by`) — owner: the integrator to route, with `DACL-1` criterion 1. Criterion 3: with `KACL-5` criterion 4 (owner named there).
+
+**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (paste after `20261203`).
+
 ---
 
 <a id="kacl-8"></a>
@@ -399,7 +439,7 @@ Tests: `askRouteAcl.test.ts` "KACL-8 / ASK-8 — legend sheets pass the asker's 
 ## KACL-9 · There is no is_indexed gatekeeper — the column does not exist; the boundary is documents.ai_excluded, and the ask route's comment misnames it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (done-when 3: `aiReadability` at the orchestrator's tools, the link proposer and drawing / locate, a test per door) — by the integrator, 2026-10-02 (at the I-03 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/aiBoundary.ts:21-60`, `lib/schemaExpectations.ts:121`, `supabase/migrations/20260807_link_proposals.sql:159-161`, `app/api/knowledge/ask/route.ts:400-411`
@@ -432,6 +472,21 @@ lib/aiBoundary.ts:10-16 — "The four reasons a controlled document is NOT AI-re
 
 **Scope / residual.** OPEN on done-when 3 (the other doors' owners).
 
+**Resolution (2026-10-14, intelligence Round G).** Package I-12: criterion 3, the doors the 2026-10-01 Partial left. `lib/aiBoundaryServer.ts` `aiReadableControlledIds` (`:23`) runs `lib/aiBoundary` `aiReadability` over the documents as they are NOW (held back, not current — `NOT_CURRENT_STATUSES` or archived — no current file), org-scoped, in slices of 100, failing closed (a failed read admits none). Every AI door asks that one function:
+- the ask route (I-03's, `aiReadability` inline), the knowledge sync and `/api/flows/browse` (`aiReadability`) — unchanged;
+- the orchestrator's mirror hop (`unreadableMirrors`, `lib/orchestrator/tools.ts:145` — `search_documents`, `equipment_mentions`, `trace_pid_lines`) and the mention tool's direct `document_id` (`contentReadableIds`, `:179`), through `aiReadableControlledIds` — replacing a held-back list capped at 2000 documents / 4000 mirrors whose failed read excluded nothing;
+- `find_documents` (`:199`, the filter at `:232`) and the link proposer (`lib/linkProposerServer.ts:378`), through `aiReadability`: these doors work on a document's IDENTITY, not its text, so the reason that binds is `held_back` (a superseded document is still found and named with its status, as before; the proposer keeps its query pre-filter so its read cap counts only usable documents);
+- `/api/knowledge/drawing` (`:175`) and `/api/knowledge/locate` (`:174`, `:271`), through `aiReadableControlledIds`;
+- the orchestrator's show-me chips (`app/api/orchestrator/route.ts`): a chip that opens a knowledge mirror through `aiReadableControlledIds`, failing closed; a chip that names a controlled document through `aiReadability`'s held-back reason.
+Tests, one per door: `lib/__tests__/intelRoundGDocAcl.test.ts` "KACL-9 / KACL-10 — …" ("aiReadableControlledIds is lib/aiBoundary aiReadability over the documents as they are now; a failed read admits none", "orchestrator search_documents: a mirror of a held-back or superseded document gives no passage …", "orchestrator equipment_mentions: the proving sentence of a held-back document … is not read back", and "every door that reads mirrors for a model asks the boundary (source pins …)"); `lib/__tests__/intelRoundGDocAclFinish.test.ts` "KACL-9 done-when 3 — …" (find_documents, the show-me chips, the link proposer, and `aiReadability`'s reason order); `sweepRoundC.test.ts` (the chips' pin).
+
+**Done-when.**
+1. ✓ (2026-10-01.)
+2. ✓ (2026-10-01.)
+3. ✓ `aiReadability` is the one function every AI door calls, directly or through `aiReadableControlledIds`, with a test per door.
+
+**Scope / residual.** What it does not change: each door decides which of the function's named reasons bind it (identity doors bind `held_back`; content doors bind all four), and that choice is written at each door. The held-back READS of `/api/flows/browse` and `/api/area/knowledge-status` still ignore a read error before they call `aiReadability` (a picker / count could then show a held-back document as AI-readable; the content doors re-check at query time) — not a criterion here; owner: the integrator to route with `KACL-10`'s neighbours (proposed: I-09's flows follow-up).
+
 ---
 
 <a id="kacl-10"></a>
@@ -439,7 +494,7 @@ lib/aiBoundary.ts:10-16 — "The four reasons a controlled document is NOT AI-re
 ## KACL-10 · ai_excluded is enforced nowhere in the retrieval path — only at sync and at flip-time purge, which race each other
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (the sync race, the sync's fail-open read, the drawing / locate doors) — by the integrator, 2026-10-02 (at the I-03 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/exclusion/route.ts:59-102`, `lib/knowledgeSourceSync.ts:103-115`, `lib/knowledgeSourceSync.ts:159-171`, `app/api/knowledge/ask/route.ts:400-435`, `lib/aiBoundary.ts:52-60`
@@ -476,6 +531,19 @@ Tests: `askRouteAcl.test.ts` "KACL-10 — the AI boundary holds at query time, w
 
 **Scope / residual.** OPEN on the sync race, the sync's fail-open read, and the drawing / locate doors.
 
+**Resolution (2026-10-14, intelligence Round G).** Package I-12: the three remainders the 2026-10-01 Partial named.
+- **drawing / locate at query time.** `/api/knowledge/drawing` folds `aiReadableControlledIds` into its mirror filter beside the caller's read set (`app/api/knowledge/drawing/route.ts:175`); `/api/knowledge/locate` refuses a sheet whose document the AI may not read now (409, `:174`) and drops such mirrors from its candidate pages (`:271`). A failed boundary read fails closed (`KACL-9`).
+- **The race.** `syncKnowledgeLibrarySources` re-reads the flag AFTER every insert and refresh and removes any mirror of a document now held back (`lib/knowledgeSourceSync.ts:350`). The exclusion route writes the flag and then purges; the sync inserts and then re-reads. Either the re-read sees the flag, or the flag was written after it — and then the route's purge, which follows its flag write, runs after the insert and removes the row. A failed re-read leaves the library unsettled for the next pass (and every content door judges the document at query time).
+- **The fail-open read.** The held-back read pages by id and an error FAILS CLOSED for the pass — nothing added, refreshed or removed, said in `errors` (`:148`, `:158`); only a missing column (a database from before the feature) reads as "nothing excluded".
+Tests (`lib/__tests__/intelRoundGDocAcl.test.ts`, "KACL-10 — …"): "regression: a whole pass mirrors the current PDF", "done-when 3: an errored ai_excluded read skips the pass …", "…but a database without the column (42703) mirrors as before …", "done-when 2: a document held back WHILE the pass runs (after its first read) never keeps a mirror …"; the drawing / locate pins in "KACL-9 / KACL-10 — …".
+
+**Done-when.**
+1. ✓ The ask route (I-03) and drawing / locate fold the boundary in at query time.
+2. ✓ The flip and the sync cannot leave a mirror standing (the re-read after insert, above).
+3. ✓ An errored `ai_excluded` read fails closed for that pass.
+
+**Scope / residual.** A mirror inserted by a racing pass may exist for the moment between its insert and the re-read (seconds); no content door uses it (each judges the document at query time). The pickers' fail-open held-back reads are noted on `KACL-9`.
+
 ---
 
 <a id="kacl-11"></a>
@@ -483,7 +551,7 @@ Tests: `askRouteAcl.test.ts` "KACL-10 — the AI boundary holds at query time, w
 ## KACL-11 · chainReadable's no-ACL fallback lets a 'private'-visibility document through where the app's own canDiscover blocks it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/knowledgeAccess.ts:57-78`, `lib/permissions.ts:113-131`, `lib/acl.ts:189`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The divergence is real and unmitigated: readableControlledDocIds/containerReadable are the only readers of the ACL chain that treat 'private' as readable-by-default, and lib/knowledgeSourceSync.ts mirrors source documents with no visibility/acl filter (grep for visibility|acl|is_private|scope in that file returns nothing), so such a doc would be indexed and quoted while RLS hides the row from the browser entirely. Severity lowered to LOW because I could not find any in-app writer that produces visibility='private' with acl NULL: PermissionDrawer.tsx:265-283 always writes acl and visibility in the same payload; document creation at app/(protected)/documents/[libraryId]/page.tsx:2448-2451 does set them independently (`visibility: library.defaultNewVisibility ?? "normal", acl: library.defaultNewAcl ?? null`) but nothing in the codebase ever sets default_new_visibility to anything but 'normal' (LibraryWizard.tsx:273; admin/libraries/page.tsx:107 only round-trips the stored value, with no UI control). The only path that can materialize the state is the blind restore importer (app/api/admin/restore/apply-table/route.ts:77-83 upserts caller-supplied rows verbatim, and 'documents' is in the importable contract, lib/exportTables.ts:44) or a direct DB write — i.e. latent defence-in-depth, not a demonstrated live leak.
@@ -508,6 +576,15 @@ lib/knowledgeAccess.ts:77 — `return visibility !== "hidden";` versus lib/permi
 - [ ] A test covers visibility='private' + acl NULL for both readableControlledDocIds and containerReadable
 - [ ] Whether any writer can produce visibility='private' with acl NULL is settled (grep lib/dataRestore.ts and the import paths); if none can, the divergence is still closed as defence in depth
 
+**Resolution (2026-10-14, intelligence Round G).** Package I-12. `chainReadable` asks `canReadNode` (`lib/permissions.ts:219`), whose no-ACL fallback is `visibility === "normal"` (`:239`) — `canDiscover`'s rule: with no ACL anywhere in the chain, a hidden AND a private node are controllers' and the effective owner's alone. Tests (`lib/__tests__/intelRoundGDocAcl.test.ts`, "KACL-11 — …"): "readableControlledDocIds: private + acl NULL is excluded; normal + acl NULL stays readable (regression)", "containerReadable: a private library / folder with no acl is not offered; a normal one is", and "the seam asks the one predicate: chainReadable answers what canReadNode answers (read) on a matrix".
+
+**Done-when.**
+1. ✓ The fallback matches `canDiscover`.
+2. ✓ Covered for `readableControlledDocIds` and `containerReadable`.
+3. ✓ Settled: no in-app writer produces `visibility = 'private'` with `acl` NULL — the library wizard offers only normal / hidden for new nodes (`app/(protected)/admin/libraries/LibraryWizard.tsx:242`), the drawer writes `acl` and `visibility` together, and `lib/libraryCollections.ts:185` writes normal. A restore can (`documents` is in the export contract and `lib/dataRestore.ts` upserts backup rows as they were), so the divergence is closed as defence in depth.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="kacl-12"></a>
@@ -515,7 +592,7 @@ lib/knowledgeAccess.ts:77 — `return visibility !== "hidden";` versus lib/permi
 ## KACL-12 · The ACL seam fails OPEN when its own reads fail: a failed (or row-capped) libraries / collections read drops the folder and library ACLs, a failed team_members read drops the caller's teams and with them every team deny, and a denied document reads as open to every AI surface and to share serving
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeAccess.ts:96-137`, `lib/knowledgeAccess.ts:36-50`, `lib/knowledgeAccess.ts:247-276`, `lib/knowledgeAccess.ts:188-205`, `lib/knowledgeAccess.ts:91`, `lib/orchestrator/tools.ts:84-90`, `app/api/knowledge/ask/route.ts:177`, `lib/shareAuthorization.ts:23-40`, `lib/knowledgeSourceSync.ts:75`
 - **Opened by:** intelligence Round G, package I-01 phase A (2026-09-30), while re-verifying `KACL-2`'s fail-closed criterion against HEAD `1b71ca1`; the `team_members` limb and the direct-caller consequences were added on the package's review the same day. Reproduced by executing the code against an in-memory stand-in (below). This report's banner ("Each finding survived an adversarial verification pass") predates the finding and does not apply to it: nobody independent has tried to refute it. The grade is carried in data by the `Re-verified` line below, which the index reads as `hardening-pass` (a re-read against source by the opening package) instead of the banner's `adversarial`; an independent pass is queued (`DEC-41`: a non-independent grade is work not yet done).
@@ -548,5 +625,22 @@ lib/knowledgeAccess.ts:105-111 — `const [libsRes, foldersRes, teamsRes] = awai
 - [ ] The container reads page until exhausted, so an org with more folders than the row cap keeps every folder ACL
 - [ ] No direct caller of `loadDcLandscape` turns an incomplete landscape into an answer: `/api/knowledge/sources`, `/api/flows/browse` and `/api/area/knowledge-status` answer 503, and the knowledge-source sync neither reconciles nor removes a library's mirrors on a failed read (and one library's failure does not stop the others)
 - [ ] Tests drive a folder-denied document through `readableControlledDocIds` with the container read failing, a team-denied one with `team_members` failing, and a folder under a library-level deny through `containerReadable` with `libraries` failing, and assert none is readable (the four KACL-12 `it.fails` cases in `lib/__tests__/intelRoundGRecords.test.ts`, flipped to `it`)
+
+**Resolution (2026-10-14, intelligence Round G).** Package I-12. Reproduced first: the four `it.fails` cases in `lib/__tests__/intelRoundGRecords.test.ts` failed on base `700f1fc` on the leak, as recorded. In `lib/knowledgeAccess.ts`:
+- `loadDcLandscape` (`:161`) reads `libraries`, `collections` and `teams` through `readAllPages` (`:133`), which throws `DcLandscapeUnreadableError` (`:118`) on any read error and pages each table in id order, asking for the exact count and starting each window where the rows already read end — so a PostgREST max-rows below the page size (every page short) never ends the read early. Folders in the 30-day trash are kept apart (`trashedFolders`): never offered as containers, but their ACL stays on the chain of whatever sits below them.
+- `loadPrincipal` (`:52`) answers no principal for a non-controller whose `team_members` read fails (`:60`); a controller still loads (every evaluator short-circuits the controller tier).
+- `folderChain` (`:261`) answers null when the folder, any ancestor its parent pointers name, or its library is absent (`:273`, `:278`); `documentContainerChain` (`:344`) does the same for a document's library / folder (`:361`); `readableControlledDocIds` skips such a document (`:391`) — a controller is answered before the landscape is read; `containerReadable` treats a folder with a missing rung as unreadable to everyone but a controller (`:294`, DEC-43).
+- The direct `loadDcLandscape` callers turn an unreadable landscape into 503: `/api/flows/browse` (`app/api/flows/browse/route.ts:63`, and its `readableControlledDocIds` call `:179`), `/api/knowledge/sources` browse and add (`app/api/knowledge/sources/route.ts:67`, `:219`), `/api/area/knowledge-status` (`app/api/area/knowledge-status/route.ts:67`); `syncKnowledgeLibrarySources` skips the library — nothing added or removed — and says why (`lib/knowledgeSourceSync.ts:90`), and `syncAllKnowledgeSources` catches per library (`:492`).
+Tests: the four KACL-12 cases flipped to `it` (`intelRoundGRecords.test.ts`, describe "KACL-12 (owner I-12): … flipped from it.fails to it …"); `lib/__tests__/intelRoundGDocAcl.test.ts` "KACL-12 — the seam fails CLOSED on its own reads" (done-when 1, 2, 3, 3 (trash), 4, 4 (continuation: max-rows 500 under 1300 folders), and four done-when 5 cases); `lib/__tests__/intelRoundGDocAclFinish.test.ts` "KACL-12 — a folder whose library is absent …" (the controller kept).
+
+**Done-when.**
+1. ✓ A `libraries` / `collections` / `teams` read error throws; no chain is evaluated with a container missing.
+2. ✓ A `team_members` read error yields no principal for a non-controller; a team deny is never dropped.
+3. ✓ A document whose folder or library is absent is unreadable to a non-controller, and so is a folder whose library is absent.
+4. ✓ The container reads page until every row is read (exact count; a short page that is not the last does not end the read).
+5. ✓ `/api/knowledge/sources`, `/api/flows/browse` and `/api/area/knowledge-status` answer 503; the sync neither reconciles nor removes on a failed read; one library's failure does not stop the others.
+6. ✓ The four cases are flipped to `it` and pass.
+
+**Scope / residual.** The container reads are offset windows: a folder deleted while the landscape is read can shift another out of the window, and that folder's documents then read as unreadable for that request (closed, never open). `KACL-2` and `IEDGE-2` close by pointer on this record.
 
 ---
