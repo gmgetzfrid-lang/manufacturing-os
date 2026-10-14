@@ -26,6 +26,8 @@ declare module "web-push" {
     topic?: string;
     timeout?: number;
     headers?: Record<string, string>;
+    /** web-push uses it for the request when it is an https.Agent */
+    agent?: import("node:https").Agent;
   }
   export interface SendResult {
     statusCode: number;

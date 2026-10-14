@@ -15,11 +15,13 @@
 //        the sender requires (OS-10 done-when 1).
 //
 // Only a browser push service's endpoint is stored (fix pass — the review's
-// blocker): an https URL on a push service's own host, default port, no
-// user-info (lib/push/endpoints.ts pushEndpointAllowed). Anything else is
-// refused as "not a browser push subscription"; the sender re-checks before
-// every send. This route is the table's only writer once 20261211 is pasted
-// (it drops the own-row INSERT policy).
+// blocker): an https URL on a push service's own host, no port, no
+// user-info, written so the WHATWG parser and the legacy url.parse web-push
+// connects by read the same host (fix pass 2 — lib/push/endpoints.ts
+// pushEndpointAllowed). Anything else is refused as "not a browser push
+// subscription"; the sender re-checks before every send. This route is the
+// table's only writer once 20261211 is pasted (it drops the own-row INSERT
+// policy).
 //
 // One browser profile has one push endpoint. When a second person turns
 // notifications on in the same browser, the endpoint is theirs from then on:
@@ -41,7 +43,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
 import { pushConfig } from "@/lib/push/sendPush";
-import { PUSH_DEVICE_CAP, PUSH_KEYS_MISMATCH, pushEndpointAllowed } from "@/lib/push/endpoints";
+import { PUSH_KEYS_MISMATCH } from "@/lib/notify/dispatch";
+import { PUSH_DEVICE_CAP, pushEndpointAllowed } from "@/lib/push/endpoints";
 
 export const runtime = "nodejs";
 

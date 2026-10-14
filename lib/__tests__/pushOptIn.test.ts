@@ -63,7 +63,7 @@ import PushOptIn, {
   PUSH_SENT_TODAY, PUSH_NOT_SENT_YET, PUSH_NOT_YET_NOTE,
   urlBase64ToUint8Array,
 } from "@/components/settings/PushOptIn";
-import { PUSH_KEYS_MISMATCH } from "@/lib/push/endpoints";
+import { PUSH_KEYS_MISMATCH } from "@/lib/notify/dispatch";
 import { KIND_META, NOTIFICATION_KINDS } from "@/lib/notificationKinds";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -216,6 +216,54 @@ describe("OS-3 — the permission prompt is reached only by a deliberate click, 
     }
     for (const k of today) expect(emitKinds.has(k), `${k} has an emit() producer`).toBe(true);
     for (const k of PUSH_NOT_SENT_YET) expect(emitKinds.has(k), `${k} has no emit() producer yet (OS-14)`).toBe(false);
+  });
+
+  // Fix pass 2 (the second review's minor): an emit() is pushed only from the BROWSER (its push leg POSTs
+  // /api/push/notify) or from a server caller that passes serverPush — and no server caller passes it today.
+  // So "has an emit() producer" is not enough: hold_opened is also emitted by the cron's scanStaleHolds,
+  // which never pushes. Each line the card promises is pinned to its producer, the function its emit()
+  // sits in, and the browser modules that call it — a producer moved behind a server route fails here.
+  it("fix pass 2: each kind the card says is pushed today is emitted by a producer that browser modules call (a server emit pushes nothing without serverPush)", () => {
+    const src = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    const isClient = (f: string) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(src(f));
+    /** a top-level function's text: from `function <name>(` to the first line that is only "}" */
+    const fnBody = (f: string, name: string) => {
+      const text = src(f);
+      const at = text.search(new RegExp(`\\bfunction ${name}\\(`));
+      expect(at, `${f}: function ${name}`).toBeGreaterThanOrEqual(0);
+      const end = text.indexOf("\n}\n", at);
+      return text.slice(at, end < 0 ? undefined : end);
+    };
+    const emitsKind = (text: string, k: string) =>
+      new RegExp(`\\bemit\\(\\{[\\s\\S]{0,600}?\\bkind:\\s*(?:input\\.opened \\? )?"${k}"`).test(text);
+    const PRODUCERS: Array<{ pushKind: string; file: string; emitIn: string | null; entry: string | null; module: string | null; callers: string[] }> = [
+      { pushKind: "hold_opened", file: "lib/holds.ts", emitIn: "notifyHoldChange", entry: "openHold", module: "@/lib/holds",
+        callers: ["components/documents/HoldStrip.tsx", "components/documents/CheckInPanel.tsx"] },
+      { pushKind: "checkout_force_released", file: "lib/checkoutEpisodes.ts", emitIn: "forceReleaseDocument", entry: "forceReleaseDocument", module: "@/lib/checkoutEpisodes",
+        callers: ["components/documents/CheckoutStatusCell.tsx", "app/(protected)/documents/[libraryId]/page.tsx"] },
+      { pushKind: "ack_requested", file: "lib/distributionAcks.ts", emitIn: "requestAcks", entry: "requestAcks", module: "@/lib/distributionAcks",
+        callers: ["components/documents/DistributionAcks.tsx", "components/documents/DistributionRecall.tsx"] },
+      // the browser module is the producer itself
+      { pushKind: "review_requested", file: "components/documents/CheckInPanel.tsx", emitIn: null, entry: null, module: null, callers: [] },
+    ];
+    expect(PRODUCERS.map((p) => p.pushKind).sort()).toEqual(PUSH_SENT_TODAY.map((l) => l.pushKind).sort());
+    for (const p of PRODUCERS) {
+      if (!p.emitIn) {
+        expect(isClient(p.file), `${p.file} is a browser module`).toBe(true);
+        expect(emitsKind(src(p.file), p.pushKind), `${p.file} emits ${p.pushKind}`).toBe(true);
+        continue;
+      }
+      const body = fnBody(p.file, p.emitIn);
+      expect(emitsKind(body, p.pushKind), `${p.emitIn} emits ${p.pushKind}`).toBe(true);
+      if (p.entry !== p.emitIn) expect(fnBody(p.file, p.entry!), `${p.entry} calls ${p.emitIn}`).toMatch(new RegExp(`\\b${p.emitIn}\\(`));
+      expect(p.callers.length).toBeGreaterThan(0);
+      for (const c of p.callers) {
+        expect(isClient(c), `${c} is a browser module`).toBe(true);
+        const text = src(c);
+        expect(text, `${c} imports ${p.entry} from ${p.module}`).toMatch(new RegExp(`import \\{[^}]*\\b${p.entry}\\b[^}]*\\} from "${p.module!.replace(/[/]/g, "\\/")}"`));
+        expect(text, `${c} calls ${p.entry}`).toMatch(new RegExp(`\\b${p.entry}\\(`));
+      }
+    }
   });
 
   it("acceptance 1: 'Allow notifications' → the browser's dialog → subscribe({ userVisibleOnly: true, applicationServerKey }) from serviceWorker.ready → the device POSTed → 'On for this device'", async () => {

@@ -51,7 +51,8 @@
 //      push_subscriptions row whose person is no longer an ACTIVE member of
 //      any workspace, made before the opt-in control existed (the deleted
 //      reminders stack's — PUSH_OPT_IN_SINCE), or naming no browser push
-//      service (lib/push/endpoints.ts — the sender never POSTs to one), is
+//      service (lib/push/endpoints.ts — the sender never POSTs to one), or
+//      dated in the future, or past its person's newest PUSH_DEVICE_CAP, is
 //      removed (prunePushSubscriptions). The cron only
 //      prunes: pushes are sent by emit() at the moment of the event
 //      (lib/push/sendPush.ts), and a subscription the push service answers
@@ -95,7 +96,7 @@ import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { KIND_META } from "@/lib/notificationKinds";
 import { isMissingSchemaError } from "@/lib/checkedWrite";
-import { pushEndpointAllowed } from "@/lib/push/endpoints";
+import { PUSH_DEVICE_CAP, PUSH_FUTURE_SKEW_MS, pushEndpointAllowed } from "@/lib/push/endpoints";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -571,7 +572,9 @@ async function handler(req: NextRequest) {
   //     row is a device credential — are removed, and so are the deleted
   //     reminders stack's (made before PUSH_OPT_IN_SINCE: never pushed — OS-10
   //     done-when 3; their people turn the device on again), and the rows
-  //     naming no browser push service (never sent to — N10 fix pass). Dead endpoints are removed
+  //     naming no browser push service (never sent to — N10 fix pass), and
+  //     (fix pass 2) the rows dated in the future and those past a person's
+  //     newest PUSH_DEVICE_CAP (never read by the sender). Dead endpoints are removed
   //     by the sender at the first 404 / 410 (lib/push/sendPush.ts). No-op
   //     before 20260804; it takes what the run has left (N6's run clock).
   if (!noTimeFor("push-subscriptions", PUSH_PRUNE_MIN_MS)) {
@@ -720,14 +723,22 @@ async function ownersStillMembers(sb: SupabaseClient, owners: string[], errors: 
 /** Step 7c (notifications N10 — GAP-205): remove the push_subscriptions rows
  *  of people with no ACTIVE membership in any workspace (removed, suspended,
  *  inactive everywhere), the rows made before PUSH_OPT_IN_SINCE (the deleted
- *  reminders stack's, which the sender never pushes), and the rows whose
+ *  reminders stack's, which the sender never pushes), the rows whose
  *  endpoint names no browser push service (lib/push/endpoints.ts — never
- *  sent to; fix pass). Pages by id; stops at `stopBy`. A membership read
- *  that fails removes nothing from that page on (fail safe: a transient
- *  error never unsubscribes a member's device). Returns how many rows went. */
+ *  sent to; fix pass), and (fix pass 2) the rows dated later than the run's
+ *  clock + PUSH_FUTURE_SKEW_MS (not stamped by the route) and those past a
+ *  person's newest PUSH_DEVICE_CAP (trimDevicesPastCap — the sender reads
+ *  no more; a member who wrote rows by hand before 20261211 keeps only ten).
+ *  Pages by id; stops at `stopBy`. A membership read that fails removes
+ *  nothing from that page on (fail safe: a transient error never
+ *  unsubscribes a member's device). Returns how many rows went. */
 async function prunePushSubscriptions(sb: SupabaseClient, errors: string[], stopBy: number): Promise<number> {
   let pruned = 0;
   let after: string | null = null;
+  const optInSince = Date.parse(PUSH_OPT_IN_SINCE);
+  const latest = Date.now() + PUSH_FUTURE_SKEW_MS;
+  /** rows each person still holds after this pass's page deletes */
+  const held = new Map<string, number>();
   while (Date.now() < stopBy) {
     let q = sb.from("push_subscriptions").select("id, user_id, endpoint, created_at").order("id", { ascending: true }).limit(PUSH_PRUNE_PAGE);
     if (after) q = q.gt("id", after);
@@ -738,26 +749,64 @@ async function prunePushSubscriptions(sb: SupabaseClient, errors: string[], stop
       return pruned;
     }
     const rows = (data as Array<{ id: string; user_id: string; endpoint: string | null; created_at: string | null }> | null) ?? [];
-    if (rows.length === 0) return pruned;
+    if (rows.length === 0) break;
     after = rows[rows.length - 1].id;
     const owners = [...new Set(rows.map((r) => r.user_id))];
     const active = await ownersStillMembers(sb, owners, errors);
     if (!active) return pruned;
-    const optInSince = Date.parse(PUSH_OPT_IN_SINCE);
-    const gone = rows
-      .filter((r) => !active.has(r.user_id) || !r.created_at || Date.parse(r.created_at) < optInSince || !pushEndpointAllowed(r.endpoint))
-      .map((r) => r.id);
-    if (gone.length > 0) {
-      const { data: removed, error: delErr } = await sb.from("push_subscriptions").delete().in("id", gone).select("id");
+    const gone = new Set(rows
+      .filter((r) => {
+        const made = r.created_at ? Date.parse(r.created_at) : NaN;
+        return !active.has(r.user_id) || !(made >= optInSince) || !(made <= latest) || !pushEndpointAllowed(r.endpoint);
+      })
+      .map((r) => r.id));
+    if (gone.size > 0) {
+      const { data: removed, error: delErr } = await sb.from("push_subscriptions").delete().in("id", [...gone]).select("id");
       if (delErr) {
         errors.push(`push-subscriptions: ${delErr.message}`);
         return pruned;
       }
       pruned += ((removed as unknown[] | null) ?? []).length;
     }
-    if (rows.length < PUSH_PRUNE_PAGE) return pruned;
+    for (const r of rows) if (!gone.has(r.id)) held.set(r.user_id, (held.get(r.user_id) ?? 0) + 1);
+    if (rows.length < PUSH_PRUNE_PAGE) break;
+  }
+  // (fix pass 2) each person keeps only their newest PUSH_DEVICE_CAP — for
+  // whoever this pass saw holding more (a pass cut short by the clock still
+  // trims whom it saw; the next run sees the rest)
+  for (const [uid, n] of held) {
+    if (n <= PUSH_DEVICE_CAP) continue;
+    if (Date.now() >= stopBy) break; // the next run continues
+    const trimmed = await trimDevicesPastCap(sb, uid, new Date(latest).toISOString(), errors, stopBy);
+    if (trimmed === null) return pruned;
+    pruned += trimmed;
   }
   return pruned;
+}
+
+/** Remove one person's registrations past their newest PUSH_DEVICE_CAP
+ *  (step 7c, fix pass 2). Reads newest first (created_at, then id), from the
+ *  cap's boundary row on, and deletes the rows after it that are not newer
+ *  than it — so a row the subscribe route stamps as new meanwhile is never
+ *  taken. Returns how many went, or null after an error (recorded). */
+async function trimDevicesPastCap(sb: SupabaseClient, uid: string, latestIso: string, errors: string[], stopBy: number): Promise<number | null> {
+  let trimmed = 0;
+  while (Date.now() < stopBy) {
+    const { data, error } = await sb.from("push_subscriptions").select("id, created_at")
+      .eq("user_id", uid).lte("created_at", latestIso)
+      .order("created_at", { ascending: false }).order("id", { ascending: false })
+      .range(PUSH_DEVICE_CAP - 1, PUSH_DEVICE_CAP - 1 + PUSH_PRUNE_PAGE);
+    if (error) { errors.push(`push-subscriptions: ${error.message}`); return null; }
+    const [boundary, ...past] = (data as Array<{ id: string; created_at: string }> | null) ?? [];
+    if (!boundary || past.length === 0) return trimmed;
+    const { data: removed, error: delErr } = await sb.from("push_subscriptions").delete()
+      .in("id", past.map((r) => r.id)).eq("user_id", uid).lte("created_at", boundary.created_at).select("id");
+    if (delErr) { errors.push(`push-subscriptions: ${delErr.message}`); return null; }
+    const n = ((removed as unknown[] | null) ?? []).length;
+    trimmed += n;
+    if (n === 0 || past.length < PUSH_PRUNE_PAGE) return trimmed;
+  }
+  return trimmed;
 }
 
 /** What one drain pass did (DELIV-11). `queueEmpty` is true only when the

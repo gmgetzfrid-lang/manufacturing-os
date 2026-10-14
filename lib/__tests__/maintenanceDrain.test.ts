@@ -1919,14 +1919,15 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
   });
 
   it("pages through every registration (more than one page)", async () => {
-    db.tables.org_members = [member(ORG_A, U(1))];
+    // eight active members holding ten registrations each (the device cap — fix pass 2 trims past it)
+    db.tables.org_members = Array.from({ length: 8 }, (_, k) => member(ORG_A, U(1 + k)));
     db.tables.push_subscriptions = Array.from({ length: 160 }, (_, i) => ({
-      id: `ps${String(i).padStart(3, "0")}`, user_id: i % 2 === 0 ? U(1) : U(500 + i), endpoint: `https://fcm.googleapis.com/fcm/send/${i}`, created_at: new Date().toISOString(),
+      id: `ps${String(i).padStart(3, "0")}`, user_id: i % 2 === 0 ? U(1 + ((i / 2) % 8)) : U(500 + i), endpoint: `https://fcm.googleapis.com/fcm/send/${i}`, created_at: new Date().toISOString(),
     }));
     const r = await runCron();
     expect(r.pushSubscriptionsPruned).toBe(80);
     expect(rows("push_subscriptions")).toHaveLength(80);
-    expect(rows("push_subscriptions").every((x) => x.user_id === U(1))).toBe(true);
+    expect(rows("push_subscriptions").every((x) => Number(String(x.user_id).slice(-3)) <= 8)).toBe(true);
   });
 
   it("an unreadable membership prunes nothing and says so; before 20260804 (no table) the step is silent", async () => {
@@ -1976,5 +1977,38 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
     expect(rows("push_subscriptions").map((x) => x.id).sort()).toEqual(consultants.map((_, i) => `c${String(i).padStart(3, "0")}`));
     expect(r.pushSubscriptionsPruned).toBe(1);
     expect(r.errors.filter((e) => e.startsWith("push-subscriptions"))).toEqual([]);
+  });
+
+  // fix pass 2 (the second review's minor): before 20261211 a member could write any number of their own rows,
+  // dated as they liked — the cron dates nothing in the future and keeps a person's newest ten
+  it("fix pass 2: a registration dated in the future is removed; one inside the clock-skew margin stays", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.push_subscriptions = [
+      { id: "now", user_id: U(1), endpoint: "https://fcm.googleapis.com/fcm/send/now", created_at: new Date().toISOString() },
+      { id: "skew", user_id: U(1), endpoint: "https://fcm.googleapis.com/fcm/send/skew", created_at: new Date(Date.now() + 2 * 60_000).toISOString() },
+      { id: "y2100", user_id: U(1), endpoint: "https://fcm.googleapis.com/fcm/send/2100", created_at: "2100-01-01T00:00:00.000Z" },
+    ];
+    const r = await runCron();
+    expect(rows("push_subscriptions").map((x) => x.id).sort()).toEqual(["now", "skew"]);
+    expect(r.pushSubscriptionsPruned).toBe(1);
+  });
+
+  it("fix pass 2: a person keeps only their newest PUSH_DEVICE_CAP (10) registrations — 1,200 hand-written rows go down to ten, across pages; a neighbour's device is untouched", async () => {
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_A, U(2))];
+    const t0 = Date.now() - 60 * 60_000;
+    db.tables.push_subscriptions = [
+      { id: "b0000", user_id: U(2), endpoint: "https://fcm.googleapis.com/fcm/send/b", created_at: new Date(t0).toISOString() },
+      ...Array.from({ length: 1200 }, (_, i) => ({
+        id: `a${String(i).padStart(4, "0")}`, user_id: U(1), endpoint: `https://fcm.googleapis.com/fcm/send/a${i}`, created_at: new Date(t0 + (i + 1) * 1000).toISOString(),
+      })),
+    ];
+    const r = await runCron();
+    const left = rows("push_subscriptions");
+    expect(left.filter((x) => x.user_id === U(1)).map((x) => x.id).sort()).toEqual(Array.from({ length: 10 }, (_, i) => `a${1190 + i}`));
+    expect(left.filter((x) => x.user_id === U(2)).map((x) => x.id)).toEqual(["b0000"]);
+    expect(r.pushSubscriptionsPruned).toBe(1190);
+    expect(r.errors.filter((e) => e.startsWith("push-subscriptions"))).toEqual([]);
+    // the trim deletes only rows not newer than the cap's boundary row (a row re-stamped meanwhile is never taken)
+    expect(src("app/api/cron/maintenance/route.ts")).toMatch(/\.in\("id", past\.map\(\(r\) => r\.id\)\)\.eq\("user_id", uid\)\.lte\("created_at", boundary\.created_at\)/);
   });
 });

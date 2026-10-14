@@ -33,10 +33,22 @@
 // first), and keeps a person's newest PUSH_DEVICE_CAP; a server emit pushes
 // only when its caller passes serverPush — loading lib/push/sendPush
 // registers nothing, so the maintenance cron's scanStaleHolds never pushes.
+//
+// Fix pass 2 (the second review): pushEndpointAllowed accepts only an
+// endpoint the WHATWG parser and the legacy url.parse (the one web-push
+// connects by) read the same host from — pinned against the REAL web-push
+// with https.request stubbed; every push request goes through
+// pushServiceAgent() (push-service hosts only, public addresses only); one
+// person's 1,200 registrations never cost a neighbour in the same device
+// read their push; a row dated in the future is never read.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import https from "node:https";
+import dns from "node:dns";
+import { EventEmitter } from "node:events";
+import { createECDH, randomBytes } from "node:crypto";
 import { NextRequest } from "next/server";
 import { resetState, type MemoryState } from "./helpers/memoryDb";
 
@@ -73,15 +85,40 @@ function idsMatchingOr(table: string, cond: string): string[] {
   };
   return rows.filter((r) => terms.some((t) => test(r, t))).map((r) => String(r.id));
 }
-function withOr(table: string, q: Record<string, unknown>): Record<string, unknown> {
+/** A device read's PostgREST shape (fix pass 2): the memory stand-in ignores
+ *  gte / lte / order / limit, so for push_subscriptions reads they are
+ *  applied here — a read's shape decides what it returns, as PostgREST's
+ *  does (a limit cuts a read short; newest first means newest first). */
+type ReadShape = { gte: Array<[string, string]>; lte: Array<[string, string]>; order: [string, boolean] | null; limit: number | null; write: boolean };
+const shaped = (shape: ReadShape, data: Array<Record<string, unknown>>) => {
+  let rows = data;
+  for (const [c, x] of shape.gte) rows = rows.filter((r) => Date.parse(String(r[c])) >= Date.parse(x));
+  for (const [c, x] of shape.lte) rows = rows.filter((r) => Date.parse(String(r[c])) <= Date.parse(x));
+  if (shape.order) {
+    const [c, asc] = shape.order;
+    rows = [...rows].sort((a, b) => (Date.parse(String(a[c])) - Date.parse(String(b[c]))) * (asc ? 1 : -1));
+  }
+  return shape.limit === null ? rows : rows.slice(0, shape.limit);
+};
+function withOr(table: string, q: Record<string, unknown>, shape: ReadShape = { gte: [], lte: [], order: null, limit: null, write: false }): Record<string, unknown> {
   return new Proxy(q, {
     get(t, prop: string) {
       const v = (t as Record<string, unknown>)[prop];
+      if (prop === "then" && table === "push_subscriptions" && !shape.write && typeof v === "function") {
+        return (resolve: (x: unknown) => unknown, reject?: (e: unknown) => unknown) =>
+          (v as (ok: (x: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise<unknown>)(
+            (res) => {
+              const r = res as { data: unknown; error: unknown };
+              return resolve(Array.isArray(r.data) ? { ...r, data: shaped(shape, r.data as Array<Record<string, unknown>>) } : r);
+            },
+            reject,
+          );
+      }
       if (prop === "then" || typeof v !== "function") return v;
       if (prop === "or") {
         return (cond: string) => {
           h.state.calls.push({ table, method: "or", args: [cond] });
-          return withOr(table, (t as unknown as { in: (c: string, ids: string[]) => Record<string, unknown> }).in("id", idsMatchingOr(table, cond)));
+          return withOr(table, (t as unknown as { in: (c: string, ids: string[]) => Record<string, unknown> }).in("id", idsMatchingOr(table, cond)), shape);
         };
       }
       if (prop === "insert" && table === "push_subscriptions" && h.insertError) {
@@ -89,8 +126,14 @@ function withOr(table: string, q: Record<string, unknown>): Record<string, unkno
         return () => ({ select: () => ({ single: async () => ({ data: null, error: err }) }) });
       }
       return (...args: unknown[]) => {
+        if (prop === "insert" || prop === "update" || prop === "delete" || prop === "upsert") shape.write = true;
+        if (table === "push_subscriptions") {
+          if (prop === "gte" || prop === "lte") shape[prop].push([String(args[0]), String(args[1])]);
+          if (prop === "order") shape.order = [String(args[0]), (args[1] as { ascending?: boolean } | undefined)?.ascending !== false];
+          if (prop === "limit") shape.limit = Number(args[0]);
+        }
         const r = (v as (...a: unknown[]) => unknown)(...args);
-        return r && typeof r === "object" && !(r instanceof Promise) ? withOr(table, r as Record<string, unknown>) : r;
+        return r && typeof r === "object" && !(r instanceof Promise) ? withOr(table, r as Record<string, unknown>, shape) : r;
       };
     },
   });
@@ -162,13 +205,16 @@ vi.mock("web-push", () => {
   return { default: api, ...api };
 });
 
-import { emit, PUSH_LEG_TIMEOUT_MS, PUSH_REQUEST_MAX_RECIPIENTS, PUSH_OPT_IN_SINCE, type EmitInput, type PushSendInput } from "@/lib/notify/dispatch";
+import { emit, PUSH_LEG_TIMEOUT_MS, PUSH_REQUEST_MAX_RECIPIENTS, PUSH_OPT_IN_SINCE, PUSH_KEYS_MISMATCH, type EmitInput, type PushSendInput } from "@/lib/notify/dispatch";
 import { __registerServerDiscoverCheck } from "@/lib/notify/recipients";
 import {
   sendPushSafe, pushFromServer, pushConfig, pushPayloadFor, safePushUrl, __resetPushLogOnceForTests,
-  PUSH_KINDS, PUSH_TITLES, PUSH_BODY, PUSH_FALLBACK_TITLE, PUSH_WRITER_CAP, PUSH_EVIDENCE_WINDOW_MS,
+  PUSH_KINDS, PUSH_TITLES, PUSH_BODY, PUSH_FALLBACK_TITLE, PUSH_WRITER_CAP, PUSH_EVIDENCE_WINDOW_MS, DEVICE_READ_LIMIT,
 } from "@/lib/push/sendPush";
-import { pushEndpointAllowed, PUSH_DEVICE_CAP, PUSH_KEYS_MISMATCH, PUSH_SERVICE_HOSTS, PUSH_SERVICE_HOST_SUFFIXES } from "@/lib/push/endpoints";
+import {
+  pushEndpointAllowed, pushHostAllowed, pushAddressPublic, pushPublicLookup, pushServiceAgent, PushServiceAgent,
+  PUSH_DEVICE_CAP, PUSH_FUTURE_SKEW_MS, PUSH_SERVICE_HOSTS, PUSH_SERVICE_HOST_SUFFIXES,
+} from "@/lib/push/endpoints";
 import { scanStaleHolds } from "@/lib/holds";
 import { KIND_META, NOTIFICATION_KINDS, kindMeta } from "@/lib/notificationKinds";
 import { POST as notifyRoute } from "@/app/api/push/notify/route";
@@ -611,15 +657,32 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     expect(warn.mock.calls.some((c) => /naming no push service were not sent to/.test(String(c[0])))).toBe(true);
   });
 
-  it("pushEndpointAllowed: exact hosts and label-boundary suffixes only; https, default port, no user-info", () => {
-    for (const ok of ["https://fcm.googleapis.com/fcm/send/x", "https://FCM.googleapis.com/x", "https://fcm.googleapis.com:443/x",
-      "https://autopush.push.services.mozilla.com/x", "https://db5p.notify.windows.com/w/?token=1", "https://api.push.apple.com/3/device/x"]) {
+  it("pushEndpointAllowed: exact hosts and label-boundary suffixes only; https, no port, no user-info", () => {
+    for (const ok of ["https://fcm.googleapis.com/fcm/send/x", "https://FCM.googleapis.com/x",
+      "https://autopush.push.services.mozilla.com/x", "https://db5p.notify.windows.com/w/?token=1", "https://api.push.apple.com/3/device/x",
+      "https://fcm.googleapis.com?x=1"]) {
       expect(pushEndpointAllowed(ok), ok).toBe(true);
     }
     for (const bad of ["https://push.apple.com/x", "https://xpush.apple.com/x", "https://fcm.googleapis.com./x", "https://user:pw@web.push.apple.com/x",
-      "ftp://fcm.googleapis.com/x", "https://[::1]/x", "not a url", "", null, 42, `https://fcm.googleapis.com/${"x".repeat(2100)}`]) {
+      "ftp://fcm.googleapis.com/x", "https://[::1]/x", "not a url", "", null, 42, `https://fcm.googleapis.com/${"x".repeat(2100)}`,
+      // fix pass 2: no port at all (url.parse keeps an explicit :443, WHATWG drops it), a path or query must follow the host
+      "https://fcm.googleapis.com:443/x", "https://fcm.googleapis.com", "https://fcm.googleapis.com#x",
+      // fix pass 2: nothing either parser may strip, decode or re-read
+      " https://fcm.googleapis.com/x", "https://fcm.googleapis.com/x y", "https://fcm.goo\tgleapis.com/x", "https://fcm%2Egoogleapis.com/x",
+      "https://fcm.googleapis.com\\@evil.example/x", "https://fcm.googleapis.com/\u00e9"]) {
       expect(pushEndpointAllowed(bad), String(bad).slice(0, 40)).toBe(false);
     }
+    // fix pass 2 (the second review's blocker): a host holding a character WHATWG accepts in a host and the
+    // legacy url.parse (web-push's) stops at — the two would name different hosts — is refused
+    for (const ch of [";", "{", "}", "'", "`", '"', "|", "^"]) {
+      for (const e of [`https://10.0.3.7${ch}.push.apple.com/x`, `https://169.254.169.254${ch}.notify.windows.com/latest`,
+        `https://attacker.example${ch}.push.services.mozilla.com/hook`, `https://internal${ch}fcm.googleapis.com/x`, `https://fcm.googleapis.com${ch}/x`]) {
+        expect(pushEndpointAllowed(e), e).toBe(false);
+      }
+    }
+    expect(pushHostAllowed("fcm.googleapis.com")).toBe(true);
+    expect(pushHostAllowed("10.0.3.7")).toBe(false);
+    expect(pushHostAllowed("a;b.push.apple.com")).toBe(false);
     expect([...PUSH_SERVICE_HOSTS].sort()).toEqual(["fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"]);
     expect([...PUSH_SERVICE_HOST_SUFFIXES].sort()).toEqual([".notify.windows.com", ".push.apple.com", ".push.services.mozilla.com"]);
   });
@@ -635,7 +698,149 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     expect(out).toMatchObject({ attempted: PUSH_DEVICE_CAP, sent: PUSH_DEVICE_CAP });
     // the five OLDEST were left out
     expect(h.sent.map((x) => x.endpoint).sort()).toEqual(Array.from({ length: PUSH_DEVICE_CAP }, (_, i) => `https://fcm.googleapis.com/fcm/send/dev-${String(i + 5).padStart(2, "0")}`));
-    expect(read("lib/push/sendPush.ts")).toMatch(/\.order\("created_at", \{ ascending: false \}\)\s*\.limit\(DEVICE_READ_LIMIT\)/);
+    const src = read("lib/push/sendPush.ts");
+    expect(src).toMatch(/\.lte\("created_at", latestIso\)\s*\.order\("created_at", \{ ascending: false \}\)\s*\.limit\(limit\)/);
+    expect(src).toContain("await readDevices(part, DEVICE_READ_LIMIT)");
+    expect(src).toContain("await readDevices([uid], PUSH_DEVICE_CAP)");
+  });
+
+  // ── fix pass 2: one person's registrations never cost another their push ──
+  it("fix pass 2: one person holding 1,200 registrations never costs a neighbour in the same device read their push — the part is read again person by person", async () => {
+    setVapid(true);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    h.state.tables.notifications = [bell("a"), bell("b")];
+    const t0 = Date.now() - 30 * 60_000;
+    h.state.tables.push_subscriptions = [
+      device("b", "https://fcm.googleapis.com/fcm/send/b-only", { created_at: new Date(t0).toISOString() }),
+      // all newer than b's one device: a single 1000-row read, newest first, would hold only these
+      ...Array.from({ length: 1200 }, (_, i) => device("a", `https://fcm.googleapis.com/fcm/send/a-${i}`, { created_at: new Date(t0 + 1000 + i * 1000).toISOString() })),
+    ];
+    const out = await sendPushSafe(input({ recipients: ["a", "b"] }));
+    expect(h.sent.map((x) => x.endpoint)).toContain("https://fcm.googleapis.com/fcm/send/b-only");
+    expect(h.sent.filter((x) => x.endpoint.includes("/a-")).map((x) => x.endpoint).sort())
+      .toEqual(Array.from({ length: PUSH_DEVICE_CAP }, (_, i) => `https://fcm.googleapis.com/fcm/send/a-${1190 + i}`).sort());
+    expect(out).toMatchObject({ eligible: 2, attempted: PUSH_DEVICE_CAP + 1, sent: PUSH_DEVICE_CAP + 1 });
+    const limits = h.state.calls.filter((c) => c.table === "push_subscriptions" && c.method === "limit").map((c) => c.args[0]);
+    expect(limits).toEqual([DEVICE_READ_LIMIT, PUSH_DEVICE_CAP, PUSH_DEVICE_CAP]);
+    expect(warn.mock.calls.some((c) => /read again person by person/.test(String(c[0])))).toBe(true);
+  });
+
+  it("fix pass 2: a registration dated in the future is not read — hand-written rows dated 2100 never hold a person's newest places; one inside the skew margin still is", async () => {
+    setVapid(true);
+    h.state.tables.notifications = [bell("a")];
+    h.state.tables.push_subscriptions = [
+      ...Array.from({ length: PUSH_DEVICE_CAP }, (_, i) => device("a", `https://fcm.googleapis.com/fcm/send/future-${i}`, { created_at: `2100-01-01T00:00:0${i}.000Z` })),
+      device("a", "https://fcm.googleapis.com/fcm/send/real"),
+      device("a", "https://fcm.googleapis.com/fcm/send/skewed", { created_at: new Date(Date.now() + PUSH_FUTURE_SKEW_MS / 2).toISOString() }),
+    ];
+    const out = await sendPushSafe(input({ recipients: ["a"] }));
+    expect(h.sent.map((x) => x.endpoint).sort()).toEqual(["https://fcm.googleapis.com/fcm/send/real", "https://fcm.googleapis.com/fcm/send/skewed"]);
+    expect(out).toMatchObject({ attempted: 2, sent: 2, pruned: 0 });
+    expect(PUSH_FUTURE_SKEW_MS).toBe(5 * 60_000);
+  });
+
+  // ── fix pass 2: the second review's blocker — the two URL parsers ─────────
+  it("fix pass 2: every endpoint pushEndpointAllowed accepts is one the REAL web-push (https.request stubbed) addresses to a push service's host — never a host a parser gap names", async () => {
+    const realMod = await vi.importActual<Record<string, unknown>>("web-push");
+    const real = ((realMod as { default?: unknown }).default ?? realMod) as {
+      sendNotification: (sub: unknown, payload: string, options: Record<string, unknown>) => Promise<unknown>;
+      generateVAPIDKeys: () => { publicKey: string; privateKey: string };
+    };
+    const seen: Array<{ hostname: unknown; port: unknown; agent: unknown }> = [];
+    vi.spyOn(https, "request").mockImplementation(((opts: https.RequestOptions) => {
+      seen.push({ hostname: opts.hostname, port: opts.port, agent: opts.agent });
+      const req = Object.assign(new EventEmitter(), {
+        write: () => undefined,
+        destroy: () => undefined,
+        end: () => { setImmediate(() => req.emit("error", Object.assign(new Error("stubbed"), { code: "ESTUB" }))); },
+      });
+      return req;
+    }) as unknown as typeof https.request);
+    const vapid = real.generateVAPIDKeys();
+    const ecdh = createECDH("prime256v1");
+    ecdh.generateKeys();
+    const keys = { p256dh: ecdh.getPublicKey().toString("base64url"), auth: randomBytes(16).toString("base64url") };
+    const named = [...PUSH_SERVICE_HOSTS, ...PUSH_SERVICE_HOST_SUFFIXES.map((x) => `edge${x}`)];
+    const delimiters = [";", "{", "}", "'", "`", '"', "|", "^", "\\", "%", "@", "#", ":", " ", "\t", "[", "]", "<", ">", "&", "$", "!", "*", "(", ")", "+", ",", "=", "~", "/", "?"];
+    const reviewers = ["https://10.0.3.7;.push.apple.com/x", "https://169.254.169.254{.notify.windows.com/latest", "https://attacker.example'.push.services.mozilla.com/hook"];
+    const good = ["https://fcm.googleapis.com/fcm/send/ok", "https://updates.push.services.mozilla.com/wpush/v2/ok", "https://wns2-par02p.notify.windows.com/w/?token=ok", "https://web.push.apple.com/ok"];
+    const candidates = [...reviewers, ...good];
+    for (const ch of delimiters) {
+      for (const host of named) {
+        const suffix = host.slice(host.indexOf("."));
+        candidates.push(`https://10.0.3.7${ch}${suffix}/x`, `https://${host}${ch}.attacker.example/x`, `https://attacker.example${ch}${host}/x`,
+          `https://${host}${ch}/x`, `https://${host}:443${ch}/x`, `https://u${ch}@${host}/x`);
+      }
+    }
+    for (const e of reviewers) expect(pushEndpointAllowed(e), e).toBe(false);
+    let accepted = 0;
+    for (const e of candidates) {
+      if (!pushEndpointAllowed(e)) continue;
+      accepted += 1;
+      const before = seen.length;
+      await real.sendNotification({ endpoint: e, keys }, "{}", {
+        vapidDetails: { subject: "mailto:ops@example.com", publicKey: vapid.publicKey, privateKey: vapid.privateKey }, TTL: 60, agent: pushServiceAgent(),
+      }).catch(() => undefined);
+      expect(seen.length, e).toBe(before + 1);
+      const last = seen[seen.length - 1];
+      expect(pushHostAllowed(last.hostname), `${JSON.stringify(e)} → ${String(last.hostname)}`).toBe(true);
+      expect(last.hostname, e).toBe(new URL(e).hostname);
+      expect(last.port ?? null, e).toBeNull();
+      expect(last.agent, e).toBeInstanceOf(PushServiceAgent);
+    }
+    expect(accepted).toBeGreaterThanOrEqual(good.length);
+    expect(candidates.length).toBeGreaterThan(1000);
+  });
+
+  it("fix pass 2 (defence in depth): every send goes through pushServiceAgent(), which connects only to a push service's host — an IP literal or any other host is refused before any socket", async () => {
+    setVapid(true);
+    h.state.tables.notifications = [bell("a")];
+    h.state.tables.push_subscriptions = [device("a")];
+    await sendPushSafe(input({ recipients: ["a"] }));
+    expect(h.sent[0].options.agent).toBe(pushServiceAgent());
+    expect(pushServiceAgent()).toBeInstanceOf(https.Agent);
+    const agent = new PushServiceAgent();
+    try {
+      for (const host of ["10.0.3.7", "169.254.169.254", "attacker.example", "fcm.googleapis.com.attacker.example", "localhost", "10.0.3.7;.push.apple.com"]) {
+        const err = await new Promise<Error | null>((resolve) => { agent.createConnection({ host, port: 443 }, (e) => resolve(e)); });
+        expect((err as { code?: string } | null)?.code, host).toBe("EPUSHHOST");
+      }
+      const wrongPort = await new Promise<Error | null>((resolve) => { agent.createConnection({ host: "fcm.googleapis.com", port: 8443 }, (e) => resolve(e)); });
+      expect((wrongPort as { code?: string } | null)?.code).toBe("EPUSHHOST");
+      // through a real https.request (no network: refused before a socket exists)
+      const viaRequest = await new Promise<{ code?: string }>((resolve) => {
+        const req = https.request({ hostname: "10.0.3.7", path: "/x", method: "POST", agent });
+        req.on("error", (e) => resolve(e as { code?: string }));
+        req.end();
+      });
+      expect(viaRequest.code).toBe("EPUSHHOST");
+      // a push service's host goes on to the TLS connection, with the public-only lookup
+      const tls = vi.spyOn(https.Agent.prototype, "createConnection").mockImplementation((() => undefined) as never);
+      agent.createConnection({ host: "fcm.googleapis.com", port: 443 }, () => undefined);
+      expect(tls).toHaveBeenCalledTimes(1);
+      expect((tls.mock.calls[0][0] as { lookup?: unknown; host?: unknown }).lookup).toBe(pushPublicLookup);
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  it("fix pass 2 (defence in depth): the agent's lookup refuses any DNS answer holding a loopback, private, link-local, CGNAT, multicast, mapped or reserved address", async () => {
+    for (const a of ["142.250.80.10", "17.253.144.10", "2607:f8b0:4005:80b::200a"]) expect(pushAddressPublic(a), a).toBe(true);
+    for (const a of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1", "255.255.255.255",
+      "::1", "::", "::ffff:10.0.0.1", "::ffff:142.250.80.10", "fe80::1", "fd00::1", "ff02::1", "64:ff9b::a00:1", "not-an-ip"]) {
+      expect(pushAddressPublic(a), a).toBe(false);
+    }
+    const answer = (addrs: Array<{ address: string; family: number }>) =>
+      vi.spyOn(dns, "lookup").mockImplementation(((_h: string, _o: unknown, cb: (e: Error | null, a: unknown) => void) => cb(null, addrs)) as never);
+    const ask = (all: boolean) => new Promise<{ err: { code?: string } | null; address: unknown; family?: number }>((resolve) => {
+      pushPublicLookup("fcm.googleapis.com", { all }, (err, address, family) => resolve({ err: err as { code?: string } | null, address, family }));
+    });
+    answer([{ address: "142.250.80.10", family: 4 }, { address: "10.0.0.5", family: 4 }]);
+    expect((await ask(false)).err?.code).toBe("EPUSHADDRESS");
+    vi.restoreAllMocks();
+    answer([{ address: "142.250.80.10", family: 4 }]);
+    expect(await ask(false)).toMatchObject({ err: null, address: "142.250.80.10", family: 4 });
+    expect(await ask(true)).toMatchObject({ err: null, address: [{ address: "142.250.80.10", family: 4 }] });
   });
 
   // ── fix pass: one push per device per bell row, claimed BEFORE the send ──
@@ -941,6 +1146,32 @@ describe("the rest of the build", () => {
     expect(read("app/api/push/subscribe/route.ts")).not.toMatch(/protocol === "https:"/);
     expect(read("lib/push/sendPush.ts")).toMatch(/if \(!pushEndpointAllowed\(d\.endpoint\)\) \{ offService\.push\(d\.id\); continue; \}/);
     expect(read("app/api/cron/maintenance/route.ts")).toMatch(/!pushEndpointAllowed\(r\.endpoint\)/);
+    // fix pass 2: the allow-list reads the host with BOTH parsers, and the sender hands web-push the push-service agent
+    const endpoints = read("lib/push/endpoints.ts");
+    expect(endpoints).toContain('import { parse as legacyUrlParse } from "node:url";');
+    expect(endpoints).toMatch(/legacy\.hostname === host && legacy\.port === null && legacy\.auth === null/);
+    expect(read("lib/push/sendPush.ts")).toMatch(/timeout: PUSH_SEND_TIMEOUT_MS, agent,/);
+  });
+
+  it("fix pass 2: lib/push/endpoints.ts and lib/push/sendPush.ts are server-only — no browser module imports either; the card takes PUSH_KEYS_MISMATCH from dispatch.ts", () => {
+    const root = process.cwd();
+    const files: string[] = [];
+    const walk = (d: string) => {
+      for (const n of readdirSync(d)) {
+        const p = join(d, n);
+        if (statSync(p).isDirectory()) { if (n !== "node_modules" && n !== "__tests__" && !n.startsWith(".")) walk(p); }
+        else if (/\.tsx?$/.test(n) && !n.endsWith(".d.ts")) files.push(p);
+      }
+    };
+    for (const d of ["app", "components", "lib", "hooks"]) walk(join(root, d));
+    const client = files.filter((f) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(readFileSync(f, "utf8")));
+    expect(client.length).toBeGreaterThan(50);
+    const offenders = client.filter((f) => /from "@\/lib\/push\/(endpoints|sendPush)"|import\("@\/lib\/push\/(endpoints|sendPush)"\)/.test(readFileSync(f, "utf8")));
+    expect(offenders.map((f) => relative(root, f))).toEqual([]);
+    // dispatch.ts is bundled for the browser
+    expect(read("lib/notify/dispatch.ts")).not.toMatch(/@\/lib\/push\/endpoints/);
+    expect(read("components/settings/PushOptIn.tsx")).toContain('import { PUSH_KEYS_MISMATCH, PUSH_OPT_IN_SINCE } from "@/lib/notify/dispatch";');
+    expect(PUSH_KEYS_MISMATCH).toBe("keys_mismatch");
   });
 
   it("OS-11 by record: the three registrations name a table the app now reads and writes", () => {

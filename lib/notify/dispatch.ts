@@ -548,6 +548,13 @@ export const PUSH_OPT_IN_SINCE = "2026-10-14T00:00:00.000Z";
  *  is this number). */
 export const PUSH_REQUEST_MAX_RECIPIENTS = 500;
 
+/** POST /api/push/subscribe's 409 `code` when the endpoint is stored under
+ *  OTHER keys than the caller presents (the caller has not shown it holds
+ *  that subscription): components/settings/PushOptIn.tsx then starts a fresh
+ *  subscription once. Here, not in lib/push/endpoints.ts, because the card
+ *  is a browser module and that file is server-only (N10 fix pass 2). */
+export const PUSH_KEYS_MISMATCH = "keys_mismatch";
+
 let pushNoSenderLogged = false;
 
 /** The push leg. Never throws. `sender`: the caller's EmitInput.serverPush

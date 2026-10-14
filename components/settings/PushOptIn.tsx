@@ -41,8 +41,7 @@ import { AlertTriangle, BellRing, Check, Smartphone } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useDismissed } from "@/hooks/useDismissed";
 import { Button } from "@/components/ui/Button";
-import { PUSH_OPT_IN_SINCE } from "@/lib/notify/dispatch";
-import { PUSH_KEYS_MISMATCH } from "@/lib/push/endpoints";
+import { PUSH_KEYS_MISMATCH, PUSH_OPT_IN_SINCE } from "@/lib/notify/dispatch";
 import type { ClassifiedKind } from "@/lib/notificationKinds";
 
 /** useDismissed key for "Not now" (scope `<uid>:<orgId>`). A later nudge that

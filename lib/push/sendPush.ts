@@ -56,7 +56,15 @@
 //     (lib/push/endpoints.ts pushEndpointAllowed) is never sent to and is
 //     deleted; at most the PUSH_DEVICE_CAP newest devices of a person are
 //     read. /api/push/subscribe stores nothing else, and 20261211 drops the
-//     own-row INSERT policy, so the route is the only writer.
+//     own-row INSERT policy, so the route is the only writer. Fix pass 2:
+//     the check accepts only an endpoint the WHATWG parser and the legacy
+//     url.parse (the one web-push connects by) read the same host from, and
+//     every request goes through pushServiceAgent(), which connects only to
+//     a push service's host and only to a public address.
+//   * One person's registrations never cost another person their push (fix
+//     pass 2): a device read that comes back at PostgREST's row limit is
+//     read again person by person, PUSH_DEVICE_CAP rows each; a row dated
+//     later than now (+ PUSH_FUTURE_SKEW_MS) is not read.
 //
 // Push is best-effort by design and is never a delivery record (GAP-205;
 // drafting-flow GAP-113): nothing reads a push to decide anything.
@@ -77,7 +85,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
 import { NOTIFICATION_KINDS, kindMeta, type ClassifiedKind } from "@/lib/notificationKinds";
 import { PUSH_OPT_IN_SINCE, PUSH_REQUEST_MAX_RECIPIENTS, type PushSender, type PushSendInput } from "@/lib/notify/dispatch";
-import { PUSH_DEVICE_CAP, pushEndpointAllowed } from "@/lib/push/endpoints";
+import { PUSH_DEVICE_CAP, PUSH_FUTURE_SKEW_MS, pushEndpointAllowed, pushServiceAgent } from "@/lib/push/endpoints";
 
 /** The push-worthy kinds, in registry order (KIND_META.pushWorthy). */
 export const PUSH_KINDS: readonly ClassifiedKind[] = Object.freeze(
@@ -118,9 +126,11 @@ export const PUSH_MAX_RECIPIENTS = PUSH_REQUEST_MAX_RECIPIENTS;
 const CHUNK = 150;
 /** uids per device read: PUSH_DEVICE_CAP devices each stay well under
  *  DEVICE_READ_LIMIT (PostgREST's default max-rows), so a read is cut short
- *  only when someone holds more rows than the cap (it is said when it is). */
+ *  only when someone holds more rows than the cap — and then the part is
+ *  read again person by person, PUSH_DEVICE_CAP rows each (fix pass 2: one
+ *  person's rows must never crowd the others in their part out). */
 const DEVICE_CHUNK = 50;
-const DEVICE_READ_LIMIT = 1000;
+export const DEVICE_READ_LIMIT = 1000;
 
 export interface PushConfig {
   publicKey: string;
@@ -313,19 +323,27 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
 
   // 3) The devices each eligible person turned on: the PUSH_DEVICE_CAP newest
   //    per person, and only those on a push service's own host — a row that
-  //    names anything else is never sent to, and is deleted (fix pass).
+  //    names anything else is never sent to, and is deleted (fix pass). A
+  //    row dated later than now (+ the skew margin) was not stamped by the
+  //    route and is not read (fix pass 2).
   const devices: DeviceRow[] = [];
   const offService: string[] = [];
   let cutShort = false;
   const optInSince = Date.parse(PUSH_OPT_IN_SINCE);
-  for (const part of chunks(eligible, DEVICE_CHUNK)) {
-    const { data, error } = await supabaseAdmin
+  const latest = now + PUSH_FUTURE_SKEW_MS;
+  const latestIso = new Date(latest).toISOString();
+  const readDevices = (uids: string[], limit: number) => {
+    const q = supabaseAdmin
       .from("push_subscriptions")
-      .select("id, user_id, endpoint, p256dh, auth, last_reminded_at, created_at")
-      .in("user_id", part)
+      .select("id, user_id, endpoint, p256dh, auth, last_reminded_at, created_at");
+    return (uids.length === 1 ? q.eq("user_id", uids[0]) : q.in("user_id", uids))
       .gte("created_at", PUSH_OPT_IN_SINCE)
+      .lte("created_at", latestIso)
       .order("created_at", { ascending: false })
-      .limit(DEVICE_READ_LIMIT);
+      .limit(limit);
+  };
+  for (const part of chunks(eligible, DEVICE_CHUNK)) {
+    const { data, error } = await readDevices(part, DEVICE_READ_LIMIT);
     if (error) {
       if (isMissingSchemaError(error)) {
         logOnce("no-table", "[push] push_subscriptions does not exist (20260804_push_subscriptions.sql not applied) — no device can be pushed");
@@ -334,15 +352,31 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
       console.warn(`[push] device registrations could not be read (${error.message}) — the ${input.kind} push was not sent`);
       return { ...none("unreadable"), eligible: eligible.length, capped };
     }
-    const rows = [...((data as DeviceRow[] | null) ?? [])];
-    if (rows.length >= DEVICE_READ_LIMIT) cutShort = true;
+    let rows = [...((data as DeviceRow[] | null) ?? [])];
+    if (rows.length >= DEVICE_READ_LIMIT) {
+      // Cut short: someone in this part holds more rows than the cap, and
+      // the limit may have left the others' devices out. Read each person
+      // again, at most PUSH_DEVICE_CAP rows each — a person whose read fails
+      // is not pushed (fail closed), the others still are.
+      cutShort = true;
+      rows = [];
+      for (const uid of part) {
+        const one = await readDevices([uid], PUSH_DEVICE_CAP);
+        if (one.error) {
+          console.warn(`[push] a person's device registrations could not be read (${one.error.message}) — not pushed; bell and email are unaffected`);
+          continue;
+        }
+        rows.push(...((one.data as DeviceRow[] | null) ?? []));
+      }
+    }
     // newest first, whatever order the read came back in
     rows.sort((a, b) => (Date.parse(b.created_at ?? "") || 0) - (Date.parse(a.created_at ?? "") || 0));
     const kept = new Map<string, number>();
     for (const d of rows) {
-      // the deleted reminders stack's registrations are never pushed (checked
-      // here too, not only by the query's filter)
-      if (!d.created_at || !(Date.parse(d.created_at) >= optInSince)) continue;
+      // the deleted reminders stack's registrations are never pushed, nor a
+      // row dated in the future (checked here too, not only by the query)
+      const made = d.created_at ? Date.parse(d.created_at) : NaN;
+      if (!(made >= optInSince) || !(made <= latest)) continue;
       if (!pushEndpointAllowed(d.endpoint)) { offService.push(d.id); continue; }
       const n = kept.get(d.user_id) ?? 0;
       if (n >= PUSH_DEVICE_CAP) continue;
@@ -350,7 +384,7 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
       devices.push(d);
     }
   }
-  if (cutShort) console.warn(`[push] a device read reached ${DEVICE_READ_LIMIT} rows (someone holds more than ${PUSH_DEVICE_CAP} registrations) — some devices may not have been pushed`);
+  if (cutShort) console.warn(`[push] a device read reached ${DEVICE_READ_LIMIT} rows (someone holds more than ${PUSH_DEVICE_CAP} registrations) — that part was read again person by person, ${PUSH_DEVICE_CAP} each`);
   const outcome: PushOutcome = { eligible: eligible.length, attempted: 0, sent: 0, pruned: 0, capped };
   if (offService.length > 0) {
     // never sent to: an endpoint off every push service's host (ids in
@@ -368,6 +402,9 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
   //    its last push is older than the row), so two requests at once send
   //    once; the second finds the claim taken and sends nothing.
   const vapidDetails = { subject: config.subject, publicKey: config.publicKey, privateKey: config.privateKey };
+  // every request goes through the push-service agent (fix pass 2): it
+  // connects only to a push service's host, and only to a public address
+  const agent = pushServiceAgent();
   await Promise.allSettled(devices.map(async (d) => {
     const row = evidence.get(d.user_id);
     if (!row) return;
@@ -390,7 +427,7 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
     const subscription: WebPushSubscription = { endpoint: d.endpoint, keys: { p256dh: d.p256dh, auth: d.auth } };
     try {
       await webpush.sendNotification(subscription, JSON.stringify(pushPayloadFor(input.kind, row)), {
-        vapidDetails, TTL: PUSH_TTL_SECONDS, urgency: "high", timeout: PUSH_SEND_TIMEOUT_MS,
+        vapidDetails, TTL: PUSH_TTL_SECONDS, urgency: "high", timeout: PUSH_SEND_TIMEOUT_MS, agent,
       });
       outcome.sent += 1;
     } catch (e) {
