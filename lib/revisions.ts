@@ -496,8 +496,12 @@ export async function notifyHolderOfRetirement(opts: {
  *  and an FYI that stalls (a hung discover check) never holds it. Used by
  *  the doors that recalled nothing before: archiveDocument,
  *  changeDocumentStatus into a retired status, and split / merge retiring
- *  their sources (lib/documentLifecycle). One call per retirement: a door that routes a write through another door that
- *  already calls it must not call it again. No label in hand (a status
+ *  their sources (lib/documentLifecycle). One call per retirement: a door
+ *  that routes a write through another door that already calls it must
+ *  not call it again. Each door passes `recallCopyHolders:
+ *  recallsCopyHolders(priorStatus)` (P26 fix pass 4, the integrator's
+ *  ruling under DEC-90): a document that was never issued gets the
+ *  watchers' FYI and no copy-holder recall. No label in hand (a status
  *  write): the row is read for it here, off the door's path; unreadable,
  *  the notice names "A document" and still goes — a recall is never
  *  dropped for want of a label. The module is loaded once and shared, so
@@ -521,31 +525,60 @@ export function recallOnRetirement(
     const { recallRetiredDocument } = await staleCopiesLoad;
     await recallRetiredDocument({ ...input, docLabel: docLabel || "A document", libraryId });
   })().catch((e) => {
-    // Non-blocking (the retirement has landed); logged when the recall never
-    // started (P26 fix pass 2): a failed module load, a throw past it. A
-    // failed download_audits read INSIDE recallRetiredDocument is silent
-    // there (notifications DELIV-17). The next recall retries the load.
-    console.warn(`[revisions] PROD-17: the retirement recall of document ${input.documentId} did not run`, e);
+    // Non-blocking (the retirement has landed), never silent: a recall that
+    // failed to run (a failed module load, a throw past it) is logged as an
+    // error, as this file logs a retirement's other dropped duties ([retire],
+    // [publish]) — P26 fix pass 2 logged it as a warning; fix pass 4 (the
+    // integrator, DEC-90) as an error. The door is unaffected and the next
+    // recall retries the load. A failed download_audits read INSIDE
+    // recallRetiredDocument is still silent there: it resolves, so nothing
+    // reaches this catch (notifications DELIV-17, assigned to
+    // document-control P28 STATUS-DOOR REMAINDERS).
+    console.error(`[revisions] PROD-17: the retirement recall of document ${input.documentId} did not run`, e);
   });
 }
 
 /** PROD-17 (P26 fix pass 2): does a door that retires a document out of
- *  `priorStatus` (the status read fresh before its write) skip the recall,
- *  because an earlier retirement may already have sent one? Only a
- *  Superseded or Archived prior skips: supersede, a split and a merge
- *  (Superseded) and the Archive dialog (Archived) recall. "May have" is
- *  all it says — a Superseded / Archived set by a status editor's bare
- *  write, the library page's bulk archive, a reversal's parking or a
- *  retention disposal recalled nothing (PROD-17 residual). A Void prior
- *  RECALLS: no live door that writes Void recalls (both status editors
- *  write it bare; changeDocumentStatus would recall, but no caller routes
- *  a retirement there), so for a Void row "already retired" means "never
- *  recalled". A prior the read did not give (null) recalls — a second
- *  recall over none. Interim: once a door that writes Void recalls, a Void
- *  prior gives a second recall, until "already recalled" is decided from
- *  the document's recall record (document-control DIST-16). */
+ *  `priorStatus` (the status read fresh before its write) skip the whole
+ *  recall call — the copy holders' recall AND the watchers' FYI — because
+ *  an earlier retirement may already have sent both? Only a Superseded or
+ *  Archived prior is "already retired" here: supersede, a split and a
+ *  merge (Superseded) and the Archive dialog (Archived) send the call.
+ *  "May have" is all it says — a Superseded / Archived set by a status
+ *  editor's bare write, the library page's bulk archive, a reversal's
+ *  parking or a retention disposal sent nothing, so its watchers are never
+ *  told (PROD-17 residual, document-control P28). A Void prior is NOT
+ *  skipped: no live door that writes Void recalls or tells a watcher (both
+ *  status editors write it bare; changeDocumentStatus would, but no caller
+ *  routes a retirement there). What a Void prior gets is
+ *  recallsCopyHolders's to say: the watchers' FYI, and no copy-holder
+ *  recall (P26 fix pass 4). A prior the read did not give (null) is not
+ *  skipped. Interim: once a door that writes Void tells the watchers, a
+ *  Void prior gives them a second FYI, until "already told" is decided
+ *  from the document's record (document-control DIST-16). */
 export function skipsRetirementRecall(priorStatus: string | null | undefined): boolean {
   return isRetiredStatus(priorStatus) && (priorStatus ?? "").trim() !== "Void";
+}
+
+/** PROD-17 (P26 fix pass 4; the integrator's ruling under DEC-90,
+ *  2026-10-14): does a retirement out of `priorStatus` (the status read
+ *  fresh before the door's write) recall the document's COPY HOLDERS?
+ *  Only when it takes away a controlled issue — the prior status is one
+ *  lib/issueStatus.ts isControlledIssueStatus counts (Issued, IFC, a
+ *  library's own; the helper also counts an empty or missing status, so a
+ *  prior the read did not give recalls: a second recall over none).
+ *  Retiring a controlled
+ *  issue means telling the holders of its copies to stop using them, as
+ *  supersede does. A document never issued — a Draft, In Review or Void
+ *  prior, which the helper does not count — gets the watchers' FYI only:
+ *  "destroy old prints" (a preference-exempt safety_recall email) is false
+ *  for it. A Void prior is a document already out of force; its copies
+ *  are for the door that voids it to recall, once that door recalls
+ *  (PROD-17 residual, document-control P28) — a row voided by a status
+ *  editor's bare write before then has its copies recalled by no door.
+ *  Superseded / Archived priors never get here (skipsRetirementRecall). */
+export function recallsCopyHolders(priorStatus: string | null | undefined): boolean {
+  return isControlledIssueStatus(priorStatus);
 }
 
 // ─── REV-6: retiring the in-flight review draft ───────────────────────────
@@ -2206,18 +2239,21 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
     },
   });
 
-  // PROD-17 (document-control P26): an archive is a retirement — every copy
-  // holder is recalled and the document's watchers told, once, never
-  // awaited. A Superseded row (read just before the write) is not recalled
-  // again (skipsRetirementRecall). That is not proof it was recalled: a
+  // PROD-17 (document-control P26): an archive is a retirement — the
+  // document's watchers are told and, when it takes away a controlled
+  // issue, every copy holder is recalled, once, never awaited. A
+  // Superseded row (read just before the write) gets neither again
+  // (skipsRetirementRecall). That is not proof it was recalled: a
   // Superseded set by either status editor's bare write, a reversal's
   // parking, or any retirement before DIST-1, recalled nothing (PROD-17
-  // residual), so until those doors recall, archiving such a row recalls
-  // no copies either. A Void row IS recalled (P26 fix pass 2): no live door
-  // that writes Void recalls, so its copies were never recalled. A status
-  // the read did not give recalls (a second recall over none). The archive
-  // tells no checkout holder or package owner itself, so they stay in the
-  // watchers' audience.
+  // residual, document-control P28), so until those doors recall,
+  // archiving such a row recalls no copies and tells no watcher either.
+  // P26 fix pass 4 (the integrator's ruling under DEC-90): the copy holders
+  // are recalled only out of a controlled issue (recallsCopyHolders): a
+  // Draft, In Review or Void row archived gets the watchers' FYI only. A
+  // status the read did not give recalls (a second recall over none). The
+  // archive tells no checkout holder or package owner itself, so they stay
+  // in the watchers' audience.
   if (!skipsRetirementRecall(priorStatus)) {
     recallOnRetirement({
       orgId, documentId: doc.id, libraryId: doc.libraryId,
@@ -2225,6 +2261,7 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
       newStatus: "Archived", replacementNote: null,
       actorUserId, actorName: actorEmail || actorUserId,
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+      recallCopyHolders: recallsCopyHolders(priorStatus),
     });
   }
 }
@@ -2992,18 +3029,20 @@ export async function changeDocumentStatus(input: {
   }
   // PROD-17 (document-control P26): a write that RETIRES the document (into
   // Superseded / Void / Archived — isRetiredStatus — out of a status that is
-  // not one, or out of Void) recalls every copy holder and tells its
-  // watchers, once, never awaited; the outcome returned is unchanged. A
-  // re-save of the status it already has recalls nothing, and nor does a
-  // move out of Superseded or Archived (skipsRetirementRecall); a move out
-  // of Void into another retired status recalls (P26 fix pass 2: no live
-  // door that writes Void recalls). A pre-write read that failed
-  // (fromStatus unknown) recalls: a second recall over none. This door tells no checkout holder or package
-  // owner, so they stay in the watchers' audience. (Neither status editor
-  // routes a retirement here today: each writes a retired status with its
-  // own bare write, which recalls nothing — PROD-17 residual. A caller that
-  // routes one here must not also call recallOnRetirement: that would be a
-  // second recall.)
+  // not one, or out of Void) tells its watchers, once, never awaited, and
+  // recalls every copy holder when it takes away a controlled issue
+  // (recallsCopyHolders, P26 fix pass 4 — the integrator's ruling under
+  // DEC-90: a Draft or In Review moved straight into a retired status, or
+  // a Void moved into another, gets the watchers' FYI only); the outcome
+  // returned is unchanged. A re-save of the status it already has sends
+  // nothing, and nor does a move out of Superseded or Archived
+  // (skipsRetirementRecall). A pre-write read that failed (fromStatus
+  // unknown) recalls: a second recall over none. This door tells no
+  // checkout holder or package owner, so they stay in the watchers'
+  // audience. (Neither status editor routes a retirement here today: each
+  // writes a retired status with its own bare write, which recalls nothing
+  // — PROD-17 residual, document-control P28. A caller that routes one here
+  // must not also call recallOnRetirement: that would be a second recall.)
   if (isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim()
     && !skipsRetirementRecall(before.fromStatus)) {
     recallOnRetirement({
@@ -3011,6 +3050,7 @@ export async function changeDocumentStatus(input: {
       newStatus: input.toStatus.trim(), replacementNote: null,
       actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+      recallCopyHolders: recallsCopyHolders(before.fromStatus),
     });
   }
   const change = { fromStatus: before.fromStatus, toStatus: input.toStatus, hasCurrentRevision: !!before.versionId };

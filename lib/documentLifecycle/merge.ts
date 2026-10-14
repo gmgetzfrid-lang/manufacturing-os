@@ -12,7 +12,7 @@ import { logRevisionEvent } from "@/lib/audit";
 import {
   revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
   canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp, describeControllerOnlyFirstIssue,
-  recallOnRetirement, skipsRetirementRecall,
+  recallOnRetirement, skipsRetirementRecall, recallsCopyHolders,
   type RevUpInput,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
@@ -515,23 +515,25 @@ async function finishMerge(
     });
   }
 
-  // PROD-17 (document-control P26): each absorbed source's copy holders are
-  // recalled and its watchers told — one recall per retired source, never
-  // awaited; a source already Superseded or Archived before the merge (its
-  // status read fresh before the flip; skipsRetirementRecall) is not
-  // recalled again, a Void one is (P26 fix pass 2: no live door that
-  // writes Void recalls). Its checkout holder was told above; no package
-  // owner is. A person who holds copies of several sources gets one
-  // recall per source — each source is its own document; for the
-  // integrator to ratify under DEC-90 (PROD-17 Partial), else the merge
-  // joins the bulk doors' batched per-recipient recall once
-  // lib/staleCopies.ts has one.
+  // PROD-17 (document-control P26): each absorbed source's watchers are
+  // told and, when the merge takes away a controlled issue, its copy
+  // holders recalled — one call per retired source, never awaited; a
+  // source already Superseded or Archived before the merge (its status read
+  // fresh before the flip; skipsRetirementRecall) gets neither again. P26
+  // fix pass 4 (the integrator's ruling under DEC-90): the copy holders
+  // are recalled only out of a controlled issue (recallsCopyHolders) — a
+  // Draft, In Review or Void source gets the watchers' FYI only. Its
+  // checkout holder was told above; no package owner is. A person who
+  // holds copies of several issued sources gets one recall per source:
+  // ACCEPTED by the integrator under DEC-90 (2026-10-14) — each source is
+  // a distinct document its holders may have printed (PROD-17).
   const mergedInto = target.kind === "create_new"
     ? target.documentNumber.trim()
     : String(target.target.documentNumber || target.target.title || target.target.name || "the kept document");
-  const wasRetired = new Set(retired.filter((r) => skipsRetirementRecall(r.priorStatus)).map((r) => r.sourceDocId));
+  const priorStatusOf = new Map(retired.map((r) => [r.sourceDocId, r.priorStatus]));
   for (const src of absorbed) {
-    if (wasRetired.has(src.id!)) continue;
+    const priorStatus = priorStatusOf.get(src.id!);
+    if (skipsRetirementRecall(priorStatus)) continue;
     recallOnRetirement({
       orgId, documentId: src.id!, libraryId: src.libraryId || target.libraryId,
       docLabel: String(src.documentNumber || src.title || src.name || "document"),
@@ -539,6 +541,7 @@ async function finishMerge(
       replacementNote: `Replaced by ${mergedInto}.`,
       actorUserId, actorName: actorEmail || actorUserId,
       personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
+      recallCopyHolders: recallsCopyHolders(priorStatus),
     });
   }
 

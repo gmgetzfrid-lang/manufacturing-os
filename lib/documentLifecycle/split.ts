@@ -10,7 +10,7 @@
 import { supabase } from "@/lib/supabase";
 import {
   authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
-  recallOnRetirement, skipsRetirementRecall,
+  recallOnRetirement, skipsRetirementRecall, recallsCopyHolders,
 } from "@/lib/revisions";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
@@ -300,14 +300,16 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     verb: "split", action: "split", reason: reason.trim(),
   });
 
-  // PROD-17 (document-control P26): the retired source's copy holders are
-  // recalled and its watchers told, once, never awaited — unless it was
-  // already Superseded or Archived (the status read fresh before the flip;
-  // skipsRetirementRecall): it is not recalled again (whether its earlier
-  // retirement recalled it depends on the door that retired it — PROD-17
-  // residual). A Void source IS recalled (P26 fix pass 2: no live door
-  // that writes Void recalls). The checkout holder was told above
-  // (notifyHolderOfRetirement); no package owner is.
+  // PROD-17 (document-control P26): the retired source's watchers are told
+  // and, when the split takes away a controlled issue, its copy holders
+  // recalled, once, never awaited — unless it was already Superseded or
+  // Archived (the status read fresh before the flip; skipsRetirementRecall):
+  // then neither goes again (whether its earlier retirement sent them
+  // depends on the door that retired it — PROD-17 residual). P26 fix pass 4
+  // (the integrator's ruling under DEC-90): the copy holders are recalled
+  // only out of a controlled issue (recallsCopyHolders) — a Draft, In
+  // Review or Void source gets the watchers' FYI only. The checkout holder
+  // was told above (notifyHolderOfRetirement); no package owner is.
   if (!skipsRetirementRecall(retired.priorStatus)) {
     recallOnRetirement({
       orgId, documentId: sourceId, libraryId: sourceLibraryId,
@@ -316,6 +318,7 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
       replacementNote: `Replaced by ${targets.map((t) => t.documentNumber.trim()).join(", ")}.`,
       actorUserId, actorName: actorEmail || actorUserId,
       personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
+      recallCopyHolders: recallsCopyHolders(retired.priorStatus),
     });
   }
 
