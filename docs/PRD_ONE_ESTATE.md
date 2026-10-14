@@ -249,17 +249,20 @@
 
 ## 6. Phases (each useful alone, in order)
 
-| Phase | Delivers | Done when |
-|---|---|---|
-| 0 (shipped) | Documents › Graph: finder parse + evidence ranking, balloon-tree map, drill-down, honing, in-place open, drive listings, finder aliases | Merged 2026-10-14 |
-| 1 | Hash as universal key (R1); folders as nodes with unit edges (R2.3) | A copy of an indexed drawing anywhere shows "read"; every folder under "20 - Crude" knows its unit |
-| 2 | Find service over L0–L2 with evidence (R4.1–R4.5); Documents graph, Cmd+K, equipment page call it | "drawings for X35 in crude" returns drawn-on / mentioned-in / tagged-to / filed-under groups, inspection hidden with a count |
-| 3 | Resolver on every upload/folder event; bridge and proposer everywhere; alias proposals (R3, R5) | Uploading `born-u1a.pdf` into any folder proposes unit + asset edges; Review shows them with evidence |
-| 4 | Project scope edges and inference (R6); Intelligence graph draws projects | A project page lists its unit, assets, and drawings without a single checkout |
-| 5 | One graph store + lenses (R2.1, R2.4, R7) | The same node id selected in Documents graph and Intelligence graph; "open in global view" works |
-| 6 | Convention watchdog with keep-and-link (R3.6) | Creating "Dave's stuff / OC74321.pdf" prompts a home and links it there |
-| 7 | Page-level landing (R4.6); semantic layer joined (L3); coverage + priced read (R4.5) | A P&ID hit opens on sheet 7 with X35 ringed |
-| 8 | Thor scanner and guided import (R8) | A 20-year share is triaged: duplicates, known-by-hash, probable drawings, copier scans |
+All eight phases are built on branch `claude/epic-rubin-izq3hf` (preview
+only, not in production as of 2026-10-14). "Done when" is what to test.
+
+| Phase | Delivers | Done when | Status |
+|---|---|---|---|
+| 0 | Documents › Graph: finder parse + evidence ranking, balloon-tree map, drill-down, honing, in-place open, drive listings, finder aliases | — | Merged to master 2026-10-14 |
+| 1 | Hash as universal key (R1); `estate_edges`; folders as nodes with unit edges (R2.3); resolver + nightly pass | A copy of an indexed drawing anywhere shows "read"; every folder under "20 - Crude" knows its unit; "Resolve links" on the map | Built (migration `20261020_one_estate.sql`) |
+| 2 | Find service L0–L2 + activity + coverage (R4, R11); Documents graph, Cmd+K, equipment page call it | "drawings for X35 in crude" returns drawn-on / mentioned / tagged / filed groups, inspection hidden with a count; "Happening now" lists requests, checkouts, markups, holds, projects, milestones | Built (`POST /api/find`) |
+| 3 | Resolver on every upload / folder / ingest event; alias proposals; Review tab section (R3, R5) | Uploading `born-u1a.pdf` anywhere proposes unit + asset edges; Review shows them with evidence; "Born" under Crude proposes an alias to teach | Built |
+| 4 | Project scope edges, by hand and inferred (R6); Intelligence graph draws projects | Project › Documents › Scope lists its units and equipment; the 3D graph connects a project with no checkouts | Built |
+| 5 | One graph, several lenses (R2.4, R7) | Same node id across Documents map and Intelligence graph; "Global view" / "Find it on the Documents map"; entities drawn as satellites beside their files | Built |
+| 6 | Convention watchdog with keep-and-link (R3.6) | Dropping a crude P&ID in "Dave's stuff" shows where crude P&IDs live; "Link it there" files it there too without moving; "Also filed here" strip | Built (`POST /api/estate/watchdog`) |
+| 7 | Page-level landing with the tag ringed (R4.6); meaning layer L3; coverage with a priced read (R4.5) | A "drawn on sheet 7" chip opens sheet 7 with X35 ringed; a meaning query finds a standard with different words when a key exists; "Read these…" links a folder as a source | Built |
+| 8 | Thor scanner and triage (R8) | `node scripts/thor-scan.mjs T:\ --out thor.json` then paste the JSON under Drives: duplicates, known-by-hash, probable drawings, copier scans, personal folders; a drive copy answers a search as its system twin | Built |
 
 ## 7. Decisions already made
 
@@ -330,3 +333,26 @@ What the roadmap changes: steps 3–6 become one resolver event on upload
 (R3) so the bridge runs for every container, step 7 gets ingestion-time
 alias proposals (R3.5), and the find service (R4) reads what steps 4–5
 produced from every search box, not only Ask.
+
+## Appendix B — Triage a share with the scanner
+
+1. On a machine that can see the share: `node scripts/thor-scan.mjs "T:\\" --out thor.json`
+   (`--no-hash` for a names-only pass, `--max-hash-mb 200` to skip huge
+   files). Nothing is uploaded; no model reads anything.
+2. It prints the triage: duplicate groups, probable drawings by name,
+   copier-named scans, empties, personal-looking folders, busiest folders.
+3. Documents › Graph › Drives › paste `thor.json`. The same triage shows
+   against the system: how many files are already controlled documents
+   (same bytes), how many are copies of each other.
+4. Search as usual. A drive file answers as its system twin ("same bytes as
+   2002-D-2001_SHT05, already in the system") and copier-named files are
+   listed as "read first" candidates for a guided import.
+
+## Appendix C — Testing the build on the preview
+
+Apply both migrations to the preview's database first:
+`20261019_file_finder.sql`, then `20261020_one_estate.sql`. Then, in order:
+Intelligence › Setup (codebook units), Documents › Graph › "Resolve links",
+Intelligence › Review (estate links), a search for equipment on the map, the
+equipment page's "Across the estate", a project's Scope, an upload into a
+wrong folder (watchdog), a drive JSON from the scanner.

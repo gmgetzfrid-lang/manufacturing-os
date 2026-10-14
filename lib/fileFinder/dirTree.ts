@@ -19,13 +19,15 @@ export interface ListedFile {
   sizeBytes?: number;
   /** ISO-ish date (YYYY-MM-DD) when the listing carried one. */
   date?: string;
+  /** SHA-256 of the bytes, when the listing came from the scanner. */
+  hash?: string;
 }
 
 export interface ParsedListing {
   files: ListedFile[];
   /** Folders seen, including empty ones, as joined paths. */
   folders: string[];
-  format: "paths" | "dir" | "tree-win" | "tree-unix" | "empty";
+  format: "paths" | "dir" | "tree-win" | "tree-unix" | "scan" | "empty";
   warnings: string[];
 }
 
@@ -176,7 +178,30 @@ function parseTreeUnix(lines: string[]): ParsedListing {
   return { files, folders: [...folders], format: "tree-unix", warnings: [] };
 }
 
+/** The scanner's JSON (scripts/thor-scan.mjs): paths, sizes, dates and hashes. */
+function parseScanJson(text: string): ParsedListing | null {
+  try {
+    const j = JSON.parse(text) as { format?: string; files?: Array<Partial<ListedFile> & { path?: unknown }>; folders?: unknown };
+    if (!j || !Array.isArray(j.files)) return null;
+    const files: ListedFile[] = [];
+    for (const f of j.files) {
+      if (!f || typeof f.name !== "string") continue;
+      const path = Array.isArray(f.path) ? (f.path as unknown[]).map(String) : [];
+      const row: ListedFile = { path, name: f.name };
+      if (typeof f.sizeBytes === "number") row.sizeBytes = f.sizeBytes;
+      if (typeof f.date === "string") row.date = f.date;
+      if (typeof f.hash === "string" && /^[0-9a-f]{32,128}$/i.test(f.hash)) row.hash = f.hash.toLowerCase();
+      files.push(row);
+    }
+    const folders = new Set<string>(Array.isArray(j.folders) ? (j.folders as unknown[]).map(String) : []);
+    for (const f of files) for (let i = 1; i <= f.path.length; i++) folders.add(f.path.slice(0, i).join("/"));
+    return { files, folders: [...folders], format: "scan", warnings: j.format === "thor-scan/1" ? [] : ["JSON listing without a thor-scan format marker — read anyway."] };
+  } catch { return null; }
+}
+
 export function parseDirectoryListing(text: string): ParsedListing {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) { const scan = parseScanJson(trimmed); if (scan) return scan; }
   const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim().length > 0);
   if (!lines.length) return { files: [], folders: [], format: "empty", warnings: [] };
   if (lines.some((l) => /^\s*Directory of\s+/i.test(l))) return parseDirS(lines);

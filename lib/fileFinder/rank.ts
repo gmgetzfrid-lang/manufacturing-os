@@ -255,8 +255,24 @@ export function rankEntries(
     // A candidate has to match something the user actually named — a code, a
     // word or a phrase, exactly or loosely. Being in the right unit's folder
     // is support for a match, never a match on its own.
-    const positive = ev.filter((x) => x.delta > 0 && (x.kind === "identifier" || x.kind === "word" || x.kind === "phrase" || x.kind === "sheet" || x.kind === "doctype"))
+    let positive = ev.filter((x) => x.delta > 0 && (x.kind === "identifier" || x.kind === "word" || x.kind === "phrase" || x.kind === "sheet" || x.kind === "doctype"))
       .reduce((s, x) => s + x.delta, 0);
+    // Identical bytes are the same document whatever the name: "copy of
+    // sheet.pdf" on a drive IS 2002-D-2001 if the hashes agree. A twin's name
+    // match carries over at a discount, with the twin named in the evidence.
+    if (positive <= 0 && e.hash && ctx.sameBytes) {
+      const twins = (ctx.sameBytes.get(e.hash) ?? []).filter((x) => x.id !== e.id);
+      for (const t of twins) {
+        const hits: string[] = [];
+        for (const c of q.identifiers) if (t.idents.includes(c.value) || t.numberCanon === c.value) hits.push(c.label);
+        for (const c of q.words) if (t.words.includes(c.value)) hits.push(`"${c.value}"`);
+        if (!hits.length) continue;
+        const delta = Math.round(0.8 * (hits.length >= 1 && q.identifiers.some((c) => t.idents.includes(c.value) || t.numberCanon === c.value) ? W.codeExactName : W.wordName * hits.length));
+        ev.push({ kind: "identifier", label: `Same bytes as "${t.name}", which says ${hits.join(", ")}`, delta, tier: "exact" });
+        positive += delta;
+        break;
+      }
+    }
     if (positive <= 0) continue;
 
     // Years: soft. Late uploads are common, so a one-year miss is a nudge.
@@ -285,7 +301,11 @@ export function rankEntries(
 
     const same = (e.hash && ctx.sameBytes?.get(e.hash)?.filter((x) => x.id !== e.id)) || [];
     if (same.length) ev.push({ kind: "duplicate", label: `Same bytes in ${same.length + 1} places`, delta: 0 });
-    if (e.source === "listing") ev.push({ kind: "source", label: `Listed on ${e.listingName}, not in the system`, delta: 0 });
+    if (e.source === "listing") {
+      const twin = same.find((x) => x.source === "system");
+      if (twin) ev.push({ kind: "source", label: `On ${e.listingName} — same bytes as "${twin.name}", already in the system`, delta: 0 });
+      else ev.push({ kind: "source", label: `Listed on ${e.listingName}, not in the system`, delta: 0 });
+    }
     if (e.read) ev.push({ kind: "source", label: e.read.status === "ready" ? `Content read by AI (${e.read.pages} pages${e.read.byHash ? ", same bytes as an indexed copy" : ""})` : `Content read: ${e.read.status}`, delta: 0 });
 
     const score = Math.round(ev.reduce((s, x) => s + x.delta, 0));

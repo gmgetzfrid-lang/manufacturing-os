@@ -220,7 +220,7 @@ export function entriesFromListing(
       linkedAssets: [],
       linkedProjects: [],
       sizeBytes: f.sizeBytes ?? null,
-      hash: null,
+      hash: f.hash ?? null,
     };
   });
 }

@@ -47,6 +47,7 @@ import {
   listFinderListings, saveFinderListing, deleteFinderListing, storeState, type FinderListing,
 } from "@/lib/fileFinder/stores";
 import { estatePost } from "@/lib/estate/client";
+import { triageListing } from "@/lib/fileFinder/triage";
 import { findEstate } from "@/lib/find/client";
 import type { FindResponse, FindRelation } from "@/lib/find/types";
 import { EntityStrip, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
@@ -147,6 +148,7 @@ function GraphPageInner() {
   const entries = useMemo(() => [...(data?.entries ?? []), ...listingEntries], [data, listingEntries]);
   const entryById = useMemo(() => new Map(entries.map((e) => [e.id, e])), [entries]);
   const sameBytesByHash = useMemo(() => clusterByHash(entries), [entries]);
+  const systemHashes = useMemo(() => new Set((data?.entries ?? []).map((e) => e.hash).filter((h): h is string => !!h)), [data]);
   const sameBytesById = useMemo(() => {
     const m = new Map<string, string[]>();
     for (const group of sameBytesByHash.values()) for (const e of group) m.set(e.id, group.filter((x) => x.id !== e.id).map((x) => x.id));
@@ -553,7 +555,7 @@ function GraphPageInner() {
             )}
 
             {panel === "drives" && (
-              <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail}
+              <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail} systemHashes={systemHashes}
                 onChange={setListings} onReveal={(id) => drill(id)} />
             )}
             {panel === "aliases" && (
@@ -886,8 +888,9 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
   );
 }
 
-function DrivesPanel({ orgId, controller, listings, uid, userEmail, onChange, onReveal }: {
+function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes, onChange, onReveal }: {
   orgId: string; controller: boolean; listings: FinderListing[]; uid: string | null; userEmail: string | null;
+  systemHashes: Set<string>;
   onChange: (l: FinderListing[]) => void; onReveal: (id: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -914,7 +917,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, onChange, on
   return (
     <div className="space-y-3">
       <div className="text-xs text-[var(--color-text-muted)]">
-        A drive the system doesn&apos;t hold. Paste the output of <code>tree /f</code>, <code>dir /s</code>, <code>tree</code>, or one path per line. Names and paths only — nothing is copied.
+        A drive the system doesn&apos;t hold. Paste the output of <code>tree /f</code>, <code>dir /s</code>, <code>tree</code>, one path per line — or the JSON from <code>node scripts/thor-scan.mjs</code>, which adds sizes, dates and hashes so files already in the system are identified by their bytes. Names and paths only — nothing is copied.
       </div>
       {storeState.listingsLocal && <div className="text-[11px] text-amber-700 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
       {listings.map((l) => (
@@ -933,9 +936,21 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, onChange, on
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} placeholder={"T:\\Crude\\Heaters\\born-u1a.pdf\nT:\\Transmix\\U1A.pdf"}
             className="w-full text-[11px] font-mono rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           {preview && (
-            <div className="text-[11px] text-[var(--color-text-muted)]">
-              Read as <b>{preview.format}</b>: {preview.files.length} files, {preview.folders.length} folders.
+            <div className="text-[11px] text-[var(--color-text-muted)] space-y-1">
+              <div>Read as <b>{preview.format}</b>: {preview.files.length} files, {preview.folders.length} folders.</div>
               {preview.warnings.map((w, i) => <div key={i} className="text-amber-700">{w}</div>)}
+              {preview.files.length > 0 && (() => {
+                const t = triageListing(preview.files, preview.folders, systemHashes);
+                return (
+                  <ul className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-2 space-y-0.5">
+                    {t.hashed > 0 && <li><b>{t.knownInSystem}</b> already in the system by bytes · <b>{t.duplicateFiles}</b> are copies of another file on the drive ({t.duplicateGroups} groups)</li>}
+                    {t.hashed === 0 && <li className="text-amber-700">No hashes — paste the scanner&apos;s JSON (<code>node scripts/thor-scan.mjs</code>) to see what is already in the system and what is a copy.</li>}
+                    <li><b>{t.drawingLike}</b> look like drawings by name · <b>{t.copierLike}</b> are copier-named (worth reading first) · <b>{t.empty}</b> empty</li>
+                    {t.personalFolders.length > 0 && <li>{t.personalFolders.length} folder{t.personalFolders.length === 1 ? "" : "s"} look personal or temporary: {t.personalFolders.slice(0, 4).join(", ")}{t.personalFolders.length > 4 ? "…" : ""}</li>}
+                    <li>Busiest: {t.topFolders.slice(0, 3).map((f) => `${f.path} (${f.count})`).join(" · ")}</li>
+                  </ul>
+                );
+              })()}
             </div>
           )}
           {err && <div className="text-[11px] text-red-700">{err}</div>}
