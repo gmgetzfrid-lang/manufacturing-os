@@ -3097,9 +3097,12 @@ describe("SEC-22 (b) (J20) — after 20261214: the door's housekeeping runs as t
   });
 
   it("a housekeeping refusal is answered as that write's own failure and never retried as the service role", async () => {
-    // a retire the door refuses for scope: 503 with today's sentence, nothing inserted, no service-role retire
+    // a retire the door refuses without one of its answers (a 42501 with no door HINT — the definer's own signed-in
+    // refusal): 503 with today's sentence, nothing inserted, no service-role retire
     resetDb(); withOwnPending(); installDoor(); installHousekeeping();
-    db.rpc.intake_door_housekeep = (x) => x.p_op === "retire" ? doorScope("only a trusted link replaces its own") : ({ data: 0, error: null });
+    db.rpc.intake_door_housekeep = (x) => x.p_op === "retire"
+      ? { data: null, error: { code: "42501", message: "intake_door: only the intake route, under the service key, opens the contractor door." } }
+      : ({ data: 0, error: null });
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const res = await upload({ docId: D1, revLabel: "C" });
     expect(res.status).toBe(503);
@@ -3115,6 +3118,37 @@ describe("SEC-22 (b) (J20) — after 20261214: the door's housekeeping runs as t
     expect(serviceHousekeeping()).toEqual([]);
     expect(spy.mock.calls.some((c) => String(c[0]).includes("project reference for"))).toBe(true);
     spy.mockRestore();
+  });
+
+  it("review fix pass 2: a retire the door refuses as out of scope (42501 'scope': the link stopped being trusted mid-request) answers the replace check's own 409 — the sentence a retry gets — never 'try again shortly'", async () => {
+    // the pre-check's sentence, read from the route so the two never drift apart
+    const STILL = "Your previous submission for this document is still in review — it must be approved or rejected first.";
+    expect(readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8")).toContain(`return fail("${STILL}", 409);`);
+    // a controller turns off allow_auto_supersede while the trusted contractor's replacement is in flight: the
+    // pre-check passed, the door re-reads the link at the retire and refuses it (scope)
+    resetDb(); withOwnPending(); installDoor(); installHousekeeping();
+    const hk = db.rpc.intake_door_housekeep;
+    db.rpc.intake_door_housekeep = (x) => {
+      if (x.p_op === "retire") db.tables.project_intake_links[0].allow_auto_supersede = false;
+      return hk(x);
+    };
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(STILL);
+    expect(housekeepCalls()).toEqual(["housekeep:retire"]); // a refusal is asked once, never retried
+    expect(serviceHousekeeping()).toEqual([]);
+    expect(db.writes.filter((w) => w.table === "document_versions" && w.method === "insert")).toEqual([]);
+    expect(db.tables.document_versions.find((v) => v.id === "v-pend")).toMatchObject({ review_state: "in_review" });
+    // the retry: the pre-check now refuses before the body, with the same status and sentence
+    const again = await upload({ docId: D1, revLabel: "C" });
+    expect(again.status).toBe(409);
+    expect((await again.json()).error).toBe(STILL);
+    // before 20261214 (the service-role retire) the first request would have landed — the next one answers 409 too
+    resetDb(); withOwnPending();
+    db.tables.project_intake_links[0].allow_auto_supersede = false;
+    const pre = await upload({ docId: D1, revLabel: "C" });
+    expect(pre.status).toBe(409);
+    expect((await pre.json()).error).toBe(STILL);
   });
 
   it("review fix pass: retire and restore keep the single retry the service-role path makes — a transient failure is asked once more and the upload answers as if it had not happened", async () => {

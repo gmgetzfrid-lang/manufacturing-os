@@ -283,6 +283,12 @@ function doorAnswer(e: DoorError, scope: DoorScope): { message: string; status: 
 }
 
 const DOOR_SCOPE_DOCUMENTS: DoorScope = { message: "This link may only submit revisions to its own or assigned documents.", status: 403 };
+/** SEC-22 (b) (J20 review fix pass 2): the door refusing to retire the
+ *  link's displaced submission as out of scope (42501 'scope') — the link
+ *  stopped being trusted, or the document left it, while the request was in
+ *  flight — is the replace check's own answer, said in its words: a retry
+ *  gets the same 409, never a "try again shortly" that cannot succeed. */
+const DOOR_SCOPE_REPLACE: DoorScope = { message: "Your previous submission for this document is still in review — it must be approved or rejected first.", status: 409 };
 /** A NEW document the door would not file: the folder the route filed into
  *  is not (or no longer) the project's intake folder inside its intake
  *  library — a configuration answer, never the revision sentence. (A quote
@@ -1839,9 +1845,13 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       if (typeof retired === "object") {
         await discard();
         // SEC-22 (b): the link went dead mid-request (28000) is answered as
-        // the checks before the body answer it; anything else as before.
-        const dead = retired.refused && String(retired.refused.code ?? "") === "28000" ? doorRefused(retired.refused, fail, DOOR_SCOPE_DOCUMENTS) : null;
-        if (dead) return dead;
+        // the checks before the body answer it, and a refusal as out of
+        // scope (42501 'scope': no longer a trusted link's own submission) as
+        // the replace check above answers it (409, still in review); anything
+        // else as before.
+        const retireCode = String(retired.refused?.code ?? "");
+        const retireRefused = retired.refused && (retireCode === "28000" || retireCode === "42501") ? doorRefused(retired.refused, fail, DOOR_SCOPE_REPLACE) : null;
+        if (retireRefused) return retireRefused;
         return fail("Your earlier submission could not be replaced right now — try again shortly.", 503, retired.error);
       }
       if (retired === "decided") {

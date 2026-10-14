@@ -200,7 +200,32 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   if (loading && candidates.length === 0) {
     return <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
   }
-  if (candidates.length === 0) return null; // nothing to transition — stay out of the way
+
+  const statusRegion = (
+    <div aria-live="polite">
+      {msg && <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+      {equipMsg && <div role="status" data-testid="transition-equipment-note" className="mt-1.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-xs font-bold text-[var(--color-text)]">{equipMsg}</div>}
+    </div>
+  );
+
+  if (candidates.length === 0) {
+    // nothing to transition — stay out of the way. UX-17 (J20 review fix
+    // pass 2): unless the adopt that just took the last sheet(s) out of intake
+    // left an equipment line — the list is empty after its refresh, and the
+    // line (with the adopt sentence it follows) must stay readable, not
+    // unmount with the panel. Without one, nothing renders, as before.
+    if (!equipMsg) return null;
+    return (
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <ArrowRightCircle className="w-4 h-4 text-[var(--color-accent)]" />
+          <span className="text-base font-bold text-[var(--color-text)]">Transition in</span>
+          <span className="text-xs text-[var(--color-text-muted)]">nothing left in intake</span>
+        </div>
+        {statusRegion}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
@@ -218,10 +243,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         </button>
       </div>
 
-      <div aria-live="polite">
-        {msg && <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
-        {equipMsg && <div role="status" data-testid="transition-equipment-note" className="mt-1.5 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-xs font-bold text-[var(--color-text)]">{equipMsg}</div>}
-      </div>
+      {statusRegion}
 
       {canManage && !canAdopt && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 text-xs text-[var(--color-text-muted)]">

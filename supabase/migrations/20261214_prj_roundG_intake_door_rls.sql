@@ -53,13 +53,25 @@
 --          document_versions_insert_integrity while it carries the door limb
 --          — and the door's own permissive policy missing (no row would be
 --          admitted as intake_door; Postgres would refuse it naming none).
---          intake_door_version_rls_ready() asks it for session_user.
+--          A column default on document_versions.created_by is a gap too:
+--          the INSERT does not name the column, so a live default (such as
+--          auth.uid(), the bound link's id under the switch) would fill it
+--          and both door policies and the integrity limb require it NULL —
+--          every switched submission refused naming no policy. The repository
+--          is not the live table's word on that column (schema.sql declares
+--          it NOT NULL, which the live table does not enforce), so the
+--          catalogs are read. intake_door_version_rls_ready() asks it for
+--          session_user.
 --      Not under row-level security, and why (each pinned on SEC-22):
 --        * the pending pointer — an UPDATE whose WHERE reads documents, so
 --          the restrictive documents_acl_select (every role) would have to
---          admit a link; widening the hottest read policy of the app for one
---          write is not done. It stays a SECURITY DEFINER door function with
---          the bound identity, every trigger guard judging it;
+--          admit a link: re-created from its newest body with an inline
+--          CURRENT_USER limb (as the integrity limb below, which widens
+--          nothing for members), plus SELECT / UPDATE grants and policies on
+--          documents for intake_door — the app's hottest read policy, for one
+--          compare-and-set, not taken on here (proposed as an exception on
+--          SEC-22). It stays a SECURITY DEFINER door function with the bound
+--          identity, every trigger guard judging it;
 --        * the trusted promote — publish_revision is SECURITY DEFINER by
 --          design; judged by the guards as the link's creator (DEC-56 item 2);
 --        * the redline — the ticket rails' service-only append (20261166).
@@ -188,6 +200,12 @@ SELECT 'inventory: projects with a set intake library and a live document link �
    AND EXISTS (SELECT 1 FROM project_intake_links l
                 WHERE l.project_id = p.id AND l.revoked_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > NOW())
                   AND COALESCE(l.purpose, 'documents') <> 'quote')
+UNION ALL
+SELECT 'inventory: column defaults on document_versions.created_by (the door''s INSERT leaves the column out; 1 = the live table fills it, so each submission keeps the bound identity, filed, and the first "row-level security for the submission" row reads false)',
+       COUNT(*)::text
+  FROM pg_attribute a
+  JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+ WHERE a.attrelid = 'public.document_versions'::regclass AND a.attname = 'created_by' AND NOT a.attisdropped
 UNION ALL
 SELECT 'inventory: other row triggers on projects that fire on INSERT or UPDATE OF intake_library_id / intake_collection_id (besides this file''s)',
        COUNT(*)::text
@@ -350,12 +368,25 @@ BEGIN
                     AND v_door = ANY (pol.polroles)) THEN
     v_gaps := v_gaps || 'no permissive policy for intake_door'::text;
   END IF;
+  -- A column default (or generation expression) on created_by: the door's
+  -- INSERT does not name the column, so the live default fills it — one such
+  -- as auth.uid() with the bound link's id — while both door policies and the
+  -- integrity limb require created_by IS NULL. Every switched submission would
+  -- be refused naming no policy, which the switch re-raises. The repository's
+  -- schema is not the live table's word on this column, so the catalogs are
+  -- read: any default is a gap, and the submission keeps the bound identity,
+  -- filed (J20 review fix pass 2).
+  IF EXISTS (SELECT 1 FROM pg_attribute a
+               JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+              WHERE a.attrelid = v_table AND a.attname = 'created_by' AND NOT a.attisdropped) THEN
+    v_gaps := v_gaps || 'default created_by'::text;
+  END IF;
   RETURN v_gaps;
 END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_version_rls_gaps(name) IS
-  'SEC-22 (a) (J20, 20261214): what the door''s submission INSERT as intake_door would lack here — ''role'', ''switch'' (p_login may not SET the role; MEMBER before PG16), ''execute <function>'' and ''read <table.column>'' for what the live INSERT / ALL policies of document_versions call and read, ''policy <name>'' for a RESTRICTIVE INSERT / ALL policy of it for every role (or intake_door) the link may fail — any but the door''s own scope policy and document_versions_insert_integrity while it carries the door limb — and ''no permissive policy for intake_door'' when no PERMISSIVE INSERT / ALL policy of it names intake_door (the door''s own was dropped). Empty: the submission may switch. Service role only.';
+  'SEC-22 (a) (J20, 20261214): what the door''s submission INSERT as intake_door would lack here — ''role'', ''switch'' (p_login may not SET the role; MEMBER before PG16), ''execute <function>'' and ''read <table.column>'' for what the live INSERT / ALL policies of document_versions call and read, ''policy <name>'' for a RESTRICTIVE INSERT / ALL policy of it for every role (or intake_door) the link may fail — any but the door''s own scope policy and document_versions_insert_integrity while it carries the door limb — ''no permissive policy for intake_door'' when no PERMISSIVE INSERT / ALL policy of it names intake_door (the door''s own was dropped), and ''default created_by'' when document_versions.created_by carries a column default (the INSERT leaves the column out, and the door''s policies require it NULL). Empty: the submission may switch. Service role only.';
 
 CREATE OR REPLACE FUNCTION public.intake_door_version_rls_ready()
 RETURNS boolean
@@ -840,10 +871,10 @@ SELECT 'intake_door holds column INSERT on what the door inserts in document_ver
                                              AND x.privilege_type = 'EXECUTE')),
        NULL
 UNION ALL
-SELECT 'row-level security for the submission: authenticator (the API''s login) may switch to intake_door, intake_door may EXECUTE and read what the live INSERT policies of document_versions use, and the door''s permissive policy is there — false: each submission keeps the bound identity alone, filed as before (SEC-22)',
+SELECT 'row-level security for the submission: authenticator (the API''s login) may switch to intake_door, intake_door may EXECUTE and read what the live INSERT policies of document_versions use, the door''s permissive policy is there, and document_versions.created_by has no column default — false: each submission keeps the bound identity alone, filed as before (SEC-22)',
        to_regrole('authenticator') IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM unnest(intake_door_version_rls_gaps('authenticator')) g
-                        WHERE g IN ('role', 'switch', 'no permissive policy for intake_door') OR g LIKE 'execute %' OR g LIKE 'read %'),
+                        WHERE g IN ('role', 'switch', 'no permissive policy for intake_door', 'default created_by') OR g LIKE 'execute %' OR g LIKE 'read %'),
        NULL
 UNION ALL
 SELECT 'row-level security for the submission: no restrictive INSERT or ALL policy for every role (or intake_door) on document_versions that the link may fail, by the door''s own test — false: one is live, and each submission keeps the bound identity alone, filed as before, until it says how it treats intake_door (SEC-22)',

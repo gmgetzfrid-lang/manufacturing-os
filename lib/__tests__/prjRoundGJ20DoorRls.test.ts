@@ -12,7 +12,7 @@
 //   (c) the rail on projects.intake_library_id / intake_collection_id.
 //
 // The SQL ran on a throwaway PostgreSQL 16 carrying schema.sql and the whole
-// sequence (the records name the scenarios, A1–A19, B1–B17, C1–C9); this file
+// sequence (the records name the scenarios, A1–A23, B1–B17, C1–C9); this file
 // pins the text the scratch run exercised. It also carries the forward scan
 // for document_versions that J16's census (documents, cost_documents) leaves
 // to this file: a later migration may not take the submission off row-level
@@ -237,7 +237,7 @@ describe("limb (a) — the policies TO intake_door and the integrity policy's do
   });
   it("review fix pass (major): the door's own permissive policy missing is a gap — readiness reads false and the submission keeps the bound identity, filed (dropping the door's policies is a safe reversal, never a refused upload)", () => {
     const g = fn("intake_door_version_rls_gaps");
-    expect(g).toContain("IF NOT EXISTS (SELECT 1 FROM pg_policy pol\n                  WHERE pol.polrelid = v_table AND pol.polpermissive AND pol.polcmd IN ('a', '*')\n                    AND v_door = ANY (pol.polroles)) THEN\n    v_gaps := v_gaps || 'no permissive policy for intake_door'::text;\n  END IF;\n  RETURN v_gaps;");
+    expect(g).toContain("IF NOT EXISTS (SELECT 1 FROM pg_policy pol\n                  WHERE pol.polrelid = v_table AND pol.polpermissive AND pol.polcmd IN ('a', '*')\n                    AND v_door = ANY (pol.polroles)) THEN\n    v_gaps := v_gaps || 'no permissive policy for intake_door'::text;\n  END IF;\n");
     // read from the catalogs, after every other limb, so ready() (cardinality = 0) sees it
     expect(g.indexOf("'no permissive policy for intake_door'")).toBeGreaterThan(g.indexOf("SELECT DISTINCT 'policy '"));
     // the unnamed refusal it prevents is the one the switch re-raises (the door's own boundary)
@@ -245,10 +245,43 @@ describe("limb (a) — the policies TO intake_door and the integrity policy's do
     // the two "row-level security for the submission" rows together read every gap class: the first now names this one
     const tail = M.slice(M.indexOf("\nCOMMIT;"));
     const row = between(tail, "SELECT 'row-level security for the submission: authenticator", "       NULL\nUNION ALL");
-    expect(row).toContain("and the door''s permissive policy is there");
-    expect(row).toContain("WHERE g IN ('role', 'switch', 'no permissive policy for intake_door') OR g LIKE 'execute %' OR g LIKE 'read %'),");
+    expect(row).toContain("the door''s permissive policy is there");
+    expect(row).toMatch(/WHERE g IN \('role', 'switch', 'no permissive policy for intake_door'(, '[a-z_ ]+')*\) OR g LIKE 'execute %' OR g LIKE 'read %'\),/);
     expect(M).toContain("''no permissive policy for intake_door'' when no PERMISSIVE INSERT / ALL policy of it names intake_door");
     expect(prose(M.slice(0, M.indexOf("-- ── Prerequisite")))).toContain("and the door's own permissive policy missing (no row would be admitted as intake_door; Postgres would refuse it naming none).");
+  });
+});
+
+describe("review fix pass 2 (major) — a column default on document_versions.created_by is a readiness gap, read from the live catalogs", () => {
+  const g = () => fn("intake_door_version_rls_gaps");
+  const tail = () => M.slice(M.indexOf("\nCOMMIT;"));
+  it("intake_door_version_rls_gaps reports 'default created_by' when pg_attrdef holds a default (or generation expression) for the column — the last check before RETURN, so ready() (cardinality = 0) reads false", () => {
+    expect(g()).toContain("  IF EXISTS (SELECT 1 FROM pg_attribute a\n               JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum\n              WHERE a.attrelid = v_table AND a.attname = 'created_by' AND NOT a.attisdropped) THEN\n    v_gaps := v_gaps || 'default created_by'::text;\n  END IF;\n  RETURN v_gaps;\nEND;");
+    expect(g().indexOf("'default created_by'")).toBeGreaterThan(g().indexOf("'no permissive policy for intake_door'"));
+    expect(M).toContain("''default created_by'' when document_versions.created_by carries a column default");
+  });
+  it("why it matters, pinned on the text it protects: the door's INSERT leaves created_by out (so a live default fills it) while both door policies and the integrity limb require it NULL", () => {
+    const insert = between(fn("intake_door_submit_version"), "INSERT INTO document_versions (", ")\n");
+    expect(insert).not.toMatch(/\bcreated_by\b(?!_name)/);
+    expect(fn("intake_door_may_submit")).toContain("AND p_created_by IS NULL");
+    for (const name of ["document_versions_intake_door_insert", "document_versions_intake_door_scope"]) {
+      expect(between(C, `CREATE POLICY ${name} ON document_versions`, ";")).toContain("released_at, created_by, supersedes_version_id)");
+    }
+    expect(between(C, "CREATE POLICY document_versions_insert_integrity ON document_versions", ");\n")).toContain("provenance = 'external' AND intake_link_id IS NOT NULL AND created_by IS NULL");
+    // the switch re-raises the unnamed refusal such a default would cause — the gap is what keeps it from happening
+    expect(fn("intake_door_submit_version")).toContain("'new row violates row-level security policy for table \"document_versions\"'");
+  });
+  it("the paste reads it: the first 'row-level security for the submission' row names the gap, and an inventory row counts the live default", () => {
+    const row = between(tail(), "SELECT 'row-level security for the submission: authenticator", "       NULL\nUNION ALL");
+    expect(row).toContain("and document_versions.created_by has no column default — false: each submission keeps the bound identity alone, filed as before (SEC-22)");
+    expect(row).toContain("WHERE g IN ('role', 'switch', 'no permissive policy for intake_door', 'default created_by') OR g LIKE 'execute %' OR g LIKE 'read %'),");
+    const inv = between(M, "CREATE TEMP TABLE prj_g_j20_inventory AS", "\nBEGIN;");
+    expect(inv).toContain("SELECT 'inventory: column defaults on document_versions.created_by (the door''s INSERT leaves the column out; 1 = the live table fills it, so each submission keeps the bound identity, filed, and the first \"row-level security for the submission\" row reads false)',\n       COUNT(*)::text\n  FROM pg_attribute a\n  JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum\n WHERE a.attrelid = 'public.document_versions'::regclass AND a.attname = 'created_by' AND NOT a.attisdropped\n");
+    // the shape the integrator pastes: 10 probes, then the one SELECT of the 7 inventory rows
+    const selects = tail().match(/^UNION ALL$/gm)!.length + 1;
+    expect(selects - 1).toBe(10);
+    expect(inv.split(/\nUNION ALL\n/)).toHaveLength(7);
+    expect(prose(M.slice(0, M.indexOf("-- ── Prerequisite")))).toContain("A column default on document_versions.created_by is a gap too:");
   });
 });
 
