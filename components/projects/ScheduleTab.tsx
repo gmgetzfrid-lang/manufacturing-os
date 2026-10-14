@@ -40,7 +40,7 @@ import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } f
 import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateInput, tzLabel } from "@/lib/scheduleTz";
+import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, tzLabel } from "@/lib/scheduleTz";
 import { ClipboardList, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
 
@@ -476,6 +476,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               userName={userName}
               userEmail={userEmail}
               userRole={userRole}
+              milestones={milestones}
               onCancel={() => setAdding(false)}
               onCreated={() => { setAdding(false); void refresh(); }}
             />
@@ -519,6 +520,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             userName={userName}
             userEmail={userEmail}
             userRole={userRole}
+            milestones={milestones}
             onCancel={() => setAdding(false)}
             onCreated={() => { setAdding(false); void refresh(); }}
           />
@@ -757,31 +759,65 @@ function StatusMenu({ current, onPick, disabled }: { current: MilestoneStatus; o
 // ─── Add milestone form ────────────────────────────────────────
 
 function AddMilestoneForm({
-  orgId, projectId, userId, userName, userEmail, userRole, onCancel, onCreated,
+  orgId, projectId, userId, userName, userEmail, userRole, milestones, onCancel, onCreated,
 }: {
   orgId: string; projectId: string; userId: string;
   userName?: string; userEmail?: string; userRole?: string;
+  /** Current schedule, for the "under" (equipment / group) picker. */
+  milestones?: Milestone[];
   onCancel: () => void; onCreated: () => void;
 }) {
   const tz = useScheduleTz();
   const [name, setName] = useState("");
-  const [plannedAt, setPlannedAt] = useState("");
+  const [startAt, setStartAt] = useState("");   // plant-time "YYYY-MM-DDTHH:MM"
+  const [finishAt, setFinishAt] = useState("");
+  const [hours, setHours] = useState("");
+  const [parentId, setParentId] = useState("");
   const [weight, setWeight] = useState("1");
   const [linkedRev, setLinkedRev] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Groups you can file the step under: anything that already has
+  // children, or is flagged a summary — the equipment / phase rows.
+  const parentOptions = useMemo(() => {
+    const all = milestones ?? [];
+    const hasKids = new Set<string>();
+    for (const m of all) if (m.parentId) hasKids.add(m.parentId);
+    return all
+      .filter((m) => m.id && (hasKids.has(m.id) || m.isSummary))
+      .sort((a, b) => (a.wbs ?? "").localeCompare(b.wbs ?? "", undefined, { numeric: true }) || a.name.localeCompare(b.name));
+  }, [milestones]);
+
+  // Finish defaults to start + hours when the user hasn't typed one.
+  const finishFromHours = useMemo(() => {
+    if (!startAt || finishAt) return null;
+    const h = Number(hours);
+    const sMs = Date.parse(fromDateTimeInput(startAt, tz) ?? "");
+    if (!Number.isFinite(sMs) || !Number.isFinite(h) || h <= 0) return null;
+    return new Date(sMs + h * 3600_000).toISOString();
+  }, [startAt, finishAt, hours, tz]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !plannedAt) { setError("Name and planned date required."); return; }
+    if (!name.trim() || !startAt) { setError("Name and start are required."); return; }
+    const startIso = fromDateTimeInput(startAt, tz);
+    const finishIso = finishAt ? fromDateTimeInput(finishAt, tz) : finishFromHours ?? startIso;
+    if (!startIso || !finishIso) { setError("Enter a valid start (and finish)."); return; }
+    if (Date.parse(finishIso) < Date.parse(startIso)) { setError("Finish must be on or after the start."); return; }
+    const h = hours.trim() ? Number(hours) : null;
+    if (h != null && (!Number.isFinite(h) || h <= 0)) { setError("Hours must be a positive number."); return; }
     setBusy(true); setError(null);
     try {
       await createMilestone({
         orgId, projectId,
         name, description,
         weight: Number(weight) || 1,
-        plannedAt: fromDateInput(plannedAt, tz) ?? new Date(plannedAt).toISOString(),
+        plannedAt: finishIso,
+        plannedStartAt: startIso,
+        durationHours: h,
+        parentId: parentId || null,
         linkedRevisionLabel: linkedRev || undefined,
         createdBy: userId,
         createdByName: userName,
@@ -793,24 +829,59 @@ function AddMilestoneForm({
     finally { setBusy(false); }
   };
 
+  const inp = "text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]";
+  const lbl = "block text-[9.5px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-0.5";
+
   return (
     <form onSubmit={submit} className="px-4 py-3 bg-[var(--color-accent-soft)]/60 border-b border-[var(--color-border)] space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (required)" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" autoFocus />
-        <input type="date" value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)} className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" title="Planned date" />
-        <input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="Weight (default 1)"
-          title="How much this milestone counts in the % complete — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
-          className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
-        <input value={linkedRev} onChange={(e) => setLinkedRev(e.target.value)} placeholder='Linked ref (e.g. "Rev 3 release")' className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
+        <label className="col-span-2">
+          <span className={lbl}>Step</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="What gets done (required)" className={`${inp} w-full`} autoFocus />
+        </label>
+        <label className="col-span-2">
+          <span className={lbl}>Under (equipment / group)</span>
+          <select value={parentId} onChange={(e) => setParentId(e.target.value)} className={`${inp} w-full`}>
+            <option value="">— top level —</option>
+            {parentOptions.map((p) => <option key={p.id} value={p.id!}>{p.wbs ? `${p.wbs} ` : ""}{p.name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span className={lbl}>Start ({tzLabel(tz)})</span>
+          <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className={`${inp} w-full`} required />
+        </label>
+        <label>
+          <span className={lbl}>Finish</span>
+          <input type="datetime-local" value={finishAt} min={startAt || undefined} onChange={(e) => setFinishAt(e.target.value)} className={`${inp} w-full`}
+            placeholder="start + hours" title={finishFromHours ? `Blank = start + hours → ${fmtInTz(finishFromHours, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Blank = same time as start (a point-in-time step), or start + hours when hours are given"} />
+        </label>
+        <label>
+          <span className={lbl}>Hours of work</span>
+          <input value={hours} onChange={(e) => setHours(e.target.value)} inputMode="decimal" placeholder="e.g. 6"
+            title="Real hours this step takes — what the shift report weighs it by. Leave blank if unknown."
+            className={`${inp} w-full font-mono`} />
+        </label>
+        <label>
+          <span className={lbl}>Weight</span>
+          <input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="1"
+            title="How much this step counts in the % complete when it has no hours — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
+            className={`${inp} w-full font-mono`} />
+        </label>
       </div>
-      <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" rows={2} className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 resize-y" />
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+        <input value={linkedRev} onChange={(e) => setLinkedRev(e.target.value)} placeholder='Linked ref (e.g. "WO 48812")' className={inp} />
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes" rows={1} className={`${inp} md:col-span-3 resize-y`} />
+      </div>
+      {finishFromHours && !finishAt && (
+        <div className="text-[10.5px] text-[var(--color-text-muted)]">Finish will be set to <b>{fmtInTz(finishFromHours, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> (start + {hours} h).</div>
+      )}
       {error && (
         <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</div>
       )}
       <div className="flex items-center justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Cancel</button>
-        <button type="submit" disabled={busy || !name.trim() || !plannedAt} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded disabled:opacity-40 transition-colors">
-          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
+        <button type="submit" disabled={busy || !name.trim() || !startAt} className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded disabled:opacity-40 transition-colors">
+          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Add to schedule
         </button>
       </div>
     </form>

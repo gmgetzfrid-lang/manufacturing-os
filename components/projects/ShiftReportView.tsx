@@ -29,6 +29,7 @@ import {
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport,
 } from "@/lib/shiftReport";
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
+import { completionNote } from "@/lib/scheduleRules";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 
 interface Props {
@@ -237,7 +238,12 @@ function ReportBody({ report, tz, now, asOf, rehearsal, projectName, byId, progr
 
         {/* 1 ── Where we stand */}
         <section>
-          <Agenda n={1} title="Where we stand" sub={overall.plannedFinish ? `Schedule day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${DT(overall.plannedFinish)}` : undefined} />
+          <Agenda n={1} title="Where we stand" sub={[
+            overall.plannedFinish ? `Schedule day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${DT(overall.plannedFinish)}` : null,
+            overall.planBasis === "baseline"
+              ? `Measured against the plan as of ${overall.baselineSetAt ? DT(Date.parse(overall.baselineSetAt)) : "the baseline"}`
+              : "Measured against the live dates — no baseline yet (Reset progress or a replace-import sets one)",
+          ].filter(Boolean).join(" · ") || undefined} />
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <Stat label="Actual complete" value={`${overall.actualPct}%`} tone={standing === "behind" ? "rose" : standing === "ahead" ? "emerald" : "slate"} />
             <Stat label="Plan said by now" value={`${overall.plannedPct}%`} tone="slate" />
@@ -267,7 +273,10 @@ function ReportBody({ report, tz, now, asOf, rehearsal, projectName, byId, progr
               <Block tone="emerald" icon={<CheckCircle2 className="w-4 h-4" />} title="Completed" count={review.done.length} empty="Nothing was completed on this shift.">
                 <Equipment rows={review.done} byId={byId} progress={progress} D={D} T={T} render={(r) => (
                   <Line marker={<CheckCircle2 className="w-4 h-4 text-emerald-600" />} time={r.offSchedule ? "early" : rowTime(r, shift)} name={r.leaf.name} done
-                    tags={[r.offSchedule ? { t: `planned ${DT(r.start)}`, tone: "muted" as const } : null]} right="Done" />
+                    tags={[
+                      r.offSchedule ? { t: `planned ${DT(r.start)}`, tone: "muted" as const } : null,
+                      (() => { const n = completionNote(r.leaf.actualAt, r.finish, tz); return n ? { t: n, tone: (n.endsWith("late") ? "amber" : "muted") as TagTone } : null; })(),
+                    ]} right="Done" />
                 )} />
               </Block>
               <Block tone="amber" icon={<AlertTriangle className="w-4 h-4" />} title="Did not finish — carries over" count={didNotFinish.length} empty="Everything planned for this shift is done.">

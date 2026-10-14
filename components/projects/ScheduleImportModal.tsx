@@ -167,6 +167,9 @@ export default function ScheduleImportModal({
       const res = await importMilestonesFromParsed({
         orgId, projectId,
         timeZone: tz,
+        // A fresh or replace import IS the plan of record → baseline it.
+        // A merge keeps the existing baseline and only baselines new rows.
+        baselineAll: replaceExisting || (existingCount ?? 0) === 0,
         source: FORMAT_TO_SOURCE[parseResult.format],
         // CRITICAL: pass through every hierarchy + duration field
         // the parser captured. Previous code dropped these on the
@@ -470,7 +473,8 @@ export default function ScheduleImportModal({
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
                 <b>Replace the current schedule</b> — delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch.
-                Untick to merge instead (rows with the same ID are updated in place). Deleting is audited and can&apos;t be undone.
+                The file becomes the plan of record (baseline). Untick to merge instead: dates and hours refresh, progress already recorded here is never lowered, and the baseline stays.
+                Deleting is audited and can&apos;t be undone.
               </span>
             </label>
           )}

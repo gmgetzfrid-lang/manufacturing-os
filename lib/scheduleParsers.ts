@@ -2,6 +2,7 @@
 //
 // Parsers for the schedule-import path. Replaces the previous
 import { naiveToIso, normalizeTimeZone } from "@/lib/scheduleTz";
+import { parseIsoDurationHours } from "@/lib/scheduleRules";
 // "paste CSV in a textarea" UX with real file support for the
 // formats project managers actually export from their tools:
 //
@@ -307,6 +308,11 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
     const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference
     if (workRaw) attributes.work = workRaw;
+    // Real hours. Prefer <Work> (resourced effort) when it carries any, else
+    // <Duration> (the schedule's own span in working time). Without this every
+    // step weighed the same in the shift report's "hours behind / ahead".
+    const durationRaw = childText(t, "Duration");
+    const durationHours = isSummary ? null : (parseIsoDurationHours(workRaw) ?? parseIsoDurationHours(durationRaw));
     // Per-task custom column values, keyed by the user's column name.
     for (const ea of Array.from(t.getElementsByTagNameNS("*", "ExtendedAttribute"))) {
       const fid = childText(ea as Element, "FieldID");
@@ -329,6 +335,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
       dependsOnExternalRefs: dependsOnExternalRefs.length > 0 ? dependsOnExternalRefs : undefined,
       responsibleParty,
       responsibleOrg,
+      durationHours,
       attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
     });
   }

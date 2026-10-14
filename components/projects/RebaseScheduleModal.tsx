@@ -46,6 +46,7 @@ export default function RebaseScheduleModal({
   const [targetTime, setTargetTime] = useState<string>("08:00"); // HH:MM
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RebaseResult | null>(null);
+  const [resetBaseline, setResetBaseline] = useState(true);
 
   // Default target = today (or the current anchor's time-of-day).
   useEffect(() => {
@@ -77,6 +78,7 @@ export default function RebaseScheduleModal({
       const res = await rebaseSchedule({
         orgId, projectId,
         newStartIso: fromDateTimeInput(`${target}T${targetTime}`, tz) ?? new Date(`${target}T${targetTime}:00`).toISOString(),
+        resetBaseline,
         actorUserId, actorUserName, actorUserEmail, actorUserRole,
       });
       setResult(res);
@@ -133,6 +135,14 @@ export default function RebaseScheduleModal({
               />
             </div>
           </div>
+
+          <label className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] bg-slate-50/60 px-3 py-2 text-xs text-[var(--color-text)]">
+            <input type="checkbox" checked={resetBaseline} onChange={(e) => setResetBaseline(e.target.checked)} className="mt-0.5" />
+            <span>
+              <b>Treat the new dates as the plan of record</b> — reset the baseline so the shift report&apos;s &ldquo;plan said by now&rdquo; follows the moved schedule.
+              Untick to keep measuring against the old dates (you will read as behind by the shift).
+            </span>
+          </label>
 
           {/* Preview */}
           {currentAnchorIso ? (

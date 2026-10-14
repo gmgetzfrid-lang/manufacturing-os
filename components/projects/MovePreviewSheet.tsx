@@ -14,6 +14,7 @@
 // taking longer = extend; otherwise defer), but the user can flip it.
 
 import React, { useMemo, useState } from "react";
+import { predecessorConflicts } from "@/lib/openWork";
 import { X as XIcon, CalendarRange, Clock, ArrowRight, Loader2, AlertTriangle } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { MoveMode } from "@/lib/scheduleReflow";
@@ -22,13 +23,15 @@ import { defaultMoveMode } from "@/lib/scheduleReflow";
 interface Props {
   /** The tasks being moved (1, or a multi-selection). */
   targets: Milestone[];
+  /** Every task on the schedule, for dependency checks. */
+  allTasks?: Milestone[];
   deltaDays: number;
   onCancel: () => void;
   onConfirm: (mode: MoveMode) => void;
   busy?: boolean;
 }
 
-export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfirm, busy }: Props) {
+export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCancel, onConfirm, busy }: Props) {
   const primary = targets[0];
   // Default mode: if ANY moved task is in-progress and we're slipping
   // later, default to extend; else defer.
@@ -80,8 +83,19 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
     if (mode === "extend" && targets.some((t) => t.status === "completed")) {
       w.push("Some selected tasks are already Done — extending a finished task is unusual.");
     }
+    // Pulling work ahead of an unfinished predecessor: say so before commit.
+    if (deltaDays < 0 && allTasks && allTasks.length) {
+      const byId = new Map<string, Milestone>();
+      for (const m of allTasks) if (m.id) byId.set(m.id, m);
+      for (const t of targets) {
+        const projected = Date.parse((t.plannedStartAt as string | undefined) ?? (t.plannedAt as string)) + deltaDays * 86400000;
+        for (const c of predecessorConflicts(t, projected, byId)) {
+          w.push(`“${t.name}” would start before “${c.pred.name}” finishes (${new Date(c.predFinish).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}) — that predecessor isn't done.`);
+        }
+      }
+    }
     return w;
-  }, [targets, deltaDays, mode, nowMs]);
+  }, [targets, allTasks, deltaDays, mode, nowMs]);
 
   return (
     <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
