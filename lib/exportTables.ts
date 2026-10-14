@@ -139,6 +139,12 @@ export const ORG_SCOPED_TABLES = [
   "knowledge_chunks",
   "knowledge_page_entities",
   "knowledge_questions",
+  // The chat: conversations, their turns (answers with citations, tool
+  // steps, proposals), and each asker's standing profile. Org knowledge
+  // the team reads back — not re-derivable.
+  "chat_threads",
+  "chat_messages",
+  "chat_user_profiles",
 
   // Output templates (document production: template + example + fill spec)
   "output_templates",

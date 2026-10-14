@@ -327,6 +327,9 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources",
   "knowledge_documents", "knowledge_chunks", "knowledge_page_entities",
   "knowledge_questions",
+  // The chat: threads reference libraries; turns reference threads; the
+  // asker profile references a default library.
+  "chat_threads", "chat_messages", "chat_user_profiles",
   "output_templates", "output_generations",
 ];
 
@@ -340,6 +343,7 @@ export const CONFLICT_TARGETS: Record<string, string> = {
   ticket_number_counters: "org_id,year",
   archive_settings: "org_id",
   org_configurations: "org_id,key",
+  chat_user_profiles: "org_id,user_id",
 };
 
 /** The ON CONFLICT target to use when additively restoring `table`. */

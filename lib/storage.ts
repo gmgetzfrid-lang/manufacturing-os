@@ -497,3 +497,22 @@ export async function getStampedDownloadUrlOrDirect(params: {
 }) {
   return getFileUrl(params.directStoragePath);
 }
+
+/** Chat attachments — context for ONE conversation turn, never indexed and
+ *  never a controlled document. Keyed under the org's chat prefix (the
+ *  server reads attachments only from there); a thread that doesn't exist
+ *  yet stages under the asker's own pending folder. */
+export function makeChatAttachmentPath(params: {
+  orgId: string;
+  threadId: string | null;
+  uid: string;
+  filename: string;
+}) {
+  const { orgId, threadId, uid, filename } = params;
+  const ts = Date.now();
+  return joinPath(
+    "orgs", orgId, "chat",
+    threadId ?? joinPath("pending", uid),
+    `${ts}_${sanitizeFilename(filename)}`,
+  );
+}
