@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
+import ProjectScopePanel from "@/components/projects/ProjectScopePanel";
 import EditProjectModal from "@/components/projects/EditProjectModal";
 import { ScheduleTzProvider } from "@/components/projects/ScheduleTzContext";
 import CostsTab from "@/components/projects/CostsTab";
@@ -461,6 +462,9 @@ export default function ProjectDetailPage() {
         )}
         {tab === "documents" && (
           <div className="space-y-4">
+            {project.id && project.orgId && (
+              <ProjectScopePanel orgId={project.orgId} projectId={project.id} projectName={project.name} canManage={!!canManage} />
+            )}
             {project.id && project.orgId && uid && (
               <ProjectDocumentsCard
                 orgId={project.orgId}

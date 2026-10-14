@@ -261,6 +261,56 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   }
   for (const r of docAssets.rows) addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag");
   for (const r of projectDocs.rows) addEdge(`proj:${r.project_id}`, `doc:${r.document_id}`, "project");
+
+  // ── One Estate edges ──────────────────────────────────────────────────
+  // Declared and resolved relationships with provenance (estate_edges):
+  // project scope (project → unit / asset / document), documents in
+  // projects, documents and folders linked to units. A folder's unit flows
+  // to every document filed under it, so the graph draws a drawing in the
+  // crude unit because its folder is, not only when a person set unit_id.
+  // A pre-20261020 org contributes nothing.
+  try {
+    const [edgesRes, foldersRes, docFoldersRes] = await Promise.all([
+      supabase.from("estate_edges").select("a, b, type").eq("org_id", orgId).eq("status", "applied")
+        .in("type", ["project_scope", "in_project", "belongs_to_unit", "about_asset", "tagged_to"]).limit(8000),
+      supabase.from("collections").select("id, parent_id").eq("org_id", orgId).limit(20000),
+      supabase.from("documents").select("id, collection_id").eq("org_id", orgId).not("collection_id", "is", null).limit(DOC_CAP),
+    ]);
+    const estate = ((edgesRes.data as Array<{ a: string; b: string; type: string }> | null) ?? []);
+    const parentOf = new Map<string, string | null>();
+    for (const c of (foldersRes.data as Array<{ id: string; parent_id: string | null }> | null) ?? []) parentOf.set(c.id, c.parent_id);
+    const folderUnit = new Map<string, string>();
+    const folderProject = new Map<string, string>();
+    const folderAsset = new Map<string, string>();
+    for (const e of estate) {
+      if (e.a.startsWith("folder:")) {
+        const fid = e.a.slice(7);
+        if (e.type === "belongs_to_unit" && e.b.startsWith("cbunit:")) folderUnit.set(fid, e.b);
+        if (e.type === "in_project" && e.b.startsWith("proj:")) folderProject.set(fid, e.b);
+        if (e.type === "about_asset" && e.b.startsWith("asset:")) folderAsset.set(fid, e.b);
+        continue;
+      }
+      if (!nodes.has(e.a) || !nodes.has(e.b)) continue;
+      if (e.type === "project_scope" || e.type === "in_project") addEdge(e.a.startsWith("proj:") ? e.a : e.b, e.a.startsWith("proj:") ? e.b : e.a, "project");
+      else if (e.type === "belongs_to_unit") addEdge(e.a, e.b, "unit");
+      else if (e.type === "tagged_to") addEdge(e.a, e.b, "tag");
+    }
+    if (folderUnit.size || folderProject.size || folderAsset.size) {
+      const nearest = (fid: string | null, map: Map<string, string>): string | null => {
+        const seen = new Set<string>();
+        let cur = fid;
+        while (cur && !seen.has(cur)) { seen.add(cur); const hit = map.get(cur); if (hit) return hit; cur = parentOf.get(cur) ?? null; }
+        return null;
+      };
+      for (const d of (docFoldersRes.data as Array<{ id: string; collection_id: string | null }> | null) ?? []) {
+        const id = `doc:${d.id}`;
+        if (!nodes.has(id)) continue;
+        const u = nearest(d.collection_id, folderUnit); if (u && nodes.has(u)) addEdge(id, u, "unit");
+        const p = nearest(d.collection_id, folderProject); if (p && nodes.has(p)) addEdge(p, id, "project");
+        const a = nearest(d.collection_id, folderAsset); if (a && nodes.has(a)) addEdge(id, a, "tag");
+      }
+    }
+  } catch { /* estate edges are optional */ }
   for (const r of related.rows) {
     if (r.kind === "document" && r.target_document_id) {
       addEdge(`doc:${r.document_id}`, `doc:${r.target_document_id}`, "related");
