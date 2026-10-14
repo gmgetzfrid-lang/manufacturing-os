@@ -587,10 +587,7 @@ export default function RestorePage() {
 
           {/* Apply / result */}
           {applyResult ? (
-            <>
-              <RestoreResultPanel result={applyResult} />
-              <MeaningIndexRebuildPrompt result={applyResult} envelope={envelopeRef.current} />
-            </>
+            <RestoreResultPanel result={applyResult} />
           ) : !applying && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-start gap-3">
@@ -636,6 +633,11 @@ export default function RestorePage() {
               )}
             </div>
           )}
+
+          {/* intelligence ILIFE-11 (admin-and-org Round G, P14; DEC-90): each
+              restored library whose passages had vectors needs a person's
+              meaning-index Build. */}
+          {applyResult && <MeaningIndexRebuildPrompt result={applyResult} envelope={envelopeRef.current} />}
 
           {/* Put files back (ZIP only, after records) */}
           {applyResult && fileEntryCount > 0 && (
