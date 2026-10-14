@@ -250,6 +250,46 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
     } else if (error && !/does not exist|schema cache/i.test(error.message)) notes.push(`text layer: ${error.message}`);
   }
 
+  // ── L3: meaning — only when the cheap layers came back thin ───────────
+  // "what holds the pump down" matches no name and no tag; a standard that
+  // says "anchor bolt design" does. Runs once per query on the caller's own
+  // embedding key, in the space the corpus was built in, and never on a
+  // workspace without one.
+  const strongSoFar = l0.filter((h) => h.verdict !== "weak" && h.verdict !== "rejected").length + adds.length;
+  const meaningWords = q.words.length + q.phrases.length;
+  if (req.semantic !== false && strongSoFar < 5 && meaningWords > 0) {
+    try {
+      const { data: conn } = await admin.from("ai_connections").select("provider, api_key, embedding_provider, embedding_model, embedding_api_key").eq("org_id", orgId).eq("user_id", principal.uid).maybeSingle();
+      const { embeddingConnectionFrom, embedQuery, toVectorLiteral } = await import("@/lib/ai/embeddings");
+      const embedding = embeddingConnectionFrom(conn as Parameters<typeof embeddingConnectionFrom>[0]);
+      if (embedding) {
+        const { data: stamped } = await admin.from("knowledge_chunks").select("embedding_model").eq("org_id", orgId).not("embedding", "is", null).not("embedding_model", "is", null).limit(1).maybeSingle();
+        const corpusModel = ((stamped as { embedding_model?: string | null } | null)?.embedding_model) ?? embedding.model;
+        const literal = toVectorLiteral(await embedQuery(embedding.provider, corpusModel, embedding.apiKey, req.query));
+        const { data: libs } = await admin.from("knowledge_libraries").select("id").eq("org_id", orgId).limit(50);
+        const perDoc = new Map<string, number>();
+        for (const lib of (libs as Array<{ id: string }> | null) ?? []) {
+          const { data: hits } = await admin.rpc("semantic_search", { p_org_id: orgId, p_library_id: lib.id, p_embedding: literal, p_limit: 12, p_model: corpusModel });
+          for (const h of (hits as Array<{ chunk_id: string; document_id: string; page: number; content: string; similarity?: number }> | null) ?? []) {
+            if (!mirrorToDoc.has(h.document_id)) {
+              const { data: km } = await admin.from("knowledge_documents").select("id, source_document_id").eq("id", h.document_id).maybeSingle();
+              const src = (km as { source_document_id?: string | null } | null)?.source_document_id;
+              if (src) mirrorToDoc.set(h.document_id, src);
+            }
+            const docId = mirrorToDoc.get(h.document_id);
+            if (!docId) continue;
+            const n = (perDoc.get(docId) ?? 0) + 1;
+            perDoc.set(docId, n);
+            if (n > 2) continue;
+            const snippet = snippetAround(h.content, terms);
+            add(docId, { evidence: n === 1 ? [{ kind: "phrase", label: `Page ${h.page} means the same thing: "${snippet.slice(0, 120)}"`, delta: 18, layer: "L3", tier: "close" }] : [], relations: [], pages: [{ page: h.page, snippet, knowledgeDocId: h.document_id }] });
+            if (!layers.includes("L3")) layers.push("L3");
+          }
+        }
+      } else notes.push("Meaning search is off: no embedding key on this account (Intelligence › Setup).");
+    } catch (e) { notes.push(`meaning search: ${(e as Error).message}`); }
+  }
+
   // ── Fold, enforce access, hide, group ──────────────────────────────────
   let results = foldLayers(entries, l0, adds, (e) => (e.hash ? (sameBytes.get(e.hash)?.length ?? 1) - 1 : 0));
   const readable = await readableControlledDocIds(principal, results.slice(0, 400).map((r) => r.documentId));

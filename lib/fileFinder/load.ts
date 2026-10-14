@@ -46,7 +46,7 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     client.from("collections").select("*").eq("org_id", orgId),
     loadCodebook(orgId, client).catch(() => ({ units: [] as Array<{ code: string; label: string }> })),
     client.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").limit(20000),
-    client.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed").eq("org_id", orgId).limit(20000),
+    client.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed, file_key").eq("org_id", orgId).limit(20000),
   ]);
   const estateMissing = !!edgesRes.error;
   const edges = estateMissing ? [] : (((edgesRes.data as Array<{ a: string; b: string; type: string; summary: string }> | null) ?? []));
@@ -61,7 +61,7 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     if (e.type === "in_project" && e.a.startsWith("doc:") && e.b.startsWith("proj:")) docProjects.set(e.a.slice(4), [...(docProjects.get(e.a.slice(4)) ?? []), e.b.slice(5)]);
   }
   // The AI-readable copies: by source document, and by bytes.
-  type Mirror = { id: string; source_document_id: string | null; file_hash: string | null; status: string; pages_indexed: number };
+  type Mirror = { id: string; source_document_id: string | null; file_hash: string | null; status: string; pages_indexed: number; file_key?: string | null };
   const mirrors = (mirrorsRes.error ? [] : ((mirrorsRes.data as Mirror[] | null) ?? []));
   const mirrorByDoc = new Map<string, Mirror>();
   const mirrorByHash = new Map<string, Mirror>();
@@ -132,7 +132,7 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     const m = mirrorByDoc.get(d.id) ?? (v?.fileHash ? mirrorByHash.get(v.fileHash) : undefined);
     const links: LinkMeta = {
       unitCodes: docUnits.get(d.id), assets: docAssets.get(d.id), projects: docProjects.get(d.id),
-      read: m ? { knowledgeDocId: m.id, status: m.status, pages: m.pages_indexed, byHash: !mirrorByDoc.has(d.id) } : undefined,
+      read: m ? { knowledgeDocId: m.id, status: m.status, pages: m.pages_indexed, byHash: !mirrorByDoc.has(d.id), fileKey: m.file_key ?? undefined } : undefined,
     };
     return entryFromDocument(d, { folders, libraries: libMap, version: v, links });
   });

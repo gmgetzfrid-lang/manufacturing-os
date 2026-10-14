@@ -38,6 +38,10 @@ import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
 // The drawing viewer is heavy (pdf.js); it only downloads when a file is opened.
 const FullScreenViewer = React.lazy(() => import("@/components/viewers/FullScreenViewer"));
+// Landing on a page with the tag ringed reuses the citation viewer.
+const CitedPageViewer = React.lazy(() => import("@/components/knowledge/CitedPageViewer"));
+import { listKnowledgeLibraries, type KnowledgeLibrary } from "@/lib/knowledge";
+import type { FindCoverage } from "@/lib/find/types";
 import {
   listFinderAliases, addFinderAlias, removeFinderAlias, bumpFinderAlias,
   listFinderListings, saveFinderListing, deleteFinderListing, storeState, type FinderListing,
@@ -99,6 +103,10 @@ function GraphPageInner() {
   /** The server's answer (tags, drawn-on, mentions, text, activity). The
    *  browser's own name/folder ranking shows instantly; this replaces it. */
   const [serverFind, setServerFind] = useState<FindResponse | null>(null);
+  /** A sheet opened AT a page, with the tag ringed. */
+  const [pageView, setPageView] = useState<{ fileKey: string; page: number; title: string; knowledgeDocId: string; tags: string[] } | null>(null);
+  /** The "read these" chooser: which knowledge library should read a folder. */
+  const [readAsk, setReadAsk] = useState<{ folder: FindCoverage["unreadFolders"][number]; libs: KnowledgeLibrary[]; pick: string; busy: boolean; note: string | null } | null>(null);
   const [finding, setFinding] = useState(false);
   const findSeq = useRef(0);
 
@@ -387,9 +395,32 @@ function GraphPageInner() {
     setSelectedId(id);
     window.setTimeout(() => graphRef.current?.focus(id), 80);
   };
-  /** Open at a page: for now the viewer opens on the document; phase 7 lands
-   *  on the sheet with the tag ringed. */
-  const openAtPage = (id: string, _page: number) => { void _page; void openEntry(id); };
+  /** Open ON the page: the read copy's file at that sheet, with the tag
+   *  ringed where it was read. Falls back to the plain viewer for a file
+   *  whose contents have not been read. */
+  const openAtPage = (id: string, page: number, tag?: string) => {
+    const r = serverById.get(id);
+    const entry = entryById.get(id);
+    if (r?.read?.fileKey) {
+      onOpenHit();
+      setPageView({ fileKey: r.read.fileKey, page, title: entry?.name ?? r.name, knowledgeDocId: r.read.knowledgeDocId, tags: tag ? [tag] : [] });
+      return;
+    }
+    void openEntry(id);
+  };
+  const askToRead = async (f: FindCoverage["unreadFolders"][number]) => {
+    if (!activeOrgId) return;
+    const libs = await listKnowledgeLibraries(activeOrgId).catch(() => [] as KnowledgeLibrary[]);
+    setReadAsk({ folder: f, libs, pick: libs[0]?.id ?? "", busy: false, note: libs.length ? null : "No knowledge library yet — create one under Intelligence › Knowledge first." });
+  };
+  const linkAndRead = async () => {
+    if (!readAsk || !activeOrgId || !readAsk.pick) return;
+    setReadAsk({ ...readAsk, busy: true, note: null });
+    try {
+      await estatePost("/api/knowledge/sources", { orgId: activeOrgId, libraryId: readAsk.pick, add: [{ type: readAsk.folder.folderId ? "folder" : "library", id: readAsk.folder.folderId ?? readAsk.folder.libraryId }] });
+      setReadAsk({ ...readAsk, busy: false, note: `Linked. Text pages read for free; pages with no text use vision on the cheap tier within your cap. Indexing runs in the background — or open the knowledge library to watch it.` });
+    } catch (e) { setReadAsk({ ...readAsk, busy: false, note: (e as Error).message }); }
+  };
 
   /** Open a system document right here: fetch its row and current version,
    *  then put the viewer over the map. The library page is never loaded. */
@@ -654,7 +685,7 @@ function GraphPageInner() {
                     const card = (h: RankedHit) => (
                       <HitCard key={h.entry.id} hit={h} rank={(idx.get(h.entry.id) ?? 0) + 1} active={activeHit?.entry.id === h.entry.id}
                         relations={serverById.get(h.entry.id)?.relations} pages={serverById.get(h.entry.id)?.pages}
-                        onReveal={() => jumpTo(idx.get(h.entry.id) ?? 0)} onOpen={() => openEntry(h.entry.id)} onPage={(r) => openAtPage(h.entry.id, r.page!)} />
+                        onReveal={() => jumpTo(idx.get(h.entry.id) ?? 0)} onOpen={() => openEntry(h.entry.id)} onPage={(r) => openAtPage(h.entry.id, r.page!, r.rel === "drawn_on" || r.rel === "mentioned_in" ? r.label : undefined)} onPageHit={(p) => openAtPage(h.entry.id, p)} />
                     );
                     if (serverFind && serverFind.groups.length > 1) {
                       const hitById = new Map(hits.map((h) => [h.entry.id, h]));
@@ -679,7 +710,7 @@ function GraphPageInner() {
                       <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
                       <ActivityPanel activity={serverFind.activity} compact />
                     </div>
-                    <CoverageLine coverage={serverFind.coverage} />
+                    <CoverageLine coverage={serverFind.coverage} onReadFolder={controller ? askToRead : undefined} />
                     {serverFind.notes.map((n, i) => <div key={i} className="text-[11px] text-amber-700">{n}</div>)}
                   </div>
                 )}
@@ -698,6 +729,31 @@ function GraphPageInner() {
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-3 py-2 shadow-lg flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" /> {viewerError}
           <button onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+      {pageView && activeOrgId && (
+        <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-black/60 text-white text-sm"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening sheet {pageView.page}…</div>}>
+          <CitedPageViewer fileKey={pageView.fileKey} page={pageView.page} quote={null} title={pageView.title} orgId={activeOrgId} documentId={pageView.knowledgeDocId} tags={pageView.tags} onClose={() => setPageView(null)} />
+        </Suspense>
+      )}
+      {readAsk && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40" onClick={() => !readAsk.busy && setReadAsk(null)}>
+          <div className="w-[28rem] max-w-[92vw] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-black inline-flex items-center gap-2"><Eye className="w-4 h-4 text-emerald-600" /> Read the contents of {readAsk.folder.path || "this library"}</div>
+            <div className="text-xs text-[var(--color-text-muted)]">{readAsk.folder.count} file{readAsk.folder.count === 1 ? "" : "s"} here have never been read. Linking the folder as a source of a knowledge library reads them: text pages cost nothing, scanned or SHX pages use vision on the cheap tier within your monthly cap, and every tag read becomes a link. Nothing outside the folder is touched.</div>
+            {readAsk.libs.length > 0 && (
+              <select value={readAsk.pick} onChange={(e) => setReadAsk({ ...readAsk, pick: e.target.value })} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
+                {readAsk.libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            )}
+            {readAsk.note && <div className="text-xs text-[var(--color-text)]">{readAsk.note}{readAsk.pick && readAsk.note.startsWith("Linked") && <> <Link href={`/knowledge/${readAsk.pick}`} className="font-bold text-[var(--color-accent)] hover:underline">Open the library →</Link></>}</div>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setReadAsk(null)} disabled={readAsk.busy} className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm">Close</button>
+              {!readAsk.note?.startsWith("Linked") && readAsk.libs.length > 0 && (
+                <button onClick={linkAndRead} disabled={readAsk.busy || !readAsk.pick} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-sm font-bold disabled:opacity-60">{readAsk.busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Link and read</button>
+              )}
+            </div>
+          </div>
         </div>
       )}
       {viewer && (
@@ -750,9 +806,9 @@ function EvidenceList({ hit }: { hit: RankedHit }) {
   );
 }
 
-function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage }: {
+function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage, onPageHit }: {
   hit: RankedHit; rank: number; active: boolean; relations?: FindRelation[]; pages?: Array<{ page: number; snippet: string; knowledgeDocId: string }>;
-  onReveal: () => void; onOpen: () => void; onPage?: (r: FindRelation) => void;
+  onReveal: () => void; onOpen: () => void; onPage?: (r: FindRelation) => void; onPageHit?: (page: number) => void;
 }) {
   const e = hit.entry;
   return (
@@ -769,7 +825,7 @@ function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage
           {e.title && e.title !== e.name && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
           <PathCrumbs entry={e} />
           {relations && <RelationChips relations={relations} onPage={onPage} />}
-          {pages && <PageHits pages={pages} />}
+          {pages && <PageHits pages={pages} onPage={(p) => onPageHit?.(p)} />}
         </button>
         {e.href && (
           <button onClick={onOpen} className="shrink-0 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-surface)]" title="Open the drawing here">

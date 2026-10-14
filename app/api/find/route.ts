@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   if (!principal) return NextResponse.json({ error: "Not a member" }, { status: 403 });
   try {
     const out = await findEstate(supabaseAdmin, principal, {
-      orgId, query: String(body.query ?? ""), scope: body.scope, limit: body.limit, activity: body.activity,
+      orgId, query: String(body.query ?? ""), scope: body.scope, limit: body.limit, activity: body.activity, semantic: body.semantic,
     });
     return NextResponse.json(out);
   } catch (e) {

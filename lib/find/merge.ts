@@ -65,7 +65,7 @@ export function foldLayers(
       id, documentId: id.replace(/^doc:/, ""), name: e.name, title: e.title ?? null, number: e.number ?? null, rev: e.rev ?? null,
       status: e.status ?? null, libraryId: e.libraryId ?? "", libraryName: e.libraryName ?? null, folderId: e.folderId ?? null,
       path: e.path, href: e.href ?? "", docTypes: e.docTypes, sheet: e.sheet, score, verdict: verdictFor(score, rejected),
-      evidence, relations, read: e.read ? { knowledgeDocId: e.read.knowledgeDocId, status: e.read.status, pages: e.read.pages } : undefined,
+      evidence, relations, read: e.read ? { knowledgeDocId: e.read.knowledgeDocId, status: e.read.status, pages: e.read.pages, fileKey: e.read.fileKey } : undefined,
       pages: (a?.pages ?? []).slice(0, 5), sameBytes: sameBytesCount(e),
     });
   }

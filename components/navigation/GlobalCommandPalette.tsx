@@ -189,7 +189,7 @@ export default function GlobalCommandPalette() {
         // is drawn on, not only files named after it.
         const [found, est] = await Promise.all([
           globalSearch({ orgId: activeOrgId, query, perKindLimit: 5 }),
-          findEstate({ orgId: activeOrgId, query, limit: 6, activity: false }).catch(() => null),
+          findEstate({ orgId: activeOrgId, query, limit: 6, activity: false, semantic: false }).catch(() => null),
         ]);
         setHits(found);
         setFindHits(est?.results ?? []);

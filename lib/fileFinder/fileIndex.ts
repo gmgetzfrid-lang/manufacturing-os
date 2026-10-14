@@ -54,7 +54,7 @@ export interface IndexEntry {
   linkedAssets: string[];
   linkedProjects: string[];
   /** The AI-readable copy, when one exists for these bytes. */
-  read?: { knowledgeDocId: string; status: string; pages: number; byHash: boolean };
+  read?: { knowledgeDocId: string; status: string; pages: number; byHash: boolean; fileKey?: string };
   /** Year it landed in the system (or was listed). Never a content signal. */
   uploadYear?: number;
   sizeBytes?: number | null;

@@ -48,7 +48,7 @@ export interface FindResult {
   verdict: Verdict;
   evidence: FindEvidence[];
   relations: FindRelation[];
-  read?: { knowledgeDocId: string; status: string; pages: number };
+  read?: { knowledgeDocId: string; status: string; pages: number; fileKey?: string };
   /** Page-level hits from the text, best first. */
   pages: Array<{ page: number; snippet: string; knowledgeDocId: string }>;
   sameBytes: number;
@@ -101,4 +101,6 @@ export interface FindRequest {
   limit?: number;
   /** Skip the activity layer (cheaper) — e.g. for a palette. */
   activity?: boolean;
+  /** Skip the meaning layer (an embedding call) — e.g. for a palette. */
+  semantic?: boolean;
 }
