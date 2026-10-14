@@ -1043,6 +1043,21 @@ describe("SEC-21 residual 3 — a matched milestone keeps its project on a re-im
     expect(milestones().every((r) => r.project_id === PROJECT)).toBe(true);
   });
 
+  it("SEC-24 (projects Round G J20): rows put back on their project (20261215's reattach_stranded_milestones) are matched by a re-import onto that project with the document, and updated IN PLACE — no insert beside them", async () => {
+    await importMilestonesFromParsed({ ...scope, documentId: DOC, rows: rowsOf(fileA2) });
+    const ids = milestones().map((r) => r.id).sort();
+    // the pre-J19 document-only re-import's move, then the put-back onto the project
+    for (const r of milestones()) r.project_id = null;
+    for (const r of milestones()) r.project_id = PROJECT;
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ ...scope, documentId: DOC, rows: rowsOf(fileB) });
+    expect(again.errors).toEqual([]);
+    expect(again).toMatchObject({ inserted: 0, updated: 3 });
+    expect(milestones().map((r) => r.id).sort()).toEqual(ids);
+    expect(milestones().every((r) => r.project_id === PROJECT && r.document_id === DOC)).toBe(true);
+    expect(db.writes.filter((w) => w.table === "milestones" && w.method === "insert")).toEqual([]);
+  });
+
   it("regression: a document-only import onto a document with no project rows still lands its rows on the document alone", async () => {
     const first = await importMilestonesFromParsed({ orgId: ORG, documentId: DOC, source: "csv", createdBy: USER, rows: rowsOf(fileA2) });
     expect(first.inserted).toBe(3);
