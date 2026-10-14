@@ -32,6 +32,28 @@
 --       → for these three: PUBLIC and anon revoked; authenticated and
 --         service_role granted by name.
 --
+-- DEC-90 RULING 4, READ PER ROLE (stated for the integrator to confirm at
+-- merge). The ruling allows a REVOKE "only for functions the app never calls
+-- as anon/authenticated". This file reads it per role: EXECUTE is revoked
+-- from a role only where the app never calls the function AS THAT ROLE.
+--     · member_is_active: no app caller at all → revoked from PUBLIC, anon
+--       and authenticated.
+--     · next_ticket_number, issue_document_number, force_release_document:
+--       the app calls each only as authenticated, never as anon
+--       (app/api/tickets/create/route.ts:673 with the caller's JWT;
+--       lib/ticketNumber.ts:84, the browser form no page calls today;
+--       lib/libraryNumbering.ts:46; lib/checkoutEpisodes.ts:709) → revoked
+--       from PUBLIC and anon only; authenticated keeps EXECUTE, by name.
+--   Read as whole-function instead, the ruling would allow only the first:
+--   then the three blocks for the other functions come out of this file and
+--   their census rows return to recorded decisions. Nothing else changes.
+--   One message changes: a signed-out caller of next_ticket_number gets
+--   "permission denied for function next_ticket_number" instead of the
+--   body's "not an active member of this org", and the tickets route's
+--   /function/ match would word that as "Ticket numbering isn't set up yet".
+--   No such caller exists today: the route's callerScopedClient answers 401
+--   to a request with no access token before it calls the function.
+--
 -- NARROWS (nobody signed in loses anything). A signed-out caller (the anon
 -- key with no session) is the only one refused, and each function already
 -- refused it inside its body (or, for member_is_active, has no app caller).

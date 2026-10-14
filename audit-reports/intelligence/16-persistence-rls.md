@@ -303,7 +303,12 @@ Measured 2026-10-14, PostgreSQL 16.13 with pgvector 0.6.0, 299 numbered files:
 **Done-when.**
 - ✓ (2026-09-30) The `knowledge_questions` ALTER is guarded in `20260806` and carried by `20261123`. The replay confirms both run clean.
 - ✗ Not met as written: "a fresh-database replay of migrations in filename order completes with zero errors". The replay now runs on every `npm run test:db`, and it reports two numbered files that fail in filename order (`IRLS-18`, `IRLS-19`) plus the baseline's own failure (`IRLS-17`). None of the three is this finding's defect.
-- ✓ On the harness's fresh install, `/api/admin/schema-health` reports every `EXPECTED_TABLE` (and every expected column and function) present. That install runs `schema.sql` statement by statement (`IRLS-17`) and re-runs `20260630` (`IRLS-18`).
+- ✓, on a generous reading (corrected at the review fix pass, 2026-10-14). On the harness's install, `/api/admin/schema-health` reports every `EXPECTED_TABLE`, and every expected column and function, present. That install is not a literal fresh install, in four ways:
+  - It runs `schema.sql` statement by statement (`IRLS-17`).
+  - It re-runs `20260630` after the sequence (`IRLS-18`).
+  - It lacks everything in `20261075`, which cannot be parsed (`IRLS-19`).
+  - The route's `GET` handler is answered through a PostgREST stand-in that the replayed database serves, not a real Supabase project.
+  The integrator may read done-when 3 as met only once `IRLS-17/18/19` land and the replay is clean. IRLS-6 stays OPEN on done-when 2 either way.
 
 **Scope / residual.** IRLS-6 stays OPEN only for done-when 2. It closes by record once `IRLS-17`, `IRLS-18` and `IRLS-19` land: at that point `replayKnownDefects.ts` lists nothing and `freshReplay.test.ts` reads zero errors. Owner of the remainder: the integrator, routing those three (DEC-31). No migration from this package touches it.
 

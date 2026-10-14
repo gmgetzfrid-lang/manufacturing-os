@@ -79,7 +79,7 @@ Measured 2026-10-14 on PostgreSQL 16.13 with pgvector 0.6.0: the harness's three
 **Done-when.**
 1. ✓ (2026-09-30) The split policies, by the role collection (20261045 + 20261128).
 2. ✓ (2026-09-30) `asset_types` and `asset_photos` carry the same split. The runtime test exercises `asset_types`; `asset_photos` is covered by the static census in `intelRoundGRegistry.test.ts`.
-3. ✓ A test refuses a Viewer's JWT at runtime, on a real PostgreSQL. INSERT answers `42501`. For UPDATE and DELETE, PostgreSQL's answer to a policy whose `USING` clause hides the row is "0 rows", never `42501`, and the test asserts exactly that. This record's 2026-09-30 Partial set the bar as "(42501 or zero rows)". `lib/assets.ts` turns a 0-row write into a thrown refusal (pinned in `intelRoundGRegistry.test.ts`).
+3. ✓, on the record's own re-reading. A test refuses a Viewer's JWT at runtime, on a real PostgreSQL. INSERT answers `42501`. For UPDATE and DELETE, PostgreSQL's answer to a policy whose `USING` clause hides the row is "0 rows", never `42501`, and the test asserts exactly that. This record's 2026-09-30 Partial set the bar as "(42501 or zero rows)"; read literally, done-when 3's "42501" holds for INSERT only. `lib/assets.ts` turns a 0-row write into a thrown refusal (pinned in `intelRoundGRegistry.test.ts`). The test runs in the opt-in `npm run test:db` suite (DEC-90 ruling 2), not in CI.
 4. ✓ (2026-09-30) The banner matches the policy.
 
 **Scope / residual.** Pending migration: `supabase/migrations/20261128_intel_roundG_registry_authority.sql`, unchanged. Apply it by hand (DEC-30): the harness proves its policies on a fresh replay, not on the live project. Nothing else remains.

@@ -11,8 +11,14 @@
 //   * each numbered migration — as `postgres`, the whole file as ONE
 //     simple-query message, exactly as the Supabase SQL editor sends a paste
 //     (one implicit transaction unless the file opens its own; the first error
-//     stops the rest). A file over 120 kB (psql's -c argument limit is 128 kB)
-//     is run with --single-transaction instead; none is that large today.
+//     stops the rest). psql's -c argument is capped at 128 kB by the kernel
+//     (MAX_ARG_STRLEN), so a file over MAX_C_BYTES cannot be sent that way:
+//     the replay then STOPS, naming the file, rather than run it any other
+//     way (psql -f would run it statement by statement in autocommit, and a
+//     late error would leave its earlier statements applied — not what a
+//     paste does). The default suite holds every numbered migration under
+//     the limit (lib/__tests__/intelRoundGDbHarness.test.ts); the largest
+//     today, 20261157, is about 99 kB.
 //
 // The replay never edits a file. A file that fails is recorded; the known
 // ones (OUT_OF_ORDER_FILES) are re-run once at the end when they rolled back.
@@ -42,7 +48,8 @@ export interface ReplayReport {
 }
 
 export const REPLAY_DB = "mos_replay";
-const MAX_C_BYTES = 120_000;
+/** The largest file the replay sends as one simple-query message (psql -c), under the kernel's 128 kB argument cap. */
+export const MAX_C_BYTES = 120_000;
 
 export function numberedMigrations(repoRoot: string): string[] {
   return readdirSync(join(repoRoot, "supabase", "migrations"))
@@ -54,9 +61,14 @@ function runMigration(conn: PgConn, db: string, path: string, file: string): Fil
   const t0 = Date.now();
   const body = readFileSync(path, "utf8");
   const settings = OPERATOR_SWITCHES[file] ?? {};
-  const r = Buffer.byteLength(body) <= MAX_C_BYTES
-    ? runPsql(conn, db, "postgres", { sql: body }, settings)
-    : runPsql(conn, db, "postgres", { file: path, stopOnError: true }, settings);
+  const bytes = Buffer.byteLength(body);
+  if (bytes > MAX_C_BYTES) {
+    throw new Error(
+      `${file} is ${bytes} bytes, over the replay's ${MAX_C_BYTES}-byte limit for one simple-query message (psql -c). ` +
+      "The harness will not run it statement by statement, which is not what a paste does: split the migration, or give the harness a transport that sends it as one message.",
+    );
+  }
+  const r = runPsql(conn, db, "postgres", { sql: body }, settings);
   return { file, ok: r.ok, error: r.ok ? null : (r.error ?? r.stderr.trim().split("\n")[0] ?? "unknown failure"), ms: Date.now() - t0 };
 }
 

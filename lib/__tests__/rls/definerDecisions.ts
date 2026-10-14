@@ -23,20 +23,51 @@
 //                         EXECUTE grant is irrelevant (listed by signature).
 //   policy-helper         called by row-level-security policies written for
 //                         every role, so anon and authenticated must execute
-//                         it; it judges the caller (auth.uid()) and answers
-//                         false / empty with no session. Kept.
-//   policy-helper-oracle  as above, but it takes the person to judge as a
-//                         parameter, so anyone can ask it about another uid.
-//                         Kept (the policies need it); the narrowing is owned
-//                         by projects-and-cost INTK-19.
+//                         it; its body judges the caller (auth.uid(), or a
+//                         caller-scoped helper). Kept.
+//   policy-helper-oracle  as above, but the body never reads the session: it
+//                         judges a person (or maps a project) the caller
+//                         passes in, so anyone holding the anon key can ask
+//                         about another uid. Kept (the policies need it); the
+//                         narrowing is owned by projects-and-cost INTK-19.
+//   signed-in-oracle      anon and PUBLIC revoked, authenticated keeps
+//                         EXECUTE, and the body judges a uid the caller
+//                         passes in without binding it to auth.uid(): any
+//                         signed-in account, of any workspace, can ask about
+//                         any person. Recorded; the narrowing is INTK-19's.
 //   own-scope-unused      reads only the caller's own ids; nothing uses it.
 //   signed-in             anon and PUBLIC revoked by its own migration;
-//                         authenticated keeps EXECUTE.
+//                         authenticated keeps EXECUTE; the body judges the
+//                         signed-in caller.
 //   signed-in-rpc         the same state, reached by 20261217.
 //   revoked-20261217      EXECUTE for service_role only, by 20261217.
 //   service-only          EXECUTE for service_role only, by its own migration.
 //   role-only             EXECUTE by name to the intake_door role only.
 //   internal              no client role at all; called by other definers.
+//
+// A decision whose claim is about the BODY (BODY_CLAIM_DECISIONS) cites the
+// body: `evidence` holds fragments of the live function (pg_proc.prosrc),
+// verbatim up to whitespace, and the census finds each one there — for a
+// caller-judging decision the clause that judges the signed-in caller, for an
+// oracle the clause that reads the person it is told about. So a reason
+// cannot be a template, and a body that changes under a row fails the run.
+//
+// A client-callable function that takes a person (an IN parameter matching
+// PERSON_PARAM: p_uid, p_to_user, p_actor, p_member_id, p_new_owner, …)
+// either carries an oracle decision with an owner, or says in `person` how the
+// body binds that parameter (PersonBinding), with its own evidence. The census
+// checks this against the catalog, so a templated reason cannot hide a new
+// oracle.
+
+export type PersonBinding =
+  /** For a signed-in caller the body refuses (or replaces) any value but auth.uid(). */
+  | "is-the-caller"
+  /** The parameter is a row's attribute (an owner column); the answer is about auth.uid(). */
+  | "judged-for-caller"
+  /** The caller's own authority over that person's workspace is checked first (an Admin acting on a member). */
+  | "caller-authority"
+  /** The caller must be an active member of the workspace, and a person outside it gets a constant answer. */
+  | "same-workspace";
 
 export interface DefinerDecision {
   /** regprocedure text, as pg_proc.oid::regprocedure prints it. */
@@ -44,6 +75,7 @@ export interface DefinerDecision {
   decision:
     | "policy-helper"
     | "policy-helper-oracle"
+    | "signed-in-oracle"
     | "own-scope-unused"
     | "signed-in"
     | "signed-in-rpc"
@@ -54,9 +86,24 @@ export interface DefinerDecision {
   /** EXECUTE on the replayed database after the whole sequence. */
   execute: { anon: boolean; authenticated: boolean; service_role: boolean };
   reason: string;
+  /** Fragments of the live body that carry the decision's claim (required for BODY_CLAIM_DECISIONS). */
+  evidence?: readonly string[];
+  /** For a function with a PERSON_PARAM parameter that is not an oracle: how the body binds it. */
+  person?: { param: string; binding: PersonBinding; evidence: readonly string[] };
   /** Who owns a remaining narrowing, when the decision records one. */
   owner?: string;
 }
+
+/** Decisions whose claim is about what the body does; each such row cites the body (`evidence`). */
+export const BODY_CLAIM_DECISIONS: readonly DefinerDecision["decision"][] = [
+  "policy-helper", "policy-helper-oracle", "signed-in-oracle", "own-scope-unused", "signed-in", "signed-in-rpc",
+];
+
+/** Decisions that record an oracle: the narrowing is owned by projects-and-cost INTK-19. */
+export const ORACLE_DECISIONS: readonly DefinerDecision["decision"][] = ["policy-helper-oracle", "signed-in-oracle"];
+
+/** An IN parameter that names a person (p_uid, p_to_user, p_actor, p_member_id, p_new_owner, p_doc_owner, …). */
+export const PERSON_PARAM = /^(p_)?([a-z0-9]+_)*(uid|uids|user|users|user_id|actor|member|member_id|owner|recipient|signer|assignee|holder|requester|by)$/;
 
 /** decision "trigger-only": each returns trigger (checked against the catalog). */
 export const TRIGGER_FUNCTIONS: readonly string[] = [
@@ -147,31 +194,147 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
 
 /** Every SECURITY DEFINER function a client could name over PostgREST, with its decision. */
 export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
-  { signature: "acl_index_denies(jsonb,uuid,uuid,text)", decision: "policy-helper-oracle", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 2 row-level-security policies written for every role, so anon and authenticated must be able to execute it (a REVOKE would turn an empty answer into a 42501 error for every such read). It takes p_uid — the person to judge — rather than reading auth.uid(), so anyone holding the public anon key can ask it about another person's authority given the uuids. Also named by the app: lib/orchestrator/tools.ts.", owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)" },
-  { signature: "adopt_intake_document(uuid,uuid,uuid,text,jsonb)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261141_prj_roundG_intake_token_hash_and_adoption.sql); the body judges the signed-in caller. Named by the app: lib/transitionIn.ts." },
+  {
+    signature: "acl_index_denies(jsonb,uuid,uuid,text)",
+    decision: "policy-helper-oracle",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 2 policies written for PUBLIC, so anon and authenticated keep EXECUTE (a REVOKE would turn a policy's empty answer into a 42501 error). Its body never reads auth.uid(): it judges the p_uid it is given — that uid's own deny entry, then its active roles and its teams — so anyone holding the public anon key can ask whether another person is denied an action, given the uuids. Also named by the app: lib/orchestrator/tools.ts.",
+    evidence: ["IF p_idx->'deny'->'users'->p_action ? p_uid::text THEN RETURN TRUE; END IF;", "FROM org_members WHERE org_id = p_org AND uid = p_uid AND status = 'active' LIMIT 1;"],
+    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+  },
+  {
+    signature: "adopt_intake_document(uuid,uuid,uuid,text,jsonb)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261141_prj_roundG_intake_token_hash_and_adoption.sql; authenticated keeps EXECUTE. A caller with no session is refused (42501), and the caller must then be a controller of the document's own workspace (is_org_controller) before it moves; the destination library and folder must be in that workspace. No person parameter. Named by the app: lib/transitionIn.ts.",
+    evidence: ["IF v_uid IS NULL THEN RAISE EXCEPTION 'Sign in to adopt a document into the controlled register.'", "IF NOT is_org_controller(v_doc.org_id) THEN"],
+  },
   { signature: "ai_cap_change(uuid,uuid,uuid,numeric,boolean,boolean)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261173_intel_roundG_ai_cap_change.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: lib/ai/capChange.ts, lib/schemaExpectations.ts." },
   { signature: "append_ticket_redline(uuid,uuid,jsonb,jsonb)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261166_df_roundG_ticket_rails.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/intake/upload/route.ts, lib/schemaExpectations.ts." },
-  { signature: "apply_milestone_moves(uuid,uuid,jsonb)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261098_prj_roundG_apply_milestone_moves.sql); the body judges the signed-in caller. Named by the app: lib/milestones.ts." },
+  {
+    signature: "apply_milestone_moves(uuid,uuid,jsonb)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261098_prj_roundG_apply_milestone_moves.sql; authenticated keeps EXECUTE. A signed-in caller must pass caller_is_active_member(p_org) and can_edit_project_schedule(p_org, p_project) (Admin, DocCtrl, Manager or Supervisor, or the project's owner); with no uid only the service role passes. Every UPDATE is pinned to org_id = p_org AND project_id = p_project. Named by the app: lib/milestones.ts.",
+    evidence: ["IF NOT caller_is_active_member(p_org) THEN RAISE EXCEPTION 'Not a member of this workspace' USING ERRCODE = '42501';", "IF NOT can_edit_project_schedule(p_org, p_project) THEN"],
+  },
   { signature: "bump_intake_use(uuid,bigint)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261104_prj_roundG_intake_links.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/intake/upload/route.ts." },
   { signature: "bump_share_access(uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261081_dc_roundF_share_access_log.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/share/resolve/route.ts, lib/schemaExpectations.ts." },
   { signature: "bump_transmittal_portal_use(uuid,text)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261133_dc_roundF_transmittal_rails.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/transmittal/route.ts." },
-  { signature: "caller_holds_any_role(uuid,text[])", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 31 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "caller_is_active_member(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 2 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "can_edit_project_schedule(uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261098_prj_roundG_apply_milestone_moves.sql); the body judges the signed-in caller. No app call site names it today." },
-  { signature: "can_manage_node(jsonb,uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 1 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "can_manage_project(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 5 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
+  {
+    signature: "caller_holds_any_role(uuid,text[])",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 31 row-level-security policies, most written for every role (PUBLIC), so anon and authenticated must keep EXECUTE: a REVOKE would turn a policy's empty answer into a 42501 error. It is one EXISTS over the caller's own active membership holding one of p_roles in role or roles[] (uid = auth.uid()), so it answers only about the caller, and with no session it is false. No person parameter.",
+    evidence: ["WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' AND (role = ANY(p_roles) OR roles && p_roles)"],
+  },
+  {
+    signature: "caller_is_active_member(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 2 policies (PUBLIC and authenticated) and by the three schedule RPCs, so anon and authenticated keep EXECUTE. One EXISTS over the caller's own active membership of p_org (uid = auth.uid()); with no session it is false.",
+    evidence: ["SELECT EXISTS (SELECT 1 FROM org_members WHERE uid = auth.uid() AND org_id = p_org AND status = 'active');"],
+  },
+  {
+    signature: "can_edit_project_schedule(uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261098_prj_roundG_apply_milestone_moves.sql; authenticated keeps EXECUTE. A predicate on the caller only: caller_holds_any_role(p_org, Admin / DocCtrl / Manager / Supervisor), or the project's owner_user_id is auth.uid(). No app call site names it; apply_milestone_moves, set_project_baseline and clear_project_baseline call it.",
+    evidence: ["SELECT caller_holds_any_role(p_org, ARRAY['Admin','DocCtrl','Manager','Supervisor']::text[]) OR EXISTS (SELECT 1 FROM projects p WHERE p.id = p_project AND p.org_id = p_org AND p.owner_user_id = auth.uid());"],
+  },
+  {
+    signature: "can_manage_node(jsonb,uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 1 policy written for PUBLIC, so anon and authenticated keep EXECUTE. A controller of p_org (is_org_controller, the caller's) gets true; otherwise it reads only the caller's own membership and teams (uid = auth.uid()) against the admin / managePermissions grants of the acl_index it is passed — the row's own index, not a person. Not an active member: false.",
+    evidence: ["IF is_org_controller(p_org) THEN RETURN true; END IF;", "WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' LIMIT 1;"],
+  },
+  {
+    signature: "can_manage_project(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 5 policies (PUBLIC and authenticated). True only when the caller is the project's active owner (owner_user_id = auth.uid()), holds Admin or Manager in its workspace (caller_holds_any_role) or is an owner / collaborator project member (pm.user_id = auth.uid()); with no session, false.",
+    evidence: ["(p.owner_user_id = auth.uid()", "OR caller_holds_any_role(p.org_id, ARRAY['Admin','Manager']::text[])", "WHERE pm.project_id = p.id AND pm.user_id = auth.uid()"],
+  },
   { signature: "claim_access_request_burst(uuid,uuid[],text,text)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261197_notif_roundG_burst_claim_digest_rail.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/auth/request-access/route.ts, lib/schemaExpectations.ts." },
-  { signature: "clear_project_baseline(uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261099_prj_roundG_baseline_authority.sql); the body judges the signed-in caller. Named by the app: lib/milestones.ts." },
-  { signature: "clear_resolved_branch_alerts(uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261181_notif_roundG_producers_free.sql); the body judges the signed-in caller. Named by the app: lib/branches.ts, lib/schemaExpectations.ts." },
-  { signature: "contractor_only_org_ids()", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261166_df_roundG_ticket_rails.sql); the body judges the signed-in caller. Called inside 2 policies." },
-  { signature: "delete_project_record(uuid,text)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261103_prj_roundG_project_closeout_rails.sql); the body judges the signed-in caller. Named by the app: lib/projects.ts." },
-  { signature: "doc_is_visible(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 2 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It reads no caller-supplied person: visibility is decided for auth.uid() (through the caller-scoped helpers it calls), so with no session it answers false." },
-  { signature: "document_has_versions(uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261205_dc_roundF_direct_write_issue_record.sql); the body judges the signed-in caller. Named by the app: lib/schemaExpectations.ts." },
-  { signature: "document_share_refusal(uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261080_dc_roundF_share_minting_and_revocation.sql); the body judges the signed-in caller. Called inside 1 policies." },
-  { signature: "documents_total_for_org(uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261138_intel_roundG_unit_identity.sql); the body judges the signed-in caller. Named by the app: lib/orgGraph.ts." },
-  { signature: "email_gate(uuid,uuid,text,text,text,text)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261191_notif_roundG_kind_split.sql); the body judges the signed-in caller. Named by the app: lib/notifications.ts." },
-  { signature: "entity_mentions_total_for_asset(uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261120_intel_roundG_knowledge_memory_acl.sql); the body judges the signed-in caller. Named by the app: lib/mentions.ts." },
-  { signature: "force_release_document(uuid,text)", decision: "signed-in-rpc", execute: { anon: false, authenticated: true, service_role: true }, reason: "lib/checkoutEpisodes.ts calls it as a signed-in member; the body raises without auth.uid(), and the checkout release guard judges authority. 20261043 revoked PUBLIC but Supabase's default grant left anon; 20261217 revokes anon and grants authenticated and service_role by name." },
+  {
+    signature: "clear_project_baseline(uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261099_prj_roundG_baseline_authority.sql; authenticated keeps EXECUTE. Gated as apply_milestone_moves is (caller_is_active_member and can_edit_project_schedule for the project, else only the service role) before it snapshots the baseline into its history and clears it. Named by the app: lib/milestones.ts.",
+    evidence: ["IF NOT caller_is_active_member(p_org) THEN RAISE EXCEPTION 'Not a member of this workspace' USING ERRCODE = '42501';", "IF NOT can_edit_project_schedule(p_org, p_project) THEN"],
+  },
+  {
+    signature: "clear_resolved_branch_alerts(uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261181_notif_roundG_producers_free.sql; authenticated keeps EXECUTE. With no session it returns 0. Otherwise it acts only on a RESOLVED branch in a workspace where auth.uid() is an active member, marking that branch's open branch_open notices read for every recipient (a resolved branch's alert is stale for all of them). Named by the app: lib/branches.ts.",
+    evidence: ["v_uid uuid := auth.uid();", "IF v_uid IS NULL OR p_branch IS NULL THEN RETURN 0;", "AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = b.org_id AND m.uid = v_uid AND m.status = 'active');"],
+  },
+  {
+    signature: "contractor_only_org_ids()",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261166_df_roundG_ticket_rails.sql; authenticated keeps EXECUTE, which the 2 policies that call it need (the tickets and ticket_comments read scopes, written for authenticated, DEC-89). It returns only the caller's own workspaces in which every role they hold is Contractor (m.uid = auth.uid()); with no session, the empty set.",
+    evidence: ["WHERE auth.uid() IS NOT NULL AND m.uid = auth.uid() AND m.status = 'active'"],
+  },
+  {
+    signature: "delete_project_record(uuid,text)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261103_prj_roundG_project_closeout_rails.sql; authenticated keeps EXECUTE. A caller with no session is refused; the caller must be a controller of the project's workspace or its owner (is_org_controller / user_owns_project, both for auth.uid()), and only a controller, with a reason, deletes a project that carries cost or quality records. Named by the app: lib/projects.ts.",
+    evidence: ["IF v_actor IS NULL THEN RAISE EXCEPTION 'Sign in to delete a project.';", "v_controller := is_org_controller(v_proj.org_id);", "IF NOT (v_controller OR user_owns_project(p_project)) THEN"],
+  },
+  {
+    signature: "doc_is_visible(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 2 policies written for PUBLIC. It reads the document's own visibility, acl_index, owner and containers and hands them to node_visible, which judges auth.uid(); a document that does not exist is false. The owner it passes is the row's column, not a person the caller names.",
+    evidence: ["(SELECT node_visible(d.visibility, d.acl_index, d.org_id, d.owner_user_id, d.collection_id, d.library_id) FROM documents d WHERE d.id = p_doc)"],
+  },
+  {
+    signature: "document_has_versions(uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261205_dc_roundF_direct_write_issue_record.sql; authenticated keeps EXECUTE. It answers NULL unless the document is in one of the caller's workspaces (my_org_ids) and doc_is_visible for the caller; only then does it say whether any version exists. Named by lib/schemaExpectations.ts (a presence probe).",
+    evidence: ["WHERE d.id = p_record AND d.org_id IN (SELECT my_org_ids())) AND doc_is_visible(p_record)"],
+  },
+  {
+    signature: "document_share_refusal(uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261080_dc_roundF_share_minting_and_revocation.sql; authenticated keeps EXECUTE, which document_shares_insert's WITH CHECK needs (written for PUBLIC; an anon insert is refused either way). For a signed-in caller the document is read only when p_org is one of my_org_ids() and node_visible passes for the caller, otherwise the answer is 'not_found'; with no uid (the service role) it reads any document.",
+    evidence: ["AND (auth.uid() IS NULL OR p_org IN (SELECT my_org_ids()))", "AND (auth.uid() IS NULL OR node_visible(d.visibility, d.acl_index, d.org_id,"],
+  },
+  {
+    signature: "documents_total_for_org(uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261138_intel_roundG_unit_identity.sql; authenticated keeps EXECUTE. It counts the workspace's documents only when auth.uid() is an active member of p_org_id, and answers 0 otherwise. Named by the app: lib/orgGraph.ts.",
+    evidence: ["WHEN EXISTS (SELECT 1 FROM org_members WHERE org_id = p_org_id AND uid = auth.uid() AND status = 'active') THEN (SELECT COUNT(*) FROM documents WHERE org_id = p_org_id)"],
+  },
+  {
+    signature: "email_gate(uuid,uuid,text,text,text,text)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261191_notif_roundG_kind_split.sql; authenticated keeps EXECUTE. A signed-in caller must be an active member of p_org (42501 otherwise); with no uid only the service role passes. It then answers for the RECIPIENT p_to_user — whether their email preferences and the 60-second dedupe let this event's email through — which is DEC-74's design (the one email rule runs where the recipient's row is visible). A recipient outside p_org gets a constant true, so nothing is disclosed across workspaces. Named by the app: lib/notifications.ts.",
+    evidence: ["v_uid uuid := auth.uid();", "IF NOT EXISTS (SELECT 1 FROM org_members WHERE org_id = p_org AND uid = v_uid AND status = 'active') THEN RAISE EXCEPTION 'email_gate: not an active member of this workspace'"],
+    person: { param: "p_to_user", binding: "same-workspace", evidence: ["IF NOT EXISTS (SELECT 1 FROM org_members WHERE org_id = p_org AND uid = p_to_user) THEN RETURN true;"] },
+  },
+  {
+    signature: "entity_mentions_total_for_asset(uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261120_intel_roundG_knowledge_memory_acl.sql; authenticated keeps EXECUTE. It counts an asset's entity mentions only when auth.uid() is an active member of p_org_id, and answers 0 otherwise. Named by the app: lib/mentions.ts.",
+    evidence: ["WHEN EXISTS (SELECT 1 FROM org_members WHERE org_id = p_org_id AND uid = auth.uid() AND status = 'active') THEN (SELECT COUNT(*) FROM entity_mentions WHERE org_id = p_org_id AND asset_id = p_asset_id)"],
+  },
+  {
+    signature: "force_release_document(uuid,text)",
+    decision: "signed-in-rpc",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "lib/checkoutEpisodes.ts calls it as a signed-in member. The body raises when auth.uid() is NULL or not an active member of the document's workspace; force authority itself is judged by the checkout release guard on the rows it writes. 20261043 revoked PUBLIC, but Supabase's default grant left anon; 20261217 revokes anon and grants authenticated and service_role by name.",
+    evidence: ["v_actor uuid := auth.uid();", "IF v_actor IS NULL THEN RAISE EXCEPTION 'force_release_document: must be called by a signed-in member';", "IF NOT EXISTS (SELECT 1 FROM org_members WHERE org_id = v_doc.org_id AND uid = v_actor AND status = 'active') THEN"],
+  },
   { signature: "intake_door_append_redline(text,uuid,jsonb,jsonb)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261184_prj_roundG_intake_door_identity.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/intake/upload/route.ts." },
   { signature: "intake_door_bound()", decision: "internal", execute: { anon: false, authenticated: false, service_role: false }, reason: "Executable by no client role (20261184_prj_roundG_intake_door_identity.sql: REVOKE … FROM PUBLIC, anon, authenticated, service_role): only other SECURITY DEFINER functions call it, as their owner." },
   { signature: "intake_door_may_create(uuid,uuid,uuid,uuid,text)", decision: "role-only", execute: { anon: false, authenticated: false, service_role: false }, reason: "Executable by no client role: EXECUTE is granted by name to the intake_door role only (20261184_prj_roundG_intake_door_identity.sql), whose 2 policies call it (the contractor door, DEC-95). PostgREST callers cannot reach it." },
@@ -180,50 +343,271 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   { signature: "intake_door_promote(text,uuid,uuid,jsonb,text)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261184_prj_roundG_intake_door_identity.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/intake/upload/route.ts, lib/schemaExpectations.ts." },
   { signature: "intake_door_submit_version(text,jsonb)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261184_prj_roundG_intake_door_identity.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/intake/upload/route.ts." },
   { signature: "intake_review_health_by_org()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261105_prj_roundG_intake_review_and_attempts.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/cron/maintenance/route.ts." },
-  { signature: "is_org_admin(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 8 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It reads no caller-supplied person: it judges auth.uid() through the caller-scoped helpers it calls, so with no session it answers false." },
-  { signature: "is_org_admin_or_manager(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 4 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "is_org_assign_drafters(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 3 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "is_org_controller(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 80 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
+  {
+    signature: "is_org_admin(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 8 policies written for PUBLIC. A one-line wrapper over caller_holds_any_role(p_org, Admin), so it answers only about the caller; with no session, false.",
+    evidence: ["SELECT caller_holds_any_role(p_org, ARRAY['Admin']::text[]);"],
+  },
+  {
+    signature: "is_org_admin_or_manager(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 4 policies written for PUBLIC, and by revoke_member. One EXISTS over the caller's own active membership holding Admin or Manager in role or roles[]; with no session, false.",
+    evidence: ["WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' AND (role IN ('Admin', 'Manager') OR roles && ARRAY['Admin', 'Manager']::text[])"],
+  },
+  {
+    signature: "is_org_assign_drafters(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 3 policies written for PUBLIC. One EXISTS over the caller's own active membership holding Admin, Manager, Supervisor or DraftingSupervisor; with no session, false.",
+    evidence: ["SELECT 1 FROM org_members WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' AND (role IN ('Admin','Manager','Supervisor','DraftingSupervisor')"],
+  },
+  {
+    signature: "is_org_controller(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 80 policies (PUBLIC and authenticated) and by most controller-gated definer functions. One EXISTS over the caller's own active membership holding Admin or DocCtrl by the role collection (DEC-2); with no session, false.",
+    evidence: ["WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' AND (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])"],
+  },
   { signature: "is_org_controller_for(uuid,uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261125_intel_roundG_skills_authority.sql: REVOKE … FROM PUBLIC, anon, authenticated). No app call site names it today (other definer functions or the SQL editor call it)." },
-  { signature: "is_project_member(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 1 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "is_project_owner(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 5 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "issue_document_number(uuid)", decision: "signed-in-rpc", execute: { anon: false, authenticated: true, service_role: true }, reason: "lib/libraryNumbering.ts calls it as a signed-in member; the body returns NULL unless auth.uid() is an active member of the library's org. 20261217 revokes PUBLIC and anon (it had no grant statement at all) and grants authenticated and service_role by name." },
+  {
+    signature: "is_project_member(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 1 policy written for PUBLIC. True only when the caller is a member of the project (pm.user_id = auth.uid()) and still an active member of its workspace; with no session, false.",
+    evidence: ["WHERE pm.project_id = p_project AND pm.user_id::text = auth.uid()::text"],
+  },
+  {
+    signature: "is_project_owner(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 5 policies (PUBLIC and authenticated). True only when the caller is the project's owner (owner_user_id = auth.uid()) and an active member of its workspace; with no session, false.",
+    evidence: ["WHERE p.id = p_project AND p.owner_user_id::text = auth.uid()::text"],
+  },
+  {
+    signature: "issue_document_number(uuid)",
+    decision: "signed-in-rpc",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "lib/libraryNumbering.ts calls it as a signed-in member; the body returns NULL unless auth.uid() is an active member of the library's workspace. 20261217 revokes PUBLIC and anon (it had no grant statement at all) and grants authenticated and service_role by name.",
+    evidence: ["IF NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = cfg.org_id AND m.uid = auth.uid() AND m.status = 'active') THEN RETURN NULL;"],
+  },
   { signature: "member_is_active(uuid,uuid)", decision: "revoked-20261217", execute: { anon: false, authenticated: false, service_role: true }, reason: "A membership oracle for ANY uid (\"is uid X active in org Y?\"), callable with the public anon key. Its only caller is user_is_effective_owner, a SECURITY DEFINER function owned by postgres that keeps calling it as its owner; no app .rpc( call, no policy, no SECURITY INVOKER function names it. 20261217 leaves EXECUTE to service_role only." },
   { signature: "mfg_dedup_stats()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20260807_dedup_stats_fn.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/storage-stats/route.ts." },
   { signature: "mfg_storage_estimate()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261008_storage_estimate_knowledge.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/storage-stats/route.ts." },
   { signature: "mfg_table_stats()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20260805_storage_stats_fn.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/purge/route.ts, app/api/admin/storage-stats/route.ts, lib/storageUsage.ts." },
-  { signature: "my_org_ids()", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 22 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "my_project_ids()", decision: "own-scope-unused", execute: { anon: true, authenticated: true, service_role: true }, reason: "Returns only the caller's own ids (it reads auth.uid()); an anon caller gets an empty set. No live policy, function or app .rpc( call uses it any more, so it can neither leak nor be needed; kept as recorded, not revoked." },
-  { signature: "my_team_ids()", decision: "own-scope-unused", execute: { anon: true, authenticated: true, service_role: true }, reason: "Returns only the caller's own ids (it reads auth.uid()); an anon caller gets an empty set. No live policy, function or app .rpc( call uses it any more, so it can neither leak nor be needed; kept as recorded, not revoked." },
-  { signature: "next_ticket_number(uuid,integer)", decision: "signed-in-rpc", execute: { anon: false, authenticated: true, service_role: true }, reason: "lib/ticketNumber.ts and app/api/tickets/create/route.ts call it with a signed-in member's JWT; the body refuses a caller with no active membership (auth.uid()), so a signed-out call never worked. 20261217 revokes PUBLIC and anon and grants authenticated and service_role by name." },
-  { signature: "node_visible(text,jsonb,uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 5 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It reads no caller-supplied person: visibility is decided for auth.uid() (through the caller-scoped helpers it calls), so with no session it answers false." },
-  { signature: "node_visible(text,jsonb,uuid,uuid,uuid,uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 5 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It reads no caller-supplied person: visibility is decided for auth.uid() (through the caller-scoped helpers it calls), so with no session it answers false." },
-  { signature: "notifications_i_sent(uuid,text,timestamp with time zone,text,text,jsonb)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261191_notif_roundG_kind_split.sql); the body judges the signed-in caller. Named by the app: lib/schemaExpectations.ts, lib/sentNotices.ts." },
-  { signature: "org_capability_allows(uuid,text,uuid)", decision: "policy-helper-oracle", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 4 row-level-security policies written for every role, so anon and authenticated must be able to execute it (a REVOKE would turn an empty answer into a 42501 error for every such read). It takes p_uid — the person to judge — rather than reading auth.uid(), so anyone holding the public anon key can ask it about another person's authority given the uuids.", owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)" },
-  { signature: "org_capability_allows_for(uuid,text,uuid,jsonb)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261137_intel_roundG_ai_manage_caps.sql); the body judges the signed-in caller. No app call site names it today." },
+  {
+    signature: "my_org_ids()",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 22 policies (PUBLIC and authenticated), as `org_id IN (SELECT my_org_ids())`. Returns the caller's own active workspace ids only (uid = auth.uid()); with no session, the empty set.",
+    evidence: ["SELECT org_id FROM org_members WHERE uid = auth.uid() AND status = 'active';"],
+  },
+  {
+    signature: "my_project_ids()",
+    decision: "own-scope-unused",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Returns the caller's own project ids (user_id = auth.uid()); an anon caller gets the empty set. No policy on the replay, no function and no app .rpc( call names it any more, so it can neither leak nor be needed; kept as recorded, not revoked.",
+    evidence: ["SELECT project_id FROM project_members WHERE user_id = auth.uid();"],
+  },
+  {
+    signature: "my_team_ids()",
+    decision: "own-scope-unused",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Returns the caller's own team ids in workspaces where they are active (tm.uid = auth.uid()); an anon caller gets the empty set. Nothing on the replay names it (no policy, no function, no app call), so it is kept as recorded, not revoked.",
+    evidence: ["WHERE tm.uid = auth.uid();"],
+  },
+  {
+    signature: "next_ticket_number(uuid,integer)",
+    decision: "signed-in-rpc",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "lib/ticketNumber.ts and app/api/tickets/create/route.ts call it with a signed-in member's JWT; the body refuses a caller with no active membership of p_org (auth.uid()), so a signed-out call never worked. 20261217 revokes PUBLIC and anon and grants authenticated and service_role by name.",
+    evidence: ["WHERE org_id = p_org AND uid = auth.uid() AND status = 'active' ) THEN RAISE EXCEPTION 'not an active member of this org';"],
+  },
+  {
+    signature: "node_visible(text,jsonb,uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "The 3-argument form of the node_visible policies (5 policies written for PUBLIC). It forwards to the 6-argument form with no owner and no containers, so its answer is that form's, judged for auth.uid().",
+    evidence: ["SELECT node_visible(p_visibility, p_acl_index, p_org, NULL::uuid, NULL::uuid, NULL::uuid);"],
+  },
+  {
+    signature: "node_visible(text,jsonb,uuid,uuid,uuid,uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 5 policies written for PUBLIC, and by doc_is_visible and document_share_refusal. Normal visibility answers true (the policies add the membership test); otherwise a controller of p_org sees the row, then its effective owner, then the acl_index grants — each judged for auth.uid(), never for a uid the caller passes. p_owner is the row's owner column.",
+    evidence: ["IF is_org_controller(p_org) THEN RETURN true;", "WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' LIMIT 1;"],
+    person: { param: "p_owner", binding: "judged-for-caller", evidence: ["IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN RETURN true;"] },
+  },
+  {
+    signature: "notifications_i_sent(uuid,text,timestamp with time zone,text,text,jsonb)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261191_notif_roundG_kind_split.sql; authenticated keeps EXECUTE. It returns only notifications the caller sent (n.actor_user_id = auth.uid()), of two kinds, from a workspace where the caller is active, at most 30 days back; with no session, nothing. Named by the app: lib/sentNotices.ts.",
+    evidence: ["AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org AND m.uid = auth.uid() AND m.status = 'active')", "AND n.actor_user_id = auth.uid()"],
+  },
+  {
+    signature: "org_capability_allows(uuid,text,uuid)",
+    decision: "policy-helper-oracle",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 4 policies written for PUBLIC, so anon and authenticated keep EXECUTE. Its body is one line, org_capability_allows_for(p_org, p_cap, p_uid, '{}'), and never reads auth.uid(), so anyone holding the public anon key can ask whether another person holds a capability in a workspace, given the uuids.",
+    evidence: ["RETURN org_capability_allows_for(p_org, p_cap, p_uid, '{}'::jsonb);"],
+    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+  },
+  {
+    signature: "org_capability_allows_for(uuid,text,uuid,jsonb)",
+    decision: "signed-in-oracle",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261137_intel_roundG_ai_manage_caps.sql; authenticated keeps EXECUTE. The body never reads auth.uid(): it loads the role collection of the p_uid it is given and answers whether THAT person holds p_cap under the workspace's capability policy, standing grants included. Any signed-in account, of any workspace, can therefore ask about any person in any other workspace, given the uuids, and nothing is audited. No policy and no app .rpc( call names it; the definers org_capability_allows and quality_signoff_granted_for call it, and so does the SECURITY INVOKER trigger function transmittals_guard, as the signed-in member — so a plain REVOKE from authenticated would break issuing, voiding or revoking a transmittal.",
+    evidence: ["SELECT role, COALESCE(roles, ARRAY[role]) INTO v_role, v_roles FROM org_members WHERE org_id = p_org AND uid = p_uid AND status = 'active'"],
+    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+  },
   { signature: "post_ticket_comment(uuid,jsonb,uuid[],uuid[])", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261166_df_roundG_ticket_rails.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/tickets/comment/route.ts." },
-  { signature: "project_org(uuid)", decision: "policy-helper-oracle", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 6 policies written for every role, so the roles they judge must execute it. It maps any project id to its org id for any caller — a small oracle (a project uuid is unguessable and the org id discloses no row).", owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)" },
+  {
+    signature: "project_org(uuid)",
+    decision: "policy-helper-oracle",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 6 policies (PUBLIC and authenticated), so the roles they judge must execute it. Its body is one SELECT of the project's org_id for any caller: a small oracle mapping any project id to its workspace id (a project uuid is unguessable, and the workspace id discloses no row).",
+    evidence: ["SELECT org_id FROM projects WHERE id = p_project;"],
+    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+  },
   { signature: "project_regulated_record_count(uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261103_prj_roundG_project_closeout_rails.sql: REVOKE … FROM PUBLIC, anon, authenticated). No app call site names it today (other definer functions or the SQL editor call it)." },
-  { signature: "project_visible_to_me(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 16 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "prune_removed_member_acl_index(uuid,uuid,uuid[],uuid[],text,uuid,integer)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261204_ao_roundG_revoke_member_acl_prune.sql); the body judges the signed-in caller. Named by the app: lib/memberAclIndexPrune.ts, lib/schemaExpectations.ts." },
-  { signature: "publish_revision(uuid,uuid,text,jsonb,uuid,text,boolean,boolean,text,text,boolean,text)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261151_dc_roundF_promote_transaction_and_hold_override.sql); the body judges the signed-in caller. Named by the app: app/api/intake/upload/route.ts, lib/postPublish.ts, lib/revisions.ts." },
-  { signature: "quality_other_signers(uuid,uuid,uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261136_prj_roundG_quality_signoff.sql: REVOKE … FROM PUBLIC, anon, authenticated). No app call site names it today (other definer functions or the SQL editor call it)." },
-  { signature: "quality_signer_eligible(uuid,uuid,uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261136_prj_roundG_quality_signoff.sql: REVOKE … FROM PUBLIC, anon, authenticated). No app call site names it today (other definer functions or the SQL editor call it)." },
-  { signature: "quality_signoff_granted(uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261136_prj_roundG_quality_signoff.sql); the body judges the signed-in caller. Called inside 4 policies." },
+  {
+    signature: "project_visible_to_me(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 16 policies (PUBLIC and authenticated). The caller must be an active member of the project's workspace (om.uid = auth.uid()), and a private project is visible only to its owner, a controller or a project member — each judged for auth.uid(); with no session, false.",
+    evidence: ["JOIN org_members om ON om.org_id = p.org_id AND om.uid = auth.uid() AND om.status = 'active'"],
+  },
+  {
+    signature: "prune_removed_member_acl_index(uuid,uuid,uuid[],uuid[],text,uuid,integer)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261204_ao_roundG_revoke_member_acl_prune.sql; authenticated keeps EXECUTE. A signed-in caller must be an active Admin of p_org_id by the role collection; with no uid only the service role passes. p_uid is the REMOVED member: the call is refused while that person is still in the workspace, and it only strips that uid from allow lists on the carriers named inside p_org_id. Named by the app: lib/memberAclIndexPrune.ts.",
+    evidence: ["v_actor uuid := auth.uid();", "ELSIF NOT EXISTS (SELECT 1 FROM org_members me WHERE me.uid = v_actor AND me.org_id = p_org_id AND me.status = 'active' AND (me.role = 'Admin' OR me.roles && ARRAY['Admin']::text[])) THEN"],
+    person: { param: "p_uid", binding: "caller-authority", evidence: ["IF EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org_id AND m.uid = p_uid) THEN RAISE EXCEPTION 'prune_removed_member_acl_index: this person is still a member of the workspace — nothing was changed.'"] },
+  },
+  {
+    signature: "publish_revision(uuid,uuid,text,jsonb,uuid,text,boolean,boolean,text,text,boolean,text)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261151_dc_roundF_promote_transaction_and_hold_override.sql; authenticated keeps EXECUTE. A signed-in caller's p_actor must be auth.uid() (left NULL it becomes auth.uid(); any other value is refused), so attribution, membership, controller status, the lock override and publish authority are all judged for the caller; only the service role (no uid) names its actor. Named by the app: app/api/intake/upload/route.ts, lib/postPublish.ts, lib/revisions.ts.",
+    evidence: ["IF auth.uid() IS NOT NULL THEN IF p_actor IS NULL THEN p_actor := auth.uid();", "WHERE org_id = v_doc.org_id AND uid = p_actor AND status = 'active' ) INTO v_is_member;"],
+    person: { param: "p_actor", binding: "is-the-caller", evidence: ["ELSIF p_actor IS DISTINCT FROM auth.uid() THEN RAISE EXCEPTION 'publish_revision: p_actor does not match the calling session.'"] },
+  },
+  { signature: "quality_other_signers(uuid,uuid,uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261136_prj_roundG_quality_signoff.sql: REVOKE … FROM PUBLIC, anon, authenticated). No app call site names it; quality_signoff_status calls it, as its owner, for otherSigners with auth.uid()." },
+  { signature: "quality_signer_eligible(uuid,uuid,uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261136_prj_roundG_quality_signoff.sql: REVOKE … FROM PUBLIC, anon, authenticated). No app call site names it; quality_signoff_status calls it, as its owner, for maySign with auth.uid(), and quality_other_signers per member." },
+  {
+    signature: "quality_signoff_granted(uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261136_prj_roundG_quality_signoff.sql; authenticated keeps EXECUTE, which its 4 policies (written for authenticated) need. Its body is quality_signoff_granted_for(p_org, p_project, auth.uid()): the service-only uid-taking form, asked only about the caller.",
+    evidence: ["SELECT quality_signoff_granted_for(p_org, p_project, auth.uid());"],
+  },
   { signature: "quality_signoff_granted_for(uuid,uuid,uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261136_prj_roundG_quality_signoff.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/capability-policy/route.ts." },
-  { signature: "quality_signoff_status(uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261136_prj_roundG_quality_signoff.sql); the body judges the signed-in caller. Named by the app: components/permissions/PermissionsExplorer.tsx, lib/checklists.ts." },
-  { signature: "rename_codebook_code(uuid,text,text,text,boolean,jsonb)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261178_intel_roundG_codebook_lifecycle.sql); the body judges the signed-in caller. Named by the app: app/api/admin/codebook/route.ts, lib/schemaExpectations.ts." },
-  { signature: "reopen_project(uuid,text)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261103_prj_roundG_project_closeout_rails.sql); the body judges the signed-in caller. Named by the app: lib/projects.ts." },
+  {
+    signature: "quality_signoff_status(uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261136_prj_roundG_quality_signoff.sql; authenticated keeps EXECUTE. It answers maySign and otherSigners for auth.uid() only (the service-only quality_signer_eligible / quality_other_signers, called with the caller's uid), and only for a project_visible_to_me. Named by the app: components/permissions/PermissionsExplorer.tsx, lib/checklists.ts.",
+    evidence: ["'maySign', quality_signer_eligible(p.org_id, p.id, auth.uid()),", "WHERE p.id = p_project AND project_visible_to_me(p.id);"],
+  },
+  {
+    signature: "rename_codebook_code(uuid,text,text,text,boolean,jsonb)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261178_intel_roundG_codebook_lifecycle.sql; authenticated keeps EXECUTE. Before anything is read it refuses a caller with no session, a caller who is not a controller of p_org_id (is_org_controller) and a controller who also holds Viewer or Auditor (caller_holds_any_role), all judged for auth.uid(). Named by the app: app/api/admin/codebook/route.ts.",
+    evidence: ["IF p_org_id IS NULL OR NOT is_org_controller(p_org_id) THEN", "IF caller_holds_any_role(p_org_id, ARRAY['Viewer','Auditor']::text[]) THEN"],
+  },
+  {
+    signature: "reopen_project(uuid,text)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261103_prj_roundG_project_closeout_rails.sql; authenticated keeps EXECUTE. A caller with no session is refused, and only a controller of the project's workspace (is_org_controller, for auth.uid()) reopens a closed project, with a reason. Named by the app: lib/projects.ts.",
+    evidence: ["IF v_actor IS NULL THEN RAISE EXCEPTION 'Sign in to reopen a project.';", "IF NOT is_org_controller(v_proj.org_id) THEN RAISE EXCEPTION 'Only Admin / Document Control can reopen a closed project.'"],
+  },
   { signature: "return_departed_member_tickets(uuid,uuid,text)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261195_df_roundG_outcome_and_departure.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: lib/ticketDepartureBackstop.ts." },
-  { signature: "revoke_member(uuid,text)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261204_ao_roundG_revoke_member_acl_prune.sql); the body judges the signed-in caller. Named by the app: app/(protected)/admin/users/page.tsx, lib/members.ts." },
-  { signature: "revup_rollback_orphan(uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261027_dc_phase1_unguarded_doors.sql); the body judges the signed-in caller. No app call site names it today." },
-  { signature: "set_project_baseline(uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261099_prj_roundG_baseline_authority.sql); the body judges the signed-in caller. Named by the app: lib/milestones.ts." },
-  { signature: "supersession_writable(uuid,uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261131_dc_roundF_documents_rails.sql); the body judges the signed-in caller. Called inside 2 policies." },
-  { signature: "ticket_mentions_me(uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261166_df_roundG_ticket_rails.sql); the body judges the signed-in caller. Called inside 1 policies." },
-  { signature: "transfer_project_ownership(uuid,uuid,text)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261102_prj_roundG_project_rails.sql); the body judges the signed-in caller. Named by the app: lib/projects.ts." },
-  { signature: "user_can_publish_doc(uuid,uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 2 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
-  { signature: "user_can_publish_on_library(uuid,text,uuid)", decision: "policy-helper-oracle", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 5 row-level-security policies written for every role, so anon and authenticated must be able to execute it (a REVOKE would turn an empty answer into a 42501 error for every such read). It takes p_uid — the person to judge — rather than reading auth.uid(), so anyone holding the public anon key can ask it about another person's authority given the uuids. Also named by the app: app/api/intake/upload/route.ts, app/api/links/invalidate/route.ts, lib/documentShares.ts, lib/shareServe.ts.", owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)" },
-  { signature: "user_download_denied(jsonb,uuid,uuid)", decision: "signed-in", execute: { anon: false, authenticated: true, service_role: true }, reason: "anon and PUBLIC revoked, authenticated keeps EXECUTE (20261140_dc_roundF_share_download_deny_rail.sql); the body judges the signed-in caller. Named by the app: lib/documentShares.ts." },
-  { signature: "user_is_effective_owner(uuid,uuid,uuid,uuid)", decision: "policy-helper-oracle", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 5 row-level-security policies written for every role, so anon and authenticated must be able to execute it (a REVOKE would turn an empty answer into a 42501 error for every such read). It takes p_uid — the person to judge — rather than reading auth.uid(), so anyone holding the public anon key can ask it about another person's authority given the uuids. Also named by the app: app/api/links/invalidate/route.ts, app/api/storage/download-url/route.ts, lib/docFileServer.ts, lib/ownership.ts, lib/revisions.ts.", owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)" },
-  { signature: "user_owns_project(uuid)", decision: "policy-helper", execute: { anon: true, authenticated: true, service_role: true }, reason: "Called inside 10 row-level-security policies written for every role, so anon and authenticated must be able to execute it — a REVOKE would turn an empty answer into a 42501 error for every such read. It judges the caller (auth.uid(), directly or through the caller-scoped helpers it calls) and answers false / empty with no session, so the anon key learns nothing from it." },
+  {
+    signature: "revoke_member(uuid,text)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261204_ao_roundG_revoke_member_acl_prune.sql; authenticated keeps EXECUTE. A caller with no session, or acting on themself, is refused. p_member_id names an org_members row, and the caller's authority is judged in THAT row's workspace: remove needs an active Admin there, suspend and restore an Admin or Manager (is_org_admin_or_manager), and only an Admin touches an Admin. Named by the app: app/(protected)/admin/users/page.tsx, lib/members.ts.",
+    evidence: ["v_actor uuid := auth.uid();", "IF v_member.uid = v_actor THEN RAISE EXCEPTION 'You can''t suspend or remove yourself.';"],
+    person: { param: "p_member_id", binding: "caller-authority", evidence: ["SELECT * INTO v_member FROM org_members WHERE id = p_member_id;", "IF NOT EXISTS (SELECT 1 FROM org_members me WHERE me.uid = v_actor AND me.org_id = v_member.org_id AND me.status = 'active' AND (me.role = 'Admin' OR me.roles && ARRAY['Admin']::text[])) THEN RAISE EXCEPTION 'Only an Admin can remove a member from the workspace.';", "IF NOT is_org_admin_or_manager(v_member.org_id) THEN"] },
+  },
+  {
+    signature: "revup_rollback_orphan(uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261027_dc_phase1_unguarded_doors.sql; authenticated keeps EXECUTE. Only the version's own creator (created_by = auth.uid()), still an active member of its workspace, may delete it and un-supersede its sibling; an unknown version changes nothing. No app call site names it today.",
+    evidence: ["IF v_created_by IS DISTINCT FROM auth.uid() THEN RAISE EXCEPTION 'revup_rollback_orphan: not your version to roll back';", "WHERE org_id = v_org AND uid = auth.uid() AND status = 'active' ) THEN RAISE EXCEPTION 'revup_rollback_orphan: not an active member of this org';"],
+  },
+  {
+    signature: "set_project_baseline(uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261099_prj_roundG_baseline_authority.sql; authenticated keeps EXECUTE. Gated as apply_milestone_moves is (caller_is_active_member and can_edit_project_schedule for the project, else only the service role) before it records the prior baseline and re-baselines the project's milestones. Named by the app: lib/milestones.ts.",
+    evidence: ["IF NOT caller_is_active_member(p_org) THEN RAISE EXCEPTION 'Not a member of this workspace' USING ERRCODE = '42501';", "IF NOT can_edit_project_schedule(p_org, p_project) THEN RAISE EXCEPTION 'You do not have schedule-editing rights on this project'"],
+  },
+  {
+    signature: "supersession_writable(uuid,uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261131_dc_roundF_documents_rails.sql; authenticated keeps EXECUTE, which its 2 policies (document_supersessions INSERT and UPDATE, written for authenticated) need. True only when auth.uid() is an active member of p_org and a controller, a publisher on the superseded document's library or its effective owner (the uid-taking helpers are called with auth.uid()), and both documents are in p_org.",
+    evidence: ["SELECT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org AND m.uid = auth.uid() AND m.status = 'active')", "OR user_can_publish_on_library(s.library_id, auth.uid()::text, s.org_id)"],
+  },
+  {
+    signature: "ticket_mentions_me(uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261166_df_roundG_ticket_rails.sql; authenticated keeps EXECUTE, which the read-scope policy that calls it (written for authenticated) needs. True only when auth.uid() is among a live comment's mentioned_uids on that ticket — a fact about the caller alone.",
+    evidence: ["SELECT auth.uid() IS NOT NULL AND EXISTS (", "AND auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[]))"],
+  },
+  {
+    signature: "transfer_project_ownership(uuid,uuid,text)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261102_prj_roundG_project_rails.sql; authenticated keeps EXECUTE. A caller with no session is refused; only a controller of the project's workspace or its owner (is_org_controller / user_owns_project, for auth.uid()) may transfer, and the new owner p_new_owner must be an active member of that same workspace. Named by the app: lib/projects.ts.",
+    evidence: ["IF v_actor IS NULL THEN RAISE EXCEPTION 'Sign in to transfer project ownership.';", "IF NOT (is_org_controller(v_proj.org_id) OR user_owns_project(p_project)) THEN"],
+    person: { param: "p_new_owner", binding: "caller-authority", evidence: ["IF NOT EXISTS (SELECT 1 FROM org_members WHERE org_id = v_proj.org_id AND uid = p_new_owner AND status = 'active') THEN"] },
+  },
+  {
+    signature: "user_can_publish_doc(uuid,uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 2 policies written for PUBLIC. A controller of p_org, or for the document's library user_can_publish_on_library / user_is_effective_owner asked about auth.uid() — the uid-taking forms are called here only with the caller's own uid; with no session, false.",
+    evidence: ["SELECT is_org_controller(p_org) OR COALESCE( (SELECT user_can_publish_on_library(d.library_id, auth.uid()::text, p_org) OR user_is_effective_owner(d.owner_user_id, d.collection_id, d.library_id, auth.uid())"],
+  },
+  {
+    signature: "user_can_publish_on_library(uuid,text,uuid)",
+    decision: "policy-helper-oracle",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 5 policies written for PUBLIC (and by publish_revision, supersession_writable and user_can_publish_doc with the caller's own uid). Its body never reads auth.uid(): it loads the roles and teams of the p_uid it is given (a text parameter) and reads the library's publish grants and denies, so anyone holding the public anon key can ask whether another person may publish into a library, given the uuids. Also named by the app: app/api/intake/upload/route.ts, app/api/links/invalidate/route.ts, lib/documentShares.ts, lib/shareServe.ts.",
+    evidence: ["WHERE org_id = p_org AND uid::text = p_uid AND status = 'active'"],
+    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+  },
+  {
+    signature: "user_download_denied(jsonb,uuid,uuid)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261140_dc_roundF_share_download_deny_rail.sql; authenticated keeps EXECUTE. A signed-in caller may ask only about themself: a p_uid other than auth.uid() is refused (42501) before any member's roles or teams are read; only the service role (no uid) asks about anyone. Named by the app: lib/documentShares.ts.",
+    evidence: ["IF auth.uid() IS NOT NULL AND p_uid IS DISTINCT FROM auth.uid() THEN RAISE EXCEPTION 'user_download_denied answers only for the signed-in caller.'"],
+    person: { param: "p_uid", binding: "is-the-caller", evidence: ["IF auth.uid() IS NOT NULL AND p_uid IS DISTINCT FROM auth.uid() THEN"] },
+  },
+  {
+    signature: "user_is_effective_owner(uuid,uuid,uuid,uuid)",
+    decision: "policy-helper-oracle",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 5 policies written for PUBLIC (and by node_visible, user_can_publish_doc and supersession_writable with auth.uid()). Its body never reads auth.uid(): it walks document owner, folder owner, library owner and the owning team's supervisor, keeps the first that member_is_active confirms, and compares it with the p_uid it is given, so anyone holding the public anon key can ask whether another person is a document's effective owner, given the uuids. Also named by the app: app/api/links/invalidate/route.ts, app/api/storage/download-url/route.ts, lib/docFileServer.ts, lib/ownership.ts, lib/revisions.ts.",
+    evidence: ["IF p_doc_owner IS NOT NULL AND member_is_active(v_org, p_doc_owner) THEN RETURN p_doc_owner = p_uid;"],
+    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+  },
+  {
+    signature: "user_owns_project(uuid)",
+    decision: "policy-helper",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "Called inside 10 policies (PUBLIC and authenticated) and by the project RPCs. True only when the caller is the project's owner (owner_user_id = auth.uid()) and an active member of its workspace; with no session, false.",
+    evidence: ["ON m.org_id = p.org_id AND m.uid = auth.uid() AND m.status = 'active' WHERE p.id = p_project AND p.owner_user_id = auth.uid()"],
+  },
 ];

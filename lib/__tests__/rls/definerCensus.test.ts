@@ -9,31 +9,52 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { admin, asCaller, mosDb, seedOrg, selectAs, skipReason, type SeededMember } from "./dbKit";
-import { CALLABLE_DEFINERS, TRIGGER_FUNCTIONS } from "./definerDecisions";
+import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, TRIGGER_FUNCTIONS, type DefinerDecision } from "./definerDecisions";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
 
 const skip = skipReason();
 
-interface Live { sig: string; trigger: boolean; anon: boolean; authenticated: boolean; service_role: boolean; pinned: boolean }
+interface Live {
+  sig: string;
+  trigger: boolean;
+  anon: boolean;
+  authenticated: boolean;
+  service_role: boolean;
+  pinned: boolean;
+  /** The IN / INOUT / VARIADIC parameter names, in order. */
+  inArgs: string[];
+  /** pg_proc.prosrc: the body, verbatim. */
+  src: string;
+}
 
 function liveDefiners(db: string): Live[] {
   const out = admin(db, `
-    SELECT p.oid::regprocedure::text || '|' || (p.prorettype = 'trigger'::regtype)::text || '|' ||
-           has_function_privilege('anon', p.oid, 'EXECUTE')::text || '|' ||
-           has_function_privilege('authenticated', p.oid, 'EXECUTE')::text || '|' ||
-           has_function_privilege('service_role', p.oid, 'EXECUTE')::text || '|' ||
-           (COALESCE(array_to_string(p.proconfig, ','), '') LIKE '%search_path=public%')::text
+    SELECT json_agg(json_build_object(
+             'sig', p.oid::regprocedure::text,
+             'trigger', p.prorettype = 'trigger'::regtype,
+             'anon', has_function_privilege('anon', p.oid, 'EXECUTE'),
+             'authenticated', has_function_privilege('authenticated', p.oid, 'EXECUTE'),
+             'service_role', has_function_privilege('service_role', p.oid, 'EXECUTE'),
+             'pinned', COALESCE(array_to_string(p.proconfig, ','), '') LIKE '%search_path=public%',
+             'inArgs', COALESCE((SELECT json_agg(a.n ORDER BY a.i)
+                                   FROM unnest(COALESCE(p.proargnames, '{}'::text[]),
+                                               COALESCE(p.proargmodes::text[], array_fill('i'::text, ARRAY[COALESCE(cardinality(p.proargnames), 0)])))
+                                        WITH ORDINALITY AS a(n, m, i)
+                                  WHERE a.m IN ('i', 'b', 'v') AND COALESCE(a.n, '') <> ''), '[]'::json),
+             'src', p.prosrc)
+           ORDER BY p.oid::regprocedure::text)
       FROM pg_proc p
      WHERE p.prosecdef
        AND p.pronamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace, 'auth'::regnamespace, 'harness'::regnamespace)
-       AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
-     ORDER BY 1`);
-  return out.split("\n").filter(Boolean).map((l) => {
-    const [sig, trg, a, u, s, pin] = l.split("|");
-    return { sig, trigger: trg === "true", anon: a === "true", authenticated: u === "true", service_role: s === "true", pinned: pin === "true" };
-  });
+       AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')`);
+  return out.trim() ? (JSON.parse(out) as Live[]) : [];
 }
+
+/** Whitespace runs collapsed: an evidence fragment is the body's text up to whitespace. */
+const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+const callsFn = (text: string, name: string) => new RegExp(`\\b${name}\\s*\\(`).test(text);
+const isOracle = (d: DefinerDecision) => ORACLE_DECISIONS.includes(d.decision);
 
 describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECUTE grants carry a reasoned decision", () => {
   let live: Live[] = [];
@@ -90,12 +111,85 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
   it("every decision is reasoned, and every recorded narrowing has an owner", () => {
     for (const d of CALLABLE_DEFINERS) {
       expect(d.reason.length, d.signature).toBeGreaterThan(60);
-      if (d.decision === "policy-helper-oracle") expect(d.owner, d.signature).toMatch(/INTK-19/);
+      if (isOracle(d)) expect(d.owner, d.signature).toMatch(/INTK-19/);
       if (d.decision === "policy-helper" || d.decision === "policy-helper-oracle") expect(d.execute.anon, d.signature).toBe(true);
+      if (d.decision === "signed-in-oracle") expect(d.execute, d.signature).toEqual({ anon: false, authenticated: true, service_role: true });
       if (d.decision === "service-only" || d.decision === "revoked-20261217") {
         expect(d.execute, d.signature).toEqual({ anon: false, authenticated: false, service_role: true });
       }
     }
+  });
+
+  it("every decision about the body cites it: each evidence fragment is in the live function, and a caller-judging one reads the session", () => {
+    const bySig = new Map(live.map((l) => [l.sig, l]));
+    // A function "reads the session" when its body names auth.uid(), or calls
+    // (by name) a function that does — to a fixed point over the definers.
+    const readers = new Set(live.filter((l) => /auth\.uid\(\)/.test(l.src)).map((l) => l.sig.split("(")[0]));
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const l of live) {
+        const name = l.sig.split("(")[0];
+        if (!readers.has(name) && [...readers].some((r) => callsFn(l.src, r))) { readers.add(name); grew = true; }
+      }
+    }
+    const problems: string[] = [];
+    for (const d of CALLABLE_DEFINERS.filter((x) => BODY_CLAIM_DECISIONS.includes(x.decision))) {
+      const l = bySig.get(d.signature);
+      if (!l) continue; // reported by the two-way comparison above
+      const body = squash(l.src);
+      const fragments = [...(d.evidence ?? []), ...(d.person?.evidence ?? [])];
+      if (!d.evidence?.length) problems.push(`${d.signature}: a ${d.decision} decision with no evidence from the body`);
+      for (const f of fragments) if (!body.includes(squash(f))) problems.push(`${d.signature}: evidence not in the live body: ${f}`);
+      if (!isOracle(d)) {
+        const readsSession = (d.evidence ?? []).some((f) => /auth\.uid\(\)/.test(f) || [...readers].some((r) => callsFn(f, r)));
+        if (!readsSession) problems.push(`${d.signature}: no evidence fragment reads the session (auth.uid() or a caller-scoped function)`);
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it("every client-callable definer that takes a person (PERSON_PARAM) binds it, with evidence, or is an oracle with an owner (INTK-19)", () => {
+    const rows = new Map(CALLABLE_DEFINERS.map((d) => [d.signature, d]));
+    const problems: string[] = [];
+    let seen = 0;
+    for (const l of live.filter((x) => !x.trigger && (x.anon || x.authenticated))) {
+      const persons = l.inArgs.filter((a) => PERSON_PARAM.test(a));
+      if (persons.length === 0) continue;
+      seen++;
+      const d = rows.get(l.sig);
+      if (!d) continue; // reported by the two-way comparison above
+      if (isOracle(d)) {
+        if (!/INTK-19/.test(d.owner ?? "")) problems.push(`${l.sig}: an oracle with no owner`);
+        continue;
+      }
+      if (!d.person) { problems.push(`${l.sig}: takes ${persons.join(", ")} but its row neither binds it (person) nor records an oracle`); continue; }
+      if (!persons.includes(d.person.param)) problems.push(`${l.sig}: person.param ${d.person.param} is not one of its person parameters (${persons.join(", ")})`);
+      const body = squash(l.src);
+      const named = d.person.evidence.filter((f) => new RegExp(`\\b${d.person!.param}\\b`).test(f));
+      if (named.length === 0) problems.push(`${l.sig}: no person evidence names ${d.person.param}`);
+      for (const f of d.person.evidence) if (!body.includes(squash(f))) problems.push(`${l.sig}: person evidence not in the live body: ${f}`);
+      if ((d.person.binding === "is-the-caller" || d.person.binding === "judged-for-caller") && !named.some((f) => /auth\.uid\(\)/.test(f))) {
+        problems.push(`${l.sig}: ${d.person.binding} needs a fragment that sets ${d.person.param} against auth.uid()`);
+      }
+      // A function with several person parameters binds each, or is an oracle.
+      if (persons.length > 1) problems.push(`${l.sig}: ${persons.length} person parameters; record an oracle or extend the row`);
+    }
+    expect(seen, "the replay has client-callable definers that take a person").toBeGreaterThan(5);
+    expect(problems).toEqual([]);
+  });
+
+  it("an oracle decision is true to the body: it never reads auth.uid(), and its evidence names what it is told to judge", () => {
+    const bySig = new Map(live.map((l) => [l.sig, l]));
+    for (const d of CALLABLE_DEFINERS.filter(isOracle)) {
+      const l = bySig.get(d.signature);
+      expect(l, d.signature).toBeDefined();
+      expect(/auth\.uid\(\)/.test(l!.src), `${d.signature} reads auth.uid(): re-reason the row (it may bind the person)`).toBe(false);
+      const persons = l!.inArgs.filter((a) => PERSON_PARAM.test(a));
+      const target = persons.length > 0 ? persons : l!.inArgs;
+      expect((d.evidence ?? []).some((f) => target.some((a) => new RegExp(`\\b${a}\\b`).test(f))), d.signature).toBe(true);
+    }
+    // the authenticated-only oracle the review found (INTK-19)
+    expect(CALLABLE_DEFINERS.find((d) => d.signature === "org_capability_allows_for(uuid,text,uuid,jsonb)")?.decision).toBe("signed-in-oracle");
   });
 
   it("a policy-helper decision is true to the catalog: some row-level-security policy really calls it", () => {

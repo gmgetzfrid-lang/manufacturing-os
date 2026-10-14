@@ -10,14 +10,22 @@
 //     then skips loudly, never fails);
 //   * 20261217's one-paste shape (DEC-30) and its guarded REVOKEs (DRLS-16);
 //   * the call sites the four narrowings were reasoned from, so a new caller
-//     makes someone re-read the decision.
+//     makes someone re-read the decision;
+//   * discovery runs on PostgreSQL 16 unless the operator says otherwise, and
+//     no numbered migration is too large to send as one paste;
+//   * every decision about a function's body cites that body (the opt-in
+//     census checks the fragments against the live catalog; here, against
+//     the migrations' text), and a function that takes a person either binds
+//     it or is an oracle with an owner (INTK-19).
 
-import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { describe, it, expect, afterAll } from "vitest";
+import { readFileSync, readdirSync, existsSync, statSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
+import { delimiter, join } from "node:path";
 import { discoverPostgres } from "./rls/pgHarness";
-import { CALLABLE_DEFINERS, TRIGGER_FUNCTIONS } from "./rls/definerDecisions";
+import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, TRIGGER_FUNCTIONS } from "./rls/definerDecisions";
 import { BASELINE_KNOWN_ERRORS, CHECKPOINTS, OPERATOR_SWITCHES, OUT_OF_ORDER_FILES } from "./rls/replayKnownDefects";
+import { MAX_C_BYTES, numberedMigrations } from "./rls/replay";
 
 const root = process.cwd();
 const read = (p: string) => readFileSync(join(root, p), "utf8");
@@ -60,6 +68,56 @@ describe("I-17: the database harness is opt-in", () => {
     if (!d.ok) expect(d.missing).toMatch(/initdb .*MOS_TEST_PG_BIN=\/nonexistent-mos-pg-bin/);
   });
 
+  describe("discovery runs on PostgreSQL 16 unless the operator says otherwise", () => {
+    const made: string[] = [];
+    // A stand-in bin directory: initdb / pg_ctl / psql exist, postgres prints a version.
+    const fakeBin = (version: string) => {
+      const dir = mkdtempSync(join(tmpdir(), "mos-fake-pg-"));
+      made.push(dir);
+      for (const f of ["initdb", "pg_ctl", "psql"]) writeFileSync(join(dir, f), "#!/bin/sh\nexit 0\n");
+      writeFileSync(join(dir, "postgres"), `#!/bin/sh\necho "postgres (PostgreSQL) ${version}"\n`);
+      for (const f of ["initdb", "pg_ctl", "psql", "postgres"]) chmodSync(join(dir, f), 0o755);
+      return dir;
+    };
+    afterAll(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
+    const base = { ...process.env, MOS_TEST_PG_BIN: "", MOS_TEST_PG_ALLOW_MAJOR: "", MOS_TEST_PG_USER: userInfo().username };
+
+    it.skipIf(process.platform === "win32")("a host with 17 and 16 runs on 16, whichever comes first", () => {
+      const v17 = fakeBin("17.2");
+      const v16 = fakeBin("16.13");
+      const d = discoverPostgres({ ...base, PATH: [v17, v16].join(delimiter) }, { packageDirs: false });
+      expect(d.ok).toBe(true);
+      if (d.ok) { expect(d.bin.major).toBe(16); expect(d.bin.dir).toBe(v16); }
+    });
+
+    it.skipIf(process.platform === "win32")("a host with only 17 skips loudly, naming the two ways to use it", () => {
+      const v17 = fakeBin("17.2");
+      const d = discoverPostgres({ ...base, PATH: v17 }, { packageDirs: false });
+      expect(d.ok).toBe(false);
+      if (!d.ok) expect(d.missing).toMatch(/PostgreSQL 16 initdb \(found only PostgreSQL 17 at .*MOS_TEST_PG_BIN.*MOS_TEST_PG_ALLOW_MAJOR=17\)/);
+    });
+
+    it.skipIf(process.platform === "win32")("17 runs only when MOS_TEST_PG_ALLOW_MAJOR names it, or MOS_TEST_PG_BIN points at it", () => {
+      const v17 = fakeBin("17.2");
+      const allowed = discoverPostgres({ ...base, PATH: v17, MOS_TEST_PG_ALLOW_MAJOR: "17" }, { packageDirs: false });
+      expect(allowed.ok && allowed.bin.major).toBe(17);
+      const explicit = discoverPostgres({ ...base, PATH: "", MOS_TEST_PG_BIN: v17 }, { packageDirs: false });
+      expect(explicit.ok && explicit.bin.major).toBe(17);
+      const old = discoverPostgres({ ...base, PATH: "", MOS_TEST_PG_BIN: fakeBin("15.6") }, { packageDirs: false });
+      expect(old.ok).toBe(false);
+    });
+  });
+
+  it("no numbered migration is too large to send as one simple-query message (the replay refuses one that is)", () => {
+    const over = numberedMigrations(root)
+      .map((f) => ({ f, bytes: statSync(join(root, "supabase", "migrations", f)).size }))
+      .filter((x) => x.bytes > MAX_C_BYTES);
+    expect(over).toEqual([]);
+    const replay = read("lib/__tests__/rls/replay.ts");
+    expect(replay).toMatch(/if \(bytes > MAX_C_BYTES\) \{\s+throw new Error\(/);
+    expect(replay).not.toMatch(/\{ file: path, stopOnError/);
+  });
+
   it("every database suite skips itself when the cluster is absent", () => {
     const dir = join(root, "lib", "__tests__", "rls");
     const suites = readdirSync(dir).filter((f) => f.endsWith(".test.ts"));
@@ -92,6 +150,54 @@ describe("I-17: the replay's recorded defects and decisions are well-formed", ()
     expect(new Set(TRIGGER_FUNCTIONS).size).toBe(TRIGGER_FUNCTIONS.length);
     expect(callable.filter((s) => TRIGGER_FUNCTIONS.includes(s))).toEqual([]);
     for (const d of CALLABLE_DEFINERS) expect(d.reason.trim().length, d.signature).toBeGreaterThan(60);
+  });
+
+  it("every decision about a body is reasoned on its own: evidence from that body, a reason no other row shares", () => {
+    const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+    // The functions' bodies come from these files (the opt-in census checks
+    // each fragment against the live catalog; this is the CI-side check).
+    const corpus = squash(
+      [read("supabase/schema.sql"), ...numberedMigrations(root).map((f) => read(join("supabase", "migrations", f)))].join("\n"),
+    );
+    const bodyRows = CALLABLE_DEFINERS.filter((d) => BODY_CLAIM_DECISIONS.includes(d.decision));
+    expect(bodyRows.length).toBeGreaterThan(50);
+    for (const d of bodyRows) {
+      expect(d.evidence?.length ?? 0, d.signature).toBeGreaterThan(0);
+      for (const f of [...(d.evidence ?? []), ...(d.person?.evidence ?? [])]) {
+        expect(corpus.includes(squash(f)), `${d.signature}: ${f}`).toBe(true);
+      }
+    }
+    const reasons = bodyRows.map((d) => d.reason);
+    expect(new Set(reasons).size, "two rows share a templated reason").toBe(reasons.length);
+  });
+
+  it("an oracle has an owner (INTK-19); a person binding names a person parameter and, when it claims the caller, auth.uid()", () => {
+    for (const d of CALLABLE_DEFINERS.filter((x) => ORACLE_DECISIONS.includes(x.decision))) {
+      expect(d.owner, d.signature).toMatch(/INTK-19/);
+      expect(d.person, d.signature).toBeUndefined();
+    }
+    for (const d of CALLABLE_DEFINERS.filter((x) => x.person)) {
+      const p = d.person!;
+      expect(p.param, d.signature).toMatch(PERSON_PARAM);
+      expect(p.evidence.some((f) => new RegExp(`\\b${p.param}\\b`).test(f)), d.signature).toBe(true);
+      if (p.binding === "is-the-caller" || p.binding === "judged-for-caller") {
+        expect(p.evidence.some((f) => f.includes(p.param) && f.includes("auth.uid()")), d.signature).toBe(true);
+      }
+    }
+    // The review's case: org_capability_allows_for judges a p_uid it is given,
+    // so it is an oracle (authenticated-only), not "signed-in".
+    expect(CALLABLE_DEFINERS.find((d) => d.signature === "org_capability_allows_for(uuid,text,uuid,jsonb)")).toMatchObject({
+      decision: "signed-in-oracle",
+      execute: { anon: false, authenticated: true, service_role: true },
+    });
+    expect(CALLABLE_DEFINERS.filter((d) => ORACLE_DECISIONS.includes(d.decision)).map((d) => d.signature.split("(")[0]).sort()).toEqual(
+      ["acl_index_denies", "org_capability_allows", "org_capability_allows_for", "project_org", "user_can_publish_on_library", "user_is_effective_owner"],
+    );
+  });
+
+  it("PERSON_PARAM names a person and nothing else", () => {
+    for (const a of ["p_uid", "p_to_user", "p_actor", "p_member_id", "p_new_owner", "p_doc_owner", "p_owner", "p_user_id", "p_uids"]) expect(a).toMatch(PERSON_PARAM);
+    for (const a of ["p_actor_name", "p_org", "p_org_id", "p_library_ids", "p_doc", "p_project", "p_new_owner_name", "p_record"]) expect(a).not.toMatch(PERSON_PARAM);
   });
 
   it("the Supabase stand-in lives outside supabase/ and defines nothing in public", () => {

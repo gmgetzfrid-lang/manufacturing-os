@@ -9,11 +9,16 @@
 // No npm dependency: the cluster is driven by the PostgreSQL binaries
 // themselves (initdb, pg_ctl, psql), so the default CI install is unchanged.
 //
-// Engine discovery: $MOS_TEST_PG_BIN (a bin directory) alone when it is set;
-// otherwise every PATH directory holding initdb, then the usual package
-// locations (/usr/lib/postgresql/<n>/bin, Homebrew, /usr/pgsql-16). The major
-// version must be 16 or later. initdb refuses to run as root, so under root
-// the cluster runs as $MOS_TEST_PG_USER, else the OS user `postgres`.
+// Engine discovery: $MOS_TEST_PG_BIN (a bin directory) alone when it is set
+// — the operator's explicit choice, accepted for any major version from 16 up.
+// Otherwise every PATH directory holding initdb, then the usual package
+// locations (/usr/lib/postgresql/16/bin first, then other versions, Homebrew,
+// /usr/pgsql-16), and only PostgreSQL 16 is accepted: the replay's recorded
+// defects (replayKnownDefects.ts) were measured on 16, and the ruling names
+// 16. Another major is taken only when $MOS_TEST_PG_ALLOW_MAJOR names it
+// (e.g. "17", or "17,18"); a host with 16 and 17 runs on 16. initdb refuses
+// to run as root, so under root the cluster runs as $MOS_TEST_PG_USER, else
+// the OS user `postgres`.
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, chownSync } from "node:fs";
@@ -37,14 +42,20 @@ function run(cmd: string, args: string[], opts: { input?: string; env?: NodeJS.P
   return spawnSync(cmd, args, { encoding: "utf8", input: opts.input, env: opts.env ?? process.env, maxBuffer: 64 * 1024 * 1024 });
 }
 
-function candidateDirs(env: NodeJS.ProcessEnv): string[] {
+/** The major version the harness runs on unless the operator says otherwise. */
+export const PREFERRED_MAJOR = 16;
+
+function candidateDirs(env: NodeJS.ProcessEnv, packageDirs: boolean): string[] {
   // An explicit bin directory is the operator's choice: only it is tried.
   if (env.MOS_TEST_PG_BIN) return [env.MOS_TEST_PG_BIN];
   const out: string[] = [];
   for (const d of (env.PATH ?? "").split(delimiter)) if (d) out.push(d);
+  if (!packageDirs) return out;
   const debian = "/usr/lib/postgresql";
   if (existsSync(debian)) {
-    for (const v of readdirSync(debian).filter((x) => /^\d+$/.test(x)).sort((a, b) => Number(b) - Number(a))) {
+    // 16 first, then the rest newest first (they are refused unless allowed).
+    const rank = (v: string) => (Number(v) === PREFERRED_MAJOR ? Number.MAX_SAFE_INTEGER : Number(v));
+    for (const v of readdirSync(debian).filter((x) => /^\d+$/.test(x)).sort((a, b) => rank(b) - rank(a))) {
       out.push(join(debian, v, "bin"));
     }
   }
@@ -52,10 +63,24 @@ function candidateDirs(env: NodeJS.ProcessEnv): string[] {
   return out;
 }
 
-/** Finds a PostgreSQL ≥ 16 the harness can start, or names what is missing. */
-export function discoverPostgres(env: NodeJS.ProcessEnv = process.env): Discovery {
+/** The majors discovery accepts: 16, plus any $MOS_TEST_PG_ALLOW_MAJOR names. */
+function allowedMajors(env: NodeJS.ProcessEnv): Set<number> {
+  const out = new Set([PREFERRED_MAJOR]);
+  for (const v of (env.MOS_TEST_PG_ALLOW_MAJOR ?? "").split(/[\s,]+/)) if (/^\d+$/.test(v)) out.add(Number(v));
+  return out;
+}
+
+/**
+ * Finds a PostgreSQL 16 the harness can start (or the major the operator
+ * allowed), or names what is missing. `packageDirs: false` searches PATH (or
+ * $MOS_TEST_PG_BIN) only — for tests of the rule itself.
+ */
+export function discoverPostgres(env: NodeJS.ProcessEnv = process.env, opts: { packageDirs?: boolean } = {}): Discovery {
   let seenOld: string | null = null;
-  for (const dir of candidateDirs(env)) {
+  const seenOther: string[] = [];
+  const explicit = Boolean(env.MOS_TEST_PG_BIN);
+  const allowed = allowedMajors(env);
+  for (const dir of candidateDirs(env, opts.packageDirs ?? true)) {
     const initdb = join(dir, "initdb");
     const pgCtl = join(dir, "pg_ctl");
     const psql = join(dir, "psql");
@@ -64,7 +89,8 @@ export function discoverPostgres(env: NodeJS.ProcessEnv = process.env): Discover
     const v = run(postgres, ["--version"]);
     const m = /(\d+)(?:\.(\d+))?/.exec(v.stdout ?? "");
     const major = m ? Number(m[1]) : 0;
-    if (major < 16) { seenOld = `${postgres} is ${String(v.stdout).trim() || "unknown"}`; continue; }
+    if (major < PREFERRED_MAJOR) { seenOld = `${postgres} is ${String(v.stdout).trim() || "unknown"}`; continue; }
+    if (!explicit && !allowed.has(major)) { seenOther.push(`PostgreSQL ${major} at ${dir}`); continue; }
     let runAs: PgBinaries["runAs"] = null;
     if (typeof process.getuid === "function" && process.getuid() === 0) {
       const name = env.MOS_TEST_PG_USER || "postgres";
@@ -86,6 +112,10 @@ export function discoverPostgres(env: NodeJS.ProcessEnv = process.env): Discover
     return { ok: true, bin: { dir, initdb, pgCtl, psql, major, version: String(v.stdout).trim(), runAs } };
   }
   if (env.MOS_TEST_PG_BIN) return { ok: false, missing: `initdb / pg_ctl / psql / postgres (PostgreSQL 16) in MOS_TEST_PG_BIN=${env.MOS_TEST_PG_BIN}` };
+  if (seenOther.length > 0) {
+    const majors = [...new Set(seenOther.map((s) => s.split(" ")[1]))].join(",");
+    return { ok: false, missing: `PostgreSQL 16 initdb (found only ${seenOther.join("; ")}; install PostgreSQL 16, set MOS_TEST_PG_BIN to a bin directory, or MOS_TEST_PG_ALLOW_MAJOR=${majors})` };
+  }
   return { ok: false, missing: seenOld ? `PostgreSQL 16 initdb (found only ${seenOld}; set MOS_TEST_PG_BIN)` : "initdb (PostgreSQL 16; set MOS_TEST_PG_BIN to its bin directory)" };
 }
 
