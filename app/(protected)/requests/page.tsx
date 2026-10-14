@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
@@ -311,6 +311,10 @@ export default function RequestPortal() {
   // views (e.g. show Drafting + Closed together). Specific open statuses skip
   // the finished rows entirely unless that toggle is on.
   const includeClosed = showClosed || filters.status === 'ALL' || isTerminalTicketStatus(filters.status);
+  // PERS-3 (DF-P9 fix pass): a way to re-read the list on demand — a mark
+  // urgent that found the list's copy stale cannot wait on a realtime event
+  // that may never come (a dropped channel, a tab woken from sleep).
+  const refetchTicketsRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!uid || !activeOrgId) {
       setTickets([]);
@@ -391,6 +395,7 @@ export default function RequestPortal() {
     };
 
     fetchTickets();
+    refetchTicketsRef.current = () => { if (alive) void fetchTickets(); };
     const channel = supabase
       .channel(`tickets-portal-${activeOrgId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
@@ -409,7 +414,7 @@ export default function RequestPortal() {
         })
       .subscribe();
 
-    return () => { alive = false; supabase.removeChannel(channel); };
+    return () => { alive = false; refetchTicketsRef.current = null; supabase.removeChannel(channel); };
   }, [roles, activeOrgId, uid, includeClosed]);
 
   // --------------------------------------------------------------------
@@ -807,15 +812,35 @@ export default function RequestPortal() {
   // matched, and a refusal or a lost race is SAID. The audit row follows only
   // a confirmed write, names the signed-in member (no 'unknown' stand-in),
   // and a refused audit row is said too.
-  const markUrgentChecked = useCallback(async (t: Ticket): Promise<string | null> => {
-    if (!activeOrgId || !t.id) return 'no active workspace';
-    const now = new Date().toISOString();
-    let q = supabase.from('tickets').update({ priority: 1, last_modified: now }).eq('id', t.id).eq('org_id', activeOrgId);
-    q = t.lastModified ? q.eq('last_modified', String(t.lastModified)) : q.is('last_modified', null);
-    const { data: hit, error } = await q.select('id');
-    if (error) return error.message || 'the write was refused';
-    if (!hit || hit.length === 0) return 'it changed while you were looking at it (the list is refreshing) — try again';
-    return null;
+  //
+  // Fix pass: a compare-and-set that misses does not lean on the realtime
+  // refresh (it may never come). It re-reads the row: already urgent is done
+  // (nothing written, so no audit row of ours); otherwise it retries ONCE on
+  // the row's fresh last_modified. `stale` asks the caller to re-read the
+  // list, so the next attempt starts from what the database holds.
+  type UrgentResult = { err: string | null; wrote: boolean; stale: boolean };
+  const markUrgentChecked = useCallback(async (t: Ticket): Promise<UrgentResult> => {
+    if (!activeOrgId || !t.id) return { err: 'no active workspace', wrote: false, stale: false };
+    const id = t.id;
+    const casWrite = async (token: unknown) => {
+      let q = supabase.from('tickets').update({ priority: 1, last_modified: new Date().toISOString() }).eq('id', id).eq('org_id', activeOrgId);
+      q = token ? q.eq('last_modified', String(token)) : q.is('last_modified', null);
+      const { data: hit, error } = await q.select('id');
+      return { landed: !!hit && hit.length > 0, error };
+    };
+    const first = await casWrite(t.lastModified);
+    if (first.error) return { err: first.error.message || 'the write was refused', wrote: false, stale: false };
+    if (first.landed) return { err: null, wrote: true, stale: false };
+    const { data: fresh, error: readErr } = await supabase.from('tickets')
+      .select('id, last_modified, priority').eq('id', id).eq('org_id', activeOrgId).maybeSingle();
+    if (readErr) return { err: `it changed since the list was read, and it could not be re-read: ${readErr.message || 'the read was refused'}`, wrote: false, stale: true };
+    if (!fresh) return { err: 'it is no longer in this workspace (deleted, or no longer visible to you)', wrote: false, stale: true };
+    const row = fresh as { last_modified?: string | null; priority?: number | null };
+    if (row.priority === 1) return { err: null, wrote: false, stale: true };
+    const second = await casWrite(row.last_modified ?? null);
+    if (second.error) return { err: second.error.message || 'the write was refused', wrote: false, stale: true };
+    if (second.landed) return { err: null, wrote: true, stale: true };
+    return { err: 'it is being changed by someone else right now — try again in a moment', wrote: false, stale: true };
   }, [activeOrgId]);
 
   const handleBulkUrgencyToggle = useCallback(async () => {
@@ -824,9 +849,11 @@ export default function RequestPortal() {
     setProcessingBulk(true);
     try {
       const chosen = tickets.filter((t) => !!t.id && selectedTicketIds.has(t.id));
-      const results = await Promise.all(chosen.map(async (t) => ({ id: t.id as string, err: await markUrgentChecked(t) })));
-      const done = results.filter((r) => !r.err).map((r) => r.id);
+      const results = await Promise.all(chosen.map(async (t) => ({ id: t.id as string, ...(await markUrgentChecked(t)) })));
+      // Only the rows THIS write changed are recorded; one already urgent is done, not ours.
+      const done = results.filter((r) => !r.err && r.wrote).map((r) => r.id);
       const failed = results.filter((r) => r.err);
+      if (results.some((r) => r.stale)) refetchTicketsRef.current?.();
       const problems: string[] = [];
       if (failed.length > 0) problems.push(`${failed.length} of ${chosen.length} were not marked urgent: ${failed[0].err}.`);
       if (done.length > 0) {
@@ -853,8 +880,10 @@ export default function RequestPortal() {
     const t = tickets.find((x) => x.id === ticketId);
     if (!t) return;
     try {
-      const err = await markUrgentChecked(t);
+      const { err, wrote, stale } = await markUrgentChecked(t);
+      if (stale) refetchTicketsRef.current?.();
       if (err) { await appAlert({ message: `Not marked urgent: ${err}.`, tone: 'danger' }); return; }
+      if (!wrote) { setOpenRowMenu(null); return; } // already urgent — nothing written, nothing to record
       const audit = await logAuditAction({
         action: 'TICKET_MARK_URGENT', resourceId: ticketId, resourceType: 'ticket',
         orgId: activeOrgId, userId: uid, userRole: activeRole ?? undefined,

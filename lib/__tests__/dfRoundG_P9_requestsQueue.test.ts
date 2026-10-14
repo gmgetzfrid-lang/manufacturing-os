@@ -11,6 +11,9 @@
 //   PERS-3 / LEAK-4 / PERS-7   Mark urgent compare-and-sets on the row's
 //                last_modified; a lost race or a refusal is said, the audit
 //                row follows only a confirmed write and names the member.
+//                Fix pass: a miss re-reads the row and retries once on its
+//                fresh token, and re-reads the list — it never waits on a
+//                realtime event that may not come.
 //   RT-4         the tickets DELETE companion drops a row the list holds,
 //                and only that.
 //   EDGE-8       a request the queue was never told about carries a chip.
@@ -29,7 +32,11 @@ const s = vi.hoisted(() => ({
   queries: [] as Array<{ table: string; calls: Array<{ m: string; a: unknown[] }>; update?: Record<string, unknown> }>,
   /** The rows a tickets UPDATE … select('id') matches. */
   updateHit: [{ id: "t1" }] as unknown[] | null,
+  /** Per-write answers, in order (falls back to updateHit when empty). */
+  updateHits: [] as Array<unknown[]>,
   updateError: null as null | { message: string },
+  /** The row a re-read (tickets … maybeSingle) returns after a miss. */
+  freshRow: null as Record<string, unknown> | null,
   policyEntries: [] as Array<Record<string, unknown>>,
   policyReads: 0,
   channels: [] as Array<{ ons: Array<{ cfg: Record<string, unknown>; cb: (p: unknown) => void }> }>,
@@ -64,10 +71,10 @@ vi.mock("@/lib/supabase", () => {
     }
     api.update = (patch: Record<string, unknown>) => { q.update = patch; return api; };
     api.single = async () => ({ data: null, error: null });
-    api.maybeSingle = async () => ({ data: null, error: null });
+    api.maybeSingle = async () => (table === "tickets" ? { data: s.freshRow, error: null } : { data: null, error: null });
     api.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
       let result: unknown;
-      if (table === "tickets" && q.update) result = s.updateError ? { data: null, error: s.updateError } : { data: s.updateHit, error: null };
+      if (table === "tickets" && q.update) result = s.updateError ? { data: null, error: s.updateError } : { data: s.updateHits.length > 0 ? s.updateHits.shift() : s.updateHit, error: null };
       else if (table === "tickets") result = { data: s.tickets, error: null };
       else if (table === "org_members" && q.calls.some((c) => c.m === "in")) {
         const ids = q.calls.find((c) => c.m === "in")!.a[1] as string[];
@@ -118,7 +125,7 @@ beforeEach(() => {
   ];
   s.members = [{ uid: "r-1", role: "Requester", roles: ["Requester"] }];
   s.queries = []; s.channels = [];
-  s.updateHit = [{ id: "t1" }]; s.updateError = null;
+  s.updateHit = [{ id: "t1" }]; s.updateHits = []; s.updateError = null; s.freshRow = null;
   s.policyEntries = []; s.policyReads = 0;
   for (const f of [s.alert, s.confirm, s.audit]) f.mockReset();
   s.alert.mockResolvedValue(undefined);
@@ -255,14 +262,59 @@ describe("PERS-3 / LEAK-4 / PERS-7 — Mark urgent can no longer fail silently o
     expect(s.audit.mock.calls[0][0]).toMatchObject({ action: "TICKET_BULK_URGENT", userId: "s-1", orgId: "org-1", details: { count: 1, ticketIds: ["t1"] } });
     expect(s.alert).not.toHaveBeenCalled();
   });
-  it("a lost race (the row moved) is said, writes no audit row, and keeps the request selected for a retry", async () => {
+  it("a race lost twice (the row moves again under the retry) is said, writes no audit row, and keeps the request selected", async () => {
     s.updateHit = [];
+    s.freshRow = { id: "t1", last_modified: "2026-10-13T11:00:00.000Z", priority: 3 };
     await mount();
     await select("t1");
     await click(byText("button", /Mark Urgent/));
+    expect(s.queries.filter((x) => x.table === "tickets" && x.update).length).toBe(2); // the first try and ONE retry
     expect(s.audit).not.toHaveBeenCalled();
-    expect(String(s.alert.mock.calls[0]?.[0]?.message)).toMatch(/1 of 1 were not marked urgent: it changed while you were looking at it/);
+    expect(String(s.alert.mock.calls[0]?.[0]?.message)).toMatch(/1 of 1 were not marked urgent: it is being changed by someone else right now/);
+    expect(String(s.alert.mock.calls[0]?.[0]?.message)).not.toMatch(/list is refreshing/);
     expect(host!.textContent).toMatch(/1 Selected/);
+  });
+  it("fix pass: a stale list with NO realtime event — the miss re-reads the row, retries on its fresh token, lands, and re-reads the list", async () => {
+    const LM2 = "2026-10-13T11:00:00.000Z";
+    s.updateHits = [[], [{ id: "t1" }]];
+    s.freshRow = { id: "t1", last_modified: LM2, priority: 3 };
+    await mount();
+    await select("t1");
+    const listReads = s.queries.filter((x) => x.table === "tickets" && !x.update && !x.calls.some((c) => c.m === "select" && c.a[0] === "id, last_modified, priority")).length;
+    await click(byText("button", /Mark Urgent/));
+    const writes = s.queries.filter((x) => x.table === "tickets" && x.update);
+    expect(writes.length).toBe(2);
+    expect(writes[0].calls).toEqual(expect.arrayContaining([{ m: "eq", a: ["last_modified", LM1] }]));
+    expect(writes[1].calls).toEqual(expect.arrayContaining([{ m: "eq", a: ["last_modified", LM2] }, { m: "select", a: ["id"] }]));
+    const reread = s.queries.find((x) => x.table === "tickets" && x.calls.some((c) => c.m === "select" && c.a[0] === "id, last_modified, priority"));
+    expect(reread?.calls).toEqual(expect.arrayContaining([{ m: "eq", a: ["id", "t1"] }, { m: "eq", a: ["org_id", "org-1"] }]));
+    // no channel callback ran — the list was re-read on the page's own initiative
+    const listReadsAfter = s.queries.filter((x) => x.table === "tickets" && !x.update && !x.calls.some((c) => c.m === "select" && c.a[0] === "id, last_modified, priority")).length;
+    expect(listReadsAfter).toBeGreaterThan(listReads);
+    expect(s.audit).toHaveBeenCalledTimes(1);
+    expect(s.audit.mock.calls[0][0]).toMatchObject({ action: "TICKET_BULK_URGENT", details: { count: 1, ticketIds: ["t1"] } });
+    expect(s.alert).not.toHaveBeenCalled();
+    expect(host!.textContent).not.toMatch(/1 Selected/);
+  });
+  it("fix pass: already urgent on the re-read is done — no second write, no audit row of a write we did not make, nothing to say", async () => {
+    s.updateHit = [];
+    s.freshRow = { id: "t1", last_modified: "2026-10-13T11:00:00.000Z", priority: 1 };
+    await mount();
+    await select("t1");
+    await click(byText("button", /Mark Urgent/));
+    expect(s.queries.filter((x) => x.table === "tickets" && x.update).length).toBe(1);
+    expect(s.audit).not.toHaveBeenCalled();
+    expect(s.alert).not.toHaveBeenCalled();
+    expect(host!.textContent).not.toMatch(/1 Selected/);
+  });
+  it("fix pass: a row the re-read cannot find is said as gone, not as a race to retry", async () => {
+    s.updateHit = [];
+    s.freshRow = null;
+    await mount();
+    await select("t1");
+    await click(byText("button", /Mark Urgent/));
+    expect(String(s.alert.mock.calls[0]?.[0]?.message)).toMatch(/no longer in this workspace/);
+    expect(s.audit).not.toHaveBeenCalled();
   });
   it("a refused write is said with the refusal; a refused audit row after a good write is said too", async () => {
     s.updateError = { message: "new row violates row-level security policy" };

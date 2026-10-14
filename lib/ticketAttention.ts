@@ -151,9 +151,13 @@ export function attentionLabel(status: string, opts?: { hasDrafter?: boolean }):
 
 /** Whose turn it is: a named person on the ticket, or a pool (the
  *  assignment queue — DraftingSupervisor holders, else Admins:
- *  lib/ticketRouting.ts queuePool — or management, when the requester whose
- *  review it is has left). */
-export type HolderKind = "requester" | "drafter" | "engineer" | "queue" | "management";
+ *  lib/ticketRouting.ts queuePool — or the co-reviewers, when the requester
+ *  whose review or acknowledgement it is has left or was never set). The
+ *  co-reviewer pool is the engine's (lib/workflow.ts, PENDING_REVIEW and
+ *  FINAL_DRAFT): `ticket.direct_approve` holders (engineers by default) and
+ *  `ticket.manage` holders (management); with NO requester on the ticket,
+ *  `ticket.requester_review` holders too. */
+export type HolderKind = "requester" | "drafter" | "engineer" | "queue" | "co_reviewers";
 
 export interface TicketHolder {
   kind: HolderKind;
@@ -172,8 +176,10 @@ export interface HoldersContext {
    *  absent = described, not named. */
   queueNames?: readonly string[] | null;
   /** The requester's CURRENT role collection (the page's DEC-16 read): `[]`
-   *  = known not to be an active member — their review then falls to
-   *  management, as the engine says (WF-24). null / absent = assumed present. */
+   *  = known not to be an active member — their review then falls to the
+   *  co-reviewers (engineers or management), as the engine says (WF-24).
+   *  null / absent = assumed present (a failed read never invents a
+   *  departure). */
   requesterRoles?: readonly string[] | null;
 }
 
@@ -199,9 +205,14 @@ export function holdersFor(
   ctx?: HoldersContext,
 ): TicketHolder[] {
   const requesterGone = Array.isArray(ctx?.requesterRoles) && ctx!.requesterRoles!.length === 0;
-  const requester = (): TicketHolder[] => requesterGone || !ticket.requesterId
-    ? [{ kind: "management", uid: null, name: "management", part: "reviews on the requester's behalf (the requester is no longer an active member)" }]
-    : [{ kind: "requester", uid: ticket.requesterId, name: nameOr(ticket.requesterName, nameOr(ticket.requesterEmail?.split("@")[0], "the requester")), part: "the requester" }];
+  // The engine's co-reviewer pool, described (lib/workflow.ts): direct
+  // approvers (engineers by default) and management when the requester has
+  // left; with no requester at all, requester-reviewers as well.
+  const requester = (): TicketHolder[] => !ticket.requesterId
+    ? [{ kind: "co_reviewers", uid: null, name: "a requester-reviewer, engineer or management", part: "reviews in the requester's place — the request has no requester" }]
+    : requesterGone
+      ? [{ kind: "co_reviewers", uid: null, name: "a reviewer — engineers or management", part: "reviews on the requester's behalf — the requester is no longer an active member" }]
+      : [{ kind: "requester", uid: ticket.requesterId, name: nameOr(ticket.requesterName, nameOr(ticket.requesterEmail?.split("@")[0], "the requester")), part: "the requester" }];
   const drafter = (): TicketHolder[] => ticket.assignedDrafterId
     ? [{ kind: "drafter", uid: ticket.assignedDrafterId, name: nameOr(ticket.assignedDrafterName, "the assigned drafter"), part: "the drafter" }]
     : queueHolders(ctx);
@@ -335,7 +346,10 @@ export function explainNoActions(
           : null;
   const holderPart = holders[0]?.part ?? "someone else";
   if (party) {
-    return { kind: "not_your_turn", text: `You are ${party} — this step is ${holderPart === party ? "not yours yet" : `${holderPart}'s`} (waiting on ${who}: ${what}).` };
+    // A pool (the queue, the co-reviewers) has no possessive part to name.
+    const pool = holders[0]?.kind === "queue" || holders[0]?.kind === "co_reviewers";
+    const step = holderPart === party ? "not yours yet" : pool ? "not yours" : `${holderPart}'s`;
+    return { kind: "not_your_turn", text: `You are ${party} — this step is ${step} (waiting on ${who}: ${what}).` };
   }
   const actsElsewhere = !!uid && OPEN_STATUSES.some((status) => status !== ticket.status
     && isActionRequired({ ...ticket, status }, ctx));

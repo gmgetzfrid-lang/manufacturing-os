@@ -972,7 +972,13 @@ export default function FullScreenViewer({
       // person chooses: send the clean sheet (the request says the markups
       // are not attached), or stay and keep marking. It used to fall back to
       // the clean original in silence. Nothing is lost by staying: the
-      // markups are saved on the document (document_markups, LIFE-3).
+      // markups stay on the sheet while the viewer is open. Leaving is
+      // worded from what this viewer can do: with a parent that persists
+      // markups (`onPageStatesChange`, the library's markup store) the
+      // sheet's states are handed to it before the viewer is left — the save
+      // closing would have made; without one (the store could not be read:
+      // read-only seed) nothing keeps them, and the dialog says so.
+      const markupsPersist = !!onPageStatesChange;
       let draftKey = "";
       let markupNotAttached = false;
       if (hasMarkup) {
@@ -991,22 +997,26 @@ export default function FullScreenViewer({
           }
         }
         if (bakeFailure) {
+          const leaving = markupsPersist
+            ? "Sending saves your markups to this document as you leave the viewer (as closing it does)."
+            : "Nothing is saving your markups in this viewer — sending leaves it and they are lost, so download them first if you need them.";
           const sendClean = await appConfirm({
             title: "Your markups could not be attached",
-            message: `Your markups are saved on this document, but ${bakeFailure}. Send the request with the clean sheet instead (it will say the markups are not attached), or cancel and try again — or use "Download w/ Markup" and attach that file to the request.`,
+            message: `Your markups stay on this sheet while it is open, but ${bakeFailure}. Cancel to stay — "Download w/ Markup" saves a copy you can attach to the request. Or send the request with the clean sheet (it will say the markups are not attached). ${leaving}`,
             confirmLabel: "Send the clean sheet",
             cancelLabel: "Cancel",
             tone: "danger",
           });
           if (!sendClean) { setSendingDraft(false); return; }
           markupNotAttached = true;
+          if (markupsPersist) onPageStatesChange?.(states);
         }
       }
 
       const description = [
         `Source: ${docNum || "(no number)"}${docRev ? ` Rev ${docRev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${docTitle ? ` — ${docTitle}` : ""}`,
         draftKey ? "(marked-up sheet attached as a Source file)" : "",
-        markupNotAttached ? "(the requester's markups could NOT be attached — the clean sheet is attached; the markups are saved on the document)" : "",
+        markupNotAttached ? "(the requester's markups could NOT be attached — the clean sheet is attached)" : "",
         unit ? `\nUnit: ${unit}` : "",
         "\nWhat needs to change:\n- ",
       ].filter(Boolean).join("\n");

@@ -7,11 +7,14 @@
 //   * EDGE-6 / ROUTE-8 — who the drafter picker offers: every active member
 //     whose role COLLECTION the org's policy lets do drafting work
 //     (`ticket.draft_work`, on this ticket's resource) — the workflow route's
-//     own test for an `assignment` pick (WF-14), so the picker never offers a
-//     drafter the server refuses and never hides one it accepts. It used to
-//     filter `.eq('role', 'Drafter')` — the headline only — so a member who
-//     holds Drafter beside a higher-ranked role was invisible and a small
-//     org could reach a request nobody could be assigned to.
+//     own test for an `assignment` pick (WF-14) — less the two picks the
+//     route refuses for this ticket: the current drafter on a reassignment
+//     (WF-18, 400 "already assigned", so never listed) and, in an org of 3+,
+//     the requester (GAP-2 / DEC-12, 403 — listed, disabled, with the
+//     reason). It used to filter `.eq('role', 'Drafter')` — the headline
+//     only — so a member who holds Drafter beside a higher-ranked role was
+//     invisible and a small org could reach a request nobody could be
+//     assigned to.
 //   * SM-13 (client half) — the file an action needs, by TYPE: Submit Draft
 //     needs a Draft on the ticket; Issue Final needs the Final the IFC upload
 //     supplies. (The check used to accept any attachment at all.)
@@ -24,7 +27,7 @@
 
 import type { Ticket, TicketAttachment, CustomCategoryConfig } from "@/types/schema";
 import { policyAllows, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
-import type { WorkflowAction } from "@/lib/workflow";
+import { separationOfDutiesActive, type WorkflowAction } from "@/lib/workflow";
 
 // ── EDGE-6 / ROUTE-8 ─────────────────────────────────────────────────────────
 
@@ -42,7 +45,27 @@ export interface DrafterCandidate {
   email: string;
   /** The member's roles, for the row's subtitle. */
   roles: string[];
+  /** Set when the route would refuse this pick for this ticket (the
+   *  requester, in an org of 3+): the row is shown disabled with it. */
+  refusedReason?: string;
 }
+
+/** The ticket facts the route's per-ticket refusals read (WF-18, GAP-2). */
+export interface DrafterPickContext {
+  /** The ticket's requester (refused as its drafter in an org of 3+). */
+  requesterId?: string | null;
+  /** The drafter now assigned — left out of a reassignment's list. */
+  assignedDrafterId?: string | null;
+  /** True for `reassign_drafter` (the route refuses the current drafter). */
+  isReassignment?: boolean;
+  /** Active members in the workspace (separation of duties binds at 3+). */
+  activeMemberCount?: number;
+}
+
+/** The route's refusal of the requester as their own request's drafter
+ *  (app/api/tickets/workflow-action/route.ts, GAP-2 / DEC-12), in words. */
+export const REQUESTER_CANNOT_DRAFT =
+  "The requester can't draft their own request — a second person is needed in a workspace of 3 or more.";
 
 /** The role collection the workflow route tests for a picked member: the
  *  additive collection when it has one, else the headline
@@ -58,21 +81,31 @@ export function pickRoles(m: MemberPickRow): string[] {
 
 /** The members the drafter picker offers: active members (the caller reads
  *  `status = active`) whose collection the policy lets do drafting work on
- *  this ticket. Sorted by name. */
+ *  this ticket. With `ctx`, the route's per-ticket refusals apply too: a
+ *  reassignment never lists the drafter already assigned, and in an org of
+ *  3+ the requester carries `refusedReason` (shown, not pickable). Sorted
+ *  by name. */
 export function drafterCandidates(
   members: readonly MemberPickRow[],
   policy: CapabilityPolicy | null | undefined,
   resource: CapabilityResource | null | undefined,
+  ctx?: DrafterPickContext,
 ): DrafterCandidate[] {
   const out: DrafterCandidate[] = [];
+  const sod = separationOfDutiesActive(ctx?.activeMemberCount);
   for (const m of members) {
     if (typeof m.uid !== "string" || !m.uid) continue;
+    if (ctx?.isReassignment && ctx.assignedDrafterId && m.uid === ctx.assignedDrafterId) continue;
     const held = pickRoles(m);
     if (held.length === 0) continue;
     if (!policyAllows(policy, "ticket.draft_work", held[0], held, m.uid, resource ?? null)) continue;
     const email = typeof m.email === "string" ? m.email : "";
     const display = typeof m.display_name === "string" ? m.display_name.trim() : "";
-    out.push({ uid: m.uid, email, name: display || email.split("@")[0] || "Unnamed member", roles: held });
+    const refused = sod && !!ctx?.requesterId && m.uid === ctx.requesterId;
+    out.push({
+      uid: m.uid, email, name: display || email.split("@")[0] || "Unnamed member", roles: held,
+      ...(refused ? { refusedReason: REQUESTER_CANNOT_DRAFT } : {}),
+    });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }

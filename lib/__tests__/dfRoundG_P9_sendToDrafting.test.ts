@@ -12,6 +12,13 @@
 //
 // REGRESSION first: no markup → the original-attachment hand-off, unchanged;
 // a bake that works → the marked-up sheet is the draft, unchanged.
+//
+// Fix pass: the dialog no longer claims the markups are "saved on this
+// document" (the viewer persists only through its parent, and not at all on
+// a read-only seed). It says they stay on the sheet while it is open, and
+// words leaving from what the viewer can do: with a persisting parent the
+// sheet's states are handed to it before leaving; without one it says they
+// are lost and to download them first.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -109,11 +116,11 @@ const DOC = {
 const MARKED = { 2: { objects: [{ type: "path" }] } };
 
 const settle = async () => { for (let i = 0; i < 6; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
-async function send(initialPageStates?: Record<number, object>) {
+async function send(initialPageStates?: Record<number, object>, onPageStatesChange?: (states: Record<number, object>) => void) {
   await act(async () => {
     root.render(React.createElement(FullScreenViewer, {
       isOpen: true, onClose: () => {}, url: "https://files.example/p101.pdf", title: "Overhead P&ID", docNumber: "P-101", rev: "C",
-      document: DOC, currentUserId: "u1", currentUserEmail: "rita@x.io", initialPageStates,
+      document: DOC, currentUserId: "u1", currentUserEmail: "rita@x.io", initialPageStates, onPageStatesChange,
     }));
   });
   await settle();
@@ -157,7 +164,11 @@ describe("HAND-8 — a markup that cannot be attached is said, never dropped in 
     const ask = s.confirm.mock.calls[0][0] as { title: string; message: string; confirmLabel: string };
     expect(ask.title).toBe("Your markups could not be attached");
     expect(ask.message).toMatch(/could not be fetched/);
-    expect(ask.message).toMatch(/saved on this document/);
+    // no persisting parent (a read-only seed): never "saved"; leaving loses them, so download first
+    expect(ask.message).not.toMatch(/saved on this document/);
+    expect(ask.message).toMatch(/stay on this sheet while it is open/);
+    expect(ask.message).toMatch(/Nothing is saving your markups in this viewer/);
+    expect(ask.message).toMatch(/download them first/);
     expect(ask.confirmLabel).toBe("Send the clean sheet");
     expect(s.push).not.toHaveBeenCalled();
     expect(btn.disabled).toBe(false); // not stuck "sending"
@@ -172,5 +183,33 @@ describe("HAND-8 — a markup that cannot be attached is said, never dropped in 
     expect(p.get("draft")).toBeNull();
     expect(p.get("sourceFileUrl")).toBe("https://files.example/p101.pdf");
     expect(p.get("description")).toMatch(/markups could NOT be attached — the clean sheet is attached/);
+    expect(p.get("description")).not.toMatch(/saved on the document/);
+  });
+  it("fix pass: with a parent that persists markups, the dialog says leaving saves them — and the sheet's states ARE handed over after the choice, before the hand-off", async () => {
+    s.bake.mockRejectedValue(new Error("pdf-lib: invalid object ref"));
+    const persisted: Array<Record<number, object>> = [];
+    let atChoice = -1;
+    s.confirm.mockImplementation(async () => { atChoice = persisted.length; return true; });
+    let pushedBeforeSave = false;
+    await send(MARKED, (states) => { persisted.push(states); if (s.push.mock.calls.length > 0) pushedBeforeSave = true; });
+    const ask = s.confirm.mock.calls[0][0] as { message: string };
+    expect(ask.message).toMatch(/Sending saves your markups to this document as you leave the viewer/);
+    expect(ask.message).not.toMatch(/Nothing is saving/);
+    pushedParams();
+    expect(atChoice).toBeGreaterThanOrEqual(0);
+    expect(persisted.length).toBeGreaterThan(atChoice); // handed over once the person chose to send
+    const last = persisted.at(-1) as Record<number, { objects?: unknown[] }>;
+    expect(last?.[2]?.objects?.length).toBe(1); // the marked page reached the parent's store
+    expect(pushedBeforeSave).toBe(false);
+  });
+  it("fix pass: Cancel with a persisting parent hands nothing over after the choice and sends nothing", async () => {
+    s.fetchOk = false;
+    const persisted: Array<Record<number, object>> = [];
+    let atChoice = -1;
+    s.confirm.mockImplementation(async () => { atChoice = persisted.length; return false; });
+    await send(MARKED, (states) => persisted.push(states));
+    expect(s.push).not.toHaveBeenCalled();
+    expect(atChoice).toBeGreaterThanOrEqual(0);
+    expect(persisted.length).toBe(atChoice);
   });
 });

@@ -32,6 +32,7 @@ import {
   pickRoles,
   drafterCandidates,
   NO_DRAFTER_CANDIDATES,
+  REQUESTER_CANNOT_DRAFT,
   requiredFileType,
   missingRequiredFile,
   triagePayload,
@@ -179,6 +180,27 @@ describe("EDGE-6 / ROUTE-8 — the drafter picker offers exactly whom the workfl
       const held = pickRoles(m);
       expect(offered.has(m.uid), m.uid).toBe(policyAllows(undefined, "ticket.draft_work", held[0], held, m.uid, resource));
     }
+  });
+  it("fix pass — the route's per-ticket refusals: the requester (org of 3+) is shown refused, the current drafter is not offered on a reassignment", () => {
+    const members = [
+      { uid: "u-req", email: "rita@x.com", role: "Drafter", roles: ["Requester", "Drafter"], display_name: "Rita" },
+      { uid: "d-1", email: "hector@x.com", role: "Drafter", roles: ["Drafter"], display_name: "Hector" },
+      { uid: "d-2", email: "dee@x.com", role: "Drafter", roles: ["Drafter"], display_name: "Dee" },
+    ];
+    // 3+ members: the route 403s the requester as their own drafter (GAP-2 / DEC-12) — listed, refused, with the reason
+    const sod = drafterCandidates(members, undefined, resource, { requesterId: "u-req", activeMemberCount: 3 });
+    expect(sod.find((c) => c.uid === "u-req")?.refusedReason).toBe(REQUESTER_CANNOT_DRAFT);
+    expect(sod.filter((c) => c.refusedReason).map((c) => c.uid)).toEqual(["u-req"]);
+    // below 3 the single-person loop is legal (DEC-12): the requester is a plain candidate
+    const small = drafterCandidates(members, undefined, resource, { requesterId: "u-req", activeMemberCount: 2 });
+    expect(small.find((c) => c.uid === "u-req")?.refusedReason).toBeUndefined();
+    // a reassignment never lists the drafter already assigned (the route 400s "already assigned", WF-18)
+    const re = drafterCandidates(members, undefined, resource, { assignedDrafterId: "d-1", isReassignment: true, activeMemberCount: 3, requesterId: "u-req" });
+    expect(re.map((c) => c.uid)).toEqual(["d-2", "u-req"]); // "Dee", "Rita"
+    // a first assignment is not a reassignment: the route has no "already assigned" check there
+    expect(drafterCandidates(members, undefined, resource, { assignedDrafterId: "d-1", isReassignment: false }).map((c) => c.uid)).toContain("d-1");
+    // no context → exactly the policy test, as before
+    expect(drafterCandidates(members, undefined, resource).every((c) => !c.refusedReason)).toBe(true);
   });
   it("nobody eligible → empty, and the empty state names the reason and the fix", () => {
     expect(drafterCandidates([{ uid: "v", role: "Viewer", roles: ["Viewer"] }], undefined, resource)).toEqual([]);
@@ -358,10 +380,41 @@ describe("UI-1 — who a request waits on, and since when", () => {
     expect(holdersFor(mk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: null }))[0]).toMatchObject({ kind: "engineer", uid: null, name: "an engineer" });
     expect(holdersFor(mk({ status: "PENDING_REVIEW" }))[0]).toMatchObject({ kind: "requester", uid: "u-req", name: "Rita Requester" });
     expect(holdersFor(mk({ status: "FINAL_DRAFT", requesterName: undefined, requesterEmail: "rita@x.com" } as Partial<Ticket>))[0].name).toBe("rita");
-    expect(holdersFor(mk({ status: "PENDING_REVIEW" }), { requesterRoles: [] })[0].kind).toBe("management");
+    expect(holdersFor(mk({ status: "PENDING_REVIEW" }), { requesterRoles: [] })[0].kind).toBe("co_reviewers");
     expect(holdersFor(mk({ status: "PENDING_REVIEW" }), { requesterRoles: null })[0].kind).toBe("requester");
     expect(holdersFor(mk({ status: "CLOSED" }))).toEqual([]);
     expect(holdersFor(mk({ status: "CANCELED" }))).toEqual([]);
+  });
+  it("fix pass — the co-reviewer pool is described as the ENGINE draws it (direct approvers, management; with no requester, requester-reviewers too)", () => {
+    const required = (t: Ticket, role: Role, uid: string, requesterRoles?: string[]) =>
+      WorkflowEngine.getActions(t, role, uid, undefined, { userRoles: [role], ...(requesterRoles ? { requesterRoles } : {}) })
+        .some((a) => !a.optional && !a.disabledReason);
+    for (const status of ["PENDING_REVIEW", "FINAL_DRAFT"] as const) {
+      // the requester has left: engineers (ticket.direct_approve) AND management (ticket.manage) must act
+      const gone = mk({ status, requesterId: "req-1", assignedDrafterId: "d-1" });
+      const goneHolder = holdersFor(gone, { requesterRoles: [] })[0];
+      expect(goneHolder.kind).toBe("co_reviewers");
+      expect(goneHolder.name).toMatch(/engineer/i);
+      expect(goneHolder.name).toMatch(/management/i);
+      expect(goneHolder.part).toMatch(/no longer an active member/);
+      expect(required(gone, "Engineer-2", "e-9", []), `${status} engineer`).toBe(true);
+      expect(required(gone, "Manager", "m-1", []), `${status} manager`).toBe(true);
+      expect(required(gone, "Requester", "r-9", []), `${status} another requester`).toBe(false); // not in this pool
+      // no requester on the ticket at all: requester-reviewers join the pool
+      const none = mk({ status, requesterId: null as never, assignedDrafterId: "d-1" });
+      const noneHolder = holdersFor(none)[0];
+      expect(noneHolder.kind).toBe("co_reviewers");
+      expect(noneHolder.name).toMatch(/requester-reviewer/);
+      expect(noneHolder.name).toMatch(/engineer/i);
+      expect(noneHolder.name).toMatch(/management/i);
+      expect(required(none, "Requester", "r-9"), `${status} requester-reviewer`).toBe(true);
+      expect(required(none, "Engineer-2", "e-9"), `${status} engineer, no requester`).toBe(true);
+      expect(required(none, "Manager", "m-1"), `${status} manager, no requester`).toBe(true);
+    }
+    // a party to the request is told it is not their step, without a broken possessive
+    const t = mk({ status: "PENDING_REVIEW", requesterId: "req-1", assignedDrafterId: "d-1" });
+    const out = explainNoActions(t, { uid: "d-1", roles: ["Drafter"], requesterRoles: new Map([["req-1", []]]), holders: holdersFor(t, { requesterRoles: [] }) });
+    expect(out.text).toMatch(/^You are the drafter — this step is not yours \(waiting on a reviewer — engineers or management: needs review\)\.$/);
   });
   it("waitingSince is the newest line that moved the stage or its holder — a file, a save or the triage note does not reset it", () => {
     const t = mk({
@@ -525,6 +578,20 @@ describe("census — the request surfaces read the shared rules (no local stand-
     const form = src("app/(protected)/requests/new/page.tsx");
     expect(form).toContain("import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';");
     expect(form).toMatch(/See how a request flows/);
+  });
+  it("ROUTE-7 (out-of-plan one-liner, recorded in 99-fix-sequencing): the feed says 'longest-waiting' only when the hook read oldest-first", () => {
+    expect(src("components/cockpit/AttentionFeed.tsx")).toContain('{status.ticketsOldestFirst ? "longest-waiting" : "most recently active"}');
+  });
+  it("PERS-7 fix pass: the redline's uid check runs before its upload, and its audit row follows the accepted action", () => {
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    const uidCheck = page.indexOf(`if (!uid) throw new Error("You're not signed in, so the redline was not uploaded.");`);
+    const upload = page.indexOf("const result = await uploadTicketAttachment({ file: redlineFile");
+    const accepted = page.indexOf("if (res.status === 409) {\n        setActionLoading(null);");
+    const audit = page.indexOf("action: 'TICKET_REDLINE_CREATED'");
+    expect(uidCheck).toBeGreaterThan(0);
+    expect(uidCheck).toBeLessThan(upload);
+    expect(accepted).toBeGreaterThan(upload);
+    expect(audit).toBeGreaterThan(accepted);
   });
   it("PERS-6: the badge hook maps a NULL unit as null, never a cast string", () => {
     const hook = src("hooks/useTicketNotifications.ts");

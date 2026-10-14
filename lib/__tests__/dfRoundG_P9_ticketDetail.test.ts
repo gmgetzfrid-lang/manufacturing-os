@@ -23,6 +23,9 @@
 //   DCW-5            a source the viewer cannot discover is labelled restricted.
 //   HAND-3 dw3       the Rev chip compares version ids when captured.
 //   HAND-7 dw2       SourceDriftBanner is mounted with the ticket's metadata.
+//   Fix pass         a failed requester read invents no departure (FRIC-7);
+//                    the picker shows the route's per-ticket refusals (EDGE-6);
+//                    the redline's audit follows the accepted action (PERS-7).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -34,6 +37,10 @@ const s = vi.hoisted(() => ({
   ticket: {} as Record<string, unknown>,
   members: [] as Array<Record<string, unknown>>,
   requesterMember: { role: "Requester", roles: ["Requester"] } as Record<string, unknown> | null,
+  requesterMemberError: null as null | { message: string },
+  postStatus: 200,
+  upload: vi.fn(),
+  audit: vi.fn(),
   sourceDoc: null as Record<string, unknown> | null,
   sourceDocError: null as null | { message: string },
   unreadHit: [{ id: "t1" }] as unknown[],
@@ -62,7 +69,13 @@ vi.mock("next/navigation", () => {
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => React.createElement("a", { href, ...rest }, children),
 }));
-vi.mock("next/dynamic", () => ({ default: () => () => null }));
+// The page's one dynamic import is the redline editor: a stand-in that saves a redline on click.
+vi.mock("next/dynamic", () => ({
+  default: () => (p: { fileUrl?: unknown; onSave?: (b: Blob) => unknown }) =>
+    typeof p.onSave === "function" && typeof p.fileUrl === "string"
+      ? React.createElement("button", { type: "button", "data-testid": "redline-save", onClick: () => p.onSave!(new Blob(["%PDF-1.7"], { type: "application/pdf" })) }, "save redline")
+      : null,
+}));
 vi.mock("@/components/providers/RoleContext", () => {
   // Stable per role, as the provider's value is.
   let last: { role: unknown; value: Record<string, unknown> } | null = null;
@@ -84,8 +97,8 @@ vi.mock("@/components/providers/DialogProvider", () => ({
   appConfirm: (...a: unknown[]) => s.confirm(...a),
   appPrompt: vi.fn(async () => null),
 }));
-vi.mock("@/lib/storage", () => ({ uploadTicketAttachment: vi.fn(), getSignedUrlForPath: vi.fn(), ArchivedFileError: class extends Error {} }));
-vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => ({ ok: true, error: null })) }));
+vi.mock("@/lib/storage", () => ({ uploadTicketAttachment: (...a: unknown[]) => s.upload(...a), getSignedUrlForPath: vi.fn(), ArchivedFileError: class extends Error {} }));
+vi.mock("@/lib/audit", () => ({ logAuditAction: (...a: unknown[]) => s.audit(...a) }));
 vi.mock("@/lib/stamping", () => ({ downloadStampedPdf: vi.fn() }));
 vi.mock("@/lib/teams", () => ({ getMyTeamIds: vi.fn(async () => []) }));
 vi.mock("@/lib/documentGuards", () => ({ resolveCanControlLibrary: vi.fn(async () => false) }));
@@ -138,7 +151,7 @@ vi.mock("@/lib/supabase", () => {
     if (table === "org_members") {
       const sel = String(calls.find((c) => c.m === "select")?.a[0] ?? "");
       if (sel === "uid" ) return { data: null, error: null, count: 4 };
-      if (terminal === "maybeSingle" && has("eq", "uid")) return { data: s.requesterMember, error: null };
+      if (terminal === "maybeSingle" && has("eq", "uid")) return s.requesterMemberError ? { data: null, error: s.requesterMemberError } : { data: s.requesterMember, error: null };
       return { data: s.members, error: null };
     }
     if (table === "org_configurations") return { data: s.config ? { data: s.config } : null, error: null };
@@ -194,6 +207,12 @@ beforeEach(() => {
   s.ticket = baseTicket();
   s.members = [];
   s.requesterMember = { role: "Requester", roles: ["Requester"] };
+  s.requesterMemberError = null;
+  s.postStatus = 200;
+  s.upload.mockReset();
+  s.upload.mockImplementation(async ({ file }: { file: File }) => ({ url: `orgs/org-1/tickets/KE-DDRT-26-0007/${file.name}` }));
+  s.audit.mockReset();
+  s.audit.mockResolvedValue({ ok: true, error: null });
   s.sourceDoc = null; s.sourceDocError = null;
   s.unreadHit = [{ id: "t1" }]; s.unreadError = null;
   s.config = null;
@@ -206,7 +225,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string }) => {
     if (String(url).includes("/api/tickets/workflow-action")) {
       s.posts.push(JSON.parse(init?.body ?? "{}"));
-      return new Response(JSON.stringify(s.postReply), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(s.postStatus === 200 ? s.postReply : { error: "conflict" }), { status: s.postStatus, headers: { "content-type": "application/json" } });
     }
     return new Response("{}", { status: 200 });
   }));
@@ -252,6 +271,25 @@ describe("UI-1 / UI-7 — where the request is, on whom, since when, in words", 
     await mount();
     await click(q("[data-testid=status-pill]"));
     expect(host!.textContent).toMatch(/Awaiting drafter/); // the map's stage labels, from the same list
+  });
+  it("fix pass (FRIC-7): a requester read that ERRORS invents no departure — the line still waits on the requester by name", async () => {
+    s.role = { activeRole: "Drafter", roles: ["Drafter"], activeOrgId: "org-1", uid: "d-1", userEmail: "hector@x.io" };
+    s.ticket = baseTicket({ status: "PENDING_REVIEW" });
+    s.requesterMemberError = { message: "upstream request timeout" };
+    await mount();
+    const waiting = q("[data-testid=waiting-on]")!.textContent!;
+    expect(waiting).toMatch(/Waiting on Rita Requester/);
+    expect(waiting).toMatch(/\(the requester\)/);
+    expect(waiting).not.toMatch(/no longer an active member/);
+  });
+  it("REGRESSION (FRIC-7): a read that SUCCEEDS with no active row is a departure — the co-reviewers are named as the engine draws them", async () => {
+    s.role = { activeRole: "Drafter", roles: ["Drafter"], activeOrgId: "org-1", uid: "d-1", userEmail: "hector@x.io" };
+    s.ticket = baseTicket({ status: "PENDING_REVIEW" });
+    s.requesterMember = null;
+    await mount();
+    const waiting = q("[data-testid=waiting-on]")!.textContent!;
+    expect(waiting).toMatch(/Waiting on a reviewer — engineers or management/);
+    expect(waiting).toMatch(/no longer an active member/);
   });
   it("the queue owner at the assignment step: 'Your turn'", async () => {
     s.role = { activeRole: "DraftingSupervisor", roles: ["DraftingSupervisor"], activeOrgId: "org-1", uid: "s-1", userEmail: "sam@x.io" };
@@ -325,6 +363,34 @@ describe("EDGE-6 / ROUTE-8 / DCW-1 / DCW-7 — the assign modal", () => {
     expect(s.posts[0].unit).toBeUndefined(); // no unit change chosen → none sent
     // DF-P1's hand-off: the landed action's warning is said
     expect(s.toast).toHaveBeenCalledWith(expect.objectContaining({ type: "warning", title: "Done, with a warning", message: expect.stringMatching(/library could not be recorded/) }));
+  });
+  it("fix pass: in an org of 3+ the requester is shown but cannot be picked (the route 403s it), with the reason", async () => {
+    s.members = [
+      { uid: "u-req", email: "rita@x.io", role: "Drafter", roles: ["Requester", "Drafter"], display_name: "Rita Requester" },
+      { uid: "d-2", email: "dee@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Dee" },
+    ];
+    await mount(); // the members count read answers 4
+    await click(byText("button", /Assign Drafter/));
+    const rita = byText("button", /Rita Requester/) as HTMLButtonElement;
+    expect(rita.disabled).toBe(true);
+    expect(rita.textContent).toMatch(/can't draft their own request/);
+    await act(async () => { rita.click(); });
+    await flush();
+    expect(s.posts.length).toBe(0);
+    await click(byText("button", /Dee/));
+    expect(s.posts[0]).toMatchObject({ actionType: "assign", assignment: { id: "d-2" } });
+  });
+  it("fix pass: a reassignment never offers the drafter already assigned (the route 400s 'already assigned')", async () => {
+    s.ticket = baseTicket({ status: "DRAFTING", assigned_drafter_id: "d-1", assigned_drafter_name: "Hector" });
+    s.members = [
+      { uid: "d-1", email: "hector@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Hector" },
+      { uid: "d-2", email: "dee@x.io", role: "Drafter", roles: ["Drafter"], display_name: "Dee" },
+    ];
+    await mount();
+    await click(byText("button", /^\s*Reassign\s*$/));
+    expect(byText("h3", /Reassign Ticket/)).toBeTruthy();
+    expect(byText("button", /hector@x\.io/)).toBeNull();
+    expect(byText("button", /Dee/)).toBeTruthy();
   });
   it("nobody can be assigned → the empty state names the reason and the fix", async () => {
     s.members = [{ uid: "v-1", email: "vic@x.io", role: "Viewer", roles: ["Viewer"] }];
@@ -402,7 +468,9 @@ describe("DCW-5 / HAND-3 / HAND-7 — the source card", () => {
     s.ticket = baseTicket({ metadata: { source_document: src } });
     s.sourceDoc = null;
     await mount();
-    expect(q("[data-testid=source-restricted]")?.textContent).toMatch(/Restricted document/);
+    const label = q("[data-testid=source-restricted]")?.textContent ?? "";
+    expect(label).toMatch(/Restricted or no longer in this workspace/); // no row back covers both
+    expect(label).not.toMatch(/triage can/); // a per-person right the page cannot vouch for
     expect(host!.textContent).toMatch(/P-101/);
     expect(host!.textContent).toMatch(/Overhead P&ID/);
   });
@@ -426,5 +494,40 @@ describe("DCW-5 / HAND-3 / HAND-7 — the source card", () => {
     expect(host!.textContent).toMatch(/Current \(Rev B\)/);
     expect(q("[data-testid=drift-banner]")).toBeTruthy();
     expect(s.driftProps.at(-1)).toMatchObject({ orgId: "org-1", metadata: { source_document: src } });
+  });
+});
+
+describe("PERS-7 fix pass — the redline: uid before upload, its audit after the accepted action", () => {
+  const draft = { id: "a-1", name: "draft.pdf", url: "https://files.example/draft.pdf", type: "Draft", status: "submitted", size: "1 KB", uploadedBy: "hector@x.io", uploadedAt: "2026-10-10T00:00:00.000Z" };
+  const redlineAndSend = async () => {
+    await mount();
+    await click(byText("button", /^\s*Redline\s*$/));
+    await click(q("[data-testid=redline-save]"));
+    const textarea = host!.querySelector("textarea") as HTMLTextAreaElement;
+    await setValue(textarea, "Dimension 4 is wrong — see the redline.");
+    await click(byText("button", /^\s*Confirm\s*$/));
+  };
+  beforeEach(() => {
+    s.ticket = baseTicket({ status: "PENDING_REVIEW", attachments: [draft] });
+  });
+  it("a refused audit row is said only AFTER the route accepted the action, and says the redline is on the request", async () => {
+    s.audit.mockImplementation(async () => ({ ok: s.posts.length === 1 ? false : true, error: s.posts.length === 1 ? "audit refused" : "written before the action" }));
+    await redlineAndSend();
+    expect(s.upload).toHaveBeenCalledTimes(1);
+    expect(s.posts.length).toBe(1);
+    expect(s.posts[0]).toMatchObject({ actionType: "request_revision", redlineAttachment: expect.objectContaining({ type: "Reference" }) });
+    const redlineAudits = s.audit.mock.calls.filter((c) => (c[0] as { action?: string }).action === "TICKET_REDLINE_CREATED");
+    expect(redlineAudits.length).toBe(1);
+    expect(redlineAudits[0][0]).toMatchObject({ userId: "u-req", orgId: "org-1" });
+    expect(s.toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Redline attached, record not written", message: expect.stringMatching(/attached to the request, but its audit record could not be written: audit refused/) }));
+  });
+  it("an action the route refuses (409) writes no redline audit row and claims nothing was attached", async () => {
+    s.postStatus = 409;
+    s.alert.mockResolvedValue(undefined);
+    await redlineAndSend();
+    expect(s.posts.length).toBe(1);
+    expect(s.audit.mock.calls.filter((c) => (c[0] as { action?: string }).action === "TICKET_REDLINE_CREATED")).toEqual([]);
+    expect(s.toast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Redline attached, record not written" }));
+    expect(String(s.alert.mock.calls[0]?.[0]?.message)).toMatch(/updated by someone else/);
   });
 });

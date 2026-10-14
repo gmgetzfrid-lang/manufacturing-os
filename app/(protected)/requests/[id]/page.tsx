@@ -290,9 +290,12 @@ interface AssignmentModalProps {
    *  list the form offers and the route checks), and whether it could be read. */
   unitOptions: UnitOption[];
   unitListState: 'loading' | 'ready' | 'unreadable';
+  /** Active members in the workspace: in an org of 3+ the route refuses the
+   *  requester as their own request's drafter (separation of duties). */
+  activeMemberCount: number;
 }
 
-const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, isReassignment, ticket, policy, triage, unitOptions, unitListState }: AssignmentModalProps) => {
+const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, isReassignment, ticket, policy, triage, unitOptions, unitListState, activeMemberCount }: AssignmentModalProps) => {
   const [members, setMembers] = useState<Array<Record<string, unknown>>>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -333,10 +336,18 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
   }, [isOpen, activeOrgId, ticket.libraryId]);
 
   // Who the route will accept: holders of drafting authority on THIS
-  // ticket (lib/ticketPage.ts drafterCandidates — the route's own test).
+  // ticket (lib/ticketPage.ts drafterCandidates — the route's own test),
+  // less the route's per-ticket refusals: the drafter already assigned is
+  // not offered on a reassignment, and the requester (org of 3+) is shown
+  // disabled with the reason.
   const drafters: DrafterCandidate[] = useMemo(
-    () => drafterCandidates(members, policy, ticketResource(ticket)),
-    [members, policy, ticket],
+    () => drafterCandidates(members, policy, ticketResource(ticket), {
+      requesterId: ticket.requesterId ?? null,
+      assignedDrafterId: ticket.assignedDrafterId ?? null,
+      isReassignment: !!isReassignment,
+      activeMemberCount,
+    }),
+    [members, policy, ticket, isReassignment, activeMemberCount],
   );
 
   if (!isOpen) return null;
@@ -401,18 +412,21 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
                 {drafters.map(drafter => (
                   <button 
                     key={drafter.uid} 
+                    data-refused={drafter.refusedReason ? 'true' : undefined}
+                    title={drafter.refusedReason}
                     onClick={async () => {
+                      if (drafter.refusedReason) return;
                       if (isReassignment && !reason.trim()) {
                         await appAlert({ message: "Please provide a reason for reassignment." });
                         return;
                       }
                       onSubmit(drafter.uid, drafter.name, reason, triage ? triagePayload(ticket, { libraryId, unit }) : undefined);
                     }}
-                    disabled={isLoading} 
-                    className="flex items-center p-3 hover:bg-orange-50 rounded-lg transition-colors group text-left w-full border border-transparent hover:border-orange-100"
+                    disabled={isLoading || !!drafter.refusedReason} 
+                    className="flex items-center p-3 hover:bg-orange-50 rounded-lg transition-colors group text-left w-full border border-transparent hover:border-orange-100 disabled:opacity-60 disabled:hover:bg-transparent disabled:cursor-not-allowed"
                   >
                     <div className="h-10 w-10 rounded-full bg-[var(--color-surface-2)] group-hover:bg-[var(--color-surface)] flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-orange-600 mr-4 border border-[var(--color-border)]"><User className="w-5 h-5" /></div>
-                    <div className="min-w-0"><p className="font-bold text-[var(--color-text)] text-sm truncate">{drafter.name}</p><p className="text-xs text-[var(--color-text-muted)] truncate">{drafter.email}{drafter.roles.length > 0 ? ` · ${drafter.roles.join(', ')}` : ''}</p></div>
+                    <div className="min-w-0"><p className="font-bold text-[var(--color-text)] text-sm truncate">{drafter.name}</p><p className="text-xs text-[var(--color-text-muted)] truncate">{drafter.email}{drafter.roles.length > 0 ? ` · ${drafter.roles.join(', ')}` : ''}</p>{drafter.refusedReason && <p className="text-[11px] text-amber-700">{drafter.refusedReason}</p>}</div>
                     <ChevronDown className="w-4 h-4 ml-auto text-slate-300 group-hover:text-orange-400 -rotate-90" />
                   </button>
                 ))}
@@ -1253,9 +1267,18 @@ export default function TicketDetailView() {
   useEffect(() => {
     let alive = true;
     if (!requesterId || !ticketOrgId) { setRequesterRoles(null); return; }
+    // FRIC-7 (DF-P9 fix pass): a failed read never invents a departure — an
+    // error is "unknown, assumed present" (null), exactly as
+    // lib/ticketRequesterRoles.ts loadRequesterRoles answers; `[]` (left the
+    // workspace) only when the read SUCCEEDED and found no active row. The
+    // waiting line and explainNoActions show what this decides.
     supabase.from('org_members').select('role, roles')
       .eq('org_id', ticketOrgId).eq('uid', requesterId).eq('status', 'active').maybeSingle()
-      .then(({ data }) => { if (alive) setRequesterRoles(data ? heldRoles(data as { role?: unknown; roles?: unknown }) : []); })
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { setRequesterRoles(null); return; }
+        setRequesterRoles(data ? heldRoles(data as { role?: unknown; roles?: unknown }) : []);
+      })
       .then(undefined, () => { if (alive) setRequesterRoles(null); });
     return () => { alive = false; };
   }, [requesterId, ticketOrgId]);
@@ -1547,7 +1570,11 @@ export default function TicketDetailView() {
       let redlineAttachment: TicketAttachment | null = null;
 
       if (pendingRedlineBlob && fileToRedline) {
+         // PERS-7 (DF-P9): no workspace or signed-in member, no action — and
+         // checked BEFORE the redline goes to storage, so a refused action
+         // leaves no orphaned file behind.
          if (!activeOrgId) throw new Error("No active workspace.");
+         if (!uid) throw new Error("You're not signed in, so the redline was not uploaded.");
          const fileName = `REDLINE_${Date.now()}_${fileToRedline.name}`;
          const redlineFile = new File([pendingRedlineBlob], fileName, { type: pendingRedlineBlob.type });
          const result = await uploadTicketAttachment({ file: redlineFile, orgId: activeOrgId, ticketId: ticket.ticketId });
@@ -1565,18 +1592,6 @@ export default function TicketDetailView() {
 
          // Append system note to comment
          finalComment = `${comment || ''}\n\n[System: Attached Redlines for ${fileToRedline.name}]`;
-
-         // PERS-7 (DF-P9): no signed-in member, no action — never an
-         // 'unknown' stand-in on the audit row; a refused row is said.
-         if (!uid) throw new Error("You're not signed in, so the redline was not recorded.");
-         const redlineAudit = await logAuditAction({
-            action: 'TICKET_REDLINE_CREATED', resourceId: ticketId, resourceType: 'ticket',
-            orgId: activeOrgId, userId: uid, userRole: activeRole ?? undefined,
-            details: { originalFile: fileToRedline.name, newFile: fileName }
-         });
-         if (!redlineAudit.ok) {
-           showToast({ type: 'warning', title: 'Redline attached, record not written', message: `The redline file is attached, but its audit record could not be written: ${redlineAudit.error}` });
-         }
       }
 
       // Server-enforced transition: /api/tickets/workflow-action validates this
@@ -1657,6 +1672,21 @@ export default function TicketDetailView() {
       // status, so without a message users couldn't tell it worked.
       if (action.action === 'save_progress') {
         showToast({ type: "success", title: "Progress saved", message: "Files staged. The request stays in Drafting until you submit." });
+      }
+      // PERS-7 (DF-P9): the redline's audit row follows the action that
+      // attached it — written only once the route accepted the request with
+      // the redline on it (never an 'unknown' stand-in), and a refused row is
+      // said. Before, it was written (and its refusal toasted as "attached")
+      // before the action was even sent, which could still 409 or 403.
+      if (redlineAttachment && fileToRedline && uid && activeOrgId) {
+        const redlineAudit = await logAuditAction({
+          action: 'TICKET_REDLINE_CREATED', resourceId: ticketId, resourceType: 'ticket',
+          orgId: activeOrgId, userId: uid, userRole: activeRole ?? undefined,
+          details: { originalFile: fileToRedline.name, newFile: redlineAttachment.name }
+        });
+        if (!redlineAudit.ok) {
+          showToast({ type: 'warning', title: 'Redline attached, record not written', message: `The redline is attached to the request, but its audit record could not be written: ${redlineAudit.error}` });
+        }
       }
       // DF-P1's hand-off (EVID-12 / LIFE-6): an action that landed can still
       // carry a warning — a close whose hold could not be released (the
@@ -1991,6 +2021,7 @@ export default function TicketDetailView() {
         triage={pendingAction?.action === 'assign' && ticket.status === 'PENDING_ASSIGNMENT' && !isReassigning}
         unitOptions={unitOptions}
         unitListState={unitListState}
+        activeMemberCount={activeMemberCount}
       />
       <UploadIFCModal isOpen={showUploadIFC} onClose={() => setShowUploadIFC(false)} onSubmit={handleIFCUpload} isLoading={!!actionLoading} />
 
@@ -2440,9 +2471,12 @@ export default function TicketDetailView() {
                        <div className="min-w-0">
                          {/* DCW-5 (DEC-107 item 4 as amended): a viewer who may not
                              discover the source sees it marked restricted — its
-                             recorded number and title under that label, never a link. */}
+                             recorded number and title under that label, never a link.
+                             No row back means EITHER restricted OR gone from the
+                             workspace (the read cannot tell them apart), and who else
+                             can open it is per person — so the label claims neither. */}
                          {sourceDoc.state === 'unavailable' && (
-                           <p data-testid="source-restricted" className="text-[10px] font-black uppercase tracking-wider text-rose-700">Restricted document — you can&apos;t open it; triage can</p>
+                           <p data-testid="source-restricted" className="text-[10px] font-black uppercase tracking-wider text-rose-700">Restricted or no longer in this workspace — you can&apos;t open it here; ask whoever runs its library</p>
                          )}
                          <p className="text-xs font-bold text-[var(--color-text)] truncate">
                            {sourceRef.documentNumber || sourceDoc.doc?.documentNumber || 'Controlled document'}
