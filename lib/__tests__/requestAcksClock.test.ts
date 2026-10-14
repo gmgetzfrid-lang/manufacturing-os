@@ -111,6 +111,11 @@ describe("recall email routing (DIST-13, source pins)", () => {
   it("both recall emitters use the recall category, never ticket-status", () => {
     const src = readFileSync(join(process.cwd(), "lib", "staleCopies.ts"), "utf8");
     const categories = src.match(/category: "(\w+)"/g) ?? [];
-    expect(categories).toEqual(['category: "recall"', 'category: "recall"']);
+    // the retirement recall to copy holders goes first (N15 fix pass 3: it
+    // never waits on the watchers' FYI); then PROD-17's (notifications N15)
+    // FYI to the document's watchers — the 'watched' category on purpose: it
+    // is not a recall of anything they hold, so their email toggle governs
+    // it; then the stale-copy nudge. Both recalls keep the recall category.
+    expect(categories).toEqual(['category: "recall"', 'category: "watched"', 'category: "recall"']);
   });
 });

@@ -430,7 +430,8 @@
     "PROJ-7",
     "LEAK-4 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push: convertTicketToProject's browser history push becomes part of the server-side project link, or is removed)",
     "EVID-1 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push limb, with LEAK-4)",
-    "DEC-101's seam (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): TicketCreateInput.projectId is parsed and not written (lib/ticketCreate.ts, lib/ticketCreateClient.ts) — write project_id in /api/tickets/create"
+    "DEC-101's seam (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): TicketCreateInput.projectId is parsed and not written (lib/ticketCreate.ts, lib/ticketCreateClient.ts) — write project_id in /api/tickets/create",
+    "notifications DELIV-16 / DELIV-7 dw2 (re-owned by the integrator at the N15 merge, 2026-10-14): components/documents/CheckInPanel.tsx's review_requested adopts lib/complianceNotify.ts notifyCompliance (one import line, the alias the seven N14 producers use) — a browser notice to another member is retried only through notification_i_wrote (20261206), never blindly; regression: the check-in's notice reaches exactly whom it reaches today"
    ],
    "severityMix": "1 HIGH, 1 MEDIUM, 7 LOW",
    "files": [

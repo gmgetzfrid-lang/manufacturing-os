@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
-import { trialDaysRemaining, isTrialExpired, holdsLiveSubscription } from "@/lib/subscription";
+import { trialDaysRemaining, isTrialExpired, holdsLiveSubscription } from "@/lib/billing";
 import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";

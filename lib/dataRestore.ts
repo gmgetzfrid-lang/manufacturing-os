@@ -149,11 +149,12 @@ const SKIP_TABLES: Record<string, string> = {
   // and body unchanged. So no row of the queue is ever written by a restore.
   email_notifications: "the outbound mail queue — a restored message would be sent again, to whatever address the backup names; delivery state is never restored",
   // NEDGE-8 (notifications Round G, N9): `subscriptions` is NOT billing state
-  // (that lives on the orgs row — lib/subscription.ts); it is the watch/follow
-  // table (lib/subscriptions.ts) every `followers: true` notice resolves
-  // through. It used to be skipped here under a billing reason, so a restore
-  // threw away every document / project / asset / library follow while
-  // reporting it as deliberate. It is restored now (RESTORE_TABLE_ORDER),
+  // (that lives on the orgs row — lib/billing.ts, formerly lib/subscription.ts,
+  // NEDGE-21); it is the watch/follow table (lib/watches.ts, formerly
+  // lib/subscriptions.ts) every `followers: true` notice resolves through.
+  // It used to be skipped here under a billing reason, so a restore threw
+  // away every document / project / asset / library follow while reporting
+  // it as deliberate. It is restored now (RESTORE_TABLE_ORDER),
   // its user_id remapped like every uid and its resource bounded to the
   // target workspace (RESTORE_POLYMORPHIC_PARENTS).
   push_subscriptions: "device push registrations are machine-specific — re-established per device",
@@ -355,7 +356,7 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
  *  RESTORE_TABLE_ORDER restores every resource table first). A row naming a
  *  resource elsewhere, a missing one, or a type with no table here is refused
  *  (`parent_outside_workspace`) and never written, so a restored follow can
- *  never point into another tenant. lib/subscriptions.ts WatchResourceType
+ *  never point into another tenant. lib/watches.ts WatchResourceType
  *  and lib/notify/recipients.ts (tickets) are the types written today. */
 export const RESTORE_POLYMORPHIC_PARENTS: Readonly<Record<string, { typeColumn: string; idColumn: string; parents: Readonly<Record<string, string>> }>> = {
   subscriptions: {
@@ -980,7 +981,7 @@ export const CONFLICT_TARGETS: Record<string, string> = {
   library_numbering: "library_id",                    // 20260806
   // NEDGE-8 (N9): one follow per (person, resource) — the unique index
   // subscriptions_user_resource_uniq (20260622 / 20260723), the key
-  // lib/subscriptions.ts watch() upserts on. A follow the person already
+  // lib/watches.ts watch() upserts on. A follow the person already
   // holds here is kept as it is (counted existing), never refused 23505.
   subscriptions: "user_id,resource_type,resource_id",
 };

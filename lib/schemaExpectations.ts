@@ -445,4 +445,22 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261205_dc_roundF_direct_write_issue_record.sql",
     feature: "A member's revision upload is judged by the policy's own limbs, without the recursive first-version read (SEC-23)",
   },
+  // notifications N15 DELIV-16 (20261206): a browser asks whether IT wrote a
+  // notice to another member before retrying it. The uuid arguments refuse
+  // "schema-health-probe" (22P02), so the body never runs. Missing → the
+  // browser simply does not retry (today's path).
+  {
+    signature: "notification_i_wrote(uuid, uuid, text, text, text, timestamptz)",
+    fn: "notification_i_wrote",
+    probeArgs: {
+      p_org: "schema-health-probe",
+      p_user: "schema-health-probe",
+      p_kind: "schema-health-probe",
+      p_title: "schema-health-probe",
+      p_resource_id: "schema-health-probe",
+      p_since: "2026-01-01T00:00:00Z",
+    },
+    migration: "20261206_notif_roundG_stale_escalation_kind.sql",
+    feature: "A browser notice to another member is retried once, never twice, after a lost answer (DELIV-16)",
+  },
 ];

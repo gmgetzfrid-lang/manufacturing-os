@@ -2,12 +2,12 @@
 
 // WatchButton — small star/bell toggle for watching a resource.
 //
-// Wires into lib/subscriptions. Used on documents, projects, assets
+// Wires into lib/watches (the `subscriptions` table). Used on documents, projects, assets
 // to opt in to bell-icon notifications on activity.
 
 import React, { useEffect, useState } from "react";
 import { Bell, BellOff, Loader2 } from "lucide-react";
-import { isWatching, watch, unwatch, type WatchResourceType } from "@/lib/subscriptions";
+import { isWatching, watch, unwatch, type WatchResourceType } from "@/lib/watches";
 
 interface Props {
   orgId: string;

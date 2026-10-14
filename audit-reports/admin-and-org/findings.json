@@ -300,7 +300,7 @@
         "app/api/stripe/webhook/route.ts:49-66",
         "app/api/stripe/checkout/route.ts:78-81",
         "app/api/data-export/destinations/route.ts:83-95",
-        "lib/subscription.ts:45-53"
+        "lib/billing.ts:52-60"
       ],
       "has_verifier_correction": true,
       "verified_by": "adversarial-independent",
