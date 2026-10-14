@@ -148,7 +148,7 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
       assetIds.length ? admin.from("document_assets").select("document_id, asset_id, tag_text, source").eq("org_id", orgId).in("asset_id", assetIds).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
       assetIds.length ? admin.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").in("b", assetNodes).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
       assetIds.length ? admin.from("entity_mentions").select("asset_id, document_id, knowledge_document_id, page, context_snippet").eq("org_id", orgId).in("asset_id", assetIds).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
-      admin.from("knowledge_page_entities").select("document_id, page, tag, x, y").eq("org_id", orgId).eq("kind", "equipment").in("tag", [...tagForms].slice(0, 40)).limit(2000),
+      admin.from("knowledge_page_entities").select("document_id, page, tag, x, y").eq("org_id", orgId).in("kind", ["equipment", "instrument"]).in("tag", [...tagForms].slice(0, 40)).limit(2000),
     ]);
     const label = (assetId: string) => assetHits.get(assetId)?.asset.tag ?? "it";
     for (const r of (da.data as Array<{ document_id: string; asset_id: string; tag_text: string | null; source: string | null }> | null) ?? []) {

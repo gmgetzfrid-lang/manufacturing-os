@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef,
+  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef, tagKindOf,
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
   pageNeedsVision, refSeries, extractTitleBlock, parseUnitMap, unitOfRef, parseOpcBoxes,
   matchEquipmentListIntent, parsePrefixMap,
@@ -66,6 +66,15 @@ describe("extractEquipmentTags", () => {
   it("accepts a codebook prefix in loose mode", () => {
     expect(extractEquipmentTags("BA 101", { loose: true })).toEqual([]);
     expect(extractEquipmentTags("BA 101", { loose: true, knownPrefixes: ["BA"] }).map((t) => t.tag)).toEqual(["BA-101"]);
+  });
+
+  it("tells equipment from instruments and off-sheet references", () => {
+    const kinds = (line: string) => extractEquipmentTags(line, { loose: true }).map((h) => `${h.tag}:${tagKindOf(h, line)}`);
+    expect(kinds("V-14 35# STEAM DRUM")).toEqual(["V-14:equipment"]);
+    expect(kinds("FROM X-45 2002-D 2001 SHT. 12")).toEqual(["X-45:xref"]);
+    expect(kinds("TO LV-222")).toEqual(["LV-222:xref"]);
+    expect(kinds("PSV-21 SET 65 PSI")).toEqual(["PSV-21:instrument"]);
+    expect(kinds("LIC-222 PIT-130")).toEqual(["LIC-222:instrument", "PIT-130:instrument"]);
   });
 
   it("reports each tag once per call", () => {

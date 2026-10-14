@@ -242,6 +242,9 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     } else if (existing.source_version_id !== doc.current_version_id) {
       // Rev published: drop the old index and queue a re-ingest of the new
       // file. The knowledge doc id is stable so past citations keep linking.
+      // New bytes: every reading of the old ones goes, the drawing census
+      // included, so the new revision is read fresh.
+      await supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", existing.id as string).then(() => undefined, () => undefined);
       const { error: chunkErr } = await supabaseAdmin
         .from("knowledge_chunks").delete().eq("document_id", existing.id as string);
       if (chunkErr) {

@@ -21,7 +21,7 @@ import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
 } from "@/lib/knowledgeText";
 import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
-  parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS,
+  parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS, tagKindOf,
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
@@ -278,7 +278,7 @@ export async function ingestKnowledgeDocBatch(
         for (const hit of extractEquipmentTags(line)) {
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-            page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(line, 160), x: null, y: null,
+            page: p, kind: tagKindOf(hit, line), tag: hit.tag, raw: truncateSafe(line, 160), x: null, y: null,
             nx: null, ny: null, pos_source: null,
           });
         }
@@ -312,7 +312,7 @@ export async function ingestKnowledgeDocBatch(
           onPage.add(hit.tag);
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-            page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(str, 160), x, y,
+            page: p, kind: tagKindOf(hit, str), tag: hit.tag, raw: truncateSafe(str, 160), x, y,
             nx, ny, pos_source: nx === null ? null : "text",
           });
         }
@@ -330,14 +330,14 @@ export async function ingestKnowledgeDocBatch(
     // whole again on the rebuilt line. Anything the lines carry that no
     // single object did is kept, without a position.
     if (!visionRead && (drawingSet || isDrawingLikePage(pageText) || tagsFromText >= 8)) {
-      const found = new Set(entityRows.filter((r) => r.document_id === doc.id && r.page === p && r.kind === "equipment").map((r) => String(r.tag)));
+      const found = new Set(entityRows.filter((r) => r.document_id === doc.id && r.page === p && (r.kind === "equipment" || r.kind === "instrument" || r.kind === "xref")).map((r) => String(r.tag)));
       for (const line of lines) {
         for (const hit of extractEquipmentTags(line, { loose: drawingSet, knownPrefixes })) {
           if (found.has(hit.tag)) continue;
           found.add(hit.tag);
           entityRows.push({
             org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-            page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(line, 160), x: null, y: null,
+            page: p, kind: tagKindOf(hit, line), tag: hit.tag, raw: truncateSafe(line, 160), x: null, y: null,
             nx: null, ny: null, pos_source: null,
           });
         }
@@ -479,10 +479,33 @@ export async function ingestKnowledgeDocBatch(
   // Drawing entities: same idempotent shape as chunks (clear the page range,
   // rewrite). Best-effort — a pre-20260921 DB (no table) skips silently and
   // ingestion still succeeds.
-  if (entityRows.length > 0) {
-    await supabaseAdmin.from("knowledge_page_entities")
-      .delete().eq("document_id", doc.id).gte("page", from + 1).lte("page", reached)
-      .then(() => undefined, () => undefined);
+  // Pages read by the drawing census (the person's model, structured) keep
+  // their equipment, instruments and off-sheet tags: this text pass never
+  // overwrites them. A new revision clears the census at sync.
+  const CENSUS_KINDS = ["equipment", "instrument", "xref", "census"];
+  const censusPages = new Set<number>();
+  {
+    const { data: cp } = await supabaseAdmin.from("knowledge_page_entities").select("page").eq("document_id", doc.id).eq("kind", "census").gte("page", from + 1).lte("page", reached);
+    for (const r of (cp as Array<{ page: number }> | null) ?? []) censusPages.add(r.page);
+  }
+  if (censusPages.size) {
+    for (let i = entityRows.length - 1; i >= 0; i--) {
+      const r = entityRows[i];
+      if (censusPages.has(Number(r.page)) && CENSUS_KINDS.includes(String(r.kind))) entityRows.splice(i, 1);
+    }
+  }
+  if (entityRows.length > 0 || censusPages.size) {
+    if (censusPages.size) {
+      await supabaseAdmin.from("knowledge_page_entities")
+        .delete().eq("document_id", doc.id).gte("page", from + 1).lte("page", reached).not("kind", "in", `(${CENSUS_KINDS.join(",")})`)
+        .then(() => undefined, () => undefined);
+      const plain = [...Array(reached - from).keys()].map((i) => from + 1 + i).filter((pg) => !censusPages.has(pg));
+      if (plain.length) await supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", doc.id).in("page", plain).in("kind", CENSUS_KINDS).then(() => undefined, () => undefined);
+    } else {
+      await supabaseAdmin.from("knowledge_page_entities")
+        .delete().eq("document_id", doc.id).gte("page", from + 1).lte("page", reached)
+        .then(() => undefined, () => undefined);
+    }
     // Layered fallbacks: one schema mismatch must never cost the whole tag
     // layer. (It did once — the original CHECK (kind IN ('equipment','ref'))
     // rejected 'self'/'opc' rows, each bad row failed its batch of 500, and

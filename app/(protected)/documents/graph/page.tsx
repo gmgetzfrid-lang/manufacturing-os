@@ -27,6 +27,7 @@ import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandl
 import { globalGraphHref } from "@/lib/estate/lenses";
 import EstateReadiness from "@/components/documents/EstateReadiness";
 import SuspectEquipment from "@/components/documents/SuspectEquipment";
+import ReadDrawingPanel from "@/components/documents/ReadDrawingPanel";
 import { useConnectEverything, ConnectButton, ConnectProgress } from "@/components/documents/ConnectEverything";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf, CONTAINER_TYPES } from "@/lib/fileFinder/fileTypes";
@@ -754,9 +755,9 @@ function GraphPageInner() {
               )}
             </div>
           )}
-          {showConnect && (connect.status || connect.running || connect.error) && (
+          {showConnect && (connect.status || connect.running || connect.error || connect.bulk) && (
             <div className="absolute top-12 right-3 pointer-events-auto">
-              <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} onRun={(o) => void connect.run(o)} />
+              <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} onRun={(o) => void connect.run(o)} bulk={connect.bulk} onReadAll={() => void connect.readAll()} />
               {controller && activeOrgId && !connect.running && connect.status && (
                 <div className="mt-2 max-w-md"><SuspectEquipment orgId={activeOrgId} refreshKey={JSON.stringify(connect.status.readiness)} onRemoved={() => void refresh()} /></div>
               )}
@@ -779,7 +780,7 @@ function GraphPageInner() {
               onPhoto={setLightbox} onNarrow={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
           )}
           {selectedEntry && (
-            <SelectedCard entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
+            <SelectedCard orgId={activeOrgId} canRead={controller || hasAnyRole(["Manager", "Supervisor"])} onRead={() => void refresh()} entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
               onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={() => openEntry(selectedEntry.id)} />
           )}
           <div className="p-3">
@@ -986,8 +987,9 @@ function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage
   );
 }
 
-function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
+function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId, canRead, onRead }: {
   entry: IndexEntry; hit?: RankedHit; sameBytes: IndexEntry[]; onClose: () => void; onReveal: (id: string) => void; onOpen: () => void;
+  orgId?: string | null; canRead?: boolean; onRead?: () => void;
 }) {
   return (
     <div className="p-3 border-b border-[var(--color-border)] bg-sky-50/30">
@@ -1018,6 +1020,9 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
       )}
       {entry.source === "listing" && (
         <div className="mt-2 text-xs text-teal-800 inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
+      )}
+      {canRead && orgId && entry.source === "system" && fileTypeOf(entry.name).key === "pdf" && (
+        <ReadDrawingPanel orgId={orgId} documentId={entry.id.replace(/^doc:/, "")} onDone={onRead} />
       )}
       {sameBytes.length > 0 && (
         <div className="mt-2">

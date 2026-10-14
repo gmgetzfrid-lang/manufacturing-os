@@ -569,7 +569,7 @@ function GraphPageInner() {
         ) : (
           <>
             {settings.mode === "map" ? (
-              <EstateMap nodes={view.nodes} edges={[...view.edges, ...view.ghosts]} query={query} selectedId={selected?.id ?? null}
+              <EstateMap nodes={graph?.nodes ?? view.nodes} edges={graph?.edges ?? view.edges} query={query} selectedId={selected?.id ?? null}
                 highlightIds={highlightIds} flyTo={highlight} onSelect={handleSelect} onOpen={open} />
             ) : settings.mode === "3d" ? (
               <Suspense fallback={

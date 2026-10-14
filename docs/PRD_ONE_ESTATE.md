@@ -287,6 +287,16 @@ only, not in production as of 2026-10-14). "Done when" is what to test.
   suggestion a person applies. Equipment a reader created by mistake is
   listed with the text it came from and removed only on a person's word;
   items with photos, files, notes, manual tags or edits are never listed.
+- Drawings are read the way the chat reads them (`lib/drawingCensus.ts`):
+  the person's own model, the sheet as an overview plus four zoomed tiles,
+  a structured answer — equipment callouts (tag, site code, name),
+  instruments, off-sheet references, title block — stored as separate
+  kinds and marked so the cheap text pass never overwrites them. Reading a
+  sheet corrects its equipment column and links. "Read with AI" on a
+  selected sheet; Connect everything offers it for every unread sheet.
+- The org graph's Map is operating area → equipment type → equipment →
+  documents; projects and "not placed yet" (by library) beside them. A
+  thing has one place; its other ties are drawn only when it is picked.
 - The org graph opens in Map mode (the estate as a tree, same renderer as
   the Documents map). In 2D and 3D, documents linked only to one hub fold
   into it as a count; clicking the hub opens it.

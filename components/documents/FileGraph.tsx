@@ -390,7 +390,10 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.strokeStyle = n.id === sel ? "#0ea5e9" : n.id === hov ? "#0ea5e9" : "rgba(255,255,255,0.9)";
         ctx.stroke();
         // Icon.
-        const key = n.kind === "folder" || n.kind === "extfolder" ? (col.has(n.id) ? "folder" : "folderOpen") : n.type.key;
+        // Folders show open or closed; any other container (an operating
+        // area, an equipment type, a piece of equipment) keeps its own icon.
+        const plainFolder = (n.kind === "folder" || n.kind === "extfolder") && (n.type.key === "folder" || n.type.key === "folderOpen");
+        const key = plainFolder ? (col.has(n.id) ? "folder" : "folderOpen") : n.type.key;
         const img = imgs.get(key);
         const iconSize = r * 1.15;
         if (img) ctx.drawImage(img, p.x - iconSize / 2, p.y - iconSize / 2, iconSize, iconSize);

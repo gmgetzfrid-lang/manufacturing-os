@@ -57,6 +57,27 @@ export interface EquipmentTagHit {
   prefix: string;     // "V", "PSV"
   /** The unit someone wrote in front of it ("10-V-101" → "10"), when any. */
   unit?: string;
+  /** Where the match starts in the text it was read from. */
+  at?: number;
+}
+
+/** Instrument and control-valve function codes (ISA-5.1 style). A tag with
+ *  one of these prefixes is an instrument, not process equipment. */
+export const INSTRUMENT_PREFIXES = new Set([
+  "PI", "PIT", "PIC", "PT", "PV", "PY", "PSV", "PSE", "PCV", "PDI", "PDT", "PDIT", "PDIC", "PAH", "PAL", "PSH", "PSL", "PRV", "PG",
+  "FE", "FI", "FIT", "FIC", "FT", "FV", "FY", "FCV", "FQ", "FQI", "FO", "FSL", "FSH", "FG",
+  "LG", "LI", "LIT", "LIC", "LT", "LV", "LY", "LCV", "LSH", "LSL", "LSHH", "LSLL", "LAH", "LAL",
+  "TE", "TI", "TIT", "TIC", "TT", "TV", "TY", "TW", "TCV", "TSH", "TSL", "TG",
+  "AE", "AI", "AIT", "AIC", "AT", "AV", "HV", "HS", "HIC", "XV", "ZS", "ZSO", "ZSC", "ZT", "RV", "SDV", "BDV",
+]);
+
+/** What a tag read off a drawing is: process equipment, an instrument, or
+ *  a reference to something on another sheet ("FROM X-45", "TO LV-222"). */
+export function tagKindOf(hit: EquipmentTagHit, text: string): "equipment" | "instrument" | "xref" {
+  const before = text.slice(Math.max(0, (hit.at ?? 0) - 8), hit.at ?? 0).toUpperCase();
+  if (/(?:^|[^A-Z])(?:FROM|TO)\s*$/.test(before)) return "xref";
+  if (INSTRUMENT_PREFIXES.has(hit.prefix)) return "instrument";
+  return "equipment";
 }
 
 // LETTERS-DASH-DIGITS(optional letter suffix). The dash is required — it's
@@ -79,7 +100,9 @@ const EQUIPMENT_STOP_PREFIXES = new Set([
 function insideANumber(upper: string, at: number): boolean {
   const before = upper.slice(Math.max(0, at - 10), at);
   // Digits standing alone (not the end of a tag like V101): 2002-D…, 2002 D…
-  if (/(?:^|[^A-Z0-9])\d{3,}[-–\s]$/.test(before)) return true;
+  // (preceded by a space or the start — "-222 " is the end of the previous
+  // tag, "LIC-222 PIT-130", not a drawing number).
+  if (/(?:^|[\s(.:])\d{3,}[-–\s]$/.test(before)) return true;
   if (/["”]\s*[-–]$/.test(before)) return true;       // 8"-P…
   return false;
 }
@@ -121,7 +144,7 @@ export function extractEquipmentTags(text: string, opts: {
     const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
     if (seen.has(tag)) continue;
     seen.add(tag);
-    out.push(unit ? { tag, prefix, unit } : { tag, prefix });
+    out.push(unit ? { tag, prefix, unit, at } : { tag, prefix, at });
   }
   if (opts.loose) {
     const known = new Set<string>([...Object.keys(EQUIPMENT_CATEGORIES), ...[...(opts.knownPrefixes ?? [])].map((p) => p.toUpperCase())]);
@@ -135,7 +158,7 @@ export function extractEquipmentTags(text: string, opts: {
       const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
       if (seen.has(tag)) continue;
       seen.add(tag);
-      out.push({ tag, prefix });
+      out.push({ tag, prefix, at: m.index ?? 0 });
     }
   }
   return out;

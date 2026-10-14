@@ -13,6 +13,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Loader2, Clock, AlertCircle, Sparkles, X } from "lucide-react";
 import { estatePost } from "@/lib/estate/client";
 import { ingestKnowledgeDocument } from "@/lib/knowledge";
+import { readDrawing, pendingDrawings } from "@/lib/drawingCensusClient";
 import type { ConnectStatus } from "@/lib/estate/connectServer";
 
 const MAX_PASSES = 40;
@@ -23,6 +24,8 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
   const [error, setError] = useState<string | null>(null);
   const [reading, setReading] = useState<{ done: number; total: number; visionPages: number; reusedPages: number; visionSkip: string | null } | null>(null);
   const stop = useRef(false);
+  /** Reading every drawing with the person's model, sheet by sheet. */
+  const [bulk, setBulk] = useState<{ done: number; total: number; equipment: number; removed: number; added: number; created: number; failed: number; current: string | null; finished: boolean; lastError: string | null } | null>(null);
   const onDoneRef = useRef(onDone); useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
 
   const run = async (opts: { visionAllPages?: boolean; rereadAll?: boolean } = {}) => {
@@ -65,9 +68,49 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
       }
     } catch (e) { setError((e as Error).message); }
     finally { setRunning(false); setReading(null); onDoneRef.current?.(); }
+    // Then the drawings themselves, read the way the chat reads them —
+    // asked once, because it spends on the person's key.
+    if (!stop.current) await readAll(true);
+  };
+
+  const readAll = async (fromConnect = false) => {
+    if (!orgId) return;
+    let list: Awaited<ReturnType<typeof pendingDrawings>>;
+    try { list = await pendingDrawings(orgId); } catch (e) { setError((e as Error).message); return; }
+    const todo = fromConnect ? list.pending : list.pending.length ? list.pending : [];
+    if (!todo.length) { if (!fromConnect) setBulk({ done: 0, total: 0, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: true, lastError: null }); return; }
+    const ok = window.confirm(`Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nEach sheet is read the way the chat reads it — the whole sheet plus four zoomed tiles — and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time.`);
+    if (!ok) return;
+    stop.current = false; setRunning(true);
+    const st = { done: 0, total: todo.length, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null as string | null, finished: false, lastError: null as string | null };
+    setBulk({ ...st });
+    const queue = [...todo];
+    const worker = async () => {
+      for (;;) {
+        if (stop.current) return;
+        const next = queue.shift(); if (!next) return;
+        st.current = next.name; setBulk({ ...st });
+        try {
+          const r = await readDrawing(orgId, { knowledgeDocumentId: next.knowledgeDocumentId });
+          st.equipment += r.equipment.length;
+          st.removed += r.correction?.removed.length ?? 0;
+          st.added += r.correction?.added.length ?? 0;
+          st.created += r.correction?.createdAssets ?? 0;
+        } catch (e) {
+          st.failed++; st.lastError = (e as Error).message;
+          // Out of budget or no key: every next sheet would fail the same way.
+          if (/budget|key|agreement/i.test(st.lastError)) { stop.current = true; }
+        }
+        st.done++; setBulk({ ...st });
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    st.current = null; st.finished = true; setBulk({ ...st });
+    setRunning(false);
+    onDoneRef.current?.();
   };
   const cancel = () => { stop.current = true; };
-  return { status, running, error, reading, run, cancel };
+  return { status, running, error, reading, run, cancel, bulk, readAll };
 }
 
 export function ConnectButton({ running, onClick, disabled, className = "" }: { running: boolean; onClick: () => void; disabled?: boolean; className?: string }) {
@@ -79,11 +122,13 @@ export function ConnectButton({ running, onClick, disabled, className = "" }: { 
   );
 }
 
-export function ConnectProgress({ status, running, error, reading, onCancel, onClose, onRun }: {
+export function ConnectProgress({ status, running, error, reading, onCancel, onClose, onRun, bulk, onReadAll }: {
   status: ConnectStatus | null; running: boolean; error: string | null; reading: { done: number; total: number; visionPages: number; reusedPages: number; visionSkip: string | null } | null;
   onCancel: () => void; onClose: () => void;
   /** Run again with options: read every page with vision, or re-read everything. */
   onRun?: (opts: { visionAllPages?: boolean; rereadAll?: boolean }) => void;
+  bulk?: { done: number; total: number; equipment: number; removed: number; added: number; created: number; failed: number; current: string | null; finished: boolean; lastError: string | null } | null;
+  onReadAll?: () => void;
 }) {
   if (!status && !running && !error) return null;
   return (
@@ -110,6 +155,15 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
         </ol>
       )}
       {reading?.visionSkip && running && <div className="text-[11px] text-amber-700">{reading.visionSkip}</div>}
+      {bulk && (
+        <div className="rounded-md border border-violet-200 bg-violet-50/60 dark:bg-violet-950/20 px-2 py-1.5 text-[11px] space-y-0.5">
+          <div className="font-bold inline-flex items-center gap-1">{!bulk.finished ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3 text-emerald-600" />} Drawings read with your AI model: {bulk.done} of {bulk.total}</div>
+          {bulk.current && <div className="text-[var(--color-text-muted)] truncate">Now: {bulk.current}</div>}
+          <div className="text-[var(--color-text-muted)]">{bulk.equipment} equipment callouts found · {bulk.added} tags put on drawings · {bulk.removed} wrong tags taken off · {bulk.created} new in the registry{bulk.failed ? ` · ${bulk.failed} failed` : ""}</div>
+          {bulk.lastError && <div className="text-red-700">{bulk.lastError}</div>}
+          {bulk.finished && bulk.total === 0 && <div>Every drawing is already read this way.</div>}
+        </div>
+      )}
       {status && (
         <div className="text-[11px] text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-1.5 space-y-1">
           <div>
@@ -123,7 +177,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
                 <input type="checkbox" checked={status.ai.visionAllPages} disabled={!status.ai.hasKey} onChange={(e) => onRun({ visionAllPages: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
                 Read every page with AI vision
               </label>
-              <button onClick={() => onRun({ rereadAll: true })} className="rounded-full border border-[var(--color-border)] px-2 py-0.5 font-semibold hover:bg-[var(--color-surface-2)]">Re-read all drawings</button>
+              {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="rounded-full border border-violet-300 bg-violet-50 text-violet-800 px-2 py-0.5 font-semibold hover:bg-violet-100 disabled:opacity-50">Read all drawings with AI</button>}
             </div>
           )}
           {!running && !status.more && <div>Search a tag now. New drawings are picked up nightly, or press the button again.</div>}
