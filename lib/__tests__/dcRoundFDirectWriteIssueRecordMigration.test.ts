@@ -236,7 +236,9 @@ describe("20261205 §2 — SEC-23: document_versions_insert_integrity without th
       }
     }
     const insertCapable = [...latest.entries()].filter(([, body]) => body && /FOR\s+(INSERT|ALL)\b|^(?![\s\S]*\bFOR\b)/i.test(body));
-    expect(insertCapable.map(([n]) => n).sort()).toEqual(["document_versions_insert_integrity", "document_versions_org_access"]);
+    // projects Round G J20 (20261214, SEC-22 (a)) adds the contractor door's INSERT pair TO intake_door — each reads
+    // intake_door_may_submit(…) with the row's own columns, no sublink — and re-creates the integrity policy with a door limb.
+    expect(insertCapable.map(([n]) => n).sort()).toEqual(["document_versions_insert_integrity", "document_versions_intake_door_insert", "document_versions_intake_door_scope", "document_versions_org_access"]);
     for (const [name, body] of insertCapable) expect(body, name).not.toMatch(/FROM\s+(?:public\.)?document_versions\b/i);
   });
 
