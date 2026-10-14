@@ -20,6 +20,19 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
+import { SLA_DEFAULT_DAYS_MAX } from '@/lib/notifications';
+import {
+  builtInSlaDays,
+  clearSlaDefault,
+  loadSlaDefaults,
+  parseSlaDays,
+  saveSlaDefault,
+  SLA_WARN_PERCENT,
+  storedWindowUsable,
+  untargetedImpact,
+  warnAfterDays,
+  type SlaDefaultRow,
+} from '@/lib/slaDefaultsEditor';
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {
   requestTypes: {
@@ -230,6 +243,9 @@ export default function DraftingConfigPage() {
             )}
           />
 
+          {/* SECTION: DUE-DATE WINDOWS (sla_defaults — drafting-flow DF-P13) */}
+          <SlaDefaultsSection orgId={activeOrgId} requestTypes={settings.requestTypes.options} />
+
           {/* SECTION: UNITS */}
           <ConfigSection 
             title="Units / Areas"
@@ -323,6 +339,208 @@ export default function DraftingConfigPage() {
 
         </div>
     </PageShell>
+  );
+}
+
+// ─── Due-date windows (sla_defaults) ─────────────────────────────────
+// drafting-flow EDGE-7 done-when 2's editor / EDGE-16 (DF-P13). One window
+// per request type: the days a request filed without a requested date has
+// before it is due (/api/tickets/create), and the window the SLA clock gives
+// an open request of the type that has no due date of its own. Each save is
+// its own checked write (lib/slaDefaultsEditor.ts), validated to the create
+// route's own bound; a refusal shows the database's words. The admin gate
+// holds this page to DRAFTING_CONFIG_EDITORS, and 20261218 makes the same set
+// the database's write rule.
+
+type SlaLoadState =
+  | { kind: "loading" }
+  | { kind: "ready"; rows: SlaDefaultRow[] }
+  | { kind: "error"; missing: boolean; error: string };
+
+function SlaDefaultsSection({ orgId, requestTypes }: { orgId: string | null; requestTypes: SelectOption[] }) {
+  const [load, setLoad] = useState<SlaLoadState>({ kind: "loading" });
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: string; tone: "ok" | "error"; text: string } | null>(null);
+
+  // quiet: re-read after a save without blanking the list.
+  const refresh = React.useCallback(async (quiet = false) => {
+    if (!orgId) return;
+    if (!quiet) setLoad({ kind: "loading" });
+    const r = await loadSlaDefaults(supabase, orgId);
+    setLoad(r.ok ? { kind: "ready", rows: r.rows } : { kind: "error", missing: r.missing, error: r.error });
+  }, [orgId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  // The request types on the form (blank values skipped, each once), then any
+  // stored window whose type is no longer on the form, so it can be removed.
+  const formTypes: Array<{ value: string; label: string; onForm: boolean }> = [];
+  for (const o of requestTypes) {
+    const value = String(o.value ?? '').trim();
+    if (value && !formTypes.some((t) => t.value === value)) formTypes.push({ value, label: o.label || value, onForm: true });
+  }
+  const rows = load.kind === "ready" ? load.rows : [];
+  for (const r of rows) {
+    if (!formTypes.some((t) => t.value === r.requestType)) formTypes.push({ value: r.requestType, label: r.requestType, onForm: false });
+  }
+  const rowFor = (type: string) => rows.find((r) => r.requestType === type) ?? null;
+
+  const save = async (type: string, label: string) => {
+    if (!orgId) return;
+    const parsed = parseSlaDays(drafts[type] ?? '');
+    if (!parsed.ok) return;
+    setBusy(type);
+    setNotice(null);
+    try {
+      const impact = await untargetedImpact(supabase, orgId, type, parsed.days);
+      if (!impact.ok) {
+        const go = await appConfirm({
+          title: "Save this window?",
+          message: `Whether this window puts open ${label} requests with no due date of their own past due could not be checked (${impact.error}). Any filed more than ${parsed.days} day(s) ago get an "Overdue" notice at the next SLA run (the nightly maintenance job). Save anyway?`,
+          confirmLabel: "Save window",
+          tone: "danger",
+        });
+        if (!go) return;
+      } else if (impact.impact.overdue + impact.impact.dueSoon > 0) {
+        const { overdue, dueSoon } = impact.impact;
+        const go = await appConfirm({
+          title: "Save this window?",
+          message: `${overdue} open ${label} request(s) with no due date of their own were filed more than ${parsed.days} day(s) ago: the next SLA run (the nightly maintenance job) records each as overdue and sends an "Overdue" notice to the person it waits on, the assignment queue and the requester. ${dueSoon} more are past ${warnAfterDays(parsed.days)} day(s) and get a "Due soon" notice. Save anyway?`,
+          confirmLabel: "Save window",
+          tone: "danger",
+        });
+        if (!go) return;
+      }
+      const w = await saveSlaDefault(supabase, orgId, type, parsed.days);
+      if (!w.ok) {
+        setNotice({ type, tone: "error", text: w.message });
+        return;
+      }
+      setDrafts((d) => { const next = { ...d }; delete next[type]; return next; });
+      setNotice({ type, tone: "ok", text: `Saved: ${label} requests are due ${parsed.days} day(s) after filing.` });
+      await refresh(true);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const clear = async (type: string, label: string) => {
+    if (!orgId) return;
+    const go = await appConfirm({
+      title: "Use the built-in window?",
+      message: `New ${label} requests will be due ${builtInSlaDays(type)} day(s) after filing (the built-in window), and the SLA clock stops timing open ${label} requests that have no due date of their own.`,
+      confirmLabel: "Use built-in",
+    });
+    if (!go) return;
+    setBusy(type);
+    setNotice(null);
+    try {
+      const w = await clearSlaDefault(supabase, orgId, type);
+      if (!w.ok) {
+        setNotice({ type, tone: "error", text: w.message });
+        return;
+      }
+      setDrafts((d) => { const next = { ...d }; delete next[type]; return next; });
+      setNotice({ type, tone: "ok", text: `${label} uses the built-in window again (${builtInSlaDays(type)} day(s)).` });
+      await refresh(true);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden" data-testid="sla-defaults">
+      <div className="px-6 py-4 bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
+        <h3 className="font-bold text-[var(--color-text)]">Due-date windows</h3>
+        <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
+          Per request type: how many days a request filed without a requested date has before it is due (at 17:00 on the last day).
+          The SLA clock warns the person a request waits on at {SLA_WARN_PERCENT}% of its window and escalates at the due date.
+          Open requests of a type that have no due date of their own are timed from their filing date with the same window.
+          Each type is saved on its own; a type with no window uses the built-in one.
+        </p>
+      </div>
+      <div className="p-6">
+        {!orgId || load.kind === "loading" ? (
+          <div className="text-xs text-[var(--color-text-muted)]">Loading due-date windows…</div>
+        ) : load.kind === "error" ? (
+          <div role="alert" className="text-xs text-rose-700">
+            {load.missing
+              ? "Due-date windows need the sla_defaults table (migration 20260529_phase_b_notifications.sql) — nothing can be edited here until it is applied."
+              : `The due-date windows could not be read (${load.error}). Nothing is shown as saved.`}
+            {!load.missing && (
+              <button onClick={() => void refresh()} className="ml-2 font-bold underline">Retry</button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {formTypes.length === 0 && (
+              <div className="text-xs italic text-[var(--color-text-muted)]">No request types on the form yet.</div>
+            )}
+            {formTypes.map((t) => {
+              const row = rowFor(t.value);
+              const usable = row ? storedWindowUsable(row.defaultDays) : false;
+              const draft = drafts[t.value];
+              const parsed = draft === undefined ? null : parseSlaDays(draft);
+              const changed = parsed?.ok === true && (!row || row.defaultDays !== parsed.days);
+              const inputId = `sla-days-${t.value}`;
+              return (
+                <div key={t.value} className="flex flex-wrap items-start gap-2" data-sla-type={t.value}>
+                  <label htmlFor={inputId} className="w-40 shrink-0 pt-2 text-sm text-[var(--color-text)]">
+                    <span className="font-bold">{t.label}</span>{' '}
+                    <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{t.value}</span>
+                    {!t.onForm && <span className="block text-[11px] text-amber-700">not on the request form</span>}
+                  </label>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <input
+                        id={inputId}
+                        inputMode="numeric"
+                        aria-label={`Due-date window in days for ${t.label}`}
+                        aria-invalid={parsed !== null && !parsed.ok}
+                        value={draft ?? (row && usable ? String(row.defaultDays) : '')}
+                        placeholder={`Built-in: ${builtInSlaDays(t.value)}`}
+                        onChange={(e) => setDrafts((d) => ({ ...d, [t.value]: e.target.value }))}
+                        className="w-28 p-2 border border-[var(--color-border)] rounded text-sm font-mono"
+                      />
+                      <span className="text-xs text-[var(--color-text-muted)]">days (1–{SLA_DEFAULT_DAYS_MAX})</span>
+                      <Button size="sm" onClick={() => void save(t.value, t.label)} disabled={!changed || busy !== null} loading={busy === t.value}>
+                        Save
+                      </Button>
+                      {row && (
+                        <Button size="sm" variant="secondary" onClick={() => void clear(t.value, t.label)} disabled={busy !== null}>
+                          Use built-in
+                        </Button>
+                      )}
+                    </div>
+                    {parsed !== null && !parsed.ok && (
+                      <div role="alert" className="text-[11px] text-rose-700">{parsed.error}</div>
+                    )}
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                      {!row
+                        ? `Built-in window: ${builtInSlaDays(t.value)} day(s).`
+                        : usable
+                          ? `Saved: ${row.defaultDays} day(s) — the clock warns after ${warnAfterDays(row.defaultDays)} day(s).`
+                          : null}
+                    </div>
+                    {row && !usable && (
+                      <div role="alert" className="text-[11px] text-amber-700">
+                        The stored window ({String(row.defaultDays)}) is outside 1–{SLA_DEFAULT_DAYS_MAX} days: new requests use the built-in {builtInSlaDays(t.value)} day(s). Enter a window, or use the built-in one.
+                      </div>
+                    )}
+                    {notice && notice.type === t.value && (
+                      <div role={notice.tone === "error" ? "alert" : "status"} className={`text-[11px] ${notice.tone === "error" ? "text-rose-700" : "text-emerald-700"}`}>
+                        {notice.text}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
