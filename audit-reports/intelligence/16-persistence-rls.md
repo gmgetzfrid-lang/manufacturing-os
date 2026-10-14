@@ -822,7 +822,7 @@ No page calls this branch today (the graph posts `{ orgId }` only), so nothing a
 ## IRLS-17 · `supabase/schema.sql` cannot run on an empty database — the documented first step of a fresh install fails at line 328
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). `schema.sql` is the shared pre-migration baseline, last reshaped by document-control `PKG-14` / `HLD-12`. Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
 - **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness, `npm run test:db`)
 - **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-17 on its PostgreSQL 16 replay; confirmed by the integrator by reading at the I-17 merge; not yet challenged by a second party).
@@ -847,6 +847,54 @@ lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements t
 
 - [ ] `supabase/schema.sql` runs as ONE script on an empty Supabase project with zero errors (forward references reordered or moved to their migrations; the `pg_trgm` extension statement on its own line; the `archived_at` index removed or its column added). No live database is touched: the file is never re-run on one (DB-8).
 - [ ] `BASELINE_KNOWN_ERRORS` in `lib/__tests__/rls/replayKnownDefects.ts` is empty, and `npm run test:db` passes.
+
+
+**Resolution (2026-10-14, intelligence Round G).** `supabase/schema.sql` now runs as one script on an empty database with zero errors (intelligence I-27 FRESH-INSTALL REPLAY; the integrator's exception for this package allowed the edit). Reproduced first on HEAD `e13bc7b`. Sent as one script onto the harness's stand-in, the file failed with `relation "projects" does not exist` and applied nothing. Statement by statement, the harness recorded 16 failing statements.
+
+**Is `schema.sql` ever re-run on an existing database?** No. Its header says "Never re-run this file on a live database" (DB-8: its frozen policy and function bodies would restore over later hardening), and `schemaBootstrapCensus.test.ts` requires that sentence. The file's only use is the first step of a fresh install: an empty project gets this file, then every numbered migration. The Docker image does not run it (`docs/SELF_HOST_DOCKER.md` points the app at an existing Supabase project, which is set up this way), and data exports bundle it as `schema/schema.sql` (`lib/exportRunner.ts`). Each change below would still be harmless if the file were re-run (tested below).
+
+**What landed, failure by failure (all 16):**
+- `:319-331` (4 statements): the `project_documents` copy and its three indexes are removed. `migrations/20260609_phase1_normalization.sql:66-78` carries the same text byte for byte, and `:192` turns RLS on. `projects` is made at `:933`, so the copy could not run where it stood.
+- `:400` (1): the `document_versions_archived_idx` line is removed. This file's `document_versions` has no `archived_at` column. `20260808_archive_foundation.sql` adds `archived_at` and `archive_id` and builds this same index.
+- `:501` (1): `CREATE EXTENSION IF NOT EXISTS pg_trgm;` now sits on its own line. It was glued to the end of the comment line above (`….sql).CREATE EXTENSION …`), so it never ran. `20260724` creates the same extension and the same `tickets_ticket_id_trgm_idx`; with this change the file builds them first, and 20260724's statements are no-ops.
+- `:656-663` (7): the `milestones` copy and its six indexes are removed. `20260614_phase7_milestones.sql` and the milestone migrations after it make every column and index the copy named. The copy was a partial mirror (it had `first_completed_at`, which `20260718` adds), and it also referenced `projects` ahead of `:933`.
+- `:1392`, `:1393`, `:1395` (3): in the bootstrap RLS block, the `project_documents` and `milestones` lines are gone (their migrations turn RLS on). `document_assets` became `ALTER TABLE IF EXISTS document_assets ENABLE ROW LEVEL SECURITY;`. That table is made here only inside the DO block that checks for `assets`, so on a fresh install the statement is a NOTICE, not an error.
+
+The header no longer lists `milestones` among the tables the file creates, and it gains a paragraph: the file runs as ONE script on an empty database (IRLS-17), and nothing in it may reference a table created further down. Every other statement is unchanged: no function, policy or trigger was added or removed, so the frozen set of 4 functions and 27 policies holds.
+
+**Why remove the copies rather than move them below `projects`.** Both were measured on PostgreSQL 16.13 by comparing a `pg_dump --schema-only` of the full fresh install (`schema.sql` as one script, then all 303 migrations) with HEAD's harness install (the baseline run statement by statement, then `20260630` re-run):
+- Removing them gives an end state identical to HEAD's harness install. The only differences are IRLS-19's `20261075` objects and the apply-time timestamp `20261104` writes into `project_intake_links_ttl`.
+- Moving them puts `milestones.first_completed_at` in a different column position, because the copy did not match the table the migrations build.
+
+Under DB-8 the migrations are the single source of truth, and the header already says everything added since the baseline "lives ONLY in the numbered migrations". So the copies went to the files that already make them.
+
+**The harness now replays the literal install.** `lib/__tests__/rls/replay.ts` sends `schema.sql` as ONE simple-query message, the editor's way, through the same transport and size stop as each migration (`runAsPaste`; 63 kB, under the 120 kB limit). It no longer runs the file statement by statement. `lib/__tests__/rls/replayKnownDefects.ts`: `BASELINE_KNOWN_ERRORS` is empty, and its comment keeps the history.
+
+**Tests.**
+- `lib/__tests__/intelRoundGFreshInstallReplay.test.ts` (default suite), "IRLS-17: supabase/schema.sql runs as one script on an empty database":
+  - A top-to-bottom census: no `REFERENCES`, index or `ALTER TABLE` without `IF EXISTS` reaches a table the file has not made yet, and a table made only inside a DO block does not count outside it.
+  - No index names a column the table does not have yet.
+  - The census catches each shape it guards (a hand-made fixture), so it is not vacuous.
+  - No statement is glued to the end of a comment line, and `pg_trgm` is created before the first trigram index.
+  - The three removed copies are made, unchanged in effect, by their migrations: `20260609` holds the `project_documents` copy byte for byte; every `milestones` column is in the sequence's census (`helpers/schemaKeys.ts`) and every index is in a migration; `20260808` holds the `archived_at` column and index.
+  - The header says the file runs as one script and is never re-run.
+  - Against HEAD's `schema.sql`, four of these tests fail, naming `REFERENCES projects`, the `archived_at` index, `document_assets` and the hidden `CREATE EXTENSION`.
+- `lib/__tests__/intelRoundGDbHarness.test.ts` (default suite): `BASELINE_KNOWN_ERRORS` and `OUT_OF_ORDER_FILES` are pinned empty (the pin used to require a non-empty list), and the replay is pinned to send `schema.sql` as one message.
+- `lib/__tests__/rls/freshReplay.test.ts` (opt-in):
+  - "IRLS-17: supabase/schema.sql, sent as ONE script (the editor's way), runs on the empty stand-in with zero errors".
+  - "IRLS-17: schema.sql alone, pasted as one script on an empty database, ends with its bootstrap census". The last result set lists only `locked — no policy yet: apply the migrations` rows (`projects` among them) and no `RLS DISABLED` row. Every table has RLS on. The trigram index is built. `project_documents`, `milestones`, `document_assets` and `document_versions_archived_idx` are absent until their migrations run.
+  - "IRLS-17: every statement schema.sql gained is a no-op on an existing (fully migrated) database". The three statements run with no error on a copy of the full replay, and the extension oid and version, the index oid and definition, and `document_assets`' RLS flag are unchanged.
+  - Against HEAD's `schema.sql`, 15 of the file's 19 tests fail, because the one-script baseline applies nothing and every later file then fails.
+
+`schemaBootstrapCensus.test.ts` still passes unchanged: the header sentences, RLS on every table the file creates, the census as the last statement, and the frozen function and policy set.
+
+Measured 2026-10-14 on PostgreSQL 16.13 with pgvector 0.6.0, `npm run test:db` exit 0. The replay logged `baseline supabase/schema.sql as one script: ok` and 303 migrations with no failure line; the four suites pass (59 tests); the scratch cluster was deleted afterwards.
+
+**Done-when.**
+- ✓ `supabase/schema.sql` runs as ONE script with zero errors on an empty database carrying the harness's Supabase stand-in (PostgreSQL 16.13: its roles, default privileges, `auth` schema, publication and pgvector). Of the four routes the record offered: the forward references moved to their migrations, which already carried them; the `pg_trgm` statement is on its own line; and the `archived_at` index is removed, its column and index coming from `20260808`. No live database is touched: the file is never re-run on one (DB-8, above). A note on "empty Supabase project": this is the harness's install, not a hosted project. The integrator's DEC-90 ruling in this package's brief counts that install in place of a real Supabase project, and it is the install `IRLS-6` done-when 3 reads. The one statement the file now runs that it did not before, `CREATE EXTENSION IF NOT EXISTS pg_trgm`, is the statement `20260724:60` already runs, a file older than the paste guide's range (`20261007` on), so one every live database has applied.
+- ✓ `BASELINE_KNOWN_ERRORS` in `lib/__tests__/rls/replayKnownDefects.ts` is empty, and `npm run test:db` passes (exit 0).
+
+**Scope / residual.** None in this finding. The `.github/workflows/ci.yml` comment still says every schema change "is mirrored into supabase/schema.sql". That predates DB-8 and contradicts the file's header. It is a comment only, outside this package's files, and noted here for the integrator.
 
 ---
 

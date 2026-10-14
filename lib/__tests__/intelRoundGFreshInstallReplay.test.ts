@@ -11,10 +11,18 @@
 //     census (intelRoundGMigrationOrder.test.ts), which did not look at
 //     indexes; 20260630's guarded statement is the original, and 20260707
 //     builds the same index with the table.
+//   * IRLS-17: supabase/schema.sql runs as ONE script on an empty database,
+//     so read top to bottom nothing in it reaches a table it has not made
+//     yet (a REFERENCES, an index, an ALTER TABLE without IF EXISTS), no
+//     index names a column the table does not have at that point, and no
+//     statement hides at the end of a comment line; the copies it no longer
+//     carries (project_documents, milestones, the archived_at index) are
+//     made, unchanged in effect, by their numbered migrations.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { censusSchema } from "./helpers/schemaKeys";
 
 const root = process.cwd();
 const MIG = join(root, "supabase", "migrations");
@@ -102,5 +110,197 @@ describe("IRLS-18: no index reaches a table the sequence creates later", () => {
     ]) expect(sql, stmt).toContain(stmt);
     // still no function, policy or trigger (DB-8)
     expect(stripSqlComments(sql)).not.toMatch(/CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|POLICY|TRIGGER)/i);
+  });
+});
+
+// ── IRLS-17: schema.sql as one script, read top to bottom ──────────────────
+
+function matchParen(src: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "'") { const j = src.indexOf("'", i + 1); if (j < 0) return -1; i = j; continue; }
+    if (ch === "(") depth++;
+    else if (ch === ")") { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+function splitTop(body: string): string[] {
+  const out: string[] = []; let depth = 0; let cur = "";
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "'") { const j = body.indexOf("'", i + 1); if (j < 0) { cur += body.slice(i); break; } cur += body.slice(i, j + 1); i = j; continue; }
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+const CONSTRAINT_HEAD = /^(CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN|EXCLUDE|LIKE)\b/i;
+
+/**
+ * Each statement of a one-script baseline that reaches a table, or names an
+ * index column, the script has not made at that point. A table made only
+ * inside a DO block is conditional: it counts for statements in that same
+ * block, never for one outside it; a statement inside a DO block is the
+ * block's own business (it runs its own existence check).
+ */
+function forwardReferences(raw: string): string[] {
+  const src = stripSqlComments(raw);
+  const blocks = [...src.matchAll(doBlockRe)].map((m) => ({ from: m.index!, to: m.index! + m[0].length }));
+  const inBlock = (pos: number) => blocks.some((b) => pos >= b.from && pos < b.to);
+  // where each table is made (unconditionally), and each column it gains
+  const made = new Map<string, number>();
+  const cols: Array<{ t: string; c: string; pos: number }> = [];
+  for (const m of src.matchAll(createRe)) {
+    if (inBlock(m.index!)) continue;
+    const t = m[1].toLowerCase();
+    if (!made.has(t)) made.set(t, m.index!);
+    const open = m.index! + m[0].length - 1;
+    const close = matchParen(src, open);
+    for (const el of splitTop(src.slice(open + 1, close))) {
+      const c = el.match(/^"?([a-z_][a-z0-9_]*)"?\s+/i);
+      if (c && !CONSTRAINT_HEAD.test(el)) cols.push({ t, c: c[1].toLowerCase(), pos: m.index! });
+    }
+  }
+  for (const m of src.matchAll(/\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?/gi)) {
+    if (!inBlock(m.index!)) cols.push({ t: m[1].toLowerCase(), c: m[2].toLowerCase(), pos: m.index! });
+  }
+  const isMade = (t: string, pos: number) => t.startsWith("auth.") || (made.has(t) && made.get(t)! < pos);
+  const out: string[] = [];
+  for (const m of src.matchAll(/\bREFERENCES\s+((?:"?[a-z_][a-z0-9_]*"?\.)?"?[a-z_][a-z0-9_]*"?)/gi)) {
+    if (inBlock(m.index!)) continue;
+    const t = m[1].replace(/"/g, "").toLowerCase().replace(/^public\./, "");
+    if (!isMade(t, m.index!)) out.push(`REFERENCES ${t} before it is made`);
+  }
+  for (const m of src.matchAll(indexRe)) {
+    if (inBlock(m.index!)) continue;
+    const t = m[1].toLowerCase();
+    if (!isMade(t, m.index!)) { out.push(`an index on ${t} before it is made`); continue; }
+    // the index's plain columns must exist at this point
+    const after = src.slice(m.index! + m[0].length);
+    const using = after.match(/^\s*(?:USING\s+\w+\s*)?\(/i);
+    if (!using) continue;
+    const open = m.index! + m[0].length + using[0].length - 1;
+    const close = matchParen(src, open);
+    const tail = src.slice(close + 1, close + 1 + 400).split(";")[0];
+    const where = tail.match(/^\s*WHERE\s+([\s\S]*)$/i)?.[1] ?? "";
+    const named = [
+      ...splitTop(src.slice(open + 1, close)).filter((e) => !e.includes("(")).map((e) => e.split(/\s+/)[0]),
+      ...[...where.matchAll(/\b([a-z_][a-z0-9_]*)\s+IS\s+(?:NOT\s+)?NULL\b/gi)].map((w) => w[1]),
+    ].map((c) => c.replace(/"/g, "").toLowerCase());
+    for (const c of named) {
+      if (!cols.some((x) => x.t === t && x.c === c && x.pos < m.index!)) out.push(`an index on ${t}(${c}) before the column exists`);
+    }
+  }
+  for (const m of src.matchAll(/\bALTER\s+TABLE\s+(IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?/gi)) {
+    if (inBlock(m.index!) || m[1]) continue;
+    const t = m[2].toLowerCase();
+    if (!isMade(t, m.index!)) out.push(`ALTER TABLE ${t} before it is made${made.has(t) ? "" : " (made only conditionally, or not here at all)"}`);
+  }
+  return [...new Set(out)];
+}
+
+/** The copies schema.sql carried until IRLS-17, as they stood (e13bc7b). */
+const OLD_PROJECT_DOCUMENTS = `CREATE TABLE IF NOT EXISTS project_documents (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id        UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  project_id    UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  document_id   UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ DEFAULT NOW(),
+  source        TEXT NOT NULL DEFAULT 'checkout' CHECK (source IN ('checkout','manual')),
+  UNIQUE (project_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS project_documents_project_idx  ON project_documents(project_id);
+CREATE INDEX IF NOT EXISTS project_documents_document_idx ON project_documents(document_id);
+CREATE INDEX IF NOT EXISTS project_documents_org_idx      ON project_documents(org_id);`;
+const OLD_MILESTONE_COLUMNS = [
+  "id", "org_id", "project_id", "document_id", "name", "description", "weight", "planned_at", "actual_at", "first_completed_at",
+  "status", "linked_revision_label", "linked_ticket_id", "source", "external_ref", "created_at", "created_by", "created_by_name",
+  "updated_at", "updated_by", "completed_by", "completed_by_name", "status_reason",
+];
+const OLD_MILESTONE_INDEXES = [
+  "CREATE INDEX IF NOT EXISTS milestones_org_idx ON milestones(org_id);",
+  "CREATE INDEX IF NOT EXISTS milestones_project_idx ON milestones(project_id) WHERE project_id IS NOT NULL;",
+  "CREATE INDEX IF NOT EXISTS milestones_document_idx ON milestones(document_id) WHERE document_id IS NOT NULL;",
+  "CREATE INDEX IF NOT EXISTS milestones_org_planned_idx ON milestones(org_id, planned_at);",
+  "CREATE INDEX IF NOT EXISTS milestones_org_source_idx ON milestones(org_id, source);",
+  "CREATE UNIQUE INDEX IF NOT EXISTS milestones_external_ref_uniq ON milestones(org_id, source, external_ref) WHERE external_ref IS NOT NULL;",
+];
+const squash = (x: string) => x.replace(/\s+/g, " ").trim().toLowerCase();
+
+describe("IRLS-17: supabase/schema.sql runs as one script on an empty database", () => {
+  const schema = read("supabase/schema.sql");
+
+  it("read top to bottom, nothing reaches a table the file has not made yet, and no index names a column the table does not have yet", () => {
+    expect(forwardReferences(schema)).toEqual([]);
+  });
+
+  it("the census catches every shape the one-script run stopped on (it is not vacuous)", () => {
+    const pre = [
+      "CREATE TABLE IF NOT EXISTS orgs (id UUID PRIMARY KEY);",
+      "CREATE TABLE IF NOT EXISTS t1 (id UUID, p UUID REFERENCES projects(id));",
+      "CREATE TABLE IF NOT EXISTS dv (id UUID, org_id UUID);",
+      "CREATE INDEX IF NOT EXISTS dv_archived_idx ON dv(org_id, archived_at) WHERE archived_at IS NOT NULL;",
+      "DO $$ BEGIN IF EXISTS (SELECT 1) THEN CREATE TABLE IF NOT EXISTS da (id UUID); END IF; END$$;",
+      "ALTER TABLE da ENABLE ROW LEVEL SECURITY;",
+      "ALTER TABLE IF EXISTS da ENABLE ROW LEVEL SECURITY;",
+      "CREATE INDEX IF NOT EXISTS x ON later (id);",
+      "CREATE TABLE IF NOT EXISTS projects (id UUID PRIMARY KEY);",
+      "CREATE TABLE IF NOT EXISTS later (id UUID);",
+    ].join("\n");
+    expect(forwardReferences(pre).sort()).toEqual([
+      "ALTER TABLE da before it is made (made only conditionally, or not here at all)",
+      "REFERENCES projects before it is made",
+      "an index on dv(archived_at) before the column exists",
+      "an index on later before it is made",
+    ]);
+  });
+
+  it("no statement hides at the end of a comment line; pg_trgm is created on its own line before the first trigram index", () => {
+    // a statement glued after the end of a comment's sentence, as
+    // ".CREATE EXTENSION IF NOT EXISTS pg_trgm;" was until IRLS-17
+    const glued = /[;.)]\s*(CREATE|ALTER|DROP|INSERT|GRANT|REVOKE)\s+[A-Z][A-Z ]*\s+"?[a-z_][\s\S]*;\s*$/;
+    expect(glued.test("-- (see migration 20260724_ticket_numbering.sql).CREATE EXTENSION IF NOT EXISTS pg_trgm;")).toBe(true);
+    const hidden = schema.split("\n").filter((l) => /^\s*--/.test(l) && glued.test(l));
+    expect(hidden).toEqual([]);
+    const ext = schema.search(/^CREATE EXTENSION IF NOT EXISTS pg_trgm;$/m);
+    expect(ext).toBeGreaterThan(0);
+    expect(ext).toBeLessThan(schema.indexOf("gin_trgm_ops"));
+  });
+
+  it("project_documents, milestones and the archived_at index live only in their migrations, which make them unchanged in effect", () => {
+    const code = stripSqlComments(schema);
+    expect(code).not.toMatch(/CREATE TABLE IF NOT EXISTS (project_documents|milestones)\b/);
+    expect(code).not.toMatch(/document_versions_archived_idx/);
+    expect(code).not.toMatch(/ALTER TABLE (project_documents|milestones) /);
+    // project_documents: 20260609 carries the copy byte for byte (and its RLS)
+    expect(mig("20260609_phase1_normalization.sql")).toContain(OLD_PROJECT_DOCUMENTS);
+    expect(mig("20260609_phase1_normalization.sql")).toContain("ALTER TABLE project_documents ENABLE ROW LEVEL SECURITY;");
+    // milestones: every column and index of the copy is made by the numbered sequence
+    const census = censusSchema();
+    const missing = OLD_MILESTONE_COLUMNS.filter((c) => !census.get("milestones")?.columns.has(c));
+    expect(missing).toEqual([]);
+    const all = squash(numbered.map((f) => stripSqlComments(f.sql)).join("\n"));
+    for (const ix of OLD_MILESTONE_INDEXES) expect(all, ix).toContain(squash(ix));
+    expect(mig("20260614_phase7_milestones.sql")).toContain("ALTER TABLE milestones ENABLE ROW LEVEL SECURITY;");
+    // the archived_at column and its index: 20260808
+    const m808 = squash(mig("20260808_archive_foundation.sql"));
+    expect(m808).toContain(squash("alter table document_versions add column if not exists archived_at timestamptz;"));
+    expect(m808).toContain(squash("CREATE INDEX IF NOT EXISTS document_versions_archived_idx ON document_versions(org_id, archived_at) WHERE archived_at IS NOT NULL;"));
+    // document_assets: RLS stays on wherever the table exists
+    expect(schema).toContain("ALTER TABLE IF EXISTS document_assets ENABLE ROW LEVEL SECURITY;");
+    expect(mig("20260609_phase1_normalization.sql")).toContain("ALTER TABLE document_assets ENABLE ROW LEVEL SECURITY;");
+  });
+
+  it("the header says the file runs as one script and is never re-run on a live database", () => {
+    const header = schema.slice(0, schema.indexOf("-- TABLES"));
+    expect(header).toMatch(/Never re-run this file on a live database/);
+    expect(header).toMatch(/It runs as ONE script on an empty database/);
+    expect(header).toMatch(/IRLS-17/);
+    expect(header).not.toMatch(/projects, milestones/);
   });
 });

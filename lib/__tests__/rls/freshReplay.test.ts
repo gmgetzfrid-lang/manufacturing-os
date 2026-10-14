@@ -86,8 +86,79 @@ describe.skipIf(skip !== null)("IRLS-6: a fresh install replays in filename orde
     expect(over).toEqual([]);
   });
 
-  it("supabase/schema.sql: the statements that fail on an empty database are exactly the recorded IRLS-17 set", () => {
+  it("IRLS-17: supabase/schema.sql, sent as ONE script (the editor's way), runs on the empty stand-in with zero errors", () => {
+    expect(BASELINE_KNOWN_ERRORS).toEqual([]);
     expect([...report().baselineErrors].sort()).toEqual([...BASELINE_KNOWN_ERRORS].sort());
+    // the file still fits in one simple-query message
+    expect(statSync(join(process.cwd(), "supabase", "schema.sql")).size).toBeLessThanOrEqual(MAX_C_BYTES);
+  });
+
+  it("IRLS-6 done-when 2: zero errors — schema.sql as one script, then every numbered migration in filename order, nothing re-run", () => {
+    const r = report();
+    expect(r.baselineErrors).toEqual([]);
+    expect(r.files.filter((f) => !f.ok).map((f) => `${f.file}: ${f.error}`)).toEqual([]);
+    expect(r.retries).toEqual([]);
+    // the one operator switch is the documented one, for its file alone
+    expect(Object.keys(OPERATOR_SWITCHES)).toEqual(["20261141_prj_roundG_intake_token_hash_and_adoption.sql"]);
+  });
+
+  it("IRLS-17: schema.sql alone, pasted as one script on an empty database, ends with its bootstrap census — nothing unprotected, the trigram index built, and the tables only the migrations make absent", () => {
+    const db = "mos_irls17_alone";
+    const { conn } = mosDb();
+    admin("postgres", `CREATE DATABASE ${db}`);
+    try {
+      const standIn = runPsql(conn!, db, conn!.superuser, { file: join(process.cwd(), "lib", "__tests__", "rls", "supabaseStandIn.sql"), stopOnError: true });
+      expect(standIn.ok).toBe(true);
+      const r = runPsql(conn!, db, "postgres", { sql: readFileSync(join(process.cwd(), "supabase", "schema.sql"), "utf8") });
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+      // the last result set the editor shows: table|state rows, none unprotected
+      const census = r.stdout.split("\n").filter((l) => l.includes("|"));
+      expect(census.length).toBeGreaterThan(10);
+      expect(census.filter((l) => /RLS DISABLED/.test(l))).toEqual([]);
+      for (const l of census) expect(l).toMatch(/^[a-z_0-9]+\|locked — no policy yet: apply the migrations$/);
+      expect(census).toContain("projects|locked — no policy yet: apply the migrations");
+      // RLS is on for every table the file made
+      expect(admin(db, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity`)).toBe("0");
+      expect(Number(admin(db, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'`))).toBeGreaterThan(40);
+      // the CREATE EXTENSION that sat at the end of a comment line now runs
+      expect(admin(db, `SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'tickets_ticket_id_trgm_idx'`)).toBe(
+        "CREATE INDEX tickets_ticket_id_trgm_idx ON public.tickets USING gin (ticket_id gin_trgm_ops)",
+      );
+      // the forward-referencing tables are the migrations' (20260609, 20260614), and the archived index is 20260808's
+      for (const t of ["project_documents", "milestones", "document_assets", "document_versions_archived_idx"]) {
+        expect(admin(db, `SELECT to_regclass('public.${t}') IS NULL`), t).toBe("t");
+      }
+    } finally {
+      admin("postgres", `DROP DATABASE ${db}`);
+    }
+  });
+
+  it("IRLS-17: every statement schema.sql gained is a no-op on an existing (fully migrated) database", () => {
+    // schema.sql is never re-run on a live database (its header, DB-8); this
+    // shows the changes would not matter even if it were. The removals cannot
+    // touch a database; the three statements it gained are these.
+    const gained = [
+      "CREATE EXTENSION IF NOT EXISTS pg_trgm;",
+      "CREATE INDEX IF NOT EXISTS tickets_ticket_id_trgm_idx ON tickets USING GIN (ticket_id gin_trgm_ops);",
+      "ALTER TABLE IF EXISTS document_assets ENABLE ROW LEVEL SECURITY;",
+    ];
+    const schema = readFileSync(join(process.cwd(), "supabase", "schema.sql"), "utf8");
+    for (const g of gained) expect(schema.split("\n").some((l) => l.startsWith(g)), g).toBe(true);
+    const db = "mos_irls17_existing";
+    admin("postgres", `CREATE DATABASE ${db} TEMPLATE ${REPLAY_DB}`);
+    try {
+      const state = () => admin(db, `SELECT (SELECT oid::text || ' ' || extversion FROM pg_extension WHERE extname = 'pg_trgm')
+        || ' / ' || (SELECT c.oid::text || ' ' || pg_get_indexdef(c.oid) FROM pg_class c WHERE c.relname = 'tickets_ticket_id_trgm_idx')
+        || ' / ' || (SELECT relrowsecurity::text FROM pg_class WHERE oid = 'public.document_assets'::regclass)`);
+      const before = state();
+      expect(before).toMatch(/ \/ true$/);
+      const r = runPsql(mosDb().conn!, db, "postgres", { sql: gained.join("\n") });
+      expect(r.errors).toEqual([]);
+      expect(state()).toBe(before);
+    } finally {
+      admin("postgres", `DROP DATABASE ${db}`);
+    }
   });
 
   it("every numbered migration runs in filename order, except the recorded out-of-order files", () => {
@@ -292,7 +363,11 @@ describe.skipIf(skip !== null)("IRLS-6: a fresh install replays in filename orde
   describe("/api/admin/schema-health against the fresh install", () => {
     beforeAll(() => { h.db = REPLAY_DB; });
 
-    it("reports every EXPECTED_TABLE, column and function present", async () => {
+    it("reports every EXPECTED_TABLE, column and function present (IRLS-6 done-when 3: the literal fresh install, read through the PostgREST stand-in — DEC-90)", async () => {
+      // the install is the literal one: schema.sql as one script, every file in order, nothing re-run
+      expect(report().baselineErrors).toEqual([]);
+      expect(report().files.every((f) => f.ok)).toBe(true);
+      expect(report().retries).toEqual([]);
       const { GET } = await import("@/app/api/admin/schema-health/route");
       const { NextRequest } = await import("next/server");
       const req = new NextRequest("http://localhost/api/admin/schema-health?orgId=00000000-0000-4000-8000-0000000000aa", {

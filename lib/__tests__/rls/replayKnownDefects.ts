@@ -8,36 +8,18 @@
 // Measured on PostgreSQL 16.13 with pgvector 0.6.0, 2026-10-14.
 
 /**
- * supabase/schema.sql cannot run as one script on an empty database (the
- * documented first step of a fresh install), so the harness runs it statement
- * by statement in autocommit and holds the statements that fail to this exact
- * multiset of messages. Every object they would have made is (re)made by the
- * numbered migrations, which the fresh-install census then checks.
- * Finding: intelligence IRLS-17 (owner: the integrator, to route).
+ * The error supabase/schema.sql stops on when it is sent as ONE script — the
+ * editor's way, which is how the replay sends it — on an empty database. An
+ * error anywhere rolls the whole paste back, so the list holds at most one.
+ * Empty since 2026-10-14 (intelligence I-27, IRLS-17): the file runs as one
+ * script with zero errors. Until then it stopped at :328 (project_documents
+ * referenced projects, created at :933), the harness ran it statement by
+ * statement instead, and 16 statements failed even so (the forward
+ * references, an index on a column the file never made, a CREATE EXTENSION
+ * hidden at the end of a comment line, and RLS switched on for tables only
+ * the migrations create).
  */
-export const BASELINE_KNOWN_ERRORS: readonly string[] = [
-  // :319-331 project_documents references projects (created at :933)
-  'relation "projects" does not exist',
-  'relation "project_documents" does not exist',
-  'relation "project_documents" does not exist',
-  'relation "project_documents" does not exist',
-  // :400 document_versions has no archived_at column in this file
-  'column "archived_at" does not exist',
-  // :501 the CREATE EXTENSION pg_trgm sits at the end of a comment line
-  'operator class "gin_trgm_ops" does not exist for access method "gin"',
-  // :656-663 milestones references projects (created at :933)
-  'relation "projects" does not exist',
-  'relation "milestones" does not exist',
-  'relation "milestones" does not exist',
-  'relation "milestones" does not exist',
-  'relation "milestones" does not exist',
-  'relation "milestones" does not exist',
-  'relation "milestones" does not exist',
-  // :1392-1395 RLS enabled on tables only the migrations create
-  'relation "project_documents" does not exist',
-  'relation "document_assets" does not exist',
-  'relation "milestones" does not exist',
-];
+export const BASELINE_KNOWN_ERRORS: readonly string[] = [];
 
 export interface OutOfOrderFile {
   file: string;
