@@ -55,6 +55,8 @@ import { GovernedCallError } from "@/lib/ai/gateError";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
 import type { ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
+import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
+import { aiReadability } from "@/lib/aiBoundary";
 import { storeProposals } from "@/lib/orchestrator/proposals";
 
 export const runtime = "nodejs";
@@ -260,7 +262,7 @@ export async function POST(req: NextRequest) {
     if (designations.length > 0) {
       const [{ data: ctrlDocs }, { data: kDocs }, { data: exDocs }] = await Promise.all([
         supabaseAdmin.from("documents")
-          .select("id, document_number, title, library_id")
+          .select("id, document_number, title, library_id, ai_excluded, status")
           .eq("org_id", orgId).eq("ai_excluded", false).neq("status", "Archived").limit(3000),
         supabaseAdmin.from("knowledge_documents")
           .select("id, name, library_id, source_document_id")
@@ -274,7 +276,14 @@ export async function POST(req: NextRequest) {
         const key = squash(m);
         if (key.length < 4 || seen.has(key)) continue;
         seen.add(key);
-        const ctrl = ((ctrlDocs ?? []) as Array<Record<string, unknown>>).find((d) => {
+        // KACL-9: the held-back reason of lib/aiBoundary aiReadability (the
+        // one function every AI door asks) binds a chip that names a
+        // controlled document — identity, not text, so not-current or
+        // file-less documents are still named, as before.
+        const ctrl = ((ctrlDocs ?? []) as Array<Record<string, unknown>>).filter((d) => aiReadability({
+          id: String(d.id), status: (d.status as string | null) ?? null, archivedAt: null, currentVersionId: null,
+          aiExcluded: d.ai_excluded === true,
+        }, true).reason !== "held_back").find((d) => {
           const num = squash(String(d.document_number ?? ""));
           const title = squash(String(d.title ?? ""));
           return (num.length >= 4 && num.includes(key)) || (key.length >= 5 && title.includes(key));
@@ -309,10 +318,20 @@ export async function POST(req: NextRequest) {
             .in("id", mirrorIds).not("source_document_id", "is", null);
           for (const m of (mirrors ?? []) as Array<{ id: string; source_document_id: string }>) mirrorSrc.set(m.id, m.source_document_id);
         }
-        const readable = await readableControlledDocIds(principal, [...new Set([...ctrlIds, ...mirrorSrc.values()])]);
+        // KACL-9 / KACL-10: a chip that opens a knowledge MIRROR hands over
+        // the document's text, so its source is judged by the AI boundary as
+        // it stands now (lib/aiBoundary aiReadability, through
+        // aiReadableControlledIds — held back, not current, no current file),
+        // failing closed; the held-back list read above (capped, open on a
+        // failed read) is no longer what decides.
+        const mirrorSources = [...new Set(mirrorSrc.values())];
+        const [readable, aiOk] = await Promise.all([
+          readableControlledDocIds(principal, [...new Set([...ctrlIds, ...mirrorSources])]),
+          mirrorSources.length > 0 ? aiReadableControlledIds(orgId, mirrorSources) : Promise.resolve(new Set<string>()),
+        ]);
         mentionedDocs = mentionedDocs.filter((d) =>
           d.openUrl.startsWith("/documents/") ? readable.has(d.id)
-          : !mirrorSrc.has(d.id) || readable.has(mirrorSrc.get(d.id) as string));
+          : !mirrorSrc.has(d.id) || (readable.has(mirrorSrc.get(d.id) as string) && aiOk.has(mirrorSrc.get(d.id) as string)));
       } catch { mentionedDocs = []; }
     }
   } catch { /* chips are decoration — never block the answer */ }

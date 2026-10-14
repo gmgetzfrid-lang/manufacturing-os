@@ -196,6 +196,15 @@ describe("KACL-9 done-when 3 — aiReadability at the doors that still tested ai
     expect(src("lib/aiBoundaryServer.ts")).toMatch(/const verdict = aiReadability\(/);
   });
 
+  it("the orchestrator's show-me chips: a mirror chip's source is judged by aiReadableControlledIds (failing closed), a controlled-document chip by aiReadability's held-back reason", () => {
+    const r = src("app/api/orchestrator/route.ts");
+    expect(r).toMatch(/mirrorSources\.length > 0 \? aiReadableControlledIds\(orgId, mirrorSources\)/);
+    expect(r).toMatch(/\(readable\.has\(mirrorSrc\.get\(d\.id\) as string\) && aiOk\.has\(mirrorSrc\.get\(d\.id\) as string\)\)/);
+    expect(r).toMatch(/aiExcluded: d\.ai_excluded === true,\s*\}, true\)\.reason !== "held_back"\)\.find\(/);
+    // the chips' check still fails closed as a whole
+    expect(r).toContain("catch { mentionedDocs = []; }");
+  });
+
   it("the link proposer judges its documents with aiReadability (held back is dropped, as before)", () => {
     const p = src("lib/linkProposerServer.ts");
     expect(p).toMatch(/import \{ aiReadability \} from "@\/lib\/aiBoundary";/);

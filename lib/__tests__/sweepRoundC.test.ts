@@ -379,7 +379,10 @@ describe("SURF-7 / EGRESS-3 — pinned at the source", () => {
       expect(r).not.toContain('(member.role as string) ?? "Viewer"');
       expect(r).toMatch(/principal, actorName/);
     }
-    expect(chat).toContain("readableControlledDocIds(principal, [...new Set([...ctrlIds, ...mirrorSrc.values()])])");
+    // intelligence I-12 (KACL-9): the mirror sources are also judged by the AI
+    // boundary, failing closed, beside the caller's read set.
+    expect(chat).toContain("readableControlledDocIds(principal, [...new Set([...ctrlIds, ...mirrorSources])])");
+    expect(chat).toContain("aiReadableControlledIds(orgId, mirrorSources)");
     expect(chat).toContain("catch { mentionedDocs = []; }");
   });
 });
