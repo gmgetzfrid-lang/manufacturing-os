@@ -31,7 +31,7 @@ interface Status {
   chunksEmbedded: number;
   pendingProposals: number;
   schemaGaps: number | null;       // null = not admin / unknown
-  recentAsks: Array<{ id: string; question: string; userName: string | null; libraryId: string; at: string }>;
+  recentAsks: Array<{ id: string; question: string; userName: string | null; libraryId: string; threadId: string | null; at: string }>;
   /** Per-source arrival flags: a card shows a shimmer until ITS data has
    *  landed (from snapshot or network) — never a default that reads as a
    *  false "No key saved". */
@@ -111,7 +111,7 @@ export default function IntelligencePage() {
           supabase.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId),
           countPendingProposals(activeOrgId),
           supabase.from("knowledge_questions")
-            .select("id, question, user_name, library_id, created_at")
+            .select("id, question, user_name, library_id, thread_id, created_at")
             .eq("org_id", activeOrgId)
             .order("created_at", { ascending: false })
             .limit(5)
@@ -125,6 +125,7 @@ export default function IntelligencePage() {
             id: String(a.id), question: String(a.question),
             userName: (a.user_name as string) ?? null,
             libraryId: String(a.library_id),
+            threadId: (a.thread_id as string | null) ?? null,
             at: String(a.created_at),
           })),
           countsKnown: true,
@@ -288,7 +289,9 @@ export default function IntelligencePage() {
                 <ul className="space-y-2">
                   {s.recentAsks.map((a) => (
                     <li key={a.id}>
-                      <Link href={`/knowledge/${a.libraryId}`} className="block rounded-lg px-2 py-1.5 -mx-2 hover:bg-[var(--color-surface-2)] transition-colors">
+                      {/* The conversation itself: new asks carry the chat thread id;
+                          older rows were backfilled as one-turn threads under their own id. */}
+                      <Link href={`/assistant?thread=${a.threadId ?? a.id}`} className="block rounded-lg px-2 py-1.5 -mx-2 hover:bg-[var(--color-surface-2)] transition-colors">
                         <div className="text-xs font-bold text-[var(--color-text)] truncate">{a.question}</div>
                         <div className="text-[10px] text-[var(--color-text-faint)]">{a.userName ?? "someone"} · {new Date(a.at).toLocaleString()}</div>
                       </Link>
