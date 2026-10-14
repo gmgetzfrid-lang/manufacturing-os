@@ -748,6 +748,11 @@ async function drainEmailQueue(origin: string, maxBatches: number, label: string
 }
 
 const STALE_ESCALATION_DAYS = 14;
+/** TAX-17 (notifications N15): the escalation's kind, and the kind it was
+ *  written as before the rename — the dedupe reads both, so a session
+ *  escalated before the deploy, whose row 20261206 has not re-filed (it
+ *  keeps a still-active session's row), is never escalated twice. */
+const STALE_ESCALATION_KINDS = ["checkout_stale_escalation", "checkout_released"];
 
 // The escalation writes through the typed sink (notifications N14, TAX-11's
 // tail — ONE statement on the cron's client, as the raw insert was);
@@ -779,11 +784,14 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[])
     id: string; org_id: string; document_id: string; library_id: string | null;
     user_id: string; user_name: string | null; started_at: string; purpose: string | null;
   }>) {
-    // Dedupe: skip if we've already escalated this session.
+    // Dedupe: skip if we've already escalated this session — under its own
+    // kind (TAX-17, N15) or, for an escalation written before the rename and
+    // not re-filed by 20261206 (it keeps a still-active session's row), the
+    // old checkout_released.
     const { data: existing } = await sb
       .from("notifications")
       .select("id")
-      .eq("kind", "checkout_released")
+      .in("kind", STALE_ESCALATION_KINDS)
       .contains("metadata", { staleSessionId: row.id })
       .limit(1);
     if ((existing as unknown[] | null)?.length) continue;
@@ -804,7 +812,7 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[])
     const { error: insErr } = await notifyBatchWithReason(recipients.map((uid) => ({
       orgId: row.org_id,
       userId: uid,
-      kind: "checkout_released" as const,
+      kind: "checkout_stale_escalation" as const,
       title: `Checkout held ${days} days — review needed`,
       body: `${row.user_name || "A user"} has had a document checked out since ${since}${row.purpose ? ` (${row.purpose})` : ""}. Nudge them or force-release if the work is done.`,
       link: row.library_id ? `/documents/${row.library_id}?doc=${row.document_id}` : "/checkouts",

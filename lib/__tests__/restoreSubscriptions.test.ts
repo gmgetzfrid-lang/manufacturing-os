@@ -1,8 +1,8 @@
 // NEDGE-8 (notifications Round G, N9): a restore brings the watch/follow graph
 // back. `subscriptions` was in SKIP_TABLES under a billing reason — but the
 // table is the follow store every `followers: true` notice resolves through
-// (lib/subscriptions.ts, lib/notify/recipients.ts), and billing state lives
-// on the orgs row (lib/subscription.ts). So every restore dropped every
+// (lib/watches.ts, lib/notify/recipients.ts), and billing state lives
+// on the orgs row (lib/billing.ts). So every restore dropped every
 // document / project / asset / library follow and reported it as deliberate.
 //
 // Pinned here, through the one shared write (applyRestoreChunk) on the
@@ -71,13 +71,13 @@ describe("NEDGE-8 — the watch/follow table is restorable", () => {
     }
   });
 
-  it("upserts on its real unique key — the one lib/subscriptions.ts watch() upserts on — and the schema has it", () => {
+  it("upserts on its real unique key — the one lib/watches.ts watch() upserts on — and the schema has it", () => {
     expect(conflictTargetFor("subscriptions")).toBe("user_id,resource_type,resource_id");
     const keys = censusSchema().get("subscriptions")?.keys ?? [];
     expect(keys).toContainEqual(["user_id", "resource_type", "resource_id"]);
   });
 
-  it("every resource type the app follows has a bounded table (lib/subscriptions.ts WatchResourceType + tickets)", () => {
+  it("every resource type the app follows has a bounded table (lib/watches.ts WatchResourceType + tickets)", () => {
     const poly = restorePolymorphicParentFor("subscriptions")!;
     expect(poly).toMatchObject({ typeColumn: "resource_type", idColumn: "resource_id" });
     expect(Object.keys(poly.parents).sort()).toEqual(["asset", "document", "library", "project", "ticket"]);

@@ -1,7 +1,14 @@
-// lib/subscriptions.ts
+// lib/watches.ts — the watch / follow list. TABLE: public.subscriptions
+// (20260622, re-created idempotently in 20260723): one row per (user,
+// resource_type, resource_id) a member follows. It is NOT billing — the org's
+// billing state lives on the orgs row and is read by lib/billing.ts.
 //
-// Generic watch/follow API. Backed by the `subscriptions` table
-// (20260622 migration). Used by WatchButton in the UI and by the
+// Renamed from lib/subscriptions.ts (NEDGE-21, notifications Round G N15):
+// the old name was one letter from the billing module (lib/subscription.ts,
+// now lib/billing.ts), and that collision is how a restore came to skip this
+// table as "billing state" (NEDGE-8).
+//
+// Generic watch/follow API. Used by WatchButton in the UI and by the
 // notification fan-out helpers to find who to notify on an event.
 
 import { supabase } from "@/lib/supabase";

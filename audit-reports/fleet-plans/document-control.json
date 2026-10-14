@@ -727,6 +727,24 @@
     "P16 merged (20261185 \u2014 its guard body is the newest; P25's re-create starts from it)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 at the P16 merge (P16 proposed it as 'P23 STATUS-SURFACE FOLLOW-UPS'; renumbered P25 because P23 DIRECT-WRITE ISSUE RECORD was added at the IS-P1 merge). 20261185 is HELD until P25's app change is deployed AND P25's put-back migration is pasted (paste guide): the integrator does not accept pasting 20261185 first. P23 and P25 both touch lib/revisions.ts and the status editors \u2014 run them one after the other (either order), the second rebases."
+  },
+  {
+   "name": "P26 STATUS-DOOR FOLLOW-UPS \u2014 the remaining retirement doors tell a document's followers: a Void / Archived status change and a split / merge retiring its sources",
+   "findings": [
+    "PROD-17 (notifications; the remaining doors of done-when 1: lib/revisions.ts changeDocumentStatus into Void / Archived, and lib/documentLifecycle/split.ts / merge.ts retiring sources \u2014 each calls lib/staleCopies.ts recallRetiredDocument({ \u2026 newStatus }), which carries the follower notice since N15 (DEC-106); a door that does not personally tell the checkout holder or the package owners passes personallyToldElsewhere: { checkoutHolder: false, packageOwners: false }; the copy holders' recall and its audit row first, the watchers' FYI never awaited in front of the door's return)"
+   ],
+   "files": [
+    "lib/revisions.ts (changeDocumentStatus), lib/documentLifecycle/split.ts, lib/documentLifecycle/merge.ts",
+    "tests: each door sends the follower FYI after the recall; a stalled FYI never delays the door; regression \u2014 every status change, split and merge that works today works the same"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "notifications N15 merged (2026-10-14; recallRetiredDocument's follower notice, 20261206's doc_retired kind)",
+    "no running package edits lib/revisions.ts or lib/documentLifecycle/** at launch"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the N15 merge, 2026-10-14 (DEC-31; PROD-17's Assigned line names it)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

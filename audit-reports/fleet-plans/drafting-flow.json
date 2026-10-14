@@ -430,7 +430,8 @@
     "PROJ-7",
     "LEAK-4 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push: convertTicketToProject's browser history push becomes part of the server-side project link, or is removed)",
     "EVID-1 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push limb, with LEAK-4)",
-    "DEC-101's seam (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): TicketCreateInput.projectId is parsed and not written (lib/ticketCreate.ts, lib/ticketCreateClient.ts) — write project_id in /api/tickets/create"
+    "DEC-101's seam (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): TicketCreateInput.projectId is parsed and not written (lib/ticketCreate.ts, lib/ticketCreateClient.ts) — write project_id in /api/tickets/create",
+    "notifications DELIV-16 / DELIV-7 dw2 (re-owned by the integrator at the N15 merge, 2026-10-14): components/documents/CheckInPanel.tsx's review_requested adopts lib/complianceNotify.ts notifyCompliance (one import line, the alias the seven N14 producers use) — a browser notice to another member is retried only through notification_i_wrote (20261206), never blindly; regression: the check-in's notice reaches exactly whom it reaches today"
    ],
    "severityMix": "1 HIGH, 1 MEDIUM, 7 LOW",
    "files": [
@@ -492,7 +493,9 @@
     "PROD-4 done-when 3 (notifications; assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: computeTransition's newUnreadBy includes ticket.assignedEngineerId, matching the comment route; a test)",
     "DF-P2 hand-offs (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31 — read drafting-flow 99-fix-sequencing.md 'Hand-offs from DF-P2'): HAND-7 done-when 2 / HAND-3 done-when 3 (mount components/requests/SourceDriftBanner.tsx on the ticket page; the queue's 'source moved' chip from driftedSources; the 'Rev advanced' chip compares version ids); FRIC-3 / FRIC-8 readers (show UNIT_UNKNOWN_LABEL for unit_unknown, mark unit_unlisted and unit_unchecked on the queue chip and the ticket page); PERS-6 the request pages' fromRow stops casting row.unit as string",
     "DF-P3 hand-offs (assigned by the integrator 2026-10-13 at the DF-P3 merge, DEC-31 — read drafting-flow 99-fix-sequencing.md 'Hand-offs from DF-P3' IN FULL): LEAK-9 done-whens 1-2 (the cancel dialog's category picker from the engine action's outcomes; GAP-107's measured rate); ROUTE-1 done-when 2 (attentionLabel: a revision with a drafter vs one without); EDGE-7 done-when 3 (the workload board's overdue count uses isPastDue) and the bell reconcile in hooks/useTicketNotifications.ts skipping SLA_NOTICE_ACTIONS rows while the ticket is open — AFTER notifications N4 merges (N4 rebuilds that hook)",
-    "notifications RT-4's tickets DELETE companion in app/(protected)/requests/page.tsx (assigned by the integrator 2026-10-13 at the N4 merge, DEC-31): the list drops a deleted ticket on the realtime DELETE event as the feed does"
+    "notifications RT-4's tickets DELETE companion in app/(protected)/requests/page.tsx (assigned by the integrator 2026-10-13 at the N4 merge, DEC-31): the list drops a deleted ticket on the realtime DELETE event as the feed does",
+    "drafting-flow DCW-5 disclosure (ruled by the integrator under DEC-90 at the DF-P4 fourth fix pass, recorded under DEC-31 — 03-doc-control-wiring.md DCW-5 Scope / residual; DECISIONS.md DEC-107 item 4 as amended): the named document's number and title are copied into metadata.source_document and every ticket reader sees them — ACCEPTED for ticket readers; DF-P9 shows them under the 'restricted' label to a viewer who may not discover the document",
+    "DCW-1 done-when 3 and DCW-7 (restated at the DF-P4 merge 2026-10-14): mount components/requests/LibraryPicker.tsx (built and tested by DF-P4) in the assign modal with currentLibraryId, and send libraryId and unit with the assign action; plus EDGE-8's queue chip for lib/ticketLibrary.ts creationNoticeOwed and PERS-6's fromRow unit cast"
    ],
    "severityMix": "2 HIGH, 11 MEDIUM",
    "files": [
@@ -624,7 +627,8 @@
     "public-surfaces PHYS-17 and PHYS-8 done-when 3: download_audits.ticket_id UUID and attachment_id TEXT (a migration after 20261068's columns; comment the source values drafting / drafting_print / drafting_unstamped / drafting_print_unstamped), and a ticket arm in lib/staleCopies.ts so a superseded ticket deliverable's copies are recalled like a document's",
     "drafting-flow EVID-16: the drafting-ticket copy is stamped and recorded in the server request that serves it (a stamping route), not in the browser after the copy",
     "Wording and observation left by DF-P10 (DEC-31): what 'withdrawn' says for an RFI closed on a review label; reject_final then Force Close keeps issued label N, so the package the requester rejected scans green on CLOSED (base did the same) — decide and record (DEC-90: fail-safe)",
-    "drafting-flow EVID-5 (MEDIUM; its ticket half landed in DF-P10): closes by pointer when EVID-16 (here) and EVID-15 (projects-joint J15) are RESOLVED and document-control's 20261068 policy half is pasted — record the pointer"
+    "drafting-flow EVID-5 (MEDIUM; its ticket half landed in DF-P10): closes by pointer when EVID-16 (here) and EVID-15 (projects-joint J15) are RESOLVED and document-control's 20261068 policy half is pasted — record the pointer",
+    "DCW-4 (assigned at the DF-P4 merge 2026-10-14): a library-only close offers 'Publish as a new document in <library>'; createDocumentWithFile (lib/revisions.ts) gains an optional relatedTicketId recorded on its creation audit row (additive; every existing caller unchanged — pinned), so the deliverable's provenance is provable"
    ],
    "files": [
     "supabase/migrations: the guard limb, the LEAK-7 (a) repair and the download_audits columns (DEC-30 each, lineDiff-pinned, DRLS-16)",
@@ -638,6 +642,25 @@
     "drafting-flow DF-P4 merged (it re-creates ticket_update_guard — start from its body)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-14 at the DF-P10 merge (DEC-31: DF-P10 named these 'a DF-P10 follow-up'). Migration numbers are allocated at launch."
+  },
+  {
+   "name": "DF-P13 SLA DEFAULTS RAIL AND EDITOR — sla_defaults, which now sets every new request's due date and the SLA clock's warnings, is written only by the drafting-configuration editors, and they get an editor for it",
+   "findings": [
+    "EDGE-16 (MEDIUM; opened by DF-P4's fix pass 2026-10-13, package added by the integrator at the DF-P4 merge 2026-10-14): any active member can write sla_defaults — one DEC-30 migration narrows its write policies to Admin / DocCtrl / DraftingSupervisor (caller_holds_any_role, DEC-107 item 3's set, the same set lib/adminSurfaces.ts DRAFTING_CONFIG_EDITORS gates), counts-only inventory first, every reader unchanged",
+    "EDGE-7 done-when 2's editor: the sla_defaults editor on the request-form configuration surface (app/(protected)/admin/requests), validated per request type, a checked write that shows the database's refusal text"
+   ],
+   "files": [
+    "supabase/migrations: one DEC-30 file (sla_defaults write policies re-created from their NEWEST definitions, lineDiff-pinned; DRLS-16)",
+    "app/(protected)/admin/requests/page.tsx (the editor)",
+    "tests: a non-editor's write refused, an editor's write lands, every reader of sla_defaults (lib/ticketSla.ts, app/api/tickets/create) unchanged; the editor renders and saves"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "drafting-flow DF-P4 merged (2026-10-14; DEC-107, 20261209's drafting editor set, the create route's sla_defaults read)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P4 merge, 2026-10-14 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

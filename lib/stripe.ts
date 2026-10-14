@@ -12,7 +12,7 @@
 // are added.
 
 import Stripe from "stripe";
-import { BILLED_STRIPE_STATUSES, holdsLiveSubscription, type SubscriptionStatus } from "@/lib/subscription";
+import { BILLED_STRIPE_STATUSES, holdsLiveSubscription, type SubscriptionStatus } from "@/lib/billing";
 
 let client: Stripe | null = null;
 

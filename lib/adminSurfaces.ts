@@ -55,6 +55,13 @@ export interface AdminSurface {
 }
 
 const CONTROLLERS = ["Admin", "DocCtrl"];
+/** AUTHZ-10 (drafting-flow DF-P4, ruled under DEC-90): who edits the drafting
+ *  request-form configuration (org_configurations key 'drafting'). The SAME
+ *  set is the database's — 20261209's org_config_key_writes_* 'drafting'
+ *  branch, caller_holds_any_role(org_id, ARRAY['Admin','DocCtrl',
+ *  'DraftingSupervisor']) — pinned equal by
+ *  lib/__tests__/dfRoundG_P4_library.test.ts. */
+export const DRAFTING_CONFIG_EDITORS = ["Admin", "DocCtrl", "DraftingSupervisor"];
 const CHANGE = "An Admin can change this under Admin → Permissions → Action permissions.";
 
 export const ADMIN_SURFACES: readonly AdminSurface[] = [
@@ -66,8 +73,8 @@ export const ADMIN_SURFACES: readonly AdminSurface[] = [
     denied: "Only Admins and Managers can manage teams." },
   { key: "libraries", path: "/admin/libraries", label: "Library config", entry: CONTROLLERS,
     denied: "Only an Admin or Document Controller can configure libraries." },
-  { key: "requests", path: "/admin/requests", label: "Request forms", entry: CONTROLLERS,
-    denied: "Only an Admin or Document Controller can configure request forms." },
+  { key: "requests", path: "/admin/requests", label: "Request forms", entry: DRAFTING_CONFIG_EDITORS, writes: DRAFTING_CONFIG_EDITORS,
+    denied: "Only an Admin, a Document Controller or a Drafting Supervisor can configure request forms." },
   { key: "permissions", path: "/admin/permissions", label: "Permissions", entry: "*", writes: CONTROLLERS,
     denied: "You must be an active member to view permissions." },
   { key: "settings", path: "/admin/settings", label: "Workspace settings", entry: ["Admin"],

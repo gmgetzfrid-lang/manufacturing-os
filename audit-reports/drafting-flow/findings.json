@@ -17,23 +17,25 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 146,
+    "findings": 147,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 47,
-      "MEDIUM": 63,
+      "MEDIUM": 64,
       "LOW": 27
     },
     "by_status": {
-      "RESOLVED": 43,
-      "OPEN": 93,
+      "RESOLVED": 46,
+      "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
+      "OPEN": 88,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
       "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)": 1,
       "REFUTED": 4,
+      "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261209`, after `20261203`; until it is pasted a DocCtrl's save is refused by the database and Manager / Supervisor can still write the key directly)": 1,
+      "WONTFIX": 2,
       "RESOLVED (2026-10-13, by the integrator's ruling at the DF-P2 merge — below)": 1,
       "BLOCKED": 1,
-      "WONTFIX": 1,
       "INVALID": 1
     }
   },
@@ -103,7 +105,7 @@
       "id": "AUTHZ-3",
       "title": "`requester_role` is free text stamped by the client at INSERT and is the only input to the \"must an engineer sign this off\" decision",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1613,7 +1615,7 @@
       "id": "AUTHZ-10",
       "title": "Drafting-request form configuration: the UI gate and the database gate disagree in both directions",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261209`, after `20261203`; until it is pasted a DocCtrl's save is refused by the database and Manager / Supervisor can still write the key directly)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1692,7 +1694,7 @@
       "id": "DCW-3",
       "title": "No drawing-type dimension exists to route on",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "WONTFIX",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "compliance / friction",
@@ -1722,7 +1724,7 @@
       "id": "DCW-5",
       "title": "A request cannot be filed against a document the requester cannot see",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": "SUSPECTED — the mechanism is confirmed; the frequency in practice was not observed",
       "blast_radius": "friction / adoption",
@@ -1993,6 +1995,35 @@
       ],
       "refuted": false,
       "summary": "A member PATCHes {\"lastmodified\": null} on a ticket. Two concurrent attachfile calls (or attachfile and saveprogress) on that ticket then both pass the status-only check, and the second overwrites attachments, watchers and unreadby from a stale read. An attachment is lost with no error.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
+    },
+    {
+      "id": "EDGE-16",
+      "title": "Any active member can write `sla_defaults`, which now sets the due date of every new request — and the SLA clock's warnings",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
+      "blast_radius": "availability / notification noise",
+      "related": [
+        "EDGE-7",
+        "ROUTE-9"
+      ],
+      "locations": [
+        "supabase/migrations/20260605_rls_policies_new_tables.sql:128-132",
+        "supabase/migrations/20260529_phase_b_notifications.sql:84",
+        "app/api/tickets/create/route.ts:607-632",
+        "lib/notifications.ts",
+        "lib/ticketSla.ts:457-464"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Viewer sets defaultdays = 1 for ISO. Every ISO request filed afterwards is due tomorrow at 17:00; the clock warns its waiting party and the queue at 75 % of the window and sends a breach notice to the queue and the requester the next day, for each one. (The other half of the review's scenario — defaultdays = 2000000000 failing every ISO request with a 500 — is closed at the create route's read b",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
     },
@@ -2635,7 +2666,7 @@
       "id": "PERS-5",
       "title": "The ticket→document-intent bridge is permanently dead: rowToTicket never maps `metadata`, so the overlap advisory for a drafter working a source drawing is never registered or cleared",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2903,7 +2934,7 @@
       "id": "ROUTE-9",
       "title": "The drafting-request SLA clock has no server-side reader — nothing ever fires an SLA warning, while the settings page promises one",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

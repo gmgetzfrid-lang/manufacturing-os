@@ -315,7 +315,7 @@
   },
   {
    "name": "N10 PUSH — connect the two built ends of Web Push (GAP-205); OS-11 closes by record",
-   "findings": ["OS-2", "TAX-12", "DELIV-14", "RT-7", "OS-3", "OS-9", "OS-10", "OS-11"],
+   "findings": ["OS-2", "TAX-12", "DELIV-14", "RT-7", "OS-3", "OS-9", "OS-10", "OS-11", "drafting-flow ROUTE-3 limb (c) (restated by the integrator at the N15 merge, 2026-10-14), through TAX-12"],
    "severityMix": "7 MEDIUM, 1 LOW",
    "files": [
     "new lib/push/sendPush.ts (web-push re-added to package.json; VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT in .env.example next to CRON_SECRET, whose stale reminders/run comment is corrected; sendPushSafe(payload) NEVER throws and never blocks inapp/email — the deleted 0bb13ed contract; 404/410 delete the push_subscriptions row — OS-2 dw4)",
@@ -481,6 +481,26 @@
       "admin-and-org P4 merged (lib/subscription.ts — DEC-98)"
     ],
     "sequencingNotes": "Added by the integrator 2026-10-13 at the N9 merge (DEC-31): every remainder N9 recorded as 'N14 (or as the integrator routes it)' that is not in N14's brief. Runs after N14."
+  },
+  {
+   "name": "N16 LIBRARY DISCOVER AND BOUNDED FALLBACK — a library-scoped follower notice names a document only to a follower who may discover it, and the failed-check fallback's controllers lookup is bounded",
+   "findings": [
+    "NEDGE-22 (opened by N15: library_doc_added, library_doc_revised and transmittal_issued name a document to a library's followers with no discover check — extend the N15 discover filter (lib/notify/recipients.ts discoveringAmong, the DEC-106 rules) to a document named by a library-scoped notice; a failed check redacts exactly as DEC-106 does; controllers never dropped)",
+    "NEDGE-6 remainder (integrator, N15 merge 2026-10-14): on a FAILED discover check the controllers lookup resolveRoleRecipients is not bounded by DISCOVER_TIMEOUT_MS — bound it (or reuse the already-resolved pool) so a stalled session read cannot hold the inserts open; a timed-out lookup is logged and the redacted notices still go"
+   ],
+   "files": [
+    "lib/notify/dispatch.ts, lib/notify/recipients.ts",
+    "lib/postPublish.ts (notifySuperseded's library_doc_revised), lib/libraryNotify.ts (library_doc_added), lib/transmittals.ts (notifyTransmittalIssued)",
+    "tests: a non-discovering library follower gets the redacted notice; a discovering one and every controller get it in full; a stalled controllers lookup is bounded; regression — every library notice that reaches a follower today still reaches them"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "notifications N15 merged (2026-10-14; DEC-106, the discover filter)",
+    "document-control: no running package edits lib/transmittals.ts / lib/postPublish.ts at launch (check every fleet plan's files list)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the N15 merge, 2026-10-14 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

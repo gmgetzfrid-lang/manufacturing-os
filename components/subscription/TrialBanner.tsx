@@ -13,7 +13,7 @@ import React from "react";
 import Link from "next/link";
 import { Clock, ArrowRight, AlertTriangle } from "lucide-react";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
-import { trialDaysRemaining, isTrialExpired, shouldShowTrialBanner } from "@/lib/subscription";
+import { trialDaysRemaining, isTrialExpired, shouldShowTrialBanner } from "@/lib/billing";
 
 export default function TrialBanner() {
   const { info } = useSubscription();

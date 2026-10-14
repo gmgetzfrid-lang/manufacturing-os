@@ -19,7 +19,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthError } from "@/lib/serverAuth";
-import { hasAccess, type SubscriptionInfo } from "@/lib/subscription";
+import { hasAccess, type SubscriptionInfo } from "@/lib/billing";
 
 /** Plans that include cloud-bucket backup destinations. */
 export const CLOUD_BUCKET_PLANS: ReadonlySet<string> = new Set(["growth", "enterprise"]);
