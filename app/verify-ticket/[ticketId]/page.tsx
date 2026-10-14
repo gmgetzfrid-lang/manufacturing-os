@@ -1,6 +1,6 @@
 "use client";
 
-// /verify-ticket/[ticketId]?r=[rev] — the page behind the QR stamped on
+// /verify-ticket/[ticketId]?r=[rev]&a=[file id] — the page behind the QR stamped on
 // drafting-portal deliverables. The scenario it exists for: a PM hands a
 // deliverable to a contractor, a revision later happens on the ticket, and
 // nobody forwards the new file. The contractor scans the paper and finds
@@ -58,10 +58,15 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
     },
   },
   // EDGE-2: a canceled request, or one that ended on a review label with
-  // nothing ever issued.
+  // nothing ever issued. DF-P12 (decided fail-safe under DEC-90): red either
+  // way, worded for which — a withdrawn request that had issued a revision,
+  // or one that ended with no issued deliverable at all (an RFI answered on a
+  // review label is not "withdrawn"; see headlineFor below).
   withdrawn: {
     bg: "bg-red-600", icon: "stop", headline: "WITHDRAWN — DO NOT USE",
-    sub: () => "This request was withdrawn or closed without an issued deliverable. Do not work from this copy — contact the requester.",
+    sub: (r) => r.latestIssuedRev
+      ? `This request was withdrawn after Rev ${r.latestIssuedRev} was issued. Do not work from this copy — contact the requester.`
+      : "This request ended without an issued deliverable — it was withdrawn, or closed without one (for example a question answered without a drawing). This copy was never issued: do not work from it — contact the requester.",
   },
   // PHYS-2: a copy whose QR names no revision (a file printed before
   // revisions were recorded per file, or a source file) — the scan cannot
@@ -74,10 +79,19 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
   },
 };
 
+/** The headline: a "withdrawn" answer for a request that never issued
+ *  anything says NOT ISSUED rather than claiming a withdrawal (DF-P12;
+ *  red either way). */
+function headlineFor(result: VerifyTicketResult, ui: (typeof VERDICT_UI)[VerifyTicketResult["verdict"]]): string {
+  return result.verdict === "withdrawn" && !result.latestIssuedRev ? "NOT ISSUED — DO NOT USE" : ui.headline;
+}
+
 export default function VerifyTicketPage() {
   const params = useParams<{ ticketId: string }>();
   const search = useSearchParams();
   const rev = search.get("r");
+  // SM-5 done-when 3 (DF-P12): the printed file's id, forwarded as printed.
+  const attachment = search.get("a");
 
   const [result, setResult] = useState<VerifyTicketResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +103,7 @@ export default function VerifyTicketPage() {
     try {
       const qs = new URLSearchParams({ t: params.ticketId });
       if (rev) qs.set("r", rev);
+      if (attachment) qs.set("a", attachment);
       const res = await fetch(`/api/verify-ticket?${qs.toString()}`);
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -101,7 +116,7 @@ export default function VerifyTicketPage() {
     } finally {
       setLoading(false);
     }
-  }, [params.ticketId, rev]);
+  }, [params.ticketId, rev, attachment]);
 
   useEffect(() => { void check(); }, [check]);
 
@@ -144,7 +159,7 @@ export default function VerifyTicketPage() {
             ) : (
               <AlertTriangle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-3xl font-black text-white leading-tight mb-1">{ui.headline}</h1>
+            <h1 className="text-3xl font-black text-white leading-tight mb-1">{headlineFor(result, ui)}</h1>
             <p className="text-white/90 text-sm font-bold mb-6">{ui.sub(result)}</p>
 
             {/* The facts card */}

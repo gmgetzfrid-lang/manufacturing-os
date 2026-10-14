@@ -501,14 +501,15 @@ describe("EVID-5 / PHYS-8 — the copy's record is awaited, checked and in the t
     return { rows, client: { from: (t: string) => ({ insert: async (row: Record<string, unknown>) => { expect(t).toBe("download_audits"); rows.push(row); return results.shift() ?? { error: null }; } }) } };
   };
 
-  it("writes download_audits with ONLY columns the table has (20261068's source; no ticket_id / attachment_* / filename / watermark_text) and an audit row naming the file", async () => {
+  it("writes download_audits with ONLY columns the table has (20261068's source; DF-P12's 20261223 ticket_id / attachment_id; never attachment_type / filename / watermark_text) and an audit row naming the file", async () => {
     const { rows, client } = mkClient([{ error: null }]);
     const logAudit = vi.fn(async () => ({ ok: true, error: null }));
     const res = await recordTicketCopy(client, logAudit, base);
     expect(res).toEqual({ recorded: true, error: null });
     expect(rows).toHaveLength(1);
-    expect(Object.keys(rows[0]).sort()).toEqual(["expires_at", "org_id", "source", "user_email", "user_id"]);
-    expect(rows[0]).toMatchObject({ org_id: "org-1", user_id: "u-1", source: "drafting" });
+    // PHYS-17 (DF-P12): the row names the ticket and the file (20261223's columns).
+    expect(Object.keys(rows[0]).sort()).toEqual(["attachment_id", "expires_at", "org_id", "source", "ticket_id", "user_email", "user_id"]);
+    expect(rows[0]).toMatchObject({ org_id: "org-1", user_id: "u-1", source: "drafting", ticket_id: T, attachment_id: "a-1" });
     expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: "DOWNLOAD", resourceType: "ticket", resourceId: T, orgId: "org-1", userId: "u-1",
       details: expect.objectContaining({ attachmentId: "a-1", fileName: "IFC.pdf", rev: "1", watermark: "UNCONTROLLED COPY", channel: "download", source: "drafting" }),
@@ -634,7 +635,8 @@ describe("AUTHZ-12 / EDGE-2 — /api/verify-ticket answers revision-status facts
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(Object.keys(body).sort()).toEqual(["checkedAt", "currentRev", "inReview", "latestIssuedRev", "printedRev", "ticketNumber", "title", "verdict"]);
     expect(body.verdict).toBe("current");
-    expect(state.selects).toEqual(["id, ticket_id, title, status, deliverable_rev, history, revision_count, archived_at"]);
+    // DF-P12: 20261221's trust index is read for the verdict (never returned); attachments only for a QR naming a file.
+    expect(state.selects).toEqual(["id, ticket_id, title, status, deliverable_rev, history, revision_count, archived_at, history_guarded_from"]);
     expect(scans()).toEqual(["current"]);
   });
   it("revision_count is read for the verdict, never returned: a member's forged history line cannot make a scan answer for it", async () => {

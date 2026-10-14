@@ -15,7 +15,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";
-import { logRevisionEvent } from "@/lib/audit";
+import { logAuditAction, logRevisionEvent } from "@/lib/audit";
+import { ticketVerdict, issueInForce, type TicketVerdict } from "@/lib/verifyTicketVerdict";
 
 /** How far back a download is considered "a copy someone may still hold".
  *  PERSONAL list: 60 days — beyond that, self-service noise outweighs value.
@@ -534,5 +535,186 @@ export async function nudgeStaleHolders(input: {
       },
     });
   } catch { /* the recall itself already went out */ }
+  return reachable.length;
+}
+
+// ─── The ticket arm (public-surfaces PHYS-17, PHYS-8 done-when 3; DF-P12) ──
+//
+// A drafting-ticket copy is no register version: it has no document_id /
+// version_id, so the arms above never see it. Since 20261223 its
+// download_audits row names the ticket and the file (ticket_id,
+// attachment_id — lib/ticketDeliverableCopy.ts recordTicketCopy, and the
+// server stamping route app/api/tickets/copy). The copy's standing is the
+// verify verdict of THAT file against the ticket now (lib/verifyTicketVerdict.ts
+// ticketVerdict with the file's own revision and id — PHYS-2, SM-5): a copy
+// whose scan would answer superseded, withdrawn or "review draft" is
+// outdated; one that answers current is current. Same window, cap, gap rule
+// and recall record as a document's.
+
+/** The ticket as the recall reads it (the columns the verdict reads). */
+export interface TicketForRecall {
+  id: string;
+  orgId: string;
+  status: string | null;
+  deliverableRev: string | null;
+  history: unknown;
+  revisionCount?: number | null;
+  /** 20261221's trust index (absent before the paste). */
+  historyGuardedFrom?: number | null;
+  attachments: unknown;
+}
+
+export interface TicketCopy {
+  attachmentId: string | null;
+  /** The file's own revision (TicketAttachment.rev), when it is still listed. */
+  rev: string | null;
+  copiedAt: string;
+  source: string | null;
+  /** What a scan of this copy answers now. */
+  verdict: TicketVerdict;
+}
+
+export interface TicketCopyHolder {
+  userId: string;
+  userEmail: string | null;
+  lastCopiedAt: string;
+  /** Every copy of this ticket's files the member took in the window, latest first. */
+  copies: TicketCopy[];
+  /** Holds a copy whose scan answers superseded, withdrawn or review draft. */
+  outdated: boolean;
+  /** Took a copy that scans current (the latest issue) — the document arm's
+   *  "re-pulled the current revision". */
+  hasCurrent: boolean;
+}
+
+export interface TicketCopyRecall {
+  holders: TicketCopyHolder[];
+  /** DIST-11: the row cap was hit — holders may be MISSING. */
+  capped: boolean;
+  /** DIST-9 dw3: the record could not be read by ticket (before 20261223, or
+   *  a read failure) — a gap in the evidence, never "nobody holds a copy". */
+  unavailable: boolean;
+  /** The ticket's last issue as the verdict reads it (for the notice). */
+  latestIssuedRev: string | null;
+}
+
+/** The standing of one copy: an outdated verdict is one the field must not work from. */
+const OUTDATED_VERDICTS: ReadonlySet<TicketVerdict> = new Set<TicketVerdict>(["superseded", "withdrawn", "draft_copy"]);
+
+/** The copy's own revision, read from the ticket's files by id. */
+function fileRevOf(attachments: unknown, attachmentId: string | null): string | null {
+  if (!attachmentId || !Array.isArray(attachments)) return null;
+  const f = attachments.find((a) => (a as { id?: unknown } | null)?.id === attachmentId) as { rev?: unknown } | undefined;
+  return typeof f?.rev === "string" && f.rev.trim() ? f.rev.trim().toUpperCase() : null;
+}
+
+/** Distribution recall for one ticket's deliverable: everyone who took a copy
+ *  of its files in the window, each copy read as a scan of it would read now. */
+export async function getTicketCopyRecall(
+  ticket: TicketForRecall,
+  client: { from: typeof supabase.from } = supabase,
+): Promise<TicketCopyRecall> {
+  const latestIssuedRev = issueInForce(ticket.history, ticket.revisionCount, ticket.deliverableRev, ticket.historyGuardedFrom)
+    ?? (typeof ticket.deliverableRev === "string" && /^\d+$/.test(ticket.deliverableRev) ? ticket.deliverableRev : null);
+  const unavailable: TicketCopyRecall = { holders: [], capped: false, unavailable: true, latestIssuedRev };
+  try {
+    const since = new Date(Date.now() - DOC_RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
+    const { data, error } = await client
+      .from("download_audits")
+      .select("user_id, user_email, attachment_id, created_at, source")
+      .eq("org_id", ticket.orgId)
+      .eq("ticket_id", ticket.id)
+      .gt("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(DOC_RECALL_ROW_CAP);
+    // Before 20261223 there is no ticket_id to read by (the read fails on the
+    // unknown column), and any other failure is a gap too — never an empty list.
+    if (error) return unavailable;
+    const rows = (data as unknown as Array<{ user_id: string | null; user_email: string | null; attachment_id: string | null; created_at: string; source: string | null }> | null) ?? [];
+    const capped = rows.length >= DOC_RECALL_ROW_CAP;
+    const row = {
+      status: ticket.status, deliverable_rev: ticket.deliverableRev, history: ticket.history,
+      revision_count: ticket.revisionCount ?? null, history_guarded_from: ticket.historyGuardedFrom ?? null,
+      attachments: ticket.attachments,
+    };
+    const byUser = new Map<string, TicketCopyHolder>();
+    for (const r of rows) {
+      if (!r.user_id) continue; // a ticket copy is always a member's own pull
+      const rev = fileRevOf(ticket.attachments, r.attachment_id);
+      const verdict = ticketVerdict(row, rev ?? "", r.attachment_id ?? "").verdict;
+      const copy: TicketCopy = { attachmentId: r.attachment_id ?? null, rev, copiedAt: r.created_at, source: r.source ?? null, verdict };
+      const h = byUser.get(r.user_id) ?? { userId: r.user_id, userEmail: r.user_email ?? null, lastCopiedAt: r.created_at, copies: [], outdated: false, hasCurrent: false };
+      h.copies.push(copy);
+      if (OUTDATED_VERDICTS.has(verdict)) h.outdated = true;
+      if (verdict === "current") h.hasCurrent = true;
+      byUser.set(r.user_id, h);
+    }
+    // Outdated holders first, then by recency.
+    const holders = [...byUser.values()].sort((a, b) =>
+      Number(b.outdated && !b.hasCurrent) - Number(a.outdated && !a.hasCurrent) || Date.parse(b.lastCopiedAt) - Date.parse(a.lastCopiedAt));
+    return { holders, capped, unavailable: false, latestIssuedRev };
+  } catch {
+    return unavailable;
+  }
+}
+
+/** One-click recall nudge for a ticket deliverable: tell every member holding
+ *  an outdated copy who has not since taken the current one (the document
+ *  arm's rule), and put the recall on the ticket's audit trail (DIST-10's
+ *  record — who was told, when, by whom). A recall that could not be
+ *  evaluated (`unavailable`) is recorded as such and nudges nobody. */
+export async function nudgeStaleTicketHolders(input: {
+  orgId: string;
+  ticketId: string;
+  ticketNumber: string | null;
+  latestIssuedRev: string | null;
+  holders: TicketCopyHolder[];
+  actorUserId: string;
+  actorName?: string | null;
+  source?: "manual" | "auto";
+  unavailable?: boolean;
+}): Promise<number> {
+  const label = input.ticketNumber || "this drafting request";
+  const record = async (recipients: TicketCopyHolder[], unavailable: boolean) => {
+    const res = await logAuditAction({
+      action: "DISTRIBUTION_RECALL",
+      resourceType: "ticket",
+      resourceId: input.ticketId,
+      orgId: input.orgId,
+      userId: input.actorUserId,
+      userEmail: input.actorName ?? undefined,
+      details: {
+        source: input.source ?? "manual",
+        ticketNumber: input.ticketNumber,
+        latestIssuedRev: input.latestIssuedRev,
+        recipientCount: recipients.length,
+        recipients: recipients.map((h) => ({ userId: h.userId, email: h.userEmail, heldRevs: [...new Set(h.copies.filter((c) => OUTDATED_VERDICTS.has(c.verdict)).map((c) => c.rev))] })),
+        ...(unavailable ? { unavailable: true } : {}),
+      },
+    });
+    if (!res.ok) console.error(`[staleCopies] the ticket copy recall for ${label} went out but its audit row was refused: ${res.error}`);
+  };
+  if (input.unavailable) {
+    await record([], true);
+    return 0;
+  }
+  const reachable = input.holders.filter((h) => h.outdated && !h.hasCurrent && h.userId !== input.actorUserId);
+  if (reachable.length === 0) return 0;
+  await emit({
+    orgId: input.orgId,
+    category: "recall",
+    kind: "doc_recalled",
+    title: `Your copy of ${label}'s deliverable is out of date`,
+    body: input.latestIssuedRev
+      ? `The latest issue is Rev ${input.latestIssuedRev}. A copy you took is no longer current — get the current deliverable before doing any work from it, and destroy old prints.`
+      : `A copy you took of this request's deliverable is not one to work from (the request was withdrawn, or it was a review draft). Stop any work based on it and destroy old prints.`,
+    link: `/requests/${input.ticketId}`,
+    resource: { type: "ticket", id: input.ticketId },
+    actorUserId: input.actorUserId,
+    actorName: input.actorName ?? undefined,
+    audience: { involved: reachable.map((h) => h.userId) },
+    metadata: { recall: true, ticketCopy: true },
+  });
+  await record(reachable, false);
   return reachable.length;
 }
