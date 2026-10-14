@@ -20,6 +20,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 
 vi.mock("@/lib/storage", () => ({ peekSignedUrl: () => undefined, subscribeSignedUrl: () => () => {} }));
 
@@ -337,32 +338,71 @@ describe("ORG-19 regression — no app INSERT into libraries or collections sets
       return /\.(ts|tsx)$/.test(d.name) ? [p] : [];
     });
   }
-  /** The argument text of `.insert(` / `.upsert(` from its opening paren to the matching close. */
-  function argAt(s: string, open: number): string {
+  /** The text between the paren at `open` and its matching close, and the close's index. */
+  function argAt(s: string, open: number): { inner: string; close: number } {
     let depth = 0;
     for (let i = open; i < s.length; i++) {
       if (s[i] === "(") depth++;
-      else if (s[i] === ")" && --depth === 0) return s.slice(open + 1, i);
+      else if (s[i] === ")" && --depth === 0) return { inner: s.slice(open + 1, i), close: i };
     }
-    return s.slice(open + 1);
+    return { inner: s.slice(open + 1), close: s.length };
   }
+  /** The table a `.from(` argument names, when it can be read statically: a
+   *  string literal ('…', "…", or `…` with no ${}), or an identifier the same
+   *  file declares as `const NAME = <such a literal>`. undefined otherwise. */
+  function tableOf(s: string, arg: string): string | undefined {
+    const lit = arg.match(/^(["'`])([^"'`\\]*)\1$/);
+    if (lit && !lit[2].includes("${")) return lit[2];
+    if (!/^[A-Za-z_$][\w$]*$/.test(arg)) return undefined;
+    const decl = s.match(new RegExp(`(?:^|\\n)\\s*(?:export\\s+)?const\\s+${arg.replace(/\$/g, "\\$")}\\s*(?::[^=\\n]+)?=\\s*(["'\`])([^"'\`$\\\\]*)\\1\\s*;`));
+    return decl ? decl[2] : undefined;
+  }
+  // Every `.from(<argument>)` directly followed by `.insert(` / `.upsert(`, in
+  // every .ts / .tsx under app/, lib/, components/ and hooks/ (tests excluded).
   const sites: Array<{ file: string; arg: string }> = [];
+  const resolved: string[] = [];
+  const unresolved: string[] = [];
   for (const f of ["app", "lib", "components", "hooks"].flatMap(walk)) {
     const s = src(f);
-    const tableConst = /const TABLE = "collections";/.test(s);
-    const re = tableConst
-      ? /\.from\(\s*(?:"(?:libraries|collections)"|TABLE)\s*\)\s*\.(?:insert|upsert)\(/g
-      : /\.from\(\s*"(?:libraries|collections)"\s*\)\s*\.(?:insert|upsert)\(/g;
-    for (const m of s.matchAll(re)) sites.push({ file: f, arg: argAt(s, m.index! + m[0].length - 1) });
+    for (const m of s.matchAll(/\.from\(/g)) {
+      const from = argAt(s, m.index! + m[0].length - 1);
+      const verb = s.slice(from.close + 1).match(/^\s*\.(insert|upsert)\(/);
+      if (!verb) continue;
+      const arg = from.inner.trim();
+      const table = tableOf(s, arg);
+      if (table === undefined) { unresolved.push(`${f}: .from(${arg}).${verb[1]}(`); continue; }
+      if (!/^["'`]/.test(arg)) resolved.push(`${f}: ${arg} = "${table}"`);
+      if (table === "libraries" || table === "collections") {
+        sites.push({ file: f, arg: argAt(s, from.close + verb[0].length).inner });
+      }
+    }
   }
 
-  it("the census sees exactly the known creation paths", () => {
+  it("the census sees exactly the known creation paths (a literal table, or a same-file const resolved to one)", () => {
     expect(sites.map((x) => x.file).sort()).toEqual([
       "app/(protected)/admin/libraries/page.tsx", // the admin wizard (dbConfig + org/stamp columns)
       "app/api/intake/upload/route.ts",           // the intake folder (service role: no uid, passes)
-      "lib/libraryCollections.ts",                // createFolder
+      "lib/libraryCollections.ts",                // createFolder (.from(TABLE), TABLE = "collections")
       "lib/libraryCollections.ts",                // createLibrary (Save-As / inline)
     ]);
+    // createFolder is found through the identifier, not a literal
+    expect(resolved).toContain('lib/libraryCollections.ts: TABLE = "collections"');
+    // a table whose name merely contains the word is not one of these two
+    expect(src("lib/collections.ts")).toContain('.from("curated_collections")');
+    expect(src("lib/knowledge.ts")).toContain('.from("knowledge_libraries")');
+  });
+
+  it("NAMED EXCEPTIONS: the only insert / upsert sites whose table cannot be read statically, each shown not to be an app creation by a person", () => {
+    expect(unresolved.sort()).toEqual([
+      // insertRows(table, rows): `table` is typed "cost_accounts" | "milestones" | "project_parties"
+      "components/projects/ProjectWizard.tsx: .from(table).insert(",
+      // the backup restore's applyRestoreChunk: its client is the apply-table route's
+      // service-role client (pinned below), so its rows carry no uid and the rail passes them
+      "lib/dataRestore.ts: .from(table).upsert(",
+    ]);
+    expect(src("lib/projectWizardWrites.ts")).toContain('insertRows(table: "cost_accounts" | "milestones" | "project_parties", rows: Record<string, unknown>[])');
+    expect(src("components/projects/ProjectWizard.tsx")).toContain("const writeDeps = (projectId: string): WizardWriteDeps => ({");
+    expect(src("lib/dataRestore.ts")).toContain("const up = await sb.from(table).upsert(rows, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: \"exact\" });");
   });
 
   it("none of them names cover_image_url, cover_tint, page_config or color — the INSERT door changes no app flow", () => {
@@ -466,16 +506,17 @@ describe("ORG-21 — the other node-colour sites (PathBar, FolderRail, LibraryHo
     expect(src("components/documents/LibraryHomeBoard.tsx")).toContain('style={{ background: safeNodeColor(f.color) ?? "var(--brand-gradient)" }}');
   });
 
-  it("CENSUS: no file under components/ or app/ draws a library's or folder's .color into a style without the rule", () => {
-    function walk(dir: string): string[] {
-      return readdirSync(join(ROOT, dir), { withFileTypes: true }).flatMap((d) => {
-        const p = `${dir}/${d.name}`;
-        if (d.isDirectory()) return d.name === "__tests__" || d.name === "node_modules" ? [] : walk(p);
-        return /\.tsx$/.test(d.name) ? [p] : [];
-      });
-    }
+  function walkTsx(dir: string, ext: RegExp): string[] {
+    return readdirSync(join(ROOT, dir), { withFileTypes: true }).flatMap((d) => {
+      const p = `${dir}/${d.name}`;
+      if (d.isDirectory()) return d.name === "__tests__" || d.name === "node_modules" ? [] : walkTsx(p, ext);
+      return ext.test(d.name) ? [p] : [];
+    });
+  }
+
+  it("CENSUS (narrow, all of components/ and app/): no inline style={{ … }} draws a folder / f / lib / library / seg / current / node .color without the rule", () => {
     const raw: string[] = [];
-    for (const f of ["components", "app"].flatMap(walk)) {
+    for (const f of ["components", "app"].flatMap((d) => walkTsx(d, /\.tsx$/))) {
       const s = src(f);
       for (const m of s.matchAll(/style=\{\{[^}]*\b(?:folder|f|lib|library|seg|current|node)\??\.color\b[^}]*\}\}/g)) {
         if (!/safeNodeColor\(/.test(m[0])) raw.push(`${f}: ${m[0]}`);
@@ -486,6 +527,242 @@ describe("ORG-21 — the other node-colour sites (PathBar, FolderRail, LibraryHo
     const cover = src("components/documents/NodeCover.tsx");
     expect(cover).toContain("const color = safeNodeColor(appearance.color);");
     expect(cover).not.toMatch(/appearance\.color \|\|/);
+  });
+
+  // The widened census (the integrator's ruling on the final review's minor 1).
+  // In components/documents/** and app/(protected)/documents/** it parses every
+  // .ts / .tsx file (the TypeScript parser) and takes as a STYLE VALUE:
+  //   · the value of an object property named background / backgroundColor /
+  //     backgroundImage (a React style object), shorthand included;
+  //   · an assignment to <x>.background / .backgroundColor / .backgroundImage,
+  //     and <x>.setProperty("background…", value);
+  //   · every ${…} of a template literal whose text holds linear-gradient( ,
+  //     color-mix( or a CSS background: / background-color: / background-image:;
+  //   · every non-literal operand of a `+` chain one of whose string literals
+  //     holds the same.
+  // A value is FLAGGED when it reads a colour: a `.color` / `["color"]` member,
+  // or a name with "color" in it that is a parameter, a destructured binding, an
+  // import or undeclared. A name declared with an initializer (const / let
+  // x = <init>) is followed to its init (lexical scope, recursively), so
+  // `const bg = \`…${color}…\`` and `const color = appearance.color` are seen
+  // through. A value is CLEAN when its
+  // colour comes only through safeNodeColor(…) (the call is not looked into), a
+  // const assigned from safeNodeColor(…), or literals. A ternary's condition is
+  // not a drawn value and is not judged.
+  const COLOUR_NAME = /color/i;
+  const BG_KEY = /^background(?:Color|Image)?$/;
+  const CSS_TRIGGER = /linear-gradient\(|color-mix\(|background(?:-color|-image)?\s*:/;
+
+  function nodeColourStyleHits(fileName: string, text: string): string[] {
+    const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+    const hits = new Map<number, string>();
+    const bindsIn = (name: ts.BindingName, text: string): ts.Identifier | undefined => {
+      if (ts.isIdentifier(name)) return name.text === text ? name : undefined;
+      for (const el of name.elements) {
+        if (ts.isOmittedExpression(el)) continue;
+        const hit = bindsIn(el.name, text);
+        if (hit) return hit;
+      }
+      return undefined;
+    };
+    /** The innermost declaration of an identifier, by lexical scope. */
+    const resolve = (id: ts.Identifier): ts.Identifier | ts.Node | undefined => {
+      for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
+        if (ts.isFunctionLike(n)) for (const p of n.parameters) { const b = bindsIn(p.name, id.text); if (b) return b; }
+        if (ts.isCatchClause(n) && n.variableDeclaration) { const b = bindsIn(n.variableDeclaration.name, id.text); if (b) return b; }
+        if ((ts.isForStatement(n) || ts.isForOfStatement(n) || ts.isForInStatement(n)) && n.initializer && ts.isVariableDeclarationList(n.initializer)) {
+          for (const d of n.initializer.declarations) { const b = bindsIn(d.name, id.text); if (b) return b; }
+        }
+        const stmts = ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n) ? n.statements : undefined;
+        for (const s of stmts ?? []) {
+          if (ts.isVariableStatement(s)) for (const d of s.declarationList.declarations) { const b = bindsIn(d.name, id.text); if (b) return b; }
+          if ((ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s)) && s.name?.text === id.text) return s;
+          if (ts.isImportDeclaration(s) && s.importClause && s.importClause.getText(sf).match(new RegExp(`\\b${id.text}\\b`))) return s;
+        }
+      }
+      return undefined;
+    };
+    const reads = (node: ts.Node, seen: Set<ts.Node>): boolean => {
+      if (ts.isTypeNode(node)) return false;
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "safeNodeColor") return false;
+      if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return false;
+      if (ts.isPropertyAccessExpression(node)) return node.name.text === "color" || reads(node.expression, seen);
+      if (ts.isElementAccessExpression(node)) {
+        if (ts.isStringLiteralLike(node.argumentExpression) && node.argumentExpression.text === "color") return true;
+        return reads(node.expression, seen) || reads(node.argumentExpression, seen);
+      }
+      if (ts.isConditionalExpression(node)) return reads(node.whenTrue, seen) || reads(node.whenFalse, seen);
+      if (ts.isIdentifier(node)) {
+        const b = resolve(node);
+        if (b && ts.isIdentifier(b) && ts.isVariableDeclaration(b.parent) && b.parent.name === b && b.parent.initializer) {
+          if (seen.has(b)) return false;
+          seen.add(b);
+          return reads(b.parent.initializer, seen);
+        }
+        return COLOUR_NAME.test(node.text);
+      }
+      return ts.forEachChild(node, (c) => (reads(c, seen) ? true : undefined)) ?? false;
+    };
+    const judge = (value: ts.Node) => {
+      if (!reads(value, new Set())) return;
+      const at = value.getStart(sf);
+      hits.set(at, `${fileName}:${sf.getLineAndCharacterOfPosition(at).line + 1}: ${value.getText(sf).replace(/\s+/g, " ")}`);
+    };
+    const visit = (n: ts.Node) => {
+      if (ts.isPropertyAssignment(n) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && BG_KEY.test(n.name.text)) judge(n.initializer);
+      if (ts.isShorthandPropertyAssignment(n) && BG_KEY.test(n.name.text)) judge(n.name);
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(n.left) && BG_KEY.test(n.left.name.text)) judge(n.right);
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "setProperty"
+          && n.arguments.length > 1 && ts.isStringLiteralLike(n.arguments[0]) && /^background/.test(n.arguments[0].text)) judge(n.arguments[1]);
+      if (ts.isTemplateExpression(n) && CSS_TRIGGER.test([n.head.text, ...n.templateSpans.map((s) => s.literal.text)].join(""))) {
+        for (const span of n.templateSpans) judge(span.expression);
+      }
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken
+          && !(ts.isBinaryExpression(n.parent) && n.parent.operatorToken.kind === ts.SyntaxKind.PlusToken)) {
+        const operands: ts.Expression[] = [];
+        const flat = (e: ts.Expression): void => {
+          if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) { flat(e.left); flat(e.right); } else operands.push(e);
+        };
+        flat(n);
+        if (operands.some((o) => ts.isStringLiteralLike(o) && CSS_TRIGGER.test(o.text))) for (const o of operands) if (!ts.isStringLiteralLike(o)) judge(o);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return [...hits.entries()].sort((a, b) => a[0] - b[0]).map(([, h]) => h);
+  }
+
+  it("CENSUS (widened, components/documents/** and app/(protected)/documents/**): no style value reads a colour except through safeNodeColor; the one named exception is the curated book", () => {
+    const files = ["components/documents", "app/(protected)/documents"].flatMap((d) => walkTsx(d, /\.tsx?$/));
+    expect(files.length).toBeGreaterThan(50);
+    const hits = files.flatMap((f) => nodeColourStyleHits(f, src(f)));
+    // NAMED EXCEPTION: CollectionsStrip draws curated_collections.color (a curated
+    // book, not a library or folder) only through bookCover, whose own
+    // /^#[0-9a-fA-F]{6}$/ guard is evaluated from source in the CollectionsStrip
+    // test below. Listed exactly, so a new hit in that file fails too.
+    expect(hits).toEqual([
+      "components/documents/CollectionsStrip.tsx:51: color",
+      "components/documents/CollectionsStrip.tsx:51: color",
+      "components/documents/CollectionsStrip.tsx:198: bookCover(collection.color)",
+    ]);
+  }, 30_000); // parses ~1.6 MB of TSX
+
+  // Copied verbatim from the base (700f1fc) bodies: each fixture is the drawing
+  // site, the lines its value is declared on and the function head it sits in,
+  // in their base order (lines in between left out). The only lines that are
+  // not the base's end in "// fixture wrapper" (LibraryHomeBoard's site sits
+  // deep in PartGrid's JSX). CI checks out one commit, so `git show 700f1fc:…`
+  // is not available at test time.
+  const BASE_700F1FC: Record<string, string> = {
+    "components/documents/NodeCover.tsx": [
+      "export default function NodeCover({",
+      "  appearance,",
+      "  className = \"\",",
+      "  rounded = \"rounded-xl\",",
+      "  iconSize = \"w-6 h-6\",",
+      "  showIcon = true,",
+      "}: {",
+      "  appearance: NodeAppearanceLike;",
+      "  className?: string;",
+      "  rounded?: string;",
+      "  iconSize?: string;",
+      "  showIcon?: boolean;",
+      "}) {",
+      "  const color = appearance.color || undefined;",
+      "  // No image → color/brand gradient panel with the icon.",
+      "  const bg = color",
+      "    ? `linear-gradient(135deg, ${color}, color-mix(in srgb, ${color} 55%, #000))`",
+      "    : \"var(--brand-gradient)\";",
+      "  return (",
+      "    <div className={`relative grid place-items-center ${rounded} ${className}`} style={{ background: bg }}>",
+      "      {showIcon && <NodeIcon name={appearance.icon} className={`${iconSize} text-white drop-shadow`} />}",
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n"),
+    "components/documents/PathBar.tsx": [
+      "/** The little colored tile that stands in for the node. */",
+      "function Tile({ icon, color, className = \"w-4 h-4\" }: {",
+      "  icon?: string | null; color?: string | null; className?: string;",
+      "}) {",
+      "  return (",
+      "    <span",
+      "      className={`${className} rounded grid place-items-center text-white shrink-0`}",
+      "      style={{ background: color || \"var(--brand-gradient)\" }}",
+      "    >",
+      "      <NodeIcon name={icon} className=\"w-2.5 h-2.5\" />",
+      "    </span>",
+      "  );",
+      "}",
+    ].join("\n"),
+    "components/documents/FolderRail.tsx": [
+      "function FolderGlyph({ folder, active }: { folder: LibraryCollection; active: boolean }) {",
+      "  if (folder.color || folder.icon) {",
+      "    return (",
+      "      <span",
+      "        className=\"w-4 h-4 rounded grid place-items-center text-white shrink-0\"",
+      "        style={{ background: folder.color || \"var(--brand-gradient)\" }}",
+      "      >",
+      "        <NodeIcon name={folder.icon} className=\"w-2.5 h-2.5\" />",
+      "      </span>",
+      "    );",
+      "  }",
+      "  return <Folder className={`w-3.5 h-3.5 shrink-0 ${active ? \"text-[var(--color-accent)]\" : \"text-amber-500\"}`} />;",
+      "}",
+    ].join("\n"),
+    "components/documents/LibraryHomeBoard.tsx": [
+      "function PartGrid() { return ( // fixture wrapper",
+      "                <div className=\"flex flex-wrap gap-2\">",
+      "                  {pickFolders(rootFolders, p.settings?.folderIds).map((f) => (",
+      "                    <button key={f.id} onClick={() => onOpenFolder(f.id!)}",
+      "                      className=\"group inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] text-sm font-semibold text-[var(--color-text)] transition-colors hover-lift\">",
+      "                      <span className=\"w-5 h-5 rounded-md grid place-items-center text-white shrink-0 shadow-sm\" style={{ background: f.color || \"var(--brand-gradient)\" }}>",
+      "                        <NodeIcon name={f.icon} className=\"w-3 h-3\" />",
+      "                      </span>",
+      "                    </button>",
+      "                  ))}",
+      "                </div>",
+      "); } // fixture wrapper",
+    ].join("\n"),
+  };
+
+  it("SELF-TEST: the widened census finds every base (700f1fc) site this package fixed — NodeCover, PathBar, FolderRail and LibraryHomeBoard", () => {
+    const hits = Object.entries(BASE_700F1FC).flatMap(([f, text]) => nodeColourStyleHits(f, text));
+    expect(hits).toEqual([
+      "components/documents/NodeCover.tsx:17: color",
+      "components/documents/NodeCover.tsx:17: color",
+      "components/documents/NodeCover.tsx:20: bg",
+      "components/documents/PathBar.tsx:8: color || \"var(--brand-gradient)\"",
+      "components/documents/FolderRail.tsx:6: folder.color || \"var(--brand-gradient)\"",
+      "components/documents/LibraryHomeBoard.tsx:6: f.color || \"var(--brand-gradient)\"",
+    ]);
+    expect(new Set(hits.map((h) => h.split(":")[0])).size).toBe(4);
+    // and the same four sites as they are now are clean
+    for (const f of Object.keys(BASE_700F1FC)) expect(nodeColourStyleHits(f, src(f)), f).toEqual([]);
+  });
+
+  it("SELF-TEST: the shapes it flags and the shapes it accepts", () => {
+    const run = (body: string) => nodeColourStyleHits("x.tsx", body).map((h) => h.replace(/^x\.tsx:\d+: /, ""));
+    // flagged
+    expect(run("const a = <i style={{ backgroundColor: node.color }} />;")).toEqual(["node.color"]);
+    expect(run("const a = <i style={{ background: n[\"color\"] }} />;")).toEqual(["n[\"color\"]"]);
+    expect(run("function T({ tileColor }: { tileColor: string }) { return <i style={{ background: tileColor }} />; }")).toEqual(["tileColor"]);
+    expect(run("function T({ folder }: any) { const { color } = folder; return <i style={{ background: color }} />; }")).toEqual(["color"]);
+    expect(run("function T({ folder }: any) { const g = \"linear-gradient(90deg, \" + folder.color + \", #000)\"; return <i style={{ background: g }} />; }")).toEqual(["folder.color", "g"]);
+    expect(run("function T({ folder }: any) { const c = folder.color; const g = `color-mix(in srgb, ${c} 50%, #000)`; return <i style={{ backgroundImage: g }} />; }")).toEqual(["c", "g"]);
+    expect(run("function T(el: HTMLElement, lib: any) { el.style.background = lib.color; el.style.setProperty(\"background-color\", lib.color); }")).toEqual(["lib.color", "lib.color"]);
+    expect(run("function T(el: HTMLElement, lib: any) { el.style.cssText = `padding:2px;background:${lib.color}`; }")).toEqual(["lib.color"]);
+    // accepted
+    expect(run("const a = <i style={{ background: safeNodeColor(f.color) ?? \"var(--brand-gradient)\" }} />;")).toEqual([]);
+    expect(run("function T({ folder }: any) { const color = safeNodeColor(folder.color); return <i style={{ background: color ?? \"x\" }} />; }")).toEqual([]);
+    expect(run("function T({ folder }: any) { const color = safeNodeColor(folder.color); const bg = color ? `linear-gradient(135deg, ${color}, #000)` : \"x\"; return <i style={{ background: bg }} />; }")).toEqual([]);
+    expect(run("const a = <i style={{ background: \"var(--color-accent)\", backgroundColor: REASON_META[r].hex }} />;")).toEqual([]);
+    expect(run("const a = <i style={{ background: f.color ? \"var(--a)\" : \"var(--b)\" }} />;")).toEqual([]);
+    // lexical scope: a safe `color` in one function does not clean another function's raw `color`
+    expect(run([
+      "function A({ folder }: any) { const color = safeNodeColor(folder.color); return <i style={{ background: color }} />; }",
+      "function B({ color }: any) { return <i style={{ background: color }} />; }",
+    ].join("\n"))).toEqual(["color"]);
   });
 });
 

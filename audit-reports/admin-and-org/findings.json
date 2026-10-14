@@ -17,9 +17,9 @@
       "LOW": 17
     },
     "by_status": {
-      "RESOLVED": 55,
+      "RESOLVED": 57,
       "OPEN *(set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form is not met on three readers — the Partial below)*": 1,
-      "OPEN": 12
+      "OPEN": 10
     }
   },
   "status_vocabulary": [
@@ -1794,7 +1794,7 @@
       "id": "ORG-19",
       "title": "Any member can create a library born with an external cover image or page background — `libraries_org_access` admits the INSERT and the birth rail does not hold the appearance columns",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading)",
       "blast_radius": null,
@@ -1849,7 +1849,7 @@
       "id": "ORG-21",
       "title": "A library's or folder's colour is drawn raw into inline CSS, so any member can make every viewer's browser fetch an external URL",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (P11's third review; the failure scenario traced by reading the two render sites and the 20261210 rail; not exercised in a browser)",
       "blast_radius": "decoration / privacy (an external fetch from every viewer's browser); no record changes, no other workspace reached",

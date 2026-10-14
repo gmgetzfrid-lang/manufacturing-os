@@ -41,7 +41,7 @@
 --       NODE_CUSTOMIZE_ROLES: Admin / DocCtrl), and the same sentence the
 --       UPDATE arm uses. A new row that sets none of them is decided exactly
 --       as before. No app INSERT writes them (lib/libraryCollections.ts
---       createLibrary / createCollection, the admin wizard's insert, the
+--       createLibrary / createFolder, the admin wizard's insert, the
 --       intake route's service-role folder), so no app flow changes.
 --       Folders: the INSERT arm holds for a folder exactly as for a
 --       library, and it holds the colour rule. IF 20261011's RESTRICTIVE
