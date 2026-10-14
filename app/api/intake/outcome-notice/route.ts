@@ -9,7 +9,16 @@
 //
 // Authority: the caller must be an active member who may decide the
 // submission — an org controller (Admin / DocCtrl, held additively) or the
-// project's owner, the people the Intake tab offers Approve / Reject to.
+// project's owner, the people the Intake tab offers Approve / Reject to —
+// or (projects-tab SAF-19's remainder, projects Round G J20) whoever holds
+// publish authority on the version's document: `user_can_publish_doc(
+// record_id, orgId)` (20261037 — controller, the library's publish grant, or
+// the document's effective owner), the authority the document's review
+// surface (ReviewGateSection) approves with, so every approver that surface
+// admits can tell the contractor. The function reads `auth.uid()`, so it is
+// asked AS THE CALLER (callerScopedClient), never through the service role.
+// Before 20261037 (42883 / PGRST202) only the first two admit, as before; a
+// check that fails otherwise sends nothing (503).
 // The outcome is read from the DATABASE (the version's review_state and its
 // reason), never from the request, so a caller cannot make the door say
 // something that did not happen. One notice per submission: a second call
@@ -57,6 +66,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { callerScopedClient } from "@/lib/serverAuth";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   intakeOutcomeEmail, quoteOutcomeEmail, OUTCOME_SEND_TIMEOUT_MS as SEND_TIMEOUT_MS, OUTCOME_STALE_CLAIM_MS as STALE_CLAIM_MS,
   type IntakeOutcome, type QuoteOutcome,
@@ -110,7 +121,13 @@ export async function POST(req: NextRequest) {
   const p = project as { id: string; name: string | null; owner_user_id: string | null } | null;
   // ADD-1: authority by the role COLLECTION, never the headline alone.
   const mayDecide = memberHoldsAny(m, ["Admin", "DocCtrl"]) || (!!p && String(p.owner_user_id ?? "") === userId);
-  if (!mayDecide) return bad("Only the project owner or a document controller can notify a contractor of a decision.", 403);
+  if (!mayDecide) {
+    // SAF-19 (J20): a publisher of the version's document approved it from
+    // the review surface — the same authority, asked as the caller.
+    const publisher = v.record_id ? await callerMayPublish(req, v.record_id, orgId) : false;
+    if (publisher === "unchecked") return bad("Your authority on this document could not be checked — try again. Nothing was sent.", 503);
+    if (!publisher) return bad("Only the project owner, a document controller or a publisher of this document can notify a contractor of a decision.", 403);
+  }
 
   const outcome: IntakeOutcome | null =
     v.review_state === "rejected" ? "rejected"
@@ -147,6 +164,23 @@ export async function POST(req: NextRequest) {
 }
 
 type Member = { role?: string; roles?: string[] | null; status?: string };
+
+/** SAF-19 (J20): does the CALLER hold publish authority on the document
+ *  (`user_can_publish_doc`, 20261037 — SECURITY DEFINER, reads auth.uid(),
+ *  so asked through a client carrying the caller's own bearer)? `false`
+ *  before 20261037 (42883 / PGRST202: today's authority alone), "unchecked"
+ *  on any other failure — the route then sends nothing. */
+async function callerMayPublish(req: NextRequest, docId: string, orgId: string): Promise<boolean | "unchecked"> {
+  const scoped = callerScopedClient(req);
+  if (!("rpc" in scoped)) return "unchecked"; // no credentials: an AuthError, not a client
+  try {
+    const { data, error } = await (scoped as SupabaseClient).rpc("user_can_publish_doc", { p_doc: docId, p_org: orgId });
+    if (error) return /^(42883|PGRST202)$/.test(String((error as { code?: string }).code ?? "")) ? false : "unchecked";
+    return data === true;
+  } catch {
+    return "unchecked";
+  }
+}
 
 /** The signed-in caller and their membership of `orgId`: a bearer token,
  *  its user, and an ACTIVE membership (503 when it cannot be read). */
