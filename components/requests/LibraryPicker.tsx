@@ -31,6 +31,12 @@
 // on such a ticket shows the current library selected (sending null, or
 // the current id, is the same no-change).
 //
+// DF-P4 fourth fix pass — "the target library (current)" names ONLY the
+// ticket's current library (`currentLibraryId`). Any other `value` the list
+// does not offer (one the modal was handed that the assigner cannot
+// discover) is "a library you cannot see (selected)" — never shown as the
+// ticket's current library, and never by name.
+//
 // Mounted by DF-P9 in the assign modal, one line:
 //   <LibraryPicker orgId={ticket.orgId} currentLibraryId={ticket.libraryId ?? null}
 //                  value={libraryId} onChange={setLibraryId} />
@@ -46,6 +52,7 @@ import type { Principal } from "@/lib/permissions";
 
 export const NO_LIBRARY_LABEL = "No library — decide later";
 export const CURRENT_HIDDEN_LIBRARY_LABEL = "the target library (current)";
+export const OTHER_HIDDEN_LIBRARY_LABEL = "a library you cannot see (selected)";
 
 export interface LibraryPickerProps {
   orgId: string;
@@ -99,7 +106,8 @@ export function LibraryPicker({ orgId, value, onChange, disabled, label = "Targe
   const current = currentLibraryId || null;
   const selected = value ?? current ?? "";
   // A library id the list does not offer — the ticket's current one, or a
-  // value the modal was given — is shown without its name.
+  // value the modal was given — is shown without its name; only the
+  // current one is labelled as the ticket's current library.
   const hiddenIds = [current, value].filter((id, i, all): id is string =>
     !!id && all.indexOf(id) === i && !options.some((o) => o.id === id));
 
@@ -115,7 +123,7 @@ export function LibraryPicker({ orgId, value, onChange, disabled, label = "Targe
       >
         {!current && <option value="">{NO_LIBRARY_LABEL}</option>}
         {hiddenIds.map((id) => (
-          <option key={`current-${id}`} value={id}>{CURRENT_HIDDEN_LIBRARY_LABEL}</option>
+          <option key={`hidden-${id}`} value={id}>{id === current ? CURRENT_HIDDEN_LIBRARY_LABEL : OTHER_HIDDEN_LIBRARY_LABEL}</option>
         ))}
         {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>

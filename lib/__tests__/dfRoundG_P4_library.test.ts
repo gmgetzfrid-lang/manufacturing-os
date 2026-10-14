@@ -40,8 +40,14 @@ const state = vi.hoisted(() => ({
 function chain(table: string) {
   const filters: Array<[string, unknown, "eq" | "is" | "in"]> = [];
   let head = false;
+  // documents.id is a uuid column: Postgres matches an `in` list on it
+  // case-insensitively (and returns the canonical lower-case text).
+  const inMatch = (k: string, list: unknown[], cell: unknown) =>
+    table === "documents" && k === "id" && typeof cell === "string"
+      ? list.some((x) => typeof x === "string" && x.toLowerCase() === cell.toLowerCase())
+      : list.includes(cell);
   const rows = () => (state.rows[table] ?? [])
-    .filter((r) => filters.every(([k, v, how]) => (how === "is" ? (r[k] ?? null) === v : how === "in" ? (v as unknown[]).includes(r[k]) : r[k] === v)))
+    .filter((r) => filters.every(([k, v, how]) => (how === "is" ? (r[k] ?? null) === v : how === "in" ? inMatch(k, v as unknown[], r[k]) : r[k] === v)))
     .map((r) => ({ ...r }));
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
@@ -82,7 +88,7 @@ vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "u
 vi.mock("@/lib/teams", () => ({ getMyTeamIds: vi.fn(async () => []) }));
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LibraryPicker, NO_LIBRARY_LABEL, CURRENT_HIDDEN_LIBRARY_LABEL } from "@/components/requests/LibraryPicker";
+import { LibraryPicker, NO_LIBRARY_LABEL, CURRENT_HIDDEN_LIBRARY_LABEL, OTHER_HIDDEN_LIBRARY_LABEL } from "@/components/requests/LibraryPicker";
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { POST as handback } from "@/app/api/tickets/handback/route";
 
@@ -376,46 +382,97 @@ describe("roles-and-permissions GAP-8 acceptance 2 — assigning a drafter regis
     (c.table === "documents" && c.method === "select") ||
     (c.table === "document_intents" && (c.method === "upsert" || c.method === "delete")));
 
-  it("fix pass 3: assigning a 150-sheet book is ONE read of every sheet (`.in`, in the ticket's org) and ONE upsert of every intent — never 300 round trips", async () => {
+  it("fix pass 4: assigning a 150-sheet book is TWO reads (`.in` slices of 100 — the create route's SOURCE_READ_CHUNK, inside the URL budget — in the ticket's org) and TWO upserts — never 300 round trips", async () => {
     seedQueue();
     seedBook();
+    const named = [...sheetIds, "doc-x"];
     state.rows.tickets = [ticketRow({ metadata: { ...bookMeta(), source_documents: [...bookMeta().source_documents, { id: "doc-x" }] } })];
     expect((await assign()).status).toBe(200);
     const calls = bridgeCalls();
-    expect(calls.map((c) => `${c.table}.${c.method}`)).toEqual(["documents.select", "document_intents.upsert"]);
-    const read = state.calls.indexOf(calls[0]);
-    expect(state.calls[read + 1]).toMatchObject({ table: "documents", method: "in", args: ["id", [...sheetIds, "doc-x"]] });
-    expect(state.calls[read + 2]).toMatchObject({ table: "documents", method: "eq", args: ["org_id", "o1"] });
-    const rows = calls[1].args[0] as Array<Record<string, unknown>>;
-    expect(rows.map((r) => r.document_id)).toEqual(sheetIds);   // doc-x (another org) registers nothing
-    expect(rows[149]).toMatchObject({ user_id: "d-1", library_id: LIB, base_version_id: "v-149", ticket_id: "t1", kind: "edit", source: "ticket" });
+    expect(calls.map((c) => `${c.table}.${c.method}`)).toEqual(["documents.select", "documents.select", "document_intents.upsert", "document_intents.upsert"]);
+    for (const [n, slice] of [[0, named.slice(0, 100)], [1, named.slice(100)]] as const) {
+      const read = state.calls.indexOf(calls[n]);
+      expect(state.calls[read + 1]).toMatchObject({ table: "documents", method: "in", args: ["id", slice] });
+      expect(state.calls[read + 2]).toMatchObject({ table: "documents", method: "eq", args: ["org_id", "o1"] });
+    }
+    const first = calls[2].args[0] as Array<Record<string, unknown>>;
+    const second = calls[3].args[0] as Array<Record<string, unknown>>;
+    expect(first).toHaveLength(100);
+    expect([...first, ...second].map((r) => r.document_id)).toEqual(sheetIds);   // doc-x (another org) registers nothing
+    expect(second[49]).toMatchObject({ user_id: "d-1", library_id: LIB, base_version_id: "v-149", ticket_id: "t1", kind: "edit", source: "ticket" });
+    const route = readFileSync(join(process.cwd(), "app", "api", "tickets", "workflow-action", "route.ts"), "utf8");
+    expect(route).toContain("const INTENT_BRIDGE_CHUNK = 100;");
+    expect(readFileSync(join(process.cwd(), "app", "api", "tickets", "create", "route.ts"), "utf8")).toContain("const SOURCE_READ_CHUNK = 100;");
   });
 
-  it("fix pass 3: reassigning the book is one retirement delete + one read + one upsert; closing it is one delete — each covering every sheet", async () => {
+  it("fix pass 4: a sheet named with an UPPER-CASE id is matched case-insensitively — its intent row carries the database's own id; two spellings of one sheet are one row", async () => {
+    seedQueue();
+    const SHEET = "5a000000-0000-4000-8000-0000000000ab";
+    state.rows.documents = [{ id: SHEET, org_id: "o1", current_version_id: "v-ab", library_id: LIB }];
+    const upserted = () => state.calls.filter((c) => c.table === "document_intents" && c.method === "upsert");
+    // Only the upper-case spelling: the sheet is found and registered.
+    state.rows.tickets = [ticketRow({ metadata: { source_document: { id: SHEET.toUpperCase() } } })];
+    expect((await assign()).status).toBe(200);
+    expect(upserted()).toHaveLength(1);
+    expect(upserted()[0].args[0]).toEqual([expect.objectContaining({ document_id: SHEET, base_version_id: "v-ab", library_id: LIB, user_id: "d-1", ticket_id: "t1" })]);
+    // Both spellings: one row, never one conflict key twice in one upsert.
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ metadata: {
+      source_document: { id: SHEET.toUpperCase() },
+      source_documents: [{ id: SHEET.toUpperCase() }, { id: SHEET }],
+    } })];
+    expect((await assign()).status).toBe(200);
+    expect(upserted()).toHaveLength(1);
+    expect(upserted()[0].args[0]).toEqual([expect.objectContaining({ document_id: SHEET, base_version_id: "v-ab" })]);
+  });
+
+  it("fix pass 4: a delete leg the database refuses is logged (non-blocking) — the close still applies", async () => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter"), member("a-1", "Admin")];
+    seedBook();
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", assigned_drafter_id: "d-1", attachments: [FINAL], metadata: bookMeta() })];
+    state.errors.document_intents = { code: "42501", message: "permission denied" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
+    expect(ticketUpdates()[0]).toMatchObject({ status: "CLOSED" });
+    const logged = warn.mock.calls.filter((a) => String(a[0]).includes("intents not cleared for ticket t1"));
+    expect(logged).toHaveLength(2);   // one per slice
+    expect(logged[0][1]).toBe("permission denied");
+    warn.mockRestore();
+  });
+
+  it("fix pass 4: reassigning the book is two retirement deletes + two reads + two upserts; closing it is two deletes — slices of 100 covering every sheet", async () => {
     state.user = { id: "a-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("d-1", "Drafter"), member("d-2", "Drafter")];
     seedBook();
     state.rows.tickets = [ticketRow({ status: "DRAFTING", assigned_drafter_id: "d-1", metadata: bookMeta() })];
     expect((await post({ ticketId: "t1", actionType: "reassign_drafter", comment: "out", assignment: { id: "d-2", name: "Sam" } })).status).toBe(200);
     let calls = bridgeCalls();
-    expect(calls.map((c) => `${c.table}.${c.method}`)).toEqual(["document_intents.delete", "documents.select", "document_intents.upsert"]);
-    const del = state.calls.indexOf(calls[0]);
-    expect(state.calls.slice(del + 1, del + 5).map((c) => [c.method, ...c.args])).toEqual([
-      ["in", "document_id", sheetIds], ["eq", "ticket_id", "t1"], ["eq", "source", "ticket"], ["eq", "user_id", "d-1"],
+    expect(calls.map((c) => `${c.table}.${c.method}`)).toEqual([
+      "document_intents.delete", "document_intents.delete", "documents.select", "documents.select", "document_intents.upsert", "document_intents.upsert",
     ]);
-    expect((calls[2].args[0] as Array<Record<string, unknown>>).every((r) => r.user_id === "d-2")).toBe(true);
-    expect((calls[2].args[0] as unknown[]).length).toBe(BOOK);
+    for (const [n, slice] of [[0, sheetIds.slice(0, 100)], [1, sheetIds.slice(100)]] as const) {
+      const del = state.calls.indexOf(calls[n]);
+      expect(state.calls.slice(del + 1, del + 5).map((c) => [c.method, ...c.args])).toEqual([
+        ["in", "document_id", slice], ["eq", "ticket_id", "t1"], ["eq", "source", "ticket"], ["eq", "user_id", "d-1"],
+      ]);
+    }
+    const upserted = [...(calls[4].args[0] as Array<Record<string, unknown>>), ...(calls[5].args[0] as Array<Record<string, unknown>>)];
+    expect(upserted.every((r) => r.user_id === "d-2")).toBe(true);
+    expect(upserted.length).toBe(BOOK);
 
     state.calls = [];
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", assigned_drafter_id: "d-2", attachments: [FINAL], metadata: bookMeta() })];
     expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
     calls = bridgeCalls().filter((c) => c.table === "document_intents");
-    expect(calls.map((c) => c.method)).toEqual(["delete"]);
-    const clr = state.calls.indexOf(calls[0]);
-    expect(state.calls.slice(clr + 1, clr + 4).map((c) => [c.method, ...c.args])).toEqual([
-      ["in", "document_id", sheetIds], ["eq", "ticket_id", "t1"], ["eq", "source", "ticket"],
-    ]);
+    expect(calls.map((c) => c.method)).toEqual(["delete", "delete"]);
+    for (const [n, slice] of [[0, sheetIds.slice(0, 100)], [1, sheetIds.slice(100)]] as const) {
+      const clr = state.calls.indexOf(calls[n]);
+      expect(state.calls.slice(clr + 1, clr + 4).map((c) => [c.method, ...c.args])).toEqual([
+        ["in", "document_id", slice], ["eq", "ticket_id", "t1"], ["eq", "source", "ticket"],
+      ]);
+    }
   });
 
   it("fix pass 3: the bridge runs AFTER the fan-out — the drafter's notice is written before any intent call; an unreadable sheet read registers nothing and never fails the assignment", async () => {
@@ -729,11 +786,16 @@ describe("DCW-5 / LibraryPicker — source pins (the component is mounted by DF-
     expect(html).toMatch(/<select[^>]*disabled=""/);
     expect(html).toContain("Target library");
   });
-  it("fix pass 2: a current library the assigner is not offered shows as 'the target library (current)', selected — never 'No library', never its name", () => {
-    const html = renderToStaticMarkup(createElement(LibraryPicker, { orgId: "o1", value: LIB, onChange: () => undefined }));
-    expect(html).toContain(`<option value="${LIB}" selected="">${CURRENT_HIDDEN_LIBRARY_LABEL}</option>`);
-    expect(html).not.toContain(`<option value="" selected="">`);
+  it("fix pass 2 / 4: a current library the assigner is not offered shows as 'the target library (current)', selected — never 'No library', never its name; an unoffered value that is NOT the current library is 'a library you cannot see (selected)'", () => {
+    const cur = renderToStaticMarkup(createElement(LibraryPicker, { orgId: "o1", currentLibraryId: LIB, value: LIB, onChange: () => undefined }));
+    expect(cur).toContain(`<option value="${LIB}" selected="">${CURRENT_HIDDEN_LIBRARY_LABEL}</option>`);
+    expect(cur).not.toContain(`<option value="" selected="">`);
     expect(CURRENT_HIDDEN_LIBRARY_LABEL).toBe("the target library (current)");
+    // fix pass 4: a value with no current library is never called the ticket's current one.
+    const html = renderToStaticMarkup(createElement(LibraryPicker, { orgId: "o1", value: LIB, onChange: () => undefined }));
+    expect(html).toContain(`<option value="${LIB}" selected="">${OTHER_HIDDEN_LIBRARY_LABEL}</option>`);
+    expect(html).not.toContain(CURRENT_HIDDEN_LIBRARY_LABEL);
+    expect(OTHER_HIDDEN_LIBRARY_LABEL).toBe("a library you cannot see (selected)");
     // No value → no extra option.
     expect(renderToStaticMarkup(createElement(LibraryPicker, { orgId: "o1", value: null, onChange: () => undefined }))).not.toContain(CURRENT_HIDDEN_LIBRARY_LABEL);
   });
@@ -755,6 +817,14 @@ describe("DCW-5 / LibraryPicker — source pins (the component is mounted by DF-
     // value === current: one option, not two.
     const same = renderToStaticMarkup(createElement(LibraryPicker, { orgId: "o1", currentLibraryId: LIB, value: LIB, onChange: () => undefined }));
     expect(same.split(`value="${LIB}"`).length - 1).toBe(1);
+  });
+  it("fix pass 4: current ≠ value, BOTH hidden — the current is 'the target library (current)', the value is 'a library you cannot see (selected)' and selected; neither by name", () => {
+    const OTHER = "1b000000-0000-4000-8000-000000000002";
+    const html = renderToStaticMarkup(createElement(LibraryPicker, { orgId: "o1", currentLibraryId: LIB, value: OTHER, onChange: () => undefined }));
+    expect(html).toContain(`<option value="${LIB}">${CURRENT_HIDDEN_LIBRARY_LABEL}</option>`);
+    expect(html).toContain(`<option value="${OTHER}" selected="">${OTHER_HIDDEN_LIBRARY_LABEL}</option>`);
+    expect(html.split(CURRENT_HIDDEN_LIBRARY_LABEL).length - 1).toBe(1);
+    expect(html).not.toContain(NO_LIBRARY_LABEL);
   });
   it("the picker offers only offerableLibraries (canDiscover) plus 'No library — decide later', the default when the ticket has no library", () => {
     const src = readFileSync(join(process.cwd(), "components", "requests", "LibraryPicker.tsx"), "utf8");

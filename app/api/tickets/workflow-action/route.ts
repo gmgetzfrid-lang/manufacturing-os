@@ -81,11 +81,11 @@ interface Body {
  *  documents.id). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** GAP-8 (DF-P4 fix pass 3): the intent bridge's slice — one `.in()` read,
- *  one upsert and one delete per leg cover this many sheets. Equal to
- *  MAX_SOURCE_DOCUMENTS (lib/ticketCreate.ts), so every ticket the create
- *  route can make is one slice; a hand-edited longer list is still bounded. */
-const INTENT_BRIDGE_CHUNK = 200;
+/** GAP-8 (DF-P4 fix passes 3-4): the intent bridge's slice — one `.in()` read,
+ *  one upsert and one delete per leg per slice. An `in` list travels in the
+ *  URL: the create route's SOURCE_READ_CHUNK, inside the 6,000-char budget;
+ *  a MAX_SOURCE_DOCUMENTS (200) ticket is two slices, any list is bounded. */
+const INTENT_BRIDGE_CHUNK = 100;
 
 /** EVID-12: the actions that approve a submitted draft — their audit row
  *  names the drafts the approval was given on. */
@@ -1159,9 +1159,9 @@ export async function POST(req: NextRequest) {
   // BATCHED (DF-P4 fix pass 3): a book request carries up to
   // MAX_SOURCE_DOCUMENTS sheets, so the bridge never makes a round trip per
   // sheet — one read of every sheet, one upsert of every intent row, one
-  // delete per retirement leg, each in INTENT_BRIDGE_CHUNK slices (one slice
-  // for any ticket the create route can make). And it runs AFTER the fan-out
-  // above: the drafter's notice never waits on it.
+  // delete per retirement leg, each in INTENT_BRIDGE_CHUNK slices (two
+  // slices at most for any ticket the create route can make). And it runs
+  // AFTER the fan-out above: the drafter's notice never waits on it.
   try {
     const sheetIds = parseSourceDocuments(ticket.metadata).map((d) => d.id);
     const slices: string[][] = [];
@@ -1183,13 +1183,16 @@ export async function POST(req: NextRequest) {
     // two statuses that register an intent.
     if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
       for (const ids of slices) {
-        await supabaseAdmin
+        const retire = await supabaseAdmin
           .from("document_intents")
           .delete()
           .in("document_id", ids)
           .eq("ticket_id", body.ticketId)
           .eq("source", "ticket")
           .eq("user_id", ticket.assignedDrafterId);
+        if (retire?.error) {
+          console.warn(`[workflow-action] intent bridge: previous drafter's intents not retired for ticket ${body.ticketId} (non-blocking)`, retire.error.message);
+        }
       }
     }
     // The new drafter is registered where the ticket is on a drafter's
@@ -1204,7 +1207,12 @@ export async function POST(req: NextRequest) {
         // SM-14: the source documents are read IN THE TICKET'S ORG (as the
         // CLOSED hand-back path reads them); a document id from another
         // workspace — or one that is gone — registers nothing.
-        const found = new Map<string, { current_version_id?: string | null; library_id?: string | null }>();
+        // Matched CASE-INSENSITIVELY (DF-P4 fix pass 4): a uuid column
+        // matches an upper-case id in the `.in()` read but returns its
+        // canonical lower-case text, so the map is keyed by the lower-cased
+        // database id, looked up by the lower-cased named id, and the row's
+        // document_id is the database's own id.
+        const found = new Map<string, { id: string; current_version_id?: string | null; library_id?: string | null }>();
         for (const ids of slices) {
           const { data: docRows, error: docErr } = await supabaseAdmin
             .from("documents")
@@ -1216,37 +1224,50 @@ export async function POST(req: NextRequest) {
             continue;
           }
           for (const r of (docRows ?? []) as Array<{ id?: string; current_version_id?: string | null; library_id?: string | null }>) {
-            if (r?.id) found.set(r.id, r);
+            if (r?.id) found.set(r.id.toLowerCase(), { ...r, id: r.id });
           }
         }
         const now = Date.now();
-        const rows = sheetIds.filter((id) => found.has(id)).map((id) => ({
+        // One row per database document: two spellings of one id (case)
+        // would otherwise put one conflict key twice in one upsert.
+        const matched = new Map<string, { id: string; current_version_id?: string | null; library_id?: string | null }>();
+        for (const id of sheetIds) {
+          const doc = found.get(id.toLowerCase());
+          if (doc && !matched.has(doc.id)) matched.set(doc.id, doc);
+        }
+        const rows = [...matched.values()].map((doc) => ({
           org_id: ticket.orgId,
-          document_id: id,
-          library_id: found.get(id)?.library_id ?? null,
+          document_id: doc.id,
+          library_id: doc.library_id ?? null,
           user_id: drafterId,
           user_name: drafterName ?? null,
           kind: "edit",
           source: "ticket",
-          base_version_id: found.get(id)?.current_version_id ?? null,
+          base_version_id: doc.current_version_id ?? null,
           ticket_id: body.ticketId,
           refreshed_at: new Date(now).toISOString(),
           expires_at: new Date(now + TICKET_INTENT_TTL_MS).toISOString(),
         }));
         for (let i = 0; i < rows.length; i += INTENT_BRIDGE_CHUNK) {
-          await supabaseAdmin
+          const upsert = await supabaseAdmin
             .from("document_intents")
             .upsert(rows.slice(i, i + INTENT_BRIDGE_CHUNK), { onConflict: "document_id,user_id,kind,source" });
+          if (upsert?.error) {
+            console.warn(`[workflow-action] intent bridge: drafter's intents not registered for ticket ${body.ticketId} (non-blocking)`, upsert.error.message);
+          }
         }
       }
     } else if (clearsAll) {
       for (const ids of slices) {
-        await supabaseAdmin
+        const clear = await supabaseAdmin
           .from("document_intents")
           .delete()
           .in("document_id", ids)
           .eq("ticket_id", body.ticketId)
           .eq("source", "ticket");
+        if (clear?.error) {
+          console.warn(`[workflow-action] intent bridge: intents not cleared for ticket ${body.ticketId} (non-blocking)`, clear.error.message);
+        }
       }
     }
   } catch (e) {

@@ -269,7 +269,7 @@ app/api/tickets/workflow-action/route.ts:231-233 —
 **Scope / residual.** Remove the cast (map the remaining columns the server path reads, or narrow the return type so omissions are compile errors) → **DF-P4**, the next package whose brief edits `rowToTicket` (it maps `library_id`). Not in the handed-on list — found on re-verification.
 
 **Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — the re-owned residual (remove the cast).
-- `lib/ticketTransitions.ts:72` `rowToTicket` builds `const ticket: Ticket = { … }` and returns it — no `as Ticket`, so the literal is checked against the type: a required `Ticket` field not mapped, or a mapped key the type does not have, is a compile error. It now also maps every column a server reader takes through it: `library_id` (DCW-1), `closed_at` (new `Ticket.closedAt`), `archived_at`, `archive_id`, `updated_at`, `search_keywords`; `unit` is `null` when NULL (PERS-6). (The SLA clocks and the outcome were mapped by DF-P3.)
+- `lib/ticketTransitions.ts:73` `rowToTicket` builds `const ticket: Ticket = { … }` and returns it — no `as Ticket`, so the literal is checked against the type: a required `Ticket` field not mapped, or a mapped key the type does not have, is a compile error. It now also maps every column a server reader takes through it: `library_id` (DCW-1), `closed_at` (new `Ticket.closedAt`), `archived_at`, `archive_id`, `updated_at`, `search_keywords`; `unit` is `null` when NULL (PERS-6). (The SLA clocks and the outcome were mapped by DF-P3.)
 - Tests: `lib/__tests__/dfRoundG_P4_library.test.ts` ("PERS-5 / PERS-6 — rowToTicket has no cast…": the mapped columns, and a source pin that `} as Ticket;` is gone and the literal is typed); `npx tsc --noEmit` exit 0.
 
 **Done-when.**

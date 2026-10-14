@@ -493,6 +493,12 @@ supports `discover` without read; the request form does not use it.
    automatically.
 2. A ticket without one can still be filed, and triage must resolve it before
    assignment completes.
+   *Note (DF-P4 fourth fix pass, ruled under `DEC-90`): the second half of
+   this acceptance is superseded — a library is **never required, at intake
+   or at assignment**: [`DEC-44 (DF-P4)`](../DECISIONS.md#dec-44-df-p4) item 2
+   and `DCW-1`'s ruling (`03-doc-control-wiring.md`, DCW-1 Partial: "Never
+   required"). Triage MAY set or correct it; a ticket with no library is
+   assigned, issued and closed as before.*
 3. Library-scoped rules can be evaluated against any ticket past triage.
 
 **Related findings:** `DCW-1`, `DCW-5`, `DCW-6`.
