@@ -19,10 +19,13 @@
 // DESC breaking ties, each page asking for the rows strictly after the last
 // row it received — so a page the server shortened to its own max-rows never
 // skips anyone, whatever that limit is. The first page carries an exact
-// count. The read stops at the end: a page that adds nobody, the count
-// reached, or — when no count came back — a page shorter than asked (the
-// ruling's "short page"). A failed page fails the WHOLE read (`ok: false`),
-// never a partial list presented as whole.
+// count. The read stops at the end: the count reached, or a page that adds
+// nobody. A page shorter than asked is NEVER taken as the end on its own
+// (fix pass): a server whose max-rows is below the page size shortens every
+// page, so with no count (an old server, a proxy that drops Content-Range)
+// the read carries on until a page adds nobody — one request more than the
+// rows need, never a silently short list. A failed page fails the WHOLE read
+// (`ok: false`), never a partial list presented as whole.
 //
 // Bounded: at most QUEUE_READ_CEILING rows (the whole history of a large
 // workspace is not held in a browser tab). A read that stops there, or ends
@@ -61,7 +64,8 @@ export type QueueReadResult =
       rows: Row[];
       /** The exact count the first page reported, or null when none came back. */
       total: number | null;
-      /** Every row of the scope is in `rows` (as far as the count can tell). */
+      /** Every row of the scope is in `rows`: the count reached, or — with no
+       *  count — read until a page added nobody. */
       complete: boolean;
       /** The read stopped at the ceiling. */
       capped: boolean;
@@ -86,6 +90,7 @@ export async function readQueueScope(
   // and its id.
   let cursor: { lm: string | null; id: string } | null = null;
   let capped = false;
+  let stalled = false;
   try {
     for (;;) {
       let q = build(cursor === null);
@@ -116,9 +121,13 @@ export async function readQueueScope(
         rows.push(r);
         added++;
       }
-      if (added === 0) break;
+      if (added === 0) {
+        // A page that came back with rows yet added nobody: the server did
+        // not honour the keyset — the read cannot say it holds everyone.
+        if (page.length > 0) stalled = true;
+        break;
+      }
       if (total !== null && rows.length >= total) break;
-      if (total === null && page.length < ask) break; // a short page: the end
       if (rows.length >= ceiling) { capped = true; break; }
       const tail = page[page.length - 1];
       const tailId = typeof tail?.id === "string" ? tail.id : "";
@@ -126,7 +135,7 @@ export async function readQueueScope(
       const tailLm = tail.last_modified;
       cursor = { lm: typeof tailLm === "string" && tailLm ? tailLm : null, id: tailId };
     }
-    return { ok: true, rows, total, complete: !capped && (total === null || rows.length >= total), capped };
+    return { ok: true, rows, total, complete: !capped && !stalled && (total === null || rows.length >= total), capped };
   } catch (e) {
     return { ok: false, error: (e as Error)?.message || "the request list could not be read" };
   }

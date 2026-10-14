@@ -196,10 +196,13 @@ export default function RequestPortal() {
   // read last succeeded for, so a later failure in THAT scope keeps its list,
   // said to be as last read, and a failure after the scope changed never
   // presents another scope's list; `listShort` — the read ended with fewer
-  // rows than its count (the ceiling, or requests that changed mid-read).
+  // rows than its count (the ceiling, or requests that changed mid-read), or
+  // with no count at all; `openComplete` — at the ceiling, every OPEN request
+  // was still read (fix pass: the open scope is read on its own), so only
+  // closed history is bounded.
   const [listFault, setListFault] = useState<string | null>(null);
   const [listLoadedFor, setListLoadedFor] = useState<string | null>(null);
-  const [listShort, setListShort] = useState<{ shown: number; total: number | null; capped: boolean } | null>(null);
+  const [listShort, setListShort] = useState<{ shown: number; total: number | null; capped: boolean; openComplete: boolean; closedShown: number } | null>(null);
   const [listReadAt, setListReadAt] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [processingBulk, setProcessingBulk] = useState<boolean>(false);
@@ -358,6 +361,12 @@ export default function RequestPortal() {
   // urgent that found the list's copy stale cannot wait on a realtime event
   // that may never come (a dropped channel, a tab woken from sleep).
   const refetchTicketsRef = useRef<(() => void) | null>(null);
+  // ROUTE-12 fix pass: every list read is numbered; only the LATEST read's
+  // answer is applied (rows, fault, short, scope, time), so two overlapping
+  // reads — a realtime event during a multi-page read — can never land out of
+  // order: a late stale failure never covers a fresh list, and a late stale
+  // success never replaces a newer one or clears a real failure.
+  const readSeqRef = useRef(0);
   useEffect(() => {
     if (!uid || !activeOrgId) {
       setTickets([]);
@@ -395,6 +404,8 @@ export default function RequestPortal() {
     });
 
     const fetchTickets = async () => {
+      const seq = ++readSeqRef.current;
+      const latest = () => alive && readSeqRef.current === seq;
       try {
         setLoading(true);
         let rows: Record<string, unknown>[] = [];
@@ -403,49 +414,69 @@ export default function RequestPortal() {
         // ends (lib/ticketQueueRead.ts — every row whatever PostgREST's
         // max-rows is, newest-modified first), and a page that fails fails
         // the read: the list is never a silently short or empty queue.
-        // `scope` starts a fresh query: the select (with the exact count on
+        // `select` starts a fresh query: the select (with the exact count on
         // the first page) and the scope's filters, as before.
-        const scope = (filter: (counted: boolean) => unknown) => (counted: boolean) => filter(counted) as QueueQuery;
         const select = (counted: boolean) => supabase.from('tickets').select('*', counted ? { count: 'exact' } : undefined);
-        let reads: QueueReadResult[];
+        type Sel = ReturnType<typeof select>;
+        type Ok = Extract<QueueReadResult, { ok: true }>;
+        // ROUTE-12 fix pass: a scope that holds closed requests and stops at
+        // the ceiling (QUEUE_READ_CEILING, newest-modified first) is read a
+        // second time for its OPEN requests alone, so every open request —
+        // the list, Needs me, the Action Required tile, every count of open
+        // work — is whole whatever the history holds; only closed history is
+        // bounded, and the page says so (drafting-flow ROUTE-13).
+        const readScope = async (filter: (q: Sel) => Sel, holdsClosed: boolean): Promise<{ read: QueueReadResult; open?: QueueReadResult }> => {
+          const read = await readQueueScope((counted) => filter(select(counted)) as unknown as QueueQuery);
+          if (!holdsClosed || !read.ok || !read.capped) return { read };
+          const open = await readQueueScope((counted) => filter(select(counted)).not('status', 'in', '("CLOSED","CANCELED")') as unknown as QueueQuery);
+          return { read, open };
+        };
+        let reads: Array<{ read: QueueReadResult; open?: QueueReadResult }>;
         if ((['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor', 'DocCtrl'] as Role[]).some((r) => roles.includes(r)) || roles.some((r) => r.includes('Engineer'))) {
-          reads = [await readQueueScope(scope((counted) => {
-            const q = select(counted).eq('org_id', activeOrgId);
-            return includeClosed ? q : q.not('status', 'in', '("CLOSED","CANCELED")');
-          }))];
+          reads = [await readScope((q) => {
+            const scoped = q.eq('org_id', activeOrgId);
+            return includeClosed ? scoped : scoped.not('status', 'in', '("CLOSED","CANCELED")');
+          }, includeClosed)];
         } else if (roles.includes('Drafter')) {
           reads = await Promise.all([
-            readQueueScope(scope((counted) => select(counted).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid))),
-            readQueueScope(scope((counted) => select(counted).eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT'))),
+            // the assigned scope holds closed requests whatever the toggle
+            // (the client filter below leaves them out), as before
+            readScope((q) => q.eq('org_id', activeOrgId).eq('assigned_drafter_id', uid), true),
+            readScope((q) => q.eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT'), false),
           ]);
         } else {
-          reads = [await readQueueScope(scope((counted) => {
-            const q = select(counted).eq('org_id', activeOrgId).eq('requester_id', uid);
-            return includeClosed ? q : q.not('status', 'in', '("CLOSED","CANCELED")');
-          }))];
+          reads = [await readScope((q) => {
+            const scoped = q.eq('org_id', activeOrgId).eq('requester_id', uid);
+            return includeClosed ? scoped : scoped.not('status', 'in', '("CLOSED","CANCELED")');
+          }, includeClosed)];
         }
-        const failed = reads.find((r): r is Extract<QueueReadResult, { ok: false }> => !r.ok);
+        const failed = reads.flatMap((r) => (r.open ? [r.read, r.open] : [r.read]))
+          .find((r): r is Extract<QueueReadResult, { ok: false }> => !r.ok);
         if (failed) {
           console.error("Fetch Error:", failed.error);
-          if (alive) { setListFault(failed.error); setLoading(false); setRefreshing(false); }
+          if (latest()) { setListFault(failed.error); setLoading(false); setRefreshing(false); }
           return;
         }
-        const done = reads as Array<Extract<QueueReadResult, { ok: true }>>;
-        if (done.length === 1) {
-          rows = done[0].rows;
+        const done = reads as Array<{ read: Ok; open?: Ok }>;
+        if (done.length === 1 && !done[0].open) {
+          rows = done[0].read.rows;
         } else {
+          // Each request once, in the order first read (the open scope's
+          // extra rows are older than every row of the capped read).
           const map = new Map<string, Record<string, unknown>>();
-          for (const r of done.flatMap((d) => d.rows)) {
+          for (const r of done.flatMap((d) => [...d.read.rows, ...(d.open?.rows ?? [])])) {
             map.set(r.id as string, r as Record<string, unknown>);
           }
           rows = Array.from(map.values());
           if (!includeClosed) rows = rows.filter((r) => !isTerminalTicketStatus(r.status as string));
         }
-        const short = done.some((d) => !d.complete)
+        const short = done.some((d) => !d.read.complete)
           ? {
-              shown: done.reduce((n, d) => n + d.rows.length, 0),
-              total: done.every((d) => d.total !== null) ? done.reduce((n, d) => n + (d.total ?? 0), 0) : null,
-              capped: done.some((d) => d.capped),
+              shown: rows.length,
+              total: done.every((d) => d.read.total !== null) ? done.reduce((n, d) => n + (d.read.total ?? 0), 0) : null,
+              capped: done.some((d) => d.read.capped),
+              openComplete: done.every((d) => !d.read.capped || (!!d.open && d.open.complete)),
+              closedShown: rows.filter((r) => isTerminalTicketStatus(r.status as string)).length,
             }
           : null;
 
@@ -453,7 +484,7 @@ export default function RequestPortal() {
         // FRIC-7: the requesters' current collections, in one batched read
         // (a failed read is null — every requester assumed present).
         const reqRoles = await loadRequesterRoles(activeOrgId, mapped.map((t) => t.requesterId));
-        if (alive) {
+        if (latest()) {
           setTickets(mapped);
           setRequesterRoles(reqRoles);
           setListFault(null);
@@ -465,7 +496,7 @@ export default function RequestPortal() {
         }
       } catch (err) {
         console.error("Fetch Error:", err);
-        if (alive) { setError("Failed to load tickets."); setListFault((err as Error)?.message || "the request list could not be read"); setLoading(false); }
+        if (latest()) { setError("Failed to load tickets."); setListFault((err as Error)?.message || "the request list could not be read"); setLoading(false); setRefreshing(false); }
       }
     };
 
@@ -823,9 +854,14 @@ export default function RequestPortal() {
     document.body.removeChild(link);
   };
 
+  // ROUTE-12 fix pass: the header's Refresh Data re-reads the list (it only
+  // spun before — a dropped realtime channel left the list stale behind a
+  // button that seemed to refresh it); the spin ends when the read lands.
   const handleRefresh = () => {
+    const refetch = refetchTicketsRef.current;
+    if (!refetch) return;
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 800);
+    refetch();
   };
 
   // Run a workflow action through the server-enforced route (state machine +
@@ -1090,28 +1126,16 @@ export default function RequestPortal() {
     );
   }
 
-  // ROUTE-12 (DF-P14): the list could not be read and no earlier read
-  // succeeded — say so, offer to read again, and show no counts or list (an
-  // empty queue here would read as "nothing to do").
-  if (listFault && !listLoaded) {
-    return (
-      <div className="p-8">
-        <div role="alert" data-testid="requests-read-failed" className="max-w-3xl mx-auto bg-red-50 border border-red-200 rounded-2xl p-6 shadow-sm text-red-900">
-          <div className="flex items-start gap-4">
-            <AlertCircle className="h-6 w-6 shrink-0 text-red-600" />
-            <div className="flex-1">
-              <h2 className="text-lg font-black">The request list could not be read</h2>
-              <p className="text-sm mt-2">{listFault}. Nothing is shown rather than a list that may be missing requests — no count or list here would be your queue.</p>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <button type="button" onClick={() => refetchTicketsRef.current?.()} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800">Try again</button>
-                <Link href="/requests/new" className="text-sm font-bold text-red-800 hover:underline">New Request</Link>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // ROUTE-12 (DF-P14): the list could not be read and no read of THIS scope
+  // succeeded — say so in place of the list, with Try again, and show no
+  // count or list derived from rows (an empty queue would read as "nothing to
+  // do"; the rows held may be another scope's). Fix pass: the page shell —
+  // the header, the filter bar, the status filter, Show Closed, the view
+  // switcher — stays, so a failure confined to one scope (the default "Any
+  // status" whole-history read timing out, say) never locks the user out of a
+  // narrower scope that would still load: choosing an open status reads only
+  // open requests.
+  const listUnread = !!listFault && !listLoaded;
 
   return (
     <div className="pb-20">
@@ -1130,7 +1154,7 @@ export default function RequestPortal() {
                 Drafting Request Portal
               </h1>
               <p className="text-sm text-[var(--color-text-muted)] mt-1">
-                {activeRole} Console • {metrics.totalVolume} Total Records
+                {activeRole} Console • {listUnread ? 'Total records unknown — the list could not be read' : `${metrics.totalVolume} Total Records`}
               </p>
             </div>
             
@@ -1160,6 +1184,8 @@ export default function RequestPortal() {
             </div>
           </div>
 
+          {/* ROUTE-12 fix pass: no tile counts rows that could not be read. */}
+          {!listUnread && (
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             
             {/* SLOT 1: MY ACTION ITEMS — AUTHZ-15: during a policy fault the
@@ -1225,6 +1251,7 @@ export default function RequestPortal() {
               <div className="text-2xl font-black text-[var(--color-text-muted)] mt-1">{metrics.staleTickets}</div>
             </div>
           </div>
+          )}
         </div>
       </div>
 
@@ -1233,7 +1260,7 @@ export default function RequestPortal() {
         
         {/* URGENT ACTION BANNER — only for a count the page computed (AUTHZ-15:
             during a policy fault the notice below says why it is unknown). */}
-        {hasActionItems && (
+        {hasActionItems && !listUnread && (
           <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 shadow-sm flex items-center justify-between text-orange-900 animate-in slide-in-from-top-4 mb-6">
             <div className="flex items-center space-x-4">
               <div className="p-2 bg-orange-100 rounded-lg">
@@ -1281,16 +1308,20 @@ export default function RequestPortal() {
           <div role="status" data-testid="requests-read-short" className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-start gap-3 text-amber-900">
             <AlertCircle className="w-5 h-5 mt-0.5 shrink-0 text-amber-600" />
             <div className="text-sm flex-1">
-              {listShort.capped
-                ? <>This list shows the {listShort.shown} most recently active of {listShort.total !== null ? `the ${listShort.total}` : 'the'} requests in this view — more than one list holds. Choose a status to narrow it and see the rest; the counts above are of the {listShort.shown} shown.</>
-                : <>This list shows {listShort.shown} of the {listShort.total ?? 'more'} requests in this view — requests changed while it was being read. Refresh to read it again.</>}
+              {listShort.capped && listShort.openComplete
+                ? <>Every open request in this view is listed, with the {listShort.closedShown} most recently active closed or canceled ones{listShort.total !== null ? <> — {listShort.total} requests in all</> : null}, more than one list holds. Older closed and canceled requests are not listed here (choosing Closed or Canceled reads the same most recent ones); the open counts above are whole, the closed ones count only those listed.</>
+                : listShort.capped
+                  ? <>This list shows the {listShort.shown} most recently active of {listShort.total !== null ? `the ${listShort.total}` : 'the'} requests in this view — more than one list holds, open requests included. Choose an open status to narrow it and see the rest; the counts above are of the {listShort.shown} shown.</>
+                  : listShort.total !== null
+                    ? <>This list shows {listShort.shown} of the {listShort.total} requests in this view — requests changed while it was being read. Refresh to read it again.</>
+                    : <>This list shows the {listShort.shown} requests that could be read, but the total could not be counted, so more may exist. Refresh to read it again.</>}
             </div>
             <button type="button" onClick={() => refetchTicketsRef.current?.()} className="px-3 py-1.5 bg-[var(--color-surface)] border border-amber-300 rounded-lg text-xs font-bold text-amber-800 hover:bg-amber-100">Refresh list</button>
           </div>
         )}
 
         {/* BULK ACTIONS HEADER */}
-        {selectedTicketIds.size > 0 && (
+        {selectedTicketIds.size > 0 && !listUnread && (
           <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-center justify-between animate-in fade-in slide-in-from-top-2">
             <div className="flex items-center space-x-3">
               <span className="bg-orange-600 text-white text-xs font-bold px-2 py-1 rounded-md">{selectedTicketIds.size} Selected</span>
@@ -1336,7 +1367,7 @@ export default function RequestPortal() {
                   onClick={() => pickAttentionView('needs_me')}
                   className={`px-3 py-1.5 rounded-md text-sm font-bold transition-all ${attentionView === 'needs_me' ? 'bg-orange-100 text-orange-800' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
                 >
-                  Needs me <span className="ml-1 font-black">{policyFault ? '—' : needsMeTickets.length}</span>
+                  Needs me <span className="ml-1 font-black">{policyFault || listUnread ? '—' : needsMeTickets.length}</span>
                 </button>
                 <button
                   type="button"
@@ -1345,7 +1376,7 @@ export default function RequestPortal() {
                   onClick={() => pickAttentionView('all')}
                   className={`px-3 py-1.5 rounded-md text-sm font-bold transition-all ${attentionView === 'all' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] shadow-inner' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`}
                 >
-                  All <span className="ml-1 font-black">{filteredTickets.length}</span>
+                  All <span className="ml-1 font-black">{listUnread ? '—' : filteredTickets.length}</span>
                 </button>
               </div>
             )}
@@ -1400,7 +1431,25 @@ export default function RequestPortal() {
       {/* 3. CONTENT AREA */}
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8">
 
-        {viewMode === 'team' ? (
+        {listUnread ? (
+          /* ROUTE-12 (DF-P14): the list could not be read — said in its place. */
+          <div role="alert" data-testid="requests-read-failed" className="bg-red-50 border border-red-200 rounded-2xl p-6 shadow-sm text-red-900">
+            <div className="flex items-start gap-4">
+              <AlertCircle className="h-6 w-6 shrink-0 text-red-600" />
+              <div className="flex-1">
+                <h2 className="text-lg font-black">The request list could not be read</h2>
+                <p className="text-sm mt-2">{listFault}. Nothing is shown rather than a list that may be missing requests — no count or list here would be your queue.</p>
+                {includeClosed && (
+                  <p data-testid="requests-read-failed-narrow" className="text-sm mt-2">This view reads closed requests too{showClosed ? ' (Show Closed is on)' : ''}. To read a narrower list, {showClosed ? 'turn Show Closed off and ' : ''}choose an open status above — it reads only open requests.</p>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button type="button" onClick={() => refetchTicketsRef.current?.()} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800">Try again</button>
+                  <Link href="/requests/new" className="text-sm font-bold text-red-800 hover:underline">New Request</Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : viewMode === 'team' ? (
           /* VIEW: BY-DRAFTER SUPERVISOR BOARD */
           teamBoard.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-32 bg-[var(--color-surface)] rounded-2xl border border-dashed border-[var(--color-border-strong)] text-center">

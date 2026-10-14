@@ -208,6 +208,32 @@ describe("GAP-13 / GAP-107 acceptance 1 — the reasons editor on Admin → Requ
     ]);
   });
 
+  it.each([
+    ["an object", {}],
+    ["a string", "Not drafting work"],
+    ["a list with junk entries", [null, 7, { id: "c", label: "x", category: "abandoned" }, { id: "close_out_only", label: "Close-out only", category: "completed" }, { id: "dup_ticket", label: "Filed twice", category: "duplicate" }]],
+  ])("FIX PASS: a stored reason value that is %s never crashes the page; what cannot be shown is said, and the rest of the form still saves", async (_label, stored) => {
+    h.config = { ...h.config!, outcomeReasons: stored };
+    await render();
+    expect(editor()).toBeTruthy();
+    // the rest of the page is there and works
+    expect(saveBtn()).toBeTruthy();
+    expect(host!.querySelector('[data-testid="outcome-reasons-hidden"]')?.textContent).toMatch(/not shown here[\s\S]*Save Changes does not keep/);
+    await click(saveBtn());
+    const data = configWrites()[0].row!.data as Row;
+    expect(data.requestTypes).toEqual(h.config!.requestTypes);
+    expect(data.outcomeReasons).toEqual(Array.isArray(stored) ? [{ id: "dup_ticket", label: "Filed twice", category: "duplicate" }] : []);
+    // saved: nothing hidden any more
+    expect(host!.querySelector('[data-testid="outcome-reasons-hidden"]')).toBeNull();
+  });
+
+  it("FIX PASS: a well-formed stored list says nothing is hidden", async () => {
+    h.config = { ...h.config!, outcomeReasons: [{ id: "dup_ticket", label: "Filed twice", category: "duplicate" }] };
+    await render();
+    expect(host!.querySelector('[data-testid="outcome-reasons-hidden"]')).toBeNull();
+    expect((group("duplicate").querySelector("input") as HTMLInputElement).value).toBe("Filed twice");
+  });
+
   it("a refused save shows the database's words and who saves request forms (the existing gate, unchanged)", async () => {
     h.configUpsertError = { code: "42501", message: "new row violates row-level security policy" };
     await render();

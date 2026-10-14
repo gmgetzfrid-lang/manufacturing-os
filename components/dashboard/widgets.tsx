@@ -35,6 +35,7 @@ import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
+import { readQueueScope, type QueueQuery } from "@/lib/ticketQueueRead";
 import { computeNudges } from "@/lib/nudges";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -440,9 +441,14 @@ interface TicketRow {
 
 function DraftingRequestsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const [statusRes, recentRes, newDates] = await Promise.all([
-      supabase.from("tickets").select("status")
-        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")').limit(2000),
+    const [statusRead, recentRes, newDates] = await Promise.all([
+      // ROUTE-12 fix pass (DF-P14): EVERY open request is counted — read
+      // through the queue's own keyset reader (lib/ticketQueueRead.ts), with
+      // its exact count — never one read capped at 2,000 rows whose error
+      // went unread (above that the count and the bar undercounted in
+      // silence, the queue's own defect).
+      readQueueScope((counted) => supabase.from("tickets").select("id, status, last_modified", counted ? { count: "exact" } : undefined)
+        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as QueueQuery),
       supabase.from("tickets")
         .select("id, ticket_id, title, status, created_at, requester_name, assigned_drafter_name, updated_at")
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
@@ -450,16 +456,27 @@ function DraftingRequestsBody() {
       fetchRecentDates("tickets", orgId, 14),
     ]);
     const byStatus = new Map<string, number>();
-    for (const r of ((statusRes.data ?? []) as Array<{ status: string | null }>)) {
+    for (const r of ((statusRead.ok ? statusRead.rows : []) as Array<{ status?: string | null }>)) {
       const s = r.status ?? "PENDING_ASSIGNMENT";
       byStatus.set(s, (byStatus.get(s) ?? 0) + 1);
     }
-    const open = Array.from(byStatus.values()).reduce((a, b) => a + b, 0);
-    return { open, byStatus, recent: (recentRes.data ?? []) as TicketRow[], newDates };
+    const counted = Array.from(byStatus.values()).reduce((a, b) => a + b, 0);
+    return {
+      // The exact count when one came back; null when the read failed (said
+      // below, never a 0).
+      open: statusRead.ok ? (statusRead.total ?? counted) : null,
+      countFault: statusRead.ok ? null : statusRead.error,
+      // The bar counts fewer than the count (past the reader's ceiling, or
+      // rows that changed mid-read): said, never a short bar shown as whole.
+      partial: statusRead.ok && !statusRead.complete ? { counted, total: statusRead.total } : null,
+      byStatus, recent: (recentRes.data ?? []) as TicketRow[], newDates,
+    };
   });
 
   if (loading) return <Skeleton />;
   const open = data?.open ?? 0;
+  const countFault = data?.countFault ?? null;
+  const partial = data?.partial ?? null;
   const recent = data?.recent ?? [];
   const by = (keys: string[]) => keys.reduce((s, k) => s + (data?.byStatus.get(k) ?? 0), 0);
   // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
@@ -481,7 +498,7 @@ function DraftingRequestsBody() {
           week's intake vs last. */}
       <div className="flex items-end justify-between gap-3 shrink-0">
         <div className="flex items-end gap-2">
-          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{open}</span>
+          <span data-testid="drafting-open-count" className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{countFault ? "—" : open}</span>
           <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">open requests</span>
         </div>
         <div className="flex items-center gap-2">
@@ -491,7 +508,13 @@ function DraftingRequestsBody() {
           </Link>
         </div>
       </div>
-      {open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
+      {countFault && (
+        <p role="status" data-testid="drafting-open-count-fault" className="mt-1 text-[11px] text-amber-700 shrink-0">Open requests could not be counted — {countFault}.</p>
+      )}
+      {!countFault && open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
+      {partial && (
+        <p data-testid="drafting-open-count-partial" className="mt-1 text-[11px] text-amber-700 shrink-0">The bar counts the {partial.counted} most recently active of {partial.total ?? "the"} open requests.</p>
+      )}
 
       {recent.length === 0 ? (
         <BodyShell>

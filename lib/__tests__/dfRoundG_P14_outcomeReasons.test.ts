@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   parseOutcomeReasons, withNormalizedOutcomeReasons, newOutcomeReasonId, outcomeChoiceGroups, decodeOutcomeChoice,
-  checkOutcomeReason, OUTCOME_REASONS_MAX, OUTCOME_REASON_CATEGORIES,
+  checkOutcomeReason, checkBareOutcome, editableOutcomeReasons, OUTCOME_REASONS_MAX, OUTCOME_REASON_CATEGORIES,
 } from "@/lib/ticketOutcomeReasons";
 import { CANCEL_OUTCOMES, OUTCOME_LABEL, TICKET_OUTCOMES } from "@/lib/ticketOutcome";
 import React, { act } from "react";
@@ -316,6 +316,48 @@ describe("lib/ticketOutcomeReasons — the list", () => {
     expect(newOutcomeReasonId("!!!", [])).toBe("reason");
     expect(newOutcomeReasonId("Dup", ["dup", "dup_2"])).toBe("dup_3");
   });
+  it("FIX PASS: the save claims every saved id first — a new reason listed before a saved one never takes its id", () => {
+    const out = withNormalizedOutcomeReasons({ outcomeReasons: [
+      { id: "", label: "Out of scope", category: "rejected" },
+      { id: "out_of_scope", label: "Out of scope (as saved)", category: "rejected" },
+      { id: "out_of_scope", label: "A second holder of the same id", category: "withdrawn" },
+    ] }) as { outcomeReasons: unknown };
+    expect(out.outcomeReasons).toEqual([
+      { id: "out_of_scope_2", label: "Out of scope", category: "rejected" },
+      { id: "out_of_scope", label: "Out of scope (as saved)", category: "rejected" },
+      { id: "a_second_holder_of_the_same_id", label: "A second holder of the same id", category: "withdrawn" },
+    ]);
+  });
+  it("FIX PASS: the save keeps only reasons under the categories the editor shows (never completed, never an unknown one)", () => {
+    const out = withNormalizedOutcomeReasons({ outcomeReasons: [
+      { id: "close_out_only", label: "Close-out only", category: "completed" },
+      { id: "c", label: "x", category: "abandoned" },
+      { id: "dup", label: "Filed twice", category: "duplicate" },
+    ] }) as { outcomeReasons: unknown };
+    expect(out.outcomeReasons).toEqual([{ id: "dup", label: "Filed twice", category: "duplicate" }]);
+    expect((withNormalizedOutcomeReasons({ outcomeReasons: {} }) as { outcomeReasons: unknown }).outcomeReasons).toEqual([]);
+  });
+  it("FIX PASS: what the editor is handed — any stored value reads as a list; what it cannot show is counted", () => {
+    expect(editableOutcomeReasons(undefined)).toEqual({ reasons: [], hidden: 0 });
+    expect(editableOutcomeReasons(null)).toEqual({ reasons: [], hidden: 0 });
+    expect(editableOutcomeReasons({})).toEqual({ reasons: [], hidden: 1 });
+    expect(editableOutcomeReasons("x")).toEqual({ reasons: [], hidden: 1 });
+    expect(editableOutcomeReasons([
+      { id: "a", label: "A", category: "withdrawn" },
+      { label: "No id yet", category: "rejected" },
+      { id: 7, label: 8, category: "duplicate" },
+      { id: "close_out_only", label: "Close-out only", category: "completed" },
+      { id: "c", label: "x", category: "abandoned" },
+      null, "junk",
+    ])).toEqual({
+      reasons: [
+        { id: "a", label: "A", category: "withdrawn" },
+        { id: "", label: "No id yet", category: "rejected" },
+        { id: "", label: "", category: "duplicate" },
+      ],
+      hidden: 4,
+    });
+  });
   it("the editor offers reasons under the four ways a cancel can end a request (a cancel is never completed)", () => {
     expect(OUTCOME_REASON_CATEGORIES).toEqual(CANCEL_OUTCOMES);
     expect(OUTCOME_REASON_CATEGORIES).not.toContain("completed");
@@ -352,6 +394,23 @@ describe("lib/ticketOutcomeReasons — the picker's choices and the route's chec
     expect(checkOutcomeReason("nope", "rejected", [])).toMatchObject({ ok: false, error: expect.stringMatching(/no reasons configured/) });
     // the CHECK's five never change
     expect(TICKET_OUTCOMES).toEqual(["completed", "withdrawn", "duplicate", "handled_out_of_band", "rejected"]);
+  });
+  it("FIX PASS: no reason named — a bare category only where the workspace keeps none under it; no category only where it keeps none at all (the picker's rule)", () => {
+    const list = parseOutcomeReasons({ outcomeReasons: REASONS });
+    expect(checkBareOutcome("duplicate", CANCEL_OUTCOMES, list)).toEqual({ ok: true });
+    expect(checkBareOutcome("withdrawn", CANCEL_OUTCOMES, list)).toEqual({ ok: true });
+    expect(checkBareOutcome("rejected", CANCEL_OUTCOMES, list)).toMatchObject({ ok: false, error: expect.stringMatching(/"Rejected" — choose one of its reasons \(Not drafting work, Not enough information\)/) });
+    expect(checkBareOutcome("handled_out_of_band", CANCEL_OUTCOMES, list)).toMatchObject({ ok: false });
+    expect(checkBareOutcome(null, CANCEL_OUTCOMES, list)).toMatchObject({ ok: false, error: expect.stringMatching(/"Handled outside the app", "Rejected"/) });
+    // completed never takes a reason: a close naming it is never refused here
+    expect(checkBareOutcome("completed", ["completed", ...CANCEL_OUTCOMES], list)).toEqual({ ok: true });
+    // no list: everything as before
+    for (const o of [null, ...CANCEL_OUTCOMES]) expect(checkBareOutcome(o, CANCEL_OUTCOMES, [])).toEqual({ ok: true });
+    // a list holding only a completed reason: no cancel is refused
+    expect(checkBareOutcome(null, CANCEL_OUTCOMES, list.filter((r) => r.category === "completed"))).toEqual({ ok: true });
+    // many reasons: the refusal names five and says there are more
+    const many = Array.from({ length: 7 }, (_, i) => ({ id: `r${i}`, label: `R${i}`, category: "rejected" as const }));
+    expect(checkBareOutcome("rejected", CANCEL_OUTCOMES, many)).toMatchObject({ error: expect.stringMatching(/\(R0, R1, R2, R3, R4, …\)/) });
   });
 });
 
@@ -404,7 +463,7 @@ describe("GAP-13 / GAP-107 acceptance 1 — the Cancel Request dialog (rendered)
     expect(s.posts[0]).toMatchObject({ outcome: "withdrawn" });
     expect("outcomeReason" in s.posts[0]).toBe(false);
   });
-  it("the configuration cannot be read: the categories are offered (the route accepts them) and the dialog says the reasons could not be read", async () => {
+  it("the configuration cannot be read: the categories are offered (the route checks them against the list it reads) and the dialog says the reasons could not be read", async () => {
     s.configError = { message: "permission denied" };
     const picker = await openCancel();
     expect(picker.querySelectorAll("optgroup")).toHaveLength(0);

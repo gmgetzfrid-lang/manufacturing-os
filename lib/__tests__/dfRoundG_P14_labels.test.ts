@@ -27,7 +27,31 @@ import { TICKET_STATUS_LABELS, ticketStatusLabel } from "@/lib/ticketStatusLabel
 const h = vi.hoisted(() => ({
   tickets: [] as Array<Record<string, unknown>>,
   analyticsTickets: [] as Array<Record<string, unknown>>,
+  /** PostgREST's max-rows for the widget's status read. */
+  maxRows: 1000,
+  /** The widget's status read fails with this. */
+  statusError: null as null | { message: string },
+  statusReads: 0,
 }));
+
+/** The widget's open-request read as PostgREST answers it (ROUTE-12 fix
+ *  pass): the scope, (last_modified DESC, id DESC), the reader's keyset, at
+ *  most min(limit, max-rows) rows, the exact count when asked. */
+function serveStatusRead(calls: Array<{ m: string; a: unknown[] }>): Record<string, unknown> {
+  h.statusReads++;
+  if (h.statusError) return { data: null, error: h.statusError };
+  const scoped = h.tickets.filter((t) => t.status !== "CLOSED" && t.status !== "CANCELED");
+  const lmOf = (t: Record<string, unknown>) => String(t.last_modified ?? "");
+  const sorted = [...scoped].sort((a, b) => (lmOf(a) !== lmOf(b) ? (lmOf(a) < lmOf(b) ? 1 : -1) : String(a.id) < String(b.id) ? 1 : -1));
+  const or = calls.find((c) => c.m === "or")?.a[0];
+  const m = typeof or === "string" ? /^last_modified\.lt\."([^"]+)",and\(last_modified\.eq\."[^"]+",id\.lt\."([^"]+)"\)$/.exec(or) : null;
+  const after = m ? sorted.filter((t) => lmOf(t) < m[1] || (lmOf(t) === m[1] && String(t.id) < m[2])) : sorted;
+  const limit = (calls.find((c) => c.m === "limit")?.a[0] as number | undefined) ?? Infinity;
+  const counted = (calls.find((c) => c.m === "select")?.a[1] as { count?: string } | undefined)?.count === "exact";
+  const sel = String(calls.find((c) => c.m === "select")?.a[0] ?? "");
+  const rows = after.slice(0, Math.min(limit, h.maxRows)).map((t) => (sel === "status" ? { status: t.status } : { id: t.id, status: t.status, last_modified: t.last_modified }));
+  return { data: rows, error: null, ...(counted ? { count: scoped.length } : {}) };
+}
 
 vi.mock("@/lib/supabase", () => {
   const chain = (table: string): unknown => {
@@ -36,9 +60,11 @@ vi.mock("@/lib/supabase", () => {
       get(_t, prop: string) {
         if (prop === "then") {
           const sel = String(calls.find((c) => c.m === "select")?.a[0] ?? "");
-          const data = table === "tickets" && sel.startsWith("id, ticket_id") ? h.tickets
-            : table === "tickets" && sel === "status" ? h.tickets.map((t) => ({ status: t.status }))
-            : [];
+          if (table === "tickets" && (sel === "status" || sel.startsWith("id, status"))) {
+            const answer = serveStatusRead(calls);
+            return (resolve: (v: unknown) => void) => resolve(answer);
+          }
+          const data = table === "tickets" && sel.startsWith("id, ticket_id") ? h.tickets : [];
           return (resolve: (v: unknown) => void) => resolve({ data, error: null, count: data.length });
         }
         return (...a: unknown[]) => { calls.push({ m: prop, a }); return new Proxy({}, hnd); };
@@ -82,7 +108,7 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  h.tickets = []; h.analyticsTickets = [];
+  h.tickets = []; h.analyticsTickets = []; h.maxRows = 1000; h.statusError = null; h.statusReads = 0;
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
 const flush = async () => { for (let i = 0; i < 8; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
@@ -160,6 +186,32 @@ describe("UI-7 — the Drafting Requests widget reads the shared labels (no thir
     // the bar's legend: the two single-status parts present here say what their chips say
     expect(host.textContent).toContain("Awaiting drafter");
     expect(host.textContent).toContain("Engineering review");
+  });
+  it("ROUTE-12 fix pass: 2,400 open requests are all counted (the read was capped at 2,000) — the count and the bar, over keyset pages", async () => {
+    const T = Date.parse("2026-10-13T10:00:00.000Z");
+    h.tickets = Array.from({ length: 2400 }, (_, i) => ({
+      id: `t${String(i).padStart(5, "0")}`, ticket_id: `REQ-${i}`, title: `T${i}`,
+      status: i < 1500 ? "DRAFTING" : "PENDING_ASSIGNMENT", created_at: "2026-10-01T00:00:00.000Z",
+      last_modified: new Date(T - i * 60_000).toISOString(),
+    }));
+    await renderWidget();
+    expect(host.querySelector("[data-testid=drafting-open-count]")?.textContent).toBe("2400");
+    expect(h.statusReads).toBe(3);
+    expect(host.querySelector("[data-testid=drafting-open-count-partial]")).toBeNull();
+    expect(host.querySelector("[data-testid=drafting-open-count-fault]")).toBeNull();
+  });
+  it("ROUTE-12 fix pass: a server whose max-rows (250) is below the page: still every open request", async () => {
+    h.maxRows = 250;
+    h.tickets = Array.from({ length: 700 }, (_, i) => ({ id: `t${String(i).padStart(4, "0")}`, status: "DRAFTING", last_modified: `2026-10-${String(1 + (i % 9)).padStart(2, "0")}T00:00:00.000Z` }));
+    await renderWidget();
+    expect(host.querySelector("[data-testid=drafting-open-count]")?.textContent).toBe("700");
+  });
+  it("ROUTE-12 fix pass: a failed count is SAID — never '0 open requests'", async () => {
+    h.statusError = { message: "canceling statement due to statement timeout" };
+    h.tickets = [{ id: "t1", ticket_id: "REQ-1", title: "x", status: "DRAFTING", created_at: "2026-10-01T00:00:00.000Z" }];
+    await renderWidget();
+    expect(host.querySelector("[data-testid=drafting-open-count]")?.textContent).toBe("—");
+    expect(host.querySelector("[data-testid=drafting-open-count-fault]")?.textContent).toMatch(/could not be counted — canceling statement/);
   });
   it("source: the widget keeps no label words of its own for a status", () => {
     const src = readFileSync(join(process.cwd(), "components/dashboard/widgets.tsx"), "utf8");

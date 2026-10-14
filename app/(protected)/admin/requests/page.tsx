@@ -40,7 +40,9 @@ import { OUTCOME_LABEL } from '@/lib/ticketOutcome';
 import {
   OUTCOME_REASON_CATEGORIES,
   OUTCOME_REASON_LABEL_MAX,
+  OUTCOME_REASONS_KEY,
   OUTCOME_REASONS_MAX,
+  editableOutcomeReasons,
   withNormalizedOutcomeReasons,
   type OutcomeReason,
 } from '@/lib/ticketOutcomeReasons';
@@ -89,6 +91,10 @@ export default function DraftingConfigPage() {
   // The request types as last loaded or saved (DF-P13): the due-date windows
   // are listed for these, never for an unsaved edit of the form above.
   const [savedRequestTypes, setSavedRequestTypes] = useState<SelectOption[]>([]);
+  // GAP-13 / GAP-107 (DF-P14 fix pass): stored reason entries the editor
+  // cannot show (not a list, or an entry under no category it shows) — said
+  // on the section, since Save Changes does not keep them.
+  const [hiddenReasons, setHiddenReasons] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -111,8 +117,19 @@ export default function DraftingConfigPage() {
           .eq('org_id', activeOrgId)
           .eq('key', 'drafting')
           .single();
-        const loaded = data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS;
+        let loaded = data ? (data.data as OrgDraftingSettings) : DEFAULT_SETTINGS;
+        // GAP-13 / GAP-107 (DF-P14 fix pass): the stored reasons, whatever
+        // the JSON holds, become a list the editor can render — never a
+        // crash of the whole page; what it cannot show is counted and said.
+        // A row without the key is left exactly as loaded.
+        let hidden = 0;
+        if (loaded && typeof loaded === 'object' && OUTCOME_REASONS_KEY in loaded) {
+          const editable = editableOutcomeReasons((loaded as Record<string, unknown>)[OUTCOME_REASONS_KEY]);
+          hidden = editable.hidden;
+          loaded = { ...loaded, outcomeReasons: editable.reasons } as DraftingSettingsWithReasons;
+        }
         setSettings(loaded);
+        setHiddenReasons(hidden);
         setSavedRequestTypes(loaded.requestTypes?.options ?? []);
       } catch (e) {
         console.error("Failed to load settings:", e);
@@ -135,7 +152,7 @@ export default function DraftingConfigPage() {
         .from('org_configurations')
         .upsert({ org_id: activeOrgId, key: 'drafting', data }, { onConflict: 'org_id,key' });
       if (error) throw error;
-      if (data !== settings) setSettings(data);
+      if (data !== settings) { setSettings(data); setHiddenReasons(0); }
       setSavedRequestTypes(settings.requestTypes?.options ?? []);
       await appAlert("Configuration saved successfully.");
     } catch (e) {
@@ -315,7 +332,8 @@ export default function DraftingConfigPage() {
 
           {/* SECTION: WAYS A REQUEST ENDS — the workspace's own reasons (GAP-13 / GAP-107, DF-P14) */}
           <OutcomeReasonsSection
-            reasons={(settings as DraftingSettingsWithReasons).outcomeReasons ?? []}
+            reasons={editableOutcomeReasons((settings as DraftingSettingsWithReasons).outcomeReasons).reasons}
+            hidden={hiddenReasons}
             onChange={(next) => setSettings({ ...settings, outcomeReasons: next } as DraftingSettingsWithReasons)}
           />
 
@@ -663,9 +681,12 @@ function ConfigSection({
 // the admin gate's `requests` surface and 20261209's write rule).
 function OutcomeReasonsSection({
   reasons,
+  hidden = 0,
   onChange,
 }: {
   reasons: OutcomeReason[];
+  /** Stored entries this editor cannot show (DF-P14 fix pass). */
+  hidden?: number;
   onChange: (next: OutcomeReason[]) => void;
 }) {
   const full = reasons.length >= OUTCOME_REASONS_MAX;
@@ -729,6 +750,13 @@ function OutcomeReasonsSection({
           );
         })}
       </div>
+      {hidden > 0 && (
+        <p data-testid="outcome-reasons-hidden" className="px-6 pb-4 text-xs text-amber-700">
+          {hidden === 1 ? '1 saved entry is' : `${hidden} saved entries are`} not shown here: not a reason under one of these four
+          ways a request can be canceled (written by another tool or by hand). Cancel Request does not offer {hidden === 1 ? 'it' : 'them'}, and
+          Save Changes does not keep {hidden === 1 ? 'it' : 'them'}.
+        </p>
+      )}
       {full && <p className="px-6 pb-4 text-xs text-amber-700">{OUTCOME_REASONS_MAX} reasons is the most a workspace keeps.</p>}
     </div>
   );

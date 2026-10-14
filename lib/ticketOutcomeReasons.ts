@@ -12,7 +12,11 @@
 //   * with a list, the picker offers the org's reasons grouped by category
 //     (a category with none of its own is offered bare), and the route
 //     accepts only a configured reason (of the category it is sent with) or
-//     a bare category.
+//     a bare category WITH NO REASONS OF ITS OWN — the picker's rule, held on
+//     the server too (DF-P14 fix pass, DEC-29: "requires a reason" holds for
+//     any caller, not only the dialog): a bare category the workspace keeps
+//     reasons under, or a Cancel Request naming no category at all while the
+//     workspace keeps reasons, is refused (`checkBareOutcome`).
 //
 // Where it lives: the request-form configuration, `org_configurations`
 // key `'drafting'`, under `outcomeReasons` — the row the request types,
@@ -87,33 +91,72 @@ export function newOutcomeReasonId(label: string, taken: Iterable<string>): stri
   }
 }
 
+/** A category the editor shows reasons under (a cancel's four ways). */
+const isEditorCategory = (v: unknown): v is TicketOutcome =>
+  isTicketOutcome(v) && OUTCOME_REASON_CATEGORIES.includes(v);
+
 /**
  * What the request-form save writes: the same settings, with `outcomeReasons`
- * cleaned — a reason with no words, or under no known category, is dropped
- * (the editor keeps a blank one while it is being typed), the words are
- * trimmed and bounded, a reason the editor just added (no id yet) is given
- * one from its words, an id already saved is KEPT (a rename never changes
- * it), and the list is bounded. Settings WITHOUT the key are returned as they
- * are (the same object), so a workspace that never configured reasons saves
- * exactly what it saved before.
+ * cleaned — a reason with no words, or under no category the editor shows
+ * (`OUTCOME_REASON_CATEGORIES`), is dropped (the editor keeps a blank one
+ * while it is being typed), the words are trimmed and bounded, a reason the
+ * editor just added (no id yet) is given one from its words, an id already
+ * saved is KEPT (a rename never changes it), and the list is bounded.
+ * DF-P14 fix pass: every saved id is claimed FIRST (its first holder keeps
+ * it), and only then are ids minted for new reasons — so a new reason listed
+ * before a saved one can never take the saved one's id and push it to `_2`.
+ * Settings WITHOUT the key are returned as they are (the same object), so a
+ * workspace that never configured reasons saves exactly what it saved before.
  */
 export function withNormalizedOutcomeReasons<T extends object>(settings: T): T {
   if (!(OUTCOME_REASONS_KEY in settings)) return settings;
   const raw = (settings as Record<string, unknown>)[OUTCOME_REASONS_KEY];
-  const out: OutcomeReason[] = [];
-  const taken = new Set<string>();
-  for (const e of Array.isArray(raw) ? raw : []) {
-    if (out.length >= OUTCOME_REASONS_MAX) break;
-    if (!e || typeof e !== "object") continue;
+  const entries = (Array.isArray(raw) ? raw : []).map((e) => {
+    if (!e || typeof e !== "object") return null;
     const r = e as Record<string, unknown>;
     const label = typeof r.label === "string" ? r.label.trim().slice(0, OUTCOME_REASON_LABEL_MAX) : "";
-    if (!label || !isTicketOutcome(r.category)) continue;
-    const kept = typeof r.id === "string" ? r.id.trim() : "";
-    const id = ID_RE.test(kept) && !taken.has(kept) ? kept : newOutcomeReasonId(label, taken);
+    if (!label || !isEditorCategory(r.category)) return null;
+    return { kept: typeof r.id === "string" ? r.id.trim() : "", label, category: r.category };
+  });
+  // Saved ids first: the first entry holding a valid id keeps it.
+  const holder = new Map<string, number>();
+  entries.forEach((e, i) => { if (e && ID_RE.test(e.kept) && !holder.has(e.kept)) holder.set(e.kept, i); });
+  const taken = new Set<string>(holder.keys());
+  const out: OutcomeReason[] = [];
+  entries.forEach((e, i) => {
+    if (!e || out.length >= OUTCOME_REASONS_MAX) return;
+    const id = holder.get(e.kept) === i ? e.kept : newOutcomeReasonId(e.label, taken);
     taken.add(id);
-    out.push({ id, label, category: r.category });
-  }
+    out.push({ id, label: e.label, category: e.category });
+  });
   return { ...settings, [OUTCOME_REASONS_KEY]: out } as T;
+}
+
+/**
+ * What the editor is handed from a stored `outcomeReasons` value (DF-P14 fix
+ * pass): whatever the JSON holds — a restore, another tool or a hand edit may
+ * have written an object, a string or junk entries — it never crashes the
+ * Request forms page. The entries the editor can show (an object under one of
+ * its categories; id and words read as text, a missing one blank) are
+ * `reasons`; every other stored entry — or a stored value that is not a list
+ * at all — is counted in `hidden`, so the page can SAY that Save Changes will
+ * not keep it, instead of dropping it without a word.
+ */
+export function editableOutcomeReasons(stored: unknown): { reasons: OutcomeReason[]; hidden: number } {
+  if (stored === undefined || stored === null) return { reasons: [], hidden: 0 };
+  if (!Array.isArray(stored)) return { reasons: [], hidden: 1 };
+  const reasons: OutcomeReason[] = [];
+  let hidden = 0;
+  for (const e of stored) {
+    const r = e && typeof e === "object" ? (e as Record<string, unknown>) : null;
+    if (!r || !isEditorCategory(r.category)) { hidden++; continue; }
+    reasons.push({
+      id: typeof r.id === "string" ? r.id : "",
+      label: typeof r.label === "string" ? r.label : "",
+      category: r.category,
+    });
+  }
+  return { reasons, hidden };
 }
 
 // ─── the Cancel Request picker ────────────────────────────────────────────────
@@ -177,8 +220,8 @@ export function decodeOutcomeChoice(
 
 /**
  * Is `reasonId` one of this workspace's configured reasons, under the
- * category the request is ending with? (A bare category never reaches here:
- * the route accepts it as before.)
+ * category the request is ending with? (A bare category is checked by
+ * `checkBareOutcome`.)
  */
 export function checkOutcomeReason(
   reasonId: string,
@@ -199,4 +242,47 @@ export function checkOutcomeReason(
     return { ok: false, error: `"${found.label}" is a reason for "${OUTCOME_LABEL[found.category]}", not for "${OUTCOME_LABEL[outcome]}"` };
   }
   return { ok: true, reason: found };
+}
+
+/** A few of a category's reasons, for a refusal a person reads. */
+function reasonNames(list: readonly OutcomeReason[]): string {
+  const shown = list.slice(0, 5).map((r) => r.label).join(", ");
+  return list.length > 5 ? `${shown}, …` : shown;
+}
+
+/**
+ * No reason named: may the request end this way? The picker's own rule, held
+ * on the server (DF-P14 fix pass — roles-and-permissions GAP-13 acceptance 1
+ * "requires selecting a reason from the org's configured list" holds for any
+ * caller, never only the dialog):
+ *   * a named category (`outcome`) is accepted bare only when the workspace
+ *     keeps no reason of its own under it;
+ *   * no category named (`outcome` null — Cancel Request's no-category path,
+ *     DF-P3) is accepted only when the workspace keeps no reason under any of
+ *     the ways the action can end a request (`categories`);
+ *   * `completed` never takes a reason (the editor offers none under it), so
+ *     a close naming it is never refused here;
+ *   * with no list configured, everything is accepted exactly as before.
+ */
+export function checkBareOutcome(
+  outcome: TicketOutcome | null,
+  categories: readonly TicketOutcome[],
+  reasons: readonly OutcomeReason[],
+): { ok: true } | { ok: false; error: string } {
+  const keptUnder = (o: TicketOutcome) =>
+    (OUTCOME_REASON_CATEGORIES.includes(o) ? reasons.filter((r) => r.category === o) : []);
+  if (outcome) {
+    const own = keptUnder(outcome);
+    if (own.length === 0) return { ok: true };
+    return {
+      ok: false,
+      error: `This workspace records why a request ends as "${OUTCOME_LABEL[outcome]}" — choose one of its reasons (${reasonNames(own)})`,
+    };
+  }
+  const withReasons = categories.filter((o) => keptUnder(o).length > 0);
+  if (withReasons.length === 0) return { ok: true };
+  return {
+    ok: false,
+    error: `This workspace records how a request ends and why — say how it ends (${categories.map((o) => OUTCOME_LABEL[o]).join(", ")}), with one of its reasons for ${withReasons.map((o) => `"${OUTCOME_LABEL[o]}"`).join(", ")}`,
+  };
 }

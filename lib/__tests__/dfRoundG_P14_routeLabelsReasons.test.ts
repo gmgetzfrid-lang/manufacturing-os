@@ -17,10 +17,17 @@
 //       or none), and a named reason is refused;
 //     * configured → a configured reason of the category it is sent with is
 //       accepted and recorded (metadata.outcome_reason, the history line, the
-//       audit row); a bare category is still accepted; any other reason, a
-//       reason without its category, or one of another category is refused
-//       with nothing written; a list that cannot be read is a 503, nothing
-//       written.
+//       audit row); any other reason, a reason without its category, or one
+//       of another category is refused with nothing written; a list that
+//       cannot be read is a 503, nothing written.
+//   Fix pass (DEC-29 — "requires a reason" for ANY caller, the picker's rule
+//   on the server): a bare category is accepted only where the workspace
+//   keeps no reason under it; a bare category it keeps reasons under, or a
+//   cancel naming no category while it keeps reasons, is refused (400
+//   outcome_reason_required, nothing written); a list that cannot be read
+//   for a request naming no reason is accepted as before and the audit row
+//   says outcomeReasonUnchecked; a force close's deliverable note keeps the
+//   reason on the row.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -322,13 +329,72 @@ describe("GAP-13 / GAP-107 acceptance 1 — the org's reasons, configured", () =
     const audit = auditRows().find((r) => r.action === "TICKET_CANCEL_REQUEST")!;
     expect(audit.details).toMatchObject({ outcomeIntended: "rejected", outcomeReason: { id: "not_drafting_work", label: "Not drafting work" } });
   });
-  it("a bare category is still accepted (the ruling: a configured reason OR a bare category)", async () => {
+  it("REGRESSION: a bare category with no reasons of its own is still accepted (the picker offers it bare)", async () => {
     seed();
     state.user = { id: REQ };
     const res = await cancel({ outcome: "duplicate" });
     expect(res.status).toBe(200);
     expect(ticketUpdates()[0]).toMatchObject({ status: "CANCELED", outcome: "duplicate" });
     expect((ticketUpdates()[0].metadata as Row | undefined)?.outcome_reason).toBeUndefined();
+    const audit = auditRows().find((r) => r.action === "TICKET_CANCEL_REQUEST")!;
+    expect((audit.details as Row).outcomeReasonUnchecked).toBeUndefined();
+  });
+  it.each([
+    ["rejected", /ends as "Rejected" — choose one of its reasons \(Not drafting work\)/],
+    ["handled_out_of_band", /ends as "Handled outside the app" — choose one of its reasons \(The vendor did it directly\)/],
+  ])("FIX PASS: a bare %s, which the workspace keeps reasons under, is refused (400 outcome_reason_required), nothing written", async (outcome, msg) => {
+    seed();
+    state.user = { id: SUP };
+    const res = await cancel({ outcome });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "outcome_reason_required", error: expect.stringMatching(msg) });
+    expect(ticketUpdates()).toEqual([]);
+    expect(auditRows()).toEqual([]);
+  });
+  it("FIX PASS: a cancel naming no category while the workspace keeps reasons is refused, nothing written", async () => {
+    seed();
+    state.user = { id: REQ };
+    const res = await cancel({});
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "outcome_reason_required", error: expect.stringMatching(/with one of its reasons for "Handled outside the app", "Rejected"/) });
+    expect(ticketUpdates()).toEqual([]);
+    expect(auditRows()).toEqual([]);
+  });
+  it("FIX PASS: reasons kept only under Completed (never a cancel's) leave every cancel as before — bare or no category", async () => {
+    seedMembers();
+    state.rows.org_configurations = [drafting({ outcomeReasons: [{ id: "close_out_only", label: "Close-out only", category: "completed" }] })];
+    state.rows.tickets = [ticketRow()];
+    state.user = { id: REQ };
+    expect((await cancel({})).status).toBe(200);
+    expect(ticketUpdates()[0]).toMatchObject({ status: "CANCELED", outcome: null });
+  });
+  it("FIX PASS: the list cannot be read and no reason is named — accepted as before (the dialog's own fallback), the audit row says the reason went unchecked", async () => {
+    seed();
+    state.failDraftingRead = 2; // the type-flags read succeeds; the reason read fails
+    state.user = { id: SUP };
+    const res = await cancel({ outcome: "rejected" });
+    expect(res.status).toBe(200);
+    expect(ticketUpdates()[0]).toMatchObject({ status: "CANCELED", outcome: "rejected" });
+    const audit = auditRows().find((r) => r.action === "TICKET_CANCEL_REQUEST")!;
+    expect(audit.details).toMatchObject({ outcomeIntended: "rejected", outcomeReasonUnchecked: true });
+  });
+  it("FIX PASS: a force close with a reason, on a ticket whose source document has no register revision — the deliverable note AND the reason both land on the row", async () => {
+    seedMembers();
+    state.rows.org_configurations = [drafting({ outcomeReasons: [...REASONS, { id: "customer_cancelled", label: "The customer cancelled", category: "withdrawn" }] })];
+    state.rows.documents = [{ id: "d1", org_id: ORG, rev: "B", document_number: "P-100-ISO" }];
+    state.rows.tickets = [ticketRow({ metadata: { source_document: { id: "d1", document_number: "P-100-ISO" } } })];
+    state.user = { id: SUP };
+    const res = await workflowAction(req("/api/tickets/workflow-action", { ticketId: "t1", actionType: "close_ticket", comment: "Customer pulled it", outcome: "withdrawn", outcomeReason: "customer_cancelled" }));
+    expect(res.status).toBe(200);
+    const upd = ticketUpdates()[0];
+    expect(upd).toMatchObject({ status: "CLOSED", outcome: "withdrawn" });
+    const meta = upd.metadata as Row;
+    expect(meta.deliverable).toMatchObject({ state: "not_in_register", document_id: "d1", register_rev: "B" });
+    expect(meta.outcome_reason).toEqual({ id: "customer_cancelled", label: "The customer cancelled", category: "withdrawn" });
+    expect(meta.source_document).toMatchObject({ id: "d1" });
+    const hist = upd.history as Array<Row>;
+    expect(hist.some((h) => String(h.details).includes("[How it ended: Withdrawn — The customer cancelled]"))).toBe(true);
+    expect(hist[hist.length - 1].action).toBe("Closed — deliverable not in the register");
   });
   it.each([
     ["an unknown reason", { outcome: "rejected", outcomeReason: "made_up" }, /not one of this workspace's reasons/],

@@ -174,7 +174,9 @@ interface ActionModalProps {
    *  some → grouped under their categories (a category with none of its own
    *  offered bare), and the chosen reason is sent beside its category. */
   outcomeReasons?: readonly OutcomeReason[];
-  /** The reasons could not be read: the categories are offered, and said. */
+  /** The reasons could not be read: the categories are offered, and said
+   *  (the route still refuses a bare category the workspace keeps reasons
+   *  under, when it can read them — DF-P14 fix pass). */
   outcomeReasonsUnreadable?: boolean;
 }
 
@@ -230,7 +232,7 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
               </select>
               <p className="text-[10px] text-[var(--color-text-muted)] mt-1">Recorded on the request and counted in Admin → Analytics (&ldquo;How Requests Ended&rdquo;). Your reason below stays in the thread.</p>
               {outcomeReasonsUnreadable && (
-                <p data-testid="outcome-reasons-unreadable" className="text-[10px] text-amber-700 mt-1">This workspace&rsquo;s own reasons could not be read, so only the categories are offered.</p>
+                <p data-testid="outcome-reasons-unreadable" className="text-[10px] text-amber-700 mt-1">This workspace&rsquo;s own reasons could not be read, so only the categories are offered. If it keeps reasons under the one you choose, the request is refused and says so &mdash; reload and choose one of them.</p>
               )}
             </div>
           )}

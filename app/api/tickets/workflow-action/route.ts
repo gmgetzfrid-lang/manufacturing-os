@@ -24,7 +24,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor, OUTCOME_LABEL } from "@/lib/ticketOutcome";
-import { parseOutcomeReasons, checkOutcomeReason, type OutcomeReason } from "@/lib/ticketOutcomeReasons";
+import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type OutcomeReason } from "@/lib/ticketOutcomeReasons";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
@@ -72,7 +72,8 @@ interface Body {
   /** GAP-13 / GAP-107 acceptance 1 (DF-P14): one of the workspace's own
    *  reasons for ending a request (lib/ticketOutcomeReasons.ts — the drafting
    *  configuration's `outcomeReasons`), sent beside `outcome`, its category.
-   *  Optional: a bare category is accepted as before. */
+   *  Needed only where the workspace keeps reasons under that category (fix
+   *  pass): a bare category with none of its own is accepted as before. */
   outcomeReason?: string | null;
   /** DCW-1 / GAP-105 (DF-P4): the library triage records with `assign` /
    *  `request_eng_review` at PENDING_ASSIGNMENT — a library of the ticket's
@@ -555,25 +556,47 @@ export async function POST(req: NextRequest) {
   // GAP-13 / GAP-107 acceptance 1 (DF-P14; the integrator's ruling under
   // DEC-90): the workspace's own reason, when one is named, must be one it
   // configured, under the category the request is ending with — refused with
-  // nothing written otherwise. No reason named → exactly as before (a bare
-  // category, or none). The list is read only when a reason is named; a list
-  // that cannot be read is a 503, never an unchecked reason.
+  // nothing written otherwise; a list that cannot be read is a 503, never an
+  // unchecked reason.
+  // Fix pass (DEC-29 — "requires a reason" holds for any caller, never only
+  // the dialog): with NO reason named, the picker's own rule binds the route
+  // too (lib/ticketOutcomeReasons.ts checkBareOutcome) — a bare category the
+  // workspace keeps reasons under, or a cancel naming no category while it
+  // keeps reasons under any way a cancel can end, is refused (400
+  // `outcome_reason_required`, nothing written). A category with no reasons
+  // of its own, and every request of a workspace with no list, behave exactly
+  // as before. If the list cannot be read for a request that names no reason,
+  // the request is accepted as before (the dialog's own fallback offers the
+  // bare categories when it cannot read them) and the audit row says the
+  // reason went unchecked (`outcomeReasonUnchecked`).
   let outcomeReason: OutcomeReason | null = null;
-  if (body.outcomeReason !== undefined && body.outcomeReason !== null && body.outcomeReason !== "") {
-    if (typeof body.outcomeReason !== "string" || !outcome) {
-      return NextResponse.json({
-        error: "A reason is named together with how the request ends (its category)",
-        code: "outcome_reason_invalid",
-      }, { status: 400 });
-    }
+  let outcomeReasonUnchecked = false;
+  const reasonNamed = body.outcomeReason !== undefined && body.outcomeReason !== null && body.outcomeReason !== "";
+  if (reasonNamed && (typeof body.outcomeReason !== "string" || !outcome)) {
+    return NextResponse.json({
+      error: "A reason is named together with how the request ends (its category)",
+      code: "outcome_reason_invalid",
+    }, { status: 400 });
+  }
+  if (reasonNamed || outcome || outcomeDefaulted) {
     const { data: reasonCfg, error: reasonCfgErr } = await supabaseAdmin
       .from("org_configurations").select("data").eq("org_id", ticket.orgId).eq("key", "drafting").maybeSingle();
     if (reasonCfgErr) {
-      return NextResponse.json({ error: "Couldn't read this workspace's reasons for ending a request — try again in a moment." }, { status: 503 });
+      if (reasonNamed) {
+        return NextResponse.json({ error: "Couldn't read this workspace's reasons for ending a request — try again in a moment." }, { status: 503 });
+      }
+      outcomeReasonUnchecked = true;
+    } else {
+      const reasons = parseOutcomeReasons((reasonCfg as { data?: unknown } | null)?.data);
+      if (reasonNamed) {
+        const checked = checkOutcomeReason(String(body.outcomeReason), outcome!, reasons);
+        if (!checked.ok) return NextResponse.json({ error: checked.error, code: "outcome_reason_invalid" }, { status: 400 });
+        outcomeReason = checked.reason;
+      } else {
+        const bare = checkBareOutcome(outcome, endsWith ?? [], reasons);
+        if (!bare.ok) return NextResponse.json({ error: bare.error, code: "outcome_reason_required" }, { status: 400 });
+      }
     }
-    const checked = checkOutcomeReason(body.outcomeReason, outcome, parseOutcomeReasons((reasonCfg as { data?: unknown } | null)?.data));
-    if (!checked.ok) return NextResponse.json({ error: checked.error, code: "outcome_reason_invalid" }, { status: 400 });
-    outcomeReason = checked.reason;
   }
 
   // DCW-1 / GAP-105 and DCW-7 / FRIC-3 (DF-P4): triage may record the
@@ -692,12 +715,9 @@ export async function POST(req: NextRequest) {
   // GAP-13 / GAP-107 (DF-P14): the configured reason rides beside the
   // category, on the same compare-and-set write — `metadata.outcome_reason`
   // (the words as they read now, so a later edit of the list never rewrites a
-  // closed request) — and the history line names it.
+  // closed request; merged just before the write, below, so the close's
+  // deliverable note cannot drop it) — and the history line names it.
   if (outcomeReason && "outcome" in updates) {
-    updates.metadata = {
-      ...(((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>),
-      outcome_reason: { id: outcomeReason.id, label: outcomeReason.label, category: outcomeReason.category },
-    };
     const hist = updates.history as TicketHistoryEntry[] | undefined;
     const line = hist?.[hist.length - 1];
     if (line) line.details = `${line.details ? `${line.details} ` : ""}[How it ended: ${OUTCOME_LABEL[outcomeReason.category]} — ${outcomeReason.label}]`;
@@ -848,7 +868,7 @@ export async function POST(req: NextRequest) {
       // is not there yet the write retries without it and a
       // TICKET_<ACTION>_OUTCOME_NOT_STORED row follows (below).
       ...(TERMINAL_STATUSES.includes(String(newStatus))
-        ? { outcomeIntended: (updates.outcome as string | null | undefined) ?? null, ...(outcomeDefaulted ? { outcomeDefaulted: true } : {}), ...(outcomeReason ? { outcomeReason: { id: outcomeReason.id, label: outcomeReason.label } } : {}) }
+        ? { outcomeIntended: (updates.outcome as string | null | undefined) ?? null, ...(outcomeDefaulted ? { outcomeDefaulted: true } : {}), ...(outcomeReason ? { outcomeReason: { id: outcomeReason.id, label: outcomeReason.label } } : {}), ...(outcomeReasonUnchecked ? { outcomeReasonUnchecked: true } : {}) }
         : {}),
       // LEAK-1 done-when 3 (DF-P3): how many people this transition resolves
       // to, BEFORE the active-members filter fanOut applies — a transition
@@ -948,6 +968,15 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.warn("[workflow-action] deliverable-state note failed (non-blocking)", e);
     }
+  }
+  // GAP-13 / GAP-107 (DF-P14 fix pass): the accepted reason is merged into
+  // the metadata LAST — after the close's deliverable note, which rebuilds
+  // `metadata` from the stored row and would otherwise drop it.
+  if (outcomeReason && "outcome" in updates) {
+    updates.metadata = {
+      ...(((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>),
+      outcome_reason: { id: outcomeReason.id, label: outcomeReason.label, category: outcomeReason.category },
+    };
   }
   const transitionNote = [body.comment ?? null, handbackNote].filter((x): x is string => !!x && x.trim().length > 0).join("\n\n") || null;
   // WF-9: attaching a file is thread ACTIVITY, not a workflow transition —

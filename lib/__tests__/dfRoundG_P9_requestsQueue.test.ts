@@ -84,7 +84,14 @@ vi.mock("@/lib/supabase", () => {
     api.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
       let result: unknown;
       if (table === "tickets" && q.update) result = s.updateError ? { data: null, error: s.updateError } : { data: s.updateHits.length > 0 ? s.updateHits.shift() : s.updateHit, error: null };
-      else if (table === "tickets") result = { data: s.tickets, error: null };
+      // drafting-flow DF-P14 fix pass (ROUTE-12): the list read asks for an
+      // exact count on its first page, and PostgREST answers one — with it
+      // the keyset reader ends after this one request, as it does live (with
+      // no count it would read on until a page adds nobody).
+      else if (table === "tickets") {
+        const counted = (q.calls.find((c) => c.m === "select")?.a[1] as { count?: string } | undefined)?.count === "exact";
+        result = { data: s.tickets, error: null, ...(counted ? { count: s.tickets.length } : {}) };
+      }
       else if (table === "org_members" && q.calls.some((c) => c.m === "in")) {
         const ids = q.calls.find((c) => c.m === "in")!.a[1] as string[];
         result = { data: s.members.filter((m) => ids.includes(m.uid as string)), error: null };

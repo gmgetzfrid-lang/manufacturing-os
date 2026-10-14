@@ -14,6 +14,13 @@
 //   Needs me; a failed page is said, with Try again; a normal workspace sees
 //   exactly today's list in one request; the Drafter's two reads and the
 //   requester's read are paged and ordered too.
+//   Fix pass: with no count the pager never stops at a short page (a
+//   server's max-rows below the page size) — only at a page that adds
+//   nobody; a failed read keeps the page shell (filter bar, status filter,
+//   Show Closed), so a narrower scope can still be read; at the ceiling the
+//   open requests are read on their own, so Needs me and every open count
+//   stay whole; overlapping reads apply only the latest; the header's
+//   Refresh Data re-reads the list.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -38,6 +45,12 @@ const s = vi.hoisted(() => ({
   countBonus: 0,
   /** The realtime listeners the page subscribed. */
   channels: [] as Array<{ cfg: Record<string, unknown>; cb: (p: unknown) => void }>,
+  /** A tickets read that fails when this says so (on top of `failReads`). */
+  failWhen: null as null | ((calls: Array<{ m: string; a: unknown[] }>) => boolean),
+  /** 1-based tickets read → a gate its answer waits on (answer computed at call time). */
+  gates: {} as Record<number, Promise<void>>,
+  /** The ceiling the page's reads use (the real one when null). */
+  ceiling: null as number | null,
 }));
 
 /** The stand-in's keyset: parse the reader's two `or` shapes. */
@@ -82,7 +95,7 @@ const order = (a: Row, b: Row) => {
 
 function serveTickets(calls: Call[]): { data: unknown; error: unknown; count?: number } {
   s.reads.push(calls);
-  if (s.failReads.includes(s.reads.length)) return { data: null, error: { message: "canceling statement due to statement timeout" } };
+  if (s.failReads.includes(s.reads.length) || s.failWhen?.(calls)) return { data: null, error: { message: "canceling statement due to statement timeout" } };
   const scoped = filtered(calls);
   const keyset = keysetOf(calls);
   const rows = (keyset ? scoped.filter(keyset) : scoped).sort(order);
@@ -100,6 +113,15 @@ vi.mock("@/components/providers/RoleContext", () => ({
 vi.mock("@/components/providers/DialogProvider", () => ({ appAlert: vi.fn(async () => undefined), appConfirm: vi.fn(async () => true) }));
 vi.mock("@/components/ui/UserAvatar", () => ({ default: () => null }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => ({ ok: true, error: null })) }));
+// The page's reads run under a test-sized ceiling when `s.ceiling` is set.
+vi.mock("@/lib/ticketQueueRead", async (orig) => {
+  const real = await orig<typeof import("@/lib/ticketQueueRead")>();
+  return {
+    ...real,
+    readQueueScope: (build: Parameters<typeof real.readQueueScope>[0], opts?: Parameters<typeof real.readQueueScope>[1]) =>
+      real.readQueueScope(build, s.ceiling ? { ...opts, ceiling: s.ceiling } : opts),
+  };
+});
 vi.mock("@/lib/capabilityPolicy", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   loadCapabilityPolicyEntry: async () => ({ policy: undefined, version: null }),
@@ -115,8 +137,11 @@ vi.mock("@/lib/supabase", () => {
     api.maybeSingle = async () => ({ data: null, error: null });
     api.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
       let result: unknown;
-      if (table === "tickets") result = serveTickets(calls);
-      else if (table === "org_members" && calls.some((c) => c.m === "in")) result = { data: [], error: null };
+      if (table === "tickets") {
+        result = serveTickets(calls);
+        const gate = s.gates[s.reads.length];
+        if (gate) return gate.then(() => result).then(ok, ko);
+      } else if (table === "org_members" && calls.some((c) => c.m === "in")) result = { data: [], error: null };
       else if (table === "org_members") result = { data: null, error: null, count: 4 };
       else result = { data: [], error: null };
       return Promise.resolve(result).then(ok, ko);
@@ -156,6 +181,7 @@ let host: HTMLDivElement | null = null;
 beforeEach(() => {
   s.role = { activeRole: "DraftingSupervisor", roles: ["DraftingSupervisor"], activeOrgId: "org-1", uid: "s-1" };
   s.tickets = []; s.maxRows = 1000; s.failReads = []; s.reads = []; s.noCount = false; s.countBonus = 0; s.channels = [];
+  s.failWhen = null; s.gates = {}; s.ceiling = null;
   try { localStorage.clear(); } catch { /* none */ }
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   host = document.createElement("div");
@@ -237,13 +263,32 @@ describe("ROUTE-12 — readQueueScope reads every row, whatever max-rows is", ()
     expect(r).toEqual({ ok: false, error: "canceling statement due to statement timeout" });
   });
 
-  it("no count came back: the read stops at a page shorter than it asked for (the ruling's short page)", async () => {
+  it("FIX PASS: no count came back and the server's max-rows (250) is below the page asked for — every row still; a short page is never taken as the end, only a page that adds nobody", async () => {
     s.tickets = bulk(1400);
     s.noCount = true;
+    s.maxRows = 250;
     const r = await readQueueScope(builder());
     expect(r.ok && r.rows.length).toBe(1400);
-    expect(r.ok && r.total).toBeNull();
-    expect(s.reads.length).toBe(2);
+    expect(r).toMatchObject({ ok: true, total: null, complete: true, capped: false });
+    expect(new Set(r.ok ? r.rows.map((x) => x.id) : []).size).toBe(1400);
+    expect(s.reads.length).toBe(7); // six pages of rows (250 × 5 + 150), then one that adds nobody
+  });
+
+  it("FIX PASS: no count and a server that ignores the keyset — the read stops (no loop) and says it is NOT complete", async () => {
+    s.tickets = bulk(30);
+    s.maxRows = 10;
+    s.noCount = true;
+    const lying = (counted: boolean): QueueQuery => {
+      const calls: Call[] = [{ m: "select", a: ["*", counted ? { count: "exact" } : undefined] }];
+      const api = {
+        order: () => api, limit: (...a: unknown[]) => { calls.push({ m: "limit", a }); return api; }, or: () => api,
+        then: (ok: (v: never) => unknown) => Promise.resolve(serveTickets(calls)).then(ok as (v: unknown) => unknown),
+      };
+      return api as unknown as QueueQuery;
+    };
+    const r = await readQueueScope(lying);
+    expect(r).toMatchObject({ ok: true, total: null, complete: false, capped: false });
+    expect(r.ok && r.rows.length).toBe(10);
   });
 
   it("the ceiling: stops there and says it is not complete (N of M)", async () => {
@@ -398,5 +443,124 @@ describe("ROUTE-12 — the queue holds every request of its scope (rendered)", (
     // the rows it did read are listed
     await click(q("[data-testid=view-all]"));
     expect(rowIds().sort()).toEqual(["/requests/t1", "/requests/t2"]);
+  });
+});
+
+describe("ROUTE-12 fix pass — the queue page (rendered)", () => {
+  const statusSelect = () => Array.from(host!.querySelectorAll("select")).find((el) => Array.from((el as HTMLSelectElement).options).some((o) => o.value === "ALL")) as HTMLSelectElement;
+  async function choose(sel: HTMLSelectElement, value: string) {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(sel, value);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+  }
+
+  it("the default 'Any status' read fails on every attempt: the filter bar stays, the notice says how to narrow, and choosing an open status reads the open list", async () => {
+    s.tickets = [
+      row("t1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, title: "Waiting pump iso" }),
+      row("t2", { status: "DRAFTING" }),
+      row("t3", { status: "CLOSED" }),
+    ];
+    // the whole-history read (no terminal filter) times out; an open-only read works
+    s.failWhen = (calls) => !calls.some((c) => c.m === "not");
+    await mount();
+    const alert = q("[data-testid=requests-read-failed]");
+    expect(alert?.textContent).toMatch(/The request list could not be read/);
+    expect(q("[data-testid=requests-read-failed-narrow]")?.textContent).toMatch(/choose an open status above/);
+    // the shell is there: the status filter, Show Closed, the view switcher; no count is claimed
+    expect(statusSelect()).toBeTruthy();
+    expect(byText("button", /Show Closed/)).toBeTruthy();
+    expect(q("[data-testid=view-needs-me]")?.textContent).toMatch(/Needs me\s*—/);
+    expect(q("[data-testid=view-all]")?.textContent).toMatch(/All\s*—/);
+    expect(q("[data-testid=tile-action-required]")).toBeNull();
+    expect(host!.textContent).toMatch(/Total records unknown/);
+    expect(host!.textContent).not.toMatch(/No matching tickets found/);
+    // narrow to an open status: the open read succeeds and the list is there
+    await choose(statusSelect(), "PENDING_ASSIGNMENT");
+    expect(q("[data-testid=requests-read-failed]")).toBeNull();
+    expect(s.reads.at(-1)!.some((c) => c.m === "not")).toBe(true);
+    await click(q("[data-testid=view-all]"));
+    expect(rowIds()).toEqual(["/requests/t1"]);
+  });
+
+  it("at the ceiling the OPEN requests are read on their own: the old open request is listed and in Needs me; the banner says only closed history is bounded", async () => {
+    s.ceiling = 50;
+    s.tickets = [
+      // 70 closed requests touched recently (a comment after close bumps last_modified)
+      ...bulk(70, () => ({ status: "CLOSED" })),
+      // 9 open ones, older
+      ...Array.from({ length: 9 }, (_, i) => row(`o${i}`, { status: "DRAFTING", last_modified: `2026-03-0${i + 1}T00:00:00.000Z` })),
+      // and the stalled one waiting on the supervisor since spring — the oldest row of all
+      row("old-1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, title: "Spring pump iso", last_modified: "2026-02-01T00:00:00.000Z" }),
+    ];
+    await mount();
+    // the capped read, then the open scope alone
+    expect(s.reads.some((calls) => calls.some((c) => c.m === "not"))).toBe(true);
+    expect(q("[data-testid=view-needs-me]")?.textContent).toMatch(/Needs me\s*1/);
+    expect(rowIds()).toEqual(["/requests/old-1"]);
+    expect(q("[data-testid=tile-action-required-count]")?.textContent).toBe("1");
+    expect(q("[data-testid=view-all]")?.textContent).toMatch(/All\s*60/);
+    const banner = q("[data-testid=requests-read-short]");
+    expect(banner?.textContent).toMatch(/Every open request in this view is listed, with the 50 most recently active closed or canceled ones — 80 requests in all/);
+    expect(banner?.textContent).toMatch(/Older closed and canceled requests are not listed here/);
+  });
+
+  it("at the ceiling with more OPEN requests than it holds too: the banner says N of M and to choose an open status", async () => {
+    s.ceiling = 50;
+    s.tickets = bulk(60, () => ({ status: "DRAFTING" }));
+    await mount();
+    const banner = q("[data-testid=requests-read-short]");
+    expect(banner?.textContent).toMatch(/shows the 50 most recently active of the 60 requests in this view/);
+    expect(banner?.textContent).toMatch(/Choose an open status/);
+  });
+
+  it("overlapping reads apply only the latest: a stale failure that lands after a fresh list never covers it", async () => {
+    s.tickets = [row("t1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null }), row("t2", { status: "DRAFTING" })];
+    await mount();
+    expect(host!.textContent).toMatch(/2 Total Records/);
+    const listener = s.channels.find((c) => c.cfg.event === "*")!;
+    let releaseA: () => void = () => undefined;
+    const n = s.reads.length;
+    s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
+    s.failReads = [n + 1];
+    await act(async () => { listener.cb({}); }); // read A: will fail, late
+    s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
+    await act(async () => { listener.cb({}); }); // read B: fresh, at once
+    await flush();
+    expect(host!.textContent).toMatch(/3 Total Records/);
+    await act(async () => { releaseA(); });
+    await flush();
+    expect(q("[data-testid=requests-read-failed]")).toBeNull();
+    expect(host!.textContent).toMatch(/3 Total Records/);
+  });
+
+  it("overlapping reads apply only the latest: a stale success that lands after a real failure never clears it", async () => {
+    s.tickets = [row("t1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null }), row("t2", { status: "DRAFTING" })];
+    await mount();
+    const listener = s.channels.find((c) => c.cfg.event === "*")!;
+    let releaseA: () => void = () => undefined;
+    const n = s.reads.length;
+    s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
+    await act(async () => { listener.cb({}); }); // read A: succeeds with the old list, late
+    s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
+    s.failReads = [n + 2];
+    await act(async () => { listener.cb({}); }); // read B: fails at once
+    await flush();
+    expect(q("[data-testid=requests-read-failed]")?.textContent).toMatch(/could not be refreshed/);
+    await act(async () => { releaseA(); });
+    await flush();
+    expect(q("[data-testid=requests-read-failed]")?.textContent).toMatch(/could not be refreshed/);
+  });
+
+  it("the header's Refresh Data re-reads the list (it only spun before)", async () => {
+    s.tickets = [row("t1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null })];
+    await mount();
+    expect(host!.textContent).toMatch(/1 Total Records/);
+    const before = s.reads.length;
+    s.tickets = [...s.tickets, row("t2", { status: "DRAFTING" })];
+    await click(host!.querySelector("button[title='Refresh Data']"));
+    expect(s.reads.length).toBe(before + 1);
+    expect(host!.textContent).toMatch(/2 Total Records/);
   });
 });
