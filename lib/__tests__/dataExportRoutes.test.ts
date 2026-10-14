@@ -41,7 +41,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync, existsSync, promises as fsPromises } from "node:fs";
 import { join } from "node:path";
-import { db, type Row } from "./helpers/restoreMemoryDb";
+import { db, from as memFrom, type Row } from "./helpers/restoreMemoryDb";
 
 const state = vi.hoisted(() => {
   process.env.CRON_SECRET = "cron-secret";
@@ -104,7 +104,10 @@ import {
   retentionRunColumns, isMissingRetentionColumn, closeSucceededRun, RETENTION_COLUMNS_MIGRATION, pushesToBucket,
 } from "@/lib/exportRunner";
 import { planRestore } from "@/lib/dataRestore";
-import { ALERT_LINKS } from "@/lib/exportAlerts";
+import {
+  ALERT_LINKS, destinationConfirmation, unconfirmedGraceTonight, GRACE_COUNT_PAGE, pausedAtLastRun, savedSince,
+  pauseToKeep, withPauseKept, PAUSE_KEPT_SENTENCE,
+} from "@/lib/exportAlerts";
 import { encryptSecret } from "@/lib/serverCrypto";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { GET as structuredGET } from "@/app/api/data-export/structured/route";
@@ -1532,9 +1535,10 @@ describe("third review fix — the run routes check every read and write of thei
     expect(admins).toHaveLength(2);
     for (const b of admins) {
       expect(b).toMatchObject({ title: "Scheduled export needs an Admin to confirm it", link: "/admin/data-export", metadata: { unconfirmed: { by: "dc@acme.com", holds: "Admin" }, destinationName: "Nightly hook" } });
-      expect(String(b.body)).toBe('A scheduled export pushed the entire workspace to "Nightly hook" (webhook). It was last confirmed by dc@acme.com, who does not hold Admin — which setting up a data export now requires. Open it under Admin → Data export and save it to confirm it, or disable it.');
+      // admin-and-org Round G P14 (DEC-87 §1 as amended under DEC-90): the bell names the night of the bounded grace.
+      expect(String(b.body)).toBe('A scheduled export pushed the entire workspace to "Nightly hook" (webhook). It was last confirmed by dc@acme.com, who does not hold Admin — which setting up a data export now requires. Open it under Admin → Data export and save it to confirm it, or disable it. This is unconfirmed night 1 of 7: unless an Admin confirms it, it is paused after night 7\'s push.');
     }
-    expect(String(bells().find((b) => b.user_id === "u-dc")!.body)).toMatch(/Ask an Admin to open it under Admin → Data export and save it to confirm it, or disable it\. The run is recorded in the audit log\.$/);
+    expect(String(bells().find((b) => b.user_id === "u-dc")!.body)).toMatch(/Ask an Admin to open it under Admin → Data export and save it to confirm it, or disable it\. The run is recorded in the audit log\. This is unconfirmed night 1 of 7: unless an Admin confirms it, it is paused after night 7's push\.$/);
     // it asks again every night until an Admin saves it (PATCH stamps updated_by); then the bell is the usual one
     db.rows.notifications = [];
     Object.assign(db.rows.export_destinations[0], { next_run_at: "2026-09-30T05:00:00.000Z" });
@@ -1620,6 +1624,9 @@ describe("fourth review fix — the JSON export is held to the hourly cap, with 
     const run = rowsOf("export_runs")[0];
     expect(res.headers.get("x-export-run-id")).toBe(run.id);
     expect(run).toMatchObject({ status: "succeeded", triggered_by: "u-admin", file_count: 3, destination_type: "json" });
+    // admin-and-org Round G P14 (ILIFE-11 criterion 2): measured before the
+    // body is streamed — the run row, the X-Export-Bytes header and the body agree.
+    expect(res.headers.get("x-export-bytes")).toBe(String(run.total_bytes));
     expect(Number(run.total_bytes)).toBe((await res.text()).length);
     db.writeError = (table, op) => (table === "export_runs" && op === "update" ? { code: "57014", message: "statement timeout" } : null);
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1979,11 +1986,13 @@ describe("sixth review fix — moving a bucket push to another store (type, endp
 
 describe("fifth review fix — an unconfirmed destination's request to confirm survives a failed push and a Run Now (DEC-87 §1)", () => {
   const runNow = () => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, destinationId: "dest-1" } }));
-  const confirmRequest = /It was last confirmed by dc@acme\.com, who does not hold Admin — which setting up a data export now requires\. An Admin should open it and save it to confirm it, or disable it\.$/;
+  // P14: a scheduled push's note also names its night in the bounded grace (DEC-87 §1, amended); Run Now's does not.
+  const confirmRequest = /It was last confirmed by dc@acme\.com, who does not hold Admin — which setting up a data export now requires\. An Admin should open it and save it to confirm it, or disable it\.( This is unconfirmed night \d of 7: unless an Admin confirms it, it is paused after night 7's push\.)?$/;
 
-  it("a scheduled push that FAILS carries the request on the run row, on the card after the failure, and on the sweep result (was: the failure only); no bell for an export that did not leave", async () => {
+  it("a scheduled push that FAILS carries the request on the run row, on the card after the failure, and on the sweep result (was: the failure only); its bell never says the workspace was pushed", async () => {
     db.rows.export_destinations = [dueDestination({ updated_by: "u-dc" })];
-    state.deliver = async () => { throw new Error("Webhook 500: down"); };
+    // a webhook's 500 comes back after it received the archive (the builder marks it: P14 fix pass)
+    state.deliver = async () => { throw Object.assign(new Error("Webhook 500: down"), { transmissionBegan: true }); };
     const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
     expect(body.results[0]).toMatchObject({
       ok: false, error: expect.stringMatching(/^Webhook 500: down; It was last confirmed by dc@acme\.com/),
@@ -1991,11 +2000,25 @@ describe("fifth review fix — an unconfirmed destination's request to confirm s
     });
     expect(rowsOf("export_runs")[0]).toMatchObject({
       status: "failed", error_message: "Webhook 500: down",
-      diagnostics: [expect.objectContaining({ step: "gate:unconfirmed", detail: expect.stringMatching(confirmRequest) })],
+      diagnostics: [
+        expect.objectContaining({ step: "gate:unconfirmed", detail: expect.stringMatching(confirmRequest) }),
+        expect.objectContaining({ step: "grace:unconfirmed-night", detail: "night=1/7" }),
+      ],
     });
     expect(rowsOf("export_destinations")[0]).toMatchObject({ last_run_status: "failed", last_run_error: expect.stringMatching(/^Webhook 500: down It was last confirmed by/) });
     expect(String(rowsOf("export_destinations")[0].last_run_error)).toMatch(confirmRequest);
-    expect(bells()).toEqual([]);
+    // admin-and-org Round G P14 (DEC-87 §1 as amended under DEC-90: an Admin
+    // bell each night of the bounded grace): the night still rings — saying
+    // the push failed, never that the workspace was pushed. P14 fix pass: the
+    // webhook answered 500 after the archive reached it, so the bell says the
+    // destination may hold it (was: "nothing left the workspace").
+    // Was: no bell (an export that did not leave rang none).
+    expect(bells().length).toBeGreaterThan(0);
+    for (const b of bells()) {
+      expect(String(b.body)).toMatch(/^A scheduled export to "[^"]+" \(webhook\) failed tonight after the archive's transmission to it began, so the destination may hold the entire workspace \(Webhook 500: down\)\./);
+      expect(String(b.body)).not.toMatch(/pushed the entire workspace|nothing left/);
+      expect(b.metadata).toMatchObject({ failed: true, failedAfterSend: true, grace: { night: 1, of: 7, pausing: false } });
+    }
   });
 
   it("…a long failure is cut so the request still fits on the card", async () => {
@@ -2817,5 +2840,782 @@ describe("A&O P4 (BILL-3 Scope / residual, P3 fix pass 8 item 1) — creating a 
   it("the page's create form sends no bucket for a webhook", () => {
     const page = readFileSync(join(process.cwd(), "app", "(protected)", "admin", "data-export", "page.tsx"), "utf8");
     expect(page).toMatch(/bucket: type === "webhook" && mode === "create" \? undefined : bucket \|\| undefined,/);
+  });
+});
+
+// ─── admin-and-org Round G P14: the bounded grace (DEC-87 §1 as amended under
+// DEC-90; intelligence IEDGE-10 / DACL-7 criteria 1-2) ──────────────────────
+// A legacy destination a non-controller configured, unconfirmed by any Admin,
+// runs for 7 consecutive unconfirmed nights, each with an Admin bell naming
+// the night; night 7's bell says it is now paused; from night 8 it is skipped
+// (a cancelled run row, the card says paused, no bell) until an Admin saves
+// it. The night the change deploys is night 1, whatever ran before.
+
+describe("P14 — an unconfirmed legacy destination is paused after 7 consecutive unconfirmed nights (DEC-87 §1, amended)", () => {
+  let day = 0;
+  beforeEach(() => { day = 0; vi.useFakeTimers({ toFake: ["Date"] }); });
+  afterEach(() => { vi.useRealTimers(); });
+  const night = async () => {
+    vi.setSystemTime(new Date(Date.UTC(2026, 9, 1 + day++, 5, 0, 0)));
+    if (db.rows.export_destinations[0]) Object.assign(db.rows.export_destinations[0], { next_run_at: new Date(Date.now() - 60_000).toISOString() });
+    db.rows.notifications = [];
+    return (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+  };
+  const adminBells = () => bells().filter((b) => b.user_id === "u-admin" || b.user_id === "u-admin2");
+
+  it("nights 1-7 run, each Admin bell naming the night; night 7's says it is now paused; nights 8 and 9 are skipped with no push and no bell", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 7; n++) {
+      const body = await night();
+      expect(body.results[0], `night ${n}`).toMatchObject({ ok: true });
+      expect(state.delivered, `night ${n}`).toHaveLength(n);
+      const b = adminBells();
+      expect(b, `night ${n}`).toHaveLength(2);
+      expect(String(b[0].body), `night ${n}`).toContain(n < 7
+        ? `This is unconfirmed night ${n} of 7: unless an Admin confirms it, it is paused after night 7's push.`
+        : "This was unconfirmed night 7 of 7, so it is now PAUSED: no scheduled push leaves until an Admin opens it and saves it to confirm it (or disables it).");
+      expect(b[0].title).toBe(n < 7 ? "Scheduled export needs an Admin to confirm it" : "Scheduled export paused until an Admin confirms it");
+      expect(b[0].metadata).toMatchObject({ grace: { night: n, of: 7, pausing: n === 7 } });
+    }
+    for (const n of [8, 9]) {
+      const body = await night();
+      expect(body.results[0], `night ${n}`).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused: no Admin has confirmed this destination after 7 unconfirmed nightly pushes/) });
+      expect(state.delivered, `night ${n}`).toHaveLength(7);
+      expect(bells(), `night ${n}`).toEqual([]);
+      const paused = rowsOf("export_runs").filter((r) => r.status === "cancelled");
+      expect(paused).toHaveLength(n - 7);
+      expect(paused[paused.length - 1]).toMatchObject({
+        trigger_type: "scheduled",
+        diagnostics: [expect.objectContaining({ step: "grace:paused" }), expect.objectContaining({ step: "grace:paused-announced", detail: "the pause was announced at an earlier run" })],
+      });
+      expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: true, last_run_status: "failed", last_run_error: expect.stringMatching(/^skipped: Paused:/) });
+    }
+    // every night that ran is counted on its run row
+    expect(rowsOf("export_runs").filter((r) => r.status === "succeeded").map((r) => (r.diagnostics as Row[]).find((d) => d.step === "grace:unconfirmed-night")?.detail))
+      .toEqual(["night=1/7", "night=2/7", "night=3/7", "night=4/7", "night=5/7", "night=6/7", "night=7/7"]);
+  });
+
+  it("an Admin's confirm resumes it: the next night pushes as any other destination, and the count starts again if it is ever unconfirmed", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night();
+    expect(state.delivered).toHaveLength(7);
+    state.userId = "u-admin2";
+    const saved = await destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body: editFormBody(db.rows.export_destinations[0]) }), params("dest-1"));
+    expect(saved.status).toBe(200);
+    const resumed = await night();
+    expect(resumed.results[0]).toMatchObject({ ok: true });
+    expect(resumed.results[0]).not.toHaveProperty("warnings");
+    expect(state.delivered).toHaveLength(8);
+    expect(bells().every((b) => b.title === "Scheduled workspace export ran")).toBe(true);
+    // the confirming Admin later loses Admin (the destination is unconfirmed again): night 1, never paused at once
+    Object.assign(db.rows.export_destinations[0], { updated_by: "u-dc" });
+    const again = await night();
+    expect(again.results[0]).toMatchObject({ ok: true });
+    expect(String(adminBells()[0].body)).toContain("This is unconfirmed night 1 of 7");
+  });
+
+  it("never the night the change deploys: earlier unconfirmed runs (before this rule) do not count — tonight is night 1", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    // ten nights of P3's unconfirmed pushes, written before the bounded grace existed
+    db.rows.export_runs = Array.from({ length: 10 }, (_, i) => ({
+      id: `old-${i}`, org_id: ORG, destination_id: "dest-1", trigger_type: "scheduled", status: "succeeded",
+      started_at: new Date(Date.UTC(2026, 8, 1 + i, 5)).toISOString(),
+      diagnostics: [{ ts: "t", step: "gate:unconfirmed", detail: "It was last confirmed by dc@acme.com …" }],
+    }));
+    const body = await night();
+    expect(body.results[0]).toMatchObject({ ok: true });
+    expect(state.delivered).toHaveLength(1);
+    expect(String(adminBells()[0].body)).toContain("This is unconfirmed night 1 of 7");
+  });
+
+  it("a night the gate skipped for another reason neither counts nor breaks the count", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 3; n++) await night();
+    db.rows.export_runs.push({
+      id: "gate-skip", org_id: ORG, destination_id: "dest-1", trigger_type: "scheduled", status: "cancelled",
+      started_at: new Date(Date.UTC(2026, 9, 1 + day++, 5)).toISOString(), diagnostics: [{ ts: "t", step: "gate:skipped", detail: "subscription" }],
+    });
+    await night();
+    expect(String(adminBells()[0].body)).toContain("This is unconfirmed night 4 of 7");
+  });
+
+  it("an unreadable count never stops a backup: it runs, says the count could not be read, and the next readable night continues the count", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    await night(); // night 1
+    db.readError = { export_runs: "statement timeout" };
+    const body = await night();
+    db.readError = {};
+    expect(body.results[0]).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.stringMatching(/unconfirmed-night count could not be read \(statement timeout\); the push ran/)]) });
+    expect(state.delivered).toHaveLength(2);
+    expect(String(adminBells()[0].body)).toMatch(/how many unconfirmed nights it has had could not be read/);
+    await night();
+    expect(String(adminBells()[0].body)).toContain("This is unconfirmed night 2 of 7"); // the unread night neither counted nor broke the run
+  });
+
+  it("a night whose push FAILS still rings every Admin's bell for the night (saying nothing left only when it failed before the archive was sent) — and a failed night 7 still announces the pause before night 8 is skipped", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 7; n++) {
+      // nights 2 and 6 fail before anything is sent; night 7's webhook answers 503 after it received the archive; the others push
+      state.deliver = [2, 6].includes(n)
+        ? async () => { throw new Error("Destination credentials are missing"); }
+        : n === 7 ? async () => { throw Object.assign(new Error("Webhook 503: unavailable"), { transmissionBegan: true }); } : null;
+      const body = await night();
+      expect(body.results[0], `night ${n}`).toMatchObject({ ok: ![2, 6, 7].includes(n) });
+      const b = adminBells();
+      expect(b, `night ${n}`).toHaveLength(2);
+      expect(b[0].metadata, `night ${n}`).toMatchObject({ grace: { night: n, of: 7, pausing: n === 7 } });
+      if ([2, 6].includes(n)) {
+        expect(String(b[0].body), `night ${n}`).toMatch(/^A scheduled export to "Nightly hook" \(webhook\) failed tonight before the archive was sent, so nothing left the workspace \(Destination credentials are missing\)\./);
+        expect(String(b[0].body), `night ${n}`).not.toMatch(/pushed the entire workspace/);
+        expect(b[0].metadata, `night ${n}`).toMatchObject({ failed: true });
+        expect(b[0].metadata, `night ${n}`).not.toHaveProperty("failedAfterSend");
+      } else if (n === 7) {
+        // P14 fix pass: the archive reached the webhook before it answered 503 — never "nothing left"
+        expect(String(b[0].body), `night ${n}`).toMatch(/^A scheduled export to "Nightly hook" \(webhook\) failed tonight after the archive's transmission to it began, so the destination may hold the entire workspace \(Webhook 503: unavailable\)\./);
+        expect(String(b[0].body), `night ${n}`).not.toMatch(/nothing left/);
+        expect(b[0].metadata, `night ${n}`).toMatchObject({ failed: true, failedAfterSend: true });
+      } else {
+        expect(String(b[0].body), `night ${n}`).toMatch(/^A scheduled export pushed the entire workspace to "Nightly hook"/);
+        expect(b[0].metadata, `night ${n}`).not.toHaveProperty("failed");
+      }
+    }
+    // night 7 failed, and its bell still says the pause
+    expect(adminBells()[0].title).toBe("Scheduled export paused until an Admin confirms it");
+    expect(String(adminBells()[0].body)).toContain("This was unconfirmed night 7 of 7, so it is now PAUSED");
+    state.deliver = null;
+    const eighth = await night();
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(state.delivered).toHaveLength(7); // seven attempts (four left, three failed); none on night 8
+    expect(bells()).toEqual([]);
+    // the failed nights are counted on their run rows like the others
+    expect(rowsOf("export_runs").filter((r) => r.status === "failed").map((r) => (r.diagnostics as Row[]).find((d) => d.step === "grace:unconfirmed-night")?.detail))
+      .toEqual(["night=2/7", "night=6/7", "night=7/7"]);
+  });
+
+  it("a failed night whose bell is refused says so on the run row and the sweep result (checked), and the push's failure stays the answer", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    state.deliver = async () => { throw new Error("Webhook 500: down"); };
+    db.writeError = (table) => (table === "notifications" ? { code: "42501", message: "permission denied" } : null);
+    const body = await night();
+    db.writeError = null;
+    expect(body.results[0]).toMatchObject({
+      ok: false, error: expect.stringMatching(/^Webhook 500: down/),
+      warnings: expect.arrayContaining([expect.stringMatching(/^the unconfirmed-night alert was not sent: /)]),
+    });
+    expect(rowsOf("export_runs")[0]).toMatchObject({ status: "failed", diagnostics: expect.arrayContaining([expect.objectContaining({ step: "alert:unsent" })]) });
+  });
+
+  it("regression: a confirmed destination's failed push rings no bell, as before", async () => {
+    db.rows.export_destinations = [dueDestination()];
+    state.deliver = async () => { throw new Error("Webhook 500: down"); };
+    const body = await night();
+    expect(body.results[0]).toMatchObject({ ok: false, error: "Webhook 500: down" });
+    expect(body.results[0]).not.toHaveProperty("warnings");
+    expect(bells()).toEqual([]);
+  });
+
+  it("regression: a destination an Admin confirmed never reads the grace and runs every night as before", async () => {
+    db.rows.export_destinations = [dueDestination()];
+    for (let n = 1; n <= 9; n++) {
+      const body = await night();
+      expect(body.results[0]).toMatchObject({ ok: true });
+      expect(body.results[0]).not.toHaveProperty("warnings");
+    }
+    expect(state.delivered).toHaveLength(9);
+    expect(rowsOf("export_runs").every((r) => !(r.diagnostics as Row[] | undefined)?.some((d) => String(d.step).startsWith("grace:")))).toBe(true);
+  });
+
+  // ── P14 review fix: the bound never fails open ────────────────────────────
+  // (major) a night whose confirmation cannot be VERIFIED — the configurer's
+  // role read fails — still reads the grace: a paused destination stays
+  // paused, and an unverified night is neutral in the count (grace:unverified),
+  // so it neither pushes from a paused destination nor restarts the count.
+  // (minor) the count pages past neutral rows, so a pause is never forgotten
+  // behind a long run of gate skips.
+
+  /** Tonight the configurer's ROLE read fails — the sweep's second org_members
+   *  read (the first is the gate's membership read, which passes; the memory
+   *  database looks the error up twice for a read that fails, hence 2 and 3). */
+  const roleReadFails = (message = "connection reset") => {
+    let reads = 0;
+    db.readError = new Proxy({} as Record<string, string>, { get: (_t, k) => (k === "org_members" && [2, 3].includes(++reads) ? message : undefined) });
+  };
+  const lastRun = () => rowsOf("export_runs")[rowsOf("export_runs").length - 1];
+  const steps = (r: Row | undefined) => ((r?.diagnostics as Row[] | undefined) ?? []).map((d) => d.step);
+
+  it("review fix (major): a PAUSED destination whose confirmation cannot be verified stays paused — no push, a paused run row, no bell — and the next readable night is still paused", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night(); // nights 1-7 pushed; night 8 paused
+    expect(state.delivered).toHaveLength(7);
+    for (const unreadable of [1, 2]) {
+      roleReadFails();
+      const body = await night();
+      db.readError = {};
+      expect(body.results[0], `unreadable night ${unreadable}`).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/^skipped: Paused: no Admin has confirmed this destination after 7 unconfirmed nightly pushes.* Whether the member who last configured it holds Admin could not be verified tonight \(connection reset\), so it stays paused; this is checked again at the next run\.$/),
+      });
+      expect(state.delivered, `unreadable night ${unreadable}`).toHaveLength(7); // nothing left the workspace
+      expect(bells(), `unreadable night ${unreadable}`).toEqual([]);
+      expect(lastRun()).toMatchObject({
+        status: "cancelled", trigger_type: "scheduled",
+        diagnostics: [expect.objectContaining({ step: "grace:paused", detail: expect.stringMatching(/so it stays paused/) }), expect.objectContaining({ step: "grace:paused-announced" })],
+      });
+      expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: true, last_run_status: "failed", last_run_error: expect.stringMatching(/^skipped: Paused:.*could not be verified tonight/) });
+    }
+    const readable = await night();
+    expect(readable.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused: no Admin has confirmed this destination after 7 unconfirmed nightly pushes/) });
+    expect(state.delivered).toHaveLength(7);
+    expect(bells()).toEqual([]);
+    // only an Admin's save ends the pause
+    state.userId = "u-admin2";
+    expect((await destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body: editFormBody(db.rows.export_destinations[0]) }), params("dest-1"))).status).toBe(200);
+    expect((await night()).results[0]).toMatchObject({ ok: true });
+    expect(state.delivered).toHaveLength(8);
+  });
+
+  it("review fix (major): mid-grace, a night whose confirmation cannot be verified runs (never stopped on a guess) and is NEUTRAL — the next readable night continues the count (night 5), never night 1; a failed unverified night is neutral too", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 4; n++) await night();
+    expect(String(adminBells()[0].body)).toContain("This is unconfirmed night 4 of 7");
+    roleReadFails();
+    const body = await night();
+    db.readError = {};
+    expect(body.results[0]).toMatchObject({ ok: true, warnings: [expect.stringMatching(/could not be verified \(connection reset\); the push ran/)] });
+    expect(state.delivered).toHaveLength(5);
+    expect(lastRun()).toMatchObject({ status: "succeeded" });
+    expect(steps(lastRun())).toContain("grace:unverified");
+    expect(steps(lastRun())).not.toContain("grace:unconfirmed-night");
+    await night();
+    expect(String(adminBells()[0].body)).toContain("This is unconfirmed night 5 of 7");
+    // an unverified night whose push FAILS: neutral as well, and no grace bell (nothing says it is unconfirmed tonight)
+    roleReadFails();
+    state.deliver = async () => { throw new Error("Webhook 503: unavailable"); };
+    const failed = await night();
+    state.deliver = null;
+    db.readError = {};
+    expect(failed.results[0]).toMatchObject({ ok: false, error: "Webhook 503: unavailable" });
+    expect(lastRun()).toMatchObject({ status: "failed" });
+    expect(steps(lastRun())).toContain("grace:unverified");
+    expect(adminBells()).toEqual([]);
+    await night();
+    expect(String(adminBells()[0].body)).toContain("This is unconfirmed night 6 of 7");
+    await night();
+    expect(adminBells()[0].title).toBe("Scheduled export paused until an Admin confirms it");
+    expect((await night()).results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(state.delivered).toHaveLength(9); // nights 1-7 and the two unverified nights; none after the pause
+  });
+
+  it("review fix (major): a role read that THROWS is unverified the same way (the read's error is carried for the paused note)", async () => {
+    const throwing = { from: () => { throw new Error("socket hang up"); } } as unknown as Parameters<typeof destinationConfirmation>[0];
+    const out = await destinationConfirmation(throwing, { org_id: ORG, created_by: "u-dc", updated_by: "u-dc" });
+    expect(out).toEqual({
+      notice: "whether the member who last configured this destination holds Admin could not be verified (socket hang up); the push ran, and this is checked again at the next run",
+      unverified: "socket hang up",
+    });
+  });
+
+  it("review fix (minor): a pause is never forgotten behind a long run of gate skips — the count pages past them (30 and then 250 skips)", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night(); // paused on night 8
+    const skips = (k: number, tag: string) => {
+      for (let i = 0; i < k; i++) {
+        db.rows.export_runs.push({
+          id: `${tag}-${String(i).padStart(4, "0")}`, org_id: ORG, destination_id: "dest-1", trigger_type: "scheduled", status: "cancelled",
+          started_at: new Date(Date.UTC(2026, 9, 1 + day++, 5)).toISOString(), diagnostics: [{ ts: "t", step: "gate:skipped", detail: "subscription inactive" }],
+        });
+      }
+    };
+    skips(30, "lapse-a");
+    const after30 = await night();
+    expect(after30.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    skips(250, "lapse-b"); // more than two pages of the count
+    expect(250).toBeGreaterThan(2 * GRACE_COUNT_PAGE);
+    const after250 = await night();
+    expect(after250.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("review fix: the count itself — paged by (started_at, id) until a deciding row; unverified, unread and gate-skip rows are neutral; a confirmed push or a pre-rule run ends it", async () => {
+    const at = (i: number) => new Date(Date.UTC(2026, 0, 1 + i, 5)).toISOString();
+    const run = (i: number, status: string, diagnostics: Row[]): Row => ({ id: `r-${String(i).padStart(4, "0")}`, org_id: ORG, destination_id: "dest-1", trigger_type: "scheduled", status, started_at: at(i), diagnostics });
+    const count = (rows: Row[], pageSize = 5) => { db.rows.export_runs = rows; return unconfirmedGraceTonight({ from: memFrom } as never, "dest-1", 7, pageSize); };
+    const neutral = (from: number, k: number) => Array.from({ length: k }, (_, j) => j % 3 === 0
+      ? run(from + j, "cancelled", [{ step: "gate:skipped" }])
+      : j % 3 === 1
+        ? run(from + j, "succeeded", [{ step: "gate:notice", detail: "could not be verified" }, { step: "grace:unverified" }])
+        : run(from + j, "failed", [{ step: "grace:unconfirmed-night", detail: "night=?/7" }]));
+    // the reviewer's case, as the sweep now writes it: an unverified night after a pause
+    expect(await count([run(0, "succeeded", [{ step: "grace:unconfirmed-night", detail: "night=7/7" }]), run(1, "cancelled", [{ step: "grace:paused" }]), ...neutral(2, 1)])).toEqual({ paused: true, since: at(1), announced: true });
+    // 28 neutral rows (more than five pages of 5), then a pause: still paused
+    expect(await count([run(0, "cancelled", [{ step: "grace:paused" }]), ...neutral(1, 28)])).toEqual({ paused: true, since: at(0), announced: true });
+    // mid-grace behind neutral rows: tonight is the next night
+    expect(await count([run(0, "succeeded", [{ step: "grace:unconfirmed-night", detail: "night=4/7" }]), ...neutral(1, 13)])).toEqual({ paused: false, night: 5, of: 7, pausing: false });
+    // a confirmed push (no grace step) or a pre-rule run ends the count: night 1
+    expect(await count([run(0, "succeeded", [{ step: "grace:unconfirmed-night", detail: "night=6/7" }]), run(1, "succeeded", [{ step: "zip:ready" }]), ...neutral(2, 11)])).toEqual({ paused: false, night: 1, of: 7, pausing: false });
+    // rows sharing started_at are ordered by id, never skipped or read twice across a page boundary
+    const tied = Array.from({ length: 12 }, (_, j) => ({ ...run(1, "cancelled", [{ step: "gate:skipped" }]), id: `t-${String(j).padStart(2, "0")}` }));
+    expect(await count([run(0, "succeeded", [{ step: "grace:unconfirmed-night", detail: "night=2/7" }]), ...tied], 5)).toEqual({ paused: false, night: 3, of: 7, pausing: false });
+    // nothing deciding at all: night 1
+    expect(await count(neutral(0, 17))).toEqual({ paused: false, night: 1, of: 7, pausing: false });
+    // an unreadable page: the count is unread (it runs, and says so — the sweep then falls back on the card in hand)
+    db.readError = { export_runs: "statement timeout" };
+    expect(await count([run(0, "cancelled", [{ step: "grace:paused" }])])).toMatchObject({ paused: false, night: null, error: "statement timeout" });
+    db.readError = {};
+  });
+
+  // ── P14 fix pass ──────────────────────────────────────────────────────────
+  // (major) a count that cannot be read never pushes from a paused
+  // destination: the sweep falls back on the card in hand (pausedAtLastRun).
+  // (major) a failed night's bell says nothing left only when the push failed
+  // before the archive was sent (lib/exportRunner.ts pushTransmissionBegan).
+  // (minor) on an unverified night, a destination an Admin saved since its
+  // pause runs uncounted (savedSince). (minor) a pause whose bell was refused
+  // is announced by the next paused night, once.
+
+  /** Tonight both the configurer's role read and the run-row count fail. */
+  const roleAndCountReadsFail = (message = "connection reset") => {
+    let reads = 0;
+    db.readError = new Proxy({} as Record<string, string>, {
+      get: (_t, k) => (k === "export_runs" ? "statement timeout" : k === "org_members" && [2, 3].includes(++reads) ? message : undefined),
+    });
+  };
+  const PAUSED_ROW = expect.objectContaining({ step: "grace:paused" });
+
+  it("fix pass (major): a PAUSED destination whose run-row count cannot be read stays paused — no push, a paused row naming the read error, no bell — and the next readable night is still paused (was: it pushed the whole workspace)", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 9; n++) await night(); // nights 1-7 pushed; 8 and 9 paused
+    expect(state.delivered).toHaveLength(7);
+    for (const unread of [1, 2]) {
+      db.readError = { export_runs: "statement timeout" };
+      const body = await night();
+      db.readError = {};
+      expect(body.results[0], `unread night ${unread}`).toMatchObject({
+        ok: false,
+        error: expect.stringMatching(/^skipped: Paused: no Admin has confirmed this destination after 7 unconfirmed nightly pushes.* How many unconfirmed nights it has had could not be read tonight \(statement timeout\); its last scheduled run left it paused, so it stays paused \(checked again at the next run\)\.$/),
+      });
+      expect(state.delivered, `unread night ${unread}`).toHaveLength(7); // nothing left the workspace
+      expect(bells(), `unread night ${unread}`).toEqual([]);
+      expect(lastRun()).toMatchObject({ status: "cancelled", diagnostics: [expect.objectContaining({ step: "grace:paused", detail: expect.stringMatching(/could not be read tonight \(statement timeout\)/) })] });
+      expect(rowsOf("export_destinations")[0]).toMatchObject({ last_run_status: "failed", last_run_error: expect.stringMatching(/^skipped: Paused:/) });
+    }
+    const readable = await night();
+    expect(readable.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused: no Admin has confirmed/) });
+    expect(state.delivered).toHaveLength(7);
+    expect(bells()).toEqual([]); // the pause was announced on night 7; the unread nights' rows are read past to that
+  });
+
+  it("fix pass (major): …on the first paused night too: the card of the night that paused it says so (kept when a retention note is long), and that is enough", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 6; n++) await night();
+    // night 7's push left, and its retention purge failed with a long message: the card is cut so the pausing sentence survives
+    state.deliver = async () => ({
+      bytes: 10, fileCount: 0, tableCount: 1, totalRows: 1, diagnostics: [{ ts: "t", step: "zip:ready" }],
+      retention: { keepDays: 30, scanned: 0, deleted: 0, failed: 0, error: `listing refused: ${"x".repeat(600)}` },
+    });
+    await night();
+    state.deliver = null;
+    const card = String(rowsOf("export_destinations")[0].last_run_error);
+    expect(card.length).toBeLessThanOrEqual(500);
+    expect(card).toContain("This was unconfirmed night 7 of 7, so it is now PAUSED");
+    db.readError = { export_runs: "statement timeout" };
+    const eighth = await night();
+    db.readError = {};
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:.*could not be read tonight \(statement timeout\)/) });
+    expect(state.delivered).toHaveLength(7);
+    expect(bells()).toEqual([]);
+  });
+
+  it("fix pass (major): regression — before the pause, and on the night the change deploys, an unreadable count still runs (a backup is never stopped on a guess)", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    db.readError = { export_runs: "statement timeout" };
+    const first = await night(); // the deploy night: no run row yet, a card from before the rule
+    db.readError = {};
+    expect(first.results[0]).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.stringMatching(/count could not be read \(statement timeout\); the push ran/)]) });
+    for (let n = 1; n <= 5; n++) await night();
+    db.readError = { export_runs: "statement timeout" };
+    const unread = await night(); // mid-grace
+    db.readError = {};
+    expect(unread.results[0]).toMatchObject({ ok: true });
+    expect(state.delivered).toHaveLength(7);
+    expect(pausedAtLastRun({ last_run_error: rowsOf("export_destinations")[0].last_run_error })).toBe(false);
+  });
+
+  it("fix pass (major + minor): both reads fail on a paused night — it stays paused; once an Admin has saved it since that run, it runs, uncounted", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night();
+    roleAndCountReadsFail();
+    const held = await night();
+    db.readError = {};
+    expect(held.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:.*could not be verified tonight \(connection reset\).*could not be read tonight \(statement timeout\)/) });
+    expect(state.delivered).toHaveLength(7);
+    vi.setSystemTime(Date.now() + 9 * 3_600_000); // the afternoon: an Admin saves it
+    state.userId = "u-admin2";
+    expect((await destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body: editFormBody(db.rows.export_destinations[0]) }), params("dest-1"))).status).toBe(200);
+    roleAndCountReadsFail();
+    const ran = await night();
+    db.readError = {};
+    expect(ran.results[0]).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.stringMatching(/it has been saved since \(only an Admin can save a destination\), so tonight it runs, uncounted/)]) });
+    expect(state.delivered).toHaveLength(8);
+    expect(steps(lastRun())).toContain("grace:unverified");
+  });
+
+  it("fix pass (minor): an Admin saves the paused destination; the next night its role read fails — it runs, uncounted (grace:unverified), never held paused on that guess; without the save it stays paused", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night(); // paused on night 8
+    roleReadFails();
+    expect((await night()).results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:.*could not be verified tonight \(connection reset\), so it stays paused/) });
+    db.readError = {};
+    expect(state.delivered).toHaveLength(7);
+    vi.setSystemTime(Date.now() + 9 * 3_600_000); // the afternoon: an Admin opens it and saves it
+    state.userId = "u-admin2";
+    expect((await destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body: editFormBody(db.rows.export_destinations[0]) }), params("dest-1"))).status).toBe(200);
+    expect(savedSince(rowsOf("export_destinations")[0].updated_at, lastRun()?.started_at)).toBe(true);
+    roleReadFails();
+    const body = await night();
+    db.readError = {};
+    expect(body.results[0]).toMatchObject({
+      ok: true,
+      warnings: expect.arrayContaining([
+        expect.stringMatching(/could not be verified \(connection reset\); the push ran/),
+        "it was paused, and it has been saved since (only an Admin can save a destination), so tonight it runs, uncounted; whether it is confirmed is checked again at the next run",
+      ]),
+    });
+    expect(state.delivered).toHaveLength(8);
+    expect(steps(lastRun())).toContain("grace:unverified");
+    expect(steps(lastRun())).not.toContain("grace:unconfirmed-night");
+    expect(bells().every((b) => b.title === "Scheduled workspace export ran")).toBe(true);
+    // the next readable night: confirmed by the Admin's save, as any other destination
+    const next = await night();
+    expect(next.results[0]).toMatchObject({ ok: true });
+    expect(next.results[0]).not.toHaveProperty("warnings");
+    expect(state.delivered).toHaveLength(9);
+  });
+
+  it("fix pass (minor): night 7's pausing bell is refused — night 8 (paused, nothing pushed) rings it, checked, once; night 9 does not", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 6; n++) await night();
+    db.writeError = (table) => (table === "notifications" ? { code: "42501", message: "permission denied" } : null);
+    const seventh = await night();
+    db.writeError = null;
+    expect(seventh.results[0]).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.stringMatching(/^the export alert was not sent: /)]) });
+    expect(steps(lastRun())).toEqual(expect.arrayContaining(["grace:unconfirmed-night", "alert:unsent"]));
+    expect(bells()).toEqual([]);
+    const eighth = await night();
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(eighth.results[0]).not.toHaveProperty("warnings");
+    expect(state.delivered).toHaveLength(7);
+    const b = adminBells();
+    expect(b).toHaveLength(2);
+    expect(b[0].title).toBe("Scheduled export paused until an Admin confirms it");
+    expect(String(b[0].body)).toMatch(/^A scheduled export to "Nightly hook" \(webhook\) was skipped tonight, so nothing left the workspace\. It was last confirmed by dc@acme\.com, who does not hold Admin.* Open it under Admin → Data export and save it to confirm it, or disable it\. It was paused after 7 unconfirmed nightly pushes: no scheduled push leaves until an Admin opens it and saves it to confirm it \(or disables it\)\. The bell that should have said so at its last push could not be sent\.$/);
+    expect(b[0].metadata).toMatchObject({ scheduled: true, paused: { of: 7, announcedLate: true } });
+    expect(String(bells().find((x) => x.user_id === "u-dc")?.body)).toMatch(/Ask an Admin to open it/); // the DocCtrl's says to ask an Admin
+    expect(lastRun()).toMatchObject({
+      status: "cancelled",
+      diagnostics: [PAUSED_ROW, expect.objectContaining({ step: "grace:paused-announced", detail: "announced tonight to 3 controller(s): the bell at its last push could not be sent" })],
+    });
+    const ninth = await night();
+    expect(ninth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(bells()).toEqual([]);
+    expect(lastRun()).toMatchObject({ diagnostics: [PAUSED_ROW, expect.objectContaining({ step: "grace:paused-announced", detail: "the pause was announced at an earlier run" })] });
+  });
+
+  it("fix pass (minor): …a refused re-announcement is said on the paused row and the sweep result, and the next paused night tries again (then never again)", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 6; n++) await night();
+    db.writeError = (table) => (table === "notifications" ? { code: "42501", message: "permission denied" } : null);
+    await night(); // night 7: its bell refused
+    const eighth = await night(); // night 8: the re-announcement refused too
+    db.writeError = null;
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/), warnings: [expect.stringMatching(/^the pausing alert was not sent: /)] });
+    expect(lastRun()).toMatchObject({ diagnostics: [PAUSED_ROW, expect.objectContaining({ step: "alert:unsent" })] });
+    await night(); // night 9: rung
+    expect(adminBells()).toHaveLength(2);
+    expect(adminBells()[0].metadata).toMatchObject({ paused: { of: 7, announcedLate: true } });
+    await night(); // night 10: not again
+    expect(bells()).toEqual([]);
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("fix pass: the count answers when the pause was decided and whether it was announced; a read that fails once the pause is found still answers the pause", async () => {
+    const at = (i: number) => new Date(Date.UTC(2026, 0, 1 + i, 5)).toISOString();
+    const run = (i: number, status: string, diagnostics: Row[]): Row => ({ id: `r-${String(i).padStart(4, "0")}`, org_id: ORG, destination_id: "dest-1", trigger_type: "scheduled", status, started_at: at(i), diagnostics });
+    const count = (rows: Row[], pageSize = 5) => { db.rows.export_runs = rows; return unconfirmedGraceTonight({ from: memFrom } as never, "dest-1", 7, pageSize); };
+    const N7 = { step: "grace:unconfirmed-night", detail: "night=7/7" };
+    const UNSENT = { step: "alert:unsent", detail: "permission denied" };
+    const SENT = { step: "alert:sent", detail: "the bell reached 3 controller(s)" };
+    const UNSURE = { step: "grace:pause-bell-unsure", detail: "whether the bell at its last push was sent is not recorded" };
+    const pausedRows = (from: number, k: number, extra: Row[] = []) => Array.from({ length: k }, (_, j) => run(from + j, "cancelled", [{ step: "grace:paused" }, ...extra]));
+    // the night that paused it: announced when its bell rang (left or failed); not when refused, nor when its run never closed
+    expect(await count([run(0, "succeeded", [N7])])).toEqual({ paused: true, since: at(0), announced: true });
+    expect(await count([run(0, "failed", [N7])])).toEqual({ paused: true, since: at(0), announced: true });
+    expect(await count([run(0, "succeeded", [N7, UNSENT])])).toEqual({ paused: true, since: at(0), announced: false });
+    // P14 integrator fix: a run that never closed is UNSURE (its bell may have rung, then the close was refused) —
+    // unless it holds alert:sent, written the moment the bell was delivered, before the close: then announced
+    expect(await count([run(0, "running", [N7])])).toEqual({ paused: true, since: at(0), announced: false, unsure: true });
+    expect(await count([run(0, "running", [N7, SENT])])).toEqual({ paused: true, since: at(0), announced: true });
+    expect(await count([run(0, "succeeded", [N7, SENT])])).toEqual({ paused: true, since: at(0), announced: true });
+    // paused rows that say nothing of it (unverified / unread nights) are read past, page after page; `since` is the newest paused row
+    expect(await count([run(0, "succeeded", [N7, UNSENT]), ...pausedRows(1, 12)])).toEqual({ paused: true, since: at(12), announced: false });
+    // the newest paused row's re-announcement refused: not announced; one delivered after it: announced, and the read stops there
+    expect(await count([run(0, "succeeded", [N7, UNSENT]), ...pausedRows(1, 1, [UNSENT])])).toEqual({ paused: true, since: at(1), announced: false });
+    // …and a refused late announcement of an UNSURE pausing bell keeps it unsure for the next try
+    expect(await count([run(0, "running", [N7]), ...pausedRows(1, 1, [UNSENT, UNSURE])])).toEqual({ paused: true, since: at(1), announced: false, unsure: true });
+    expect(await count([run(0, "succeeded", [N7, UNSENT]), ...pausedRows(1, 1, [UNSENT]), ...pausedRows(2, 1, [{ step: "grace:paused-announced" }])])).toEqual({ paused: true, since: at(2), announced: true });
+    // a page that fails once the pause is found: the pause stands (announced: no bell on a guess)
+    let reads = 0;
+    db.readError = new Proxy({} as Record<string, string>, { get: (_t, k) => (k === "export_runs" && ++reads >= 2 ? "statement timeout" : undefined) });
+    expect(await count([run(0, "succeeded", [N7, UNSENT]), ...pausedRows(1, 12)])).toEqual({ paused: true, since: at(12), announced: true });
+    db.readError = {};
+    // the helpers the sweep's fallbacks read
+    expect(pausedAtLastRun({ last_run_error: "skipped: Paused: no Admin has confirmed this destination …" })).toBe(true);
+    expect(pausedAtLastRun({ last_run_error: "Webhook 500: down It was last confirmed by dc@acme.com … This was unconfirmed night 7 of 7, so it is now PAUSED: …" })).toBe(true);
+    expect(pausedAtLastRun({ last_run_error: "It was last confirmed by dc@acme.com … This is unconfirmed night 3 of 7: unless an Admin confirms it, it is paused after night 7's push." })).toBe(false);
+    expect(pausedAtLastRun({ last_run_error: null })).toBe(false);
+    // P14 integrator fix: a card a gate skip rewrote with the pause kept
+    expect(pausedAtLastRun({ last_run_error: withPauseKept("skipped: the configurer's membership could not be verified (x); retried next cycle") })).toBe(true);
+    expect(pauseToKeep({ last_run_error: "skipped: Paused: …", updated_at: "2026-10-09T04:00:00.000Z", last_run_at: "2026-10-09T05:00:00.000Z" })).toBe(true);
+    expect(pauseToKeep({ last_run_error: "skipped: Paused: …", updated_at: "2026-10-09T14:00:00.000Z", last_run_at: "2026-10-09T05:00:00.000Z" })).toBe(false); // an Admin saved it since
+    expect(pauseToKeep({ last_run_error: "skipped: the subscription …", updated_at: null, last_run_at: "2026-10-09T05:00:00.000Z" })).toBe(false);
+    const long = withPauseKept(`skipped: ${"x".repeat(900)}`);
+    expect(long.length).toBeLessThanOrEqual(500);
+    expect(long.endsWith(PAUSE_KEPT_SENTENCE)).toBe(true);
+    expect(savedSince("2026-10-09T14:00:00.000Z", "2026-10-09T05:00:00.000Z")).toBe(true);
+    expect(savedSince("2026-10-09T05:00:00.000Z", "2026-10-09T05:00:00.000Z")).toBe(false);
+    expect(savedSince(null, "2026-10-09T05:00:00.000Z")).toBe(false);
+    expect(savedSince("2026-10-09T14:00:00.000Z", null)).toBe(false);
+  });
+
+  // ── P14 integrator fix (DEC-90: a paused destination STAYS paused until an Admin saves it) ──
+  it("integrator fix (1): paused → a gate-skip night → an unreadable count → still paused, nothing pushed (was: the skip's card dropped the pause and the unread night pushed the whole workspace)", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night(); // nights 1-7 pushed; 8 paused
+    expect(state.delivered).toHaveLength(7);
+    db.readError = { org_members: "connection reset" }; // the gate cannot verify the configurer: skipped
+    const skip = await night();
+    db.readError = {};
+    expect(skip.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: the configurer's membership could not be verified \(connection reset\); retried next cycle Its last scheduled run left it paused and no Admin has saved it since, so it is still PAUSED: /) });
+    const card = String(rowsOf("export_destinations")[0].last_run_error);
+    expect(card.length).toBeLessThanOrEqual(500);
+    expect(card).toMatch(/^skipped: the configurer's membership could not be verified/);
+    expect(card.endsWith(PAUSE_KEPT_SENTENCE)).toBe(true);
+    expect(pausedAtLastRun({ last_run_error: card })).toBe(true);
+    expect(steps(lastRun())).toEqual(["gate:skipped"]); // the skip's run row is still neutral in the count
+    db.readError = { export_runs: "statement timeout" };
+    const unread = await night();
+    db.readError = {};
+    expect(unread.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused: .*could not be read tonight \(statement timeout\); its last scheduled run left it paused, so it stays paused/) });
+    expect(state.delivered).toHaveLength(7); // nothing pushed
+    expect(bells()).toEqual([]);
+    expect(lastRun()).toMatchObject({ status: "cancelled", diagnostics: [PAUSED_ROW] });
+    // and the next readable night is paused as before
+    expect((await night()).results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (1): regression — a gate skip of a destination that is not paused, or that an Admin saved since its pause, writes the card exactly as before", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 3; n++) await night(); // mid-grace
+    db.readError = { org_members: "connection reset" };
+    const mid = await night();
+    db.readError = {};
+    expect(mid.results[0]).toEqual({ destinationId: "dest-1", ok: false, error: "skipped: the configurer's membership could not be verified (connection reset); retried next cycle" });
+    expect(rowsOf("export_destinations")[0].last_run_error).toBe("skipped: the configurer's membership could not be verified (connection reset); retried next cycle");
+    for (let n = 4; n <= 8; n++) await night(); // nights 4-7 pushed; paused
+    vi.setSystemTime(Date.now() + 9 * 3_600_000); // the afternoon: an Admin saves it
+    state.userId = "u-admin2";
+    expect((await destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body: editFormBody(db.rows.export_destinations[0]) }), params("dest-1"))).status).toBe(200);
+    db.readError = { org_members: "connection reset" };
+    const saved = await night();
+    db.readError = {};
+    expect(saved.results[0]).toMatchObject({ ok: false, error: "skipped: the configurer's membership could not be verified (connection reset); retried next cycle" });
+    expect(rowsOf("export_destinations")[0].last_run_error).toBe("skipped: the configurer's membership could not be verified (connection reset); retried next cycle");
+    // confirmed by the Admin's save: the next night pushes as any other destination
+    expect((await night()).results[0]).toMatchObject({ ok: true });
+    expect(state.delivered).toHaveLength(8);
+  });
+
+  it("integrator fix (1): a refused run-row open keeps the pause on the card the grace was read for; the next unreadable night stays paused", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 8; n++) await night(); // paused on night 8
+    // the run history is gone (purged), so the count reads night 1 — but the card in hand says paused
+    db.rows.export_runs = [];
+    db.writeError = (table, op) => (table === "export_runs" && op === "insert" ? { code: "42501", message: "permission denied" } : null);
+    const refused = await night();
+    db.writeError = null;
+    expect(refused.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^not run: the run record could not be opened \(permission denied\); retried next cycle Its last scheduled run left it paused and no Admin has saved it since, so it is still PAUSED: /) });
+    const card = String(rowsOf("export_destinations")[0].last_run_error);
+    expect(card.endsWith(PAUSE_KEPT_SENTENCE)).toBe(true);
+    expect(state.delivered).toHaveLength(7);
+    db.readError = { export_runs: "statement timeout" };
+    const unread = await night();
+    db.readError = {};
+    expect(unread.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused: .*could not be read tonight \(statement timeout\)/) });
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (1): regression — a refused run-row open of a CONFIRMED destination writes the card exactly as before", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-admin", updated_by: "u-admin", last_run_error: "skipped: Paused: no Admin has confirmed this destination …" })];
+    db.writeError = (table, op) => (table === "export_runs" && op === "insert" ? { code: "42501", message: "permission denied" } : null);
+    const body = await night();
+    db.writeError = null;
+    expect(body.results[0]).toEqual({ destinationId: "dest-1", ok: false, error: "not run: the run record could not be opened (permission denied); retried next cycle" });
+    expect(rowsOf("export_destinations")[0].last_run_error).toBe("not run: the run record could not be opened (permission denied); retried next cycle");
+  });
+
+  it("integrator fix (2): night 7's bell is delivered and its closing write refused — alert:sent is on the row left running, so night 8 rings NO second pause bell", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 6; n++) await night();
+    db.writeError = (table, op, rows) => (table === "export_runs" && op === "update" && rows[0]?.status === "succeeded" ? { code: "57014", message: "statement timeout" } : null);
+    const seventh = await night();
+    db.writeError = null;
+    expect(seventh.results[0]).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.stringMatching(/^run row not updated: statement timeout/)]) });
+    expect(adminBells()).toHaveLength(2); // the pausing bell rang
+    expect(lastRun()).toMatchObject({ status: "running" });
+    expect(steps(lastRun())).toEqual(["grace:unconfirmed-night", "alert:sent"]);
+    expect(lastRun()?.diagnostics).toEqual([expect.objectContaining({ detail: "night=7/7" }), expect.objectContaining({ step: "alert:sent", detail: "the bell reached 3 controller(s)" })]);
+    const eighth = await night();
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    expect(eighth.results[0]).not.toHaveProperty("warnings");
+    expect(bells()).toEqual([]); // was: a second pause bell saying the first could not be sent
+    expect(lastRun()).toMatchObject({ diagnostics: [PAUSED_ROW, expect.objectContaining({ step: "grace:paused-announced", detail: "the pause was announced at an earlier run" })] });
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (2): …a failed night 7 (its bell rung, its close refused) is read the same way", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 6; n++) await night();
+    state.deliver = async () => { throw new Error("Destination credentials are missing"); };
+    db.writeError = (table, op, rows) => (table === "export_runs" && op === "update" && rows[0]?.status === "failed" ? { code: "57014", message: "statement timeout" } : null);
+    await night();
+    db.writeError = null;
+    state.deliver = null;
+    expect(adminBells()).toHaveLength(2);
+    expect(steps(lastRun())).toEqual(["grace:unconfirmed-night", "alert:sent"]);
+    await night();
+    expect(bells()).toEqual([]);
+  });
+
+  const pausingNightUnrecorded = async () => {
+    for (let n = 1; n <= 6; n++) await night();
+    db.writeError = (table, op) => (table === "export_runs" && op === "update" ? { code: "57014", message: "statement timeout" } : null);
+    const seventh = await night(); // its bell rings; the marker AND the close are refused
+    db.writeError = null;
+    return seventh;
+  };
+  const saysMayNotHaveBeenSent = () => {
+    const b = adminBells();
+    expect(b).toHaveLength(2);
+    for (const x of b) {
+      expect(x.title).toBe("Scheduled export paused until an Admin confirms it");
+      expect(String(x.body)).toMatch(/^A scheduled export to "Nightly hook" \(webhook\) was skipped tonight, so nothing left the workspace\. .* It was paused after 7 unconfirmed nightly pushes: .* The bell that should have said so at its last push may not have been sent\.$/);
+      expect(String(x.body)).not.toMatch(/could not be sent/);
+      expect(x.metadata).toMatchObject({ paused: { of: 7, announcedLate: true, earlierBellUnsure: true } });
+    }
+    expect(lastRun()).toMatchObject({ diagnostics: [PAUSED_ROW, expect.objectContaining({ step: "grace:paused-announced", detail: "announced tonight to 3 controller(s): the bell at its last push may not have been sent" })] });
+  };
+
+  it("integrator fix (2): the marker write is refused too — night 7 says so on the sweep result; night 8 rings once, saying the earlier bell MAY not have been sent (never that it failed); night 9 does not", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    const seventh = await pausingNightUnrecorded();
+    expect(adminBells()).toHaveLength(2); // it did ring
+    expect(seventh.results[0]).toMatchObject({
+      ok: true,
+      warnings: expect.arrayContaining([expect.stringMatching(/^the pausing alert was sent, but recording that on the run row failed \(statement timeout\); if the run's closing write is refused too, the next paused night says that alert may not have been sent$/)]),
+    });
+    expect(lastRun()).toMatchObject({ status: "running" });
+    expect(steps(lastRun())).toEqual(["grace:unconfirmed-night"]);
+    const eighth = await night();
+    expect(eighth.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    saysMayNotHaveBeenSent();
+    await night(); // night 9: not again
+    expect(bells()).toEqual([]);
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (2): …and when night 8's late bell is refused, the paused row keeps it unsure, so night 9's try still says it MAY not have been sent", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    await pausingNightUnrecorded();
+    db.writeError = (table) => (table === "notifications" ? { code: "42501", message: "permission denied" } : null);
+    const eighth = await night();
+    db.writeError = null;
+    expect(eighth.results[0]).toMatchObject({ warnings: [expect.stringMatching(/^the pausing alert was not sent: /)] });
+    expect(steps(lastRun())).toEqual(["grace:paused", "alert:unsent", "grace:pause-bell-unsure"]);
+    expect((await night()).results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: Paused:/) });
+    saysMayNotHaveBeenSent();
+    await night(); // night 10: not again
+    expect(bells()).toEqual([]);
+    expect(state.delivered).toHaveLength(7);
+  });
+
+  it("integrator fix (2): regression — nights 1-6 write no marker (only the pausing night's bell is read back), and a closed night 7 keeps alert:sent on its closing row", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
+    for (let n = 1; n <= 7; n++) await night();
+    const runs = rowsOf("export_runs");
+    expect(runs.slice(0, 6).every((r) => !steps(r).includes("alert:sent"))).toBe(true);
+    expect(runs[6]).toMatchObject({ status: "succeeded" });
+    expect(steps(runs[6])).toEqual(expect.arrayContaining(["grace:unconfirmed-night", "alert:sent"]));
+  });
+
+  describe("fix pass (major): through the real builder — a failed night's bell says whether the archive was sent", () => {
+    let readdir: { mockRestore: () => void } | null = null;
+    let posts: string[] = [];
+    beforeEach(async () => {
+      posts = [];
+      // the ZIP's bundled migrations are not what this is about
+      readdir = vi.spyOn(fsPromises, "readdir").mockResolvedValue([] as never);
+      const real = await vi.importActual<typeof import("@/lib/exportRunner")>("@/lib/exportRunner");
+      state.deliver = (p) => real.buildAndDeliverExport(p as never);
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => { posts.push(String(url)); return new Response("receiver down", { status: 500 }); }));
+    });
+    afterEach(() => { vi.unstubAllGlobals(); readdir?.mockRestore(); readdir = null; });
+
+    it("a webhook that answers 500 after receiving the whole archive: every Admin's bell says the destination may hold it, never that nothing left", async () => {
+      db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc", webhook_url: "https://203.0.113.10/hook" })];
+      const body = await night();
+      expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^Webhook 500: receiver down/) });
+      expect(posts).toEqual(["https://203.0.113.10/hook"]); // the archive went
+      const b = adminBells();
+      expect(b).toHaveLength(2);
+      for (const x of b) {
+        expect(String(x.body)).toMatch(/^A scheduled export to "Nightly hook" \(webhook\) failed tonight after the archive's transmission to it began, so the destination may hold the entire workspace \(Webhook 500: receiver down/);
+        expect(String(x.body)).not.toMatch(/nothing left/);
+        expect(x.metadata).toMatchObject({ failed: true, failedAfterSend: true, grace: { night: 1, of: 7, pausing: false } });
+      }
+    }, 30_000);
+
+    it("a push refused before anything is sent (the address guard): the bell says nothing left", async () => {
+      db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc", webhook_url: "https://10.0.0.7/hook" })];
+      const body = await night();
+      expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^Blocked private-range destination address/) });
+      expect(posts).toEqual([]);
+      const b = adminBells();
+      expect(b).toHaveLength(2);
+      for (const x of b) {
+        expect(String(x.body)).toMatch(/^A scheduled export to "Nightly hook" \(webhook\) failed tonight before the archive was sent, so nothing left the workspace \(Blocked private-range destination address/);
+        expect(x.metadata).toMatchObject({ failed: true });
+        expect(x.metadata).not.toHaveProperty("failedAfterSend");
+      }
+    }, 30_000);
+
+    it("an S3-compatible endpoint that took the put and then fails its read-back: the destination may hold it; one with no keys fails before anything is sent", async () => {
+      const bucketDest = (extra: Row = {}) => dueDestination({
+        created_by: "u-dc", updated_by: "u-dc", name: "Bucket", destination_type: "s3", webhook_url: null, bucket: "acme", endpoint: "https://203.0.113.20",
+        access_key_id_encrypted: encryptSecret("AK"), secret_access_key_encrypted: encryptSecret("SK"), ...extra,
+      });
+      const puts: string[] = [];
+      state.s3 = (cmd) => { if (cmd === "PutObjectCommand") puts.push(cmd); return cmd === "HeadObjectCommand" ? { ContentLength: 1 } : {}; };
+      db.rows.export_destinations = [bucketDest()];
+      const sent = await night();
+      expect(sent.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^Backup verification failed/) });
+      expect(puts).toHaveLength(1);
+      for (const x of adminBells()) expect(String(x.body)).toMatch(/^A scheduled export to "Bucket" \(s3\) failed tonight after the archive's transmission to it began, so the destination may hold the entire workspace/);
+      db.rows.export_destinations = [bucketDest({ access_key_id_encrypted: null, secret_access_key_encrypted: null })];
+      const unsent = await night();
+      expect(unsent.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^Destination credentials are missing/) });
+      expect(puts).toHaveLength(1);
+      for (const x of adminBells()) expect(String(x.body)).toMatch(/^A scheduled export to "Bucket" \(s3\) failed tonight before the archive was sent, so nothing left the workspace \(Destination credentials are missing/);
+    }, 30_000);
   });
 });

@@ -25,17 +25,17 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 270,
+    "findings": 271,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
       "MEDIUM": 150,
-      "LOW": 52
+      "LOW": 53
     },
     "by_status": {
-      "RESOLVED": 218,
-      "OPEN": 45,
+      "RESOLVED": 225,
+      "OPEN": 39,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -1106,7 +1106,7 @@
       "id": "ILIFE-1",
       "title": "Orphan sweeper does not know about cost_documents.file_url — every vendor quote and cost document is deletable 7 days after upload",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2784,7 +2784,7 @@
       "id": "DACL-7",
       "title": "Full-workspace export (every table + every file) is open to the Manager role, which is not an ACL controller and cannot see private documents anywhere else",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4246,7 +4246,7 @@
       "id": "IEDGE-10",
       "title": "Manager can export the org's entire knowledge corpus — including chunk text of ACL-restricted mirrored documents — through /api/data-export with no ACL filter anywhere in the pipeline",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4405,7 +4405,7 @@
       "id": "ILIFE-8",
       "title": "Orphan scan and delete are bucket-global with no org scoping — one tenant's DocCtrl reclaims every tenant's storage",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4461,7 +4461,7 @@
       "id": "ILIFE-10",
       "title": "Tables with their own unique constraints are upserted ON CONFLICT (id), so a merge restore errors instead of deduping",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4488,7 +4488,7 @@
       "id": "ILIFE-11",
       "title": "The export inlines every 1024-dimension chunk embedding into one JSON response with no exclusion or streaming",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -6624,6 +6624,29 @@
       ],
       "refuted": false,
       "summary": "A Controller (the route's tier) calls DELETE /api/storage/delete for the key of a superseded revision whose knowledge mirror is still indexed. The route deletes the object. The mirror's file is now gone, so a re-index or a page render of that mirror fails, and the library's citations point at a document whose bytes no longer exist. The app's only caller sends project-cost keys (lib/costDocs.ts), s",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/18-lifecycle.md"
+    },
+    {
+      "id": "ILIFE-15",
+      "title": "A backup taken before the vector omission restores 500 chunk rows per request, vectors inline — whether that fits the deployed platform's request body limit is unmeasured",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (measured by a test over a synthetic pre-omission backup; the platform's limit is the one this repository records, not re-measured against the host)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/dataRestore.ts",
+        "app/api/admin/restore/apply-table/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An Admin restores a backup taken in September (before I-01 phase B) into a fresh workspace on a platform whose function body limit is about 4.5 MB. The run stops at knowledgechunks with the platform's 413, and the tables after it in the restore order (knowledgepageentities, knowledgequestions, outputtemplates, outputgenerations) are not attempted. Re-running stops at the same place.",
       "area": "intelligence",
       "report": "audit-reports/intelligence/18-lifecycle.md"
     },

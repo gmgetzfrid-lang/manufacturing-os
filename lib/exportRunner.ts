@@ -21,10 +21,13 @@ import { S3Client, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, De
 import { createHash, randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { runOrgExport, recordExportUndelivered, DataExportEnvelope } from "@/lib/dataExport";
+import { EXPORT_OMITTED_COLUMNS } from "@/lib/exportTables";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 import net from "node:net";
+import { prettyJsonChunks, batchedChunks } from "@/lib/prettyJsonStream";
 import { lookup } from "node:dns/promises";
 
 type DiagnosticStep = { ts: string; step: string; detail?: string };
@@ -140,11 +143,15 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
  *  307 → http://169.254.169.254/… would receive the whole org ZIP with the
  *  guard never re-run (the runtime follows redirects and re-resolves DNS on
  *  its own). Residual: the CONNECTED address is still the runtime's own
- *  resolution of the checked host (no custom dispatcher without undici). */
-export async function fetchExternalGuarded(url: string, init: RequestInit & { method: string }): Promise<Response> {
+ *  resolution of the checked host (no custom dispatcher without undici).
+ *  `onSend` (P14 fix pass) is called just before each request goes out, once
+ *  its hop has passed the guard: from then the body may have reached that
+ *  host, whatever it answers. */
+export async function fetchExternalGuarded(url: string, init: RequestInit & { method: string }, onSend?: () => void): Promise<Response> {
   let current = url;
   for (let hop = 0; ; hop++) {
     await assertSafeExternalUrl(current);
+    onSend?.();
     const res = await fetch(current, { ...init, redirect: "manual" });
     const location = res.headers.get("location");
     if (!REDIRECT_STATUSES.has(res.status) || !location) return res;
@@ -367,15 +374,26 @@ type BuildAndDeliverParams = {
  *  slow upload that succeeds today — the recall's read allows a day
  *  (lib/dataExport.ts UNDELIVERED_READ_WINDOW_MS; A&O P3 fix pass 8). A
  *  function killed mid-delivery (Vercel at 300 s, a container restart)
- *  writes no row at all, and its run row stays "running". */
+ *  writes no row at all, and its run row stays "running".
+ *  P14 fix pass (DEC-87 §1): an error thrown once the archive's transmission
+ *  to the destination had begun — the webhook POST or the bucket put sent,
+ *  whatever the destination then answered (a webhook's 500 comes back after
+ *  it received the whole ZIP) — carries `transmissionBegan`
+ *  (pushTransmissionBegan), so the scheduled sweep's bell never tells the
+ *  Admins nothing left when the destination may hold the archive. An error
+ *  before that (the envelope, the ZIP, the credentials, the address guard)
+ *  carries nothing: nothing was sent. */
 export async function buildAndDeliverExport(params: BuildAndDeliverParams): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
   const recordId = randomUUID();
   let recorded = false;
+  let transmitting = false;
   try {
-    return await buildAndDeliver(params, recordId, () => { recorded = true; });
+    return await buildAndDeliver(params, recordId, () => { recorded = true; }, () => { transmitting = true; });
   } catch (e) {
+    if (transmitting && e && typeof e === "object") (e as { transmissionBegan?: boolean }).transmissionBegan = true;
     if (!recorded) throw e;
     const err = e instanceof Error ? e : new Error(String(e));
+    if (transmitting) (err as Error & { transmissionBegan?: boolean }).transmissionBegan = true;
     const unwritten = await recordExportUndelivered(
       createClient(params.supabaseUrl, params.serviceRoleKey, { auth: { persistSession: false } }),
       {
@@ -391,10 +409,18 @@ export async function buildAndDeliverExport(params: BuildAndDeliverParams): Prom
   }
 }
 
+/** P14 fix pass: did this error come after the archive's transmission to the
+ *  destination began (buildAndDeliverExport's `transmissionBegan`)? Then the
+ *  destination may hold the archive, whatever it answered. */
+export function pushTransmissionBegan(e: unknown): boolean {
+  return !!e && typeof e === "object" && (e as { transmissionBegan?: unknown }).transmissionBegan === true;
+}
+
 async function buildAndDeliver(
   params: BuildAndDeliverParams,
   recordId: string,
   onRecorded: () => void,
+  onTransmitting: () => void = () => undefined,
 ): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
   const diagnostics: DiagnosticStep[] = [];
   const step = (s: string, d?: string) => diagnostics.push({ ts: new Date().toISOString(), step: s, detail: d });
@@ -451,10 +477,14 @@ async function buildAndDeliver(
     step("schema:migrations:err", (e as Error).message);
   }
 
-  // One table file per data type — small files unzip nicely
+  // One table file per data type — small files unzip nicely.
+  // intelligence ILIFE-11 criterion 2 (admin-and-org Round G, P14): each
+  // table's JSON is STREAMED into the compressor a batch of rows at a time
+  // (tableJsonContent) — the same text as JSON.stringify(rows, null, 2), never
+  // held as one string beside the rows it was made from.
   const tableFolder = zip.folder("tables");
   for (const [name, rows] of Object.entries(envelope.tables)) {
-    tableFolder?.file(`${name}.json`, JSON.stringify(rows, null, 2));
+    tableFolder?.file(`${name}.json`, tableJsonContent(rows));
   }
 
   // Embed binary files inline. Each file's path mirrors its storage key, and
@@ -587,6 +617,7 @@ async function buildAndDeliver(
           key: fullKey,
           body: zipBytes,
           contentType: "application/zip",
+          onSend: onTransmitting,
         });
         step("s3:done");
 
@@ -665,7 +696,7 @@ async function buildAndDeliver(
           method: "POST",
           headers,
           body: zipBytes as unknown as BodyInit,
-        });
+        }, onTransmitting);
         if (!res.ok) throw new Error(`Webhook ${res.status}: ${await res.text()}`);
         step("webhook:done");
 
@@ -708,8 +739,11 @@ async function s3Put(params: {
   key: string;
   body: Uint8Array;
   contentType: string;
+  /** P14 fix pass: called once the credentials are read, just before the put is sent. */
+  onSend?: () => void;
 }): Promise<void> {
   const client = buildS3ClientFromDestination(params.dest);
+  params.onSend?.();
   await client.send(new PutObjectCommand({
     Bucket: params.dest.bucket || "",
     Key: params.key,
@@ -851,6 +885,42 @@ export async function testDestinationConnection(dest: ExportDestination): Promis
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
+/** ILIFE-11 criterion 2 (P14): a table file's content for the ZIP — a Node
+ *  stream of JSON.stringify(rows, null, 2), row by row (lib/
+ *  prettyJsonStream.ts), which JSZip reads as it compresses. Where JSZip
+ *  cannot take a Node stream (no `readable-stream` support), the string, as
+ *  before. Exported for tests.
+ *
+ *  P14 review fix: each batch is yielded as its UTF-8 BYTES, never as a JS
+ *  string. JSZip treats any stream input as binary — it skips its UTF-8
+ *  encoder and keeps only the low byte of each char code of a string chunk —
+ *  so a string stream wrote "Ø 50 mm — 120 °C" back as "� 50 mm  120 �C" in
+ *  every server-built backup. Bytes are stored as they are, and the file
+ *  reads back as the same text as the string fallback (aoRoundGP14ExportStream,
+ *  exportContractRoundTrip pin non-ASCII text). */
+export function tableJsonContent(rows: unknown): Readable | string {
+  // JSZip reports it at runtime; its typings leave the key out.
+  if (!(JSZip.support as unknown as { nodestream?: boolean }).nodestream) return JSON.stringify(rows, null, 2);
+  return Readable.from((function* () {
+    for (const s of batchedChunks(prettyJsonChunks(rows, 1))) yield Buffer.from(s, "utf8");
+  })());
+}
+
+/** ILIFE-11 (P14): the README's section naming the derived columns this
+ *  archive leaves out (manifest.omittedColumns), with each one's reason from
+ *  the export contract (lib/exportTables.ts EXPORT_OMITTED_COLUMNS — the
+ *  same words as the manifest's OMITTED note), so someone reading the archive
+ *  is told that, for example, every knowledge_chunks row lacks `embedding`. */
+export function omittedColumnsReadmeSection(omittedColumns: Record<string, readonly string[]> | undefined): string {
+  const entries = Object.entries(omittedColumns ?? {}).filter(([, cols]) => Array.isArray(cols) && cols.length > 0);
+  if (entries.length === 0) return "";
+  const lines = entries.map(([t, cols]) => {
+    const reason = Object.prototype.hasOwnProperty.call(EXPORT_OMITTED_COLUMNS, t) ? EXPORT_OMITTED_COLUMNS[t].reason : null;
+    return `- ${t}: ${cols.join(", ")}${reason ? ` — ${reason}` : ""}`;
+  });
+  return `\n## Omitted derived columns\n\nThese columns are derived data and are NOT in this archive (not exported as null — left out):\n${lines.join("\n")}\n`;
+}
+
 function buildReadme(envelope: DataExportEnvelope, omittedCount = 0, late = { atDeadline: 0, sizeUnknown: 0 }): string {
   const m = envelope.manifest;
   const totalRows = m.tables.reduce((s, t) => s + t.rowCount, 0);
@@ -873,6 +943,7 @@ function buildReadme(envelope: DataExportEnvelope, omittedCount = 0, late = { at
   const redactedNote = redacted.length > 0
     ? `\n## Redacted credential columns\n\nSecrets never leave the database. These columns are exported as null:\n${redacted.map(([t, cols]) => `- ${t}: ${cols.join(", ")}`).join("\n")}\nAfter a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), and export destinations must have their credentials re-entered (restored rows arrive disabled).\n`
     : "";
+  const omittedColumnsNote = omittedColumnsReadmeSection(m.omittedColumns);
   return `# manufacturing-os export
 
 Organization: ${m.orgName || m.orgId}
@@ -893,7 +964,7 @@ Schema version: ${m.schemaVersion}
 - schema/migrations/*.sql   — every schema migration, in order (base + migrations = the exact live schema)
 - tables/<name>.json        — one file per table; JSON array of rows
 - files/<storage-path>      — every binary file, path-preserved
-${omittedNote}${shedNote}${redactedNote}
+${omittedNote}${shedNote}${redactedNote}${omittedColumnsNote}
 To rebuild elsewhere: apply schema.sql, then each migration in filename order,
 then import tables/*.json (parents before children), then upload files/* to
 your storage under the same keys.

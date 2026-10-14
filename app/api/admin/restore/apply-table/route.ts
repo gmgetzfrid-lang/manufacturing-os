@@ -89,7 +89,11 @@ export async function POST(req: NextRequest) {
   // Remap, FORCE the org boundary, filter, bound every row by the parents it
   // names, write — the shared function both restore routes call.
   const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap });
-  const { inserted, existing, heldElsewhere, uncounted, filtered, refused, cleared, advanced } = result;
+  const { inserted, existing, heldElsewhere, uncounted, filtered, refused, cleared, advanced, notApplied } = result;
+  // ILIFE-10 / ILIFE-11 (admin-and-org Round G, P14): a kept live row whose
+  // backup decision was not applied (notApplied), and the libraries whose
+  // restored passages need a meaning-index Build (meaningIndex), ride the
+  // answer and the RESTORE_CHUNK row like every other count.
   const counts = {
     inserted,
     ...(existing ? { existing } : {}),
@@ -99,11 +103,14 @@ export async function POST(req: NextRequest) {
     ...(advanced ? { advanced } : {}),
     ...(refused.length ? { refused } : {}),
     ...(cleared.length ? { cleared } : {}),
+    ...(notApplied.length ? { notApplied } : {}),
+    ...(result.meaningIndex ? { meaningIndex: result.meaningIndex } : {}),
+    ...(result.meaningIndexUnchecked ? { meaningIndexUnchecked: result.meaningIndexUnchecked } : {}),
   };
   // A chunk that failed before writing anything leaves nothing to record. A
   // statement accepted without a count may have written rows (uncounted), so
   // that chunk is recorded too (fix pass 4).
-  if (!result.ok && inserted === 0 && !uncounted && !advanced && refused.length === 0 && cleared.length === 0) {
+  if (!result.ok && inserted === 0 && !uncounted && !advanced && refused.length === 0 && cleared.length === 0 && notApplied.length === 0) {
     return NextResponse.json({ error: result.error, ...(result.code ? { code: result.code } : {}), ...counts }, { status: result.status ?? 500 });
   }
 
@@ -123,6 +130,8 @@ export async function POST(req: NextRequest) {
       ...(advanced ? { advanced } : {}),
       ...(refused.length ? { refused } : {}),
       ...(cleared.length ? { cleared } : {}),
+      ...(notApplied.length ? { notApplied } : {}),
+      ...(result.meaningIndex ? { meaningIndex: result.meaningIndex } : {}),
       ...(!result.ok ? { failed: result.error ?? "write failed" } : {}),
       backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
       backupOrgName: parsed.manifest?.orgName ?? null,
