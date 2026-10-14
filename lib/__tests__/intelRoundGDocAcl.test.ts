@@ -104,6 +104,7 @@ function chain(table: string) {
         switch (prop) {
           case "eq": eqCols.push(args[0] as string); preds.push((r) => r[args[0] as string] === args[1]); break;
           case "neq": preds.push((r) => r[args[0] as string] !== args[1]); break;
+          case "gt": preds.push((r) => r[args[0] as string] != null && String(r[args[0] as string]) > String(args[1])); break;
           case "in": preds.push((r) => (args[1] as unknown[]).includes(r[args[0] as string])); break;
           case "is": preds.push((r) => (args[1] === null ? r[args[0] as string] == null : r[args[0] as string] === args[1])); break;
           case "not": {
@@ -149,7 +150,7 @@ vi.mock("@/lib/knowledgeIngest", () => ({
 
 import {
   loadPrincipal, loadDcLandscape, containerReadable, readableControlledDocIds, chainReadable,
-  DcLandscapeUnreadableError, DC_LANDSCAPE_PAGE, type KnowledgePrincipal,
+  DcLandscapeUnreadableError, DC_LANDSCAPE_PAGE, PrincipalUnreadableError, PRINCIPAL_UNREADABLE, type KnowledgePrincipal,
 } from "@/lib/knowledgeAccess";
 import { canReadNode, canServeContent, canDiscover, canWithAclChain, canReadViaIndex, type Principal } from "@/lib/permissions";
 import { evaluateAclChain, aclSaysSomething, buildAclIndexFromChain } from "@/lib/acl";
@@ -306,12 +307,37 @@ describe("KACL-12 — the seam fails CLOSED on its own reads", () => {
       await expect(readableControlledDocIds(await viewer(), [DOC])).rejects.toThrow(/could not be read: statement timeout/);
     }
   });
-  it("done-when 2: a team_members read error yields no principal for a non-controller (a team deny is never dropped); a controller still loads", async () => {
+  it("done-when 2: a team_members read error yields no principal for a non-controller (a team deny is never dropped) — it THROWS PrincipalUnreadableError, never 'not a member' (second review fix); a controller still loads", async () => {
     seed({ teams: ["T-contract"] });
     db.errors.team_members = { message: "statement timeout" };
-    expect(await loadPrincipal(ORG, "u-viewer")).toBeNull();
+    await expect(loadPrincipal(ORG, "u-viewer")).rejects.toBeInstanceOf(PrincipalUnreadableError);
     const dc = await loadPrincipal(ORG, "u-dc");
     expect(dc).toMatchObject({ isController: true, teamIds: [] });
+    // an unreadable membership row throws too; an absent one is "not a member" (null)
+    seed();
+    db.errors.org_members = { message: "statement timeout" };
+    await expect(loadPrincipal(ORG, "u-viewer")).rejects.toMatchObject({ name: "PrincipalUnreadableError", what: "membership" });
+    seed();
+    expect(await loadPrincipal(ORG, "u-nobody")).toBeNull();
+  });
+  it("second review fix: an unreadable principal is answered 503 'try again' by the routes the review named — never 403 'Not a member' — and share serving calls it 'unknown', never a lapse", async () => {
+    seed({ teams: ["T-contract"] });
+    db.errors.team_members = { message: "statement timeout" };
+    const browse = await flowsBrowse(new NextRequest(`https://app/api/flows/browse?orgId=${ORG}`, { headers: { authorization: "Bearer t" } }));
+    expect(browse.status).toBe(503);
+    expect(await browse.json()).toEqual({ error: PRINCIPAL_UNREADABLE });
+    const src = await sourcesGET(new NextRequest(`https://app/api/knowledge/sources?orgId=${ORG}&action=browse`, { headers: { authorization: "Bearer t" } }));
+    expect(src.status).toBe(503);
+    const { shareAuthority } = await import("@/lib/shareAuthorization");
+    expect(await shareAuthority(ORG, "u-viewer", DOC)).toBe("unknown");
+    // the landscape unreadable is 'unknown' too
+    seed();
+    db.errors.collections = { message: "statement timeout" };
+    expect(await shareAuthority(ORG, "u-viewer", DOC)).toBe("unknown");
+    // control: readable → ok; a creator who left → lapsed
+    seed();
+    expect(await shareAuthority(ORG, "u-viewer", DOC)).toBe("ok");
+    expect(await shareAuthority(ORG, "u-gone", DOC)).toBe("lapsed");
   });
   it("done-when 3: a document whose folder is absent from the landscape, or whose folder's ancestor is, is unreadable; a folder whose library is absent is not a readable container", async () => {
     seed();
@@ -337,7 +363,7 @@ describe("KACL-12 — the seam fails CLOSED on its own reads", () => {
     expect(containerReadable("folder", FOLDER, await viewer(), l)).toBe(false);
     expect(await aiReads()).toBe(false);
   });
-  it("done-when 4 (continuation): a project max-rows BELOW the page size — every page comes back short — still reads every folder (the exact count, not a short page, ends the read)", async () => {
+  it("done-when 4 (continuation): a project max-rows BELOW the page size — every page comes back short — still reads every folder (only an EMPTY keyset page ends the read)", async () => {
     seed();
     const extra = Array.from({ length: 1300 }, (_, i) => ({
       id: `g-${String(i).padStart(5, "0")}`, org_id: ORG, library_id: LIB, parent_id: null, path_ids: [], name: `G${i}`, path_names: [`G${i}`],
@@ -371,6 +397,50 @@ describe("KACL-12 — the seam fails CLOSED on its own reads", () => {
     expect(await aiReads()).toBe(false);
     last.acl = null as never;
     expect(await aiReads()).toBe(true);
+  });
+
+  it("done-when 4 (second review fix): the reads page by KEYSET — a folder deleted while the landscape is read never shifts another out of the read (the knowledge sync builds a library's folder list from it, and would remove the skipped folder's mirrors)", async () => {
+    seed();
+    const extra = Array.from({ length: DC_LANDSCAPE_PAGE + 300 }, (_, i) => ({
+      id: `h-${String(i).padStart(5, "0")}`, org_id: ORG, library_id: LIB, parent_id: null, path_ids: [], name: `H${i}`, path_names: [`H${i}`],
+      acl: null, visibility: "normal", owner_user_id: null, deleted_at: null,
+    }));
+    db.tables.collections.push(...extra);
+    const all = db.tables.collections.length;
+    // one folder of the FIRST window is deleted right after that window is
+    // read (the 30-day trash emptied while the sync runs) — an offset read
+    // would then start its second window one row late and skip
+    // extra[DC_LANDSCAPE_PAGE - 1]
+    const folders = db.tables.collections;
+    const victim = extra[10].id;
+    let pages = 0;
+    const { supabaseAdmin } = await import("@/lib/supabaseAdmin");
+    const realFrom = supabaseAdmin.from.bind(supabaseAdmin);
+    const spy = vi.spyOn(supabaseAdmin, "from").mockImplementation(((t: string) => {
+      if (t === "collections" && ++pages === 2) {
+        const i = folders.findIndex((r) => r.id === victim);
+        if (i >= 0) folders.splice(i, 1);
+      }
+      return realFrom(t);
+    }) as typeof supabaseAdmin.from);
+    try {
+      const l = await loadDcLandscape(ORG);
+      expect(pages).toBeGreaterThanOrEqual(2);
+      // every folder is in the landscape (the victim was read before it went) — none is skipped
+      expect(l.folders.size).toBe(all);
+      expect(l.folders.has(extra[DC_LANDSCAPE_PAGE - 1].id)).toBe(true);
+      expect(l.folders.has(extra[DC_LANDSCAPE_PAGE].id)).toBe(true);
+      expect(l.folders.has(extra[extra.length - 1].id)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+    // and the read asks no count and no offset window: a keyset bound and a limit
+    const k = readFileSync(join(process.cwd(), "lib/knowledgeAccess.ts"), "utf8");
+    const body = k.slice(k.indexOf("async function readAllPages"), k.indexOf("type LandscapeFolder"));
+    expect(body).toMatch(/q = q\.gt\("id", lastId\)/);
+    expect(body).toMatch(/\.limit\(DC_LANDSCAPE_PAGE\)/);
+    expect(body).not.toMatch(/\.range\(/);
+    expect(body).not.toMatch(/count: "exact"/);
   });
 
   it("done-when 5: /api/flows/browse answers 503 when the landscape cannot be read (never the tree)", async () => {
@@ -746,10 +816,16 @@ describe("VFY-7 — the short link's resolver: punctuation-forgiving at the quer
   it("source pins: the normalized number itself (an anchored ~* pattern) as the second candidate read, exact normalized matches only, a chooser for more than one, never rows[0]", () => {
     const home = readFileSync(join(process.cwd(), "app/(protected)/documents/page.tsx"), "utf8");
     // the second candidate read matches the normalized number itself (an
-    // anchored ~* pattern), never a loose in-order window
-    expect(home).toMatch(/\.regexIMatch\("document_number", normalizedNumberPattern\(norm\)\)/);
+    // anchored ~* pattern, built by lib/docNumberMatch shortLinkExactMatches),
+    // never a loose in-order window; both reads always run (second review fix)
+    expect(home).toMatch(/hits = await shortLinkExactMatches<DocumentRow>\(raw, \{/);
+    expect(home).toMatch(/\.regexIMatch\("document_number", pattern\)/);
+    expect(home).toMatch(/if \(error\) throw new Error\(error\.message\);/);
+    expect(home).not.toMatch(/exact\.size === 0/);
     expect(home).not.toMatch(/\.ilike\("document_number", `%\$\{norm/);
-    expect(home).toMatch(/if \(normalizeDocNumber\(r\.document_number\) === norm\) exact\.set\(r\.id, r\);/);
+    const lib = readFileSync(join(process.cwd(), "lib/docNumberMatch.ts"), "utf8");
+    expect(lib).toMatch(/if \(normalizeDocNumber\(r\.document_number\) === norm\) exact\.set\(r\.id, r\);/);
+    expect(lib).toMatch(/if \(norm\.length >= 2\) take\(await reads\.normalized\(normalizedNumberPattern\(norm\)\)\);/);
     expect(home).toMatch(/else if \(hits\.length > 1\) \{[\s\S]*?setShortLinkChoices\(\{ raw, rows: hits \}\);/);
     expect(home).toContain("data-short-link-chooser");
     expect(home).not.toMatch(/\?\? \(rows \?\? \[\]\)\[0\]/);

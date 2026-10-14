@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   loadPrincipal, loadDcLandscape, containerReadable,
+  PrincipalUnreadableError, PRINCIPAL_UNREADABLE,
 } from "@/lib/knowledgeAccess";
 import { syncKnowledgeLibrarySources } from "@/lib/knowledgeSourceSync";
 import { isMissingColumn } from "@/lib/knowledgeIngest";
@@ -56,7 +57,11 @@ export async function GET(req: NextRequest) {
   if (!orgId) return bad("orgId is required");
   const user = await authUser(req);
   if (!user) return bad("Unauthorized", 401);
-  const principal = await loadPrincipal(orgId, user.id);
+  // KACL-12 (I-12 second review fix): an unreadable membership or teams is a
+  // temporary 503, never "Not a member" (loadPrincipal throws it).
+  let principal: Awaited<ReturnType<typeof loadPrincipal>>;
+  try { principal = await loadPrincipal(orgId, user.id); }
+  catch (e) { if (e instanceof PrincipalUnreadableError) return bad(PRINCIPAL_UNREADABLE, 503); throw e; }
   if (!principal) return bad("Not a member of this workspace", 403);
 
   // ── Browse: containers the caller can read, for the picker ─────────────
@@ -151,7 +156,11 @@ export async function POST(req: NextRequest) {
   if (!orgId || !libraryId) return bad("orgId and libraryId are required");
   const user = await authUser(req);
   if (!user) return bad("Unauthorized", 401);
-  const principal = await loadPrincipal(orgId, user.id);
+  // KACL-12 (I-12 second review fix): an unreadable membership or teams is a
+  // temporary 503, never "Not a member" (loadPrincipal throws it).
+  let principal: Awaited<ReturnType<typeof loadPrincipal>>;
+  try { principal = await loadPrincipal(orgId, user.id); }
+  catch (e) { if (e instanceof PrincipalUnreadableError) return bad(PRINCIPAL_UNREADABLE, 503); throw e; }
   if (!principal) return bad("Not a member of this workspace", 403);
 
   // ── "Something changed in doc control" — the auto-update nudge ─────────
@@ -273,7 +282,11 @@ export async function DELETE(req: NextRequest) {
   if (!orgId || !sourceId) return bad("orgId and sourceId are required");
   const user = await authUser(req);
   if (!user) return bad("Unauthorized", 401);
-  const principal = await loadPrincipal(orgId, user.id);
+  // KACL-12 (I-12 second review fix): an unreadable membership or teams is a
+  // temporary 503, never "Not a member" (loadPrincipal throws it).
+  let principal: Awaited<ReturnType<typeof loadPrincipal>>;
+  try { principal = await loadPrincipal(orgId, user.id); }
+  catch (e) { if (e instanceof PrincipalUnreadableError) return bad(PRINCIPAL_UNREADABLE, 503); throw e; }
   if (!principal) return bad("Not a member of this workspace", 403);
 
   if (!principal.isController) {

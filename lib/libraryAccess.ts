@@ -32,7 +32,7 @@
 
 import { aclSaysSomething } from "@/lib/acl";
 import { canDiscover, canReadViaIndex, canWithAclChain, type Principal } from "@/lib/permissions";
-import type { AccessControl, AclIndex, NodeVisibility, PermissionAction, Role } from "@/types/schema";
+import type { AccessControl, AclIndex, LibraryConfig, NodeVisibility, PermissionAction, Role } from "@/types/schema";
 
 export interface LibraryAccessFields {
   readAccess?: Role[] | "ALL" | null;
@@ -104,12 +104,17 @@ export const LIBRARY_RUNG_COLUMNS = "acl, visibility, read_access, visible_to, w
  *  lib/knowledgeAccess loadDcLandscape, lib/docFileServer
  *  loadContainerAclChain). read_access is JSONB: the string "ALL" or a role
  *  array; NULL reads as "ALL" (the home page's rule), so a NULL never
- *  synthesizes a rung. */
+ *  synthesizes a rung. Any OTHER value — a JSON string other than "ALL", an
+ *  object, a number (a hand-edited legacy row) — is restricted, naming no
+ *  role: the pages' reading (the documents home's libraryReadsByRole and the
+ *  library page's `read_access ?? "ALL"` both hide such a library), so a
+ *  malformed list restricts at the server too, never opens it (I-12 review
+ *  fix: it read as no rung — open at the AI seam and the bytes door). */
 export function effectiveLibraryAclFromRow(row: Record<string, unknown> | null | undefined): AccessControl | undefined {
   if (!row) return undefined;
   const ra = row.read_access;
   return effectiveLibraryAcl({
-    readAccess: ra === "ALL" ? "ALL" : Array.isArray(ra) ? (ra as Role[]) : null,
+    readAccess: ra === "ALL" ? "ALL" : ra == null ? null : Array.isArray(ra) ? (ra as Role[]) : [],
     visibleTo: toRoles(row.visible_to),
     writeAccess: toRoles(row.write_access),
     adminAccess: toRoles(row.admin_access),
@@ -124,7 +129,12 @@ export function effectiveLibraryAclFromRow(row: Record<string, unknown> | null |
  *  with the reader's role collection, teams and uid — so a team or user
  *  grant in the Permissions drawer counts), never the legacy role arrays
  *  alone. The library's owner and controllers see it (canDiscover's
- *  short-circuits). `null` principal (SESS-6: no role known) sees nothing. */
+ *  short-circuits) — the owner only when the caller passes `ownerUserId`,
+ *  which the library page reads with the row (LIBRARY_PAGE_COLUMNS /
+ *  libraryConfigFromRow; I-12 second review fix: the page never loaded it,
+ *  so a legacy-restricted library hid its contents from its own owner).
+ *  The team-supervisor rung of the ownership cascade resolves database-side
+ *  only (as on base). `null` principal (SESS-6: no role known) sees nothing. */
 export function explorerLibraryVisible(
   principal: Principal | null,
   lib: (LibraryAccessFields & { ownerUserId?: string | null }) | null | undefined,
@@ -137,6 +147,39 @@ export function explorerLibraryVisible(
     aclChain: rung ? [rung] : [],
     effectiveOwnerUserId: lib.ownerUserId ?? null,
   });
+}
+
+/** The columns the library page reads for its library (the select("*")
+ *  fallback carries them too). owner_user_id and visibility are read so the
+ *  ownership short-circuit and the library rung's visibility hold on the page
+ *  as they do at the AI seam and the bytes door (I-12 second review fix). */
+export const LIBRARY_PAGE_COLUMNS =
+  "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,acl_index,column_widths,color,icon,cover_image_url,cover_tint,home_config,page_config,owner_user_id,visibility";
+
+/** A `libraries` row (LIBRARY_PAGE_COLUMNS, or select("*")) as the library
+ *  page's LibraryConfig — the page's mapping, with the owner and the
+ *  library's visibility carried (a database without either column maps them
+ *  to "no owner" / unset, as before). */
+export function libraryConfigFromRow(data: Record<string, unknown> & { id?: unknown }): LibraryConfig {
+  const d = data as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  return {
+    id: d.id, orgId: d.org_id, name: d.name, description: d.description,
+    type: d.type, customColumns: d.custom_columns ?? [],
+    columnLabelOverrides: d.column_label_overrides ?? {},
+    uniquenessKeys: Array.isArray(d.uniqueness_keys) ? d.uniqueness_keys : undefined,
+    writeAccess: d.write_access ?? [], adminAccess: d.admin_access ?? [],
+    readAccess: d.read_access ?? "ALL", visibleTo: d.visible_to ?? [],
+    folderSecurity: d.folder_security ?? "Inherited",
+    defaultNewVisibility: d.default_new_visibility,
+    defaultNewAcl: d.default_new_acl, acl: d.acl,
+    aclIndex: d.acl_index ?? undefined,
+    ownerUserId: d.owner_user_id ?? null,
+    visibility: d.visibility ?? undefined,
+    color: d.color ?? undefined, icon: d.icon ?? undefined,
+    coverImageUrl: d.cover_image_url ?? undefined, coverTint: d.cover_tint ?? undefined,
+    homeConfig: d.home_config ?? undefined,
+    pageConfig: d.page_config ?? undefined,
+  } as LibraryConfig;
 }
 
 interface ExplorerFolder {

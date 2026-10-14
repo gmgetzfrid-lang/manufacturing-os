@@ -57,7 +57,11 @@ async function loadGatePrincipal(orgId: string, uid: string): Promise<Principal 
  *  exact-equality lookups, never a PostgREST .or() string (assertSafeStorageKey
  *  admits commas and parentheses; the storage delete route's pattern). A
  *  database without the source column (42703 / PGRST204) has only the first.
- *  THROWS on any other lookup error. */
+ *  THROWS on any other lookup error. Both run on every org-key sign (each
+ *  viewer open, thumbnail and download): file_url is indexed since 20260827,
+ *  source_file_key by 20261212's partial document_versions_source_file_key_idx
+ *  — until that paste the second lookup is a sequential scan of
+ *  document_versions (same answer, slower). */
 async function documentsNamingKey(path: string): Promise<string[]> {
   const ids: string[] = [];
   for (const col of ["file_url", "source_file_key"] as const) {

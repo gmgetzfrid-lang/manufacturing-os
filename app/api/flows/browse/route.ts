@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   loadPrincipal, loadDcLandscape, containerReadable, readableControlledDocIds,
+  PrincipalUnreadableError, PRINCIPAL_UNREADABLE,
 } from "@/lib/knowledgeAccess";
 import { aiReadability } from "@/lib/aiBoundary";
 import {
@@ -48,7 +49,11 @@ export async function GET(req: NextRequest) {
   if (!token) return bad("Not signed in", 401);
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
   if (userErr || !userData?.user) return bad("Not signed in", 401);
-  const principal = await loadPrincipal(orgId, userData.user.id);
+  // KACL-12 (I-12 second review fix): an unreadable membership or teams is a
+  // temporary 503, never "Not a member" (loadPrincipal throws it).
+  let principal: Awaited<ReturnType<typeof loadPrincipal>>;
+  try { principal = await loadPrincipal(orgId, userData.user.id); }
+  catch (e) { if (e instanceof PrincipalUnreadableError) return bad(PRINCIPAL_UNREADABLE, 503); throw e; }
   if (!principal) return bad("Not a member of this workspace", 403);
 
   // KACL-12: a landscape that could not be read in full is never turned

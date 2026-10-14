@@ -102,7 +102,7 @@ const state = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ fn: string; args: Row }>,
   rpcResult: { data: null as unknown, error: null as null | { message: string } },
   origin: "https://app.example.com",
-  authorized: true,
+  authorized: true as boolean | "unknown",
   audits: [] as Row[],
   // the order the bytes, the stamp and the two record writes happened in
   seq: [] as string[],
@@ -171,7 +171,12 @@ function makeClient() {
 
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => makeClient() }));
 vi.mock("@/lib/supabase", () => ({ supabase: makeClient() }));
-vi.mock("@/lib/shareAuthorization", () => ({ shareStillAuthorized: vi.fn(async () => state.authorized) }));
+// KACL-12 (I-12 second review fix): share serving asks shareAuthority, which
+// tells a lapsed authority ("revoked") from one that could not be checked.
+vi.mock("@/lib/shareAuthorization", () => ({
+  shareStillAuthorized: vi.fn(async () => state.authorized === true),
+  shareAuthority: vi.fn(async () => (state.authorized === "unknown" ? "unknown" : state.authorized ? "ok" : "lapsed")),
+}));
 vi.mock("@/lib/publicOrigin", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/publicOrigin")>()),
   publicOrigin: () => state.origin,
@@ -575,7 +580,8 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     // the check runs AFTER the read decision and BEFORE the status / hold / version steps
     const serve = src("lib/shareServe.ts");
     const body = serve.slice(serve.indexOf("export async function resolveShareForServing"));
-    expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeGreaterThan(body.indexOf("await shareStillAuthorized("));
+    expect(body.indexOf("await shareAuthority(")).toBeGreaterThan(0);
+    expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeGreaterThan(body.indexOf("await shareAuthority("));
     expect(body.indexOf("await creatorMayShare(sb, s, d)")).toBeLessThan(body.indexOf("shareStatusRefusal(d)"));
     expect(serve).toMatch(/memberHoldsAny\(member as \{ role\?: unknown; roles\?: unknown \}, SHARE_CONTROLLER_ROLES\)/);
   });
@@ -656,12 +662,35 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     // an unreadable acknowledgment read refuses (a copy leaving the organisation fails closed)
     state.libraryAck = { enabled: true, hardGate: true };
     state.acks = { data: [], error: { message: "boom" } };
+    state.inserts = [];
     res = await fileGet();
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: "unavailable", unreadable: true });
+    // I-12 second review fix: an unreadable gate is recorded as unverified, never as an outstanding acknowledgment
+    expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "acknowledgment_unverified" })]);
     // nothing pending serves even under a hard gate
     state.acks = { data: [], error: null };
     expect((await fileGet()).status).toBe(200);
+  });
+  it("KACL-12 (intelligence I-12 second review fix): a creator's authority that could not be CHECKED (an unreadable membership, teams or chain) answers 503 'unavailable' with the try-again sentence — never 'revoked' — and is recorded as authority_unverified, never authority_lapsed; no bytes leave", async () => {
+    const { SHARE_UNAVAILABLE_UNREADABLE } = await import("@/lib/shareServe");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.authorized = "unknown"; state.inserts = [];
+    r2.send.mockClear();
+    const res = await fileGet();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "unavailable", reason: SHARE_UNAVAILABLE_UNREADABLE, unreadable: true });
+    expect(r2.send).not.toHaveBeenCalled();
+    expect(inserted("download_audits")).toHaveLength(0);
+    expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "authority_unverified" })]);
+    const landing = await resolveGet();
+    expect(landing.status).toBe(503);
+    expect(await landing.json()).toMatchObject({ error: "unavailable", unreadable: true });
+    // a lapsed authority is still "revoked" (control)
+    state.authorized = false; state.inserts = [];
+    expect((await fileGet()).status).toBe(410);
+    expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ reason: "authority_lapsed" })]);
+    err.mockRestore();
   });
   it("a refused attempt on a KNOWN share leaves one 'refused' access row with the reason, IP and UA (SHR-10); an unknown token leaves none", async () => {
     const cases: Array<[Row, Row | null, boolean, string, number]> = [

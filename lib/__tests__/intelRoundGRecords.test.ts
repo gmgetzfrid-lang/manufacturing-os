@@ -11,9 +11,10 @@
 //
 //   * the principal is the one loadPrincipal builds (role collection, teams);
 //     an inactive or absent membership yields null and the route answers 403
-//     before any key, meter or provider is touched — and so does an ACTIVE
-//     member whose principal cannot be loaded, although the route's own
-//     member read still finds them (the `!principal` limb, Done-when 1);
+//     before any key, meter or provider is touched — and an ACTIVE member
+//     whose principal cannot be READ, although the route's own member read
+//     still finds them, is refused there too (503 "try again" since I-12's
+//     second review fix — the principal limb, Done-when 1);
 //   * a folder-level deny, and a folder restricted to a team the caller is
 //     not in, both remove the document inside the folder from find_documents
 //     AND its mirror's passages from search_documents, while a controller
@@ -260,21 +261,25 @@ describe("KACL-2 (→ R&P EGRESS-3) — Done-when 1: the principal is loadPrinci
     expect(db.providerCalls).toBe(0);
   });
 
-  it("/api/orchestrator answers 403 for an ACTIVE member whose principal cannot be loaded, though its own member read finds them", async () => {
+  it("/api/orchestrator refuses an ACTIVE member whose principal cannot be loaded, though its own member read finds them — 503 'try again' since intelligence I-12's second review fix (an unreadable row is not 'Not a member'); nothing reaches the provider", async () => {
     seed(null);
     // loadPrincipal's read (`role, roles`) fails; the route's second read of
     // the same row (`uid, role, display_name, email`) succeeds — so only the
-    // `!principal` limb of route.ts's guard can refuse this caller.
+    // principal limb of route.ts's guard can refuse this caller. Since I-12
+    // (second review fix) loadPrincipal THROWS PrincipalUnreadableError on a
+    // failed read (it answered null, which the route told the member as "Not
+    // a member of this workspace"); the route answers 503 with the try-again
+    // sentence — still refused, still before any key, meter or provider.
     db.failSelect.add("org_members|role, roles");
-    expect(await loadPrincipal(ORG, "u-viewer")).toBeNull();
+    await expect(loadPrincipal(ORG, "u-viewer")).rejects.toMatchObject({ name: "PrincipalUnreadableError" });
     db.user = { id: "u-viewer" };
     const res = await orchestratorPOST(new NextRequest("http://test/api/orchestrator", {
       method: "POST",
       headers: { authorization: "Bearer tok", "content-type": "application/json" },
       body: JSON.stringify({ orgId: ORG, question: "what does the incident report say about the flare knockout drum?" }),
     }));
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "Not a member of this workspace" });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "Couldn't check your access just now — try again." });
     expect(db.providerCalls).toBe(0);
   });
 });

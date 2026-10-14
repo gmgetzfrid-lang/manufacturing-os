@@ -54,7 +54,7 @@ import {
 import { GovernedCallError } from "@/lib/ai/gateError";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
 import type { ToolContext } from "@/lib/orchestrator/tools";
-import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
+import { loadPrincipal, readableControlledDocIds, PrincipalUnreadableError, PRINCIPAL_UNREADABLE } from "@/lib/knowledgeAccess";
 import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
 import { aiReadability } from "@/lib/aiBoundary";
 import { storeProposals } from "@/lib/orchestrator/proposals";
@@ -89,11 +89,22 @@ export async function POST(req: NextRequest) {
   // SURF-7 / EGRESS-3: the caller's ACL principal — role COLLECTION, teams,
   // controller tier — is what every tool filters through. The service-role
   // key fetches; the principal decides what the caller may see or do.
-  const [principal, { data: member }] = await Promise.all([
-    loadPrincipal(orgId, user.id),
-    supabaseAdmin.from("org_members").select("uid, role, display_name, email")
-      .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
-  ]);
+  // KACL-12 (I-12 second review fix): an unreadable membership or teams is a
+  // temporary 503, never "Not a member" (loadPrincipal throws it).
+  let principal: Awaited<ReturnType<typeof loadPrincipal>>;
+  let member: Record<string, unknown> | null;
+  try {
+    const [p, m] = await Promise.all([
+      loadPrincipal(orgId, user.id),
+      supabaseAdmin.from("org_members").select("uid, role, display_name, email")
+        .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
+    ]);
+    principal = p;
+    member = (m.data as Record<string, unknown> | null) ?? null;
+  } catch (e) {
+    if (e instanceof PrincipalUnreadableError) return bad(PRINCIPAL_UNREADABLE, 503);
+    throw e;
+  }
   if (!principal || !member) return bad("Not a member of this workspace", 403);
   const role = principal.role;
   const actorName = ((member.display_name as string | null) || (member.email as string | null)?.split("@")[0] || "A colleague");

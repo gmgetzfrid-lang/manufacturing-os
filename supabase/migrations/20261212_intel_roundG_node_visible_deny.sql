@@ -26,6 +26,37 @@
 --           true from a jsonb test alone, with no table read, exactly as
 --           before; the member / team reads run only for the rows a read deny
 --           names someone on.
+--           Cost (I-12 second review fix): a library-wide read deny is
+--           written into every document's chain-resolved index, so a normal
+--           row reaching the judged branch is common. For such a row the
+--           caller's roles and teams are read FIRST and a row the deny does
+--           not name returns true at once; is_org_controller and the
+--           ownership cascade run only for a row the deny names. Expected
+--           cost per scanned row, for a member the deny does not name: two
+--           index reads (their org_members row, their team_members rows —
+--           both keyed by uid), where the first build ran four lookups (the
+--           controller check, the member row, the cascade, the teams).
+--           Private / hidden rows keep 20261203's order.
+--   KACL-5 (index)  /api/storage/download-url resolves EVERY org-key sign
+--           (each viewer open, thumbnail and download) by
+--           document_versions.file_url (indexed since 20260827) AND by
+--           source_file_key, which no migration indexed — a sequential scan
+--           of document_versions on every sign. This script adds the partial
+--           index document_versions_source_file_key_idx (rows with a source
+--           key only). The route behaves the same before and after; only
+--           the cost of its second lookup changes. CREATE INDEX (not
+--           CONCURRENTLY — the SQL editor runs one transaction) holds writes
+--           to document_versions for the seconds the build takes.
+--   DACL-9 (inventory only)  the app's evaluateAclChain and
+--           buildAclIndexFromChain now reset the merged rules on a node's
+--           OWN inherit:false only (they also reset on the next node below
+--           it, dropping the non-inheriting node's rules). A non-inheriting
+--           library's or folder's denies AND grants therefore reach the
+--           folders and documents below it that carry their own ACL — in the
+--           app at once, in acl_index at the next rebuild (DEC-10). This
+--           script changes nothing for it; its inventory counts the nodes
+--           and descendants affected (upper bounds), so the widening half is
+--           sized before the rebuild runs (DEC-30).
 --
 --   What this does NOT change (recorded on DACL-1 / DACL-6 / DACL-10, with
 --   the inventory below):
@@ -60,8 +91,10 @@
 -- Pre-apply inventory (DEC-30, aggregate counts only, BEFORE the
 -- transaction): the private / hidden rows a role / team / org deny will now
 -- bind on, the normal rows whose index carries a read deny (newly judged),
--- and the normal rows whose index says something without a deny (unchanged;
--- DACL-1 / DACL-6's remaining gap). Never a customer row.
+-- the normal rows whose index says something without a deny (unchanged;
+-- DACL-1 / DACL-6's remaining gap), the document_versions rows the new index
+-- covers, and DACL-9's non-inheriting nodes and the descendants with their
+-- own ACL below them (the app change, sized here). Never a customer row.
 --
 -- BEFORE THE PASTE the app already refuses these rows (canReadNode, the
 -- library page, the AI seam, the bytes door). AFTER IT a direct PostgREST
@@ -69,10 +102,13 @@
 -- already hid from them; no other member, and no controller or effective
 -- owner, sees any change. NARROWS.
 -- ORDER: after 20261203 (it carries that file's org-scoped team lookup).
--- Independent of every other pending file. ⚠ APPLIED BY HAND (DEC-30). One
--- script; re-running is safe.
+-- Independent of every other pending file (20260823 added
+-- document_versions.source_file_key long ago). ⚠ APPLIED BY HAND (DEC-30).
+-- One script; re-running is safe (CREATE INDEX IF NOT EXISTS).
 --
--- ROLLBACK: re-paste 20261203's node_visible (section 3 of that file).
+-- ROLLBACK: re-paste 20261203's node_visible (section 3 of that file); the
+-- index may stay (it only speeds a lookup) or be dropped with
+-- DROP INDEX IF EXISTS document_versions_source_file_key_idx.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── 0. pre-apply inventory (counts only) ────────────────────────────────────
@@ -112,15 +148,58 @@ SELECT 'before: normal-visibility documents with an acl_index and no read deny (
  WHERE (visibility IS NULL OR visibility = 'normal') AND acl_index IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM unnest(ARRAY['users', 'roles', 'teams', 'orgs']) s(subj)
                     WHERE jsonb_typeof(acl_index->'deny'->s.subj->'read') = 'array'
-                      AND jsonb_array_length(acl_index->'deny'->s.subj->'read') > 0);
+                      AND jsonb_array_length(acl_index->'deny'->s.subj->'read') > 0)
+UNION ALL
+SELECT 'KACL-5: document_versions rows with a source_file_key (the rows the new partial index covers)',
+       COUNT(*) FROM document_versions WHERE source_file_key IS NOT NULL
+UNION ALL
+SELECT 'DACL-9: libraries whose own ACL sets inherit = false (their rules now reach the folders and documents below that carry their own ACL)',
+       COUNT(*) FROM libraries WHERE acl->>'inherit' = 'false'
+UNION ALL
+SELECT 'DACL-9: folders whose own ACL sets inherit = false',
+       COUNT(*) FROM collections WHERE acl->>'inherit' = 'false'
+UNION ALL
+SELECT 'DACL-9: of those libraries and folders, the ones with a descendant folder or document carrying its own ACL',
+       (SELECT COUNT(*) FROM libraries l WHERE l.acl->>'inherit' = 'false'
+           AND (EXISTS (SELECT 1 FROM collections c WHERE c.library_id = l.id AND c.acl IS NOT NULL)
+             OR EXISTS (SELECT 1 FROM documents d WHERE d.library_id = l.id AND d.acl IS NOT NULL)))
+     + (SELECT COUNT(*) FROM collections f WHERE f.acl->>'inherit' = 'false'
+           AND (EXISTS (SELECT 1 FROM collections c WHERE f.id = ANY(c.path_ids) AND c.id <> f.id AND c.acl IS NOT NULL)
+             OR EXISTS (SELECT 1 FROM documents d JOIN collections dc ON dc.id = d.collection_id
+                         WHERE d.acl IS NOT NULL AND (dc.id = f.id OR f.id = ANY(dc.path_ids)))))
+UNION ALL
+SELECT 'DACL-9: folders and documents carrying their own ACL below a non-inheriting library or folder (upper bound of the rows whose app evaluation changes now and whose acl_index changes at the next rebuild)',
+       (SELECT COUNT(*) FROM collections c WHERE c.acl IS NOT NULL
+           AND (EXISTS (SELECT 1 FROM libraries l WHERE l.id = c.library_id AND l.acl->>'inherit' = 'false')
+             OR EXISTS (SELECT 1 FROM collections f WHERE f.acl->>'inherit' = 'false' AND f.id = ANY(c.path_ids) AND f.id <> c.id)))
+     + (SELECT COUNT(*) FROM documents d LEFT JOIN collections dc ON dc.id = d.collection_id WHERE d.acl IS NOT NULL
+           AND (EXISTS (SELECT 1 FROM libraries l WHERE l.id = d.library_id AND l.acl->>'inherit' = 'false')
+             OR EXISTS (SELECT 1 FROM collections f WHERE f.acl->>'inherit' = 'false'
+                         AND (f.id = dc.id OR f.id = ANY(dc.path_ids)))))
+UNION ALL
+SELECT 'DACL-9: of those descendants, private / hidden ones (where the next rebuild''s index also changes who the database lists them to)',
+       (SELECT COUNT(*) FROM collections c WHERE c.acl IS NOT NULL AND c.visibility IN ('private', 'hidden')
+           AND (EXISTS (SELECT 1 FROM libraries l WHERE l.id = c.library_id AND l.acl->>'inherit' = 'false')
+             OR EXISTS (SELECT 1 FROM collections f WHERE f.acl->>'inherit' = 'false' AND f.id = ANY(c.path_ids) AND f.id <> c.id)))
+     + (SELECT COUNT(*) FROM documents d LEFT JOIN collections dc ON dc.id = d.collection_id
+         WHERE d.acl IS NOT NULL AND d.visibility IN ('private', 'hidden')
+           AND (EXISTS (SELECT 1 FROM libraries l WHERE l.id = d.library_id AND l.acl->>'inherit' = 'false')
+             OR EXISTS (SELECT 1 FROM collections f WHERE f.acl->>'inherit' = 'false'
+                         AND (f.id = dc.id OR f.id = ANY(dc.path_ids)))));
 
 BEGIN;
+
+-- ── 0b. KACL-5: the native-source lookup the bytes door makes on every sign ─
+CREATE INDEX IF NOT EXISTS document_versions_source_file_key_idx
+  ON document_versions (source_file_key) WHERE source_file_key IS NOT NULL;
 
 -- ── 1. node_visible: deny for every subject, on every visibility ────────────
 -- Body from 20261203 (its newest definition). Changes: the normal fast path
 -- reads the index's read-deny lists; the deny check names user, every held
 -- role, team and org, and runs before the allow; a normal row the deny does
--- not name returns true after it.
+-- not name returns true after it; on a normal row the controller check and
+-- the ownership cascade wait until the deny names the caller (cost — see the
+-- header).
 CREATE OR REPLACE FUNCTION node_visible(
   p_visibility text,
   p_acl_index  jsonb,
@@ -150,8 +229,13 @@ BEGIN
   -- Controllers always see everything. OWN-3/DEC-2: the controller tier is a
   -- property of the role COLLECTION (is_org_controller: role IN (...) OR
   -- roles && ARRAY[...]), so an additively-held DocCtrl sees a private library.
-  IF is_org_controller(p_org) THEN
-    RETURN true;
+  -- A NORMAL row reaching here carries a read deny: its controller check and
+  -- ownership cascade wait until that deny names the caller (below), so a
+  -- member it does not name costs the member and team reads only.
+  IF NOT v_normal THEN
+    IF is_org_controller(p_org) THEN
+      RETURN true;
+    END IF;
   END IF;
   SELECT role, COALESCE(roles, ARRAY[role]) INTO v_role, v_roles FROM org_members
     WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' LIMIT 1;
@@ -164,8 +248,10 @@ BEGIN
   -- an owner outranks a stray deny of their own document). The cascade
   -- (document → folder → library → team supervisor) is the same SECURITY
   -- DEFINER function the publish guard trusts, so no recursion.
-  IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN
-    RETURN true;
+  IF NOT v_normal THEN
+    IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN
+      RETURN true;
+    END IF;
   END IF;
 
   -- Restricted with no grant table -> only controllers (already returned).
@@ -188,6 +274,14 @@ BEGIN
                        WHERE (p_acl_index->'deny'->'roles'->a.act) ? r)
            OR EXISTS (SELECT 1 FROM unnest(COALESCE(v_teams, '{}'::text[])) t
                        WHERE (p_acl_index->'deny'->'teams'->a.act) ? t)) THEN
+    -- On a normal row the deny names the caller: a controller and the
+    -- effective owner still read it (asked only now); anyone else does not.
+    IF v_normal THEN
+      IF is_org_controller(p_org) THEN
+        RETURN true;
+      END IF;
+      RETURN COALESCE(user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()), false);
+    END IF;
     RETURN false;
   END IF;
 
@@ -246,6 +340,20 @@ SELECT 'behaviour (no session): a normal row with no index is open; a normal row
        AND node_visible('normal', '{"deny":{"users":{"read":["00000000-0000-0000-0000-0000000000aa"]}}}'::jsonb,
                         '00000000-0000-0000-0000-000000000000'::uuid, NULL, NULL, NULL)
        AND NOT node_visible('private', NULL::jsonb, '00000000-0000-0000-0000-000000000000'::uuid, NULL, NULL, NULL),
+       NULL
+UNION ALL
+SELECT 'node_visible/6: on a normal row the controller check and the ownership cascade run only after the deny names the caller (cost); a private / hidden row keeps the controller-first order',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'node_visible' AND pronargs = 6
+                  AND prosrc LIKE '%IF NOT v_normal THEN%IF is_org_controller(p_org) THEN%'
+                  AND prosrc LIKE '%IF v_normal THEN%IF is_org_controller(p_org) THEN%RETURN COALESCE(user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()), false);%'
+                  AND position('FROM team_members WHERE uid = auth.uid() AND org_id = p_org;' in prosrc)
+                      < position('RETURN COALESCE(user_is_effective_owner(' in prosrc)),
+       NULL
+UNION ALL
+SELECT 'KACL-5: document_versions_source_file_key_idx exists on document_versions (source_file_key), partial on source_file_key IS NOT NULL',
+       EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'document_versions'
+                  AND indexname = 'document_versions_source_file_key_idx'
+                  AND indexdef LIKE '%(source_file_key)%' AND indexdef LIKE '%WHERE (source_file_key IS NOT NULL)%'),
        NULL
 UNION ALL
 SELECT 'documents_acl_select and collections_acl_select still call the 6-arg node_visible',

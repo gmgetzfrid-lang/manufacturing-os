@@ -12,8 +12,9 @@
 //
 //   1. token shape → share row → revoked / expired (410)
 //   2. the document, org-joined (EGRESS-1) — a cross-org share is a 404
-//   3. the CREATOR's current authority (EGRESS-1 dw4) — lapsed is a 410:
-//      they can still read the document (shareStillAuthorized), are not
+//   3. the CREATOR's current authority (EGRESS-1 dw4) — lapsed is a 410
+//      (a check that could not be made is a 503 "unavailable", never a
+//      lapse — KACL-12): they can still read the document (shareAuthority), are not
 //      named by an explicit ACL download deny on it (the member download
 //      route's rule, lib/downloadDeny.ts — SHR-3), AND still hold the
 //      minting tier (DEC-46 §1 — a controller by the role collection, or a
@@ -55,7 +56,7 @@ import { assertNotOnHold, isHoldBlockedError, type HoldBlockedError } from "@/li
 import { publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK } from "@/lib/holds";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";
-import { shareStillAuthorized } from "@/lib/shareAuthorization";
+import { shareAuthority } from "@/lib/shareAuthorization";
 import { resolveServedVersion, shareStatusRefusal, versionServable, type ServableVersion } from "@/lib/shareRules";
 
 /** A service-role client (createClient(...) in the route) — `.from()` and `.rpc()`. */
@@ -162,7 +163,16 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
 
   // Serve only on the creator's CURRENT authority (EGRESS-1 dw4): if they
   // left the org or lost read access to this document, the link is dead.
-  if (!(await shareStillAuthorized(s.org_id, s.created_by, d.id))) return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
+  // KACL-12 (I-12 second review fix): a check that could not be made — the
+  // creator's membership, teams or the document's chain unreadable — is a
+  // TEMPORARY condition: 503 "unavailable", recorded as
+  // `authority_unverified`, never "revoked" / `authority_lapsed`.
+  const authority = await shareAuthority(s.org_id, s.created_by, d.id);
+  if (authority === "unknown") {
+    console.error("[share] creator's authority could not be checked — share refused", { share: s.id, document: d.id });
+    return refuseKnown(503, { error: "unavailable", reason: SHARE_UNAVAILABLE_UNREADABLE, unreadable: true }, "authority_unverified");
+  }
+  if (authority !== "ok") return refuseKnown(410, { error: "revoked" }, "authority_lapsed");
   // ... and on their CURRENT sharing authority (DEC-46 §1): no download
   // deny names them, and the tier that lets a copy out is checked when the
   // copy leaves, not only when the link was minted.
@@ -219,7 +229,7 @@ export async function resolveShareForServing(sb: ShareServeClient, token: string
     const gate = await creatorAckGate(sb, d.id, d.library_id, s.created_by, extraRow?.collection_id ?? null, extraRow?.ack_policy ?? null);
     if (gate === "unknown") {
       console.error("[share] acknowledgment gate unreadable — share refused", { share: s.id, document: d.id });
-      return refuseKnown(503, { error: "unavailable", reason: SHARE_UNAVAILABLE_UNREADABLE, unreadable: true }, "acknowledgment_outstanding");
+      return refuseKnown(503, { error: "unavailable", reason: SHARE_UNAVAILABLE_UNREADABLE, unreadable: true }, "acknowledgment_unverified");
     }
     if (gate === "gated") {
       return refuseKnown(409, { error: "unavailable", reason: SHARE_UNAVAILABLE_ACK }, "acknowledgment_outstanding");

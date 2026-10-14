@@ -19,7 +19,7 @@ vi.mock("@/lib/knowledgeAccess", () => ({
   readableControlledDocIds: vi.fn(async () => ka.readable),
 }));
 
-import { shareStillAuthorized } from "@/lib/shareAuthorization";
+import { shareAuthority, shareStillAuthorized } from "@/lib/shareAuthorization";
 
 beforeEach(() => {
   ka.principal = null;
@@ -52,6 +52,26 @@ describe("shareStillAuthorized (fail closed)", () => {
 
   it("refuses on any lookup error — never serves what it cannot confirm", async () => {
     ka.loadThrows = true;
+    expect(await shareStillAuthorized("orgA", "u1", "doc1")).toBe(false);
+  });
+});
+
+describe("shareAuthority (KACL-12, intelligence I-12 second review fix): a lapse is told from a check that could not be made", () => {
+  it("'lapsed' for no creator, no active membership, or a document no longer readable; 'ok' for a reader or a controller", async () => {
+    expect(await shareAuthority("orgA", null, "doc1")).toBe("lapsed");
+    ka.principal = null;
+    expect(await shareAuthority("orgA", "u1", "doc1")).toBe("lapsed");
+    ka.principal = { uid: "u1", orgId: "orgA", isController: false, role: "Drafter", teamIds: [] };
+    expect(await shareAuthority("orgA", "u1", "doc1")).toBe("lapsed");
+    ka.readable = new Set(["doc1"]);
+    expect(await shareAuthority("orgA", "u1", "doc1")).toBe("ok");
+    ka.principal = { uid: "u1", orgId: "orgA", isController: true, role: "Admin", teamIds: [] };
+    expect(await shareAuthority("orgA", "u1", "doc1")).toBe("ok");
+  });
+  it("'unknown' — never 'lapsed' — when a read the decision needs failed (loadPrincipal's PrincipalUnreadableError, or the landscape)", async () => {
+    ka.loadThrows = true;
+    expect(await shareAuthority("orgA", "u1", "doc1")).toBe("unknown");
+    // the boolean form stays fail-closed
     expect(await shareStillAuthorized("orgA", "u1", "doc1")).toBe(false);
   });
 });

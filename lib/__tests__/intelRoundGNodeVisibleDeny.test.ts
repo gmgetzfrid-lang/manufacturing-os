@@ -78,6 +78,35 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(after.trimEnd().endsWith(";")).toBe(true);
   });
 
+  it("KACL-5 (second review fix): the native-source lookup the bytes door makes on every sign is indexed — a partial index inside the transaction, probed in the result set", () => {
+    const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    const begin = code.indexOf("\nBEGIN;"), commit = code.indexOf("\nCOMMIT;");
+    const idx = code.indexOf("CREATE INDEX IF NOT EXISTS document_versions_source_file_key_idx\n  ON document_versions (source_file_key) WHERE source_file_key IS NOT NULL;");
+    expect(idx).toBeGreaterThan(begin);
+    expect(idx).toBeLessThan(commit);
+    expect(code.slice(commit)).toMatch(/indexname = 'document_versions_source_file_key_idx'/);
+    expect(code.slice(commit)).toMatch(/indexdef LIKE '%WHERE \(source_file_key IS NOT NULL\)%'/);
+    // the route's two lookups are unchanged — the index only changes their cost
+    const route = readFileSync(join(process.cwd(), "app/api/storage/download-url/route.ts"), "utf8");
+    expect(route).toMatch(/for \(const col of \["file_url", "source_file_key"\] as const\)/);
+    expect(route).toMatch(/document_versions_source_file_key_idx/);
+  });
+
+  it("DACL-9 (second review fix): the counts-only inventory sizes the inherit-flag change — non-inheriting libraries and folders, those with descendants carrying their own ACL, and those descendants (private / hidden counted apart)", () => {
+    const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), code.indexOf("\nBEGIN;"));
+    for (const label of [
+      "'DACL-9: libraries whose own ACL sets inherit = false",
+      "'DACL-9: folders whose own ACL sets inherit = false'",
+      "'DACL-9: of those libraries and folders, the ones with a descendant folder or document carrying its own ACL'",
+      "'DACL-9: folders and documents carrying their own ACL below a non-inheriting library or folder",
+      "'DACL-9: of those descendants, private / hidden ones",
+      "'KACL-5: document_versions rows with a source_file_key",
+    ]) expect(inv, label).toContain(label);
+    expect(inv.match(/acl->>'inherit' = 'false'/g)!.length).toBeGreaterThanOrEqual(10);
+    expect(inv).not.toMatch(/SELECT\s+\*/);
+  });
+
   it("the only function it creates is node_visible/6: SECURITY DEFINER, search_path pinned, grants deliberately left as they are", () => {
     const creates = [...SQL.matchAll(/^CREATE OR REPLACE FUNCTION (\w+)\(/gm)].map((m) => m[1]);
     expect(creates).toEqual(["node_visible"]);
@@ -101,6 +130,10 @@ describe("20261212 — node_visible/6 re-created from its newest earlier definit
     expect(onlyInA).toEqual([
       "  -- Fail-safe: normal/unset visibility is open to org members.",
       "  IF p_visibility IS NULL OR p_visibility = 'normal' THEN",
+      // second review fix (cost): on a normal row the controller check and
+      // the cascade wait for the deny — both now sit inside IF NOT v_normal
+      "  IF is_org_controller(p_org) THEN",
+      "  IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN",
       "  -- Explicit deny of read/discover wins.",
       "  IF (p_acl_index->'deny'->'users'->'read') ? v_uid",
       "     OR (p_acl_index->'deny'->'users'->'discover') ? v_uid THEN",
@@ -115,6 +148,17 @@ describe("20261212 — node_visible/6 re-created from its newest earlier definit
       "       SELECT 1 FROM unnest(ARRAY['users', 'roles', 'teams', 'orgs']) s(subj)",
       "        WHERE jsonb_typeof(p_acl_index->'deny'->s.subj->'read') = 'array'",
       "          AND jsonb_array_length(p_acl_index->'deny'->s.subj->'read') > 0)) THEN",
+      "  -- A NORMAL row reaching here carries a read deny: its controller check and",
+      "  -- ownership cascade wait until that deny names the caller (below), so a",
+      "  -- member it does not name costs the member and team reads only.",
+      "  IF NOT v_normal THEN",
+      "    IF is_org_controller(p_org) THEN",
+      "      RETURN true;",
+      "    END IF;",
+      "  IF NOT v_normal THEN",
+      "    IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN",
+      "      RETURN true;",
+      "    END IF;",
       "  -- Explicit deny wins (DACL-12): a deny of read — or, on a hidden / private",
       "  -- row, of discover — naming the caller by uid, by ANY held role, by a team",
       "  -- or by the workspace refuses before any allow is read (lib/acl: a deny of",
@@ -127,9 +171,35 @@ describe("20261212 — node_visible/6 re-created from its newest earlier definit
       "                       WHERE (p_acl_index->'deny'->'roles'->a.act) ? r)",
       "           OR EXISTS (SELECT 1 FROM unnest(COALESCE(v_teams, '{}'::text[])) t",
       "                       WHERE (p_acl_index->'deny'->'teams'->a.act) ? t)) THEN",
+      "    -- On a normal row the deny names the caller: a controller and the",
+      "    -- effective owner still read it (asked only now); anyone else does not.",
+      "    IF v_normal THEN",
+      "      IF is_org_controller(p_org) THEN",
+      "        RETURN true;",
+      "      END IF;",
+      "      RETURN COALESCE(user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()), false);",
+      "    END IF;",
       "  -- A normal row the deny does not name stays open (the fail-safe default).",
       "  IF v_normal THEN",
     ]);
+  });
+
+  it("second review fix (cost): on a NORMAL row the roles and teams are read first and a row the deny does not name returns true before any controller check or ownership cascade; a private / hidden row keeps 20261203's controller → owner order", () => {
+    const body = next[0][1];
+    const at = (s: string, from = 0) => { const i = body.indexOf(s, from); expect(i, s).toBeGreaterThan(0); return i; };
+    // private / hidden: the controller check and the cascade are guarded by IF NOT v_normal, before the member read
+    const guardCtl = at("  IF NOT v_normal THEN\n    IF is_org_controller(p_org) THEN\n      RETURN true;\n    END IF;\n  END IF;");
+    const memberRead = at("SELECT role, COALESCE(roles, ARRAY[role]) INTO v_role, v_roles FROM org_members");
+    const guardOwner = at("  IF NOT v_normal THEN\n    IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN");
+    const teams = at("FROM team_members WHERE uid = auth.uid() AND org_id = p_org;");
+    const deny = at("WHERE (p_acl_index->'deny'->'users'->a.act) ? v_uid");
+    // normal: the deny that names the caller asks the controller tier, then the cascade — only there
+    const normalNamed = at("    IF v_normal THEN\n      IF is_org_controller(p_org) THEN\n        RETURN true;\n      END IF;\n      RETURN COALESCE(user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()), false);\n    END IF;\n    RETURN false;", deny);
+    const normalOpen = at("  IF v_normal THEN\n    RETURN true;\n  END IF;", normalNamed);
+    expect([guardCtl, memberRead, guardOwner, teams, deny, normalNamed, normalOpen]).toEqual([guardCtl, memberRead, guardOwner, teams, deny, normalNamed, normalOpen].sort((x, y) => x - y));
+    // every call of the controller check and of the cascade is inside a v_normal branch
+    expect(body.match(/is_org_controller\(p_org\)/g)).toHaveLength(2);
+    expect(body.match(/user_is_effective_owner\(/g)).toHaveLength(2);
   });
 
   it("order: normal fast path → controller → owner → no-index refusal → team lookup → deny → normal open → allow", () => {
@@ -179,14 +249,18 @@ function sqlNodeVisible(vis: NodeVisibility, idx: AclIndex | null, p: Principal,
   const readDenyAny = ["users", "roles", "teams", "orgs"].some((s) => list("deny", s, "read").length > 0);
   if (normal && (!idx || !readDenyAny)) return true;
   const roles = [p.role, ...(p.roles ?? [])] as string[];
-  if (roles.some((r) => r === "Admin" || r === "DocCtrl")) return true;
-  if (owner && owner === p.uid) return true;
+  const controller = roles.some((r) => r === "Admin" || r === "DocCtrl");
+  const isOwner = !!owner && owner === p.uid;
+  // private / hidden: the controller check and the cascade first (20261203's order)
+  if (!normal && controller) return true;
+  if (!normal && isOwner) return true;
   if (!idx) return false;
   const teams = p.teamIds ?? [];
   const acts = normal ? ["read"] : ["read", "discover"];
   const denied = acts.some((a) => list("deny", "users", a).includes(p.uid) || (!!p.orgId && list("deny", "orgs", a).includes(p.orgId))
     || roles.some((r) => list("deny", "roles", a).includes(r)) || teams.some((t) => list("deny", "teams", a).includes(t)));
-  if (denied) return false;
+  // normal: asked only once the deny names the caller (second review fix — cost)
+  if (denied) return normal ? controller || isOwner : false;
   if (normal) return true;
   const allowAny = (s: string, ids: string[]) => Object.values(((idx.allow as unknown as Record<string, Record<string, string[]>>)[s]) ?? {})
     .some((l) => Array.isArray(l) && l.some((x) => ids.includes(x)));

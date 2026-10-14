@@ -581,6 +581,6 @@ Tests: `lib/__tests__/intelRoundGDocAcl.test.ts` "IEDGE-12 — the AI seam and t
 
 **Remaining / owner.** Criterion 1's database half is `DACL-1` criterion 1 (owner named there). Recorded at the review fix, not a criterion here: the service-role page reader `lib/docFileServer.ts` (`mayReadContent`, the SEC-10 door that hands a linked document's pages to a model) evaluates the same chain rule through `canWithAclChain` but does not apply the private-draft rule — owner: the integrator to route to that door's owner (projects SEC-10), the change being to pass the row's `is_private` / `scope` / `created_by` into `canReadNode`.
 
-**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`).
+**Pending migration:** `supabase/migrations/20261212_intel_roundG_node_visible_deny.sql` (after `20261203`). *Second review fix (2026-10-14): on a normal row whose index carries a read deny, `node_visible` now reads the caller's roles and teams first and answers a row the deny does not name at once — the controller check and the ownership cascade only where it names them (same answers; the cost per row is `DACL-12`'s record); the same paste adds `KACL-5`'s source-key index and `DACL-9`'s inventory.*
 
 ---

@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { searchDocuments, type DocumentRow } from "@/lib/search";
 import { libraryIsPublicRead, libraryReadsByRole } from "@/lib/libraryAccess";
-import { normalizeDocNumber, normalizedNumberPattern } from "@/lib/docNumberMatch";
+import { shortLinkExactMatches } from "@/lib/docNumberMatch";
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
@@ -96,40 +96,42 @@ export default function DocumentsHomePage() {
   // service-role oracle. An exact normalized match deep-links into the viewer;
   // anything else falls back to a pre-filled search, disclosing nothing beyond
   // what this user could already search for.
-  // VFY-7: the match is punctuation-forgiving at the query too — when the
-  // search finds no exact normalized match, a second candidate read matches
-  // the NORMALIZED number itself (still under RLS, org-scoped): an anchored,
-  // case-insensitive pattern that admits the typed letters and digits in
-  // order with only separators around and between them — exactly the
-  // numbers whose normalized form is the one typed, so no window of loose
-  // matches can crowd an exact one out. Only an EXACT normalized match is
-  // ever taken. Two or more open a chooser; none falls back to the search.
+  // VFY-7: the match is punctuation-forgiving at the query too — beside the
+  // search, a second candidate read matches the NORMALIZED number itself
+  // (still under RLS, org-scoped): an anchored, case-insensitive pattern
+  // that admits the typed letters and digits in order with only separators
+  // around and between them — exactly the numbers whose normalized form is
+  // the one typed, so no window of loose matches can crowd an exact one out.
+  // Both reads always run (lib/docNumberMatch shortLinkExactMatches — I-12
+  // second review fix: the second ran only when the search found no exact
+  // match, so "P-101" found by the search hid "P101"). Only an EXACT
+  // normalized match is ever taken. Two or more open a chooser; none — or a
+  // read that failed, when one match cannot be told from two — falls back
+  // to the search.
   const [shortLinkChoices, setShortLinkChoices] = useState<{ raw: string; rows: DocumentRow[] } | null>(null);
   useEffect(() => {
     if (!activeOrgId || typeof window === "undefined") return;
     const raw = new URLSearchParams(window.location.search).get("d");
     if (!raw) return;
-    const norm = normalizeDocNumber(raw);
     let alive = true;
     void (async () => {
-      const exact = new Map<string, DocumentRow>();
-      const take = (rows: DocumentRow[]) => {
-        for (const r of rows) if (normalizeDocNumber(r.document_number) === norm) exact.set(r.id, r);
-      };
+      let hits: DocumentRow[] = [];
       try {
-        take(await searchDocuments({ orgId: activeOrgId, query: raw, limit: 25 }));
-        if (exact.size === 0 && norm.length >= 2) {
-          const { data } = await supabase.from("documents")
-            .select("id, library_id, document_number, title, updated_at")
-            .eq("org_id", activeOrgId)
-            .regexIMatch("document_number", normalizedNumberPattern(norm))
-            .order("updated_at", { ascending: false })
-            .limit(200);
-          take((data ?? []) as unknown as DocumentRow[]);
-        }
-      } catch { /* fall through to search */ }
+        hits = await shortLinkExactMatches<DocumentRow>(raw, {
+          search: (q) => searchDocuments({ orgId: activeOrgId, query: q, limit: 25 }),
+          normalized: async (pattern) => {
+            const { data, error } = await supabase.from("documents")
+              .select("id, library_id, document_number, title, updated_at")
+              .eq("org_id", activeOrgId)
+              .regexIMatch("document_number", pattern)
+              .order("updated_at", { ascending: false })
+              .limit(200);
+            if (error) throw new Error(error.message);
+            return (data ?? []) as unknown as DocumentRow[];
+          },
+        });
+      } catch { hits = []; /* one match cannot be told from two — fall through to search */ }
       if (!alive) return;
-      const hits = [...exact.values()];
       if (hits.length === 1) {
         router.replace(`/documents/${hits[0].library_id}?doc=${hits[0].id}`);
       } else if (hits.length > 1) {

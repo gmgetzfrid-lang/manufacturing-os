@@ -83,7 +83,7 @@ import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canWithAclChain, canPublishOnLibrary, canPublishViaIndex, type Principal } from "@/lib/permissions";
-import { effectiveLibraryAcl, explorerDocReadable, explorerFolderVisible, explorerLibraryVisible } from "@/lib/libraryAccess";
+import { effectiveLibraryAcl, explorerDocReadable, explorerFolderVisible, explorerLibraryVisible, LIBRARY_PAGE_COLUMNS, libraryConfigFromRow } from "@/lib/libraryAccess";
 import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
@@ -1503,11 +1503,14 @@ export default function LibraryExplorerPage() {
     let alive = true;
     (async () => {
       try {
-        const LIB_COLS =
-          "id,org_id,name,description,type,custom_columns,column_label_overrides,uniqueness_keys,write_access,admin_access,read_access,visible_to,folder_security,default_new_visibility,default_new_acl,acl,acl_index,column_widths,color,icon,cover_image_url,cover_tint,home_config,page_config";
+        // DACL-10 (I-12 second review fix): the owner and the library's
+        // visibility are read with the row (lib/libraryAccess
+        // LIBRARY_PAGE_COLUMNS) — the ownership short-circuit (GAP-15 /
+        // DEC-7) and the library rung need them on this page as at the AI
+        // seam and the bytes door.
         let resp = await supabase
           .from("libraries")
-          .select(LIB_COLS)
+          .select(LIBRARY_PAGE_COLUMNS)
           .eq("id", libraryId)
           .single();
         if (resp.error) {
@@ -1521,22 +1524,7 @@ export default function LibraryExplorerPage() {
         if (!alive) return;
         if (!data) { setLibrary(null); setError("Library not found."); return; }
         if (data.org_id && data.org_id !== activeOrgId) { setLibrary(null); setError("Library does not belong to active workspace."); return; }
-        const fresh: LibraryConfig = {
-          id: data.id, orgId: data.org_id, name: data.name, description: data.description,
-          type: data.type, customColumns: data.custom_columns ?? [],
-          columnLabelOverrides: data.column_label_overrides ?? {},
-          uniquenessKeys: Array.isArray(data.uniqueness_keys) ? data.uniqueness_keys : undefined,
-          writeAccess: data.write_access ?? [], adminAccess: data.admin_access ?? [],
-          readAccess: data.read_access ?? "ALL", visibleTo: data.visible_to ?? [],
-          folderSecurity: data.folder_security ?? "Inherited",
-          defaultNewVisibility: data.default_new_visibility,
-          defaultNewAcl: data.default_new_acl, acl: data.acl,
-          aclIndex: data.acl_index ?? undefined,
-          color: data.color ?? undefined, icon: data.icon ?? undefined,
-          coverImageUrl: data.cover_image_url ?? undefined, coverTint: data.cover_tint ?? undefined,
-          homeConfig: data.home_config ?? undefined,
-          pageConfig: data.page_config ?? undefined,
-        } as LibraryConfig;
+        const fresh: LibraryConfig = libraryConfigFromRow(data);
         setLibrary(fresh);
         const widths = data.column_widths ?? {};
         setColWidths(widths);
@@ -5079,7 +5067,11 @@ export default function LibraryExplorerPage() {
           nodeType="library"
           nodeId={libraryId}
           acl={library.acl}
-          visibility={library.visibility as NodeVisibility}
+          // The drawer keeps a LIBRARY's visibility inside its ACL (it never
+          // writes the column), so it opens on the ACL's — libraries.visibility,
+          // now read with the row, must not override it (a save would rewrite
+          // the ACL's visibility from the column).
+          visibility={library.acl?.visibility}
           aclChain={[library.acl].filter(Boolean) as AccessControl[]}
           canEdit={isController || libraryDelegationAuthority}
           delegationOnly={!isController && libraryDelegationAuthority}

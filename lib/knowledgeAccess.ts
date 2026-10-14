@@ -17,14 +17,19 @@
 // lib/permissions canReadNode (IEDGE-12), the predicate the bytes door asks
 // too.
 //
-// KACL-12: the seam FAILS CLOSED on its own reads. loadPrincipal answers no
-// principal when the caller's teams cannot be read (a team deny is never
-// dropped); loadDcLandscape throws DcLandscapeUnreadableError when the
-// libraries, folders or teams cannot be read, and pages the container reads
-// until a short page (a row cap never truncates the folder ACLs); and a
-// document or folder whose library or folder is absent from the landscape is
-// unreadable to everyone but a controller (its chain is never evaluated with
-// a rung missing).
+// KACL-12: the seam FAILS CLOSED on its own reads. loadPrincipal throws
+// PrincipalUnreadableError when the caller's membership or (for a
+// non-controller) teams cannot be read — a team deny is never dropped, and a
+// failed read is never told to anyone as "not a member" (I-12 second review
+// fix: it answered no principal, which every caller turned into 403 "Not a
+// member of this workspace", and share serving into "revoked"); routes
+// answer 503 "try again" (PRINCIPAL_UNREADABLE). loadDcLandscape throws
+// DcLandscapeUnreadableError when the libraries, folders or teams cannot be
+// read, and pages the container reads by keyset until an empty page (a row
+// cap never truncates the folder ACLs, and a row deleted mid-read never
+// shifts another out of the read); and a document or folder whose library or
+// folder is absent from the landscape is unreadable to everyone but a
+// controller (its chain is never evaluated with a rung missing).
 //
 // DACL-10 (review fix): the library rung is lib/libraryAccess
 // effectiveLibraryAclFromRow — the library's ACL, or, for a legacy row whose
@@ -51,22 +56,43 @@ export interface KnowledgePrincipal {
   teamIds: string[];
 }
 
+/** KACL-12 (I-12 second review fix): the caller's membership or teams could
+ *  not be read — a TEMPORARY condition, never a verdict. loadPrincipal throws
+ *  it; a route answers 503 with PRINCIPAL_UNREADABLE (never "Not a member"),
+ *  share serving answers "unavailable" (never "revoked"), and every other
+ *  caller that catches fails closed. */
+export class PrincipalUnreadableError extends Error {
+  constructor(readonly what: "membership" | "teams", detail: string) {
+    super(`Your ${what === "teams" ? "teams (and the access rules that name them)" : "membership"} could not be read: ${detail}`);
+    this.name = "PrincipalUnreadableError";
+  }
+}
+
+/** What a route answers (503) when loadPrincipal throws
+ *  PrincipalUnreadableError. */
+export const PRINCIPAL_UNREADABLE = "Couldn't check your access just now — try again.";
+
 /** Load the principal (role + teams) the ACL engine evaluates against.
- *  `null` — refused by every caller — for a non-member or an unreadable
- *  membership, AND (KACL-12) for a non-controller whose teams cannot be read:
- *  a principal built without its teams would match no TEAM deny, so a
- *  document denied to the caller's team would read as open. A controller's
- *  teams decide nothing (every evaluator short-circuits the controller tier,
- *  DEC-2 / DEC-43), so a controller still loads, with no teams. */
+ *  `null` — refused by every caller — for a non-member (no active
+ *  membership row). THROWS PrincipalUnreadableError when the membership
+ *  cannot be read, and (KACL-12) when a non-controller's teams cannot be
+ *  read: a principal built without its teams would match no TEAM deny, so a
+ *  document denied to the caller's team would read as open — and an
+ *  unreadable row is not "not a member". A controller's teams decide nothing
+ *  (every evaluator short-circuits the controller tier, DEC-2 / DEC-43), so a
+ *  controller still loads, with no teams. */
 export async function loadPrincipal(orgId: string, uid: string): Promise<KnowledgePrincipal | null> {
   const [{ data: member, error: memberErr }, { data: teams, error: teamsErr }] = await Promise.all([
     supabaseAdmin.from("org_members").select("role, roles")
       .eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle(),
     supabaseAdmin.from("team_members").select("team_id").eq("uid", uid),
   ]);
-  if (memberErr || !member) return null;
+  if (memberErr) throw new PrincipalUnreadableError("membership", memberErr.message ?? String(memberErr));
+  if (!member) return null;
   const roles = new Set<string>([member.role as string, ...((member.roles as string[]) ?? [])]);
-  if (teamsErr && !(roles.has("Admin") || roles.has("DocCtrl"))) return null;
+  if (teamsErr && !(roles.has("Admin") || roles.has("DocCtrl"))) {
+    throw new PrincipalUnreadableError("teams", teamsErr.message ?? String(teamsErr));
+  }
   return {
     uid,
     orgId,
@@ -135,12 +161,18 @@ export class DcLandscapeUnreadableError extends Error {
   }
 }
 
-/** Rows per container read. Each read pages by `id` until it holds every
- *  row (KACL-12 done-when 4): the read asks PostgREST for the exact count,
- *  and the next window starts where the rows already read end, so a
- *  project max-rows BELOW this page size (a short page that is not the
- *  last) never truncates the landscape. Without a count (an older
- *  PostgREST), a short page ends the read, as before. */
+/** Rows per container read. Each read pages by KEYSET on `id` until it
+ *  holds every row (KACL-12 done-when 4): each page asks for the rows whose
+ *  id is greater than the last one read, and only an EMPTY page ends the
+ *  read — so a project max-rows BELOW this page size (a short page that is
+ *  not the last) never truncates the landscape, and (I-12 second review fix)
+ *  a row deleted while the landscape is read never shifts another out of
+ *  the read. Offset windows did: a folder deleted mid-read pushed the next
+ *  one out of every window, and the knowledge sync, which builds a library's
+ *  folder list from this landscape, then removed that folder's documents'
+ *  mirrors. The rows are also kept strictly ascending here, so a page that
+ *  repeats an id already read (a stand-in that ignores the bound) ends the
+ *  read instead of looping. */
 export const DC_LANDSCAPE_PAGE = 1000;
 
 async function readAllPages(
@@ -150,18 +182,17 @@ async function readAllPages(
 ): Promise<Array<Record<string, unknown>>> {
   const what = table === "collections" ? "folders" : table;
   const out: Array<Record<string, unknown>> = [];
+  let lastId: string | null = null;
   for (;;) {
-    const from = out.length;
-    const { data, error, count } = await supabaseAdmin
-      .from(table).select(columns, { count: "exact" }).eq("org_id", orgId)
-      .order("id", { ascending: true })
-      .range(from, from + DC_LANDSCAPE_PAGE - 1);
+    let q = supabaseAdmin.from(table).select(columns).eq("org_id", orgId);
+    if (lastId !== null) q = q.gt("id", lastId);
+    const { data, error } = await q.order("id", { ascending: true }).limit(DC_LANDSCAPE_PAGE);
     if (error) throw new DcLandscapeUnreadableError(what, error.message ?? String(error));
-    const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
-    out.push(...rows);
+    const rows = ((data ?? []) as unknown as Array<Record<string, unknown>>)
+      .filter((r) => lastId === null || String(r.id) > lastId);
     if (rows.length === 0) return out;
-    if (typeof count === "number") { if (out.length >= count) return out; }
-    else if (rows.length < DC_LANDSCAPE_PAGE) return out;
+    out.push(...rows);
+    lastId = String(rows[rows.length - 1].id);
   }
 }
 

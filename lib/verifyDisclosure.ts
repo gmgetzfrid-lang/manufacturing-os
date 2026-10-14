@@ -10,6 +10,18 @@
 /** The label a verify answer shows in place of a restricted document's. */
 export const RESTRICTED_DOCUMENT_LABEL = "Restricted document";
 
+/** A restricted sheet on a PRINT-KEYED pack (`?print=`), labelled by its
+ *  position on the paper being scanned — "Restricted document — sheet 3 of
+ *  6 in this pack". The print snapshot records the printed sheets in the
+ *  order the pack was merged (the order of the cover's contents list), so
+ *  the position names the physical sheet without naming the document
+ *  (I-12 second review fix: every restricted row read "Restricted document",
+ *  so a stale or held one could not be told from the others although the
+ *  page says the stale sheets are "marked below"). `position` is 1-based. */
+export function restrictedSheetLabel(position: number, total: number): string {
+  return `${RESTRICTED_DOCUMENT_LABEL} — sheet ${position} of ${total} in this pack`;
+}
+
 /** May a public verify answer name this document (number, title, name)?
  *  Only when its row was read WITH `visibility` and that is "normal" or
  *  unset (NULL — the database's "normal", node_visible's first branch).

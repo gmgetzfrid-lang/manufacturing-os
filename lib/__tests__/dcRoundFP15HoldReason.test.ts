@@ -68,7 +68,7 @@ const dispatch = vi.hoisted(() => ({ emit: vi.fn(async (_p: Row) => undefined) }
 vi.mock("@/lib/notify/dispatch", () => ({ emit: dispatch.emit }));
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => undefined) }));
 // lib/shareServe.ts (the public share door) is imported for its hold sentence only
-vi.mock("@/lib/shareAuthorization", () => ({ shareStillAuthorized: vi.fn(async () => true) }));
+vi.mock("@/lib/shareAuthorization", () => ({ shareStillAuthorized: vi.fn(async () => true), shareAuthority: vi.fn(async () => "ok") }));
 
 import {
   openHold, HOLD_REASON_CODES, PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON, isHoldReasonCode, holdReasonLabel,

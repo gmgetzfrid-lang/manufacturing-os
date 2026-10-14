@@ -46,7 +46,7 @@ import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import { isPackLeftOutCode } from "@/lib/packLeftOut";
 import type { NotPrintableReason, PackVerdict, SheetState } from "@/lib/verifyPresent";
-import { legacyCoverStateRows, RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
+import { legacyCoverStateRows, RESTRICTED_DOCUMENT_LABEL, restrictedSheetLabel, verifyMayNameDocument } from "@/lib/verifyDisclosure";
 
 // A pack verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -70,7 +70,12 @@ interface VersionDateRow { id: string; effective_date: string | null }
 interface VersionFileRow { id: string; file_url: string | null; file_type?: string | null }
 
 /** One sheet as the paper (or, for a legacy QR, the live pin) records it. */
-interface SheetSource { document_id: string; version_id: string | null; rev_label: string | null; label: string | null }
+interface SheetSource {
+  document_id: string; version_id: string | null; rev_label: string | null; label: string | null;
+  /** A print-keyed sheet's place on the paper (1-based, of `onPaperOf`
+   *  printed sheets) — the snapshot's order, which is the print order. */
+  onPaperAt?: number; onPaperOf?: number;
+}
 
 const WITHDRAWN_STATES: ReadonlySet<SheetState> = new Set(["void", "archived", "superseded", "retired"]);
 const NOT_GOOD_STATES: ReadonlySet<SheetState> = new Set([
@@ -162,11 +167,13 @@ export async function GET(req: NextRequest) {
         if (s.printed !== false || !s.documentId) continue;
         leftOutAtPrint.set(String(s.documentId), isPackLeftOutCode(s.leftOutCode) ? s.leftOutCode : "left_out");
       }
-      sources = raw.filter((s) => s.printed !== false).map((s) => ({
+      sources = raw.filter((s) => s.printed !== false).map((s, i, printed) => ({
         document_id: String(s.documentId ?? ""),
         version_id: (s.versionId as string | null) ?? null,
         rev_label: (s.revLabel as string | null) ?? null,
         label: (s.label as string | null) ?? null,
+        onPaperAt: i + 1,
+        onPaperOf: printed.length,
       })).filter((s) => s.document_id);
     } else {
       // The QR names a print we can't find — never fall back to the live pins
@@ -240,9 +247,12 @@ export async function GET(req: NextRequest) {
   // answered — its state, its revisions — without its number or title, the
   // printed label included (lib/verifyDisclosure). A sheet whose document
   // is gone keeps the label printed on the paper being scanned.
-  const labelOf = (id: string, fallback: string | null) => {
+  // On a print-keyed pack a restricted sheet is labelled by its position on
+  // the paper (the snapshot's order — the print order, the cover's contents
+  // list), so the stale or held one can be pulled (I-12 second review fix).
+  const labelOf = (id: string, fallback: string | null, onPaper?: { position: number; total: number }) => {
     const d = byId.get(id);
-    if (d && !verifyMayNameDocument(d)) return RESTRICTED_DOCUMENT_LABEL;
+    if (d && !verifyMayNameDocument(d)) return onPaper ? restrictedSheetLabel(onPaper.position, onPaper.total) : RESTRICTED_DOCUMENT_LABEL;
     return String(d?.document_number || d?.title || d?.name || fallback || "Document");
   };
 
@@ -264,7 +274,7 @@ export async function GET(req: NextRequest) {
     else if (effectiveStatusFor(d.current_version_id ? effectiveByVersion.get(d.current_version_id) : null) === "pending") state = "not_yet_effective";
     else state = "fresh";
     return {
-      label: labelOf(s.document_id, s.label),
+      label: labelOf(s.document_id, s.label, s.onPaperAt && s.onPaperOf ? { position: s.onPaperAt, total: s.onPaperOf } : undefined),
       // A legacy QR records no printing: its live pin is not "what was printed".
       printedRev: printConfirmed ? s.rev_label : null,
       currentRev: d?.rev ?? null,

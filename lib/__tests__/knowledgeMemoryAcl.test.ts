@@ -444,8 +444,10 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     expect([...await readableControlledDocIds((await loadPrincipal(ORG, V))!, [DTEAM])]).toEqual([]);   // the team DENY binds
     admin.state.failReads.team_members = { message: "statement timeout" };
     // Was a principal with teamIds [] that read DTEAM (the leak). Now no
-    // principal is built from a failed read; every caller refuses a null one.
-    expect(await loadPrincipal(ORG, V)).toBeNull();
+    // principal is built from a failed read: loadPrincipal THROWS
+    // PrincipalUnreadableError (I-12 second review fix — it answered null,
+    // which callers told the reader as "Not a member"); every caller refuses.
+    await expect(loadPrincipal(ORG, V)).rejects.toMatchObject({ name: "PrincipalUnreadableError", what: "teams" });
   });
   it("…so the history route reads the reader's teams again: a failed read answers 500 with NO rows, and a principal whose teams were lost is judged with the teams actually read", async () => {
     const TM = "3a000000-0000-4000-8000-000000000001";
@@ -463,14 +465,15 @@ describe("/api/knowledge/history — the team's record, re-decided per reader", 
     // healthy: withheld by the team DENY
     expect(await (await post({ orgId: ORG, libraryId: LIB, action: "list" })).text()).not.toContain("TEAM-DENIED QUOTE");
     // the team read fails: nothing is served. Since KACL-12 (intelligence
-    // I-12) loadPrincipal itself answers no principal on that failure, so the
-    // route refuses at its member check (403, no rows) before its own re-read
-    // of the teams is reached.
+    // I-12) loadPrincipal itself refuses to build a principal on that
+    // failure, so the route refuses at its member check (no rows) before its
+    // own re-read of the teams is reached — 503 "try again" since the second
+    // review fix (it said 403 "Not a member of this workspace").
     admin.state.failReads = { team_members: { message: "statement timeout" } };
     const res = await post({ orgId: ORG, libraryId: LIB, action: "list" });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(503);
     const text = await res.text();
-    expect(JSON.parse(text).rows).toBeUndefined();
+    expect(JSON.parse(text)).toEqual({ error: "Couldn't check your access just now — try again." });
     expect(text).not.toContain("TEAM-DENIED QUOTE");
     // loadPrincipal's read failed but the re-read succeeds: judged with the teams read
     admin.state.failReads = {};

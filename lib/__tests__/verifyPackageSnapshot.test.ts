@@ -884,7 +884,7 @@ describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing 
 });
 
 describe("VFY-16 (intelligence I-12) — a private or hidden document's sheet is answered without its number or title", () => {
-  it("private, hidden, an unknown value and an unread visibility each label the sheet 'Restricted document' (the printed label too); the verdict is unchanged", async () => {
+  it("private, hidden, an unknown value and an unread visibility each label the sheet 'Restricted document' — on a print-keyed pack with its place on the paper (the printed label withheld too); the verdict is unchanged", async () => {
     for (const visibility of ["private", "hidden", "secret", undefined]) {
       state.print = printAt([sheetV2]);
       const row = docRow({ visibility });
@@ -892,10 +892,45 @@ describe("VFY-16 (intelligence I-12) — a private or hidden document's sheet is
       state.docs = [row];
       const r = await verify(true);
       const sheets = r.sheets as Array<Record<string, unknown>>;
-      expect(sheets[0].label, String(visibility)).toBe("Restricted document");
+      expect(sheets[0].label, String(visibility)).toBe("Restricted document — sheet 1 of 1 in this pack");
       expect(JSON.stringify(r), String(visibility)).not.toMatch(/P-101|P&ID/);
       expect(r.verdict).toBe("current");
     }
+  });
+  it("second review fix: three private sheets, one superseded — each restricted row names its place on the paper (the snapshot's print order), so the stale one can be pulled; a left-out sheet takes no place; the advice's 'marked below' points at it", async () => {
+    const sheet = (id: string, label: string, v = "w1") => ({ documentId: id, versionId: v, revLabel: "1", label });
+    state.print = printAt([
+      sheet(DOC2, "P-202"),
+      { documentId: "abababab-abab-abab-abab-abababababab", versionId: null, revLabel: null, label: "P-999", printed: false, leftOutCode: "not_issued" },
+      sheet(DOC, "P-101", "v2"),
+      sheet(DOC3, "P-303"),
+    ]);
+    state.liveMembers = [DOC2, DOC, DOC3].map((id) => ({ document_id: id, pinned_version_id: id === DOC ? "v2" : "w1", pinned_rev_label: "1" }));
+    state.docs = [
+      docRow({ id: DOC2, document_number: "P-202", current_version_id: "w1", rev: "1", visibility: "private" }),
+      docRow({ id: DOC, visibility: "private", status: "Superseded" }),
+      docRow({ id: DOC3, document_number: "P-303", current_version_id: "w1", rev: "1", visibility: "hidden" }),
+    ];
+    const r = await verify(true);
+    const sheets = r.sheets as Array<Record<string, unknown>>;
+    expect(sheets.map((x) => [x.label, x.state])).toEqual([
+      ["Restricted document — sheet 1 of 3 in this pack", "fresh"],
+      ["Restricted document — sheet 2 of 3 in this pack", "superseded"],
+      ["Restricted document — sheet 3 of 3 in this pack", "fresh"],
+    ]);
+    expect(new Set(sheets.map((x) => x.label)).size).toBe(3);
+    expect(JSON.stringify(sheets)).not.toMatch(/P-101|P-202|P-303|P&ID/);
+    expect(r.verdict).toBe("stale");
+    const v = presentPackVerdict(r as unknown as PackVerifyResult);
+    expect(v.advice ?? "").not.toMatch(/cannot say which sheets/);
+    // a normal sheet beside them keeps its number (positions are only for the restricted)
+    state.docs[0] = { ...state.docs[0], visibility: "normal" };
+    const r2 = await verify(true);
+    expect((r2.sheets as Array<Record<string, unknown>>).map((x) => x.label)).toEqual([
+      "P-202", "Restricted document — sheet 2 of 3 in this pack", "Restricted document — sheet 3 of 3 in this pack",
+    ]);
+    const { restrictedSheetLabel } = await import("@/lib/verifyDisclosure");
+    expect(restrictedSheetLabel(3, 6)).toBe("Restricted document — sheet 3 of 6 in this pack");
   });
   it("a package member left off the paper is listed without its number either; a normal one (and a NULL visibility, the database's 'normal') keeps its label", async () => {
     state.print = printAt([sheetV2]);
