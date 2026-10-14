@@ -91,7 +91,10 @@ const GRANDFATHERED = new Set<string>();
  *  the 2026-10-07 wave), with the file that creates it. The integrator adds
  *  the row and removes the table from here in the same merge — the tripwire
  *  below fails once both say it, so the entry cannot outlive its merge. */
-const ROW_AT_MERGE: Record<string, string> = {};
+const ROW_AT_MERGE: Record<string, string> = {
+  // admin-and-org P13 (drafting-flow EVID-6): the audit dead-letter outbox
+  audit_dead_letters: "20261219_ao_roundG_audit_node_trail_and_outbox.sql",
+};
 
 const BASE = "schema.sql (base schema)";
 const sqlOf = (file: string) =>

@@ -87,7 +87,12 @@ const excluded = new Set<string>(Object.keys(EXPORT_EXCLUDED_TABLES));
  *  AO-P4's in the 2026-10-07 wave). The integrator writes the decision and
  *  removes the table from here in the same merge — the test after the gap
  *  check fails once both say it, so the entry cannot outlive its merge. */
-const DECISION_AT_MERGE: Record<string, string> = {};
+const DECISION_AT_MERGE: Record<string, string> = {
+  // admin-and-org P13 (drafting-flow EVID-6, 20261219). Proposed decision:
+  // EXPORT_EXCLUDED with this reason.
+  audit_dead_letters:
+    "the audit dead-letter outbox (an audit row whose insert was refused, kept as its writer sent it; admin-and-org P13, 20261219) — service-role only, a transient queue the daily maintenance cron drains into audit_logs as AUDIT_DEAD_LETTER rows, which are exported; a restored outbox would replay another deployment's recovered rows into this deployment's trail",
+};
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
 // not in the pattern — file_key / template_file_key / builtin_key are storage

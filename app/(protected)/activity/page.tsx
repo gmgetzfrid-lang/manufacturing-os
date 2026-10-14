@@ -17,12 +17,14 @@
 // permission): rows typed org / member / team / capability_policy /
 // org_configuration / export_destination, and CAPABILITY_ / MEMBER_ / ROLE_ /
 // EXPORT_ / SECURITY_ / TEAM_ / DATA_EXPORT / RESTORE_ / PURGE_ actions
-// (audit_logs_admin_trail, 20261063 — DEC-17, SURF-9, ROLE-5). The
-// document-level history every active member reads INCLUDES permission
-// (NODE_ACL_CHANGED), ownership (OWNER_*) and recertification
-// (ACCESS_RECERTIFIED) changes made on a library, folder or document: they
-// are typed library / collection / document, so the overlay does not cover
-// them. Project scoping (SEC-20 / SEC-21: a project's rows only to those who
+// (audit_logs_admin_trail, 20261063 — DEC-17, SURF-9, ROLE-5).
+// admin-and-org ALOG-16 (P13, 20261219): permission (NODE_ACL_CHANGED),
+// ownership (OWNER_ASSIGNED / OWNER_CLEARED / OWNER_TEAM_*) and
+// recertification (ACCESS_RECERTIFIED) changes made on a library, folder or
+// document are readable only by Audit log holders and by those who may
+// manage that node (audit_row_node_manageable: its controllers, its effective
+// owner, a Manage Permissions / admin grant on it); every member reads the
+// rest of the document-level history. Project scoping (SEC-20 / SEC-21: a project's rows only to those who
 // can see it) lives in 20261142 and 20261157, neither confirmed pasted when
 // P7 landed, so the page neither claims nor denies it; add it to the stated
 // rule once MIGRATION-PASTE-ORDER.md marks both live. The DATABASE applies the rule
@@ -243,7 +245,7 @@ export default function ActivityFeedPage() {
           title="Activity Feed"
           subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.{" "}
             <span className="block mt-1 text-[11px] text-[var(--color-text-faint)]">
-              Who can read this feed: workspace-level authority events (capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges) are shown only to people with the Audit log permission. Every member reads the workspace&apos;s document-level history, and that includes permission (access list), ownership and recertification changes made on a library, folder or document. The database applies this rule, not this page.
+              Who can read this feed: workspace-level authority events (capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges) are shown only to people with the Audit log permission. Permission (access list), ownership and recertification changes made on a library, folder or document are shown only to people with the Audit log permission and to those who may manage that library, folder or document (its document controllers, its owner, and anyone granted Manage Permissions on it). Every member reads the rest of the workspace&apos;s document-level history. The database applies this rule, not this page.
             </span></>}
           actions={
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>

@@ -212,15 +212,29 @@ describe("ALOG-5 — /activity states who can read what, and that the database a
   it("names the Audit log permission rule and the member rule, and that the database applies it", () => {
     const p = page();
     expect(p).toMatch(/workspace-level authority events \(capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges\) are shown only to people with the Audit log permission/);
-    expect(p).toMatch(/Every member reads the workspace&apos;s document-level history/);
+    expect(p).toMatch(/Every member reads the rest of the workspace&apos;s document-level history/);
     expect(p).toMatch(/The database applies this rule, not this page\./);
   });
 
-  it("says permission (ACL), ownership and recertification changes on a library, folder or document are document-level — the overlay does not cover them", () => {
+  // admin-and-org ALOG-16 (P13, 20261219): the node-level authority rows left
+  // the every-member history — the overlay's newest body adds a node-manager
+  // clause (they stay OUT of the org-level set, which is still the
+  // workspace's own trail).
+  it("says permission (ACL), ownership and recertification changes on a library, folder or document reach only Audit log holders and the node's managers — the newest overlay's ALOG-16 clause", () => {
     const p = page();
-    expect(p).toMatch(/that includes permission \(access list\), ownership and recertification changes made on a library, folder or document/);
-    // ...and that is what the database does: the newest overlay's org-level set
-    // matches none of these rows (types library / collection / document; no prefix).
+    expect(p).toMatch(/Permission \(access list\), ownership and recertification changes made on a library, folder or document are shown only to people with the Audit log permission and to those who may manage that library, folder or document/);
+    expect(p).not.toMatch(/that includes permission \(access list\), ownership and recertification changes/);
+    // ...and that is what the database does: the newest overlay narrows them
+    // with audit_row_node_manageable, the action test inline …
+    const dir = join(root, "supabase", "migrations");
+    const newest = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort()
+      .filter((f) => readFileSync(join(dir, f), "utf8").includes("CREATE POLICY audit_logs_admin_trail")).pop()!;
+    const sql = readFileSync(join(dir, newest), "utf8");
+    expect(sql).toContain("OR audit_row_node_manageable(resource_type, resource_id))");
+    expect(sql).toContain("AND ((COALESCE(action, '') NOT IN ('NODE_ACL_CHANGED', 'OWNER_ASSIGNED', 'OWNER_CLEARED', 'ACCESS_RECERTIFIED')");
+    expect(sql).toContain("AND left(COALESCE(action, ''), 11) <> 'OWNER_TEAM_')");
+    // … while its org-level set still matches none of these rows (types
+    // library / collection / document; no prefix): they are not workspace events.
     const o = overlay();
     expect(o.types).toEqual(expect.arrayContaining(["org", "member", "team", "capability_policy", "org_configuration", "export_destination"]));
     expect(o.prefixes.length).toBeGreaterThan(5); // the parse found the action list (not vacuous)
