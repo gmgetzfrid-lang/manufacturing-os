@@ -2011,4 +2011,44 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
     // the trim deletes only rows not newer than the cap's boundary row (a row re-stamped meanwhile is never taken)
     expect(src("app/api/cron/maintenance/route.ts")).toMatch(/\.in\("id", past\.map\(\(r\) => r\.id\)\)\.eq\("user_id", uid\)\.lte\("created_at", boundary\.created_at\)/);
   });
+
+  // fix pass 4 (the fourth review's minor): step 7c took the whole run's remaining time, so slow prune pages
+  // could leave the knowledge sync and every step after it "not run". It now has its own PUSH_PRUNE_MS (20 s).
+  it("fix pass 4: slow prune pages (10 s each) stop at step 7c's own 20 s — the knowledge sync, the ingest, the storage watchdog and the embed drain still run; the next run prunes on", async () => {
+    // 4,500 registrations of people with no membership: 30 pages, which at 10 s a page would have taken the run
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.push_subscriptions = Array.from({ length: 4500 }, (_, i) => ({
+      id: `ps${String(i).padStart(4, "0")}`, user_id: U(1000 + i), endpoint: `https://fcm.googleapis.com/fcm/send/${i}`, created_at: new Date().toISOString(),
+    }));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date());
+    let pages = 0;
+    db.onExec = (table, op) => { if (table === "push_subscriptions" && op === "select") { pages += 1; vi.setSystemTime(new Date(Date.now() + 10_000)); } };
+    try {
+      const r = await runCron();
+      expect(pages).toBe(2);
+      expect(r.pushSubscriptionsPruned).toBe(300);
+      expect(rows("push_subscriptions")).toHaveLength(4200);
+      for (const step of ["knowledge-sync", "knowledge-ingest", "platform-storage", "embed-drain"]) {
+        expect(r.errors.some((e) => e.startsWith(`${step}: not run`)), step).toBe(false);
+      }
+      expect(r.knowledgeSync).toBeDefined();
+      expect(r.knowledgeIngest).toBeDefined();
+      expect(r.platformStorage).toBeDefined();
+      expect(r.embedDrain).toBeDefined();
+      expect(r.orchestratorProposalsPruned).toBe(0);
+      expect(r.errors.filter((e) => e.startsWith("push-subscriptions"))).toEqual([]);
+      // the next run picks up where the rows are: two more pages pruned
+      pages = 0;
+      const r2 = await runCron();
+      expect(pages).toBe(2);
+      expect(r2.pushSubscriptionsPruned).toBe(300);
+      expect(rows("push_subscriptions")).toHaveLength(3900);
+    } finally {
+      vi.useRealTimers();
+    }
+    const route = src("app/api/cron/maintenance/route.ts");
+    expect(route).toContain("const PUSH_PRUNE_MS = 20_000;");
+    expect(route).toContain("await prunePushSubscriptions(sb, result.errors, Math.min(runEnd, Date.now() + PUSH_PRUNE_MS));");
+  });
 });

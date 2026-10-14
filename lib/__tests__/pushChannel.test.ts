@@ -41,6 +41,12 @@
 // pushServiceAgent() (push-service hosts only, public addresses only); one
 // person's 1,200 registrations never cost a neighbour in the same device
 // read their push; a row dated in the future is never read.
+//
+// Fix pass 4 (the fourth review): the watermark a push stores on a device is
+// never later than the server's clock (pushWatermarkFor), so a forged row
+// dated inside the clock margin holds back no real push; the web-push mock is
+// reset after every test (a queued never-answering push service cannot leak);
+// review_requested's lock-screen title says "review".
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -197,25 +203,33 @@ vi.mock("@/lib/inAppNotifications", async (orig) => ({
     return { sent: (input.userIds as string[]).length, failed: 0 };
   }),
 }));
+/** How the tests' push service answers web-push's sendNotification: the
+ *  default implementation, re-applied before every test (fix pass 4: a test
+ *  that queues its own answer — the never-answering push service — cannot
+ *  leak it into a later test; the mock is reset after each). */
+const pushService = vi.hoisted(() => ({
+  answer: async (sub: { endpoint: string }, payload?: string | Buffer | null, options?: object) => {
+    const err = h.sendError.get(sub.endpoint);
+    if (err) throw err;
+    h.sent.push({ endpoint: sub.endpoint, payload: String(payload ?? ""), options: (options ?? {}) as Record<string, unknown> });
+    return { statusCode: 201, body: "", headers: {} as Record<string, string> };
+  },
+}));
 vi.mock("web-push", () => {
   const api = {
     setVapidDetails: vi.fn(() => { if (h.vapidThrows) throw new Error("Vapid public key should be 65 bytes long when decoded."); }),
-    sendNotification: vi.fn(async (sub: { endpoint: string }, payload: string, options: Record<string, unknown>) => {
-      const err = h.sendError.get(sub.endpoint);
-      if (err) throw err;
-      h.sent.push({ endpoint: sub.endpoint, payload, options });
-      return { statusCode: 201, body: "", headers: {} };
-    }),
+    sendNotification: vi.fn(pushService.answer),
     generateVAPIDKeys: vi.fn(),
     WebPushError: class extends Error {},
   };
   return { default: api, ...api };
 });
 
+import webpush from "web-push";
 import { emit, PUSH_LEG_TIMEOUT_MS, PUSH_REQUEST_MAX_RECIPIENTS, PUSH_OPT_IN_SINCE, PUSH_KEYS_MISMATCH, type EmitInput, type PushSendInput } from "@/lib/notify/dispatch";
 import { __registerServerDiscoverCheck } from "@/lib/notify/recipients";
 import {
-  sendPushSafe, pushFromServer, pushConfig, pushPayloadFor, safePushUrl, __resetPushLogOnceForTests,
+  sendPushSafe, pushFromServer, pushConfig, pushPayloadFor, safePushUrl, pushWatermarkFor, __resetPushLogOnceForTests,
   PUSH_KINDS, PUSH_TITLES, PUSH_BODY, PUSH_FALLBACK_TITLE, PUSH_WRITER_CAP, PUSH_EVIDENCE_WINDOW_MS, DEVICE_READ_LIMIT,
 } from "@/lib/push/sendPush";
 import {
@@ -247,11 +261,14 @@ beforeEach(() => {
   h.state.tables.org_members = members("a", "b", "actor");
   __registerServerDiscoverCheck(null);
   setVapid(false);
+  vi.mocked(webpush.sendNotification).mockImplementation(pushService.answer);
 });
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // fix pass 4: whatever a test queued on the push service (mockImplementationOnce) goes with it
+  vi.mocked(webpush.sendNotification).mockReset();
 });
 
 // ─── emit()'s push leg (lib/notify/dispatch.ts) ─────────────────────────────
@@ -348,7 +365,7 @@ describe("OS-9 — emit() has a third, push, channel: guarded, after the other t
     expect(r1).toEqual({ recipients: 2, inapp: { sent: 2, failed: 0 } });
     expect(r2).toEqual(r1);
     expect(spy).not.toHaveBeenCalled();
-    // said at most once per process (the first such emit in this file says it)
+    // said at most once per process (dispatch.ts keeps a once-flag)
     expect(info.mock.calls.filter((c) => /passed no push sender/.test(String(c[0]))).length).toBeLessThanOrEqual(1);
   });
 
@@ -456,6 +473,10 @@ describe("the push-worthy set (GAP-205 'default that set to small'; DEC-90 rulin
     }
     expect(PUSH_BODY).toBe("Open the app to see the details.");
     expect(read("lib/push/sendPush.ts")).not.toMatch(/\b(?:title|body):\s*`/);
+    // fix pass 4 (the fourth review's minor): "review", not "sign off" — true of the change proposed at
+    // check-in (components/documents/CheckInPanel.tsx), the only producer that pushes review_requested today
+    expect(PUSH_TITLES.review_requested).toBe("You're asked to review a document");
+    expect(Object.values(PUSH_TITLES).join(" | ")).not.toMatch(/sign off/i);
   });
 
   it("pushPayloadFor writes exactly { title, body, url, tag } — the bell row's link as a root-relative path, never its title or body", () => {
@@ -987,6 +1008,117 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ attempted: 0, sent: 0 });
     expect(h.sent).toHaveLength(0);
   });
+
+  // ── fix pass 4 (the fourth review's minor): the device watermark is never later than the server's clock ──
+  // Until 20261160 is pasted a browser dates its own bell row. A row dated inside PUSH_FUTURE_SKEW_MS is
+  // read; fix pass 3 stored its created_at as the device's watermark, so a member who forged one every few
+  // minutes (under PUSH_WRITER_CAP) held a colleague's real pushes back for as long as they kept at it.
+  it("fix pass 4: pushWatermarkFor — a row dated at or before now keeps its own created_at (the same string); one dated after now stores created_at − PUSH_FUTURE_SKEW_MS, never later than now; anything else claims nothing", () => {
+    const now = Date.parse("2026-10-14T12:00:00.000Z");
+    for (const c of ["2026-10-14T11:59:30.123456+00:00", "2026-10-14T12:00:00.000Z", "2026-10-14 11:58:00.5+00"]) {
+      expect(pushWatermarkFor(c, now), c).toBe(c);
+    }
+    const ahead = "2026-10-14T12:04:00.000Z";
+    expect(pushWatermarkFor(ahead, now)).toBe("2026-10-14T11:59:00.000Z");
+    expect(Date.parse(pushWatermarkFor(ahead, now)!)).toBeLessThanOrEqual(now);
+    expect(Date.parse(pushWatermarkFor(new Date(now + PUSH_FUTURE_SKEW_MS).toISOString(), now)!)).toBe(now);
+    // the same on every request made while the row is still ahead of the clock (a replay is refused)
+    expect(pushWatermarkFor(ahead, now + 60_000)).toBe(pushWatermarkFor(ahead, now));
+    for (const bad of ["", "yesterday", "2026-10-14T12:00:00Z'; drop", "2026-99-99T99:99:99Z"]) expect(pushWatermarkFor(bad, now), bad).toBeNull();
+  });
+
+  it("fix pass 4: a forged row dated ahead (re-forged every two minutes, under the cap) no longer holds back a colleague's real pushes — each real one is sent", async () => {
+    setVapid(true);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const T0 = Date.parse("2026-10-14T12:00:00.000Z");
+    vi.setSystemTime(T0);
+    h.state.tables.org_members = members("a", "actor", "pat");
+    h.state.tables.push_subscriptions = [device("a", undefined, { created_at: new Date(T0 - 3_600_000).toISOString() })];
+    const dev = () => (h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0];
+    const at = (ms: number) => new Date(T0 + ms).toISOString();
+    const forge = (ms: number, res: string) => h.state.tables.notifications.push(bell("a", { resource_id: res, actor_user_id: "actor", created_at: at(ms + PUSH_FUTURE_SKEW_MS - 1000) }));
+    const real = (ms: number, res: string) => h.state.tables.notifications.push(bell("a", { resource_id: res, actor_user_id: "pat", created_at: at(ms) }));
+    h.state.tables.notifications = [];
+    // T0: the forger's row, dated 4 min 59 s ahead
+    forge(0, "f-1");
+    expect(await sendPushSafe(input({ recipients: ["a"], resourceId: "f-1", writerUid: "actor" }))).toMatchObject({ sent: 1 });
+    expect(Date.parse(String(dev().last_reminded_at))).toBeLessThanOrEqual(T0); // fix pass 3 stored T0 + 4 min 59 s here
+    // T0 + 1 min: a colleague's real hold — pushed (fix pass 3 refused it: its row was older than the watermark)
+    vi.setSystemTime(T0 + 60_000);
+    real(60_000, "r-1");
+    expect(await sendPushSafe(input({ recipients: ["a"], resourceId: "r-1", writerUid: "pat" }))).toMatchObject({ sent: 1 });
+    expect(dev().last_reminded_at).toBe(at(60_000));
+    // T0 + 2 min: the forger again
+    vi.setSystemTime(T0 + 120_000);
+    forge(120_000, "f-2");
+    expect(await sendPushSafe(input({ recipients: ["a"], resourceId: "f-2", writerUid: "actor" }))).toMatchObject({ sent: 1 });
+    expect(Date.parse(String(dev().last_reminded_at))).toBeLessThanOrEqual(T0 + 120_000);
+    // T0 + 3 min: the next real one — pushed again
+    vi.setSystemTime(T0 + 180_000);
+    real(180_000, "r-2");
+    expect(await sendPushSafe(input({ recipients: ["a"], resourceId: "r-2", writerUid: "pat" }))).toMatchObject({ sent: 1 });
+    expect(h.sent).toHaveLength(4);
+    expect(JSON.parse(h.sent[3].payload).tag).toBe("mfgos-hold_opened-r-2");
+  });
+
+  it("fix pass 4: a row dated ahead is still pushed once per device while it is ahead — a replayed request sends nothing more — and at most once more after the clock passes its date", async () => {
+    setVapid(true);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const T0 = Date.parse("2026-10-14T12:00:00.000Z");
+    vi.setSystemTime(T0);
+    h.state.tables.push_subscriptions = [device("a", undefined, { created_at: new Date(T0 - 3_600_000).toISOString() })];
+    const ahead = new Date(T0 + 4 * 60_000).toISOString();
+    h.state.tables.notifications = [bell("a", { created_at: ahead })];
+    for (const ms of [0, 1000, 60_000, 180_000]) {
+      vi.setSystemTime(T0 + ms);
+      await sendPushSafe(input({ recipients: ["a"], writerUid: "actor" }));
+    }
+    expect(h.sent).toHaveLength(1);
+    // the clock passes the row's date: its watermark is now its created_at — one more push, then none
+    for (const ms of [4 * 60_000 + 1000, 5 * 60_000]) {
+      vi.setSystemTime(T0 + ms);
+      await sendPushSafe(input({ recipients: ["a"], writerUid: "actor" }));
+    }
+    expect(h.sent).toHaveLength(2);
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0].last_reminded_at).toBe(ahead);
+  });
+
+  it("fix pass 4: a real row (dated at or before now) is claimed exactly as before — the claim stores its created_at and compares against it", async () => {
+    setVapid(true);
+    const row = bell("a", { created_at: "2026-10-14T11:59:59.123456+00:00" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse("2026-10-14T12:00:30.000Z"));
+    h.state.tables.notifications = [row];
+    h.state.tables.push_subscriptions = [device("a", undefined, { created_at: "2026-10-14T11:00:00.000Z", last_reminded_at: "2026-10-14T11:30:00.000Z" })];
+    expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ sent: 1 });
+    const claim = h.state.writes.find((w) => w.table === "push_subscriptions" && w.method === "update")!;
+    expect(claim.payload).toEqual({ last_reminded_at: "2026-10-14T11:59:59.123456+00:00" });
+    const or = h.state.calls.find((c) => c.table === "push_subscriptions" && c.method === "or")!;
+    expect(or.args[0]).toBe('last_reminded_at.is.null,last_reminded_at.lt."2026-10-14T11:59:59.123456+00:00"');
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0].last_reminded_at).toBe(row.created_at);
+  });
+
+  it("fix pass 4: the put-back still works — a failed send for a row dated ahead puts back exactly the watermark it claimed, and a later request sends", async () => {
+    setVapid(true);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const T0 = Date.parse("2026-10-14T12:00:00.000Z");
+    vi.setSystemTime(T0);
+    const before = "2026-10-14T11:40:00.000Z";
+    h.state.tables.notifications = [bell("a", { created_at: new Date(T0 + 3 * 60_000).toISOString() })];
+    h.state.tables.push_subscriptions = [device("a", undefined, { created_at: "2026-10-14T11:00:00.000Z", last_reminded_at: before })];
+    h.sendError.set("https://fcm.googleapis.com/fcm/send/a", Object.assign(new Error("Received unexpected response code"), { statusCode: 503 }));
+    expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ attempted: 1, sent: 0, pruned: 0 });
+    const stamp = new Date(T0 + 3 * 60_000 - PUSH_FUTURE_SKEW_MS).toISOString();
+    const updates = h.state.writes.filter((w) => w.table === "push_subscriptions" && w.method === "update");
+    expect(updates.map((w) => (w.payload as Record<string, unknown>).last_reminded_at)).toEqual([stamp, before]);
+    expect(updates[1].filters).toContainEqual(["last_reminded_at", stamp]);
+    expect(updates[1].matched).toBe(1);
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0].last_reminded_at).toBe(before);
+    h.sendError.clear();
+    expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ sent: 1 });
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0].last_reminded_at).toBe(stamp);
+  });
 });
 
 // ─── the routes ─────────────────────────────────────────────────────────────
@@ -1068,8 +1200,7 @@ describe("POST /api/push/notify — the browser half of the push leg", () => {
     const now = new Date().toISOString();
     h.state.tables.notifications = [{ id: "n1", org_id: ORG, user_id: "a", kind: "hold_opened", resource_id: "d-1", link: "/x", actor_user_id: "actor", created_at: now, metadata: null }];
     h.state.tables.push_subscriptions = [{ id: "s1", user_id: "a", endpoint: "https://fcm.googleapis.com/fcm/send/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: now }];
-    const webpush = (await import("web-push")).default as unknown as { sendNotification: ReturnType<typeof vi.fn> };
-    webpush.sendNotification.mockImplementationOnce(() => new Promise(() => undefined)); // never answers
+    vi.mocked(webpush.sendNotification).mockImplementationOnce(() => new Promise(() => undefined)); // never answers
     const res = await post(notifyRoute, "/api/push/notify", body);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -1080,6 +1211,29 @@ describe("POST /api/push/notify — the browser half of the push leg", () => {
     const route = read("app/api/push/notify/route.ts");
     expect(route).toMatch(/after\(async \(\) => \{\s*await sendPushSafe\(/);
     expect(route.match(/sendPushSafe\(/g)).toHaveLength(1);
+  });
+
+  // fix pass 4 (the fourth review's minor): the test above queues a push service that never answers
+  // (mockImplementationOnce) and never runs the send it was queued for. The web-push mock is reset after
+  // every test and its default answer re-applied before the next, so this one, right after it, sends.
+  it("fix pass 4: after the never-answering push service above, the next test's send is answered (the web-push mock is reset between tests)", async () => {
+    setVapid(true);
+    h.user = { id: "actor" };
+    const now = new Date().toISOString();
+    h.state.tables.notifications = [{ id: "n1", org_id: ORG, user_id: "a", kind: "hold_opened", resource_id: "d-1", link: "/x", actor_user_id: "actor", created_at: now, metadata: null }];
+    h.state.tables.push_subscriptions = [{ id: "s1", user_id: "a", endpoint: "https://fcm.googleapis.com/fcm/send/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: now }];
+    expect(vi.mocked(webpush.sendNotification).getMockImplementation()).toBe(pushService.answer);
+    expect((await post(notifyRoute, "/api/push/notify", body)).status).toBe(200);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        runAfter(),
+        new Promise((_ok, ko) => { timer = setTimeout(() => ko(new Error("the send hung: a queued never-answering push service leaked into this test")), 2000); }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(h.sent.map((x) => x.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/a"]);
   });
 });
 
@@ -1223,7 +1377,8 @@ describe("the rest of the build", () => {
     const vercel = JSON.parse(read("vercel.json")) as { crons: Array<{ path: string }> };
     expect(vercel.crons.map((c) => c.path).sort()).toEqual(["/api/cron/maintenance", "/api/data-export/run-scheduled"]);
     const cron = read("app/api/cron/maintenance/route.ts");
-    expect(cron).toContain("result.pushSubscriptionsPruned = await prunePushSubscriptions(sb, result.errors, runEnd);");
+    // fix pass 4: step 7c has its own budget, never past the run's end
+    expect(cron).toContain("result.pushSubscriptionsPruned = await prunePushSubscriptions(sb, result.errors, Math.min(runEnd, Date.now() + PUSH_PRUNE_MS));");
     expect(cron).not.toMatch(/lib\/push\/sendPush"|sendPushSafe/);
   });
 

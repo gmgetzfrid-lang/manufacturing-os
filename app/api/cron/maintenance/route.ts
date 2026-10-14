@@ -576,10 +576,16 @@ async function handler(req: NextRequest) {
   //     (fix pass 2) the rows dated in the future and those past a person's
   //     newest PUSH_DEVICE_CAP (never read by the sender). Dead endpoints are removed
   //     by the sender at the first 404 / 410 (lib/push/sendPush.ts). No-op
-  //     before 20260804; it takes what the run has left (N6's run clock).
+  //     before 20260804. N10 fix pass 4: it has its own budget,
+  //     PUSH_PRUNE_MS, never past the run's end, so slow pages here never
+  //     cost the knowledge sync and the steps after it their time. Each run
+  //     pages from the lowest id: what one budget does not reach waits for a
+  //     later run, and rows past what one budget's pages reach are not
+  //     visited (housekeeping only — the sender checks membership, the
+  //     opt-in date, the host, the device cap and the date itself).
   if (!noTimeFor("push-subscriptions", PUSH_PRUNE_MIN_MS)) {
     try {
-      result.pushSubscriptionsPruned = await prunePushSubscriptions(sb, result.errors, runEnd);
+      result.pushSubscriptionsPruned = await prunePushSubscriptions(sb, result.errors, Math.min(runEnd, Date.now() + PUSH_PRUNE_MS));
     } catch (e) {
       result.errors.push(`push-subscriptions: ${(e as Error).message}`);
     }
@@ -682,6 +688,9 @@ async function handler(req: NextRequest) {
 
 /** Step 7c's floor: it is not started with less than this left. */
 const PUSH_PRUNE_MIN_MS = 5_000;
+/** Step 7c's own budget (N10 fix pass 4): it stops paging after this long,
+ *  and never past the run's end. */
+const PUSH_PRUNE_MS = 20_000;
 /** Registrations read per page. */
 const PUSH_PRUNE_PAGE = 150;
 /** Owners per membership read, and the most rows one such read may answer

@@ -48,6 +48,12 @@
 //     while last_reminded_at is older than the row — fix pass), so a replayed
 //     request, or two tabs asking about the same row at once, sends once. A
 //     send that fails (not 404 / 410) puts the claim back.
+//     Fix pass 4: the watermark is never later than the server's clock
+//     (pushWatermarkFor). A row dated ahead of it — a database clock ahead of
+//     this server's, or, until 20261160 is pasted, a row a browser dated
+//     itself — stores created_at − PUSH_FUTURE_SKEW_MS, so it can no longer
+//     hold back a push for a row dated after it was pushed. Every row dated
+//     at or before the server's clock stores its created_at, as before.
 //   * A browser's request is capped per writer: past PUSH_WRITER_CAP push-
 //     worthy rows from one member to one person in PUSH_WRITER_WINDOW_MS,
 //     the bell keeps them and no more pushes go (the 20261160 caps bound the
@@ -73,6 +79,8 @@
 //     dated 2100 would otherwise become the device's watermark and refuse
 //     every later push), and only an active member of input.orgId is pushed
 //     (org_members, read on the service role; unreadable = nothing sent).
+//     Fix pass 4: a row dated inside that margin no longer sets a watermark
+//     ahead of the server's clock either (pushWatermarkFor, above).
 //
 // Push is best-effort by design and is never a delivery record (GAP-205;
 // drafting-flow GAP-113): nothing reads a push to decide anything.
@@ -107,7 +115,10 @@ export const PUSH_TITLES: Readonly<Partial<Record<ClassifiedKind, string>>> = Ob
   checkout_force_released: "Your checkout was released by someone else",
   hold_opened: "A document hold needs your attention",
   ack_requested: "You're asked to acknowledge a document",
-  review_requested: "You're asked to sign off a document",
+  // fix pass 4: "review", not "sign off" — true of the change proposed at
+  // check-in (components/documents/CheckInPanel.tsx), the only producer
+  // that pushes this kind today (the sign-off roster does not yet — OS-14)
+  review_requested: "You're asked to review a document",
   ticket_mention: "You were mentioned on a request",
   ticket_assigned: "A request was assigned to you",
 });
@@ -241,12 +252,38 @@ const chunks = <T,>(xs: T[], size = CHUNK): T[][] => {
   return out;
 };
 
-/** The claim's condition: the device's last push is older than this bell row
- *  (or it has none). The row's created_at comes from the database; anything
- *  that is not a plain timestamp claims nothing (the device is not pushed). */
-function claimCondition(createdAt: string): string | null {
+/** The device watermark a push for this bell row stores (fix pass 4 — the
+ *  fourth review's minor): never later than the server's clock `now`.
+ *   * A row dated at or before `now` — every row the database dated before
+ *     this request, so every real row — stores its own created_at, exactly
+ *     as before.
+ *   * A row dated after `now` (read only inside PUSH_FUTURE_SKEW_MS: a
+ *     database clock ahead of this server's, or, until 20261160 is pasted, a
+ *     row a browser dated itself) stores created_at − PUSH_FUTURE_SKEW_MS.
+ *     That is no later than `now`, so the row cannot hold back a push for a
+ *     row dated after it was pushed. It is also the same on every request
+ *     made while the row is ahead of the clock, so a replay is still refused
+ *     by the claim. (A watermark of `now` itself would not be: each replay
+ *     would find the device's watermark older than the row and push again.)
+ *     Once the clock passes the row's date its watermark is its created_at,
+ *     so a request about it then can push that device once more: at most two
+ *     pushes per such row per device. And such a row is not pushed to a
+ *     device whose watermark is already at or past created_at −
+ *     PUSH_FUTURE_SKEW_MS (pushed in that window for a row dated at or
+ *     before the server's clock): the bell keeps it (fail-safe side).
+ *  Not a plain timestamp → null (the device is not pushed). */
+export function pushWatermarkFor(createdAt: string, now: number): string | null {
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+(Z|[+-][0-9:]+)?$/.test(createdAt)) return null;
-  return `last_reminded_at.is.null,last_reminded_at.lt."${createdAt}"`;
+  const at = Date.parse(createdAt);
+  if (!Number.isFinite(at)) return null;
+  return at <= now ? createdAt : new Date(at - PUSH_FUTURE_SKEW_MS).toISOString();
+}
+
+/** The claim's condition: the device's last push is older than this row's
+ *  watermark (pushWatermarkFor — the row's created_at for every row dated at
+ *  or before the server's clock), or it has none. */
+function claimCondition(stamp: string): string {
+  return `last_reminded_at.is.null,last_reminded_at.lt."${stamp}"`;
 }
 
 /** Send the push for one emit (see the header). NEVER throws. */
@@ -279,8 +316,10 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
   //    resource just now (and, for a browser's request, from that member).
   //    Fix pass 3: a row dated later than now (+ PUSH_FUTURE_SKEW_MS) earns
   //    nothing. Until 20261160 is pasted a browser sets a row's created_at,
-  //    and the device claim stores the row's created_at as the watermark, so
-  //    a row dated 2100 would have every later push to that person refused.
+  //    and the device claim stores the row's date as the watermark, so a row
+  //    dated 2100 would have every later push to that person refused. (Fix
+  //    pass 4: a row inside the margin stores a watermark no later than now —
+  //    pushWatermarkFor.)
   const rowsByUser = new Map<string, BellRow[]>();
   for (const part of chunks(recipients)) {
     let q = supabaseAdmin
@@ -440,7 +479,10 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
   // 4) Send — once per device per bell row, in parallel. The device is
   //    claimed for the row first (a conditional update that lands only while
   //    its last push is older than the row), so two requests at once send
-  //    once; the second finds the claim taken and sends nothing.
+  //    once; the second finds the claim taken and sends nothing. Fix pass 4:
+  //    what the claim compares and stores is the row's watermark
+  //    (pushWatermarkFor) — its created_at for every row dated at or before
+  //    `now`, and never later than `now` for a row dated after it.
   const vapidDetails = { subject: config.subject, publicKey: config.publicKey, privateKey: config.privateKey };
   // every request goes through the push-service agent (fix pass 2): it
   // connects only to a push service's host, and only to a public address
@@ -448,14 +490,14 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
   await Promise.allSettled(devices.map(async (d) => {
     const row = evidence.get(d.user_id);
     if (!row) return;
-    if (d.last_reminded_at && Date.parse(d.last_reminded_at) >= Date.parse(row.created_at)) return;
-    const condition = claimCondition(row.created_at);
-    if (!condition) return;
+    const stamp = pushWatermarkFor(row.created_at, now);
+    if (!stamp) return;
+    if (d.last_reminded_at && Date.parse(d.last_reminded_at) >= Date.parse(stamp)) return;
     const claim = await checkedWrite(supabaseAdmin
       .from("push_subscriptions")
-      .update({ last_reminded_at: row.created_at })
+      .update({ last_reminded_at: stamp })
       .eq("id", d.id)
-      .or(condition)
+      .or(claimCondition(stamp))
       .select("id"));
     if (!claim.ok) {
       // refused: another request claimed this device for this row (or a
@@ -479,13 +521,13 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
         else if (del.code === "db") console.warn(`[push] a dead subscription (${status}) could not be removed: ${del.error}`);
         return;
       }
-      // put the claim back (only if it is still this row's), so a later
-      // request about this row may try again
+      // put the claim back (only if it is still this row's — the watermark
+      // this claim stored), so a later request about this row may try again
       const back = await checkedWrite(supabaseAdmin
         .from("push_subscriptions")
         .update({ last_reminded_at: d.last_reminded_at })
         .eq("id", d.id)
-        .eq("last_reminded_at", row.created_at)
+        .eq("last_reminded_at", stamp)
         .select("id"));
       if (!back.ok && back.code === "db") console.warn(`[push] a failed push's claim could not be put back (${back.error})`);
       console.warn(`[push] a device push failed (${typeof status === "number" ? status : (e as Error)?.message ?? "error"}) — kept; bell and email are unaffected`);
