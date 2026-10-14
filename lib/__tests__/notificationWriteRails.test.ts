@@ -1574,7 +1574,7 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/projects.ts#transitionProjectStatus(input.actorUserId)",
   "lib/retention.ts#placeLegalHold(input.actorId)",
   "lib/retention.ts#releaseLegalHold(input.actorId)",
-  "lib/revisions.ts#recallOnRetirement(input.actorUserId)",       // document-control P26 (PROD-17): the retirement doors' recall; its callers (archiveDocument, changeDocumentStatus, splitDocument, finishMerge, BulkEditModal) forward their own actor, the signed-in member
+  "lib/revisions.ts#recallOnRetirement(input.actorUserId)",       // document-control P26 (PROD-17): the retirement doors' recall; its callers (archiveDocument, changeDocumentStatus, splitDocument, finishMerge) forward their own actor, the signed-in member
   "lib/revisions.ts#revUpDocument(input.actorUserId)",
   "lib/revisions.ts#revertToVersion(input.actorUserId)",
   "lib/revisions.ts#submitForReview(input.actorUserId)",

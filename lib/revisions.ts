@@ -495,10 +495,8 @@ export async function notifyHolderOfRetirement(opts: {
  *  supersedeDocument sends its own: the door returns exactly when it did,
  *  and an FYI that stalls (a hung discover check) never holds it. Used by
  *  the doors that recalled nothing before: archiveDocument,
- *  changeDocumentStatus into a retired status, split / merge retiring
- *  their sources (lib/documentLifecycle) and the bulk editor's retiring
- *  rows (components/documents/BulkEditModal.tsx). One call per
- *  retirement: a door that routes a write through another door that
+ *  changeDocumentStatus into a retired status, and split / merge retiring
+ *  their sources (lib/documentLifecycle). One call per retirement: a door that routes a write through another door that
  *  already calls it must not call it again. No label in hand (a status
  *  write): the row is read for it here, off the door's path; unreadable,
  *  the notice names "A document" and still goes — a recall is never
@@ -2185,11 +2183,15 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
 
   // PROD-17 (document-control P26): an archive is a retirement — every copy
   // holder is recalled and the document's watchers told, once, never
-  // awaited. Archiving a document already retired (a Superseded or Void
-  // row, read just before the write) recalls nothing again — its
-  // retirement already did; a status the read did not give recalls (a
-  // second recall over none). The archive tells no checkout holder or
-  // package owner itself, so they stay in the watchers' audience.
+  // awaited. A document already retired (a Superseded or Void row, read
+  // just before the write) is not recalled again. That is not proof it was
+  // recalled: a Void, Superseded or Archived set by either status editor's
+  // bare write, a reversal's parking, a retention disposal, or any
+  // retirement before DIST-1, recalled nothing (PROD-17 residual), so until
+  // those doors recall, archiving such a row recalls no copies either. A
+  // status the read did not give recalls (a second recall over none). The
+  // archive tells no checkout holder or package owner itself, so they stay
+  // in the watchers' audience.
   if (!isRetiredStatus(priorStatus)) {
     recallOnRetirement({
       orgId, documentId: doc.id, libraryId: doc.libraryId,
@@ -2970,9 +2972,9 @@ export async function changeDocumentStatus(input: {
   // (fromStatus unknown) recalls: a second recall over none. This door
   // tells no checkout holder or package owner, so they stay in the
   // watchers' audience. (Neither status editor routes a retirement here
-  // today: each writes a retired status with its own bare write, and the
-  // bulk editor calls recallOnRetirement itself — a caller that routes one
-  // here must not also call it.)
+  // today: each writes a retired status with its own bare write, which
+  // recalls nothing — PROD-17 residual. A caller that routes one here must
+  // not also call recallOnRetirement: that would be a second recall.)
   if (isRetiredStatus(input.toStatus) && !isRetiredStatus(before.fromStatus)) {
     recallOnRetirement({
       orgId: input.orgId, documentId: input.documentId,

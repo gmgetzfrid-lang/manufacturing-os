@@ -303,9 +303,10 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
 
   // PROD-17 (document-control P26): the retired source's copy holders are
   // recalled and its watchers told, once, never awaited — unless it was
-  // already retired (the status read fresh before the flip): that
-  // retirement recalled it. The checkout holder was told above
-  // (notifyHolderOfRetirement); no package owner is.
+  // already retired (the status read fresh before the flip): it is not
+  // recalled again (whether its earlier retirement recalled it depends on
+  // the door that retired it — PROD-17 residual). The checkout holder was
+  // told above (notifyHolderOfRetirement); no package owner is.
   if (!isRetiredStatus(retired.priorStatus)) {
     recallOnRetirement({
       orgId, documentId: sourceId, libraryId: sourceLibraryId,

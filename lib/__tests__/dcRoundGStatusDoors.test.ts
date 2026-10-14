@@ -20,8 +20,15 @@
 //     merging a document already retired (its status read fresh before the
 //     write) recalls nothing again; a refused write recalls nothing; a
 //     rolled-back split recalls nothing.
+//   · CENSUS (fix pass): recallOnRetirement is called from exactly the four
+//     doors above and nowhere else — the status editors (the library page,
+//     BulkEditModal) are PROD-17 residual doors and do not call it, so a
+//     door that later routes a retirement through changeDocumentStatus or
+//     archiveDocument cannot also send a second recall unnoticed.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fakeSupabase";
 
 type RecallInput = Record<string, unknown>;
@@ -470,5 +477,45 @@ describe("PROD-17 (P26) — through the real recall: the copy holders first, the
       target: { kind: "create_new", documentNumber: "M-NEW", title: "merged", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
       reason: "combine", orgId: ORG, actorUserId: ME,
     })).resolves.toMatchObject({ supersededSourceIds: ["m1", "m2"] });
+  });
+});
+
+// ─── CENSUS (fix pass): one recall per retirement ───────────────────────
+describe("PROD-17 (P26 fix pass) — census: who calls recallOnRetirement", () => {
+  const ROOT = join(__dirname, "..", "..");
+  function walk(dir: string, out: string[]): string[] {
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name === "__tests__" || name.startsWith(".")) continue;
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) walk(full, out);
+      else if (/\.(ts|tsx)$/.test(name)) out.push(full);
+    }
+    return out;
+  }
+  const sources = ["app", "components", "lib"].flatMap((d) => walk(join(ROOT, d), []));
+  const callSites = (): Record<string, number> => {
+    const sites: Record<string, number> = {};
+    for (const f of sources) {
+      const code = readFileSync(f, "utf8");
+      const n = (code.match(/\brecallOnRetirement\(/g) ?? []).length
+        - (code.match(/export function recallOnRetirement\(/g) ?? []).length;
+      if (n > 0) sites[relative(ROOT, f).split("\\").join("/")] = n;
+    }
+    return sites;
+  };
+
+  it("exactly the four doors: archiveDocument and changeDocumentStatus (lib/revisions.ts), the split, the merge", () => {
+    expect(callSites()).toEqual({
+      "lib/revisions.ts": 2,
+      "lib/documentLifecycle/split.ts": 1,
+      "lib/documentLifecycle/merge.ts": 1,
+    });
+  });
+
+  it("the status editors call it nowhere (PROD-17 residual doors: the bulk editor's and the metadata editor's bare writes recall nothing)", () => {
+    const bulk = readFileSync(join(ROOT, "components/documents/BulkEditModal.tsx"), "utf8");
+    expect(bulk).not.toMatch(/recallOnRetirement|recallRetiredDocument/);
+    const page = readFileSync(join(ROOT, "app/(protected)/documents/[libraryId]/page.tsx"), "utf8");
+    expect(page).not.toMatch(/recallOnRetirement/);
   });
 });

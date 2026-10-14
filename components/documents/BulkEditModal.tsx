@@ -74,12 +74,6 @@
 // unknown ("check its history") rather than given the "start its clocks"
 // advice the page owes only the rows it said it would issue. Every row
 // changed to a status that issues nothing keeps the bare write.
-//
-// PROD-17 (document-control P26): a row the bare write RETIRES (into
-// Superseded / Archived — isRetiredStatus — out of a status this page shows
-// live) recalls its copy holders and tells its watchers, once, never
-// awaited (lib/revisions.ts recallOnRetirement): the apply returns when it
-// did. A row this page already shows retired recalls nothing again.
 
 import React, { useState } from "react";
 import {
@@ -87,11 +81,11 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
-import { isIssueTransition, isIssueRefusal, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
+import { isIssueTransition, isIssueRefusal, isControlledIssueStatus } from "@/lib/issueStatus";
 import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
-import { changeDocumentStatus, recallOnRetirement, type StatusIssueOutcome } from "@/lib/revisions";
+import { changeDocumentStatus, type StatusIssueOutcome } from "@/lib/revisions";
 import { useRole } from "@/components/providers/RoleContext";
 
 interface BulkEditModalProps {
@@ -281,18 +275,6 @@ export default function BulkEditModal({
         const { data: written, error } = await supabase.from("documents").update(updates).eq("id", doc.id).select("id");
         if (error) throw error;
         if (!written || written.length === 0) throw new Error("refused — the database updated nothing (no edit access to this document)");
-        // PROD-17 (P26): the row this write retired — its copies recalled and
-        // its watchers told, once, not awaited. This editor tells no checkout
-        // holder or package owner, so they stay in the watchers' audience.
-        if (target.kind === "status" && doc.id && isRetiredStatus(newValue) && !isRetiredStatus(doc.status)) {
-          recallOnRetirement({
-            orgId: doc.orgId || library.orgId, documentId: doc.id, libraryId: doc.libraryId || library.id,
-            docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
-            newStatus: newValue, replacementNote: null,
-            actorUserId, actorName: userEmail || actorUserId,
-            personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
-          });
-        }
         ok += 1;
       } catch (e) {
         const reason = (e as Error).message;
