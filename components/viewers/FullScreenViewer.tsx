@@ -51,6 +51,8 @@ import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { appAlert } from "@/components/providers/DialogProvider";
+// HAND-8 (drafting-flow DF-P9): the send-to-drafting fallback asks before it sends the clean sheet.
+import { appConfirm } from "@/components/providers/DialogProvider";
 import { bakeMarkupIntoPdf, bakeMarkupIntoDoc } from "@/lib/markupExport";
 import { stashDraft } from "@/lib/draftHandoff";
 import {
@@ -964,23 +966,47 @@ export default function FullScreenViewer({
       // If there are markups, bake them into the PDF and hand THAT off, so the
       // marked-up sheet — not the clean original — lands in the request's
       // source files. With no markups we keep the original-attachment path.
+      //
+      // drafting-flow HAND-8 (DF-P9): a bake that cannot run — the sheet's
+      // bytes could not be fetched, or pdf-lib threw — is SAID, and the
+      // person chooses: send the clean sheet (the request says the markups
+      // are not attached), or stay and keep marking. It used to fall back to
+      // the clean original in silence. Nothing is lost by staying: the
+      // markups are saved on the document (document_markups, LIFE-3).
       let draftKey = "";
+      let markupNotAttached = false;
       if (hasMarkup) {
+        let bakeFailure: string | null = null;
         const bytes = await ensureBytes();
-        if (bytes) {
+        if (!bytes) {
+          bakeFailure = "the sheet's file could not be fetched to bake them in";
+        } else {
           try {
             const baked = await bakeMarkupIntoPdf(bytes, states);
             const stem = `${docNum || docTitle || "sheet"}${docRev ? `_Rev${docRev}` : ""}_markup`.replace(/[^\w.\-]+/g, "_");
             draftKey = await stashDraft([{ name: `${stem}.pdf`, blob: new Blob([baked as BlobPart], { type: "application/pdf" }), docId: d.id, docNumber: docNum }]);
           } catch (e) {
-            console.error("bake markup for drafting failed; falling back to clean original", e);
+            console.error("bake markup for drafting failed", e);
+            bakeFailure = "they could not be baked into this PDF";
           }
+        }
+        if (bakeFailure) {
+          const sendClean = await appConfirm({
+            title: "Your markups could not be attached",
+            message: `Your markups are saved on this document, but ${bakeFailure}. Send the request with the clean sheet instead (it will say the markups are not attached), or cancel and try again — or use "Download w/ Markup" and attach that file to the request.`,
+            confirmLabel: "Send the clean sheet",
+            cancelLabel: "Cancel",
+            tone: "danger",
+          });
+          if (!sendClean) { setSendingDraft(false); return; }
+          markupNotAttached = true;
         }
       }
 
       const description = [
         `Source: ${docNum || "(no number)"}${docRev ? ` Rev ${docRev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${docTitle ? ` — ${docTitle}` : ""}`,
         draftKey ? "(marked-up sheet attached as a Source file)" : "",
+        markupNotAttached ? "(the requester's markups could NOT be attached — the clean sheet is attached; the markups are saved on the document)" : "",
         unit ? `\nUnit: ${unit}` : "",
         "\nWhat needs to change:\n- ",
       ].filter(Boolean).join("\n");
