@@ -23,7 +23,9 @@ import { join } from "node:path";
 import { NODE_CUSTOMIZE_ROLES } from "@/lib/storageKey";
 import {
   clearSkippedNodeImagePointers, pageConfigWithoutBackground, nodeImageFileLabel, nodeImagePointerLabel, overflowLines,
-  type NodeImagePointerNode,
+  nodeImageClearVerdict, storageAnsweredInRun, restoreEnvelopeNodeIds, nodeIdsPresentBeforeRestore, addRestoredNodeIds,
+  RESTORE_ADDITIVE_NOTE, RESTORE_FILES_POINTER_NOTE, NODE_IMAGE_KEPT_REASON_TEXT,
+  type NodeImagePointerNode, type NodeImageClearScope,
 } from "@/lib/dataRestore";
 
 const ROOT = process.cwd();
@@ -262,6 +264,7 @@ function fakeClient(db: Db, opts: { readError?: (table: string, filters: string[
       select() { return builder; },
       update(patch: Row) { call.op = "update"; call.patch = patch; return builder; },
       eq(col: string, val: unknown) { call.filters.push(`${col}=${String(val)}`); preds.push((r) => r[col] === val); return builder; },
+      in(col: string, vals: unknown[]) { call.filters.push(`${col} in ${vals.length}`); preds.push((r) => vals.includes(r[col])); return builder; },
       contains(col: string, val: unknown) { call.filters.push(`${col}@>${JSON.stringify(val)}`); preds.push((r) => contains(r[col], val)); return builder; },
       then(resolve: (v: { data: Row[] | null; error: { message: string } | null }) => void) {
         calls.push(call);
@@ -301,11 +304,18 @@ function fixture(): Db {
   };
 }
 
+/** Every fixture node in this workspace was added by the restore, and storage answered. */
+const ADDED_ALL: NodeImageClearScope = {
+  restoredLibraryIds: new Set(["lib-1", "lib-2", "lib-x"]),
+  restoredFolderIds: new Set(["fold-1", "fold-2"]),
+  storageAnswered: true,
+};
+
 describe("ORG-18 — a cover / background the restore skipped leaves no node pointing at it, and the node is named", () => {
   it("REPRODUCED → fixed: a library's legacy SVG cover (reported missing) — the pointer is cleared and the library named; nothing else on the row changes", async () => {
     const db = fixture();
     const { client } = fakeClient(db);
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: true }], ADDED_ALL);
     expect(r.errors).toEqual([]);
     expect(r.kept).toEqual([]);
     expect(r.cleared).toEqual([
@@ -325,7 +335,7 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
   it("a legacy HEIC page background: background becomes { type: 'none' } (what Customize writes for none), the header and other keys are kept", async () => {
     const db = fixture();
     const { client, calls } = fakeClient(db);
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: HEIC, reportedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: HEIC, reportedMissing: true }], ADDED_ALL);
     expect(r.cleared.map(nodeImagePointerLabel)).toEqual([
       'library "P&IDs" — background (backgrounds/legacy.heic)',
       'folder "Unit 100" — background (backgrounds/legacy.heic)',
@@ -343,9 +353,10 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
   it("a key the storage check did not report missing is NOT cleared — its nodes are named as still pointing at it", async () => {
     const db = fixture();
     const { client, calls } = fakeClient(db);
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: false }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: false }], ADDED_ALL);
     expect(r.cleared).toEqual([]);
     expect(r.kept.map((n) => n.id)).toEqual(["lib-1", "fold-2"]);
+    expect(r.kept.every((n) => n.keptBecause === "not-reported-missing")).toBe(true);
     expect(calls.filter((c) => c.op === "update")).toEqual([]);
     expect(db.libraries[0].cover_image_url).toBe(SVG);
   });
@@ -353,19 +364,19 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
   it("the same key seen twice is one key; reported missing on either pass counts as reported missing", async () => {
     const db = fixture();
     const { client, calls } = fakeClient(db);
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: false }, { key: SVG, reportedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: false }, { key: SVG, reportedMissing: true }], ADDED_ALL);
     expect(r.cleared).toHaveLength(2);
     expect(calls.filter((c) => c.op === "select")).toHaveLength(4); // cover + background read, per table, once
   });
 
   it("a skipped file no node points at: nothing to clear, nothing written; no org or no keys: no reads at all", async () => {
     const { client, calls } = fakeClient(fixture());
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: `orgs/${ORG}/branding/covers/orphan.tiff`, reportedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: `orgs/${ORG}/branding/covers/orphan.tiff`, reportedMissing: true }], ADDED_ALL);
     expect(r).toEqual({ cleared: [], kept: [], errors: [] });
     expect(calls.filter((c) => c.op === "update")).toEqual([]);
     const empty = fakeClient(fixture());
-    expect(await clearSkippedNodeImagePointers(empty.client, "", [{ key: SVG, reportedMissing: true }])).toEqual({ cleared: [], kept: [], errors: [] });
-    expect(await clearSkippedNodeImagePointers(empty.client, ORG, [])).toEqual({ cleared: [], kept: [], errors: [] });
+    expect(await clearSkippedNodeImagePointers(empty.client, "", [{ key: SVG, reportedMissing: true }], ADDED_ALL)).toEqual({ cleared: [], kept: [], errors: [] });
+    expect(await clearSkippedNodeImagePointers(empty.client, ORG, [], ADDED_ALL)).toEqual({ cleared: [], kept: [], errors: [] });
     expect(empty.calls).toEqual([]);
   });
 
@@ -375,13 +386,117 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
       readError: (t, f) => (t === "collections" && f.some((x) => x.startsWith("cover_image_url=")) ? "permission denied" : null),
       refuse: (t, id) => t === "libraries" && id === "lib-1",
     });
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: true }], ADDED_ALL);
     expect(r.cleared).toEqual([]);
     expect(r.errors).toHaveLength(2);
     expect(r.errors[0]).toMatch(/^The library "P&IDs" still points at the missing cover covers\/legacy\.svg: Nothing was changed/);
     expect(r.errors[1]).toBe("Could not read the folders that use covers/legacy.svg as a cover (permission denied).");
     expect(db.libraries[0].cover_image_url).toBe(SVG);
     expect(db.collections[1].cover_image_url).toBe(SVG);
+  });
+
+  // ── fix pass 2: DEC-90 fail-safe — the clear touches only rows this restore added ──
+  it("REVIEW PIN: a row that was already here (not added by this restore) naming a reported-missing key is KEPT, named, and never written", async () => {
+    const db = fixture();
+    const { client, calls } = fakeClient(db);
+    // lib-1 and fold-2 both name SVG; only fold-2 was added by this restore
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: true }], {
+      restoredLibraryIds: new Set(), restoredFolderIds: new Set(["fold-2"]), storageAnswered: true,
+    });
+    expect(r.errors).toEqual([]);
+    expect(r.cleared.map((n) => n.id)).toEqual(["fold-2"]);
+    expect(r.kept).toEqual([{ kind: "library", id: "lib-1", name: "P&IDs", slot: "cover", file: "covers/legacy.svg", keptBecause: "already-here" }]);
+    expect(db.libraries[0].cover_image_url).toBe(SVG); // the live cover is untouched
+    const writes = calls.filter((c) => c.op === "update");
+    expect(writes).toHaveLength(1);
+    expect(writes[0].filters).toContain("id=fold-2");
+  });
+
+  it("the same holds for a background: an existing library's background is kept, an added folder's is cleared", async () => {
+    const db = fixture();
+    const { client } = fakeClient(db);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: HEIC, reportedMissing: true }], {
+      restoredLibraryIds: new Set(), restoredFolderIds: new Set(["fold-1"]), storageAnswered: true,
+    });
+    expect(r.cleared.map((n) => n.id)).toEqual(["fold-1"]);
+    expect(r.kept.map((n) => [n.id, n.keptBecause])).toEqual([["lib-1", "already-here"]]);
+    expect((db.libraries[0].page_config as Row).background).toEqual({ type: "image", imagePath: HEIC, opacity: 0.18 });
+    expect(db.collections[0].page_config).toEqual({ background: { type: "none" } });
+  });
+
+  it("a run in which storage never answered (outage, wrong credentials) clears nothing — every report of missing is distrusted, each node named", async () => {
+    const db = fixture();
+    const { client, calls } = fakeClient(db);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: true }, { key: HEIC, reportedMissing: true }],
+      { ...ADDED_ALL, storageAnswered: false });
+    expect(r.cleared).toEqual([]);
+    expect(r.kept).toHaveLength(4);
+    expect(r.kept.every((n) => n.keptBecause === "storage-unanswered")).toBe(true);
+    expect(calls.filter((c) => c.op === "update")).toEqual([]);
+  });
+
+  it("nodeImageClearVerdict: a clear needs all three; any doubt keeps", () => {
+    expect(nodeImageClearVerdict(true, true, true)).toBeNull();
+    expect(nodeImageClearVerdict(false, true, true)).toBe("not-reported-missing");
+    expect(nodeImageClearVerdict(true, false, true)).toBe("already-here");
+    expect(nodeImageClearVerdict(true, true, false)).toBe("storage-unanswered");
+    expect(nodeImageClearVerdict(false, false, false)).toBe("not-reported-missing");
+  });
+
+  it("storageAnsweredInRun: only an upload or a file found present is evidence (a space-archived file is decided from the database)", () => {
+    expect(storageAnsweredInRun({ uploaded: 0, skipped: 0 })).toBe(false);
+    expect(storageAnsweredInRun({ uploaded: 1, skipped: 0 })).toBe(true);
+    expect(storageAnsweredInRun({ uploaded: 0, skipped: 3 })).toBe(true);
+    // the page passes its counters object, which carries offline / failed too
+    expect(storageAnsweredInRun({ uploaded: 0, skipped: 0, offline: 4, failed: 9 } as { uploaded: number; skipped: number })).toBe(false);
+  });
+
+  it("restoreEnvelopeNodeIds / addRestoredNodeIds: the backup's ids, minus those already here, added to earlier runs'", () => {
+    const env = { tables: { libraries: [{ id: "lib-1" }, { id: "lib-9" }, { id: "lib-9" }, null, { name: "no id" }], collections: [{ id: "fold-7" }], notes: [{ id: "n" }] } };
+    const ids = restoreEnvelopeNodeIds(env as never);
+    expect(ids).toEqual({ libraries: ["lib-1", "lib-9"], collections: ["fold-7"] });
+    expect(restoreEnvelopeNodeIds({ tables: {} })).toEqual({ libraries: [], collections: [] });
+    const first = addRestoredNodeIds(null, ids, { libraries: new Set(["lib-1"]), collections: new Set() });
+    expect([...first.libraries]).toEqual(["lib-9"]);
+    expect([...first.collections]).toEqual(["fold-7"]);
+    // a second run sees the first run's rows as already here — they stay counted as added
+    const second = addRestoredNodeIds(first, ids, { libraries: new Set(["lib-1", "lib-9"]), collections: new Set(["fold-7"]) });
+    expect([...second.libraries]).toEqual(["lib-9"]);
+    expect([...second.collections]).toEqual(["fold-7"]);
+  });
+
+  it("nodeIdsPresentBeforeRestore: reads this workspace's rows among the backup's ids in chunks; a failed read is ok:false (the caller then clears nothing)", async () => {
+    const db = fixture();
+    const { client, calls } = fakeClient(db);
+    const many = Array.from({ length: 450 }, (_, i) => `lib-n${i}`);
+    const r = await nodeIdsPresentBeforeRestore(client, ORG, { libraries: ["lib-1", "lib-x", ...many], collections: ["fold-2", "fold-9"] });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect([...r.libraries]).toEqual(["lib-1"]); // lib-x is another workspace's
+      expect([...r.collections]).toEqual(["fold-2"]);
+    }
+    const libReads = calls.filter((c) => c.table === "libraries");
+    expect(libReads).toHaveLength(3); // 452 ids → 200 + 200 + 52
+    for (const c of calls) expect(c.filters).toContain(`org_id=${ORG}`);
+    const bad = fakeClient(fixture(), { readError: (t) => (t === "collections" ? "permission denied" : null) });
+    const e = await nodeIdsPresentBeforeRestore(bad.client, ORG, { libraries: ["lib-1"], collections: ["fold-2"] });
+    expect(e.ok).toBe(false);
+    if (!e.ok) expect(e.error).toMatch(/^Could not read which folders were already here before the restore \(permission denied\)/);
+    // a thrown read (network) is ok:false too — it never throws into the restore
+    const throwing = { from: () => { throw new Error("Failed to fetch"); } } as never;
+    const t = await nodeIdsPresentBeforeRestore(throwing, ORG, { libraries: ["lib-1"], collections: [] });
+    expect(t).toEqual({ ok: false, error: expect.stringContaining("(Failed to fetch)") });
+  });
+
+  it("the restore's promise is said: the additive note now names what the files step can change, and that an existing record is never changed by it", () => {
+    expect(RESTORE_ADDITIVE_NOTE.endsWith(RESTORE_FILES_POINTER_NOTE)).toBe(true);
+    expect(RESTORE_FILES_POINTER_NOTE).toContain("only folders and libraries this restore added");
+    expect(RESTORE_FILES_POINTER_NOTE).toContain("legacy SVG, HEIC or TIFF cover or background");
+    expect(RESTORE_FILES_POINTER_NOTE).toContain("each one is named");
+    expect(RESTORE_FILES_POINTER_NOTE).toContain("A folder or library that was already here is never changed by it.");
+    // the counter exception and "kept exactly as it is" stay as pinned elsewhere (restoreApplyRoute.test.ts)
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/kept exactly as it is/);
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/The one exception the restore itself makes is a ticket or document numbering counter/);
   });
 
   it("the pure helpers", () => {
@@ -392,6 +507,8 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
     expect(nodeImageFileLabel(SVG)).toBe("covers/legacy.svg");
     const n: NodeImagePointerNode = { kind: "folder", id: "f", name: "", slot: "cover", file: "covers/a.svg" };
     expect(nodeImagePointerLabel(n)).toBe('folder "f" — cover (covers/a.svg)');
+    expect(nodeImagePointerLabel({ ...n, keptBecause: "already-here" }))
+      .toBe(`folder "f" — cover (covers/a.svg): kept, because ${NODE_IMAGE_KEPT_REASON_TEXT["already-here"]}`);
   });
 
   it("overflowLines: the first `cap` lines and how many more — every line is either shown or counted", () => {
@@ -435,13 +552,13 @@ describe("ORG-18 — the restore page clears and names (app/(protected)/admin/re
   });
   it("after every file is tried, the pointers are cleared through the checked helper with this workspace's id, and the result is shown", () => {
     const loopEnd = page.indexOf("await Promise.all(\n      Array.from({ length: Math.min(CONCURRENCY, entries.length) }");
-    const call = page.indexOf("await clearSkippedNodeImagePointers(supabase, activeOrgId, skippedNodeImages)");
+    const call = page.indexOf("await clearSkippedNodeImagePointers(supabase, activeOrgId, skippedNodeImages, {");
     expect(loopEnd).toBeGreaterThan(0);
     expect(call).toBeGreaterThan(loopEnd);
     expect(page).toContain("setFilesProgress({ running: false, total: entries.length, ...counters, ...detail(), ...(pointers ?? {}) });");
     expect(page).toContain('data-testid="restore-node-images-cleared"');
     expect(page).toContain("So nothing points at a missing image, the cover or background was removed from");
-    expect(page).toContain("because the storage check did not report the file missing (nothing was");
+    expect(page).toContain("These still point at a skipped image (nothing was changed), each with the reason it was kept:");
     expect(page).not.toContain("could not confirm");
     expect(page).toContain("filesProgress.nodeImagePointerErrors");
     // a thrown helper is said, never a silent success
@@ -465,6 +582,34 @@ describe("ORG-18 — the restore page clears and names (app/(protected)/admin/re
     expect(page).not.toMatch(/nodeImages(Cleared|Kept)!\.length > 10 \? "; …"/);
     // Show all lists every line it is given
     expect(page).toMatch(/function ShowAllLines\(\{ lines, testId \}[^)]*\) \{[\s\S]*?\{lines\.map\(\(l, i\) => <li key=\{`\$\{i\}:\$\{l\}`\}>\{l\}<\/li>\)\}/);
+  });
+  it("fix pass 2: the 'was it here' read runs after the confirm and BEFORE the records are written; only added rows and an answering storage may be cleared", () => {
+    const confirm = page.indexOf("if (!ok) return;\n      // ORG-18 fix pass 2:");
+    const before = page.indexOf("await nodeIdsPresentBeforeRestore(supabase, activeOrgId, backupNodeIds)");
+    const run = page.indexOf("async () => await runChunkedRestore(");
+    expect(confirm).toBeGreaterThan(0);
+    expect(before).toBeGreaterThan(confirm);
+    expect(run).toBeGreaterThan(before);
+    expect(page).toContain("if (nodesBefore?.ok) restoredNodesRef.current = addRestoredNodeIds(restoredNodesRef.current, backupNodeIds, nodesBefore);");
+    expect(page).toContain("else if (nodesBefore && !nodesBefore.ok) restoredNodesNoteRef.current = nodesBefore.error;");
+    // the clear is scoped: nothing added → empty sets (nothing cleared); storage evidence from this run's counters
+    expect(page).toContain("restoredLibraryIds: added?.libraries ?? new Set<string>(),");
+    expect(page).toContain("restoredFolderIds: added?.collections ?? new Set<string>(),");
+    expect(page).toContain("storageAnswered: storageAnsweredInRun(counters),");
+    // a failed "was it here" read is said with the pointer errors
+    expect(page).toContain("nodeImagePointerErrors: [...(restoredNodesNoteRef.current ? [restoredNodesNoteRef.current] : []), ...r.errors],");
+    // a new drop forgets the previous backup's added rows
+    expect(page).toContain("restoredNodesRef.current = null; restoredNodesNoteRef.current = null;");
+  });
+  it("fix pass 2: the files step says, before it runs, that it can change records — only ones this restore added", () => {
+    const para = page.indexOf("Re-uploads the <b>{fmtNum(fileEntryCount)}</b> file(s)");
+    const note = page.indexOf('<span data-testid="restore-files-pointer-note">{RESTORE_FILES_POINTER_NOTE}</span>');
+    const button = page.indexOf("onClick={() => void putFilesBack()}");
+    expect(para).toBeGreaterThan(0);
+    expect(note).toBeGreaterThan(para);
+    expect(button).toBeGreaterThan(note);
+    // and the confirm before the records are applied carries it (RESTORE_ADDITIVE_NOTE ends with it)
+    expect(page).toContain("`${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.`");
   });
   it("REGRESSION: the ORG-16 file notice is unchanged and still names each skipped file", () => {
     expect(page).toContain("nodeImagesNotRestored: [...nodeImagesNotRestored],");

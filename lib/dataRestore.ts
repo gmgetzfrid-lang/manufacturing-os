@@ -1721,6 +1721,15 @@ export async function previewRestoreChunk(
 // `post` — so it runs the same in a test against the real routes as it does
 // in the browser against fetch.
 
+/** ORG-18 (fix pass 2) — what "Put the files back" may change, said before
+ *  the records are applied and again on the files step. It changes only a
+ *  folder or library THIS restore added (absent before it ran); a record that
+ *  was already here is never changed by it. */
+export const RESTORE_FILES_POINTER_NOTE =
+  "Putting a Full ZIP's files back can also change records, but only folders and libraries this restore added: " +
+  "a legacy SVG, HEIC or TIFF cover or background that can no longer be uploaded is removed from the folder or library " +
+  "this restore added that points at it, and each one is named. A folder or library that was already here is never changed by it.";
+
 /** DEC-75 §5 — the sentence the page shows before and after a restore.
  *  Fix pass 6: it names the one exception (RESTORE_COUNTER_COLUMNS), so the
  *  Admin never consents to "kept exactly as it is" for a counter the restore
@@ -1732,7 +1741,8 @@ export const RESTORE_ADDITIVE_NOTE =
   "when the backup carries its counters (one made before 2026-08-18, or an incomplete export, may not); " +
   "where this workspace's number prefix differs from the backup's, that leaves a gap in its numbering. " +
   "Restored records still run the database's own bookkeeping (for example a project's last-activity time), " +
-  "and choosing the backup's workspace name renames this workspace.";
+  "and choosing the backup's workspace name renames this workspace. " +
+  RESTORE_FILES_POINTER_NOTE;
 
 /** BKP-5 (fix pass) — what the page says about records whose key another workspace holds. */
 export const RESTORE_HELD_ELSEWHERE_NOTE =
@@ -2087,15 +2097,28 @@ export async function readBackupArchive(parts: ReadonlyArray<{ name: string; zip
 // drew nothing, with no way to tell which node. Ruled under DEC-90 for P11:
 // the restore clears that node's pointer and names the node and the file.
 //
-// Which keys are cleared: only a key for which `/api/storage/resolve`
-// answered 200 with `missing: true`, i.e. storage did not return the object.
-// That answer is NOT a proof of absence: the route gives `missing: true` for
-// a HEAD failure of any kind (a NotFound, but also a 5xx, throttling, a
-// timeout or a credentials error — app/api/storage/resolve/route.ts's catch),
-// so a transient storage error can clear a pointer whose file is still there
-// (DEC-90 rules a clear on any skip; the node is named and can be given its
-// image again under Customize). A key the check did not answer at all (a
-// non-200, or no `missing: true`) is named and NOT cleared. Only the pointer that equals the skipped key changes: a cover
+// Which pointers are cleared (fix pass 2, DEC-90 fail-safe): a pointer is
+// cleared only when ALL three hold —
+//   1. the storage check reported the key missing: `/api/storage/resolve`
+//      answered 200 with `missing: true`.
+//      That answer is NOT a proof of absence: the route gives `missing: true`
+//      for a HEAD failure of any kind (a NotFound, but also a 5xx, throttling,
+//      a timeout or a credentials error — app/api/storage/resolve/route.ts's
+//      catch; ORG-20 routes the NotFound-only answer to its owner);
+//   2. the node is one THIS restore added — its id is in the backup and was
+//      absent from this workspace just before the records were applied
+//      (nodeIdsPresentBeforeRestore). A folder or library that was already
+//      here is never changed, whatever the check said, so a live cover whose
+//      file is still in storage cannot be lost to a storage error;
+//   3. storage answered at least once in this run (a file was uploaded, or
+//      found already there — storageAnsweredInRun). A run in which no request
+//      reached storage (an outage, wrong credentials) reports every key
+//      missing, so none of its reports is trusted.
+// Every other node naming a skipped key is named with the reason it was kept,
+// and NOT changed. So a transient error can clear a pointer only on a row the
+// restore itself just added, while storage was otherwise answering (DEC-90
+// rules a clear on skip; the node is named). Only the pointer that equals the
+// skipped key changes: a cover
 // pointer becomes NULL, a background becomes `{ type: "none" }` (what the
 // Customize editor writes for "no background"), and every other column and
 // the page header are kept. Every write is checked (a zero-row answer is a
@@ -2104,6 +2127,8 @@ export async function readBackupArchive(parts: ReadonlyArray<{ name: string; zip
 // and after its paste.
 
 export type SkippedNodeImage = { key: string; reportedMissing: boolean };
+/** Why a node naming a skipped file was kept (NOT changed). */
+export type NodeImageKeptReason = "not-reported-missing" | "already-here" | "storage-unanswered";
 export type NodeImagePointerNode = {
   kind: "library" | "folder";
   id: string;
@@ -2111,13 +2136,26 @@ export type NodeImagePointerNode = {
   slot: "cover" | "background";
   /** The skipped file, as the panel names it (`covers/<file>`). */
   file: string;
+  /** Set on a kept node only: why its pointer was left as it is. */
+  keptBecause?: NodeImageKeptReason;
 };
+/** Fix pass 2 (DEC-90 fail-safe): what the clear may touch. */
+export interface NodeImageClearScope {
+  /** Ids of the libraries this restore added (in the backup, absent from
+   *  this workspace just before the records were applied). */
+  restoredLibraryIds: ReadonlySet<string>;
+  /** Ids of the folders (collections) this restore added, likewise. */
+  restoredFolderIds: ReadonlySet<string>;
+  /** Whether storage answered at least once in this files run
+   *  (storageAnsweredInRun). */
+  storageAnswered: boolean;
+}
 export interface NodeImagePointerClearResult {
   /** Pointers cleared: the node no longer names the missing image. */
   cleared: NodeImagePointerNode[];
-  /** Nodes that name a skipped file the storage check did not report
-   *  missing (it did not answer 200 with `missing: true`) — named, NOT
-   *  changed. */
+  /** Nodes that name a skipped file and were NOT changed, each with
+   *  `keptBecause`: the check did not report it missing, the node was
+   *  already here before the restore, or storage never answered this run. */
   kept: NodeImagePointerNode[];
   /** Each read or write that failed, in words (nothing is assumed). */
   errors: string[];
@@ -2140,9 +2178,97 @@ export function pageConfigWithoutBackground(pageConfig: unknown): Record<string,
   return { ...base, background: { type: "none" } };
 }
 
-/** One line per node for the restore panel: `library "P&IDs" — cover (covers/a.svg)`. */
+/** The words the panel gives for each kept reason. */
+export const NODE_IMAGE_KEPT_REASON_TEXT: Readonly<Record<NodeImageKeptReason, string>> = {
+  "not-reported-missing": "the storage check did not report the file missing",
+  "already-here": "it was already in this workspace before the restore, which never changes it",
+  "storage-unanswered": "storage did not answer once in this run (nothing uploaded or found), so its missing-file reports are not trusted",
+};
+
+/** One line per node for the restore panel: `library "P&IDs" — cover (covers/a.svg)`,
+ *  and for a kept node the reason it was kept. */
 export function nodeImagePointerLabel(n: NodeImagePointerNode): string {
-  return `${n.kind} "${n.name || n.id}" — ${n.slot} (${n.file})`;
+  const base = `${n.kind} "${n.name || n.id}" — ${n.slot} (${n.file})`;
+  return n.keptBecause ? `${base}: kept, because ${NODE_IMAGE_KEPT_REASON_TEXT[n.keptBecause]}` : base;
+}
+
+/** Fix pass 2: the clear's verdict for one node — null to clear, or why it is
+ *  kept. Every condition must hold for a clear (fail-safe: any doubt keeps).
+ *  Pure. */
+export function nodeImageClearVerdict(reportedMissing: boolean, addedByRestore: boolean, storageAnswered: boolean): NodeImageKeptReason | null {
+  if (!reportedMissing) return "not-reported-missing";
+  if (!addedByRestore) return "already-here";
+  if (!storageAnswered) return "storage-unanswered";
+  return null;
+}
+
+/** Fix pass 2: storage answered at least once in a files run — a file was
+ *  uploaded, or the resolve route found one already there (a HEAD that
+ *  succeeded). A file left to a space archive is decided from the database,
+ *  not storage, so it is no evidence. Pure. */
+export function storageAnsweredInRun(counters: { uploaded: number; skipped: number }): boolean {
+  return (counters.uploaded ?? 0) + (counters.skipped ?? 0) > 0;
+}
+
+/** Fix pass 2: the library and folder (collection) ids a backup carries. A
+ *  restore keeps every id, so these are the ids the rows land under. Pure. */
+export function restoreEnvelopeNodeIds(envelope: Pick<RestoreEnvelopeLike, "tables">): { libraries: string[]; collections: string[] } {
+  const idsOf = (table: string): string[] => {
+    const rows = envelope?.tables && has(envelope.tables, table) && Array.isArray(envelope.tables[table]) ? envelope.tables[table] : [];
+    const out = new Set<string>();
+    for (const r of rows) {
+      const id = r && typeof r === "object" ? (r as Record<string, unknown>).id : undefined;
+      if (typeof id === "string" && id) out.add(id);
+    }
+    return [...out];
+  };
+  return { libraries: idsOf("libraries"), collections: idsOf("collections") };
+}
+
+/** Fix pass 2: which of the backup's library / folder ids already exist in
+ *  `orgId` — read just before the records are applied, so the files step can
+ *  tell a row this restore added from one that was already here. Checked: a
+ *  failed read answers `ok: false` and the caller then treats every node as
+ *  already here (nothing is cleared). Read in chunks of 200 ids. */
+export async function nodeIdsPresentBeforeRestore(
+  supabase: Pick<SupabaseClient, "from">,
+  orgId: string,
+  ids: { libraries: ReadonlyArray<string>; collections: ReadonlyArray<string> },
+): Promise<{ ok: true; libraries: Set<string>; collections: Set<string> } | { ok: false; error: string }> {
+  const present = { libraries: new Set<string>(), collections: new Set<string>() };
+  const refused = (table: string, why: string) => ({ ok: false as const,
+    error: `Could not read which ${table === "libraries" ? "libraries" : "folders"} were already here before the restore (${why}) — no folder or library will have a cover or background removed by "Put the files back".` });
+  for (const table of ["libraries", "collections"] as const) {
+    const list = ids[table];
+    for (let i = 0; i < list.length; i += 200) {
+      // A thrown read (network) is an unread answer too: it never stops the
+      // restore, and it clears nothing.
+      let res: { data: unknown; error: { message: string } | null };
+      try {
+        res = await supabase.from(table).select("id").eq("org_id", orgId).in("id", list.slice(i, i + 200));
+      } catch (e) {
+        return refused(table, (e instanceof Error && e.message) || "the read failed");
+      }
+      if (res.error) return refused(table, res.error.message);
+      for (const r of (res.data ?? []) as Array<{ id: string }>) present[table].add(r.id);
+    }
+  }
+  return { ok: true, ...present };
+}
+
+/** Fix pass 2: the ids this restore added — the backup's ids that were not
+ *  here before it ran — added to those earlier runs in this session added.
+ *  Pure. */
+export function addRestoredNodeIds(
+  prior: { libraries: ReadonlySet<string>; collections: ReadonlySet<string> } | null,
+  backup: { libraries: ReadonlyArray<string>; collections: ReadonlyArray<string> },
+  before: { libraries: ReadonlySet<string>; collections: ReadonlySet<string> },
+): { libraries: Set<string>; collections: Set<string> } {
+  const libraries = new Set(prior?.libraries ?? []);
+  const collections = new Set(prior?.collections ?? []);
+  for (const id of backup.libraries) if (!before.libraries.has(id)) libraries.add(id);
+  for (const id of backup.collections) if (!before.collections.has(id)) collections.add(id);
+  return { libraries, collections };
 }
 
 /** ORG-18: the restore panel shows the first `cap` lines of a list and says
@@ -2154,13 +2280,15 @@ export function overflowLines(lines: ReadonlyArray<string>, cap: number): { show
 }
 
 /** ORG-18: find every library and folder in `orgId` whose cover or page
- *  background names a key the restore skipped, clear the pointer when the
- *  storage check reported the key missing (any HEAD failure — see above),
- *  and name each node either way. */
+ *  background names a key the restore skipped, clear the pointer only when
+ *  nodeImageClearVerdict says so (reported missing, added by this restore,
+ *  storage answered — see above), and name each node either way. `scope` is
+ *  required: no caller gets a clear of rows that were already here. */
 export async function clearSkippedNodeImagePointers(
   supabase: Pick<SupabaseClient, "from">,
   orgId: string,
   skipped: ReadonlyArray<SkippedNodeImage>,
+  scope: NodeImageClearScope,
 ): Promise<NodeImagePointerClearResult> {
   const result: NodeImagePointerClearResult = { cleared: [], kept: [], errors: [] };
   const byKey = new Map<string, SkippedNodeImage>();
@@ -2175,6 +2303,7 @@ export async function clearSkippedNodeImagePointers(
   if (!orgId || unique.length === 0) return result;
 
   for (const { table, kind } of NODE_IMAGE_TABLES) {
+    const addedIds = table === "libraries" ? scope.restoredLibraryIds : scope.restoredFolderIds;
     for (const { key, reportedMissing } of unique) {
       const file = nodeImageFileLabel(key);
       // ── the cover pointer ──
@@ -2185,7 +2314,8 @@ export async function clearSkippedNodeImagePointers(
       } else {
         for (const row of (covers ?? []) as Array<{ id: string; name: string | null }>) {
           const node: NodeImagePointerNode = { kind, id: row.id, name: row.name ?? "", slot: "cover", file };
-          if (!reportedMissing) { result.kept.push(node); continue; }
+          const why = nodeImageClearVerdict(reportedMissing, addedIds.has(row.id), scope.storageAnswered);
+          if (why) { result.kept.push({ ...node, keptBecause: why }); continue; }
           const w = await checkedWrite(supabase.from(table).update({ cover_image_url: null })
             .eq("id", row.id).eq("org_id", orgId).eq("cover_image_url", key).select("id"));
           if (w.ok) result.cleared.push(node);
@@ -2201,7 +2331,8 @@ export async function clearSkippedNodeImagePointers(
       }
       for (const row of (backs ?? []) as Array<{ id: string; name: string | null; page_config: unknown }>) {
         const node: NodeImagePointerNode = { kind, id: row.id, name: row.name ?? "", slot: "background", file };
-        if (!reportedMissing) { result.kept.push(node); continue; }
+        const why = nodeImageClearVerdict(reportedMissing, addedIds.has(row.id), scope.storageAnswered);
+        if (why) { result.kept.push({ ...node, keptBecause: why }); continue; }
         const w = await checkedWrite(supabase.from(table).update({ page_config: pageConfigWithoutBackground(row.page_config) })
           .eq("id", row.id).eq("org_id", orgId).contains("page_config", { background: { imagePath: key } }).select("id"));
         if (w.ok) result.cleared.push(node);
