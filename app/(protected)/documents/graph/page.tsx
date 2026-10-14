@@ -34,7 +34,8 @@ import {
   aliasConfidence, tagVariants,
   type ParsedQuery, type QueryChip, type RankedHit, type IndexEntry, type FinderAlias, type FinderAliasKind,
 } from "@/lib/fileFinder";
-import { loadFinderData, loadFinderSnapshot, saveFinderSnapshot, type FinderData } from "@/lib/fileFinder/load";
+import { loadFinderSnapshot, saveFinderSnapshot, type FinderData } from "@/lib/fileFinder/load";
+import { fetchFinderData } from "@/lib/fileFinder/remote";
 import { supabase } from "@/lib/supabase";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
 import { rowToVersion } from "@/lib/revisions";
@@ -147,7 +148,7 @@ function GraphPageInner() {
     if (!dataRef.current) { const snap = loadFinderSnapshot(activeOrgId); if (snap) { setData(snap.data); setSnapAt(snap.at); } }
     try {
       // The map first; aliases and drive listings are extras and never hold it up.
-      const d = await loadFinderData(activeOrgId, activeRole, controller);
+      const d = await fetchFinderData(activeOrgId, activeRole, controller);
       setData(d); setSnapAt(null); saveFinderSnapshot(activeOrgId, d);
       const [a, l] = await Promise.all([
         listFinderAliases(activeOrgId).catch((e) => { console.warn("[finder] aliases:", e); return []; }),

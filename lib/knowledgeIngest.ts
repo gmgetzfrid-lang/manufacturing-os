@@ -108,6 +108,12 @@ export async function ingestKnowledgeDocBatch(
 
   const from = Number(doc.pages_indexed ?? 0);           // 0-based next page
   const to = Math.min(from + PAGE_BATCH, pageCount);
+  // A drawing set extracts on EVERY page. The sparse-text heuristic was
+  // written for standards with the odd drawing inside; a CAD P&ID with a
+  // full text layer carries thousands of characters and used to be skipped
+  // as "prose" — every tag on it invisible, the registry empty.
+  const { data: libFeat } = await supabaseAdmin.from("knowledge_libraries").select("ai_features").eq("id", doc.library_id).maybeSingle();
+  const drawingSet = ((libFeat?.ai_features ?? {}) as Record<string, unknown>).drawingIntel === true;
   let emptyPages = 0;
   let visionPages = 0;
   let visionBudgetSpent = false;
@@ -228,7 +234,7 @@ export async function ingestKnowledgeDocBatch(
           });
         }
       }
-    } else if (isDrawingLikePage(pageText)) {
+    } else if (drawingSet || isDrawingLikePage(pageText) || tagsFromText >= 8) {
       // Normalized position rides along with every hit: PDF user space has
       // its origin at the BOTTOM-left and is sized in points, neither of
       // which a browser overlay can use. 0..1 from the top-left survives any
@@ -265,7 +271,7 @@ export async function ingestKnowledgeDocBatch(
     // The border says who this sheet is — drawing number, sheet, rev. That
     // declaration (kind 'self') is what the reference audit trusts;
     // filenames are only a fallback for sheets that never declared.
-    if (visionRead || isDrawingLikePage(pageText)) {
+    if (visionRead || drawingSet || isDrawingLikePage(pageText) || tagsFromText >= 8) {
       // Off-page connector BOX NUMBERS — the small numbered box at the page
       // edge that pairs with the same number on the continuation sheet. The
       // raw line keeps the stream/destination + drawing ref for pairing.

@@ -108,27 +108,29 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
     if (!error) sourcesAdded++;
   }
   const sync = await syncKnowledgeLibrarySources(libraryId);
-  // Copies read before tags were extracted: no equipment on any page although
-  // pages were read. Re-read once (the marker lives on the library).
+  // Copies read with no equipment on any page: read before tags were
+  // extracted, or read as prose. Each is re-read once (the ids already
+  // re-read live on the library, so a sheet that truly has no tags is
+  // never re-read in a loop).
   let rereads = 0;
-  if (!feats.connectRereadAt) {
-    const { data: ready } = await admin.from("knowledge_documents").select("id, pages_indexed").eq("library_id", libraryId).eq("status", "ready").gt("pages_indexed", 0).limit(2000);
-    const ids = ((ready as Array<{ id: string }> | null) ?? []).map((r) => r.id);
-    if (ids.length) {
-      const withTags = new Set<string>();
-      for (let i = 0; i < ids.length; i += 200) {
-        const { data: ents } = await admin.from("knowledge_page_entities").select("document_id").eq("org_id", orgId).eq("kind", "equipment").in("document_id", ids.slice(i, i + 200)).limit(20000);
-        for (const e of (ents as Array<{ document_id: string }> | null) ?? []) withTags.add(e.document_id);
-      }
-      const stale = ids.filter((id) => !withTags.has(id));
-      for (let i = 0; i < stale.length; i += 200) {
-        const slice = stale.slice(i, i + 200);
-        await admin.from("knowledge_chunks").delete().in("document_id", slice).then(() => undefined, () => undefined);
-        const { error } = await admin.from("knowledge_documents").update({ status: "stale", pages_indexed: 0, page_count: null, last_section: null, error: null }).in("id", slice);
-        if (!error) rereads += slice.length;
-      }
+  const already = new Set<string>(Array.isArray(feats.connectReread) ? (feats.connectReread as string[]) : []);
+  const { data: ready } = await admin.from("knowledge_documents").select("id, pages_indexed").eq("library_id", libraryId).eq("status", "ready").gt("pages_indexed", 0).limit(3000);
+  const ids = ((ready as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+  if (ids.length) {
+    const withTags = new Set<string>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: ents } = await admin.from("knowledge_page_entities").select("document_id").eq("org_id", orgId).eq("kind", "equipment").in("document_id", ids.slice(i, i + 200)).limit(20000);
+      for (const e of (ents as Array<{ document_id: string }> | null) ?? []) withTags.add(e.document_id);
     }
-    await admin.from("knowledge_libraries").update({ ai_features: { ...feats, drawingIntel: true, connectRereadAt: new Date().toISOString() } }).eq("id", libraryId).then(() => undefined, () => undefined);
+    const stale = ids.filter((id) => !withTags.has(id) && !already.has(id));
+    for (let i = 0; i < stale.length; i += 200) {
+      const slice = stale.slice(i, i + 200);
+      await admin.from("knowledge_chunks").delete().in("document_id", slice).then(() => undefined, () => undefined);
+      await admin.from("knowledge_page_entities").delete().in("document_id", slice).then(() => undefined, () => undefined);
+      const { error } = await admin.from("knowledge_documents").update({ status: "stale", pages_indexed: 0, page_count: null, last_section: null, error: null }).in("id", slice);
+      if (!error) { rereads += slice.length; for (const id of slice) already.add(id); }
+    }
+    if (stale.length) await admin.from("knowledge_libraries").update({ ai_features: { ...feats, drawingIntel: true, connectReread: [...already].slice(-5000) } }).eq("id", libraryId).then(() => undefined, () => undefined);
   }
   return { libraryId, created, sourcesAdded, sync, rereads };
 }
@@ -206,9 +208,19 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
   const queued = (queuedRows as Array<{ id: string }> | null) ?? [];
   const { count: readyCount } = await admin.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("library_id", r.libraryId).eq("status", "ready");
   const { count: errCount } = await admin.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("library_id", r.libraryId).eq("status", "error");
+  // How many read copies actually carry equipment tags — the number the
+  // registry step lives on.
+  const { data: readyIds } = await admin.from("knowledge_documents").select("id").eq("library_id", r.libraryId).eq("status", "ready").limit(3000);
+  const rids = ((readyIds as Array<{ id: string }> | null) ?? []).map((x) => x.id);
+  const tagged = new Set<string>();
+  for (let i = 0; i < rids.length; i += 200) {
+    const { data: ents } = await admin.from("knowledge_page_entities").select("document_id").eq("org_id", orgId).eq("kind", "equipment").in("document_id", rids.slice(i, i + 200)).limit(20000);
+    for (const e of (ents as Array<{ document_id: string }> | null) ?? []) tagged.add(e.document_id);
+  }
+  const untagged = rids.length - tagged.size;
   steps.push({
-    key: "index", title: "Drawings read", state: queued.length ? "working" : "done",
-    detail: `${readyCount ?? 0} read${queued.length ? ` · ${queued.length} still to read${drained.pagesIndexed ? ` (${drained.pagesIndexed} pages just now)` : ""}` : ""}${errCount ? ` · ${errCount} could not be read` : ""}`,
+    key: "index", title: "Drawings read", state: queued.length ? "working" : untagged > 0 && tagged.size === 0 ? "blocked" : "done",
+    detail: `${readyCount ?? 0} read · ${tagged.size} with equipment tags on their pages${untagged ? ` · ${untagged} with none${queued.length ? "" : " (scanned images need your AI key under AI settings to be read)"}` : ""}${queued.length ? ` · ${queued.length} still to read${drained.pagesIndexed ? ` (${drained.pagesIndexed} pages just now)` : ""}` : ""}${errCount ? ` · ${errCount} could not be read` : ""}`,
   });
 
   // 4. Registry from the read drawings.
