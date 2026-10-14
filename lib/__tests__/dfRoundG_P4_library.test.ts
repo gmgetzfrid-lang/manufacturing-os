@@ -81,7 +81,7 @@ vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "u
 vi.mock("@/lib/teams", () => ({ getMyTeamIds: vi.fn(async () => []) }));
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LibraryPicker, NO_LIBRARY_LABEL } from "@/components/requests/LibraryPicker";
+import { LibraryPicker, NO_LIBRARY_LABEL, CURRENT_HIDDEN_LIBRARY_LABEL } from "@/components/requests/LibraryPicker";
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { POST as handback } from "@/app/api/tickets/handback/route";
 
@@ -251,6 +251,48 @@ describe("DCW-1 / DCW-7 — the workflow route: triage's library and unit, valid
       expect(JSON.stringify(u.history)).not.toContain("Legal");
     }
   });
+  it("fix pass 2: the ticket's CURRENT library sent back unchanged is no change — a non-controller assigner who cannot discover it still assigns (200), library_id untouched, the library never read", async () => {
+    for (const role of ["DraftingSupervisor", "Supervisor"]) {
+      state.calls = [];
+      state.user = { id: "s-1" };
+      state.rows.org_members = [member("s-1", role), member("req-1", "Requester"), member("d-1", "Drafter")];
+      state.rows.team_members = [];
+      // A requester's discover grant set it (DCW-5 → create route); the assigner holds none.
+      state.rows.libraries = [{ id: LIB, org_id: "o1", name: "Unit 300 P&IDs", visibility: "private", acl: null, owner_user_id: "someone" }];
+      state.rows.tickets = [ticketRow({ library_id: LIB })];
+      for (const libraryId of [LIB, LIB.toUpperCase(), ` ${LIB} `]) {
+        state.calls = [];
+        state.rows.tickets = [ticketRow({ library_id: LIB })];
+        const res = await assign({ libraryId });
+        expect(res.status, `${role} ${libraryId}`).toBe(200);
+        const u = ticketUpdates()[0];
+        expect(u).toMatchObject({ status: "DRAFTING", assigned_drafter_id: "d-1" });
+        expect("library_id" in u).toBe(false);
+        expect(JSON.stringify(u.history)).not.toContain("Library:");
+        expect(state.calls.some((c) => c.table === "libraries")).toBe(false);
+      }
+    }
+    // A DIFFERENT library the same assigner cannot discover is still refused.
+    const OTHER = "1b000000-0000-4000-8000-000000000002";
+    state.calls = [];
+    state.rows.libraries.push({ id: OTHER, org_id: "o1", name: "Other", visibility: "private", acl: null, owner_user_id: "someone" });
+    state.rows.tickets = [ticketRow({ library_id: LIB })];
+    expect((await assign({ libraryId: OTHER })).status).toBe(400);
+    expect(ticketUpdates()).toHaveLength(0);
+  });
+  it("fix pass 2: a NORMAL library whose ACL carries any rule (a deny hiding it from a role) is 'the target library' in the triage history", async () => {
+    seedQueue();
+    state.rows.libraries = [{ id: LIB, org_id: "o1", name: "Confidential Projects", visibility: "normal", owner_user_id: null,
+      acl: { rules: [{ subject: { type: "role", id: "Requester" }, effect: "deny", actions: ["discover"] }] } }];
+    state.rows.tickets = [ticketRow()];
+    const res = await assign({ libraryId: LIB });
+    expect(res.status).toBe(200);
+    const u = ticketUpdates()[0];
+    expect(u.library_id).toBe(LIB);
+    const line = (u.history as Array<{ action: string; details?: string }>).find((h) => h.action === "Triage details set");
+    expect(line?.details).toBe("Library: the target library");
+    expect(JSON.stringify(u)).not.toContain("Confidential");
+  });
   it("fix pass: a membership or team read that fails is a 503 with nothing written — never a guess", async () => {
     seedQueue();
     state.rows.tickets = [ticketRow()];
@@ -343,6 +385,28 @@ describe("DCW-4 (DF-P4 limb) — a request with a library but no source document
     const u = ticketUpdates()[0];
     expect((u.history as Array<{ details?: string }>).at(-1)?.details).toBe("Closed without a register document: the deliverable was not published into the target library.");
     expect(JSON.stringify(u)).not.toContain("Legal");
+  });
+  it("fix pass 2: a NORMAL library with an ACL rule is 'the target library' in the close note — the ACL hides it from some readers", async () => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter"), member("a-1", "Admin")];
+    state.rows.libraries = [{ id: LIB, org_id: "o1", name: "Confidential Projects", visibility: "normal",
+      acl: { rules: [{ subject: { type: "team", id: "team-x" }, effect: "deny", actions: ["discover"] }] } }];
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", assigned_drafter_id: "d-1", attachments: [FINAL], library_id: LIB })];
+    expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
+    const u = ticketUpdates()[0];
+    expect((u.history as Array<{ details?: string }>).at(-1)?.details).toBe("Closed without a register document: the deliverable was not published into the target library.");
+    expect(JSON.stringify(u)).not.toContain("Confidential");
+    expect(state.calls.some((c) => c.table === "libraries" && c.method === "select" && String(c.args[0]).includes("acl"))).toBe(true);
+  });
+  it("fix pass 2: libraryLabelForTicket names a normal library only when its ACL is absent or carries no rule and no restricted visibility", () => {
+    expect(libraryLabelForTicket({ name: "P&IDs", visibility: "normal", acl: null })).toBe("P&IDs");
+    expect(libraryLabelForTicket({ name: "P&IDs", visibility: "normal", acl: { rules: [] } })).toBe("P&IDs");
+    expect(libraryLabelForTicket({ name: "P&IDs", visibility: "normal", acl: { inherit: true } })).toBe("P&IDs");
+    const deny = { rules: [{ subject: { type: "role", id: "Requester" }, effect: "deny", actions: ["discover"] }] };
+    const allow = { rules: [{ subject: { type: "team", id: "t" }, effect: "allow", actions: ["read"] }] };
+    for (const acl of [deny, allow, { rules: [], visibility: "private" }, { rules: [], visibility: "hidden" }, { rules: "x" }, "garbage", [1]]) {
+      expect(libraryLabelForTicket({ name: "Confidential", visibility: "normal", acl }), JSON.stringify(acl)).toBe("the target library");
+    }
   });
   it("libraryLabelForTicket: a normal (or unknown-visibility) library keeps its name; hidden / private / missing / blank is 'the target library'", () => {
     expect(libraryLabelForTicket({ name: "P&IDs", visibility: "normal" })).toBe("P&IDs");
@@ -476,6 +540,16 @@ describe("AUTHZ-10 — the page's entry set equals the database's write set (one
     // inventory rows are counts, never customer rows
     expect(between(M, "CREATE TEMP TABLE df_round_g_209_before", "\nBEGIN;")).not.toMatch(/SELECT\s+(m\.|t\.)?(uid|email|display_name)\b/);
   });
+  it("fix pass 2 (CHAIN-7 / SURF-9 census): the sidebar shows 'Request forms' to the same set — the controllers' section, and exactly that entry to a non-controller DRAFTING_CONFIG_EDITORS holder", () => {
+    const sb = readFileSync(join(process.cwd(), "components", "navigation", "Sidebar.tsx"), "utf8");
+    expect(sb).toContain("import { DRAFTING_CONFIG_EDITORS } from '@/lib/adminSurfaces';");
+    expect(sb).toContain("const requestsEntry: NavLeaf = { label: 'Request forms', href: '/admin/requests', icon: FileText, tone: 'orange' };");
+    expect(sb).toContain("    if (!isAdmin && hasAnyRole(DRAFTING_CONFIG_EDITORS as Role[])) admin.push(requestsEntry);");
+    expect(sb.match(/href: '\/admin\/requests'/g)).toHaveLength(1);
+    expect(sb).toMatch(/usersEntry,\n\s+\{ label: 'Teams'[^\n]*\n[^\n]*Library config[^\n]*\n\s+requestsEntry,\n/);
+    // The non-controllers the entry adds are exactly the registry's set minus the controllers.
+    expect(DRAFTING_CONFIG_EDITORS.filter((r) => r !== "Admin" && r !== "DocCtrl")).toEqual(["DraftingSupervisor"]);
+  });
   it("the page has no client redirect (the layout's server gate decides) and says the database's own reason on a refused save", () => {
     const page = readFileSync(join(process.cwd(), "app", "(protected)", "admin", "requests", "page.tsx"), "utf8");
     expect(page).not.toContain("router.push('/dashboard')");
@@ -571,6 +645,14 @@ describe("DCW-5 / LibraryPicker — source pins (the component is mounted by DF-
     expect(html).toContain(`<option value="" selected="">${NO_LIBRARY_LABEL}</option>`);
     expect(html).toMatch(/<select[^>]*disabled=""/);
     expect(html).toContain("Target library");
+  });
+  it("fix pass 2: a current library the assigner is not offered shows as 'the target library (current)', selected — never 'No library', never its name", () => {
+    const html = renderToStaticMarkup(createElement(LibraryPicker, { orgId: "o1", value: LIB, onChange: () => undefined }));
+    expect(html).toContain(`<option value="${LIB}" selected="">${CURRENT_HIDDEN_LIBRARY_LABEL}</option>`);
+    expect(html).not.toContain(`<option value="" selected="">`);
+    expect(CURRENT_HIDDEN_LIBRARY_LABEL).toBe("the target library (current)");
+    // No value → no extra option.
+    expect(renderToStaticMarkup(createElement(LibraryPicker, { orgId: "o1", value: null, onChange: () => undefined }))).not.toContain(CURRENT_HIDDEN_LIBRARY_LABEL);
   });
   it("the picker offers only offerableLibraries (canDiscover) plus 'No library — decide later', the default", () => {
     const src = readFileSync(join(process.cwd(), "components", "requests", "LibraryPicker.tsx"), "utf8");

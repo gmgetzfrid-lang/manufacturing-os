@@ -547,7 +547,14 @@ export async function POST(req: NextRequest) {
   // Phase 2 item 1: "Do not make it required at intake"; DEC-101 item 1).
   const triageAction = ticket.status === "PENDING_ASSIGNMENT"
     && (action.action === "assign" || action.action === "request_eng_review");
-  const wantsLibrary = typeof body.libraryId === "string" && body.libraryId.trim() !== "";
+  // DF-P4 second fix pass: the library the ticket ALREADY has, sent back
+  // unchanged (the picker initialised from the ticket re-sends it), is no
+  // change — never re-checked against the caller, whose discover rights on
+  // it are beside the point (a requester's discover grant may have set it,
+  // GAP-105 / DCW-5). computeTransition treats it as a no-op too.
+  const libraryUnchanged = typeof body.libraryId === "string"
+    && !!ticket.libraryId && body.libraryId.trim().toLowerCase() === ticket.libraryId.toLowerCase();
+  const wantsLibrary = typeof body.libraryId === "string" && body.libraryId.trim() !== "" && !libraryUnchanged;
   const wantsUnit = typeof body.unit === "string" && body.unit.trim() !== "";
   let triage: TransitionInput["triage"] = null;
   let libraryNotStored = false;
@@ -594,9 +601,9 @@ export async function POST(req: NextRequest) {
       }], principal) : [];
       if (!libRow || offered.length === 0) return NextResponse.json({ error: "That library is not one of this workspace's" }, { status: 400 });
       // The history line names a library only when every reader of the
-      // ticket may know it (libraryLabelForTicket): a hidden / private one
-      // is "the target library".
-      triage = { ...(triage ?? {}), library: { id: String(libRow.id), name: libraryLabelForTicket(libRow) } };
+      // ticket may know it (libraryLabelForTicket): a hidden / private one,
+      // or one whose ACL carries any rule, is "the target library".
+      triage = { ...(triage ?? {}), library: { id: String(libRow.id), name: libraryLabelForTicket({ name: libRow.name, visibility: libRow.visibility, acl: libRow.acl }) } };
     }
   }
   if (wantsUnit) {
@@ -875,11 +882,12 @@ export async function POST(req: NextRequest) {
         // it. (Publishing it as a new document of the library is the
         // document-creation path's, not this route's: DEC-22.)
         // DF-P4 fix pass: the note is read by the requester and every
-        // watcher, so a hidden / private library is "the target library"
-        // (libraryLabelForTicket), never its name.
+        // watcher, so a hidden / private library — or one whose ACL carries
+        // any rule — is "the target library" (libraryLabelForTicket), never
+        // its name.
         const { data: libRow } = await supabaseAdmin
-          .from("libraries").select("name, visibility").eq("id", ticket.libraryId).eq("org_id", ticket.orgId).maybeSingle();
-        const libLabel = libraryLabelForTicket(libRow as { name?: string | null; visibility?: string | null } | null);
+          .from("libraries").select("name, visibility, acl").eq("id", ticket.libraryId).eq("org_id", ticket.orgId).maybeSingle();
+        const libLabel = libraryLabelForTicket(libRow as { name?: string | null; visibility?: string | null; acl?: unknown } | null);
         const merged = noteDeliverableNotInLibrary(ticket.metadata, { libraryId: ticket.libraryId });
         if (merged) {
           updates.metadata = merged;

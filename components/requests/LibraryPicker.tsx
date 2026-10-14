@@ -13,6 +13,12 @@
 // and is the default when the request has none: a library is never required
 // (99-fix-sequencing Phase 2 item 1).
 //
+// The ticket's CURRENT library may be one the assigner cannot discover (a
+// requester's discover grant set it from the linked document, DCW-5): it is
+// then shown as one extra option, "the target library (current)", never by
+// name and never as "No library". Sent back unchanged it is no change — the
+// route skips its check for the ticket's own library (DF-P4 second fix pass).
+//
 // Mounted by DF-P9 in the assign modal, one line:
 //   <LibraryPicker orgId={ticket.orgId} value={libraryId} onChange={setLibraryId} />
 // and the modal sends `libraryId` with the action.
@@ -25,6 +31,7 @@ import { offerableLibraries, type LibraryChoiceRow } from "@/lib/ticketLibrary";
 import type { Principal } from "@/lib/permissions";
 
 export const NO_LIBRARY_LABEL = "No library — decide later";
+export const CURRENT_HIDDEN_LIBRARY_LABEL = "the target library (current)";
 
 export interface LibraryPickerProps {
   orgId: string;
@@ -83,6 +90,9 @@ export function LibraryPicker({ orgId, value, onChange, disabled, label = "Targe
         onChange={(e) => onChange(e.target.value ? e.target.value : null)}
       >
         <option value="">{NO_LIBRARY_LABEL}</option>
+        {value && !options.some((o) => o.id === value) && (
+          <option key={`current-${value}`} value={value}>{CURRENT_HIDDEN_LIBRARY_LABEL}</option>
+        )}
         {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>
       {state === "error" && (

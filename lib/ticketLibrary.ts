@@ -76,18 +76,35 @@ export function offerableLibraries(rows: readonly LibraryChoiceRow[], principal:
 }
 
 /** What a ticket's history line and its close notice may call a library
- *  (DCW-1 / DCW-4, DF-P4 fix pass). Both are read by everyone who can read
+ *  (DCW-1 / DCW-4, DF-P4 fix passes). Both are read by everyone who can read
  *  the ticket — the requester and the watchers included — so a library that
- *  is not open to every member (`hidden` / `private`) is named "the target
- *  library", never by its name: a library the reader cannot discover must not
- *  be disclosed through a request about it. A normal library (or one whose
- *  visibility is unknown, read as normal, as canDiscover does) keeps its name. */
+ *  is not open to every member is named "the target library", never by its
+ *  name: a library the reader cannot discover must not be disclosed through
+ *  a request about it. "Open to every member" is decided conservatively:
+ *  the library is normal (or its visibility unknown, read as normal, as
+ *  canDiscover does) AND its ACL carries no rule at all and no restricted
+ *  visibility of its own. A normal library with ANY ACL rule — a deny that
+ *  hides it from a role or a team (canDiscover → isDiscoverable), or an
+ *  allow list — is not named, since the ticket's readers are not known here.
+ *  An ACL that cannot be read as one (not an object, `rules` not a list) is
+ *  treated as restrictive. */
 export const UNNAMED_TARGET_LIBRARY = "the target library";
-export function libraryLabelForTicket(row: { name?: string | null; visibility?: string | null } | null | undefined): string {
+export function libraryLabelForTicket(row: { name?: string | null; visibility?: string | null; acl?: unknown } | null | undefined): string {
   if (!row) return UNNAMED_TARGET_LIBRARY;
   const visibility = (row.visibility ?? "normal") as string;
   if (visibility === "hidden" || visibility === "private") return UNNAMED_TARGET_LIBRARY;
+  if (!aclOpenToEveryMember(row.acl)) return UNNAMED_TARGET_LIBRARY;
   return (row.name ?? "").trim() || UNNAMED_TARGET_LIBRARY;
+}
+
+/** No ACL, or an ACL with no rule and no restricted visibility of its own. */
+function aclOpenToEveryMember(acl: unknown): boolean {
+  if (acl === null || acl === undefined) return true;
+  if (typeof acl !== "object" || Array.isArray(acl)) return false;
+  const a = acl as { rules?: unknown; visibility?: unknown };
+  if (a.visibility === "hidden" || a.visibility === "private") return false;
+  if (a.rules === undefined || a.rules === null) return true;
+  return Array.isArray(a.rules) && a.rules.length === 0;
 }
 
 /** DCW-5 (DF-P4): the request form's "link a document by number" search.
