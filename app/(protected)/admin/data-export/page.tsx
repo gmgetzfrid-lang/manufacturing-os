@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, type BackupProgress } from "@/lib/clientBackup";
+import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, exportSizeWarning, type BackupProgress } from "@/lib/clientBackup";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Input, Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -86,6 +86,8 @@ export default function DataExportPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // ILIFE-11 criterion 2 (P14): the JSON download's measured size, said before its body is read.
+  const [sizeNote, setSizeNote] = useState<string | null>(null);
 
   const [busyJson, setBusyJson] = useState(false);
   const [busyZip, setBusyZip] = useState(false);
@@ -124,7 +126,7 @@ export default function DataExportPage() {
   // ─── Inline JSON download ────────────────────────────────────────────
   const downloadJson = async () => {
     if (!activeOrgId) return;
-    setBusyJson(true); setError(null);
+    setBusyJson(true); setError(null); setSizeNote(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
@@ -132,6 +134,7 @@ export default function DataExportPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error(await res.text());
+      setSizeNote(exportSizeWarning(res.headers.get("X-Export-Bytes")));
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -354,6 +357,12 @@ export default function DataExportPage() {
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
+          </div>
+        )}
+
+        {sizeNote && (
+          <div data-testid="export-size-warning" className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {sizeNote}
           </div>
         )}
 

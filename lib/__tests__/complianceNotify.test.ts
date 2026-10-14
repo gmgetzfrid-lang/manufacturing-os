@@ -227,14 +227,14 @@ describe("integrator fix pass (re-review minor 3) — a retry never writes a sec
     expect(slept).toEqual([]);                                  // found before the 1 s wait's insert
   });
 
-  it("the BROWSER writing another member's row (ack_requested at publish): it cannot read that row back, so a failed insert is NOT retried — the committed-but-lost row stays the only one, and the dead letter says why", async () => {
+  it("the BROWSER writing another member's row (ack_requested at publish), notification_i_wrote unavailable (this client has no rpc — before 20261206): it cannot read that row back, so a failed insert is NOT retried — the committed-but-lost row stays the only one, and the dead letter says why (N15: with 20261206 the retry is made — complianceRetryN15.test.ts)", async () => {
     db.sessionUid = "u-publisher";
     db.lostResponses = [{ message: "TypeError: Failed to fetch" }];
     expect(await notifyCompliance(NOTICE)).toBe(false);
     expect(db.rows.notifications).toEqual([ROW]);              // not two
     expect(bellAttempts()).toHaveLength(1);
     expect(db.readBacks).toBe(0);
-    expect(deadLetters()[0].details).toMatchObject({ attempts: 1, error: expect.stringContaining("not retried: this writer cannot read the recipient's bell rows back") });
+    expect(deadLetters()[0].details).toMatchObject({ attempts: 1, error: expect.stringContaining("not retried: this writer's read-back of its own rows (notification_i_wrote, 20261206) failed or is not deployed") });
   });
 
   it("the BROWSER writing the signed-in member's OWN row reads it back: a lost answer is found; a refusal is retried", async () => {
@@ -407,8 +407,10 @@ describe("fix pass (minor 1) — the cron's shortfall is scoped to the scan's ow
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     const scan = runComplianceScan("access-recert@org-1", async () => { await gate; await notifyCompliance(NOTICE); return 1; }, errors, null);
-    db.failNotifications = [{ message: "permission denied for table notifications" }];
-    await notifyCompliance({ ...NOTICE, userId: "u-other-request" }); // a concurrent server request (no read-back: a single attempt)
+    // a concurrent server request (N15: a server writer with no session reads
+    // its row back and retries once; a deterministic refusal then dead-letters)
+    db.failNotifications = [{ message: "permission denied for table notifications" }, { message: "permission denied for table notifications" }];
+    await notifyCompliance({ ...NOTICE, userId: "u-other-request" });
     release();
     await scan;                                                       // the scan's own notice lands
     expect(errors).toEqual([]);

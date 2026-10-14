@@ -32,7 +32,12 @@
 //   - the WALK is confined to the caller's org prefix (RET-7): one
 //     workspace's admin never lists, sizes or deletes another tenant's
 //     objects. The reference collector stays bucket-wide on purpose — a key
-//     any tenant references is protected — only the candidate set is scoped.
+//     any tenant references is protected — only the candidate set is scoped
+//     (DEC-57). What the scan REPORTS is the caller's prefix only: its
+//     `referencedKeys` counts the referenced keys under `orgs/<orgId>/`, never
+//     the deployment's total (intelligence ILIFE-8, admin-and-org Round G P14);
+//   - a purge returns every key it deleted (`deletedKeys`), so the route's
+//     STORAGE_ORPHANS_PURGED row can name them (ILIFE-1 criterion 3).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
@@ -115,6 +120,9 @@ export interface OrphanScan {
   /** Objects and bytes under THIS org's prefix only (RET-7) — never the bucket. */
   totalObjects: number;
   totalBytes: number;
+  /** Referenced storage keys under THIS org's prefix (ILIFE-8) — the
+   *  reference SET stays bucket-wide (a key any tenant names is protected),
+   *  but its size is never reported to one workspace. */
   referencedKeys: number;
   skippedYoung: number;
   truncated: boolean;
@@ -160,8 +168,17 @@ export async function scanOrphans(sb: SupabaseClient, orgId: string, maxPages = 
   orphans.sort((a, b) => b.size - a.size);
   return {
     orphans, orphanBytes, totalObjects, totalBytes,
-    referencedKeys: referenced.size, skippedYoung, truncated: !!token, scope: prefix,
+    referencedKeys: referencedUnder(referenced, prefix), skippedYoung, truncated: !!token, scope: prefix,
   };
+}
+
+/** intelligence ILIFE-8 (admin-and-org Round G, P14): how many of the
+ *  referenced keys sit under `prefix` — the count a scan confined to one
+ *  workspace reports, never the deployment's total. */
+export function referencedUnder(referenced: ReadonlySet<string>, prefix: string): number {
+  let n = 0;
+  for (const k of referenced) if (k.startsWith(prefix)) n++;
+  return n;
 }
 
 /** intelligence ILIFE-6 criterion 3: the JSON shapes a key is embedded in,
@@ -353,11 +370,14 @@ export const ORPHAN_PURGE_BUDGET_MS = 240_000;
  *  deleted with an error saying to run it again. */
 export async function deleteOrphans(sb: SupabaseClient, orgId: string, opts: { deadline?: number } = {}): Promise<{
   deleted: number; freedBytes: number; errors: string[]; scope: string; kept: number;
+  /** ILIFE-1 criterion 3: every key DeleteObjects reported deleted, in the
+   *  order sent (its length is `deleted`). */
+  deletedKeys: string[];
 }> {
   const deadline = opts.deadline ?? Date.now() + ORPHAN_PURGE_BUDGET_MS;
   const scan = await scanOrphans(sb, orgId);
   const prefix = scan.scope;
-  const out = { deleted: 0, freedBytes: 0, errors: [] as string[], scope: prefix, kept: 0 };
+  const out = { deleted: 0, freedBytes: 0, errors: [] as string[], scope: prefix, kept: 0, deletedKeys: [] as string[] };
   const candidates = scan.orphans.filter((o) => o.key.startsWith(prefix));
   const stopAtLimit = (from: number) =>
     out.errors.push(
@@ -389,7 +409,7 @@ export async function deleteOrphans(sb: SupabaseClient, orgId: string, opts: { d
         const failed = new Set((res.Errors ?? []).map((e) => e.Key ?? ""));
         for (const e of res.Errors ?? []) out.errors.push(`${e.Key}: ${e.Message}`);
         for (const o of batch) {
-          if (!failed.has(o.key)) { out.deleted++; out.freedBytes += o.size; }
+          if (!failed.has(o.key)) { out.deleted++; out.freedBytes += o.size; out.deletedKeys.push(o.key); }
         }
       } catch (e) {
         out.errors.push((e as Error).message);
@@ -399,4 +419,30 @@ export async function deleteOrphans(sb: SupabaseClient, orgId: string, opts: { d
     slowest = Math.max(slowest, Date.now() - started);
   }
   return out;
+}
+
+/** ILIFE-1 criterion 3 (admin-and-org Round G, P14): how many deleted keys a
+ *  STORAGE_ORPHANS_PURGED row names. The list is bounded, because audit_logs
+ *  is itself exported and read whole by every later export; the row always
+ *  carries the full count, and says when the list was cut. Matches the GET's
+ *  listing cap (the route answers at most 500 orphans). */
+export const ORPHAN_AUDIT_KEY_CAP = 500;
+
+/** The STORAGE_ORPHANS_PURGED row's details: the counts and scope it always
+ *  carried, plus the deleted keys (the first ORPHAN_AUDIT_KEY_CAP, in the
+ *  order deleted), how many there were, and whether the list was cut, so a
+ *  mistaken purge can be diagnosed from the audit trail. */
+export function orphanPurgeAuditDetails(result: {
+  deleted: number; freedBytes: number; errors: readonly string[]; scope: string; kept: number; deletedKeys: readonly string[];
+}): Record<string, unknown> {
+  return {
+    deleted: result.deleted,
+    freedBytes: result.freedBytes,
+    errors: result.errors.length,
+    scope: result.scope,
+    kept: result.kept,
+    deletedKeys: result.deletedKeys.slice(0, ORPHAN_AUDIT_KEY_CAP),
+    deletedKeyCount: result.deletedKeys.length,
+    deletedKeysTruncated: result.deletedKeys.length > ORPHAN_AUDIT_KEY_CAP,
+  };
 }

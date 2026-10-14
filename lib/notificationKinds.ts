@@ -147,18 +147,33 @@ export const KIND_META = {
   // (lib/activityThread.ts — PROD-8), which used to collapse into checkout_message.
   checkout_handoff:         { section: "documents", actionRequired: false, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "watched_activity" },
   checkout_message:         { section: "documents", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions", category: "watched_activity" },
-  // checkout_released: since N9 only the maintenance cron's stale-checkout
-  // escalation to the controllers writes it ("Checkout held N days — review
-  // needed"; app/api/cron/maintenance/route.ts, N6's file — the rename to
-  // checkout_stale_escalation is TAX-17, N14). The holder's own notices have
-  // their own kinds, both actions as before:
+  // checkout_released: declared for LEGACY rows only (TAX-17, notifications
+  // N15). From N9 until N15 only the maintenance cron's stale-checkout
+  // escalation to the controllers wrote it ("Checkout held N days — review
+  // needed"; app/api/cron/maintenance/route.ts). Since N15 that escalation
+  // writes checkout_stale_escalation — same flags, same toast category, same
+  // reconcile class (lib/notificationReconcile.ts 'stale_checkout': retired
+  // once its session ends, N4) — and 20261206 re-files the escalations
+  // written before (a still-active session's row by the second paste, after
+  // its session closes); nothing writes checkout_released any more. The
+  // holder's own notices have their own kinds, both actions as before:
   //   checkout_force_released: someone force-released YOUR checkout
   //     (lib/checkoutEpisodes.ts forceReleaseDocument);
   //   checkout_auto_released: your ad-hoc checkout expired and was released
   //     (lib/projects.ts autoReleaseExpiredAdHoc — the browser sweep and the
   //     cron).
   checkout_released:        { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "sla_warning" },
+  checkout_stale_escalation: { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "sla_warning" },
   checkout_force_released:  { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "status_change" },
+  // checkout_force_released_fyi (notifications N15 fix pass — PROD-17): a
+  //   document you WATCH was force-released by someone — the watchers' FYI
+  //   beside the holder's own checkout_force_released (lib/checkoutEpisodes.ts
+  //   forceReleaseDocument). Its own name, so the checkout thread's chat kind
+  //   (checkout_message — Mentions, bell-only) keeps one meaning: a lock
+  //   notice under Locks, not an action (nothing clears it — DEC-105), not a
+  //   compliance kind; its email and toast ride the watcher's own toggle
+  //   (category 'watched' → watched_activity).
+  checkout_force_released_fyi: { section: "documents", actionRequired: false, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "watched_activity" },
   checkout_auto_released:   { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "status_change" },
   overlap_advisory:         { section: "documents", actionRequired: true, compliance: false, icon: "AlertOctagon", tone: "slate", group: "other", category: "status_change" },
   branch_open:              { section: "documents", actionRequired: true, compliance: false, icon: "GitBranch", tone: "slate", group: "other", category: "status_change" },
@@ -185,6 +200,15 @@ export const KIND_META = {
   // ack_requested (lib/distributionAcks.ts). 20261191 re-files the rows
   // already written by their metadata discriminators.
   doc_recalled:             { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },
+  // doc_retired (notifications N15 — PROD-17): a document you WATCH was
+  //   retired — lib/staleCopies.ts recallRetiredDocument's follower notice.
+  //   doc_recalled's badge, icon and group, but NOT a compliance kind: a
+  //   watcher holds nothing to destroy, so the FYI stays out of the daily
+  //   compliance digest, is deletable once read (20261161 keeps only
+  //   compliance kinds dismiss-only) and is not retried as an obligation;
+  //   not an action (nothing clears it — DEC-105); its email and toast ride
+  //   the watcher's own toggle (category 'watched' → watched_activity).
+  doc_retired:              { section: "documents", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "documents", category: "watched_activity" },
   doc_upstream_changed:     { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "watched_activity" },
   package_doc_stale:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },
   package_doc_retired:      { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },

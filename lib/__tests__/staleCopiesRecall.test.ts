@@ -101,8 +101,10 @@ describe("recallRetiredDocument (DIST-1)", () => {
       actorUserId: "actor", actorName: "doccontrol",
     });
     expect(n).toBe(2);
-    expect(state.emits).toHaveLength(1);
-    const e = state.emits[0] as { audience: { involved: string[] }; title: string; body: string };
+    // PROD-17 (N15): the one recall first, then the watchers' FYI (fix pass 3)
+    const recalls = state.emits.filter((x) => x.category === "recall");
+    expect(recalls).toHaveLength(1);
+    const e = recalls[0] as { audience: { involved: string[] }; title: string; body: string };
     expect(e.audience.involved.sort()).toEqual(["u1", "u2"]);
     expect(e.title).toContain("Superseded");
     expect(e.body).toContain("Replaced by P-101A.");
@@ -115,8 +117,86 @@ describe("recallRetiredDocument (DIST-1)", () => {
       newStatus: "Void", actorUserId: "actor",
     });
     expect(n).toBe(0);
-    expect(state.emits).toHaveLength(0);
+    // no recall (nobody holds a copy) and no recall audit row — only PROD-17's watcher FYI (N15)
+    expect(state.emits.filter((x) => x.category === "recall")).toHaveLength(0);
+    expect(state.emits).toHaveLength(1);
     expect(state.audits).toHaveLength(0);
+  });
+
+  it("PROD-17 (notifications N15): the document's followers are told it was retired, in a watcher's words, minus the copy holders the recall tells", async () => {
+    state.tables.download_audits = [{ user_id: "u1" }, { user_id: "actor" }];
+    await recallRetiredDocument({
+      orgId: "org1", documentId: "d1", libraryId: "lib1", docLabel: "P-101",
+      newStatus: "Void", replacementNote: "Replaced by P-101A.", actorUserId: "actor", actorName: "doccontrol",
+    });
+    const f = state.emits.find((x) => (x.audience as { followers?: boolean }).followers) as Record<string, unknown>;
+    expect(f).toMatchObject({
+      // fix pass: its own NON-compliance kind (doc_recalled is a compliance
+      // kind — the digest, dismiss-only, retried as an obligation)
+      kind: "doc_retired", category: "watched",
+      title: "P-101 was retired (Void)",
+      resource: { type: "document", id: "d1" }, actorUserId: "actor",
+      audience: { followers: true, exclude: ["u1"] },
+      metadata: { retirement: true, followerNotice: true, newStatus: "Void" },
+      // fix pass 2: doc_retired is declared by 20261206 — if that paste is
+      // late, a refused bell row sends no email either
+      emailOnlyWithBell: true,
+    });
+    expect(String(f.body)).toContain("doccontrol retired P-101 (void)");
+    expect(String(f.body)).not.toMatch(/your copy/i);
+    expect(String(f.body)).toContain("Replaced by P-101A.");
+  });
+
+  it("PROD-17 (fix pass): the watchers' FYI also leaves out the checkout holder and the open packages' owners — the people the supersede door's personal notices told", async () => {
+    state.tables.download_audits = [{ user_id: "u1" }];
+    // the supersede leaves the checkout open: documents.checked_out_by still names the holder
+    (state.tables as Record<string, unknown>).documents = { checked_out_by: "holder" };
+    state.tables.work_package_documents = [{ package_id: "pk1" }, { package_id: "pk2" }];
+    state.tables.work_packages = [{ owner_user_id: "pkowner" }, { owner_user_id: "actor" }, { owner_user_id: null }];
+    await recallRetiredDocument({
+      orgId: "org1", documentId: "d1", libraryId: "lib1", docLabel: "P-101",
+      newStatus: "Superseded", actorUserId: "actor", actorName: "doccontrol",
+    });
+    const f = state.emits.find((x) => (x.audience as { followers?: boolean }).followers) as { kind: string; audience: { exclude: string[] } };
+    expect(f.kind).toBe("doc_retired");
+    expect([...f.audience.exclude].sort()).toEqual(["holder", "pkowner", "u1"]);
+    // the copy holders' recall is unchanged
+    const recall = state.emits.find((x) => x.category === "recall") as { kind: string; audience: { involved: string[] } };
+    expect(recall).toMatchObject({ kind: "doc_recalled", audience: { involved: ["u1"] } });
+  });
+
+  it("PROD-17 (fix pass): a door that sends neither personal notice says so, and those people stay in the watchers' audience", async () => {
+    state.tables.download_audits = [];
+    (state.tables as Record<string, unknown>).documents = { checked_out_by: "holder" };
+    state.tables.work_package_documents = [{ package_id: "pk1" }];
+    state.tables.work_packages = [{ owner_user_id: "pkowner" }];
+    await recallRetiredDocument({
+      orgId: "org1", documentId: "d1", docLabel: "P-101", newStatus: "Void", actorUserId: "actor",
+      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+    });
+    expect(state.emits).toHaveLength(1);
+    expect((state.emits[0] as { audience: { exclude: string[] } }).audience.exclude).toEqual([]);
+  });
+
+  it("fix pass 3 (the review's major): the copy holders' recall and its DIST-10 audit row go out BEFORE the watchers' FYI — an FYI that never finishes (a hung discover check) cannot hold them back", async () => {
+    const { emit } = await import("@/lib/notify/dispatch");
+    vi.mocked(emit).mockImplementation(async (p) => {
+      state.emits.push(p as unknown as Record<string, unknown>);
+      if ((p as { kind?: string }).kind === "doc_retired") await new Promise(() => undefined); // never resolves
+      return { recipients: 1 };
+    });
+    try {
+      state.tables.download_audits = [{ user_id: "u1" }, { user_id: "u2" }];
+      void recallRetiredDocument({
+        orgId: "org1", documentId: "d1", libraryId: "lib1", docLabel: "P-101",
+        newStatus: "Superseded", actorUserId: "actor", actorName: "doccontrol",
+      });
+      await vi.waitFor(() => expect(state.emits.map((e) => e.kind)).toEqual(["doc_recalled", "doc_retired"]));
+      expect(state.audits).toHaveLength(1);
+      expect(state.audits[0]).toMatchObject({ type: "DISTRIBUTION_RECALL", details: { recipientCount: 2 } });
+    } finally {
+      vi.mocked(emit).mockImplementation(async (p) => { state.emits.push(p as unknown as Record<string, unknown>); return { recipients: 1 }; });
+    }
   });
 
   it("puts the retirement recall on the audit trail (DIST-10)", async () => {

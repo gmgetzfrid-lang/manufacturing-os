@@ -9,7 +9,7 @@
 // on behalf of a user we haven't verified.
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { hasAccess, type SubscriptionInfo } from "@/lib/subscription";
+import { hasAccess, type SubscriptionInfo } from "@/lib/billing";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 
 export type AuthorizedActor = {

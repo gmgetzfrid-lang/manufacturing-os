@@ -40,7 +40,7 @@
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { documentStanding, isPdfFile, isRecognisedStatus, isUndefinedColumnError } from "@/lib/verifyVerdict";
-import { effectiveStatusFor } from "@/lib/effectiveDate";
+import { effectiveStatusFor, workspaceEffectiveDateTimeZone } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
@@ -242,6 +242,12 @@ export async function GET(req: NextRequest) {
     if (verErr && !isUndefinedColumnError(verErr)) return unavailable();
     if (!verErr) for (const v of (verData as VersionDateRow[] | null) ?? []) effectiveByVersion.set(String(v.id), v.effective_date ?? null);
   }
+  // VFY-15 (admin-and-org P12): "in force" is decided in the package's
+  // workspace calendar (its Admin's zone), as /api/verify decides a single
+  // sheet — none set, or unreadable, the deployment's (today's behaviour).
+  const effectiveZone = [...effectiveByVersion.values()].some((v) => !!v)
+    ? await workspaceEffectiveDateTimeZone(sb, pkgOrgId || null)
+    : undefined;
 
   // VFY-16 (DEC-90 default): a private or hidden document's sheet is
   // answered — its state, its revisions — without its number or title, the
@@ -271,7 +277,7 @@ export async function GET(req: NextRequest) {
     else if (!printConfirmed) state = "unconfirmed";
     else if (!s.version_id || s.version_id !== d.current_version_id) state = "stale";
     else if (!inPackage.has(s.document_id)) state = "removed";
-    else if (effectiveStatusFor(d.current_version_id ? effectiveByVersion.get(d.current_version_id) : null) === "pending") state = "not_yet_effective";
+    else if (effectiveStatusFor(d.current_version_id ? effectiveByVersion.get(d.current_version_id) : null, new Date(), effectiveZone) === "pending") state = "not_yet_effective";
     else state = "fresh";
     return {
       label: labelOf(s.document_id, s.label, s.onPaperAt && s.onPaperOf ? { position: s.onPaperAt, total: s.onPaperOf } : undefined),

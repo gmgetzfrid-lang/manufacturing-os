@@ -1274,6 +1274,19 @@ describe("NEDGE-9 — the digest honours the member's preferences and lists unre
     expect(a.metadata).toMatchObject({ day: new Date().toISOString().slice(0, 10), count: 1 });
   });
 
+  it("PROD-17 (notifications N15 fix pass): a watcher's retirement FYI (doc_retired) is not listed — the copy holder's recall (doc_recalled) still is", async () => {
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_A, U(2))];
+    db.tables.notifications = [
+      notice(ORG_A, U(1), "doc_retired", "P-101 was retired (Superseded)", minutesAgo(10)),
+      notice(ORG_A, U(2), "doc_recalled", "P-101 is now Superseded — your copy is dead paper", minutesAgo(10)),
+    ];
+    await runCron();
+    expect(digestFor(U(1))).toBeUndefined();
+    const d = digestFor(U(2))!;
+    expect(String(d.body_text)).toContain("your copy is dead paper");
+    expect(d.subject).toBe("Compliance items need you (1)");
+  });
+
   it("an unreadable preferences read sends the digest stamped pref_gate=unverified, and says so (DEC-74 §4)", async () => {
     seedThree();
     db.readError.notification_preferences = { message: "boom" };
@@ -1460,7 +1473,7 @@ describe("DELIV-7 / NEDGE-12 — the stale-checkout escalation reports a failed 
     seedStale();
     const r = await runCron();
     expect(r.staleEscalations).toBe(1);
-    const n = rows("notifications").find((x) => x.kind === "checkout_released")!;
+    const n = rows("notifications").find((x) => x.kind === "checkout_stale_escalation")!;
     expect(n.body).toBe("Pat has had a document checked out since 2026-03-20 (UTC) (markups). Nudge them or force-release if the work is done.");
     expect(n.metadata).toEqual({ staleSessionId: "s1", escalation: true });
   });
@@ -1477,7 +1490,8 @@ describe("DELIV-7 / NEDGE-12 — the stale-checkout escalation reports a failed 
     // a column the raw insert left out (actor_user_id) is NULL either way:
     // notifications has no default for it (20260621 / 20260723)
     const row = (uid: string) => ({
-      org_id: ORG_A, user_id: uid, kind: "checkout_released",
+      // TAX-17 (notifications N15): the escalation's own kind
+      org_id: ORG_A, user_id: uid, kind: "checkout_stale_escalation",
       title: expect.stringMatching(/^Checkout held \d+ days — review needed$/),
       body: "Pat has had a document checked out since 2026-03-20 (UTC) (markups). Nudge them or force-release if the work is done.",
       link: "/documents/l1?doc=d1", resource_type: "document", resource_id: "d1",
@@ -1489,6 +1503,14 @@ describe("DELIV-7 / NEDGE-12 — the stale-checkout escalation reports a failed 
     const again = await runCron();
     expect(again.staleEscalations).toBe(0);
     expect(db.calls.filter((c) => c.table === "notifications" && c.op === "insert")).toHaveLength(1);
+  });
+
+  it("TAX-17 (notifications N15): a session escalated BEFORE the rename (a checkout_released row 20261206 has not re-filed yet) is not escalated again", async () => {
+    seedStale();
+    db.tables.notifications = [{ id: "old", org_id: ORG_A, user_id: U(7), kind: "checkout_released", title: "Checkout held 15 days — review needed", metadata: { staleSessionId: "s1", escalation: true } }];
+    const r = await runCron();
+    expect(r.staleEscalations).toBe(0);
+    expect(rows("notifications").filter((x) => x.kind === "checkout_stale_escalation")).toHaveLength(0);
   });
 
   it("an insert that fails is pushed into errors and the session is not counted (it is retried next run)", async () => {

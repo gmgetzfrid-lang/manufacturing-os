@@ -113,7 +113,8 @@ const ticketRow = (over: Record<string, unknown> = {}) => ({
 const updateOf = (table: string) => state.calls.filter((c) => c.table === table && c.method === "update").map((c) => c.args[0] as Record<string, unknown>);
 const insertsOf = (table: string) => state.calls.filter((c) => c.table === table && c.method === "insert").flatMap((c) => (Array.isArray(c.args[0]) ? c.args[0] : [c.args[0]]) as Array<Record<string, unknown>>);
 const callIndex = (table: string, method: string) => state.calls.findIndex((c) => c.table === table && c.method === method);
-const legsAfter = (i: number, table: string) => state.calls.slice(i + 1).filter((c) => c.table === table && c.method === "eq").map((c) => c.args as [string, unknown]);
+// DF-P4 fix pass 3 (GAP-8): the intent bridge filters its sheets with one `.in("document_id", ids)` leg, so the legs read both `.in` and `.eq`.
+const legsAfter = (i: number, table: string) => state.calls.slice(i + 1).filter((c) => c.table === table && (c.method === "eq" || c.method === "in")).map((c) => c.args as [string, unknown]);
 const casLegs = () => {
   // the eq() filters recorded on the tickets UPDATE chain, after the update call
   const i = state.calls.findIndex((c) => c.table === "tickets" && c.method === "update");
@@ -435,7 +436,7 @@ describe("WF-17 / DEC-14 — cancel_request exists; NEW and PENDING_ENG_INITIAL 
     expect((await post({ ticketId: "t1", actionType: "cancel_request", comment: "withdrawn" })).status).toBe(200);
     const del = callIndex("document_intents", "delete");
     expect(del).toBeGreaterThan(callIndex("tickets", "update"));
-    expect(legsAfter(del, "document_intents")).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"]]);
+    expect(legsAfter(del, "document_intents")).toEqual([["document_id", ["doc-1"]], ["ticket_id", "t1"], ["source", "ticket"]]);
     expect(src("app/api/tickets/workflow-action/route.ts")).toContain('const clearsAll = newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT";');
     expect(src("app/api/tickets/workflow-action/route.ts")).toContain("} else if (clearsAll) {");
   });
@@ -610,8 +611,8 @@ describe("WF-18 — the Reassign button carries an action the route accepts: rea
     const up = callIndex("document_intents", "upsert");
     expect(del).toBeGreaterThan(-1);
     expect(up).toBeGreaterThan(del);
-    expect(legsAfter(del, "document_intents").slice(0, 4)).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"], ["user_id", "d-1"]]);
-    expect(state.calls[up].args[0]).toMatchObject({ document_id: "doc-1", user_id: "d-2", kind: "edit", source: "ticket", ticket_id: "t1" });
+    expect(legsAfter(del, "document_intents").slice(0, 4)).toEqual([["document_id", ["doc-1"]], ["ticket_id", "t1"], ["source", "ticket"], ["user_id", "d-1"]]);
+    expect(state.calls[up].args[0]).toMatchObject([{ document_id: "doc-1", user_id: "d-2", kind: "edit", source: "ticket", ticket_id: "t1" }]); // one batched upsert (DF-P4 GAP-8)
     // an ordinary entry into DRAFTING (assign) deletes nothing — there is no previous drafter
     state.calls = []; state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, metadata: { source_document: { id: "doc-1" } } })];
     expect((await post({ ticketId: "t1", actionType: "assign", assignment: { id: "d-1", name: "Hector" } })).status).toBe(200);
@@ -630,11 +631,11 @@ describe("WF-18 — the Reassign button carries an action the route accepts: rea
       expect((await res.json()).status).toBe(status);
       const del = callIndex("document_intents", "delete");
       expect(del, status).toBeGreaterThan(callIndex("tickets", "update"));
-      expect(legsAfter(del, "document_intents").slice(0, 4), status).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"], ["user_id", "d-1"]]);
+      expect(legsAfter(del, "document_intents").slice(0, 4), status).toEqual([["document_id", ["doc-1"]], ["ticket_id", "t1"], ["source", "ticket"], ["user_id", "d-1"]]);
       const up = callIndex("document_intents", "upsert");
       if (status === "PENDING_IFC") {
         expect(up).toBeGreaterThan(del);
-        expect(state.calls[up].args[0]).toMatchObject({ document_id: "doc-1", user_id: "d-2", kind: "edit", source: "ticket", ticket_id: "t1" });
+        expect(state.calls[up].args[0]).toMatchObject([{ document_id: "doc-1", user_id: "d-2", kind: "edit", source: "ticket", ticket_id: "t1" }]); // one batched upsert (DF-P4 GAP-8)
       } else {
         expect(up, status).toBe(-1); // under review: registered on the next return to REVISION_REQ
       }
@@ -642,7 +643,7 @@ describe("WF-18 — the Reassign button carries an action the route accepts: rea
     // FINAL_DRAFT: the wholesale clear covers it — no per-drafter delete, no new registration
     state.calls = []; state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", metadata: { source_document: { id: "doc-1" } } })];
     expect((await post({ ticketId: "t1", actionType: "reassign_drafter", comment: "x", assignment: { id: "d-2", name: "Sam" } })).status).toBe(200);
-    expect(legsAfter(callIndex("document_intents", "delete"), "document_intents")).toEqual([["document_id", "doc-1"], ["ticket_id", "t1"], ["source", "ticket"]]);
+    expect(legsAfter(callIndex("document_intents", "delete"), "document_intents")).toEqual([["document_id", ["doc-1"]], ["ticket_id", "t1"], ["source", "ticket"]]);
     expect(callIndex("document_intents", "upsert")).toBe(-1);
     // and the retirement is not inside the DRAFTING / REVISION_REQ branch any more
     const route = src("app/api/tickets/workflow-action/route.ts");

@@ -156,6 +156,7 @@ lib/capabilityPolicy.ts:70-71 —
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** notifications N10 PUSH (limb (c), through `TAX-12`) — restated by the integrator at the N15 merge, 2026-10-14 (DEC-31). Limb (a) was N15's and is done.
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (limb (a): `lib/notify/recipients.ts` `resolveFollowers`' ticket branch removed, or its header says the two ticket routes fold `tickets.watchers` themselves) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notify/recipients.ts:35`, `lib/ticketRouting.ts:98`, `lib/workflow.ts:83`, `public/sw.js:226`, `supabase/migrations/20260804_push_subscriptions.sql:1`
@@ -211,6 +212,23 @@ self.addEventListener("push", (event) => {
 3. ✗ → notifications `TAX-12` (N10).
 
 **Scope / residual.** Stays OPEN on (a) and (c), each with the owner named above.
+
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — limb (a).
+
+**Re-verified** on `89c9aaa`: the two ticket routes fold `tickets.watchers` themselves. But `resolveFollowers`' ticket branch is NOT dead: the intake door's redline notice (`app/api/intake/upload/route.ts`, `resource: { type: "ticket" }`, `audience: { involved, followers: true }`) walks it. Removing the branch would drop that notice's watchers, so the done-when's other arm was taken.
+
+**What landed.**
+- `lib/notify/recipients.ts`: the header's "folding together EVERY follow/subscribe mechanism" claim is gone. It now says the two ticket routes (`comment`, `workflow-action`) do NOT walk the resolver — they fold `tickets.watchers` into their own fan-out — and that the branch's only consumer is the intake door's redline notice. A ticket emit adding `followers: true` beside them would double-supply the watchers.
+- The comment on the branch says the same.
+
+**Tests.** `lib/__tests__/recipientDiscovery.test.ts` "ROUTE-3 (a)": the header's words; the redline notice is the branch's consumer; neither ticket route passes `followers: true` or calls `resolveFollowers`; the redline notice still reaches a ticket watcher (REGRESSION).
+
+**Done-when.**
+- ✓ 1: the "EVERY follow/subscribe mechanism" claim is removed and the header names the ticket routes as folding watchers themselves. The branch stays, for its one real consumer.
+- ✓ 2 (DF-P3).
+- Done-when 3 is not met: `TAX-12`, notifications N10.
+
+**Scope / residual.** Stays OPEN on (c) only (`TAX-12`, N10).
 
 ---
 
@@ -508,7 +526,7 @@ contrast components/requests/EngineerPickerModal.tsx:77-89 —
 ## ROUTE-9 · The drafting-request SLA clock has no server-side reader — nothing ever fires an SLA warning, while the settings page promises one
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P4 LIBRARY (done-when 4: the create route stamps `target_completion_at` — re-owned from the merged DF-P2) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:216`, `lib/notifications.ts:224`, `lib/notifications.ts:245`, `lib/notify/dispatch.ts:56`, `app/(protected)/settings/notifications/page.tsx:143`, `app/api/cron/maintenance/route.ts:159`, `vercel.json:4`
@@ -568,6 +586,16 @@ const scans: Array<[string, (orgId: string) => Promise<number>]> = [
 4. ✗ in part — the scan reads `sla_defaults` for a ticket with no target, but creation does not seed from it and `lib/notifications.ts:321`'s "first fallback when an org hasn't configured sla_defaults rows" comment still describes a lookup creation never makes. **Owner: DF-P2** (the create route stamps from `sla_defaults` first, and corrects the comment).
 
 **Scope / residual.** Done-when 4 → DF-P2 (see `EDGE-7`). *Fix pass 2:* the clock starts at the first paste of `20261195`, which records the backlog already past its target without a notice each (one summary to each queue); before the paste the scan sends nothing and counts that backlog; step 5b stops 120 s before the run's end; a request waiting on its requester is worded as such (see `EDGE-7`).
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — done-when 4 (re-owned from the merged DF-P2). The create route seeds the due date from the org's `sla_defaults` row for the type before `DEFAULT_SLA_DAYS` (`app/api/tickets/create/route.ts:607-632`, recorded in full on `EDGE-7`), and the comment above `DEFAULT_SLA_DAYS` (`lib/notifications.ts`) now says the create route reads `sla_defaults` first and the clock never applies the built-in window retroactively. Tests: `lib/__tests__/ticketCreateRoute.test.ts` ("DF-P4 — EDGE-7 done-when 2 / ROUTE-9 done-when 4"). *DF-P4 fix pass:* `sla_defaults` is writable by every active member (`20260605` `sla_defaults_member_all`, FOR ALL) and `default_days` has no CHECK, so the value is bounded where the create route reads it — `lib/notifications.ts` `boundedSlaDays` admits a whole number of days from 1 to `SLA_DEFAULT_DAYS_MAX` (3650), and anything else (2e9 — which threw a `RangeError` and failed every request of the type with a 500 — 0, negative, fractional, text) is the built-in window, the computation itself wrapped the same way (`app/api/tickets/create/route.ts:607-632`; tests: "a member-written default_days outside 1..3650 …", "boundedSlaDays"). Who may write the table is the new [`EDGE-16`](./13-edges-and-invariants.md#edge-16) (owner admin-and-org).
+
+**Done-when.**
+1. ✓ Unchanged (DF-P3) — the clock starts at the first paste of `20261195` (pending), as recorded.
+2. ✓ Unchanged.
+3. ✓ Unchanged.
+4. ✓ `sla_defaults` is read to seed per-org SLA windows — at creation (this package) and by the scan (DF-P3) — and the comment no longer describes a lookup the code does not make.
+
+**Scope / residual.** An admin editor for `sla_defaults` is `EDGE-7` done-when 2's remainder (admin-and-org); it is not a done-when of this finding.
 
 ---
 

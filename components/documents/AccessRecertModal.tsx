@@ -40,6 +40,10 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
   const [note, setNote] = useState("");
   // ALOG-2: rules whose expiresAt has passed are listed apart, never as current.
   const [expired, setExpired] = useState<AccessGrant[]>([]);
+  // ORG-7 (admin-and-org P12): personal grants naming a member who is not
+  // active — listed by name with their status, never hidden, so the reviewer
+  // can revoke them before attesting.
+  const [suspended, setSuspended] = useState<AccessGrant[]>([]);
   // ALOG-2: a read that failed is said — an empty list would read as "nobody
   // has access", the false answer an attestation must never be signed on.
   const [loadIssue, setLoadIssue] = useState<string | null>(null);
@@ -65,6 +69,7 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
       setNextDate((data?.next_recertification_date as string | null) ?? null);
       setGrants(eff.live);
       setExpired(eff.expired);
+      setSuspended(eff.suspended ?? []);
       const libErr = error ? error.message : !data ? "the library was not found" : null;
       setLibraryReadError(libErr);
       const issues = [...(libErr ? [`library: ${libErr}`] : []), ...(eff.complete ? [] : eff.issues)];
@@ -179,6 +184,21 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
                         <span className="text-[10px] font-bold uppercase w-10 shrink-0">{g.subjectType}</span>
                         <span className="min-w-0 truncate line-through">{g.subjectName}</span>
                         <span className="ml-auto text-[10px]">expired {(g.expiresAt ?? "").slice(0, 10)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {suspended.length > 0 && (
+                <div className="mt-2" data-suspended-grants="">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-amber-700 mb-1">Personal grants of members who are not active · {suspended.length} — no access while it lasts; the grant returns with them</div>
+                  <div className="rounded-lg border border-dashed border-amber-300 divide-y divide-[var(--color-border)]">
+                    {suspended.map((g, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2.5 py-1 text-[11px]">
+                        <span className="text-[10px] font-bold uppercase text-[var(--color-text-faint)] w-10 shrink-0">{g.subjectType}</span>
+                        <span className="text-[var(--color-text)] min-w-0 truncate">{g.subjectName}</span>
+                        <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-1.5 text-[9px] font-bold uppercase text-amber-800">{g.memberStatus ?? "suspended"}</span>
+                        <span className="ml-auto text-[10px] text-[var(--color-text-muted)] truncate">{g.actions.join(", ")}</span>
                       </div>
                     ))}
                   </div>

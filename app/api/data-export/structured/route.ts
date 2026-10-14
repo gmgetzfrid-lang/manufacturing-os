@@ -25,6 +25,15 @@
 // recordExport — fifth review fix: was its whole list on every call). An
 // export whose DATA_EXPORT row was written but which then failed (its file
 // list refused) is recorded as not delivered (DATA_EXPORT_UNDELIVERED).
+//
+// intelligence ILIFE-11 criterion 2 (admin-and-org Round G, P14): the
+// envelope is never built as one string. Its size is MEASURED first, a piece
+// at a time (lib/prettyJsonStream.ts — the text is JSON.stringify(envelope,
+// null, 2), byte for byte), and then STREAMED: the response body is written
+// a batch of rows at a time. The measured size goes on the run row
+// (total_bytes, as before) and in the X-Export-Bytes header, which the
+// browser reads before it parses the body or builds a ZIP, and warns on
+// (lib/clientBackup.ts EXPORT_SIZE_WARN_BYTES).
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -33,6 +42,7 @@ import { runOrgExport, recordExportUndelivered } from "@/lib/dataExport";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { alertAdminsOfExport } from "@/lib/exportAlerts";
 import { exportRateLimitRefusal } from "@/lib/exportRunner";
+import { prettyJsonChunks, batchedChunks, prettyJsonByteLength } from "@/lib/prettyJsonStream";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -110,8 +120,18 @@ export async function GET(req: NextRequest) {
   }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
   if (!alert.ok) console.error(`[data-export/structured] org ${orgId}: the export alert was not sent: ${alert.error}`);
 
-  // Stream as a downloadable JSON file
-  const body = JSON.stringify(envelope, null, 2);
+  // ILIFE-11: measured a piece at a time, then streamed — the text is never
+  // held whole (envelope → tables → rows are serialised one row at a time).
+  const totalBytes = prettyJsonByteLength(envelope, 3);
+  const pieces = batchedChunks(prettyJsonChunks(envelope, 3));
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = pieces.next();
+      if (next.done) controller.close();
+      else controller.enqueue(encoder.encode(next.value));
+    },
+  });
   const filename = `manufacturing-os-export-${(envelope.manifest.orgName || orgId).replace(/[^\w.\-]+/g, "_")}-${envelope.manifest.exportedAt.slice(0, 10)}.json`;
   // The run row's outcome, CHECKED: a refused write is named, the download proceeds.
   const completedAt = new Date().toISOString();
@@ -120,7 +140,7 @@ export async function GET(req: NextRequest) {
     table_count: envelope.manifest.tables.length,
     total_rows: envelope.manifest.tables.reduce((n, t) => n + t.rowCount, 0),
     file_count: envelope.files.length,
-    total_bytes: Buffer.byteLength(body, "utf8"),
+    total_bytes: totalBytes,
     destination_type: "json",
     diagnostics: alert.ok ? [] : [{ ts: completedAt, step: "alert:unsent", detail: alert.error }],
     completed_at: completedAt,
@@ -134,6 +154,7 @@ export async function GET(req: NextRequest) {
       "Content-Disposition": `attachment; filename="${filename}"`,
       "Cache-Control": "no-store",
       "X-Export-Run-Id": runId,
+      "X-Export-Bytes": String(totalBytes),
       ...(runUpdErr ? { "X-Export-Unrecorded": `run row not updated: ${runUpdErr.message}`.replace(/[^\x20-\x7e]/g, "?").slice(0, 300) } : {}),
       "X-Export-Alert": alert.ok
         ? `sent to ${alert.notified}`

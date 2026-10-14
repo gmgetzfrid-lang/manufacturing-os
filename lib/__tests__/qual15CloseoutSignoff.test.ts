@@ -44,7 +44,7 @@ vi.mock("@/lib/supabase", () => {
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => ({ error: null })), logCheckoutEvent: vi.fn(async () => ({ error: null })) }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => undefined) }));
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => undefined), notifyMany: vi.fn(async () => undefined) }));
-vi.mock("@/lib/subscriptions", () => ({ listFollowerIds: vi.fn(async () => []) }));
+vi.mock("@/lib/watches", () => ({ listFollowerIds: vi.fn(async () => []) }));
 vi.mock("@/lib/checkoutEpisodes", () => ({
   ensureActiveEpisode: vi.fn(async () => null), postEpisodeSystemMessage: vi.fn(async () => undefined),
   reconcileDocumentCheckoutState: vi.fn(async () => undefined), isMissingOutcomeSchema: () => false,

@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 
 // Vitest config tuned for the pure-function tests under lib/.
@@ -10,6 +10,9 @@ import { resolve } from "node:path";
 export default defineConfig({
   test: {
     include: ["lib/__tests__/**/*.test.ts"],
+    // lib/__tests__/rls/ needs a real PostgreSQL: it runs only under
+    // `npm run test:db` (vitest.db.config.ts), never in the default suite.
+    exclude: [...configDefaults.exclude, "lib/__tests__/rls/**"],
     environment: "node",
     globals: false,
     setupFiles: ["./lib/__tests__/setup.ts"],

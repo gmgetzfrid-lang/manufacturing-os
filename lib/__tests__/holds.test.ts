@@ -508,6 +508,94 @@ describe("HLD-14 — expectedReleaseIso and scanStaleHolds", () => {
     state.rows.document_holds = [openHoldRow({ id: "late", expected_release_at: daysAgo(3), opened_at: daysAgo(10) })];
     expect(await scanStaleHolds("o1", now)).toBe(1);
   });
+  it("DELIV-7 dw1 (notifications N15): the nudge's rows retry (inappRetry with the hold's key); a recipient whose row dead-lettered is sent it again next run — and nobody else", async () => {
+    const now = new Date("2026-09-23T03:00:00.000Z");
+    const daysAgo = (n: number) => new Date(now.getTime() - n * 86400_000).toISOString();
+    const late = daysAgo(3);
+    state.rows.document_holds = [openHoldRow({ id: "late", expected_release_at: late, opened_at: daysAgo(10) })];
+    state.rows.documents = [{ id: DOC, document_number: "P-101", library_id: "lib-1" }];
+    state.rows.org_members = [
+      { uid: "adm", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" },
+      { uid: "opener", role: "Drafter", roles: ["Drafter"], org_id: "o1", status: "active" },
+    ];
+    state.rows.notifications = [];
+    state.rows.audit_logs = [];
+    dispatch.emit.mockClear();
+    // first run: everyone, with the retry key, both channels (as before)
+    expect(await scanStaleHolds("o1", now)).toBe(1);
+    const first = dispatch.emit.mock.calls[0][0] as { audience: { involved: string[] }; inappRetry?: { retryKey?: string }; channels?: string[] };
+    expect(first.inappRetry).toEqual({ retryKey: `hold-aging:late:${late}` });
+    expect(first.channels).toBeUndefined();
+    // the admin's row landed; the opener's dead-lettered (the audit row notifyCompliance writes)
+    state.rows.notifications = [{ id: "n-adm", kind: "hold_opened", user_id: "adm", metadata: { staleHoldId: "late", staleFor: late, escalation: true } }];
+    state.rows.audit_logs = [{ org_id: "o1", action: "NOTIFICATION_DEAD_LETTER", timestamp: new Date().toISOString(), details: { retryKey: `hold-aging:late:${late}`, kind: "hold_opened", recipient: "opener" } }];
+    dispatch.emit.mockClear();
+    expect(await scanStaleHolds("o1", now)).toBe(1);
+    const retry = dispatch.emit.mock.calls[0][0] as { audience: { involved: string[] }; inappRetry?: { retryKey?: string }; channels?: string[] };
+    expect(retry.audience.involved).toEqual(["opener"]);
+    expect(retry.channels).toEqual(["inapp"]);
+    // once the opener's row is there, nothing more; and a pool member who joined since is NOT nudged about the old miss
+    state.rows.notifications.push({ id: "n-op", kind: "hold_opened", user_id: "opener", metadata: { staleHoldId: "late", staleFor: late, escalation: true } });
+    state.rows.org_members.push({ uid: "adm2", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" });
+    dispatch.emit.mockClear();
+    expect(await scanStaleHolds("o1", now)).toBe(0);
+    expect(dispatch.emit).not.toHaveBeenCalled();
+    // REGRESSION: no dead letter at all — a nudged hold stays nudged (the pre-N15 dedupe)
+    state.rows.audit_logs = [];
+    state.rows.notifications = [{ id: "n-adm", kind: "hold_opened", user_id: "adm", metadata: { staleHoldId: "late", staleFor: late, escalation: true } }];
+    expect(await scanStaleHolds("o1", now)).toBe(0);
+  });
+  it("DELIV-7 dw1 (N15 fix pass 3): when the dead letters cannot be read, a hold someone was already told about is DEFERRED — nobody is re-nudged (not the one who deleted their read nudge, not a pool member who joined since); the next readable run sends the lost row to the lost recipient only", async () => {
+    const now = new Date("2026-09-23T03:00:00.000Z");
+    const daysAgo = (n: number) => new Date(now.getTime() - n * 86400_000).toISOString();
+    const late = daysAgo(3);
+    state.rows.document_holds = [openHoldRow({ id: "late", expected_release_at: late, opened_at: daysAgo(10) })];
+    state.rows.documents = [{ id: DOC, document_number: "P-101", library_id: "lib-1" }];
+    state.rows.org_members = [
+      { uid: "adm", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" },
+      { uid: "adm-b", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" },
+      { uid: "opener", role: "Drafter", roles: ["Drafter"], org_id: "o1", status: "active" },
+    ];
+    // run 1 landed both admins' rows and dead-lettered the opener's; admin B
+    // then read and DELETED theirs; a DocCtrl joins the pool later
+    state.rows.notifications = [{ id: "n-adm", kind: "hold_opened", user_id: "adm", metadata: { staleHoldId: "late", staleFor: late, escalation: true } }];
+    state.rows.org_members.push({ uid: "dc-new", role: "DocCtrl", roles: ["DocCtrl"], org_id: "o1", status: "active" });
+    state.rows.audit_logs = [{ org_id: "o1", action: "NOTIFICATION_DEAD_LETTER", timestamp: new Date().toISOString(), details: { retryKey: `hold-aging:late:${late}`, kind: "hold_opened", recipient: "opener" } }];
+    // runs 2 and 3 cannot read audit_logs: nothing is sent, each time
+    state.readErrors = { audit_logs: "timeout" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      for (let run = 0; run < 2; run++) {
+        dispatch.emit.mockClear();
+        expect(await scanStaleHolds("o1", now)).toBe(0);
+        expect(dispatch.emit).not.toHaveBeenCalled();
+      }
+      // the read comes back: the opener's lost row goes out, bell-only, and to nobody else
+      state.readErrors = {};
+      dispatch.emit.mockClear();
+      expect(await scanStaleHolds("o1", now)).toBe(1);
+      const retry = dispatch.emit.mock.calls[0][0] as { audience: { involved: string[] }; inappRetry?: { retryKey?: string }; channels?: string[] };
+      expect(retry.audience.involved).toEqual(["opener"]);
+      expect(retry.channels).toEqual(["inapp"]);
+      expect(retry.inappRetry).toEqual({ retryKey: `hold-aging:late:${late}` });
+    } finally { warn.mockRestore(); state.readErrors = {}; }
+  });
+  it("REGRESSION (N15 fix pass 3): an unreadable plan does not hold back a hold NOBODY was told about yet — its first nudge goes out as before", async () => {
+    const now = new Date("2026-09-23T03:00:00.000Z");
+    const daysAgo = (n: number) => new Date(now.getTime() - n * 86400_000).toISOString();
+    state.rows.document_holds = [openHoldRow({ id: "late", expected_release_at: daysAgo(3), opened_at: daysAgo(10) })];
+    state.rows.documents = [{ id: DOC, document_number: "P-101", library_id: "lib-1" }];
+    state.rows.org_members = [{ uid: "adm", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" }];
+    state.rows.notifications = [];
+    state.rows.audit_logs = [];
+    state.readErrors = { audit_logs: "timeout" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    dispatch.emit.mockClear();
+    try {
+      expect(await scanStaleHolds("o1", now)).toBe(1);
+      expect((dispatch.emit.mock.calls[0][0] as { channels?: string[] }).channels).toBeUndefined();
+    } finally { warn.mockRestore(); state.readErrors = {}; }
+  });
   it("updateHoldExpectedRelease re-dates an OPEN hold in place: writes expected_release_at only under the released_at IS NULL predicate, null clears, a released hold is refused, no hold event is written", async () => {
     state.rows.document_holds = [openHoldRow({ expected_release_at: "2026-10-03T23:59:59.999Z" })];
     const out = await updateHoldExpectedRelease(HOLD, "2026-10-17T23:59:59.999Z");

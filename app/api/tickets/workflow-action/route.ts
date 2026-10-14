@@ -18,13 +18,16 @@ import {
 } from "@/lib/ticketTransitions";
 import type { Role, TicketAttachment, TicketOutcome } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
-import { parseSourceDocument } from "@/lib/sourceDocRef";
+import { parseSourceDocument, parseSourceDocuments } from "@/lib/sourceDocRef";
+import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
 import { heldRoles } from "@/lib/roleHeld";
-import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
+import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor } from "@/lib/ticketOutcome";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
+import { offerableLibraries, libraryLabelForTicket, type LibraryChoiceRow } from "@/lib/ticketLibrary";
+import type { Principal } from "@/lib/permissions";
 
 // POST /api/tickets/workflow-action
 //
@@ -64,11 +67,25 @@ interface Body {
   /** LEAK-9 / GAP-107 (DF-P3): how the request ended, for close_ticket /
    *  close_rfi / cancel_request — one of lib/ticketOutcome.ts's vocabulary. */
   outcome?: string | null;
+  /** DCW-1 / GAP-105 (DF-P4): the library triage records with `assign` /
+   *  `request_eng_review` at PENDING_ASSIGNMENT — a library of the ticket's
+   *  org that the caller may discover (the picker's rule). Never required. */
+  libraryId?: string | null;
+  /** DCW-7 / FRIC-3 (DF-P4): the unit triage records with the same actions,
+   *  resolved against the org's unit list (lib/ticketCreate.ts
+   *  unitOptionsFor). Never required. */
+  unit?: string | null;
 }
 
 /** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
  *  documents.id). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** GAP-8 (DF-P4 fix passes 3-4): the intent bridge's slice — one `.in()` read,
+ *  one upsert and one delete per leg per slice. An `in` list travels in the
+ *  URL: the create route's SOURCE_READ_CHUNK, inside the 6,000-char budget;
+ *  a MAX_SOURCE_DOCUMENTS (200) ticket is two slices, any list is bounded. */
+const INTENT_BRIDGE_CHUNK = 100;
 
 /** EVID-12: the actions that approve a submitted draft — their audit row
  *  names the drafts the approval was given on. */
@@ -529,6 +546,96 @@ export async function POST(req: NextRequest) {
     outcomeDefaulted = true;
   }
 
+  // DCW-1 / GAP-105 and DCW-7 / FRIC-3 (DF-P4): triage may record the
+  // request's library and its unit — with the assignment or the engineering
+  // flag, from the assignment queue, never elsewhere — on the same
+  // compare-and-set write. Neither is ever required (99-fix-sequencing
+  // Phase 2 item 1: "Do not make it required at intake"; DEC-101 item 1).
+  const triageAction = ticket.status === "PENDING_ASSIGNMENT"
+    && (action.action === "assign" || action.action === "request_eng_review");
+  // DF-P4 second fix pass: the library the ticket ALREADY has, sent back
+  // unchanged (the picker initialised from the ticket re-sends it), is no
+  // change — never re-checked against the caller, whose discover rights on
+  // it are beside the point (a requester's discover grant may have set it,
+  // GAP-105 / DCW-5). computeTransition treats it as a no-op too.
+  const libraryUnchanged = typeof body.libraryId === "string"
+    && !!ticket.libraryId && body.libraryId.trim().toLowerCase() === ticket.libraryId.toLowerCase();
+  const wantsLibrary = typeof body.libraryId === "string" && body.libraryId.trim() !== "" && !libraryUnchanged;
+  const wantsUnit = typeof body.unit === "string" && body.unit.trim() !== "";
+  let triage: TransitionInput["triage"] = null;
+  let libraryNotStored = false;
+  if ((wantsLibrary || wantsUnit) && !triageAction) {
+    return NextResponse.json({ error: "A library or a unit is recorded at triage — when assigning, or flagging for engineering review, from the assignment queue." }, { status: 400 });
+  }
+  if (wantsLibrary) {
+    const libraryId = String(body.libraryId).trim();
+    if (!UUID_RE.test(libraryId)) return NextResponse.json({ error: "That library is not one of this workspace's" }, { status: 400 });
+    if (!("library_id" in (row as Record<string, unknown>))) {
+      // 20261208 not pasted yet: the column is not there. The action applies
+      // as today, without a library, and the answer says so.
+      libraryNotStored = true;
+    } else {
+      // DF-P4 fix pass: the SAME rule the picker offers by
+      // (lib/ticketLibrary.ts offerableLibraries → canDiscover), run here on
+      // the caller's principal built on the server — membership roles (the
+      // full additive collection) and team ids read as the service role — so
+      // a library the assigner cannot discover is refused exactly as one of
+      // another workspace is (same answer: its existence is not confirmed),
+      // whatever the client sends. A read that fails is a 503, never a guess.
+      const [{ data: lib, error: libErr }, { data: teamRows, error: teamErr }] = await Promise.all([
+        supabaseAdmin.from("libraries").select("id, name, visibility, acl, owner_user_id")
+          .eq("id", libraryId).eq("org_id", ticket.orgId).maybeSingle(),
+        supabaseAdmin.from("team_members").select("team_id").eq("uid", caller.id),
+      ]);
+      if (libErr || teamErr) return NextResponse.json({ error: "Couldn't check that library right now — try again in a moment." }, { status: 503 });
+      const libRow = lib as { id: string; name?: string | null; visibility?: string | null; acl?: unknown; owner_user_id?: string | null } | null;
+      const heldByCaller = heldRoles(member as { role?: unknown; roles?: unknown }) as Role[];
+      const principal: Principal | null = heldByCaller.length === 0 ? null : {
+        uid: caller.id,
+        role: heldByCaller[0],
+        roles: heldByCaller,
+        orgId: ticket.orgId,
+        teamIds: ((teamRows ?? []) as Array<{ team_id?: unknown }>).map((t) => String(t.team_id ?? "")).filter(Boolean),
+        isActiveMember: true,
+      };
+      const offered = libRow ? offerableLibraries([{
+        id: String(libRow.id),
+        name: libRow.name ?? null,
+        visibility: libRow.visibility ?? null,
+        acl: (libRow.acl ?? null) as LibraryChoiceRow["acl"],
+        ownerUserId: libRow.owner_user_id ?? null,
+      }], principal) : [];
+      if (!libRow || offered.length === 0) return NextResponse.json({ error: "That library is not one of this workspace's" }, { status: 400 });
+      // The history line names a library only when every reader of the
+      // ticket may know it (libraryLabelForTicket): a hidden / private one,
+      // or one whose ACL carries any rule, is "the target library".
+      triage = { ...(triage ?? {}), library: { id: String(libRow.id), name: libraryLabelForTicket({ name: libRow.name, visibility: libRow.visibility, acl: libRow.acl }) } };
+    }
+  }
+  if (wantsUnit) {
+    // The SAME list the request form offers and the create route checks:
+    // the saved units, else the Site Codebook's, else none (free text, as
+    // the form keeps it — DEC-101 item 1). A list that is there but cannot
+    // be read is a 503, never an unchecked unit.
+    const { data: unitCfg, error: unitCfgErr } = await supabaseAdmin
+      .from("org_configurations").select("data").eq("org_id", ticket.orgId).eq("key", "drafting").maybeSingle();
+    if (unitCfgErr) return NextResponse.json({ error: "Couldn't read this workspace's unit list — try again in a moment." }, { status: 503 });
+    const cfgUnits = ((unitCfg as { data?: unknown } | null)?.data ?? null) as Parameters<typeof unitOptionsFor>[0];
+    let codebookUnits: Array<{ code: string; label: string | null }> = [];
+    if (!((cfgUnits?.units?.options?.length ?? 0) > 0)) {
+      const { data: cb, error: cbErr } = await supabaseAdmin
+        .from("codebook_entries").select("code, label").eq("org_id", ticket.orgId).eq("kind", "unit");
+      const failure = unitListReadFailure(cbErr);
+      if (failure === "unreadable") return NextResponse.json({ error: "Couldn't read this workspace's unit list — try again in a moment." }, { status: 503 });
+      if (failure === "none") codebookUnits = ((cb ?? []) as Array<{ code: string; label: string | null }>).filter((u) => !!u.code);
+    }
+    const resolved = resolveUnit(String(body.unit).slice(0, 120), unitOptionsFor(cfgUnits, codebookUnits));
+    if (resolved.kind === "unmatched") {
+      return NextResponse.json({ error: `"${String(body.unit).trim().slice(0, 60)}" is not on this workspace's unit list`, field: "unit" }, { status: 400 });
+    }
+    if (resolved.unit) triage = { ...(triage ?? {}), unit: resolved.unit };
+  }
+
   const input: TransitionInput = {
     actionType: action.action,
     actionLabel: action.label,
@@ -543,6 +650,7 @@ export async function POST(req: NextRequest) {
     finalAttachment: vetted.finalAttachment,
     attachment: vetted.attachment,
     outcome: outcome ?? undefined,
+    triage,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
@@ -773,6 +881,26 @@ export async function POST(req: NextRequest) {
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
           updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
         }
+      } else if (!src?.id && ticket.libraryId && recorded?.state !== "published") {
+        // DCW-4 (DF-P4): a request with no source document but a target
+        // library (GAP-105) that closes without its deliverable in that
+        // library is said too — the register visibly knows it does not have
+        // it. (Publishing it as a new document of the library is the
+        // document-creation path's, not this route's: DEC-22.)
+        // DF-P4 fix pass: the note is read by the requester and every
+        // watcher, so a hidden / private library — or one whose ACL carries
+        // any rule — is "the target library" (libraryLabelForTicket), never
+        // its name.
+        const { data: libRow } = await supabaseAdmin
+          .from("libraries").select("name, visibility, acl").eq("id", ticket.libraryId).eq("org_id", ticket.orgId).maybeSingle();
+        const libLabel = libraryLabelForTicket(libRow as { name?: string | null; visibility?: string | null; acl?: unknown } | null);
+        const merged = noteDeliverableNotInLibrary(ticket.metadata, { libraryId: ticket.libraryId });
+        if (merged) {
+          updates.metadata = merged;
+          handbackNote = `Closed without a register document: the deliverable was not published into ${libLabel}.`;
+          const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
+          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+        }
       }
     } catch (e) {
       console.warn("[workflow-action] deliverable-state note failed (non-blocking)", e);
@@ -986,91 +1114,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
-  // EDIT INTENT on the source document — visible on the coordination surfaces
-  // and feeding overlap advisories, WITHOUT taking a lock (intent decays on
-  // its own; no zombie-lock factory). Ticket closure — or cancellation, the
-  // other terminal exit (WF-17) — clears it. Best-effort: never fails the
-  // transition; no-op on pre-migration envs.
-  try {
-    const srcDoc = (ticket.metadata as Record<string, unknown> | undefined)
-      ?.source_document as { id?: string } | undefined;
-    if (srcDoc?.id) {
-      const drafterId =
-        (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
-      const drafterName =
-        (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
-      const isReassign = action.action === "reassign_drafter";
-      // Statuses where the ticket's intents are cleared wholesale (below).
-      const clearsAll = newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT";
-      // WF-18: a reassignment hands the ticket to a different drafter, so
-      // the PREVIOUS drafter's ticket-sourced intent is retired now rather
-      // than lingering on the coordination surfaces until its TTL — two
-      // drafters were shown editing for one ticket. Reassignment never
-      // moves the status, and it is offered at every live status with a
-      // drafter (PENDING_REVIEW, PENDING_FINAL_APPROVAL and PENDING_IFC
-      // included), so the retirement runs for all of them — not only the
-      // two statuses that register an intent.
-      if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
-        await supabaseAdmin
-          .from("document_intents")
-          .delete()
-          .eq("document_id", srcDoc.id)
-          .eq("ticket_id", body.ticketId)
-          .eq("source", "ticket")
-          .eq("user_id", ticket.assignedDrafterId);
-      }
-      // The new drafter is registered where the ticket is on a drafter's
-      // bench: entering DRAFTING / REVISION_REQ (every assignment), and on
-      // reassignment at PENDING_IFC (the package is being issued). A
-      // reassignment while the draft is under review registers nothing —
-      // the next return to REVISION_REQ does.
-      const registersDrafter =
-        newStatus === "DRAFTING" || newStatus === "REVISION_REQ" || (isReassign && newStatus === "PENDING_IFC");
-      if (registersDrafter) {
-        // SM-14: the source document is read IN THE TICKET'S ORG (as the
-        // CLOSED hand-back path reads it); a document id from another
-        // workspace registers nothing.
-        const { data: docRow } = drafterId
-          ? await supabaseAdmin
-              .from("documents")
-              .select("current_version_id, library_id")
-              .eq("id", srcDoc.id)
-              .eq("org_id", ticket.orgId)
-              .maybeSingle()
-          : { data: null };
-        if (drafterId && docRow) {
-          await supabaseAdmin.from("document_intents").upsert(
-            {
-              org_id: ticket.orgId,
-              document_id: srcDoc.id,
-              library_id: (docRow as { library_id?: string | null } | null)?.library_id ?? null,
-              user_id: drafterId,
-              user_name: drafterName ?? null,
-              kind: "edit",
-              source: "ticket",
-              base_version_id:
-                (docRow as { current_version_id?: string | null } | null)?.current_version_id ?? null,
-              ticket_id: body.ticketId,
-              refreshed_at: new Date().toISOString(),
-              expires_at: new Date(Date.now() + TICKET_INTENT_TTL_MS).toISOString(),
-            },
-            { onConflict: "document_id,user_id,kind,source" },
-          );
-        }
-      } else if (clearsAll) {
-        await supabaseAdmin
-          .from("document_intents")
-          .delete()
-          .eq("document_id", srcDoc.id)
-          .eq("ticket_id", body.ticketId)
-          .eq("source", "ticket");
-      }
-    }
-  } catch (e) {
-    console.warn("[workflow-action] intent bridge failed (non-blocking)", e);
-  }
-
   // Fan-out — also server-side, so it survives the client closing the tab.
   // Failures here never fail the action (the transition is already committed);
   // they're logged for the maintenance cron's visibility.
@@ -1102,7 +1145,139 @@ export async function POST(req: NextRequest) {
     console.error("[workflow-action] fan-out failed (transition committed):", e);
   }
 
-  return NextResponse.json({ ok: true, status: newStatus, ...(holdOutcome ?? {}) });
+  // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
+  // EDIT INTENT on the source document — visible on the coordination surfaces
+  // and feeding overlap advisories, WITHOUT taking a lock (intent decays on
+  // its own; no zombie-lock factory). Ticket closure — or cancellation, the
+  // other terminal exit (WF-17) — clears it. Best-effort: never fails the
+  // transition; no-op on pre-migration envs.
+  // GAP-8 acceptance 2 (DF-P4): every sheet the request names —
+  // parseSourceDocuments: the singular source_document first, then each
+  // entry of metadata.source_documents — not only the primary. Every sheet is
+  // read in the ticket's org (SM-14) and gets its own intent row; a
+  // single-source ticket (every historical row) is a list of one.
+  // BATCHED (DF-P4 fix pass 3): a book request carries up to
+  // MAX_SOURCE_DOCUMENTS sheets, so the bridge never makes a round trip per
+  // sheet — one read of every sheet, one upsert of every intent row, one
+  // delete per retirement leg, each in INTENT_BRIDGE_CHUNK slices (two
+  // slices at most for any ticket the create route can make). And it runs
+  // AFTER the fan-out above: the drafter's notice never waits on it.
+  try {
+    const sheetIds = parseSourceDocuments(ticket.metadata).map((d) => d.id);
+    const slices: string[][] = [];
+    for (let i = 0; i < sheetIds.length; i += INTENT_BRIDGE_CHUNK) slices.push(sheetIds.slice(i, i + INTENT_BRIDGE_CHUNK));
+    const drafterId =
+      (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
+    const drafterName =
+      (updates.assigned_drafter_name as string | undefined) ?? ticket.assignedDrafterName;
+    const isReassign = action.action === "reassign_drafter";
+    // Statuses where the ticket's intents are cleared wholesale (below).
+    const clearsAll = newStatus === "CLOSED" || newStatus === "CANCELED" || newStatus === "FINAL_DRAFT";
+    // WF-18: a reassignment hands the ticket to a different drafter, so
+    // the PREVIOUS drafter's ticket-sourced intent is retired now rather
+    // than lingering on the coordination surfaces until its TTL — two
+    // drafters were shown editing for one ticket. Reassignment never
+    // moves the status, and it is offered at every live status with a
+    // drafter (PENDING_REVIEW, PENDING_FINAL_APPROVAL and PENDING_IFC
+    // included), so the retirement runs for all of them — not only the
+    // two statuses that register an intent.
+    if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
+      for (const ids of slices) {
+        const retire = await supabaseAdmin
+          .from("document_intents")
+          .delete()
+          .in("document_id", ids)
+          .eq("ticket_id", body.ticketId)
+          .eq("source", "ticket")
+          .eq("user_id", ticket.assignedDrafterId);
+        if (retire?.error) {
+          console.warn(`[workflow-action] intent bridge: previous drafter's intents not retired for ticket ${body.ticketId} (non-blocking)`, retire.error.message);
+        }
+      }
+    }
+    // The new drafter is registered where the ticket is on a drafter's
+    // bench: entering DRAFTING / REVISION_REQ (every assignment), and on
+    // reassignment at PENDING_IFC (the package is being issued). A
+    // reassignment while the draft is under review registers nothing —
+    // the next return to REVISION_REQ does.
+    const registersDrafter =
+      newStatus === "DRAFTING" || newStatus === "REVISION_REQ" || (isReassign && newStatus === "PENDING_IFC");
+    if (registersDrafter) {
+      if (drafterId) {
+        // SM-14: the source documents are read IN THE TICKET'S ORG (as the
+        // CLOSED hand-back path reads them); a document id from another
+        // workspace — or one that is gone — registers nothing.
+        // Matched CASE-INSENSITIVELY (DF-P4 fix pass 4): a uuid column
+        // matches an upper-case id in the `.in()` read but returns its
+        // canonical lower-case text, so the map is keyed by the lower-cased
+        // database id, looked up by the lower-cased named id, and the row's
+        // document_id is the database's own id.
+        const found = new Map<string, { id: string; current_version_id?: string | null; library_id?: string | null }>();
+        for (const ids of slices) {
+          const { data: docRows, error: docErr } = await supabaseAdmin
+            .from("documents")
+            .select("id, current_version_id, library_id")
+            .in("id", ids)
+            .eq("org_id", ticket.orgId);
+          if (docErr) {
+            console.warn(`[workflow-action] intent bridge: source documents unreadable for ticket ${body.ticketId} (non-blocking)`, docErr.message);
+            continue;
+          }
+          for (const r of (docRows ?? []) as Array<{ id?: string; current_version_id?: string | null; library_id?: string | null }>) {
+            if (r?.id) found.set(r.id.toLowerCase(), { ...r, id: r.id });
+          }
+        }
+        const now = Date.now();
+        // One row per database document: two spellings of one id (case)
+        // would otherwise put one conflict key twice in one upsert.
+        const matched = new Map<string, { id: string; current_version_id?: string | null; library_id?: string | null }>();
+        for (const id of sheetIds) {
+          const doc = found.get(id.toLowerCase());
+          if (doc && !matched.has(doc.id)) matched.set(doc.id, doc);
+        }
+        const rows = [...matched.values()].map((doc) => ({
+          org_id: ticket.orgId,
+          document_id: doc.id,
+          library_id: doc.library_id ?? null,
+          user_id: drafterId,
+          user_name: drafterName ?? null,
+          kind: "edit",
+          source: "ticket",
+          base_version_id: doc.current_version_id ?? null,
+          ticket_id: body.ticketId,
+          refreshed_at: new Date(now).toISOString(),
+          expires_at: new Date(now + TICKET_INTENT_TTL_MS).toISOString(),
+        }));
+        for (let i = 0; i < rows.length; i += INTENT_BRIDGE_CHUNK) {
+          const upsert = await supabaseAdmin
+            .from("document_intents")
+            .upsert(rows.slice(i, i + INTENT_BRIDGE_CHUNK), { onConflict: "document_id,user_id,kind,source" });
+          if (upsert?.error) {
+            console.warn(`[workflow-action] intent bridge: drafter's intents not registered for ticket ${body.ticketId} (non-blocking)`, upsert.error.message);
+          }
+        }
+      }
+    } else if (clearsAll) {
+      for (const ids of slices) {
+        const clear = await supabaseAdmin
+          .from("document_intents")
+          .delete()
+          .in("document_id", ids)
+          .eq("ticket_id", body.ticketId)
+          .eq("source", "ticket");
+        if (clear?.error) {
+          console.warn(`[workflow-action] intent bridge: intents not cleared for ticket ${body.ticketId} (non-blocking)`, clear.error.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[workflow-action] intent bridge failed (non-blocking)", e);
+  }
+
+  return NextResponse.json({
+    ok: true, status: newStatus, ...(holdOutcome ?? {}),
+    ...(libraryNotStored && !holdOutcome ? { warning: "The request moved on, but its library could not be recorded yet (database update 20261208 is not applied)." } : {}),
+  });
 }
 
 async function fanOut(params: {

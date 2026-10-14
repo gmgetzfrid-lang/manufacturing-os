@@ -15,7 +15,10 @@ export type MocOrigin = { status: "completed" | "in_progress" | "none"; number: 
 
 export type DeliverableState =
   | { state: "published"; version_id: string; revision_label: string; document_id: string; published_at: string; published_by: string; in_review?: boolean }
-  | { state: "not_in_register"; document_id: string; register_rev: string | null; noted_at: string };
+  | { state: "not_in_register"; document_id: string; register_rev: string | null; noted_at: string }
+  /** DCW-4 (DF-P4): a request with no source document but a target library
+   *  (GAP-105) closed without its deliverable entering that library. */
+  | { state: "not_in_register"; document_id: null; library_id: string; register_rev: null; noted_at: string };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -75,6 +78,7 @@ export function deliverableStateOf(metadata: Record<string, unknown> | null | un
   if (!d) return null;
   if (d.state === "published" && typeof d.version_id === "string") return d as unknown as DeliverableState;
   if (d.state === "not_in_register" && typeof d.document_id === "string") return d as unknown as DeliverableState;
+  if (d.state === "not_in_register" && d.document_id == null && typeof d.library_id === "string") return d as unknown as DeliverableState;
   return null;
 }
 
@@ -86,6 +90,22 @@ export function publishedDeliverable(
   const deliverable: DeliverableState = {
     state: "published", version_id: o.versionId, revision_label: o.revisionLabel, document_id: o.documentId,
     published_at: o.now ?? new Date().toISOString(), published_by: o.publishedBy,
+  };
+  return { ...(metadata ?? {}), deliverable };
+}
+
+/** DCW-4 (DF-P4): closing a request that has NO source document but a target
+ *  library (GAP-105) and no published deliverable leaves the same visible,
+ *  queryable state, naming the library. null when the deliverable was
+ *  already published. */
+export function noteDeliverableNotInLibrary(
+  metadata: Record<string, unknown> | null | undefined,
+  o: { libraryId: string; now?: string },
+): Record<string, unknown> | null {
+  const current = deliverableStateOf(metadata);
+  if (current?.state === "published") return null;
+  const deliverable: DeliverableState = {
+    state: "not_in_register", document_id: null, library_id: o.libraryId, register_rev: null, noted_at: o.now ?? new Date().toISOString(),
   };
   return { ...(metadata ?? {}), deliverable };
 }

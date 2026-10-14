@@ -574,6 +574,12 @@ casQuery = auth.readLastModified ? casQuery.eq("last_modified", auth.readLastMod
 
 **Scope / residual.** The ticket shed's commit (and, for symmetry, its restore) → **DF-P11**, which already owns `app/api/admin/ticket-shed/*` (its `SM-4` row re-reads status at commit). The commit should carry a `last_modified` leg captured at produce time, or re-capture the arrays and refuse when they changed, so a comment posted after capture is never wiped unarchived (`99-fix-sequencing.md`, "Hand-offs from DF-P1"). The hand-back route's compare-and-set has no null-token leg (`app/api/tickets/handback/route.ts:85` adds `last_modified` only when present) — the `EDGE-15` class on a file DF-P1 does not own; noted for the hand-back's owner (DF-P2 / DF-P4), not fixed here.
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — the hand-back route's null-token leg (the `EDGE-15` class, handed to DF-P4 at the DF-P2 merge). `app/api/tickets/handback/route.ts:89` now compare-and-sets a ticket with no `last_modified` on the null itself (`q.is("last_modified", null)`), as the workflow route does since DF-P1: the first writer stamps it and a concurrent second matches no row (409) — never a write with no leg at all. Test: `lib/__tests__/dfRoundG_P4_library.test.ts` ("SM-9 / EDGE-15 class (DF-P4)": the legs after the update are `eq id` and `is last_modified null`; with a token, the token).
+
+**Done-when.** ✗ (in part) done-when 3: every writer DF-P4 owns now compare-and-sets (the hand-back's null leg closed); the ticket shed's commit is still unguarded (DF-P11), as recorded above.
+
+**Scope / residual.** The ticket shed's commit / restore → **DF-P11** (unchanged).
+
 ---
 
 <a id="sm-10"></a>

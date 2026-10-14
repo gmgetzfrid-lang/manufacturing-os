@@ -1176,6 +1176,47 @@
         "projects J19 merged (lib/transitionIn.ts)"
       ],
       "sequencingNotes": "Added by the integrator 2026-10-13 at the I-11 merge (DEC-31): every limb I-11 recorded as handed to 'the next package that edits' a file it did not own. Runs after I-12 and J19. The index paste is independent of the relation paste and can go any time."
+    },
+    {
+      "name": "I-27 FRESH-INSTALL REPLAY — a brand-new install replays schema.sql and every numbered migration in order with zero errors, and the one pending migration that cannot paste is corrected",
+      "findings": [
+        "IRLS-19 (opened by I-17 2026-10-14): 20261075's final verification SELECT reads the column `check` unquoted — pasted as one script (the SQL editor) it fails with a syntax error and applies NOTHING; correct it IN PLACE (quote the identifier; never applied anywhere, so no drift), flip the I-17 harness's known-defect allow-list and freshReplay.test.ts's two IRLS-19 pins, re-run every 20261075 shape test, and give the paste guide's row 70 its PASTE line back (the integrator edits the guide at merge)",
+        "IRLS-18 (opened by I-17): 20260630 indexes team_members before 20260707 creates it — on a fresh install the index statement fails; fix so a fresh replay in filename order succeeds without changing any already-applied database (guarded / IF EXISTS / a later numbered file — decide with the replay and say why)",
+        "IRLS-17 (opened by I-17): supabase/schema.sql cannot run as one script (sent whole it applies nothing; 16 statements fail even one by one) — make it replay clean for a fresh install (self-host docker), each change proven harmless to an existing database",
+        "IRLS-6 done-when 2 and 3 (the zero-error fresh replay; the schema-health route healthy on a fresh install) — close once IRLS-17/18/19 land; the integrator rules whether the harness's PostgREST stand-in counts in place of a real Supabase project (proposed default under DEC-90: yes for the route's reads, said in the record)"
+      ],
+      "files": [
+        "supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql (the one identifier only)",
+        "supabase/schema.sql",
+        "supabase/migrations/20260630_* (or a guarded later file)",
+        "lib/__tests__/rls/replayKnownDefects.ts, lib/__tests__/rls/freshReplay.test.ts",
+        "tests: the opt-in replay runs clean end to end; every existing shape / lineDiff test of the touched files still passes"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "intelligence I-17 merged (2026-10-14: the PostgreSQL 16 harness, npm run test:db)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the I-17 merge, 2026-10-14 (DEC-31). IRLS-19 first: it blocks the paste of document-control 20261075 (paste guide row 70 on HOLD)."
+      ]
+    },
+    {
+      "name": "I-28 DEFINER ORACLES — the six SECURITY DEFINER helpers that answer about any uid (or project) a caller names answer only for the caller when a client role calls them",
+      "findings": [
+        "INTK-19 (projects-and-cost; opened by I-17 2026-10-14): user_can_publish_on_library, user_is_effective_owner, org_capability_allows, acl_index_denies, org_capability_allows_for answer only for auth.uid() when called by anon / authenticated (or the policies and SECURITY INVOKER callers such as transmittals_guard call a caller-bound wrapper and the uid-taking form narrows to service_role); project_org gets a decision; node_visible's caller-supplied p_owner membership answer is closed or decided; lib/__tests__/rls/definerDecisions.ts has no oracle row left (or each kept is re-reasoned) and member_is_active's row drops its INTK-19 owner. Every policy that calls a helper today must answer exactly as before for every legitimate reader — proven on the I-17 harness (npm run test:db) before and after"
+      ],
+      "files": [
+        "supabase/migrations: one DEC-30 file re-creating each helper / wrapper and every policy that calls them from their NEWEST bodies (lineDiff-pinned), counts-only inventory, DRLS-16",
+        "lib/__tests__/rls/definerDecisions.ts, definerCensus.test.ts, registryAuthority-style before/after RLS tests"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "intelligence I-17 merged (2026-10-14; the harness and the census)",
+        "intelligence I-12 merged (it re-creates node_visible and the document read predicate)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the I-17 merge, 2026-10-14 (DEC-31). LOW severity, but it touches the policy helpers every read uses: regression-first, every policy's answer pinned before and after on the replay."
+      ]
     }
   ],
   "crossAreaFileOverlaps": [

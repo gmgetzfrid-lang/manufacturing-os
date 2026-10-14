@@ -18,6 +18,10 @@ const state = vi.hoisted(() => ({
   /** 20261157 applied: the claim rows are unique per (org, version, attempt). */
   uniqueClaims: true,
   insertErrors: {} as Record<string, { code?: string; message: string }>,
+  /** SAF-19 (J20): user_can_publish_doc asked AS THE CALLER (callerScopedClient). */
+  publish: { data: false as unknown, error: null as null | { code?: string; message: string } },
+  publishCalls: [] as Array<{ fn: string; args: unknown; bearer: string | null }>,
+  scopedUnavailable: false,
 }));
 const claimKey = (r: Row) => `${r.org_id}|${(r.details as Row | undefined)?.versionId}|${(r.details as Row | undefined)?.attempt}`;
 function chain(table: string) {
@@ -61,6 +65,18 @@ function chain(table: string) {
   };
   return new Proxy(c, h);
 }
+vi.mock("@/lib/serverAuth", () => ({
+  callerScopedClient: (req: Request) => {
+    if (state.scopedUnavailable) return { error: "Server is missing Supabase credentials", status: 500 };
+    const bearer = req.headers.get("authorization");
+    return {
+      rpc: async (fn: string, args: unknown) => {
+        state.publishCalls.push({ fn, args, bearer });
+        return { data: state.publish.error ? null : state.publish.data, error: state.publish.error };
+      },
+    };
+  },
+}));
 vi.mock("@/lib/supabaseAdmin", () => ({
   supabaseAdmin: {
     auth: { getUser: vi.fn(async () => (state.user ? { data: { user: state.user }, error: null } : { data: { user: null }, error: { message: "bad jwt" } })) },
@@ -89,6 +105,9 @@ beforeEach(() => {
   state.inserts = [];
   state.uniqueClaims = true;
   state.insertErrors = {};
+  state.publish = { data: false, error: null };
+  state.publishCalls = [];
+  state.scopedUnavailable = false;
   state.rows = {
     org_members: [
       { org_id: ORG, uid: "u-owner", role: "Requester", roles: [], status: "active" },
@@ -129,7 +148,7 @@ describe("POST /api/intake/outcome-notice — who may send it", () => {
     state.user = { id: "u-member" };
     const res = await post({ orgId: ORG, versionId: VER });
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/project owner or a document controller/);
+    expect((await res.json()).error).toBe("Only the project owner, a document controller or a publisher of this document can notify a contractor of a decision.");
     expect(sent).not.toHaveBeenCalled();
     expect(audits()).toHaveLength(0);
   });
@@ -408,5 +427,69 @@ describe("POST /api/intake/outcome-notice — a quote's award or decline (MON-10
   it("a submission's notice still names a version: a body with both ids is the submission's (the regression path)", async () => {
     const res = await post({ orgId: ORG, versionId: VER, costDocumentId: QUOTE });
     expect(await res.json()).toEqual({ sent: true, outcome: "rejected" });
+  });
+});
+
+describe("projects-tab SAF-19 remainder (projects Round G J20) — every approver the review surface admits can tell the contractor", () => {
+  it("a publisher of the version's document (user_can_publish_doc true, asked AS THE CALLER) who is neither a controller nor the owner is admitted; the claim-once and send are unchanged", async () => {
+    state.user = { id: "u-member" };
+    state.publish = { data: true, error: null };
+    const res = await post({ orgId: ORG, versionId: VER });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: true, outcome: "rejected" });
+    expect(state.publishCalls).toEqual([{ fn: "user_can_publish_doc", args: { p_doc: DOC, p_org: ORG }, bearer: "Bearer t" }]);
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(audits().map((r) => r.action)).toEqual(["INTAKE_OUTCOME_NOTICE_CLAIMED", "INTAKE_OUTCOME_NOTIFIED"]);
+    // once per submission, whoever asks next
+    expect(await (await post({ orgId: ORG, versionId: VER })).json()).toEqual({ sent: false, reason: "already" });
+    expect(sent).toHaveBeenCalledTimes(1);
+  });
+
+  it("a member who is not a publisher of the document is refused (403), nothing claimed, nothing sent", async () => {
+    state.user = { id: "u-member" };
+    state.publish = { data: false, error: null };
+    const res = await post({ orgId: ORG, versionId: VER });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("Only the project owner, a document controller or a publisher of this document can notify a contractor of a decision.");
+    expect(state.publishCalls).toHaveLength(1);
+    expect(sent).not.toHaveBeenCalled();
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("regression: a controller or the project owner is admitted exactly as before — the publish check is never asked", async () => {
+    state.user = { id: "u-dc" };
+    expect((await post({ orgId: ORG, versionId: VER })).status).toBe(200);
+    state.rows.audit_logs = [];
+    state.user = { id: "u-owner" };
+    expect((await post({ orgId: ORG, versionId: VER })).status).toBe(200);
+    expect(state.publishCalls).toHaveLength(0);
+  });
+
+  it("before 20261037 (42883 / PGRST202) the check admits nobody new: today's 403", async () => {
+    state.user = { id: "u-member" };
+    for (const code of ["42883", "PGRST202"]) {
+      state.publish = { data: null, error: { code, message: "function user_can_publish_doc(uuid, uuid) does not exist" } };
+      expect((await post({ orgId: ORG, versionId: VER })).status).toBe(403);
+    }
+    expect(sent).not.toHaveBeenCalled();
+  });
+
+  it("a check that fails otherwise, or cannot be made, sends nothing (503) — never a pass", async () => {
+    state.user = { id: "u-member" };
+    state.publish = { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+    const res = await post({ orgId: ORG, versionId: VER });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/could not be checked/);
+    state.scopedUnavailable = true;
+    expect((await post({ orgId: ORG, versionId: VER })).status).toBe(503);
+    expect(sent).not.toHaveBeenCalled();
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("an inactive member is refused before any publish check", async () => {
+    state.user = { id: "u-gone" };
+    state.publish = { data: true, error: null };
+    expect((await post({ orgId: ORG, versionId: VER })).status).toBe(403);
+    expect(state.publishCalls).toHaveLength(0);
   });
 });

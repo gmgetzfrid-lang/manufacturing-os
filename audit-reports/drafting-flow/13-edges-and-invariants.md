@@ -459,6 +459,7 @@ lib/notify/recipients.ts:59-61
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P13 SLA DEFAULTS RAIL AND EDITOR (done-when 2's editor for `sla_defaults`; the creation half landed with DF-P4) and drafting-flow DF-P9 TICKET-PAGE (done-when 3) — restated by the integrator at the DF-P4 merge, 2026-10-14 (DEC-31).
 - **Assigned:** notifications N4 FEED-PROVIDER-AND-REALTIME (fix pass 3's bell-rows limb: the attention feed's client reconcile in `hooks/useTicketNotifications.ts` skips `SLA_NOTICE_ACTIONS` rows while the ticket is open — only CLOSED / CANCELED retire them) — by the integrator, 2026-10-13 (N4 integrator fix pass, DEC-31: re-owned from DF-P9, because N4 rebuilt the hook; landed on `fleet/N4-feed-provider`, below).
 - **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-when 3: the workload board's overdue count uses `isPastDue`; and the bell's client reconcile in `hooks/useTicketNotifications.ts` skips `SLA_NOTICE_ACTIONS` rows while the ticket is open — after notifications N4 merges, which rebuilds that hook; *that limb re-owned to notifications N4 on 2026-10-13, the line above*) and drafting-flow DF-P4 LIBRARY (done-when 2: the create route stamps `target_completion_at` from the org's `sla_defaults`; the create route never writes `sla_breached_at` / `sla_breach_warned_at` / `outcome` — re-owned from the merged DF-P2) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
@@ -525,6 +526,19 @@ vercel.json (only two crons; neither scans tickets)
 
 **Scope / residual.** As above. The columns are `20260529`'s; the clock starts at the first paste of `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` (§5), which records the backlog already past its target without a notice each — until then step 5b sends nothing and reports the backlog as a count (*corrected at fix pass 2:* this said the first runs after the deploy would send breach notices to that backlog, as many as fit in 30 s, and that inventory row 5 counted them; the count was taken after the deploy and could not warn). The first run after the paste warns the open tickets past 75 % of their window and not yet due (inventory row 7). Residual: an `sla_defaults` row added later for a type gives that type's old untargeted tickets a window at once, so they breach on the next run (no editor exists yet — done-when 2's owner).
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — done-when 2's creation half (re-owned from the merged DF-P2).
+- `/api/tickets/create` stamps `target_completion_at` from the requester's date when they gave one, else the org's `sla_defaults` row for the type (`default_days` from now, at 17:00 — the shape every creation path stamps, `lib/notifications.ts` `slaTargetDateInDays`), else the built-in `DEFAULT_SLA_DAYS` (`app/api/tickets/create/route.ts:607-632`). A read that fails falls back to the built-in window and is logged (a due date carries no authority). The "first fallback" comment above `DEFAULT_SLA_DAYS` now says what the code does.
+- The create route (service role — `ticket_insert_integrity` does not run for it) writes none of `sla_breached_at`, `sla_breach_warned_at`, `outcome` (pinned: no row key of that name, and no ticket from any of the three doors carries one).
+- Tests: `lib/__tests__/ticketCreateRoute.test.ts` ("DF-P4 — EDGE-7 done-when 2 / ROUTE-9 done-when 4": the org's window, the requester's own date wins, no row → 14 days for ISO, an unreadable `sla_defaults` → the built-in window; the three columns never written).
+- **DF-P4 fix pass — the value is bounded, and who writes it is recorded.** The bullet above called a failed read fail-safe ("a due date carries no authority") and said nothing of who writes the table: `sla_defaults` is writable by **every active member** (`20260605_rls_policies_new_tables.sql:128-132`, `sla_defaults_member_all` FOR ALL) and `default_days` has no CHECK. Before DF-P4 the create route always stamped the built-in window, so this member-writable value reached no new ticket; now it reaches every request filed without a requester date. A Viewer setting `default_days = 2000000000` made `slaTargetDateInDays` throw a `RangeError` and every request of that type fail with a 500 (portal, intake collision, check-in). Now the create route uses the window only when it is a whole number of days from 1 to `SLA_DEFAULT_DAYS_MAX` (3650) — `lib/notifications.ts` `boundedSlaDays` — else the built-in window (logged), and the date computation is wrapped with the same fallback (`app/api/tickets/create/route.ts:607-632`). Tests: "a member-written default_days outside 1..3650 whole days (2e9, 0, negative, fractional, text) is the built-in window — never a 500", "boundedSlaDays". A member can still set a legal but hostile window (1 day → every new request due tomorrow, and the clock warns the queue for each): that is the table's open write, opened as **[`EDGE-16`](#edge-16)** (owner admin-and-org, with this finding's editor).
+
+**Done-when.**
+1. ✓ Unchanged (DF-P3).
+2. ✗ in part — `sla_defaults` is read at creation (✓, bounded) and by the clock (DF-P3 ✓), but no admin UI edits it, and any active member can write it (`EDGE-16`). **Owner:** admin-and-org (the settings surface and the write policy), as recorded.
+3. ✗ Unchanged — DF-P9.
+
+**Scope / residual.** As above.
+
 ---
 
 <a id="edge-8"></a>
@@ -584,6 +598,11 @@ app/api/tickets/workflow-action/route.ts:24-25 (the standard this violates)
 - ✓ A recipient still receives the `request_pending_approval` bell row and email when the submitting tab closes right after the response: both are written before the response, and nothing is left for the tab to do (the same route test reads them with no further client step).
 
 **Scope / residual.** The check-in's PSM escalation for an undocumented field change is the route's too (second review fix): `escalatePsm` (`:1109`) sends it on the `safety` category to the workspace's controllers other than the reporter, after the creation notice and before the answer, and stamps `metadata.psm_escalated_at`; a check-in that resumes the ticket sends it only while that stamp is missing (`lib/__tests__/ticketCreateRoute.test.ts`, "LIFE-7 / LEAK-6 — the PSM escalation is the route's: sent once, stamped, and resumed only when it never went out"). The owner-review notice (`review_requested`) still `emit()`s from the browser after the route answers (`components/documents/CheckInPanel.tsx`, the review-requested block); it is not the creation notice, and DF-P2's brief does not move it — a proposed hand-off in `99-fix-sequencing.md`, "Hand-offs from DF-P2". A request-form or intake-collision request answered `notified: false` has no automatic resend. Only a check-in resumes, so only a check-in's retry sends a missing notice. The requester is told to tell their supervisor, and the ticket is in the queue regardless. **Owner:** DF-P4 (proposed), which owns the queue: a sweep, or a triage-side reader, for `PENDING_ASSIGNMENT` tickets without `metadata.created_notice_at` (`99-fix-sequencing.md`, "Hand-offs from DF-P2").
+
+**Follow-up (2026-10-13, drafting-flow Round G, DF-P4 LIBRARY) — the two residual limbs handed on at the DF-P2 merge. The finding stays RESOLVED; neither limb is a done-when of it.**
+- *A creation notice nobody received, outside a check-in.* `/api/tickets/create` now marks every request it files `metadata.created_notice_owed = true` (`app/api/tickets/create/route.ts:658`); `created_notice_at` (stamped once a queue recipient's bell has the notice) settles it, and `lib/ticketLibrary.ts` `creationNoticeOwed(status, metadata)` is the reader: true only for a marked, unstamped request still in `PENDING_ASSIGNMENT` — a request filed before the mark existed is never counted, because it cannot be told apart from an announced one. Tests: `ticketCreateRoute.test.ts` ("DF-P4 — EDGE-8": announced → owed and stamped; nobody to tell → owed and not stamped), `dfRoundG_P4_library.test.ts` ("creationNoticeOwed"). **Not mounted:** the queue chip ("not announced") is `app/(protected)/requests/page.tsx` (**DF-P9**), and a resend sweep would be a step of `app/api/cron/maintenance/route.ts` (notifications N15's file in this round) — one call of `creationNoticeOwed` each.
+  - **Not met (this limb):** `creationNoticeOwed` (`lib/ticketLibrary.ts:41`) has **no caller yet** — the marker is written and the reader is tested, but no screen or sweep shows an unannounced request, so nobody is told today. **Owner:** drafting-flow **DF-P9** — the queue chip in `app/(protected)/requests/page.tsx` (assigned in `99-fix-sequencing.md`, "Hand-offs from DF-P4"); the resend sweep, if wanted, is a notifications step of `app/api/cron/maintenance/route.ts`. *(Recorded at the DF-P4 fourth fix pass, ruled under `DEC-90`.)*
+- *The check-in's owner-review notice (`review_requested`).* Reproduced: it is **not** part of ticket creation. It is the `notify_owner` outcome of the check-in (`components/documents/CheckInPanel.tsx:455-484`), which files no ticket at all — it never reaches `/api/tickets/create`, so "a stamped server leg in /api/tickets/create" has no request to ride on. Moving it server-side is a check-in route's (a notice of the check-in episode, stamped on the episode) → **document-control** (P23 owns `CheckInPanel.tsx` this round). Not done here.
 
 ---
 
@@ -985,6 +1004,38 @@ export async function notify(input: NotificationInput): Promise<void> {
 - ✓ A route test: two concurrent writes on a null-token row give one 409.
 
 **Scope / residual.** None for this finding. The same null-leg gap in `app/api/tickets/handback/route.ts:85` is noted on `SM-9` for that route's owner.
+
+---
+
+<a id="edge-16"></a>
+
+## EDGE-16 · Any active member can write `sla_defaults`, which now sets the due date of every new request — and the SLA clock's warnings
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** drafting-flow DF-P13 SLA DEFAULTS RAIL AND EDITOR (the `sla_defaults` write policy narrowed to the drafting-configuration editors — Admin, DocCtrl, DraftingSupervisor, `DEC-107` item 3's set — and the editor beside the request-form configuration) — package added by the integrator at the DF-P4 merge, 2026-10-14 (DEC-31; the record named admin-and-org with no package).
+- **Assigned:** admin-and-org (the `EDGE-7` done-when 2 editor's owner: the editor and the write policy land together) — opened by drafting-flow DF-P4's fix pass, 2026-10-13, from the adversarial review of DF-P4 (`DEC-31`: a remainder is a new id with an owner).
+- **Verification:** CONFIRMED (by reading; not exercised against a live database)
+- **Independently verified:** — (`author`: opened 2026-10-13 by drafting-flow DF-P4's fix pass from its adversarial review; confirmed by the integrator by reading at the DF-P4 merge; not yet challenged by a second party).
+- **Blast radius:** availability / notification noise
+- **Locations:**
+  - `supabase/migrations/20260605_rls_policies_new_tables.sql:128-132` — `CREATE POLICY "sla_defaults_member_all" ON sla_defaults FOR ALL USING (EXISTS (… org_members … status = 'active')) WITH CHECK (…)` — the table's only policy: every active member, every verb
+  - `supabase/migrations/20260529_phase_b_notifications.sql:84` — `CREATE TABLE IF NOT EXISTS sla_defaults` — `default_days` carries no CHECK
+  - `app/api/tickets/create/route.ts:607-632` — the create route seeds `target_completion_at` from it (DF-P4, `EDGE-7` / `ROUTE-9`), bounded to 1–3650 whole days at the read (`lib/notifications.ts` `boundedSlaDays`)
+  - `lib/ticketSla.ts:457-464` — the SLA clock gives a ticket with no target its org's window from the same table (any `default_days > 0`)
+- **Related:** `EDGE-7` (the SLA layer; its done-when 2 editor), `ROUTE-9` (done-when 4)
+- **Independently verified:** — (`author`: opened at the DF-P4 fix pass from the review's finding; the cited lines re-read at the fix pass; not yet challenged)
+
+**Mechanism.** `sla_defaults` was written by nobody and read by nobody until Round G; its RLS was the generic member-FOR-ALL shape of `20260605`. DF-P3's clock and DF-P4's create route now read it, so a value any active member can write — a Viewer from the browser console, `supabase.from('sla_defaults').upsert({ org_id, request_type: 'ISO', default_days: 1 })` — sets the due date of every request of that type filed without a requester date, and the window the clock applies to old untargeted ones.
+
+**Failure scenario.** A Viewer sets `default_days = 1` for ISO. Every ISO request filed afterwards is due tomorrow at 17:00; the clock warns its waiting party and the queue at 75 % of the window and sends a breach notice to the queue and the requester the next day, for each one. (The other half of the review's scenario — `default_days = 2000000000` failing every ISO request with a 500 — is closed at the create route's read by the DF-P4 fix pass. The clock is not bounded yet: its `sla_defaults` pass computes `new Date(now - days * DAY_MS).toISOString()` (`lib/ticketSla.ts:474-475`), which throws a `RangeError` on such a value; the cron's step 5b catches it (`app/api/cron/maintenance/route.ts:414`), so the untargeted pass stops for every workspace after the hostile one, that run and every run until the row is fixed. Found by reading at the DF-P4 fix pass; `lib/ticketSla.ts` is DF-P3's merged module, not this package's.)
+
+**Remediation.** Narrow the writes to the people who configure the drafting flow — the `AUTHZ-10` set (`lib/adminSurfaces.ts` `DRAFTING_CONFIG_EDITORS`: Admin, DocCtrl, DraftingSupervisor) through `caller_holds_any_role`, keeping SELECT for members — with a counts-only inventory (workspaces with rows, rows outside 1–3650) before the transaction (`DEC-30`), a CHECK (or a guard) bounding `default_days` to the same 1–3650, and the admin editor `EDGE-7` done-when 2 asks for.
+
+**Done when.**
+- A member who holds none of the configuring roles cannot insert, update or delete an `sla_defaults` row (RLS), and the role set is pinned equal to the registry.
+- `default_days` outside 1–3650 whole days is refused by the database.
+- The clock bounds the value it reads as the create route does (`lib/ticketSla.ts` skips a row outside 1–3650 whole days — `lib/notifications.ts` `boundedSlaDays` is the shared rule — so one workspace's row cannot stop the pass for the others). **Owner of this item:** the SLA clock's owner (DF-P3's successor on `lib/ticketSla.ts`), if it lands before the database bound.
 
 ---
 

@@ -29,6 +29,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { notifyWithReason } from "@/lib/inAppNotifications";
+import { formatRecordTime, orgTimeZone } from "@/lib/recordTime";
 // queueEmail and the request-scoped client binding are loaded when an email
 // is sent (below): the two routes that call this load nothing more than they
 // did before N9 until a receipt is actually told.
@@ -68,11 +69,14 @@ export interface ReceiptNoticeOutcome {
 }
 
 /** The receipt email's subject and plain text — the portal's words as they
- *  were before N9, and the register's own. */
-export function receiptEmailText(input: ReceiptNoticeInput): { subject: string; bodyText: string } {
+ *  were before N9, and the register's own. NEDGE-12 dw1 (notifications N15):
+ *  the time is written through lib/recordTime.ts formatRecordTime — ISO-8601
+ *  with its offset and the zone named, in the org's configured zone (else
+ *  UTC, labelled) — never the server's unlabelled toLocaleString(). */
+export function receiptEmailText(input: ReceiptNoticeInput, timeZone?: string | null): { subject: string; bodyText: string } {
   const subjectLine = input.subject ? ` (${input.subject})` : "";
   const noteLine = input.note ? `\n\nTheir note: ${input.note}` : "";
-  const when = new Date(input.at).toLocaleString();
+  const when = formatRecordTime(input.at, timeZone);
   if (input.via === "portal") {
     return {
       subject: `Transmittal ${input.number} acknowledged by ${input.acknowledgedByName}`,
@@ -123,7 +127,7 @@ export async function tellIssuerOfReceipt(admin: SupabaseClient, input: ReceiptN
     if (error) console.error("[transmittal receipt] the issuer's email address could not be read", error.message);
     const toEmail = (member as { email?: string | null } | null)?.email ?? null;
     if (toEmail) {
-      const { subject, bodyText } = receiptEmailText(input);
+      const { subject, bodyText } = receiptEmailText(input, await orgTimeZone(admin, input.orgId));
       const [{ queueEmail }, { runWithServerClient }] = await Promise.all([
         import("@/lib/notifications"),
         import("@/lib/serverClientScope"),

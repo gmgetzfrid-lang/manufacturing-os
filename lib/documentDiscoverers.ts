@@ -16,11 +16,12 @@
 // (GAP-15 / DEC-7) and the controller tier (DEC-43: controllers are
 // unscoped). It answers; it does not filter anyone's notice by itself.
 //
-// Who wires it: the dispatcher (lib/notify/dispatch.ts, emit) is owned by the
-// notifications dispatch package — dropping the non-discovering,
-// non-controller recipients of a document-scoped event is its call to make,
-// through this module on the server and POST /api/documents/discoverers from
-// the browser. Recorded as NEDGE-6's residual with that owner.
+// Who wires it (notifications N15): the dispatcher (lib/notify/dispatch.ts
+// resolveRecipients) drops a document's non-discovering followers through
+// lib/notify/recipients.ts discoveringAmong — this module on the server
+// (registered at the bottom of this file when it is loaded) and POST
+// /api/documents/discoverers from the browser; lib/activityThread.ts
+// notifyCheckoutActivity filters its whole audience the same way (TAX-4).
 //
 // Fail-closed toward the caller: a membership, chain or document read that
 // fails answers `ok: false` with the reason — never a guessed list. A chain
@@ -34,6 +35,7 @@ import {
 import { canDiscover, type Principal } from "@/lib/permissions";
 import { normalizeRoles } from "@/lib/roleCapabilities";
 import { runWithServerClient } from "@/lib/serverClientScope";
+import { __registerServerDiscoverCheck } from "@/lib/notify/recipients";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
 /** The most people one check answers for (one emit's audience is far below it). */
@@ -190,3 +192,13 @@ export async function discoverersOfDocument(input: {
   }
   return { ok: true, discover, withheld, visibility, ...(brokenChain ? { brokenChain: true } : {}) };
 }
+
+// NEDGE-6 done-when 3 (notifications Round G, N15): the dispatcher's server
+// check. Registered when this module is loaded (lib/notify/recipients.ts is
+// bundled for the browser and never imports this file). A failed answer —
+// a read that failed, a document not in the org — is a failure to the
+// dispatcher, which then keeps only the controllers.
+__registerServerDiscoverCheck(async ({ orgId, documentId, uids }) => {
+  const answer = await discoverersOfDocument({ orgId, documentId, uids });
+  return answer.ok ? { ok: true, discover: answer.discover } : { ok: false, error: answer.error };
+});

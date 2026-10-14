@@ -31,7 +31,7 @@ Whether giving an area a drawing populates its equipment.
 ## AREA-1 · The equipment registry has no write authority at all — RLS is FOR ALL to every active member, while the Operating Areas page prints a role restriction that does not exist
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)
 - **Assigned:** intelligence I-17 DATABASE HARNESS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:24-29`, `app/(protected)/admin/assets/page.tsx:56`, `app/(protected)/admin/assets/page.tsx:348-352`, `lib/assets.ts:172-220`
@@ -65,6 +65,24 @@ supabase/migrations/20260605_rls_policies_new_tables.sql:26-29 — `CREATE POLIC
 4. ✓ The banner text matches the policy (pinned by test).
 
 **Scope / residual.** Apply 20261128. The finding stays OPEN on one limb: done-when 3 asks for a test that refuses a Viewer's JWT at runtime, and a static census plus a scratch-database spot check is not that test. It closes when the suite gains a database (or an RLS harness) that runs the policies. Everything else is built.
+
+**Resolution (2026-10-14, intelligence Round G; resolved by the integrator's ruling at the I-17 integrator fix pass).** The last limb, done-when 3's runtime refusal, is built on the database harness (intelligence I-17): `npm run test:db` (`vitest.db.config.ts`, globalSetup `lib/__tests__/rls/globalSetup.ts`) finds a PostgreSQL 16 (`MOS_TEST_PG_BIN`, else PATH, else the usual package directories; `lib/__tests__/rls/pgHarness.ts`), starts it under a scratch directory, replays `supabase/schema.sql` and every numbered migration in filename order onto a Supabase stand-in (`lib/__tests__/rls/supabaseStandIn.sql`: the roles `anon` / `authenticated` / `service_role` / `authenticator`, a non-superuser `postgres` with BYPASSRLS, Supabase's default privileges, `auth.users`, `auth.uid()` / `auth.jwt()` read from `request.jwt.claims`), runs the suites under `lib/__tests__/rls/`, and deletes the cluster afterwards. With no PostgreSQL it prints one line naming the missing binary and the suites skip (exit 0). The default `npx vitest run` excludes `lib/__tests__/rls/**` and CI runs only `npm test`, so neither changes (`lib/__tests__/intelRoundGDbHarness.test.ts` pins it). No npm dependency was added: the harness drives the PostgreSQL binaries through `psql`. `lib/__tests__/rls/registryAuthority.test.ts` sends each statement the way PostgREST sends a signed-in person's request (`SET ROLE authenticated` plus the JWT claims in `request.jwt.claims`), on a database that has replayed the whole sequence, `20261128` included:
+- **INSERT on `assets`:** a Viewer's and an Auditor's JWT are refused with `42501`. A Manager, a Supervisor, a DocCtrl and an Admin each create a row. `anon` and an Admin of another workspace are refused with `42501`.
+- **UPDATE:** a Viewer's and an Auditor's JWT touch 0 rows. A Manager's edit lands.
+- **DELETE:** Viewer, Auditor, Engineer-1, Manager, Supervisor and an outsider each touch 0 rows, and the row is still there. An Admin's delete removes it and writes `ASSET_DELETED` with the Admin's uid. A DocCtrl's delete and the delete of a Viewer who holds DocCtrl in `roles[]` also land, which proves the additive role collection is read.
+- **`asset_types`:** a Viewer's INSERT is refused with `42501`; a Manager's DELETE touches 0 rows; an Admin's DELETE removes the row.
+- **Reads:** every active member reads the registry; an outsider and `anon` read 0 rows.
+- **The test is not vacuous.** On a copy of the replay without `20261128`'s DELETE overlay, the same Manager delete succeeds ("the runtime tests are not vacuous").
+
+Measured 2026-10-14 (review fix pass 2) on PostgreSQL 16.13 with pgvector 0.6.0: the harness's three files, 39 tests, all pass in about 27 s, and the cluster was deleted afterwards.
+
+**Done-when.**
+1. ✓ (2026-09-30) The split policies, by the role collection (20261045 + 20261128).
+2. ✓ (2026-09-30) `asset_types` and `asset_photos` carry the same split. The runtime test exercises `asset_types`; `asset_photos` is covered by the static census in `intelRoundGRegistry.test.ts`.
+3. ✓ Met as narrowed by the integrator (DEC-90; ruled at the I-17 integrator fix pass, 2026-10-14). PostgreSQL answers a `USING` refusal with zero rows, which is the record's own "(42501 or zero rows)" bar (2026-09-30), and the runtime test lives in the opt-in suite by DEC-90 ruling 2. What the test shows, on a real PostgreSQL 16 with the whole sequence replayed: a Viewer's JWT is refused on `assets` INSERT with `42501`, and its UPDATE and DELETE touch 0 rows (the row is unchanged and still there); `lib/assets.ts` turns a 0-row write into a thrown refusal (pinned in `intelRoundGRegistry.test.ts`). The narrowing covers exactly the two points where the done-when's words go further: `42501` on UPDATE and DELETE (PostgreSQL never raises it for a `USING` refusal), and a test "in the style of the existing API-route authorization tests", which run in CI (this one runs in `npm run test:db`, never in CI). Nothing else in the done-when's text is left unshown.
+4. ✓ (2026-09-30) The banner matches the policy.
+
+**Scope / residual.** RESOLVED by the integrator's ruling (done-when 3 met as narrowed, above); no code changed for it. Pending migration: `supabase/migrations/20261128_intel_roundG_registry_authority.sql`, unchanged. Apply it by hand (DEC-30): the harness proves its policies on a fresh replay, not on the live project. Until it is pasted, the live database keeps 20261045's writer-tier overlays, so DELETE on `assets`, `asset_types` and `asset_photos` stays with the writer tier rather than the controller tier, and person-initiated deletions are not audited. Measured again at the I-17 integrator fix pass (2026-10-14, PostgreSQL 16.13, the merged sequence): `registryAuthority.test.ts` passes inside the opt-in run's 53 tests.
 
 ---
 

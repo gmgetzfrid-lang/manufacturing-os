@@ -137,6 +137,11 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 import { runWithServerClient } from "@/lib/serverClientScope";
+// NEDGE-6 done-when 3 (notifications N15): loading this module registers the
+// dispatcher's server-side discover check, so a published revision's
+// document followers (lib/postPublish.ts, through this door) are filtered by
+// who may discover the document, as they are from the browser.
+import "@/lib/documentDiscoverers";
 import { readActiveHolds, decideHoldGate } from "@/lib/holdGate";
 import { matchCompanyByName } from "@/lib/bidTab";
 import { validateIntakeFile, type IntakeBranch } from "@/lib/fileSniff";
@@ -283,6 +288,12 @@ function doorAnswer(e: DoorError, scope: DoorScope): { message: string; status: 
 }
 
 const DOOR_SCOPE_DOCUMENTS: DoorScope = { message: "This link may only submit revisions to its own or assigned documents.", status: 403 };
+/** SEC-22 (b) (J20 review fix pass 2): the door refusing to retire the
+ *  link's displaced submission as out of scope (42501 'scope') — the link
+ *  stopped being trusted, or the document left it, while the request was in
+ *  flight — is the replace check's own answer, said in its words: a retry
+ *  gets the same 409, never a "try again shortly" that cannot succeed. */
+const DOOR_SCOPE_REPLACE: DoorScope = { message: "Your previous submission for this document is still in review — it must be approved or rejected first.", status: 409 };
 /** A NEW document the door would not file: the folder the route filed into
  *  is not (or no longer) the project's intake folder inside its intake
  *  library — a configuration answer, never the revision sentence. (A quote
@@ -304,6 +315,41 @@ function refuser(ref: string) {
 function doorRefused(e: DoorError, fail: ReturnType<typeof refuser>, scope: DoorScope): NextResponse | null {
   const a = doorAnswer(e, scope);
   return a ? fail(a.message, a.status, `door refused: ${e.code ?? ""} ${e.message ?? ""}`, { code: a.code }) : null;
+}
+
+/** SEC-22 (b) (projects Round G J20, 20261214): the door's housekeeping —
+ *  retiring, restoring and withdrawing its own submissions, discarding the
+ *  document the request created, referencing it on the project, and the
+ *  intake folder — goes through intake_door_housekeep /
+ *  intake_door_intake_folder, the link's identity bound, every guard
+ *  judging it. Those two come from 20261214, not 20261184, so their
+ *  availability is learned on their OWN state: a database with the door
+ *  (20261184) but not its housekeeping (20261214) keeps the door for the
+ *  content writes and today's service-role housekeeping. "Absent" is decided
+ *  exactly as for the door (doorFunctionAbsent); any other answer is
+ *  answered and never followed by the service-role write. */
+interface DoorHousekeeping { state: DoorState; tokenHash: string }
+type HousekeepOp = "retire" | "restore" | "withdraw" | "discard" | "reference";
+function housekeepVia(door: DoorHousekeeping | undefined, op: HousekeepOp, args: { doc: string; version?: string | null; at?: string | null }) {
+  return door
+    ? viaDoor<number>(door.state, () => supabaseAdmin.rpc("intake_door_housekeep", {
+        p_token_hash: door.tokenHash, p_op: op, p_doc: args.doc, p_version: args.version ?? null, p_at: args.at ?? null,
+      }))
+    : Promise.resolve({ kind: "absent" } as DoorAnswer<number>);
+}
+/** The door's own refusals: the link went dead (28000), out of its scope
+ *  (42501), an operation the function does not know (22023). */
+const DOOR_REFUSAL_CODES = new Set(["28000", "42501", "22023"]);
+/** 'retire' and 'restore' keep the single retry the service-role path makes
+ *  ("Checked, retried once"): a transient failure (a reset connection, a
+ *  deadlock 40P01, a statement timeout 57014) is asked once more; a door
+ *  refusal is answered at once, never retried. Both are safe to repeat — the
+ *  retire is a compare-and-set, the restore clears only the stamp this
+ *  request wrote. */
+async function housekeepRetried(door: DoorHousekeeping | undefined, op: "retire" | "restore", args: { doc: string; version?: string | null; at?: string | null }) {
+  const first = await housekeepVia(door, op, args);
+  if (first.kind !== "error" || DOOR_REFUSAL_CODES.has(String(first.error.code ?? ""))) return first;
+  return housekeepVia(door, op, args);
 }
 
 /** SEC-16 dw2: a token used from a browser that is ALSO signed in to the
@@ -481,7 +527,16 @@ const SAME_FILE_ELSEWHERE = "This same file is already awaiting review through t
  *  into a folder outside the library. */
 async function ensureIntakeFolder(input: {
   orgId: string; projectId: string; projectName: string; libraryId: string; current: string | null;
-}): Promise<{ id: string } | { error: string }> {
+  door?: DoorHousekeeping;
+}): Promise<{ id: string } | { error: string } | { refused: DoorError }> {
+  // SEC-22 (b): the same decision in the database, as the link's identity
+  // (intake_door_intake_folder, 20261214) — the rail on the project's intake
+  // pointers admits exactly this repair. Before the paste, below, unchanged.
+  const viaDb = await (input.door
+    ? viaDoor<string>(input.door.state, () => supabaseAdmin.rpc("intake_door_intake_folder", { p_token_hash: input.door!.tokenHash }))
+    : Promise.resolve({ kind: "absent" } as DoorAnswer<string>));
+  if (viaDb.kind === "ok") return viaDb.data ? { id: String(viaDb.data) } : { error: "intake_door_intake_folder answered no folder" };
+  if (viaDb.kind === "error") return { refused: viaDb.error };
   let stale: string | null = null;
   if (input.current) {
     const { data: cur, error: curErr } = await supabaseAdmin
@@ -639,7 +694,14 @@ async function publishThroughContract(input: {
  *  touched ("decided"). Checked, retried once. Pre-20261105 databases (the
  *  review_state CHECK does not know 'superseded' yet) keep the older
  *  retire-by-superseded_at shape. */
-async function retireDisplacedFirst(input: { displacedId: string; nowIso: string }): Promise<"retired" | "decided" | { error: string }> {
+async function retireDisplacedFirst(input: { displacedId: string; nowIso: string; documentId: string; door?: DoorHousekeeping }): Promise<"retired" | "decided" | { error: string; refused?: DoorError }> {
+  // SEC-22 (b): as the link's identity (intake_door_housekeep 'retire',
+  // 20261214), the same compare-and-set, retried once on a transient failure
+  // as below; a refusal is answered, never retried as the service role.
+  // Before the paste, below, unchanged.
+  const viaDb = await housekeepRetried(input.door, "retire", { doc: input.documentId, version: input.displacedId, at: input.nowIso });
+  if (viaDb.kind === "ok") return Number(viaDb.data ?? 0) > 0 ? "retired" : "decided";
+  if (viaDb.kind === "error") return { error: `displaced submission retire: ${viaDb.error.message ?? viaDb.error.code ?? "refused"}`, refused: viaDb.error };
   const attempt = async () => {
     let r = await supabaseAdmin.from("document_versions")
       .update({ review_state: "superseded", superseded_at: input.nowIso })
@@ -669,7 +731,14 @@ async function retireDisplacedFirst(input: { displacedId: string; nowIso: string
  *  names a draft the door retired, and a controller must resolve it. */
 async function restoreDisplaced(ref: string, input: {
   orgId: string; documentId: string; displacedId: string; nowIso: string; projectId: string; contactEmail: string | null;
+  door?: DoorHousekeeping;
 }): Promise<void> {
+  // SEC-22 (b): as the link's identity (intake_door_housekeep 'restore',
+  // 20261214) — it needs the link to exist, not to be live, so a revocation
+  // mid-request never strands the draft. Retried once on a transient
+  // failure, as below; a refusal is recorded below exactly as a failed
+  // restore is, and never retried as the service role.
+  const viaDb = await housekeepRetried(input.door, "restore", { doc: input.documentId, version: input.displacedId, at: input.nowIso });
   const attempt = async () => {
     const a = await supabaseAdmin.from("document_versions")
       .update({ superseded_at: null }).eq("id", input.displacedId).eq("superseded_at", input.nowIso);
@@ -678,9 +747,15 @@ async function restoreDisplaced(ref: string, input: {
       .update({ review_state: "in_review" }).eq("id", input.displacedId).eq("review_state", "superseded");
     return b.error;
   };
-  let err = await attempt();
-  if (err) err = await attempt();
-  if (!err) return;
+  let err: { message: string } | null = null;
+  if (viaDb.kind === "ok") return;
+  if (viaDb.kind === "error") {
+    err = { message: viaDb.error.message ?? String(viaDb.error.code ?? "refused") };
+  } else {
+    err = await attempt();
+    if (err) err = await attempt();
+    if (!err) return;
+  }
   console.error(`[intake/upload] ref=${ref} displaced submission ${input.displacedId} could not be restored: ${err.message}`);
   await audit(ref, {
     action: "INTAKE_DISPLACE_UNRESOLVED",
@@ -774,6 +849,8 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
   const limits = intakeLimits();
   // J16: the door functions' availability, learned on this request's first call.
   const doorState: DoorState = { absent: false };
+  // SEC-22 (b) (J20): the housekeeping functions' (20261214), learned apart.
+  const housekeeping: DoorHousekeeping = { state: { absent: false }, tokenHash };
   // INTK-15: a multipart POST that is the portal's fallback for a direct
   // upload names its begin — which already counted this upload's attempt.
   // Its reservation is claimed for THIS token (once: a second POST naming
@@ -1552,7 +1629,13 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     const folder = await ensureIntakeFolder({
       orgId, projectId, projectName: String(project.name ?? "Project"), libraryId,
       current: (project.intake_collection_id as string | null) ?? null,
+      door: housekeeping,
     });
+    if ("refused" in folder) {
+      const refused = doorRefused(folder.refused, fail, DOOR_SCOPE_NEW_DOCUMENT);
+      if (refused) return refused;
+      return fail("Couldn't prepare the intake folder — try again shortly.", 500, `intake folder: ${folder.refused.code ?? ""} ${folder.refused.message ?? ""}`);
+    }
     if ("error" in folder) return fail("Couldn't prepare the intake folder — try again shortly.", 500, folder.error);
     collectionId = folder.id;
   }
@@ -1575,7 +1658,14 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
   let createdDocId: string | null = null;
   const discard = async () => {
     if (createdDocId) {
-      const { error: dropErr } = await supabaseAdmin.from("documents").delete().eq("id", createdDocId).eq("org_id", orgId);
+      // SEC-22 (b): as the link's identity (intake_door_housekeep 'discard',
+      // 20261214: its own document, never approved); before the paste, the
+      // service-role delete, unchanged. A refusal is logged as a failed
+      // delete is — never retried as the service role.
+      const viaDb = await housekeepVia(housekeeping, "discard", { doc: createdDocId });
+      let dropErr: { message?: string } | null = null;
+      if (viaDb.kind === "error") dropErr = { message: `${viaDb.error.code ?? ""} ${viaDb.error.message ?? ""}`.trim() };
+      else if (viaDb.kind === "absent") ({ error: dropErr } = await supabaseAdmin.from("documents").delete().eq("id", createdDocId).eq("org_id", orgId));
       if (dropErr) console.error(`[intake/upload] ref=${ref} unused document ${createdDocId} could not be removed: ${dropErr.message}`);
       createdDocId = null;
     }
@@ -1692,10 +1782,19 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
    *  its revision label. */
   const withdraw = async (msg: string, detail?: string, then?: () => Promise<void>, status = 409, extra?: Record<string, unknown>) => {
     if (versionId) {
-      let { error: wErr } = await supabaseAdmin.from("document_versions")
-        .update({ review_state: "superseded", superseded_at: nowIso }).eq("id", versionId);
-      if (wErr && String(wErr.code ?? "") === "23514") {
-        ({ error: wErr } = await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", versionId));
+      // SEC-22 (b): as the link's identity (intake_door_housekeep
+      // 'withdraw', 20261214: its own submission); before the paste, the
+      // service-role write, unchanged. A refusal is logged as a failed write
+      // is — never retried as the service role.
+      const viaDb = await housekeepVia(housekeeping, "withdraw", { doc: theDocId, version: versionId, at: nowIso });
+      let wErr: { message?: string; code?: string } | null = null;
+      if (viaDb.kind === "error") wErr = { message: `${viaDb.error.code ?? ""} ${viaDb.error.message ?? ""}`.trim() };
+      else if (viaDb.kind === "absent") {
+        ({ error: wErr } = await supabaseAdmin.from("document_versions")
+          .update({ review_state: "superseded", superseded_at: nowIso }).eq("id", versionId));
+        if (wErr && String(wErr.code ?? "") === "23514") {
+          ({ error: wErr } = await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", versionId));
+        }
       }
       if (wErr) console.error(`[intake/upload] ref=${ref} withdrawn submission ${versionId} not resolved: ${wErr.message}`);
     }
@@ -1747,9 +1846,17 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     // is retired BEFORE the replacement exists — see retireDisplacedFirst.
     let displacedRetired = false;
     if (priorPending) {
-      const retired = await retireDisplacedFirst({ displacedId: priorPending, nowIso });
+      const retired = await retireDisplacedFirst({ displacedId: priorPending, nowIso, documentId: theDocId, door: housekeeping });
       if (typeof retired === "object") {
         await discard();
+        // SEC-22 (b): the link went dead mid-request (28000) is answered as
+        // the checks before the body answer it, and a refusal as out of
+        // scope (42501 'scope': no longer a trusted link's own submission) as
+        // the replace check above answers it (409, still in review); anything
+        // else as before.
+        const retireCode = String(retired.refused?.code ?? "");
+        const retireRefused = retired.refused && (retireCode === "28000" || retireCode === "42501") ? doorRefused(retired.refused, fail, DOOR_SCOPE_REPLACE) : null;
+        if (retireRefused) return retireRefused;
         return fail("Your earlier submission could not be replaced right now — try again shortly.", 503, retired.error);
       }
       if (retired === "decided") {
@@ -1761,7 +1868,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     const undoDisplace = async () => {
       if (!displacedRetired || !priorPending) return;
       displacedRetired = false;
-      await restoreDisplaced(ref, { orgId, documentId: theDocId, displacedId: priorPending, nowIso, projectId, contactEmail });
+      await restoreDisplaced(ref, { orgId, documentId: theDocId, displacedId: priorPending, nowIso, projectId, contactEmail, door: housekeeping });
     };
     // J16 (GAP-401): the submission, as the door's identity (20261184) — a
     // version only of a document this link authored or was assigned, its
@@ -1865,10 +1972,18 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
   // — the project's document list shows it with its live revision, never a
   // copy. Checked: a refused reference is logged, the submission stands.
   if (createdDocId) {
-    const { error: refErr } = await supabaseAdmin.from("project_documents").upsert(
-      { org_id: orgId, project_id: projectId, document_id: createdDocId, source: "manual", first_seen_at: nowIso, last_seen_at: nowIso },
-      { onConflict: "project_id,document_id", ignoreDuplicates: true },
-    );
+    // SEC-22 (b): as the link's identity (intake_door_housekeep
+    // 'reference', 20261214: a document it created; DO NOTHING on a repeat);
+    // before the paste, the service-role upsert, unchanged.
+    const viaDb = await housekeepVia(housekeeping, "reference", { doc: createdDocId, at: nowIso });
+    let refErr: { message?: string } | null = null;
+    if (viaDb.kind === "error") refErr = { message: `${viaDb.error.code ?? ""} ${viaDb.error.message ?? ""}`.trim() };
+    else if (viaDb.kind === "absent") {
+      ({ error: refErr } = await supabaseAdmin.from("project_documents").upsert(
+        { org_id: orgId, project_id: projectId, document_id: createdDocId, source: "manual", first_seen_at: nowIso, last_seen_at: nowIso },
+        { onConflict: "project_id,document_id", ignoreDuplicates: true },
+      ));
+    }
     if (refErr) console.error(`[intake/upload] ref=${ref} project reference for ${createdDocId} not written: ${refErr.message}`);
   }
 
