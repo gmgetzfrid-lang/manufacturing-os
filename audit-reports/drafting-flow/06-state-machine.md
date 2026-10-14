@@ -777,7 +777,7 @@ case "assign":
 ## SM-13 · `requiresFile` is never enforced server-side, so "ISSUE FINAL IFC PACKAGE" completes with no Final attachment at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:104-109`, `lib/workflow.ts:309-314`, `lib/ticketTransitions.ts:280-283`, `app/(protected)/requests/[id]/page.tsx:1028-1034`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the asymmetry inside workflow.ts strengthens it: `submit_draft` at :176-182 is only offered when `ticket.attachments?.some(a => a.type === 'Draft')`, so the server enforces its file requirement structurally, while `submit_final` at :309-314 carries `requiresFile: true` with no such state guard and no server check — the one compliance-critical issue step is the unguarded one.
@@ -841,6 +841,15 @@ if (action.requiresFile) {
 - ✓ An API-route test posts `submit_final` with `finalAttachment: null` and asserts 400 with the ticket still at `PENDING_IFC` (`dfRoundG_P0.test.ts:381`), and now one typed wrongly (`dfRoundG_P1_rails.test.ts:583`).
 
 **Scope / residual.** The type-specific client check → **DF-P9** (fleet plan: DF-P9 TICKET-PAGE lists `SM-13`).
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the client half. `lib/ticketPage.ts` `requiredFileType` / `missingRequiredFile` (:87, :97): **Submit Draft** needs a `Draft` on the ticket (a Reference or Source no longer satisfies it); **Issue Final** needs the file the IFC upload supplies, typed `Final` — checked when the action is chosen (`app/(protected)/requests/[id]/page.tsx`:1446) and again before it is sent (`app/(protected)/requests/[id]/page.tsx`:1533), so the client refuses exactly what the route refuses (DF-P1's server half, unchanged).
+
+**Done-when.**
+- ✓ The route enforces `requiresFile` against the right type (DF-P1).
+- ✓ The client check tests the specific attachment TYPE — `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "SM-13 — the file an action needs, by TYPE".
+- ✓ The API-route test for `submit_final` with no Final (DF-P0 / DF-P1, unchanged).
+
+**Scope / residual.** None.
 
 ---
 

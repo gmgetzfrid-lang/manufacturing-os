@@ -218,7 +218,7 @@ app/verify-ticket/[ticketId]/page.tsx:35-38
 ## EDGE-3 · A drafter's attention feed pulls CLOSED tickets into a 500-row cap, so a long-tenured drafter's oldest open assignments silently fall off the badge
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:28-31`, `hooks/useTicketNotifications.ts:156`, `hooks/useTicketNotifications.ts:159-161`, `hooks/useTicketNotifications.ts:170`
 - **Re-verified:** hardening pass — **SURVIVES** — and it is more precise than a spot-check suggests. Lines 156 (management) and 170 (requester) **do** carry `.neq('status','CLOSED')`; the defect is line **160**, the Drafter's assigned query, which has no status filter at all. Every ticket ever assigned to that drafter competes for the same 500 slots, ordered `last_modified` DESC, so the rows dropped are the least recently touched — the definition of a stalled assignment.
@@ -253,6 +253,15 @@ hooks/useTicketNotifications.ts:156 (management branch — has the filter)
 - [ ] The Drafter assigned-query excludes terminal statuses (CLOSED and CANCELED) as the other two branches do
 - [ ] When the cap binds, the retained set is chosen by action-required/aging rather than most-recent activity — or the count is fetched separately (head:true) so the badge is exact even when the list is capped
 - [ ] A test with 501 assigned tickets (500 closed, 1 old DRAFTING) asserts the DRAFTING one appears in items
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE, on notifications N4's rebuilt hook (`DEC-105`). Re-verified on `ee21632`: N4 already gave the drafter's assigned query the terminal-status filter, paged every scope 500 at a time with an exact count up to `TICKET_SCAN_CEILING` (5000), and moved the drafter's closed tickets into one uncounted read. This package closes what was left. (a) The drafter's closed scope reads only closed tickets **still unread by them** (`.contains('unread_by', [uid])`, `hooks/useTicketNotifications.ts:631`) — the only closed rows the feed shows — so closed history no longer competes for anything. (b) Past the ceiling the scope is re-read **oldest-modified first** (`loadTicketScope`, :322, `oldestFirst` :335): the 5000 requests evaluated are the longest-waiting, and the ones left are the most recently touched. Under the ceiling the order is unchanged. (c) The feed says which it checked ("the N longest-waiting of M open requests are checked" vs "most recently active", `components/cockpit/AttentionFeed.tsx:251`, `AttentionStatus.ticketsOldestFirst`).
+
+**Done-when.**
+- ✓ The Drafter assigned query excludes CLOSED and CANCELED (N4; unchanged).
+- ✓ When the cap binds, the retained set is the aging work (oldest first past the ceiling) and the count is exact (N4's head count) — `lib/__tests__/attentionProvider.test.ts` ("drafting-flow Round G (DF-P9) — the badge counts what the page offers") "ROUTE-7 / EDGE-3: past the scan ceiling the oldest-modified requests are the ones evaluated, and the surface says so", and its REGRESSION case (under the ceiling the order is most-recent-first and nothing says "longest-waiting").
+- ✓ A test with 500 closed assignments and 1 old DRAFTING one asserts the DRAFTING one is in the feed and counted: `lib/__tests__/attentionProvider.test.ts` ("drafting-flow Round G (DF-P9) — the badge counts what the page offers") "EDGE-3 done-when 3: a drafter with 500 closed assignments and 1 old DRAFTING one…"; and "EDGE-3: the 501st open request is evaluated and counted".
+
+**Scope / residual.** An org with more than 5000 open requests in one viewer's scope still has its most recently touched ones unevaluated by the badge (they are on the queue page, which reads the scope unpaged) — said on the feed, as `ROUTE-7` asks.
 
 ---
 
@@ -404,7 +413,7 @@ app/(protected)/admin/restore/page.tsx:202
 ## EDGE-6 · The drafter assignment picker filters on the headline `role` column only, ignoring the additive roles[] model the rest of the system enforces — an org can reach a request nobody can be assigned to
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:241-247`, `components/requests/EngineerPickerModal.tsx:77-92`, `lib/notify/recipients.ts:52-62`, `app/api/tickets/workflow-action/route.ts:111-131`, `lib/roleCapabilities.ts:120-123`, `supabase/migrations/20260722_member_roles_collection.sql:13`
 - **Also surfaced independently as** [`ROUTE-8`](./08-routing-and-attention.md#route-8) — two lenses found this separately, which raises confidence. Fix once.
@@ -450,6 +459,15 @@ lib/notify/recipients.ts:59-61
 - [ ] The drafter picker selects roles and matches against the collection with the headline as fallback, exactly as EngineerPickerModal does
 - [ ] lib/ticketRouting.ts listActiveMembers/resolveTicketRecipients read the additive collection too
 - [ ] The picker's empty state names the real reason ('no active member holds the Drafter role') rather than rendering blank
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. The drafter picker no longer filters `.eq('role', 'Drafter')`. The assign modal reads active members' `uid, email, role, roles, display_name` and offers `lib/ticketPage.ts` `drafterCandidates` (:62; `app/(protected)/requests/[id]/page.tsx`:338): every member whose role **collection** — the additive `roles`, else the headline (`pickRoles`, :52, the workflow route's own rule) — the org's policy lets do drafting work on this ticket (`policyAllows(policy, "ticket.draft_work", held[0], held, uid, ticketResource(ticket))`, including a personal grant). That is exactly the route's `assignment` check (WF-14), so the picker never offers someone the server refuses and never hides someone it accepts. A failed member read says so; an empty result shows `NO_DRAFTER_CANDIDATES` (:81, `app/(protected)/requests/[id]/page.tsx`:398): nobody holds the Drafter role (or the drafting capability), and an Admin can add it in Admin → Users beside any role they hold.
+
+**Done-when.**
+- ✓ The picker reads the collection with the headline as fallback — `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "EDGE-6 / ROUTE-8 — the drafter picker offers exactly whom the workflow route accepts" (Drafter beside Engineer-2 offered; headline-only rows; the org's policy decides; member-by-member equality with the route's `policyAllows`); `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "EDGE-6 / ROUTE-8 / DCW-1 / DCW-7 — the assign modal" (rendered: Pat with `['Engineer-2','Drafter']` offered, a Viewer not).
+- ✓ `lib/ticketRouting.ts` reads the additive collection (`heldRoles`, :67 — landed in an earlier round, re-verified).
+- ✓ The empty state names the real reason (`lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "nobody can be assigned → the empty state names the reason and the fix").
+
+**Scope / residual.** The shared helper for the **engineer** picker is `ROUTE-8`'s residual (DF-P5).
 
 ---
 
@@ -539,6 +557,15 @@ vercel.json (only two crons; neither scans tickets)
 
 **Scope / residual.** As above.
 
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — done-when 3. The queue's overdue counts read the one rule, `lib/notifications.ts` `isPastDue` (a CLOSED or CANCELED request past its target is not overdue): the supervisor board's bucket count (`app/(protected)/requests/page.tsx`:687), its cards (:1235) and the table's "Past Due / Due Soon" line (:1350, with `isNearingDue`). Pinned in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "one overdue rule on the queue".
+
+**Done-when.**
+1. ✓ Unchanged (DF-P3).
+2. ✗ in part — unchanged: no admin UI edits `sla_defaults`, and its write policy (`EDGE-16`). **Owner:** admin-and-org / DF-P13, as recorded.
+3. ✓ The queue's overdue count uses `isPastDue`.
+
+**Scope / residual.** Done-when 2 only (owners as recorded above).
+
 ---
 
 <a id="edge-8"></a>
@@ -603,6 +630,8 @@ app/api/tickets/workflow-action/route.ts:24-25 (the standard this violates)
 - *A creation notice nobody received, outside a check-in.* `/api/tickets/create` now marks every request it files `metadata.created_notice_owed = true` (`app/api/tickets/create/route.ts:658`); `created_notice_at` (stamped once a queue recipient's bell has the notice) settles it, and `lib/ticketLibrary.ts` `creationNoticeOwed(status, metadata)` is the reader: true only for a marked, unstamped request still in `PENDING_ASSIGNMENT` — a request filed before the mark existed is never counted, because it cannot be told apart from an announced one. Tests: `ticketCreateRoute.test.ts` ("DF-P4 — EDGE-8": announced → owed and stamped; nobody to tell → owed and not stamped), `dfRoundG_P4_library.test.ts` ("creationNoticeOwed"). **Not mounted:** the queue chip ("not announced") is `app/(protected)/requests/page.tsx` (**DF-P9**), and a resend sweep would be a step of `app/api/cron/maintenance/route.ts` (notifications N15's file in this round) — one call of `creationNoticeOwed` each.
   - **Not met (this limb):** `creationNoticeOwed` (`lib/ticketLibrary.ts:41`) has **no caller yet** — the marker is written and the reader is tested, but no screen or sweep shows an unannounced request, so nobody is told today. **Owner:** drafting-flow **DF-P9** — the queue chip in `app/(protected)/requests/page.tsx` (assigned in `99-fix-sequencing.md`, "Hand-offs from DF-P4"); the resend sweep, if wanted, is a notifications step of `app/api/cron/maintenance/route.ts`. *(Recorded at the DF-P4 fourth fix pass, ruled under `DEC-90`.)*
 - *The check-in's owner-review notice (`review_requested`).* Reproduced: it is **not** part of ticket creation. It is the `notify_owner` outcome of the check-in (`components/documents/CheckInPanel.tsx:455-484`), which files no ticket at all — it never reaches `/api/tickets/create`, so "a stamped server leg in /api/tickets/create" has no request to ride on. Moving it server-side is a check-in route's (a notice of the check-in episode, stamped on the episode) → **document-control** (P23 owns `CheckInPanel.tsx` this round). Not done here.
+
+*Queue chip landed (2026-10-14, drafting-flow Round G, DF-P9 TICKET-PAGE) — the "Not met (this limb)" above.* `lib/ticketLibrary.ts` `creationNoticeOwed` has its first caller: the queue's row chips (`app/(protected)/requests/page.tsx` `rowChips`, :613) show **"Not announced"** (`data-testid="chip-not-announced"`, with a tooltip saying the assignment queue was never told and what to do) on a marked, unstamped request still in `PENDING_ASSIGNMENT`. `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "UI-7 / FRIC-3 / EDGE-8 — a row in words". A resend sweep, if wanted, stays a notifications step of `app/api/cron/maintenance/route.ts`.
 
 ---
 

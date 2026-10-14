@@ -249,7 +249,7 @@ lib/branches.ts:204-215 —
 ## PROD-4 · 13 of 17 emit() call sites hardcode their audience; the follower/watcher machinery is bypassed and audience.projectId is never used at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P9 (done-when 3, `computeTransition` in `lib/ticketTransitions.ts` — the one remainder) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plans `audit-reports/fleet-plans/`); restated at the N15 fix pass 4, 2026-10-14. Done-whens 1 and 4 (as DEC-100 item 2 narrows them) were notifications N15's and are met (the N15 Partial below).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notify/dispatch.ts:36-41`, `lib/distributionAcks.ts:145`, `lib/staleCopies.ts:205`, `lib/revisionImpact.ts:148`, `lib/workPackages.ts:286`, `lib/checkoutEpisodes.ts:676`, `lib/projects.ts:706`, `lib/notify/recipients.ts:65-72`, `lib/ticketTransitions.ts:130-132`
@@ -323,6 +323,16 @@ lib/ticketTransitions.ts:130-132 —
 - ✓ 4, as narrowed: every non-personal document-scoped kind.
 
 **Scope / residual.** Stays OPEN on done-when 3 only (owner drafting-flow DF-P9).
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — done-when 3, the one remainder. `lib/ticketTransitions.ts` `computeTransition`'s default audience (`newUnreadBy`, :303) is now the requester, the drafter **and the assigned engineer** — the comment route's involved set — de-duplicated (one person can hold two parts) and never the actor. The per-action overrides (an assignment tells the assignee, an engineering-review request tells the picked engineer, `attach_file` adds readers) are unchanged. An engineer assigned for review used to be told once and then dropped from every later transition until they acted.
+
+**Done-when.**
+- ✓ 1, as `DEC-100` item 2 narrows it (N15).
+- ✓ 2 (N9).
+- ✓ 3 `computeTransition`'s `newUnreadBy` includes `ticket.assignedEngineerId` — `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "notifications PROD-4 done-when 3 — a transition's default audience includes the assigned engineer" (the drafter acting tells the requester and the engineer; the engineer acting is not told of their own act; one person in two parts is told once; REGRESSION: no engineer → the audience it always was). `lib/__tests__/ticketTransitions.test.ts` passes unchanged.
+- ✓ 4, as narrowed (N15).
+
+**Scope / residual.** None.
 
 ---
 

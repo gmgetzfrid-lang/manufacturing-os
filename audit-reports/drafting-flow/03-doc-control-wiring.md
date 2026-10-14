@@ -16,7 +16,7 @@ does not know which library it belongs to.**
 ## DCW-1 · A ticket has no target library, so no library-scoped rule can ever apply to it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / architecture
 - **Locations:**
@@ -73,6 +73,15 @@ not exist on the ticket.
 3. ✗ in part (the documented mount — `value` initialised from the ticket, `currentLibraryId` the ticket's library (third fix pass) — no longer refuses a legitimate assignment: an unchanged library is no change, second fix pass) — deferred to triage: the triage action takes it (server ✓), but no screen sends it until DF-P9 mounts `LibraryPicker` in the assign modal and passes `libraryId` (one line; the brief's split). Requester-side choice at intake is deliberately not offered (99-fix-sequencing Phase 2 item 1).
 
 **Scope / residual.** The picker's mount and the `libraryId` it sends → **DF-P9** (assign modal). Paste `20261208` (see the paste row in DF-P4's report). DF-P5 / DF-P6 read `tickets.library_id` for routing and the roster; `libraryId` joins `ticketResource` only with DF-P5, after the page / attention mappers carry it (hand-off row). The discover rule reads the library's own `owner_user_id` as its owner, as the picker does; a library owned by a team (`owner_team_id`) is offered to that team only through its ACL.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — done-when 3's mount. The assign modal at `PENDING_ASSIGNMENT` (not a reassignment) shows "Triage details (optional)" with `<LibraryPicker orgId={ticket.orgId} currentLibraryId={ticket.libraryId ?? null} value={libraryId} onChange={setLibraryId} />` (`app/(protected)/requests/[id]/page.tsx`:373) — the documented mount, the value starting on the ticket's library — and sends `libraryId` with `assign` (`lib/ticketPage.ts` `triagePayload`, :122; the body field at the workflow route). The page's `fromRow` carries `library_id` (`libraryId`). Nothing is required: no choice sends the ticket's current library (no change at the route) or nothing.
+
+**Done-when.**
+1. ✓ (after the paste) Unchanged (DF-P4).
+2. ✓ Unchanged (DF-P4).
+3. ✓ Deferred to triage, which now sends it — `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "EDGE-6 / ROUTE-8 / DCW-1 / DCW-7 — the assign modal" (rendered: the picker's `currentLibraryId` and `value` are the ticket's `lib-1`; choosing `lib-9` posts `libraryId: "lib-9"` with the assignment); `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "DCW-1 / DCW-7 — the triage fields the assign modal sends".
+
+**Scope / residual.** Pending migration (DF-P4's): `20261208` (paste guide row 163) — until pasted the route records nothing for the library and the action lands with a warning, which the page now shows (DF-P1's hand-off). `libraryId` joins `ticketResource` with DF-P5, as recorded.
 
 ---
 
@@ -304,6 +313,8 @@ exists; the request form does not use it.
 **Scope / residual.** The ticket page's "restricted — triage can open it" label for a source the viewer cannot open is the page's (DF-P9). `DEC-107` item 4.
 - *Disclosure on the ticket (recorded under `DEC-31` at the DF-P4 fourth fix pass; ruled by the integrator under `DEC-90`).* Done-when 2 is about the document's CONTENT. Its number and title are not content, but they do travel: the create route re-reads the named document as the requester and copies its number and title into `metadata.source_document` (`app/api/tickets/create/route.ts:481-490`, written at `:649`), and **every reader of the ticket sees them** — the drafter, triage, watchers — including one who may not discover that document. **Ruling: ACCEPTED for ticket readers** — the requester chose to name a document they may discover, and triage acts on it. The viewer side is owned by **drafting-flow DF-P9**: the ticket page shows the source under the "restricted" label to a viewer who may not discover the document (`audit-reports/fleet-plans/drafting-flow.json`, DF-P9's findings). `DEC-107` item 4 is amended to say so.
 
+*Label landed (2026-10-14, drafting-flow Round G, DF-P9 TICKET-PAGE) — this record's Scope / residual and `DEC-107` item 4 as amended.* When the source read returns no row (the viewer may not discover the document, or it left the workspace), the source card shows **"Restricted document — you can't open it; triage can"** above the recorded number and title (`app/(protected)/requests/[id]/page.tsx`:2445), never a link; a failed read is a separate state ("Couldn't check the source document right now"), never labelled restricted. `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "DCW-5 / HAND-3 / HAND-7 — the source card".
+
 ---
 
 ## DCW-6 · The library's own review policy is invisible to the drafting flow
@@ -391,6 +402,12 @@ the unconfigured case is visibly a setup gap rather than a free-text field.
 **Done-when.** ✓ `unit` resolves against the org's codebook (or configured list) where one exists — at intake (DF-P2) and now at triage. ✗ (in part) The unconfigured case is visibly a setup gap but still a free-text field (`DEC-101` item 1 keeps it); and no screen sends the triage `unit` until the assign modal does (DF-P9).
 
 **Scope / residual.** The assign modal's unit field (beside `LibraryPicker`) → **DF-P9**; the free-text box stays by `DEC-101` item 1.
+
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the triage unit. The assign modal's triage section offers the workspace's unit list (`lib/ticketCreate.ts` `unitOptionsFor` over the saved settings and the Site Codebook — the list the form offers and the route checks) as a select with "No change" first; with no list, a free-text box says the workspace has no unit list yet; a list that cannot be read is said and offers no unit (the route would 503 an unchecked one). The current unit is shown with its mark ("now: Unit unknown — triage assigns"). `triagePayload` sends `unit` only when it differs from the ticket's or the row carries an unknown / unlisted / unchecked mark (`lib/__tests__/dfRoundG_P9_ticketPage.test.ts`).
+
+**Done-when.** ✓ `unit` resolves against the org's codebook (or configured list) at intake and at triage, and the triage screen now sends it. ✗ (in part) The unconfigured case is still a free-text field (`DEC-101` item 1 keeps it — the user's call), and the `DF-P12` limb (the "Publish as a new document in <library>" offer) is open.
+
+**Scope / residual.** DF-P12's limb, as assigned; the free-text box stays by `DEC-101` item 1.
 
 ---
 

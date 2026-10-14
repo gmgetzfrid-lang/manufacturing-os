@@ -881,6 +881,15 @@ branch falls back to Admins; and nobody at all is notified when a ticket
 
 **Related findings:** `DRAFT-4`, `WF-19`.
 
+**Partial (2026-10-14, drafting-flow Round G, DF-P9 TICKET-PAGE — the remainder re-owned to it, 2026-10-01).** The triage "we don't do that" outcome is now a structured, required choice in the product: ending a request through **Cancel Request** asks how it ends — a required select from the engine action's outcomes (`DEC-103` item 3: withdrawn, duplicate, handled outside the app, **rejected**), stored on the row as `tickets.outcome` (DF-P3's column; `20261195` PASTE pending) and sent beside the free-text reason (`app/(protected)/requests/[id]/page.tsx`, the ActionModal's `outcome-picker`; `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "LEAK-9 — Cancel asks how the request ends"). The revision-flavoured `REVISION_REASONS` list stays the root-cause category for revisions (a different question).
+
+**Acceptance.**
+1. ✗ in part — rejecting requires a structured reason (✓), but the reason list is the fixed `DEC-103` vocabulary, not an **org-configured** list, and there is no admin editor for one. **Owner (proposed, `DEC-31`):** drafting-flow **DF-P13** (its SLA-defaults editor sits on the same admin requests-settings surface, `app/(protected)/admin/requests/page.tsx`) — an org-configurable list of out-of-scope reasons stored beside the outcome (e.g. `metadata.rejection_reason` keyed to the configured list), required when the outcome is `rejected`; `DEC-103`'s "Org-configurable vocabulary: later" is the decision to revisit.
+2. ✓ `/admin/analytics` "How Requests Ended" (DF-P3, `components/requests/RequestOutcomes.tsx`) counts `rejected` and the other outcomes — the rejection breakdown at the outcome level.
+3. ✓ A ticket entering a queue state notifies whoever the routing policy names, matched against the full role collection (`WF-19` / `lib/ticketRouting.ts` `queuePool` over `heldRoles`, earlier rounds; re-verified).
+
+**Status:** OPEN for acceptance 1's org-configured list (owner above).
+
 ---
 
 <a id="gap-14"></a>

@@ -196,6 +196,8 @@ document.
 
 **Scope / residual.** A triage action that sets the unit on a "Unit unknown" ticket is `DCW-7`'s residual. Nothing yet **shows** the recorded unknown: no reader of `metadata.unit_unknown` / `unit_unlisted` / `unit_unchecked` (the unit given when the list could not be read — `DCW-7`, third review fix) exists, and the queue and the ticket page render an empty unit chip for a NULL unit (`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, DF-P9's files) — proposed for **DF-P9** in `99-fix-sequencing.md`, "Hand-offs from DF-P2".
 
+*Readers landed (2026-10-14, drafting-flow Round G, DF-P9 TICKET-PAGE) — this record's Scope.* The recorded unknown is now shown: `lib/ticketStatusLabels.ts` `ticketUnitDisplay` (:86) reads `unit` with `metadata.unit_unknown` ("Unit unknown — triage assigns"), `unit_unlisted` (the unit, marked "not on the unit list") and `unit_unchecked` (the unit given, "not checked — the unit list could not be read; triage assigns"); a bare NULL with no mark reads "No unit recorded". The ticket page's unit field (`app/(protected)/requests/[id]/page.tsx`:2355) and the queue's unit cells and row chips (`app/(protected)/requests/page.tsx`:1326, `rowChips` :613) use it. The triage `unit` is sent by the assign modal (`DCW-7`). Tests: `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "FRIC-3 / FRIC-8 — the unit as a person reads it"; `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "PROJ-9 / FRIC-3"; `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "UI-7 / FRIC-3 / EDGE-8".
+
 ---
 
 ## FRIC-4 · The requester must personally choose an engineer, by email prefix
@@ -317,7 +319,7 @@ That is again the **work class** (`TIER-2`) deciding, not a global rule.
 ## FRIC-7 · The attention badge tells people to act on tickets that offer them nothing
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / adoption
 - **Locations:**
@@ -364,6 +366,12 @@ role/status combination, ideally because attention is derived from the engine.
 
 **Scope / residual.** Binding → **DF-P9**, which owns `lib/ticketAttention.ts` and `hooks/useTicketNotifications.ts`: an `AttentionContext.requesterRoles` input, fed by the badge hook from the requesters' current membership (one batched member read for the tickets in view), passed to the engine as the route passes it — so a departed requester's ticket is counted by the badge, bell and inbox, not only shown on the page. Until then it is surfaced on the page and the route but counted by no badge, and can stall unseen by everyone who works from the badge (an under-count, never an unclearable badge). WF-24 recorded the under-count as accepted for its own done-when; that does not bind this one. DF-P9's brief does not name it; the integrator must add it (`99-fix-sequencing.md`, "Hand-offs from DF-P0" — no longer optional). The finding's "deeper reading" (Document Control belongs at issue and release) is `DCW-2` / `GAP-104`, OPEN under DF-P6: removing the false DocCtrl badge did not build that slot.
 
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the under-count the DF-P0 review fix pass left. `lib/ticketAttention.ts` `AttentionContext.requesterRoles` (a map uid → current role collection) is passed to the engine for each ticket as the route and the page pass it (`requesterRolesFor`, :98; `[]` = known not to be an active member, so the engine requires the co-review; no entry = unknown, assumed present, the old behaviour — a failed read never invents a departure). `lib/ticketRequesterRoles.ts` (new) `loadRequesterRoles` reads the active members among the tickets' requesters in slices of 100 (`.in('uid', …)`, read only), answering `[]` for a requester the read did not return and `null` when the read fails. The badge hook (`hooks/useTicketNotifications.ts:659`, `:927`) and the queue (`app/(protected)/requests/page.tsx`:380, :301) feed it with the tickets they read, so the badge, bell, inbox and the queue's "needs you" markers count a departed requester's review exactly where the page requires it.
+
+**Done-when.** ✓ The badge and the ticket page agree for every role/status combination given the same inputs, and now they get the same inputs. `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "FRIC-7 — the badge is given the requesters' CURRENT roles" (Engineer-2, Admin and Manager counted at `PENDING_REVIEW` for a departed requester — equal to the page's engine call with `requesterRoles: []` — not counted for a present one, and an uncovered requester unchanged; the loader's slices, `[]` entries and failure); `lib/__tests__/attentionProvider.test.ts` ("drafting-flow Round G (DF-P9) — the badge counts what the page offers") "FRIC-7: a departed requester's review is counted for an engineer…" (rendered hook); `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "FRIC-7 — the queue's markers are given the requesters' current roles". The every-role × every-status equality tests (`lib/__tests__/ticketAttention.test.ts`, `dfRoundG_P0.test.ts:325`) still pass unchanged.
+
+**Scope / residual.** None. The finding's "deeper reading" (Document Control's slot at issue and release) stays `DCW-2` / `GAP-104` under DF-P6, as recorded.
+
 ---
 
 ## FRIC-8 · Three ticket-creation paths, three different field contracts
@@ -394,12 +402,14 @@ Third review fix (2026-10-13). A viewer's "Send to Drafting" whose library key p
 
 **Scope / residual.** Who resolves a "Unit unknown" ticket at triage is `DCW-7`'s residual.
 
+*Readers landed (2026-10-14, drafting-flow Round G, DF-P9 TICKET-PAGE).* The explicit unknown this record's done-when 3 left undisplayed is now shown on the queue and the ticket page — see `FRIC-3`'s note (`lib/ticketStatusLabels.ts` `ticketUnitDisplay`).
+
 ---
 
 ## FRIC-9 · The queue does not open on "what needs me"
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -426,6 +436,12 @@ actual default view.
 
 **Done when.** A user landing on the request queue sees their own actionable work
 first, with an obvious one-click path to the full queue.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE, on the integrator's ruling under `DEC-90` (the queue opens on "needs me" for every role; "all open" one click away; counts visible). `app/(protected)/requests/page.tsx`: `attentionView` starts at `'needs_me'` (:208) for every role, and the list (table and cards) shows `needsMeTickets` — the filtered list narrowed by the engine's action-required rule (`isActionRequired`, :301, the badge's rule) — with a summary line "Showing the N requests that need you, of M. Show all". A "Needs me N / All M" toggle sits in the filter row (:1118); when nothing needs the viewer, an empty state says so and offers "Show all M" (never "No matching tickets"). The Action Required tile and banner switch to the same view. The assignee filter now starts at "all" for everyone — the Drafter-only `assignedTo: 'me'` default was the proxy this replaces. The supervisor's by-drafter board keeps the whole filtered list (the team's work by design).
+
+**Done-when.** ✓ A user landing on the queue sees their own actionable work first, with an obvious one-click path to the full queue. `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "FRIC-9 / UI-6 — the queue opens on what needs me": a drafting supervisor lands on Needs me (count 1) with All (3) shown; REGRESSION — one click on All lists every request the scope returned; a requester with nothing waiting gets the empty state and "Show all"; a Drafter is no longer defaulted to "My Tickets" and sees the pool request they can pick up.
+
+**Scope / residual.** None. The ruling changes the landing view for every role on purpose (`DEC-90`); "All" is one click and the counts are on screen.
 
 ---
 

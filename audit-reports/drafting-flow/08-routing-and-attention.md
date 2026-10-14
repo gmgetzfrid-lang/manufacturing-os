@@ -17,7 +17,7 @@ Who is told what, and what goes silent. Overlaps `04-flow-leaks.md` deliberately
 ## ROUTE-1 · A request returned from engineering review with no drafter assigned lands in REVISION_REQ, where nobody's attention rule matches — it disappears from every queue
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-when 2: `attentionLabel` tells a revision with a drafter from one without) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/workflow.ts:126`, `lib/ticketTransitions.ts:273`, `lib/ticketAttention.ts:68`, `lib/ticketAttention.ts:79`, `lib/workflow.ts:166`
@@ -80,6 +80,16 @@ lib/ticketAttention.ts:67-70 (the only REVISION_REQ clause) —
 4. ✓ A test asserts a drafterless `REVISION_REQ` is action-required for at least one role under the default policy (above).
 
 **Scope / residual.** Done-when 2 → DF-P9. Pending migration: `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` (the stragglers; until it is pasted they are action-required for the queue and the drafting pool through the engine, and the paste moves them).
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — done-when 2, the last open limb. `lib/ticketAttention.ts` `attentionLabel(status, { hasDrafter })` (:133): a `REVISION_REQ` known to have no drafter reads **"Revision requested — needs a drafter"** (and an ownerless `DRAFTING` / `PENDING_IFC` says it needs a drafter); with a drafter, or called without the option, the label is exactly what it was. The badge hook passes `hasDrafter` (`hooks/useTicketNotifications.ts:938`) and the ticket page's waiting line uses the same label.
+
+**Done-when.**
+1. ✓ Unchanged (DF-P3).
+2. ✓ `attentionLabel` distinguishes an owned revision from one with no owner — `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "ROUTE-1 done-when 2 — a revision nobody owns is not 'in progress'"; `lib/__tests__/attentionProvider.test.ts` ("drafting-flow Round G (DF-P9) — the badge counts what the page offers") "ROUTE-1 done-when 2: a revision nobody owns says it needs a drafter, in the feed's row".
+3. ✓ Unchanged (DF-P3).
+4. ✓ Unchanged (DF-P3).
+
+**Scope / residual.** None here. Pending migration (unchanged, DF-P3's): `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` moves the stragglers.
 
 ---
 
@@ -434,7 +444,7 @@ app/api/tickets/workflow-action/route.ts:309-310 —
 ## ROUTE-7 · The attention feed caps at 500 open tickets sorted newest-modified-first, so the longest-neglected requests are exactly the ones it drops
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:31`, `hooks/useTicketNotifications.ts:156`, `hooks/useTicketNotifications.ts:160`, `hooks/useTicketNotifications.ts:170`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly as claimed: newest-modified-first with a hard 500 cap means the least-recently-touched open tickets are the first excluded, and lib/ticketAttention.isActionRequired only ever runs over the rows that survived the cap. No compensating query exists — the feed is the only source for the badge, bell and /inbox.
@@ -466,6 +476,15 @@ hooks/useTicketNotifications.ts:156 —
 - [ ] The attention query either filters server-side to action-required candidates (so the cap bounds a relevant set) or sorts oldest-first / by due date, so truncation drops the least urgent rather than the most.
 - [ ] The UI states honestly when the feed is truncated (e.g. "showing 500 of N open requests") rather than presenting a silently partial count as the count.
 - [ ] A test with more than OPEN_TICKET_CAP open tickets asserts that an aged, untouched action-required ticket still appears in the feed.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE, on notifications N4's paging (`DEC-105` item 3). Same change as `EDGE-3`: every scope is paged 500 at a time with an exact count up to 5000 (N4); past that ceiling it is re-read **oldest-modified first** (`hooks/useTicketNotifications.ts` `loadTicketScope`, :322-358), so truncation drops the most recently touched requests, never the longest-neglected; and the feed says "the N longest-waiting of M open requests are checked" (`components/cockpit/AttentionFeed.tsx:251`).
+
+**Done-when.**
+- ✓ The query sorts oldest-first when it must truncate, so truncation drops the least urgent (a server-side action-required filter is not possible — the rule is the engine's, client-side).
+- ✓ The UI states when the feed is truncated, and which end it kept ("longest-waiting of M").
+- ✓ A test with more than the cap asserts an aged, untouched action-required ticket appears: `lib/__tests__/attentionProvider.test.ts` ("drafting-flow Round G (DF-P9) — the badge counts what the page offers") "ROUTE-7 / EDGE-3: past the scan ceiling…" (6000 open: the oldest page is read, the aged `t0` is evaluated, the newest is not, the feed text says so) and "EDGE-3: the 501st open request is evaluated and counted".
+
+**Scope / residual.** As `EDGE-3`'s.
 
 ---
 
@@ -518,6 +537,15 @@ contrast components/requests/EngineerPickerModal.tsx:77-89 —
 - [ ] The drafter picker selects `roles` and matches headline ∪ additive, mirroring EngineerPickerModal.
 - [ ] A shared helper resolves "active members holding role token X" and is used by the drafter picker, the engineer picker and lib/ticketRouting.ts, so the three cannot drift again.
 - [ ] The server's `assignment` reference check in app/api/tickets/workflow-action/route.ts validates the picked assignee holds a drafting role (headline or additive), matching the check already applied to `engineer` — so widening the picker does not widen who can be assigned.
+
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the drafter picker (the same change as [`EDGE-6`](./13-edges-and-invariants.md#edge-6)).
+
+**Done-when.**
+- ✓ The drafter picker selects `roles` and matches headline ∪ additive — by the route's own rule under the org's policy (`lib/ticketPage.ts` `drafterCandidates`, `pickRoles`); `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` and `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` as recorded on `EDGE-6`.
+- ✗ in part — one shared helper for all three: the drafter picker's rule lives in `lib/ticketPage.ts` and `lib/ticketRouting.ts` reads `heldRoles`, but `components/requests/EngineerPickerModal.tsx` still carries its own filter. **Owner:** drafting-flow **DF-P5** (its package lists `EngineerPickerModal.tsx`): move the engineer picker onto a shared "active members holding capability X" helper (`drafterCandidates`' shape with `ticket.eng_review` / the engineer tokens).
+- ✓ The route validates the `assignment` pick: `policyAllows(capPolicy, "ticket.draft_work", held[0], held, ref, resource)` (`app/api/tickets/workflow-action/route.ts`, WF-14 — landed in an earlier round, re-verified), so widening the picker widened nothing.
+
+**Scope / residual.** Done-when 2's engineer picker → DF-P5.
 
 ---
 

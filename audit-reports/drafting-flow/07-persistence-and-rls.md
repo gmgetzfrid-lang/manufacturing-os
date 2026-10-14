@@ -117,6 +117,15 @@ app/api/tickets/comment/route.ts:202-211 —
 - [ ] No client code writes the comments / history / attachments / watchers JSONB arrays directly
 - [ ] A test drives a concurrent workflow action and a category edit and asserts neither loses the other's write
 
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. Re-verified on `ee21632`: the three handlers this finding names write through server routes with compare-and-set since roles-and-permissions `WF-9` — the root-cause category through `PATCH /api/tickets/comment` (CAS on `last_modified`, mirrored to `ticket_comments`, audited), the file upload as the workflow route's `attach_file`, the watch toggle through `/api/tickets/watch`; the page writes none of `comments`, `history`, `attachments` or `watchers` (pinned by `lib/__tests__/sweepRoundE_A.test.ts`, "the page no longer writes tickets.attachments / comments / watchers itself"). The two remaining client writes on the request pages are neither array: the unread marker (checked now, `PERS-3`) and priority (compare-and-set now, `PERS-3`).
+
+**Done-when.**
+- ✓ The three handlers route through server endpoints that CAS on `last_modified` (and the comment route keeps `ticket_comments` in lockstep).
+- ✗ in part — no request-page code writes the JSONB arrays; `lib/projects.ts:1603` still pushes a "Converted to Project" `history` entry from the browser (dormant: `convertTicketToProject` has no caller). **Owner:** drafting-flow **DF-P8** (the project link becomes a server action, `GAP-114`; already its residual under `LEAK-4`).
+- ✓ A test drives a concurrent workflow action and a category edit: `lib/__tests__/sweepRoundE_A.test.ts` "drafting-flow PERS-2 done-when 3 (DF-P9): a root-cause edit racing a workflow action — the edit's compare-and-set loses (409), nothing of it lands, and the action's write stands" (new), beside "route: a concurrent transition between read and write yields 409".
+
+**Scope / residual.** Done-when 2's `lib/projects.ts` history push → DF-P8.
+
 ---
 
 <a id="pers-3"></a>
@@ -124,7 +133,7 @@ app/api/tickets/comment/route.ts:202-211 —
 ## PERS-3 · Six client-side writes to `tickets` never check the returned error, and the audit log is written as if they succeeded
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:978`, `app/(protected)/requests/[id]/page.tsx:1010-1014`, `app/(protected)/requests/[id]/page.tsx:1328`, `app/(protected)/requests/[id]/page.tsx:920`, `app/(protected)/requests/page.tsx:620`, `app/(protected)/requests/page.tsx:639`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Accurate — supabase-js resolves with {error} so the surrounding try/catch cannot fire and the user sees success. Corrected to MEDIUM: two of the six cited writes (:920 unread_by, :1328 watchers) have no audit call attached, so the 'audit log written as if it succeeded' half applies to four; and because the tickets policy is fully permissive these updates rarely fail in practice, making the impact conditional silent-failure rather than routine corruption.
@@ -164,6 +173,18 @@ contrast, app/(protected)/requests/new/page.tsx:322-330 —
 - [ ] Every one of the six call sites destructures `{ error }` (and where it matters, `.select('id')` to confirm a row matched) and surfaces the failure to the user before any success-path side effect
 - [ ] The audit call is moved after a confirmed write, never before or unconditionally
 - [ ] A lint rule or test forbids an un-destructured supabase write in the /requests tree
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. Of the six sites: the root-cause category, the file upload and the watch toggle left the page in an earlier round (`PERS-2`). The three left are checked:
+- **Mark urgent** (bulk and row menu, `app/(protected)/requests/page.tsx` `markUrgentChecked`, :810): priority stays a member's own write (one of the columns 20261208's `ticket_update_guard` leaves a client), but it now compare-and-sets on the `last_modified` the list read (`.eq('last_modified', …)`, or `.is('last_modified', null)` for a row with none — EDGE-15's leg), selects the row it matched, and a refusal or a lost race ("it changed while you were looking at it — try again") is said; only the requests that failed stay selected. The audit row (`TICKET_BULK_URGENT` / `TICKET_MARK_URGENT`) follows a confirmed write only, names the signed-in member, and a refused audit row is said too.
+- **The unread clear** (`app/(protected)/requests/[id]/page.tsx`:1127): removes only the viewer's own uid (what the guard allows), `.select('id')`, and a refusal or a write that matched nothing is a warning toast ("Not marked as read").
+- **The notifications read mark** beside it: its error is logged with what it lost.
+
+**Done-when.**
+- ✓ Every remaining site destructures `{ error }` and, where it matters, `.select('id')`, and says the failure before any success-path side effect — `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "PERS-3 / LEAK-4 / PERS-7 — Mark urgent can no longer fail silently or race the workflow" (CAS legs; lost race said, no audit, selection kept; refusal said; refused audit said; the NULL-token leg); `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "PERS-3 / LEAK-4 — clearing my unread marker is checked".
+- ✓ The audit call follows a confirmed write (same tests).
+- ✓ A test forbids an un-destructured supabase write in the /requests tree: `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "PERS-3 done-when 3 — no unchecked supabase write in the /requests tree" (a census over every `.from(…).update / insert / upsert / delete` under `app/(protected)/requests`, non-empty).
+
+**Scope / residual.** None.
 
 ---
 
@@ -286,7 +307,7 @@ app/api/tickets/workflow-action/route.ts:231-233 —
 ## PERS-6 · Two of the three ticket-creation paths never write `unit` — and they are the safety-critical ones (as-built discrepancy / undocumented field change, intake number collision)
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P4 LIBRARY (done-whens 2–3: `Ticket.unit` becomes `string | null` in `types/schema.ts` and `rowToTicket` stops casting) and DF-P9 TICKET-PAGE (the request pages' `fromRow`) — by the integrator, 2026-10-13 (at the DF-P2 merge, DEC-31: DF-P2 has merged and named these limbs in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2"; fleet plan updated).
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CheckInPanel.tsx:236-268`, `lib/transitionIn.ts:304-331`, `app/(protected)/requests/new/page.tsx:299-315`, `types/schema.ts:1112`, `supabase/schema.sql:402`
@@ -346,6 +367,15 @@ supabase/schema.sql:402 —
 
 **Scope / residual.** The pages' `fromRow` → **DF-P9** (already in its plan entry).
 
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the request pages' and the badge hook's mappers. `fromRow` in `app/(protected)/requests/page.tsx` and `app/(protected)/requests/[id]/page.tsx`, and `fromDbTicket` in `hooks/useTicketNotifications.ts`, map `unit: typeof r.unit === 'string' ? r.unit : null` — no cast; a NULL is the designed unknown (`DEC-101` item 1), shown by `ticketUnitDisplay` (`FRIC-3`). `npx tsc --noEmit` exit 0 against `Ticket.unit: string | null` (DF-P4).
+
+**Done-when.**
+- ✓ (1) DF-P2.
+- ✓ (2) DF-P4.
+- ✓ (3) The row mappers no longer cast `unit` — `rowToTicket` (DF-P4) and now the pages' and the hook's; pinned in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "PERS-6: the badge hook maps a NULL unit as null, never a cast string".
+
+**Scope / residual.** None.
+
 ---
 
 <a id="pers-7"></a>
@@ -353,7 +383,7 @@ supabase/schema.sql:402 —
 ## PERS-7 · logAuditAction cannot detect a failed audit write — supabase-js resolves with {error} rather than throwing, so its try/catch is unreachable and every client-side ticket audit event is best-effort silence
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/audit.ts:16-32`, `supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:84-90`, `supabase/schema.sql:1084-1085`, `app/(protected)/requests/[id]/page.tsx:979-983`, `app/(protected)/requests/page.tsx:623-627`
 - **Same root cause as** `EVID-6` — `supabase-js` resolves with `{error}` rather than throwing, so a swallowed audit insert reads as success. Same class of fix at every call site. Fix once; close the rest citing this one.
@@ -416,6 +446,15 @@ Landed: `supabase/migrations/20261202_ao_roundG_audit_org_required.sql` (PASTE p
 - ✓ (pending `20261202`) The INSERT policy stops allowing `org_id IS NULL` — the criterion's first form; and no new row with no workspace is accepted by the app or (after the paste) the database.
 
 **Scope / residual.** The call-site stand-ins (DF-P9). Status stays OPEN for them.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the call-site stand-ins. Every ticket audit call on the request pages names the signed-in member or does not run: bulk archive and bulk / row mark urgent (`app/(protected)/requests/page.tsx`) refuse without a uid ("You're not signed in…", nothing written), and the redline path (`app/(protected)/requests/[id]/page.tsx`:1571) stops before its audit row and before the action is sent, instead of sending `'unknown'`, pass the active workspace, and say a refused audit row (`logAuditAction`'s `{ ok, error }`, DF-P1). The census in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` forbids `uid || 'unknown'` in both request pages.
+
+**Done-when.**
+- ✓ (DF-P1) `{ error }` destructured and surfaced.
+- ✓ Call sites stop substituting `'unknown'` for a uuid — the ticket flow's sites (this finding's scope: "every client-side ticket audit event"); `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` (the bulk audit names `s-1`).
+- ✓ (pending `20261202`, admin-and-org P7) The INSERT policy stops allowing `org_id IS NULL`.
+
+**Scope / residual.** Found on HEAD outside the ticket flow: `lib/teams.ts:206`, `:216` still pass `ctx.actorId ?? "unknown"` (team management, not a request; `lib/audit.ts` neutralises the stand-in into a system-labelled row). Proposed owner: admin-and-org (the teams surface), under `DEC-31`. Pending: `20261202` (paste guide, AO-P7's row).
 
 ---
 

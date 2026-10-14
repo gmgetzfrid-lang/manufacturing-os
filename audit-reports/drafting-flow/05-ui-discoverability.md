@@ -14,7 +14,7 @@ to proceed is a finding.
 ## UI-1 · A ticket never says who it is waiting on
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / adoption
 - **Locations:**
@@ -49,12 +49,21 @@ current holder is a small change against an existing, tested function.
 2. It states how long it has been in that state.
 3. The requester can tell at a glance whether the ball is in their court.
 
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE, base `ee21632`. Reproduced first by reading: the page rendered `{ticket.status.replace(/_/g, ' ')}` and named no holder or elapsed time. The ticket header now carries one line under the title (`app/(protected)/requests/[id]/page.tsx`:2101, `data-testid="waiting-on"`): **"Your turn: …"** when the engine offers the viewer a live, non-optional action (the attention rule, `liveActions.some((a) => !a.optional && !a.disabledReason)`, :1866); otherwise **"Waiting on <name> (<part>) — <what>"**; for a closed / canceled request, "nothing is waiting on anyone"; and **"· for N days"** since the wait began. The pieces are pure and shared (`lib/ticketAttention.ts`): `holdersFor` (:197) names the person on the ticket whose move the status is — the drafter, the reviewing engineer, the requester — or the assignment queue by its members' names (`lib/ticketRouting.ts` `queuePool`, read once on the page when the step is the queue's), or management when the requester whose review it is has left; `waitingSince` (:244) is the newest history line that moved the stage or its holder (a file, a saved draft, the triage note do not reset it — `NON_STEP_HISTORY_ACTIONS`, :230, pinned against the engine by a census); `waitedFor` (:269) reads in hours under two days, then days; `attentionLabel` (:133) words the step. The status itself reads in words (`UI-7`).
+
+**Done-when.**
+1. ✓ The ticket states in plain language what stage it is at (the status label, and `attentionLabel`) and who it is waiting on (by name and part). `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "UI-1 / UI-7 — where the request is, on whom, since when, in words".
+2. ✓ It states how long it has been in that state ("· for 3 days" in the same test; `waitingSince` / `waitedFor` cases and the history census in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts`, "UI-1 — who a request waits on, and since when").
+3. ✓ The requester can tell at a glance whether the ball is in their court: "Your turn" is the engine's own answer for the viewer (the queue owner at the assignment step, same test); otherwise the line names someone else.
+
+**Scope / residual.** None. The queue-member names come from one routing read per ticket view; when it fails the line says "the assignment queue".
+
 ---
 
 ## UI-2 · The workflow map is hidden behind a status pill that does not look clickable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -84,6 +93,15 @@ good. It needs a visible affordance, and it needs to exist on the request form
 2. It is reachable from the new-request form and the queue, not only from an
    existing ticket.
 3. It does not depend on hover.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. The status pill keeps its help icon and gains an `aria-label` ("Status: <label> — see where this request is in the workflow") and a visible text button beside it, **"See the workflow"** (`app/(protected)/requests/[id]/page.tsx`:2052-2066). The map opens from the request queue ("How requests flow", `app/(protected)/requests/page.tsx`:978, and the modal at :945) and from the new-request form ("See how a request flows", `app/(protected)/requests/new/page.tsx:453`). Every trigger is a click or tap, never a hover. The map's stage names come from the same label list as the pills (`components/requests/WorkflowDiagramModal.tsx` reads `TICKET_STATUS_LABELS`).
+
+**Done-when.**
+1. ✓ A visible, obviously clickable affordance: a labelled text button beside the pill, plus the pill itself. `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "UI-2: the status pill opens the workflow map".
+2. ✓ Reachable from the new-request form and the queue — `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "UI-2 — the workflow map is reachable from the queue" (rendered: a click opens the map); the form's link is pinned in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` ("census — the request surfaces read the shared rules"), and `lib/__tests__/requestFormCreate.test.ts` renders the form with it.
+3. ✓ Nothing depends on hover.
+
+**Scope / residual.** None.
 
 ---
 
@@ -124,7 +142,7 @@ channel real work arrives through.**
 ## UI-4 · "View Only — No Actions Available" explains nothing
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -152,6 +170,16 @@ library — <controller> can grant it."*
 
 **Done when.** The empty state distinguishes "not your turn" from "not
 permitted", and names who to talk to in each case.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. "View Only — No Actions Available" is gone. When the engine offers the viewer nothing, the page shows one sentence from `lib/ticketAttention.ts` `explainNoActions` (:315; `app/(protected)/requests/[id]/page.tsx`:2207, `data-testid="no-actions-why"`):
+- **Not your turn** — the viewer is a party to the request (its requester, drafter or reviewing engineer), or the engine would offer them a live action at another open stage of it: "You are the requester — this step is the drafter's (waiting on Hector: …)" / "Not your turn — waiting on <holder> (…). You act on this request at another stage."
+- **Not permitted** — no stage offers them anything: "Your roles don't act on this request — waiting on <holder> (…). If you should be able to, an Admin can change who may act in Admin → Permissions."
+- **Terminal** — closed / canceled, nothing waits on anyone, and what to do instead.
+The holder is named exactly as the waiting line names them (`holdersFor`). While the policy is unreadable the page shows the AUTHZ-15 notice instead (it cannot say "not permitted" without the policy).
+
+**Done-when.** ✓ The empty state distinguishes "not your turn" from "not permitted" and names who to talk to in each case — the holder, and for "not permitted" the Admin who edits the policy. `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "UI-4 — 'View Only' explained" (requester, drafter at another stage, viewer, terminal); `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "UI-4 — no action, explained" (rendered: the Viewer sees the queue member's name and Admin → Permissions; the old text is absent).
+
+**Scope / residual.** None.
 
 ---
 
@@ -195,7 +223,7 @@ with no recovery path and no explanation.
 ## UI-6 · The queue opens on the whole org, not on what needs you
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Re-verified:** hardening pass — **SURVIVES**. `myActionItems` is computed at `app/(protected)/requests/page.tsx:329` but the initial `filters` state opens on `status: 'ALL'` across the org (same file, `:180-187`). Duplicate of `FRIC-9` within this area; fix once.
@@ -210,12 +238,18 @@ result is already on screen, and the list does not use it.
 
 **Done when.** See `FRIC-9`.
 
+**Resolution (2026-10-14, drafting-flow Round G).** Closed with [`FRIC-9`](./02-friction-latency.md) (the same change): the queue opens on "Needs me" for every role — the engine's action-required set, the `myActionItems` selector this finding names — with "All" one click away and both counts on screen.
+
+**Done-when.** ✓ See `FRIC-9`.
+
+**Scope / residual.** None.
+
 ---
 
 ## UI-7 · Raw status enums are the primary vocabulary
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -246,6 +280,12 @@ users actually see.
 
 **Done when.** A user-facing surface never shows a raw status identifier as the
 primary label.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. A display layer only — the enum values are untouched, as this finding's chain reaction requires. `lib/ticketStatusLabels.ts` (new) holds one label per status (`TICKET_STATUS_LABELS`, :24: "Awaiting drafter", "Engineering review", "Drafting", "Revision requested", "In review", "Engineer sign-off", "Ready to issue (IFC)", **"Issued — awaiting acknowledgement"** for `FINAL_DRAFT`, "Closed", "Canceled") and `ticketStatusLabel` (:40), which words a value this build does not know ("Some new state") rather than showing it. Every surface that shows a status to a person reads it: the ticket header pill (`app/(protected)/requests/[id]/page.tsx`:2052), the queue's table, cards and board chips (`app/(protected)/requests/page.tsx`:1244, :1324, :1430), the queue's status filter (`TICKET_STATUS_FILTER_ORDER`, `app/(protected)/requests/page.tsx`:1137), and the workflow map's stage names. The CSV export keeps the stored value (a data file, not a label).
+
+**Done-when.** ✓ No user-facing request surface shows a raw status identifier as its primary label. `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "UI-7 — a status is shown in words" (every status labelled, none in snake case, the filter lists each once); `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "UI-7 / FRIC-3 / EDGE-8 — a row in words" (rendered: labels present, `PENDING_ASSIGNMENT` / `REVISION_REQ` absent, the filter offers "Issued — awaiting acknowledgement"); the census in `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` forbids `.status.replace(/_/g` in both request pages.
+
+**Scope / residual.** The ticket page's audit-trail tab still shows history *action* names with underscores replaced (`event.action.replace(/_/g, ' ')`) — those are history entries, not statuses, outside this finding.
 
 ---
 

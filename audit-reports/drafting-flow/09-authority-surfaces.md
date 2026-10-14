@@ -836,7 +836,7 @@ and the policy that makes the narrowing optional — supabase/schema.sql:1080-10
 
 - **Severity:** LOW
 - **Severity rationale:** No authority widens: every action these controls offer is decided by a server route, a strict gate or the database, and each refuses on an unreadable policy (`AUTHZ-7`, DEC-89 item 3). The harm is a control that is offered during a database fault and then refused, with nothing on screen saying that the policy behind it could not be read.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** CONFIRMED by the integrator at the admin-and-org P9 merge, 2026-10-08 (DEC-31) — drafting-flow DF-P9 TICKET-PAGE for the request surfaces; document-control P24 TRANSMITTAL ISSUE VERDICT for the transmittals page (plan entries updated). The proposal as made:
   - drafting-flow **DF-P9 TICKET-PAGE**: `app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, `hooks/useTicketNotifications.ts`.
   - **document-control**, the next package that lists each file:
@@ -938,5 +938,16 @@ Rendered tests (jsdom). Each surface drives `unreadable`, a thrown read, a healt
 **Scope / residual.** `lib/capabilityPolicy.ts`'s comment on `loadCapabilityPolicy` still names these five surfaces among its non-authoritative readers. They now read `loadCapabilityPolicyEntry`. The comment is in a shared module P24 does not own, so it is left for the integrator to restate at merge, or for DF-P9 when the request surfaces move. `useForceReleaseAllowed` (`components/documents/CheckoutStatusCell.tsx:94`) has no caller in this tree now. It is kept for its signature.
 
 **Stays OPEN, with its owner:** only the request surfaces (`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, `hooks/useTicketNotifications.ts`), which belong to drafting-flow **DF-P9 TICKET-PAGE**, as assigned. They may reuse `affordancePolicyFault`, and they apply the ruling above: `unreadable` is held back and labelled; `stale` is drawn as is.
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the request surfaces, the last share, under the integrator's ruling above (`unreadable` → held back, labelled, Try again; `stale` → drawn as is). All three read `loadCapabilityPolicyEntry` and `lib/checkoutAffordances.ts` `affordancePolicyFault`:
+- **The ticket page** (`app/(protected)/requests/[id]/page.tsx`:1850, :2200): on a fault no action is offered (`liveActions = []` — the workflow route refuses every action 503 `policy_unreadable` on an unreadable policy, DEC-89 item 3); a labelled notice says "Permissions could not be read — <reason>. Actions are held back until they can be (the server would refuse them now)" with **Try again**, which re-reads.
+- **The queue** (`app/(protected)/requests/page.tsx`:1075): the "needs you" markers, the Needs-me lens (its count reads "—"), Archive and Force Close are held back with a notice and **Try again**; the list and "All" stay.
+- **The badge hook** (`hooks/useTicketNotifications.ts:927`, :1052): nothing is counted as needing the viewer and the feed's status says "Permissions could not be read, so requests that need you are not counted until they can be."; each ticket fetch re-reads the policy while it is faulted.
+
+**Done-when.**
+- ✓ Each surface, during a fault with no last good entry, draws its policy-dependent controls withheld with the reason — the stricter option.
+- ✓ A rendered test per owning package drives `unreadable`: `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "AUTHZ-15 — an unreadable policy offers nothing, says why, and retries" (and REGRESSION: `stale` draws the actions); `lib/__tests__/dfRoundG_P9_requestsQueue.test.ts` "AUTHZ-15 — an unreadable policy is said, never guessed under the defaults" (and its `stale` REGRESSION); `lib/__tests__/attentionProvider.test.ts` ("drafting-flow Round G (DF-P9) — the badge counts what the page offers") "AUTHZ-15: an unreadable policy counts nothing…" and "REGRESSION: a stale (last-good) policy is drawn as is".
+
+**Scope / residual.** `lib/capabilityPolicy.ts`'s comment on `loadCapabilityPolicy` still lists non-authoritative readers that now read the entry (P24's note above); a shared module neither package owns — for the integrator to restate.
 
 ---
