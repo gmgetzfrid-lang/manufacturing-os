@@ -419,19 +419,31 @@ describe("20261218 — DEC-30 shape", () => {
     expect(M).toContain("this file needs only sla_defaults (20260529), its member policy\n-- sla_defaults_member_all (20260605) and caller_holds_any_role (20261045);\n-- the prerequisite block checks each of the three by name");
     expect(M.indexOf("-- ── Prerequisites")).toBeLessThan(M.indexOf("CREATE TEMP TABLE df_round_g_218_before"));
   });
-  it("prerequisite refusal → counts-only inventory BEFORE the transaction → BEGIN/COMMIT → ONE final SELECT (check, ok, n)", () => {
+  it("prerequisite refusal → counts-only inventory BEFORE the transaction → BEGIN/COMMIT → ONE final SELECT (check, ok, n), in an explicit order", () => {
     expect(F.startsWith(`${SLA_DEFAULTS_RAIL_MIGRATION}_df_roundG_sla_defaults_rail_`)).toBe(true);
     expect(M.indexOf("RAISE EXCEPTION '20261218 needs caller_holds_any_role")).toBeLessThan(M.indexOf("CREATE TEMP TABLE df_round_g_218_before"));
     expect(M.indexOf("CREATE TEMP TABLE df_round_g_218_before")).toBeLessThan(M.indexOf("\nBEGIN;\n"));
     expect(M.indexOf("\nBEGIN;\n")).toBeLessThan(M.indexOf("\nCOMMIT;\n"));
     expect(M.split("\nBEGIN;\n")).toHaveLength(2);
     expect(M.split("\nCOMMIT;\n")).toHaveLength(2);
-    const after = M.slice(M.indexOf("\nCOMMIT;\n"));
-    expect((stripComments(after).replace(/UNION ALL\s*\nSELECT/g, "UNION ALL SELECT").match(/^SELECT /gm) ?? []).length).toBe(1);
+    const after = M.slice(M.indexOf("\nCOMMIT;\n") + "\nCOMMIT;\n".length);
+    const code = stripComments(after).trim();
+    // ONE statement (one result set): a single terminating semicolon outside the string literals
+    expect((code.replace(/'(?:[^']|'')*'/g, "''").match(/;/g) ?? []).length).toBe(1);
+    expect(code.endsWith("ORDER BY sec, ord;")).toBe(true);
+    // three columns out — check, ok, n — with the reserved word quoted where it is named (IRLS-19)
+    expect(code.startsWith('SELECT "check", ok, n FROM (\nSELECT 1 AS sec, 1 AS ord,')).toBe(true);
     expect(after).toContain("AS check,");
     expect(after).toContain("AS ok,");
     expect(after).toContain("NULL::text AS n");
-    expect(after).toContain("SELECT inventory, NULL, n FROM df_round_g_218_before;");
+    const noStrings = code.replace(/'(?:[^']|'')*'/g, "''");
+    expect(noStrings).toContain('SELECT "check", ok, n FROM (');   // the one place the column is named, quoted
+    const bare = [...noStrings.matchAll(/(^|[^"\w])check(?![\w"])/g)]
+      .filter((m) => !/\bAS\s+$/.test(noStrings.slice(Math.max(0, m.index! - 8), m.index! + m[1].length)));
+    expect(bare.map((m) => noStrings.slice(Math.max(0, m.index! - 20), m.index! + 20))).toEqual([]);
+    // re-review: the explicit order — probes 1..6 in section 1, then the inventory's own ord in section 2
+    expect([...code.matchAll(/^SELECT 1, (\d+),/gm)].map((m) => Number(m[1]))).toEqual([2, 3, 4, 5, 6]);
+    expect(code).toContain("UNION ALL\nSELECT 2, ord, inventory, NULL, n FROM df_round_g_218_before\n) AS final_rows\nORDER BY sec, ord;");
   });
   it("the inventory is counts only — never a uid, an email, a name or a row", () => {
     const inv = between(M, "CREATE TEMP TABLE df_round_g_218_before", "\nBEGIN;");

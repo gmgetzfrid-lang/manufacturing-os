@@ -183,6 +183,33 @@ describe.skipIf(skip !== null)("20261218 pasted as ONE script, as the SQL editor
       return { check, ok, n };
     });
   };
+  // re-review: the ONE result set comes back in an explicit order (ORDER BY
+  // sec, ord) — the six probes as written, then inventory rows 1–7.
+  const PROBES = [
+    "EDGE-16: sla_defaults_editor_writes_ins / _upd / _del",
+    "EDGE-16: SELECT unchanged",
+    "EDGE-16: row-level security is still enabled on sla_defaults",
+    "EDGE-16: sla_defaults_default_days_bounded",
+    "EDGE-16 world: the CHECK is ",
+    "caller_holds_any_role (20261045) is SECURITY DEFINER",
+  ];
+  const INVENTORY = [
+    "inventory (before apply): EDGE-16 — sla_defaults rows (all workspaces)",
+    "inventory (before apply): workspaces with exactly 1 sla_defaults row",
+    "inventory (before apply): workspaces with 2–5 sla_defaults rows",
+    "inventory (before apply): workspaces with 6 or more sla_defaults rows",
+    "inventory (before apply): EDGE-16 — sla_defaults rows whose default_days is outside 1–3650",
+    "inventory (before apply): EDGE-16 — active members who LOSE",
+    "inventory (before apply): of those, members of a workspace that has sla_defaults rows",
+  ];
+  const expectOrdered = (rows: Array<{ check: string; ok: string; n: string }>) => {
+    expect(rows.length).toBe(PROBES.length + INVENTORY.length);
+    rows.forEach((r, i) => {
+      const want = i < PROBES.length ? PROBES[i] : INVENTORY[i - PROBES.length];
+      expect(r.check.startsWith(want), `row ${i + 1}: ${r.check}`).toBe(true);
+      expect(r.ok === "", `row ${i + 1}`).toBe(i >= PROBES.length);
+    });
+  };
 
   it("HEAD reproduces EDGE-16 (not vacuous): a Viewer writes a 1-day ISO window and a 2,000,000,000-day one; then the paste refuses the same Viewer, keeps both rows, leaves the CHECK NOT VALID and says so — every probe true, the inventory counted", () => {
     const scratch = "mos_p13_head";
@@ -205,6 +232,7 @@ describe.skipIf(skip !== null)("20261218 pasted as ONE script, as the SQL editor
       expect(Number(expected.outside)).toBe(1);
 
       const rows = paste(scratch);
+      expectOrdered(rows);
       const probes = rows.filter((r) => r.ok !== "");
       const inventory = rows.filter((r) => r.ok === "");
       expect(probes.length).toBe(6);
@@ -231,6 +259,7 @@ describe.skipIf(skip !== null)("20261218 pasted as ONE script, as the SQL editor
 
       // the re-paste after the correction validates the CHECK
       const again = paste(scratch);
+      expectOrdered(again);
       expect(again.filter((r) => r.ok !== "" && r.ok !== "t")).toEqual([]);
       expect(again.some((r) => r.check === "EDGE-16 world: the CHECK is VALIDATED — no stored row is outside 1–3650")).toBe(true);
       expect(admin(scratch, `SELECT convalidated FROM pg_constraint WHERE conrelid = 'sla_defaults'::regclass AND conname = 'sla_defaults_default_days_bounded'`)).toBe("t");

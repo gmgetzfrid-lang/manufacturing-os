@@ -39,8 +39,9 @@
 --      and VALIDATEd only when no stored row is outside the bound; a stored
 --      row outside it is KEPT and counted (never rewritten or deleted here):
 --      the create route already ignores it (boundedSlaDays → the built-in
---      window), the editor flags it for correction, and a re-paste after the
---      correction validates the CHECK.
+--      window), the SLA clock passes over it as a type with no row (the same
+--      helper — drafting-flow EDGE-17), the editor flags it for correction,
+--      and a re-paste after the correction validates the CHECK.
 -- No function is created or changed here. warn_before_days is not read by
 -- any code (the clock warns at lib/ticketSla.ts SLA_WARN_FRACTION, 75 %) and
 -- is left as it is.
@@ -64,11 +65,18 @@
 -- the prerequisite block checks each of the three by name and refuses
 -- without any of them, changing nothing). Never re-paste 20260605 to
 -- "restore" sla_defaults: it is harmless after this file (point 2) but
--- restores nothing.
+-- restores nothing. Where 20261195 is still unpasted, paste this file BEFORE
+-- it (recommended): 20261195 reads sla_defaults unbounded, so a stored
+-- window over ~100,000,000 days, with an open request of its type that has
+-- no due date, stops 20261195's paste at its inventory ("timestamp out of
+-- range", before its transaction — nothing changed, the SLA clock not
+-- started). Inventory row 5 below counts such rows: correct them in
+-- Admin → Request forms before pasting 20261195.
 -- Re-runnable (DROP POLICY IF EXISTS / CREATE POLICY; the CHECK is added only
 -- when missing and validated when it can be).
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
--- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
+-- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text) in an
+-- explicit order: the 6 probes, then inventory rows 1–7 (ORDER BY).
 -- ⚠ APPLIED BY HAND (DEC-30).
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -168,8 +176,12 @@ $$;
 COMMIT;
 
 -- ── Verification + inventory (ONE result set) ───────────────────────────────
--- expect ok = true on every probe; the inventory rows carry n.
-SELECT 'EDGE-16: sla_defaults_editor_writes_ins / _upd / _del — RESTRICTIVE, INSERT / UPDATE / DELETE, Admin, DocCtrl, DraftingSupervisor (caller_holds_any_role)' AS check,
+-- expect ok = true on every probe; the inventory rows carry n. The rows come
+-- back in the order written — the six probes, then inventory rows 1–7 — by
+-- the ORDER BY at the end (a UNION ALL alone promises no order).
+SELECT "check", ok, n FROM (
+SELECT 1 AS sec, 1 AS ord,
+       'EDGE-16: sla_defaults_editor_writes_ins / _upd / _del — RESTRICTIVE, INSERT / UPDATE / DELETE, Admin, DocCtrl, DraftingSupervisor (caller_holds_any_role)' AS check,
        (SELECT COUNT(*) = 3 FROM pg_policies
          WHERE schemaname = 'public' AND tablename = 'sla_defaults' AND permissive = 'RESTRICTIVE'
            AND ((policyname = 'sla_defaults_editor_writes_ins' AND cmd = 'INSERT' AND qual IS NULL
@@ -181,7 +193,7 @@ SELECT 'EDGE-16: sla_defaults_editor_writes_ins / _upd / _del — RESTRICTIVE, I
                  AND qual LIKE 'caller_holds_any_role(org_id, ARRAY[''Admin''%''DocCtrl''%''DraftingSupervisor''%'))) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'EDGE-16: SELECT unchanged — sla_defaults_member_all (20260605) is still the one PERMISSIVE policy, FOR ALL TO authenticated, active membership',
+SELECT 1, 2, 'EDGE-16: SELECT unchanged — sla_defaults_member_all (20260605) is still the one PERMISSIVE policy, FOR ALL TO authenticated, active membership',
        (SELECT COUNT(*) = 1 FROM pg_policies
          WHERE schemaname = 'public' AND tablename = 'sla_defaults' AND permissive = 'PERMISSIVE'
            AND policyname = 'sla_defaults_member_all' AND cmd = 'ALL' AND roles = '{authenticated}'::name[]
@@ -192,17 +204,18 @@ SELECT 'EDGE-16: SELECT unchanged — sla_defaults_member_all (20260605) is stil
                           AND policyname <> 'sla_defaults_member_all'),
        NULL
 UNION ALL
-SELECT 'EDGE-16: row-level security is still enabled on sla_defaults',
+SELECT 1, 3, 'EDGE-16: row-level security is still enabled on sla_defaults',
        (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.sla_defaults'::regclass),
        NULL
 UNION ALL
-SELECT 'EDGE-16: sla_defaults_default_days_bounded — CHECK (default_days BETWEEN 1 AND 3650) holds every new write',
+SELECT 1, 4, 'EDGE-16: sla_defaults_default_days_bounded — CHECK (default_days BETWEEN 1 AND 3650) holds every new write',
        EXISTS (SELECT 1 FROM pg_constraint
                 WHERE conrelid = 'public.sla_defaults'::regclass AND conname = 'sla_defaults_default_days_bounded'
                   AND contype = 'c' AND pg_get_constraintdef(oid) LIKE '%default_days >= 1%default_days <= 3650%'),
        NULL
 UNION ALL
-SELECT CASE WHEN (SELECT convalidated FROM pg_constraint
+SELECT 1, 5,
+       CASE WHEN (SELECT convalidated FROM pg_constraint
                    WHERE conrelid = 'public.sla_defaults'::regclass AND conname = 'sla_defaults_default_days_bounded')
             THEN 'EDGE-16 world: the CHECK is VALIDATED — no stored row is outside 1–3650'
             ELSE 'EDGE-16 world: the CHECK is NOT VALID — the stored rows outside 1–3650 (inventory row 5) are kept; correct them in Admin → Request forms, then re-paste this file'
@@ -212,8 +225,10 @@ SELECT CASE WHEN (SELECT convalidated FROM pg_constraint
          = NOT EXISTS (SELECT 1 FROM sla_defaults WHERE NOT (default_days BETWEEN 1 AND 3650)),
        NULL
 UNION ALL
-SELECT 'caller_holds_any_role (20261045) is SECURITY DEFINER with search_path pinned',
+SELECT 1, 6, 'caller_holds_any_role (20261045) is SECURITY DEFINER with search_path pinned',
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'caller_holds_any_role' AND prosecdef AND proconfig @> ARRAY['search_path=public']),
        NULL
 UNION ALL
-SELECT inventory, NULL, n FROM df_round_g_218_before;
+SELECT 2, ord, inventory, NULL, n FROM df_round_g_218_before
+) AS final_rows
+ORDER BY sec, ord;
