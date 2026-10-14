@@ -5,12 +5,12 @@
 // /api/tickets/create stamps on a request filed without a requested date
 // (default_days from now, at 17:00) and the window the SLA clock
 // (lib/ticketSla.ts) gives an open request that has no due date of its own.
-// Neither reader changes here: the create route keeps its own bound
-// (lib/notifications.ts boundedSlaDays — the SAME rule the editor validates
-// with, and the one the clock skips a stored row by, EDGE-17) and its built-in
-// fallback (DEFAULT_SLA_DAYS); the clock warns at SLA_WARN_FRACTION of the
-// window, a fixed constant — so the table's warn_before_days column, which no
-// code reads, is not offered.
+// The create route keeps its own bound (lib/notifications.ts boundedSlaDays —
+// the SAME rule the editor validates with) and its built-in fallback
+// (DEFAULT_SLA_DAYS); the clock skips a stored row outside that bound, as a
+// type with no row (EDGE-17), and warns at SLA_WARN_FRACTION of the window, a
+// fixed constant — so the table's warn_before_days column, which no code
+// reads, is not offered.
 //
 // Who may write: the drafting-configuration editors (lib/adminSurfaces.ts
 // DRAFTING_CONFIG_EDITORS — Admin, DocCtrl, DraftingSupervisor). The admin
