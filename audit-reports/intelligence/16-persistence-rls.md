@@ -244,7 +244,7 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 ## IRLS-6 · 20260806_intelligence_layer.sql ALTERs a table that is not created until 20260911 — the whole file rolls back on a fresh database
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-17 DATABASE HARNESS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260806_intelligence_layer.sql:57-61`, `supabase/migrations/20260911_knowledge_ai.sql:91`, `lib/schemaExpectations.ts:1-13`
@@ -311,6 +311,23 @@ Measured 2026-10-14, PostgreSQL 16.13 with pgvector 0.6.0, 299 numbered files:
   Done-when 3 can be met once `IRLS-17` lands and the route is run against that install, through the stand-in only if the integrator accepts it in place of a real Supabase project.
 
 **Scope / residual.** IRLS-6 stays OPEN on done-when 2 and done-when 3. Done-when 2 closes by record once `IRLS-17`, `IRLS-18` and `IRLS-19` land: at that point `replayKnownDefects.ts` lists nothing and `freshReplay.test.ts` reads zero errors. Done-when 3 closes once `IRLS-17` lands and the route is run as above. Owner of the remainder: intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge), which holds all three findings. No migration from this package touches it.
+
+**Resolution (2026-10-14, intelligence Round G).** Closed by intelligence I-27 FRESH-INSTALL REPLAY, by record. The three findings that held done-when 2 and 3 open landed first, in this package, each in its own commit: `IRLS-19` (`20261075` quoted in place), `IRLS-18` (`20260630`'s `team_members` index guarded) and `IRLS-17` (`schema.sql` runs as one script). This finding needed no further code. Its own fix stands as recorded at 2026-09-30: `20260806`'s guard plus `20261123`.
+
+*Ratified by the integrator under the user's delegation, 2026-10-14 (DEC-90), in the I-27 brief: the database harness's PostgREST stand-in counts in place of a real Supabase project for the schema-health route's reads.* The reason:
+- The route reads only through `supabaseAdmin`. It sends a table probe (`select(cols).limit(0)`) and named-argument RPC probes, and the stand-in sends exactly those to the replayed catalog as `service_role`: `SELECT cols FROM public.<table> LIMIT 0`, and `SELECT public.<fn>(arg => literal)`, with untyped literals resolved against the function's parameters, as PostgREST does.
+- The stand-in answers a missing function as `PGRST202`, PostgREST's own code.
+- It cannot hide a missing object, because every answer comes from the real catalog. The companion test shows a dropped table and a dropped function reported missing, so a gap is reported, never masked (fail-safe).
+- Testing a route against a faithful local copy of its datastore is the standard practice: Supabase's own local stack is PostgreSQL plus PostgREST.
+
+**Done-when.**
+- ✓ (2026-09-30) The `knowledge_questions` ALTER and its two indexes are guarded in `20260806` and carried by `20261123`. The replay confirms both run clean (`freshReplay.test.ts`, "IRLS-6's own defect is gone …").
+- ✓ A fresh-database replay of the migrations in filename order completes with zero errors. Measured with `npm run test:db` on PostgreSQL 16.13 with pgvector 0.6.0, exit 0, 2026-10-14. `supabase/schema.sql` is sent as one script, then all 303 numbered migrations, each as one simple-query message (a paste), in filename order. No file fails, none is re-run, and nothing is skipped: `BASELINE_KNOWN_ERRORS` and `OUT_OF_ORDER_FILES` are both empty. The only setting supplied is `20261141`'s documented operator switch (`app.j11_deployed`), for that file alone. The file refuses on purpose until its deploy is live, and a test proves it still refuses without the switch. Test: `freshReplay.test.ts`, "IRLS-6 done-when 2: zero errors — schema.sql as one script, then every numbered migration in filename order, nothing re-run".
+- ✓ `/api/admin/schema-health` was run against that fresh install and reports every `EXPECTED_TABLE` present (met under the ruling above). The route's own `GET` handler, answered through the PostgREST stand-in by the replayed database, returns `healthy: true`, `missingTables: []`, `missingColumns: []` and `migrationsToRun: []`, with more than 100 tables and more than 5 functions checked. The test first asserts the install is the literal one: one-script baseline, every file `ok`, no re-run. Of the four differences the I-17 fix pass listed, three are gone: `schema.sql` now runs as one script (`IRLS-17`), `20260630` is no longer re-run (`IRLS-18`), and `20261075` applies (`IRLS-19`). The fourth, the PostgREST stand-in, is counted under the ruling. The `org_configurations.data` column and the 16 base-schema tables, which the I-17 pass found absent from a one-script install, are present and reported. Tests: `freshReplay.test.ts`, "/api/admin/schema-health against the fresh install" (both cases, the non-vacuous one included).
+
+**Pending migration:** `20261123_intel_roundG_knowledge_questions_order.sql` (paste guide row 91, PASTE). It is a no-op on live deployments, and its SELECT confirms the column and indexes. `20260630`'s and `schema.sql`'s edits need no paste (see `IRLS-18`, `IRLS-17`). `20261075`'s paste is row 70 (see `IRLS-19`).
+
+**Scope / residual.** None in this finding. What the harness does not exercise is a hosted project's own services (auth, storage, PostgREST's schema cache). The ruling above covers that for the route's reads.
 
 ---
 
