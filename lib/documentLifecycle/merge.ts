@@ -12,12 +12,14 @@ import { logRevisionEvent } from "@/lib/audit";
 import {
   revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
   canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp, describeControllerOnlyFirstIssue,
+  recallOnRetirement,
   type RevUpInput,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import type { PublishGuardState } from "@/lib/documentGuards";
 import type { DocumentRecord, DocumentVersion, AssetTag } from "@/types/schema";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
+import { isRetiredStatus } from "@/lib/issueStatus";
 import {
   type ActorContext,
   type Compensation,
@@ -511,6 +513,27 @@ async function finishMerge(
     await notifyHolderOfRetirement({
       preState: pre, documentId: src.id!, libraryId: src.libraryId || target.libraryId, orgId, actorUserId, actorEmail,
       verb: "merged", action: "merge", reason: reason.trim(),
+    });
+  }
+
+  // PROD-17 (document-control P26): each absorbed source's copy holders are
+  // recalled and its watchers told — one recall per retired source, never
+  // awaited; a source already retired before the merge (its status read
+  // fresh before the flip) is not recalled again. Its checkout holder was
+  // told above; no package owner is.
+  const mergedInto = target.kind === "create_new"
+    ? target.documentNumber.trim()
+    : String(target.target.documentNumber || target.target.title || target.target.name || "the kept document");
+  const wasRetired = new Set(retired.filter((r) => isRetiredStatus(r.priorStatus)).map((r) => r.sourceDocId));
+  for (const src of absorbed) {
+    if (wasRetired.has(src.id!)) continue;
+    recallOnRetirement({
+      orgId, documentId: src.id!, libraryId: src.libraryId || target.libraryId,
+      docLabel: String(src.documentNumber || src.title || src.name || "document"),
+      newStatus: "Superseded",
+      replacementNote: `Replaced by ${mergedInto}.`,
+      actorUserId, actorName: actorEmail || actorUserId,
+      personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
     });
   }
 

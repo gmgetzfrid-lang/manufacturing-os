@@ -10,9 +10,11 @@
 import { supabase } from "@/lib/supabase";
 import {
   authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
+  recallOnRetirement,
 } from "@/lib/revisions";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
+import { isRetiredStatus } from "@/lib/issueStatus";
 import {
   type ActorContext,
   createNewDocWithFirstVersion,
@@ -298,6 +300,22 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     preState, documentId: sourceId, libraryId, orgId, actorUserId, actorEmail,
     verb: "split", action: "split", reason: reason.trim(),
   });
+
+  // PROD-17 (document-control P26): the retired source's copy holders are
+  // recalled and its watchers told, once, never awaited — unless it was
+  // already retired (the status read fresh before the flip): that
+  // retirement recalled it. The checkout holder was told above
+  // (notifyHolderOfRetirement); no package owner is.
+  if (!isRetiredStatus(retired.priorStatus)) {
+    recallOnRetirement({
+      orgId, documentId: sourceId, libraryId: sourceLibraryId,
+      docLabel: String(source.documentNumber || source.title || source.name || "document"),
+      newStatus: "Superseded",
+      replacementNote: `Replaced by ${targets.map((t) => t.documentNumber.trim()).join(", ")}.`,
+      actorUserId, actorName: actorEmail || actorUserId,
+      personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
+    });
+  }
 
   return {
     supersededSourceId: sourceId,

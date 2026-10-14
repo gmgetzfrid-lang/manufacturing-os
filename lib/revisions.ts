@@ -48,6 +48,7 @@ import { isControlledIssueStatus, isRetiredStatus, isIssueTransition, RETIRED_NO
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { IN_FORCE_STATUSES } from "@/lib/verifyVerdict";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
+import type { recallRetiredDocument as RecallRetiredDocument } from "@/lib/staleCopies";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
 //
@@ -485,6 +486,43 @@ export async function notifyHolderOfRetirement(opts: {
   } catch {
     /* best-effort */
   }
+}
+
+/** PROD-17 (document-control P26): a retirement door's recall — the copy
+ *  holders' doc_recalled and its DISTRIBUTION_RECALL row first, then the
+ *  watchers' doc_retired FYI (lib/staleCopies.ts recallRetiredDocument,
+ *  which orders them) — sent ONCE for the retirement and never awaited, as
+ *  supersedeDocument sends its own: the door returns exactly when it did,
+ *  and an FYI that stalls (a hung discover check) never holds it. Used by
+ *  the doors that recalled nothing before: archiveDocument,
+ *  changeDocumentStatus into a retired status, split / merge retiring
+ *  their sources (lib/documentLifecycle) and the bulk editor's retiring
+ *  rows (components/documents/BulkEditModal.tsx). One call per
+ *  retirement: a door that routes a write through another door that
+ *  already calls it must not call it again. No label in hand (a status
+ *  write): the row is read for it here, off the door's path; unreadable,
+ *  the notice names "A document" and still goes — a recall is never
+ *  dropped for want of a label. The module is loaded once and shared, so
+ *  a merge's several recalls wait on one load. */
+let staleCopiesLoad: Promise<typeof import("@/lib/staleCopies")> | null = null;
+export function recallOnRetirement(
+  input: Omit<Parameters<typeof RecallRetiredDocument>[0], "docLabel" | "libraryId"> & { docLabel?: string | null; libraryId?: string | null },
+): void {
+  void (async () => {
+    let docLabel = input.docLabel ?? null;
+    let libraryId = input.libraryId ?? null;
+    if (!docLabel) {
+      try {
+        const { data } = await supabase.from("documents").select("library_id, document_number, title, name").eq("id", input.documentId).maybeSingle();
+        const row = (data as { library_id?: string | null; document_number?: string | null; title?: string | null; name?: string | null } | null) ?? null;
+        docLabel = row ? (row.document_number || row.title || row.name || null) : null;
+        libraryId = libraryId ?? row?.library_id ?? null;
+      } catch { /* named generically below */ }
+    }
+    staleCopiesLoad ??= import("@/lib/staleCopies").catch((e) => { staleCopiesLoad = null; throw e; });
+    const { recallRetiredDocument } = await staleCopiesLoad;
+    await recallRetiredDocument({ ...input, docLabel: docLabel || "A document", libraryId });
+  })().catch(() => { /* non-blocking: the retirement has landed */ });
 }
 
 // ─── REV-6: retiring the in-flight review draft ───────────────────────────
@@ -2064,7 +2102,7 @@ export type ArchiveInput = {
  *  The checkout lock is not an archive gate (it never was, at either layer). */
 async function authorizeArchive(opts: {
   documentId: string; libraryId: string; orgId: string; actorUserId: string; actorRole?: string;
-}): Promise<void> {
+}): Promise<{ priorStatus: string | null }> {
   const principal: Principal = await resolveActorPrincipal({
     uid: opts.actorUserId, orgId: opts.orgId, headlineRole: opts.actorRole,
   });
@@ -2077,13 +2115,16 @@ async function authorizeArchive(opts: {
     await assertNotOnHold(opts.documentId, { action: "archiving it" });
   }
   const { data, error } = await supabase
-    .from("documents").select("legal_hold").eq("id", opts.documentId).maybeSingle();
+    .from("documents").select("legal_hold, status").eq("id", opts.documentId).maybeSingle();
   if (error) {
     throw new Error(`Couldn't confirm this document is free of a legal hold (${error.message}) — nothing was archived.`);
   }
   if ((data as { legal_hold?: boolean | null } | null)?.legal_hold === true) {
     throw new Error("This document is under legal hold and cannot be archived — a controller must release the legal hold first. Nothing was changed.");
   }
+  // PROD-17 (P26): the status the archive retires it from, read with the
+  // legal hold (no extra round trip); unknown is null.
+  return { priorStatus: (data as { status?: string | null } | null)?.status ?? null };
 }
 
 export async function archiveDocument(input: ArchiveInput): Promise<void> {
@@ -2093,7 +2134,7 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
 
   // REV-6: every refusal the database would give an archive is asked first;
   // nothing has been written yet.
-  await authorizeArchive({ documentId: doc.id, libraryId: doc.libraryId, orgId, actorUserId, actorRole });
+  const { priorStatus } = await authorizeArchive({ documentId: doc.id, libraryId: doc.libraryId, orgId, actorUserId, actorRole });
 
   const now = new Date().toISOString();
   const { data: archived, error } = await supabase
@@ -2141,6 +2182,23 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
       liveShareLinksLeft: shares.liveLeft, shareRevokeAuditError: shares.auditError,
     },
   });
+
+  // PROD-17 (document-control P26): an archive is a retirement — every copy
+  // holder is recalled and the document's watchers told, once, never
+  // awaited. Archiving a document already retired (a Superseded or Void
+  // row, read just before the write) recalls nothing again — its
+  // retirement already did; a status the read did not give recalls (a
+  // second recall over none). The archive tells no checkout holder or
+  // package owner itself, so they stay in the watchers' audience.
+  if (!isRetiredStatus(priorStatus)) {
+    recallOnRetirement({
+      orgId, documentId: doc.id, libraryId: doc.libraryId,
+      docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
+      newStatus: "Archived", replacementNote: null,
+      actorUserId, actorName: actorEmail || actorUserId,
+      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+    });
+  }
 }
 
 // ─── REV-23 (P19): the stamped put-back's recorded door ─────────────────────
@@ -2903,6 +2961,25 @@ export async function changeDocumentStatus(input: {
   if (error) throw new Error(error.message);
   if (((rows as unknown[] | null) ?? []).length === 0) {
     throw new Error("The status was NOT changed — you don't have authority to change this document, or it is no longer visible to you. Nothing was changed.");
+  }
+  // PROD-17 (document-control P26): a write that RETIRES the document (into
+  // Superseded / Void / Archived — isRetiredStatus — out of a status that is
+  // not one) recalls every copy holder and tells its watchers, once, never
+  // awaited; the outcome returned is unchanged. A re-save of a document
+  // already retired recalls nothing again. A pre-write read that failed
+  // (fromStatus unknown) recalls: a second recall over none. This door
+  // tells no checkout holder or package owner, so they stay in the
+  // watchers' audience. (Neither status editor routes a retirement here
+  // today: each writes a retired status with its own bare write, and the
+  // bulk editor calls recallOnRetirement itself — a caller that routes one
+  // here must not also call it.)
+  if (isRetiredStatus(input.toStatus) && !isRetiredStatus(before.fromStatus)) {
+    recallOnRetirement({
+      orgId: input.orgId, documentId: input.documentId,
+      newStatus: input.toStatus.trim(), replacementNote: null,
+      actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
+      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+    });
   }
   const change = { fromStatus: before.fromStatus, toStatus: input.toStatus, hasCurrentRevision: !!before.versionId };
   if (!isIssueTransition(change) && !isUnguardedEntryIntoForce(change)) {
