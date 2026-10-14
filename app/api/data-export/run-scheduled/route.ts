@@ -44,6 +44,17 @@
 // the sweep result (fifth review fix: it was dropped there); no bell rings
 // for an export that did not leave.
 //
+// DEC-87 §1 as amended 2026-10-13 under DEC-90 (admin-and-org Round G, P14;
+// intelligence IEDGE-10 / DACL-7): that grace is BOUNDED. Each unconfirmed
+// push is a counted night (lib/exportAlerts.ts unconfirmedGraceTonight, read
+// from the destination's own scheduled run rows — the night this deploys is
+// night 1); nights 1 to 7 run and every Admin's bell names the night; night
+// 7's push is followed by a pause, said in its bell; from night 8 the sweep
+// skips it with a cancelled run row and the card saying it is paused (no
+// bell), until an Admin opens it and saves it (confirmed: it runs as any
+// other destination) or disables it. A count that cannot be read never stops
+// a backup: it runs, and says so.
+//
 // admin-and-org BKP-6: a succeeded bucket push whose retention purge ran puts
 // the purge's deleted and failed counts on its run row's own columns
 // (migration 20261172; until that is pasted the row is written without them,
@@ -56,7 +67,10 @@ export const maxDuration = 300;
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, exportEmbedDeadline, pushesToBucket, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
-import { alertAdminsOfExport, destinationConfirmation, unconfirmedNote as unconfirmedNoteFor } from "@/lib/exportAlerts";
+import {
+  alertAdminsOfExport, destinationConfirmation, unconfirmedNote as unconfirmedNoteFor,
+  unconfirmedGraceTonight, graceSentence, graceNightStep, pausedNote, GRACE_PAUSED_STEP, type UnconfirmedGrace,
+} from "@/lib/exportAlerts";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -223,17 +237,65 @@ async function handler(req: NextRequest) {
     // surface's entry role? Either way it runs; an unconfirmed one turns the
     // night's bell into a request to confirm it (below).
     const confirmation = await destinationConfirmation(sb, dest);
-    const unconfirmedNote = confirmation.unconfirmed ? unconfirmedNoteFor(confirmation.unconfirmed) : null;
-    const notices = [...gate.notices, ...(confirmation.notice ? [confirmation.notice] : []), ...(unconfirmedNote ? [unconfirmedNote] : [])];
+    // DEC-87 §1 (amended, P14): an unconfirmed destination's night in the
+    // bounded grace — or, past its last night, a pause.
+    let grace: UnconfirmedGrace | null = null;
+    let graceReadNote: string | null = null;
+    if (confirmation.unconfirmed) {
+      const tonight = await unconfirmedGraceTonight(sb, dest.id);
+      if (tonight.paused) {
+        const at = new Date().toISOString();
+        const msg = `skipped: ${pausedNote(confirmation.unconfirmed)}`;
+        const unrecorded: string[] = [];
+        const { error: runErr } = await sb.from("export_runs").insert({
+          org_id: dest.org_id,
+          destination_id: dest.id,
+          trigger_type: "scheduled",
+          status: "cancelled",
+          error_message: msg.slice(0, 1000),
+          destination_type: dest.destination_type,
+          diagnostics: [{ ts: at, step: GRACE_PAUSED_STEP, detail: pausedNote(confirmation.unconfirmed) }],
+          started_at: at,
+          completed_at: at,
+          duration_ms: 0,
+        });
+        if (runErr) unrecorded.push(`run row not recorded: ${runErr.message}`);
+        const { error: destErr } = await sb.from("export_destinations").update({
+          last_run_at: at,
+          last_run_status: "failed",
+          last_run_error: msg.slice(0, 500),
+        }).eq("id", dest.id);
+        if (destErr) unrecorded.push(`last-run status not recorded: ${destErr.message}`);
+        for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
+        results.push({ destinationId: dest.id, ok: false, error: [msg, ...unrecorded].join("; ") });
+        continue;
+      }
+      grace = { night: tonight.night, of: tonight.of, pausing: tonight.pausing };
+      if ("error" in tonight) {
+        graceReadNote = `the unconfirmed-night count could not be read (${tonight.error}); the push ran`;
+        console.warn(`[run-scheduled] destination ${dest.id}: ${graceReadNote}`);
+      }
+    }
+    const unconfirmedNote = confirmation.unconfirmed
+      ? `${unconfirmedNoteFor(confirmation.unconfirmed)}${grace ? ` ${graceSentence(grace)}` : ""}`
+      : null;
+    const notices = [
+      ...gate.notices, ...(confirmation.notice ? [confirmation.notice] : []), ...(unconfirmedNote ? [unconfirmedNote] : []),
+      ...(graceReadNote ? [graceReadNote] : []),
+    ];
     if (confirmation.notice) console.warn(`[run-scheduled] destination ${dest.id}: ${confirmation.notice}`);
 
     const startedAt = new Date().toISOString();
+    // The night is counted on the run row from the moment it opens, so a push
+    // killed mid-flight (its row left "running") still counts.
+    const graceStep = grace ? graceNightStep(grace, startedAt) : null;
     const { data: runRow, error: runRowErr } = await sb.from("export_runs").insert({
       org_id: dest.org_id,
       destination_id: dest.id,
       trigger_type: "scheduled",
       status: "running",
       started_at: startedAt,
+      ...(graceStep ? { diagnostics: [graceStep] } : {}),
     }).select("id").single();
     const runId = (runRow as { id: string } | null)?.id;
     if (runRowErr || !runId) {
@@ -277,6 +339,7 @@ async function handler(req: NextRequest) {
         scheduled: {
           destinationName: dest.name || dest.id, configuredBy: dest.updated_by || dest.created_by || null,
           ...(confirmation.unconfirmed ? { unconfirmed: confirmation.unconfirmed } : {}),
+          ...(grace ? { grace } : {}),
         },
       }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
       if (!alert.ok) console.error(`[run-scheduled] destination ${dest.id}: the export alert was not sent: ${alert.error}`);
@@ -301,6 +364,8 @@ async function handler(req: NextRequest) {
             ...gate.notices.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
             ...(confirmation.notice ? [{ ts: startedAt, step: "gate:notice", detail: confirmation.notice }] : []),
             ...(unconfirmedNote ? [{ ts: startedAt, step: "gate:unconfirmed", detail: unconfirmedNote }] : []),
+            ...(graceStep ? [graceStep] : []),
+            ...(graceReadNote ? [{ ts: startedAt, step: "gate:notice", detail: graceReadNote }] : []),
             ...result.diagnostics,
             ...(alert.ok ? [] : [{ ts: completedAt, step: "alert:unsent", detail: alert.error }]),
           ],
@@ -352,6 +417,8 @@ async function handler(req: NextRequest) {
               ...gate.notices.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
               ...(confirmation.notice ? [{ ts: startedAt, step: "gate:notice", detail: confirmation.notice }] : []),
               ...(unconfirmedNote ? [{ ts: startedAt, step: "gate:unconfirmed", detail: unconfirmedNote }] : []),
+              ...(graceStep ? [graceStep] : []),
+              ...(graceReadNote ? [{ ts: startedAt, step: "gate:notice", detail: graceReadNote }] : []),
             ],
           } : {}),
           completed_at: completedAt,

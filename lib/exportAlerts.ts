@@ -114,18 +114,22 @@ export async function alertAdminsOfExport(
      *  uid; `unconfirmed` when that configurer does not hold the surface's
      *  entry role (`by`: their email, else their uid; `holds`: the role(s)
      *  it takes, e.g. "Admin"). */
-    scheduled?: { destinationName: string; configuredBy: string | null; unconfirmed?: { by: string; holds: string } };
+    scheduled?: { destinationName: string; configuredBy: string | null; unconfirmed?: { by: string; holds: string }; grace?: UnconfirmedGrace };
   },
 ): Promise<ExportAlertResult> {
   const when = new Date().toISOString();
   const unconfirmed = info.scheduled?.unconfirmed;
+  // DEC-87 §1 as amended under DEC-90 (admin-and-org Round G, P14): the
+  // night's place in the bounded grace, said in every Admin's bell.
+  const grace = unconfirmed ? info.scheduled?.grace : undefined;
+  const graceText = grace ? ` ${graceSentence(grace)}` : "";
   const what = info.scheduled
     ? `A scheduled export pushed the entire workspace to "${info.scheduled.destinationName}" (${info.destination}).`
     : `${info.actorEmail} exported the entire workspace (${info.destination}).`;
   const body = (forAdmin: boolean) => unconfirmed
     ? `${what} ${unconfirmedSentence(unconfirmed)} ${forAdmin
       ? "Open it under Admin → Data export and save it to confirm it, or disable it."
-      : "Ask an Admin to open it under Admin → Data export and save it to confirm it, or disable it. The run is recorded in the audit log."}`
+      : "Ask an Admin to open it under Admin → Data export and save it to confirm it, or disable it. The run is recorded in the audit log."}${graceText}`
     : info.scheduled
       ? `${what} If you don't recognise this destination, ${forAdmin
         ? "disable it under Admin → Data export."
@@ -135,7 +139,7 @@ export async function alertAdminsOfExport(
         : "tell an Admin now so they can review the account. The export is recorded in the audit log."}`;
   return alertControllers(admin, info.orgId, info.actorUserId, {
     title: unconfirmed
-      ? "Scheduled export needs an Admin to confirm it"
+      ? (grace?.pausing ? "Scheduled export paused until an Admin confirms it" : "Scheduled export needs an Admin to confirm it")
       : info.scheduled ? "Scheduled workspace export ran" : "Full workspace export was run",
     body,
     actorUserId: info.actorUserId,
@@ -144,8 +148,98 @@ export async function alertAdminsOfExport(
       destination: info.destination, at: when,
       ...(info.scheduled ? { scheduled: true, destinationName: info.scheduled.destinationName, configuredBy: info.scheduled.configuredBy } : {}),
       ...(unconfirmed ? { unconfirmed: { by: unconfirmed.by, holds: unconfirmed.holds } } : {}),
+      ...(grace ? { grace: { night: grace.night, of: grace.of, pausing: grace.pausing } } : {}),
     },
   });
+}
+
+// ── DEC-87 §1, the bounded grace (amended 2026-10-13 under DEC-90; built by
+// admin-and-org Round G, P14 — intelligence IEDGE-10 / DACL-7) ─────────────
+// A destination a Manager or DocCtrl configured before the data-export
+// surface became Admin-only, which no Admin has confirmed since, still runs —
+// but no longer indefinitely. Each such scheduled push is an unconfirmed
+// NIGHT, counted on its run row (diagnostics step GRACE_NIGHT_STEP, detail
+// `night=<n>/<of>`); nights 1 to UNCONFIRMED_GRACE_NIGHTS run and every
+// Admin's bell names the night; the last night's push is followed by a pause
+// (its bell says so); from the next night the sweep skips it with a
+// cancelled run row (GRACE_PAUSED_STEP) and no bell, until an Admin opens it
+// and saves it (which stamps updated_by: confirmed — it runs as any other
+// destination) or disables it. The count reads only rows this rule wrote, so
+// the night the change deploys is night 1 for every such destination, never
+// the night a backup stops. A run the gate skipped for another reason
+// (cancelled, no grace step) neither counts nor breaks the count; any other
+// run (a confirmed push, a run from before this rule) ends it.
+
+/** DEC-87 §1 (amended): consecutive unconfirmed nightly runs before a pause. */
+export const UNCONFIRMED_GRACE_NIGHTS = 7;
+/** The run row's diagnostics step for an unconfirmed night (`night=<n>/<of>`, `n` "?" when unread). */
+export const GRACE_NIGHT_STEP = "grace:unconfirmed-night";
+/** The run row's diagnostics step for a night the destination stayed paused. */
+export const GRACE_PAUSED_STEP = "grace:paused";
+
+export interface UnconfirmedGrace {
+  /** Tonight's unconfirmed night (1-based), or null when the count could not be read (it runs). */
+  night: number | null;
+  of: number;
+  /** Tonight is the last night: it runs, and is paused from the next night. */
+  pausing: boolean;
+}
+
+/** What the bell, run row and card say about tonight's place in the grace. */
+export function graceSentence(g: UnconfirmedGrace): string {
+  if (g.night === null) {
+    return `It runs tonight; how many unconfirmed nights it has had could not be read, so the count resumes at the next run (it is paused after ${g.of} unconfirmed nights).`;
+  }
+  return g.pausing
+    ? `This was unconfirmed night ${g.night} of ${g.of}, so it is now PAUSED: no scheduled push leaves until an Admin opens it and saves it to confirm it (or disables it).`
+    : `This is unconfirmed night ${g.night} of ${g.of}: unless an Admin confirms it, it is paused after night ${g.of}'s push.`;
+}
+
+/** The run row's diagnostics entry for tonight's unconfirmed night. */
+export function graceNightStep(g: UnconfirmedGrace, ts: string): { ts: string; step: string; detail: string } {
+  return { ts, step: GRACE_NIGHT_STEP, detail: `night=${g.night ?? "?"}/${g.of}` };
+}
+
+/** What a paused night's run row, card and sweep result say. */
+export function pausedNote(u: { by: string; holds: string }, of = UNCONFIRMED_GRACE_NIGHTS): string {
+  return `Paused: no Admin has confirmed this destination after ${of} unconfirmed nightly pushes, so no scheduled push leaves until an Admin opens it under Admin → Data export and saves it to confirm it (or disables it). ${unconfirmedSentence(u)}`;
+}
+
+/** Tonight's place in the grace for an unconfirmed destination, read from
+ *  its recent scheduled run rows (newest first). `paused` when the previous
+ *  counted night was the last one, or a paused night; otherwise tonight's
+ *  night. A read that fails answers `night: null` — the push runs (a backup
+ *  is never stopped on a guess) and says the count could not be read. */
+export async function unconfirmedGraceTonight(
+  sb: Pick<SupabaseClient, "from">,
+  destinationId: string,
+  of = UNCONFIRMED_GRACE_NIGHTS,
+): Promise<{ paused: true } | ({ paused: false } & UnconfirmedGrace) | ({ paused: false; error: string } & UnconfirmedGrace)> {
+  const { data, error } = await sb
+    .from("export_runs")
+    .select("id, status, diagnostics, started_at")
+    .eq("destination_id", destinationId)
+    .eq("trigger_type", "scheduled")
+    .order("started_at", { ascending: false })
+    .limit(4 * of);
+  if (error) return { paused: false, night: null, of, pausing: false, error: error.message };
+  let previous = 0;
+  for (const run of (Array.isArray(data) ? data : []) as Array<{ status?: unknown; diagnostics?: unknown }>) {
+    const steps = Array.isArray(run.diagnostics) ? run.diagnostics as Array<{ step?: unknown; detail?: unknown }> : [];
+    if (steps.some((d) => d?.step === GRACE_PAUSED_STEP)) return { paused: true };
+    const night = steps.find((d) => d?.step === GRACE_NIGHT_STEP);
+    if (night) {
+      const m = /^night=(\d+)\/\d+$/.exec(String(night.detail ?? ""));
+      if (!m) continue; // an unread count: it neither counts nor breaks the run of nights
+      previous = Number(m[1]);
+      break;
+    }
+    if (run.status === "cancelled") continue; // a gate skip for another reason
+    break; // a confirmed push, or a run from before this rule: the count starts again
+  }
+  if (previous >= of) return { paused: true };
+  const tonight = previous + 1;
+  return { paused: false, night: tonight, of, pausing: tonight >= of };
 }
 
 /** DEC-87 §1: what an unconfirmed scheduled push's bell (and its
