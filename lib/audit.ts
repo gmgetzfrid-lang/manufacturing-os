@@ -58,7 +58,6 @@ const AUDIT_ACTOR_SENTINELS: ReadonlySet<string> = new Set(["", "unknown", "syst
  *  today's path. A row with no workspace is refused before any write and is
  *  not dead-lettered (the outbox, like the trail, needs its workspace). */
 export async function logAuditAction(entry: AuditEntry): Promise<{ error: string | null; ok: boolean }> {
-  let row: DeadLetterRow | null = null;
   try {
     // ALOG-10 (admin-and-org P7): a row with no workspace is readable by no
     // signed-in reader (every SELECT policy and both viewers read org_id), so
@@ -75,7 +74,7 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
     const metadata = uid === null
       ? { ...(entry.metadata ?? {}), actor_kind: "system", ...(entry.userId ? { actor_label: String(entry.userId) } : {}) }
       : (entry.metadata || null);
-    row = {
+    const row: DeadLetterRow = {
       action: entry.action,
       resource_id: entry.resourceId,
       resource_type: entry.resourceType,
@@ -86,7 +85,17 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
       details: entry.details || null,
       metadata,
     };
-    const { error } = await supabase.from("audit_logs").insert(row);
+    let error: { message?: string } | null;
+    try {
+      ({ error } = await supabase.from("audit_logs").insert(row));
+    } catch (thrown) {
+      // a thrown insert (a network failure) is dead-lettered too; the outer
+      // catch below is only for a row that could not be built (kept as before)
+      console.error(`Failed to write audit log (${entry.action}):`, thrown);
+      const message = (thrown as Error)?.message ?? String(thrown);
+      sayKept(entry.action, await deadLetterAuditRow(row, message));
+      return { error: message, ok: false };
+    }
     if (error) {
       console.error(`Failed to write audit log (${entry.action}):`, error.message);
       const message = error.message || "audit insert refused";
@@ -96,14 +105,12 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
     return { error: null, ok: true };
   } catch (error) {
     console.error(`Failed to write audit log (${entry?.action}):`, error);
-    const message = (error as Error)?.message ?? String(error);
-    sayKept(entry?.action, row ? await deadLetterAuditRow(row, message) : { kept: false, why: "the row was never built" });
-    return { error: message, ok: false };
+    return { error: (error as Error)?.message ?? String(error), ok: false };
   }
 }
 
 /** EVID-6: the second log line — whether the refused row was kept in the outbox. */
-function sayKept(action: string | undefined, kept: { kept: boolean; why?: string }): void {
+function sayKept(action: string, kept: { kept: boolean; why?: string }): void {
   if (kept.kept) console.error(`Audit log (${action}): the refused row was kept in the audit dead-letter outbox; the maintenance cron recovers it into the audit trail`);
   else console.error(`Audit log (${action}): the refused row was NOT kept in the audit dead-letter outbox (${kept.why})`);
 }
