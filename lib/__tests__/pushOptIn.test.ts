@@ -264,7 +264,7 @@ describe("this device, on and off", () => {
     installBrowser();
     env.permission = "granted";
     env.existing = makeSub("https://push.example/mine");
-    db.subRow = { id: "s1" };
+    db.subRow = { id: "s1", created_at: new Date().toISOString() };
     await mount();
     expect(deviceState()).toBe("on");
     const sub = env.existing;
@@ -275,12 +275,22 @@ describe("this device, on and off", () => {
     expect(deviceState()).toBe("off");
   });
 
+  it("a row from before the opt-in control (the deleted reminders stack's) does not count as on — the person turns the device on again", async () => {
+    installBrowser();
+    env.permission = "granted";
+    env.existing = makeSub("https://push.example/reminders-era");
+    db.subRow = { id: "s-legacy", created_at: "2026-08-04T09:00:00Z" };
+    await mount();
+    expect(deviceState()).toBe("off");
+    expect(button(/Turn on notifications for this device/)).toBeTruthy();
+  });
+
   it("a subscription made with another key (the server's key rotated) reads as off, and turning on replaces it", async () => {
     installBrowser();
     env.permission = "granted";
     const stale = makeSub("https://push.example/old", new Uint8Array(65).fill(7));
     env.existing = stale;
-    db.subRow = { id: "s-old" };
+    db.subRow = { id: "s-old", created_at: new Date().toISOString() };
     await mount();
     expect(deviceState()).toBe("off");
     await click(button(/Turn on notifications for this device/));

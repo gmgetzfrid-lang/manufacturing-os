@@ -39,6 +39,7 @@ import { AlertTriangle, BellRing, Check, Smartphone } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useDismissed } from "@/hooks/useDismissed";
 import { Button } from "@/components/ui/Button";
+import { PUSH_OPT_IN_SINCE } from "@/lib/notify/dispatch";
 
 /** useDismissed key for "Not now" (scope `<uid>:<orgId>`). A later nudge that
  *  invites push reads the same key and stays quiet. */
@@ -160,9 +161,12 @@ export default function PushOptIn({ uid, orgId }: { uid: string | null; orgId: s
         const reg = await navigator.serviceWorker.getRegistration();
         const sub = await reg?.pushManager.getSubscription();
         if (sub && Notification.permission === "granted" && sameKey(sub.options?.applicationServerKey, urlBase64ToUint8Array(key))) {
-          // own-row RLS (20260804): the row is visible only if it is ours
-          const { data } = await supabase.from("push_subscriptions").select("id").eq("endpoint", sub.endpoint).maybeSingle();
-          if (!cancelled && data) { setDevice("on"); return; }
+          // own-row RLS (20260804): the row is visible only if it is ours;
+          // one older than this control (the deleted reminders stack's) is
+          // never pushed, so it does not count as on
+          const { data } = await supabase.from("push_subscriptions").select("id, created_at").eq("endpoint", sub.endpoint).maybeSingle();
+          const made = (data as { created_at?: unknown } | null)?.created_at;
+          if (!cancelled && typeof made === "string" && Date.parse(made) >= Date.parse(PUSH_OPT_IN_SINCE)) { setDevice("on"); return; }
         }
       } catch { /* treat as not on */ }
       if (!cancelled) setDevice("off");

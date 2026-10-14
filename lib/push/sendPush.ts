@@ -22,7 +22,9 @@
 //     push_subscriptions row exists only because they clicked "Turn on
 //     notifications for this device" (components/settings/PushOptIn.tsx) —
 //     and whose notification_preferences.push_enabled is not false. The
-//     column's DEFAULT TRUE alone sends nothing (OS-10 done-when 1).
+//     column's DEFAULT TRUE alone sends nothing (OS-10 done-when 1). A row
+//     older than that control (PUSH_OPT_IN_SINCE — the deleted reminders
+//     stack's) is never pushed (OS-10 done-when 3).
 //     push_enabled = false stops delivery and leaves the device registered.
 //   * Push follows a bell row: a person is pushed only when a bell row of
 //     this kind about this resource landed for them in the last
@@ -61,7 +63,7 @@ import webpush, { type PushSubscription as WebPushSubscription } from "web-push"
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
 import { NOTIFICATION_KINDS, kindMeta, type ClassifiedKind } from "@/lib/notificationKinds";
-import { __registerServerPushSender, PUSH_REQUEST_MAX_RECIPIENTS, type PushSendInput } from "@/lib/notify/dispatch";
+import { __registerServerPushSender, PUSH_OPT_IN_SINCE, PUSH_REQUEST_MAX_RECIPIENTS, type PushSendInput } from "@/lib/notify/dispatch";
 
 /** The push-worthy kinds, in registry order (KIND_META.pushWorthy). */
 export const PUSH_KINDS: readonly ClassifiedKind[] = Object.freeze(
@@ -194,7 +196,7 @@ export interface PushOutcome {
 const none = (skipped?: PushOutcome["skipped"]): PushOutcome => ({ skipped, eligible: 0, attempted: 0, sent: 0, pruned: 0, capped: 0 });
 
 type BellRow = { id: string; user_id: string; kind: string; resource_id: string | null; link: string | null; created_at: string; metadata: Record<string, unknown> | null };
-type DeviceRow = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string; last_reminded_at: string | null };
+type DeviceRow = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string; last_reminded_at: string | null; created_at: string | null };
 
 const chunks = <T,>(xs: T[]): T[][] => {
   const out: T[][] = [];
@@ -287,8 +289,9 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
   for (const part of chunks(eligible)) {
     const { data, error } = await supabaseAdmin
       .from("push_subscriptions")
-      .select("id, user_id, endpoint, p256dh, auth, last_reminded_at")
-      .in("user_id", part);
+      .select("id, user_id, endpoint, p256dh, auth, last_reminded_at, created_at")
+      .in("user_id", part)
+      .gte("created_at", PUSH_OPT_IN_SINCE);
     if (error) {
       if (isMissingSchemaError(error)) {
         logOnce("no-table", "[push] push_subscriptions does not exist (20260804_push_subscriptions.sql not applied) — no device can be pushed");
@@ -297,7 +300,9 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
       console.warn(`[push] device registrations could not be read (${error.message}) — the ${input.kind} push was not sent`);
       return { ...none("unreadable"), eligible: eligible.length, capped };
     }
-    devices.push(...((data as DeviceRow[] | null) ?? []));
+    // the deleted reminders stack's registrations are never pushed (checked
+    // here too, not only by the query's filter)
+    devices.push(...((data as DeviceRow[] | null) ?? []).filter((d) => !!d.created_at && Date.parse(d.created_at) >= Date.parse(PUSH_OPT_IN_SINCE)));
   }
 
   // 4) Send — once per device per bell row (last_reminded_at), in parallel.

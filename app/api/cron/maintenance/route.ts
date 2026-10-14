@@ -49,7 +49,9 @@
 //      90 days (VFY-12; prune_verify_scans(), 20261134).
 //   7c. Web Push device registrations (notifications N10 — GAP-205): a
 //      push_subscriptions row whose person is no longer an ACTIVE member of
-//      any workspace is removed (prunePushSubscriptions). The cron only
+//      any workspace, or made before the opt-in control existed (the deleted
+//      reminders stack's — PUSH_OPT_IN_SINCE), is removed
+//      (prunePushSubscriptions). The cron only
 //      prunes: pushes are sent by emit() at the moment of the event
 //      (lib/push/sendPush.ts), and a subscription the push service answers
 //      404 / 410 for is deleted there and then. No time-based prune: a device
@@ -87,7 +89,7 @@ import {
 } from "@/lib/intakeRateLimit";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
-import { emit, type EmitResult } from "@/lib/notify/dispatch";
+import { emit, PUSH_OPT_IN_SINCE, type EmitResult } from "@/lib/notify/dispatch";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { KIND_META } from "@/lib/notificationKinds";
@@ -564,7 +566,9 @@ async function handler(req: NextRequest) {
   // 7c. PUSH SUBSCRIPTIONS (notifications N10 — GAP-205; OS-2 done-when 4's
   //     cron half). The device registrations of people who are no longer an
   //     active member of any workspace — they can receive nothing, and the
-  //     row is a device credential — are removed. Dead endpoints are removed
+  //     row is a device credential — are removed, and so are the deleted
+  //     reminders stack's (made before PUSH_OPT_IN_SINCE: never pushed — OS-10
+  //     done-when 3; their people turn the device on again). Dead endpoints are removed
   //     by the sender at the first 404 / 410 (lib/push/sendPush.ts). No-op
   //     before 20260804; it takes what the run has left (N6's run clock).
   if (!noTimeFor("push-subscriptions", PUSH_PRUNE_MIN_MS)) {
@@ -677,14 +681,16 @@ const PUSH_PRUNE_PAGE = 150;
 
 /** Step 7c (notifications N10 — GAP-205): remove the push_subscriptions rows
  *  of people with no ACTIVE membership in any workspace (removed, suspended,
- *  inactive everywhere). Pages by id; stops at `stopBy`. A membership read
- *  that fails removes nothing from that page on (fail safe: a transient
- *  error never unsubscribes a member's device). Returns how many rows went. */
+ *  inactive everywhere), and the rows made before PUSH_OPT_IN_SINCE (the
+ *  deleted reminders stack's, which the sender never pushes). Pages by id;
+ *  stops at `stopBy`. A membership read that fails removes nothing from that
+ *  page on (fail safe: a transient error never unsubscribes a member's
+ *  device). Returns how many rows went. */
 async function prunePushSubscriptions(sb: SupabaseClient, errors: string[], stopBy: number): Promise<number> {
   let pruned = 0;
   let after: string | null = null;
   while (Date.now() < stopBy) {
-    let q = sb.from("push_subscriptions").select("id, user_id").order("id", { ascending: true }).limit(PUSH_PRUNE_PAGE);
+    let q = sb.from("push_subscriptions").select("id, user_id, created_at").order("id", { ascending: true }).limit(PUSH_PRUNE_PAGE);
     if (after) q = q.gt("id", after);
     const { data, error } = await q;
     if (error) {
@@ -692,7 +698,7 @@ async function prunePushSubscriptions(sb: SupabaseClient, errors: string[], stop
       if (!isMissingSchemaError(error)) errors.push(`push-subscriptions: ${error.message}`);
       return pruned;
     }
-    const rows = (data as Array<{ id: string; user_id: string }> | null) ?? [];
+    const rows = (data as Array<{ id: string; user_id: string; created_at: string | null }> | null) ?? [];
     if (rows.length === 0) return pruned;
     after = rows[rows.length - 1].id;
     const owners = [...new Set(rows.map((r) => r.user_id))];
@@ -703,7 +709,10 @@ async function prunePushSubscriptions(sb: SupabaseClient, errors: string[], stop
       return pruned;
     }
     const active = new Set(((members as Array<{ uid: string }> | null) ?? []).map((m) => m.uid));
-    const gone = rows.filter((r) => !active.has(r.user_id)).map((r) => r.id);
+    const optInSince = Date.parse(PUSH_OPT_IN_SINCE);
+    const gone = rows
+      .filter((r) => !active.has(r.user_id) || !r.created_at || Date.parse(r.created_at) < optInSince)
+      .map((r) => r.id);
     if (gone.length > 0) {
       const { data: removed, error: delErr } = await sb.from("push_subscriptions").delete().in("id", gone).select("id");
       if (delErr) {

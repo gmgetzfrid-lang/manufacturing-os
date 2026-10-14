@@ -237,7 +237,7 @@ vi.mock("@/lib/intakeRateLimit", () => ({
   REVIEW_HEALTH_KIND: "review_overdue",
   isMissingFunction: () => true,
 }));
-vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => ({ recipients: 0 })) }));
+vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => ({ recipients: 0 })), PUSH_OPT_IN_SINCE: "2026-10-14T00:00:00.000Z" }));
 vi.mock("@/lib/serverAuth", () => ({
   authorizeOrgRole: vi.fn(async () => ({ userId: "dc1", email: "dc1@x.io", orgId: "oA", role: "DocCtrl", roles: ["DocCtrl"], admin: makeClient() })),
 }));
@@ -1903,14 +1903,17 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
       member(ORG_A, U(1)), member(ORG_A, U(2), "suspended"),
       member(ORG_B, U(3)), member(ORG_A, U(3), "removed"),
     ];
+    const made = new Date().toISOString();
     db.tables.push_subscriptions = [
-      { id: "ps1", user_id: U(1), endpoint: "https://push.example/1" },
-      { id: "ps2", user_id: U(2), endpoint: "https://push.example/2" },
-      { id: "ps3", user_id: U(3), endpoint: "https://push.example/3" },
-      { id: "ps4", user_id: U(4), endpoint: "https://push.example/4" },
+      { id: "ps1", user_id: U(1), endpoint: "https://push.example/1", created_at: made },
+      { id: "ps2", user_id: U(2), endpoint: "https://push.example/2", created_at: made },
+      { id: "ps3", user_id: U(3), endpoint: "https://push.example/3", created_at: made },
+      { id: "ps4", user_id: U(4), endpoint: "https://push.example/4", created_at: made },
+      // the deleted reminders stack's registration (OS-10 done-when 3): never pushed, removed
+      { id: "ps5", user_id: U(1), endpoint: "https://push.example/5", created_at: "2026-08-04T09:00:00Z" },
     ];
     const r = await runCron();
-    expect(r.pushSubscriptionsPruned).toBe(2);
+    expect(r.pushSubscriptionsPruned).toBe(3);
     expect(rows("push_subscriptions").map((x) => x.id)).toEqual(["ps1", "ps3"]);
     expect(r.errors.filter((e) => e.startsWith("push-subscriptions"))).toEqual([]);
   });
@@ -1918,7 +1921,7 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
   it("pages through every registration (more than one page)", async () => {
     db.tables.org_members = [member(ORG_A, U(1))];
     db.tables.push_subscriptions = Array.from({ length: 160 }, (_, i) => ({
-      id: `ps${String(i).padStart(3, "0")}`, user_id: i % 2 === 0 ? U(1) : U(500 + i), endpoint: `https://push.example/${i}`,
+      id: `ps${String(i).padStart(3, "0")}`, user_id: i % 2 === 0 ? U(1) : U(500 + i), endpoint: `https://push.example/${i}`, created_at: new Date().toISOString(),
     }));
     const r = await runCron();
     expect(r.pushSubscriptionsPruned).toBe(80);
@@ -1927,7 +1930,7 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
   });
 
   it("an unreadable membership prunes nothing and says so; before 20260804 (no table) the step is silent", async () => {
-    db.tables.push_subscriptions = [{ id: "ps1", user_id: U(1), endpoint: "https://push.example/1" }];
+    db.tables.push_subscriptions = [{ id: "ps1", user_id: U(1), endpoint: "https://push.example/1", created_at: new Date().toISOString() }];
     db.readError.org_members = { message: "upstream timeout" };
     let r = await runCron();
     expect(rows("push_subscriptions")).toHaveLength(1);

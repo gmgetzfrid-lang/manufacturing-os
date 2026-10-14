@@ -89,7 +89,7 @@ vi.mock("web-push", () => {
   return { default: api, ...api };
 });
 
-import { emit, __registerServerPushSender, PUSH_LEG_TIMEOUT_MS, PUSH_REQUEST_MAX_RECIPIENTS, type EmitInput, type PushSendInput } from "@/lib/notify/dispatch";
+import { emit, __registerServerPushSender, PUSH_LEG_TIMEOUT_MS, PUSH_REQUEST_MAX_RECIPIENTS, PUSH_OPT_IN_SINCE, type EmitInput, type PushSendInput } from "@/lib/notify/dispatch";
 import { __registerServerDiscoverCheck } from "@/lib/notify/recipients";
 import {
   sendPushSafe, pushConfig, pushPayloadFor, safePushUrl, __resetPushLogOnceForTests,
@@ -319,7 +319,7 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     actor_user_id: "actor", created_at: now(), metadata: null, ...over,
   });
   const device = (user_id: string, endpoint = `https://push.example/${user_id}`, over: Record<string, unknown> = {}) => ({
-    id: `s-${endpoint}`, user_id, org_id: ORG, endpoint, p256dh: "p256", auth: "authk", last_reminded_at: null, ...over,
+    id: `s-${endpoint}`, user_id, org_id: ORG, endpoint, p256dh: "p256", auth: "authk", last_reminded_at: null, created_at: now(), ...over,
   });
   const input = (over: Partial<PushSendInput> = {}): PushSendInput => ({ orgId: ORG, kind: "hold_opened", resourceId: "d-1", recipients: ["a", "b"], ...over });
 
@@ -448,6 +448,19 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ capped: 0, sent: 1 });
   });
 
+  it("OS-10 done-when 3: a registration older than the opt-in control (the deleted reminders stack's) is never pushed", async () => {
+    setVapid(true);
+    h.state.tables.notifications = [bell("a")];
+    h.state.tables.push_subscriptions = [
+      device("a", "https://push.example/reminders-era", { created_at: "2026-08-04T09:00:00Z" }),
+      device("a", "https://push.example/no-date", { created_at: null }),
+    ];
+    expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ eligible: 1, attempted: 0, sent: 0 });
+    expect(h.sent).toHaveLength(0);
+    expect(PUSH_OPT_IN_SINCE).toBe("2026-10-14T00:00:00.000Z");
+    expect(read("lib/push/sendPush.ts")).toContain('.gte("created_at", PUSH_OPT_IN_SINCE)');
+  });
+
   it("before 20260804 (no table) nothing is sent and it says so once; a kind that is not push-worthy is refused", async () => {
     setVapid(true);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -503,8 +516,8 @@ describe("POST /api/push/notify — the browser half of the push leg", () => {
       { id: "n2", org_id: ORG, user_id: "b", kind: "hold_opened", resource_id: "d-1", link: "/x", actor_user_id: "other", created_at: new Date().toISOString(), metadata: null },
     ];
     h.state.tables.push_subscriptions = [
-      { id: "s1", user_id: "a", endpoint: "https://push.example/a", p256dh: "p", auth: "k", last_reminded_at: null },
-      { id: "s2", user_id: "b", endpoint: "https://push.example/b", p256dh: "p", auth: "k", last_reminded_at: null },
+      { id: "s1", user_id: "a", endpoint: "https://push.example/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: new Date().toISOString() },
+      { id: "s2", user_id: "b", endpoint: "https://push.example/b", p256dh: "p", auth: "k", last_reminded_at: null, created_at: new Date().toISOString() },
     ];
     const res = await post(notifyRoute, "/api/push/notify", body);
     expect(res.status).toBe(200);

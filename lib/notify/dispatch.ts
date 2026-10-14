@@ -531,6 +531,15 @@ export function __registerServerPushSender(fn: PushSender | null): void {
  *  and email legs have already finished). */
 export const PUSH_LEG_TIMEOUT_MS = 8000;
 
+/** A push_subscriptions row made before this instant was made for the push
+ *  stack deleted in 0bb13ed (its "reminders"), never through
+ *  components/settings/PushOptIn.tsx: the sender never pushes it, the
+ *  settings card does not count it as on, and the maintenance cron removes
+ *  it — its person turns the device on again (OS-10 done-when 3: nobody is
+ *  pushed without having clicked THIS control). The instant precedes any
+ *  row the opt-in can have written (the control did not exist before it). */
+export const PUSH_OPT_IN_SINCE = "2026-10-14T00:00:00.000Z";
+
 /** The most recipients one POST /api/push/notify is about; the browser leg
  *  sends a larger audience in parts (lib/push/sendPush.ts PUSH_MAX_RECIPIENTS
  *  is this number). */
