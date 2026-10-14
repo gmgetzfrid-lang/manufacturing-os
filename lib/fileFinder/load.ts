@@ -22,7 +22,11 @@ export interface FinderData {
   edges: Array<{ a: string; b: string; type: string; summary: string }>;
   /** True when the One Estate migration has not been applied. */
   estateMissing: boolean;
+  /** The equipment registry, light: enough to draw and name it on the map. */
+  assets: AssetLite[];
 }
+
+export interface AssetLite { id: string; tag: string; description: string | null; unitCode: string | null; coverPhotoId: string | null }
 
 export const DOC_CAP = 4000;
 const PAGE = 1000;
@@ -55,13 +59,16 @@ async function optional<T>(p: PromiseLike<{ data: T | null; error: { message: st
 export async function loadFinderData(orgId: string, role: Role, controller: boolean, client: Client = supabase): Promise<FinderData> {
   const truncations: string[] = [];
   const t0 = Date.now();
-  const [libsRes, foldersRes, codebook, edgesRes, mirrorsRes] = await Promise.all([
+  const [libsRes, foldersRes, codebook, edgesRes, mirrorsRes, assetsRes] = await Promise.all([
     withTimeout(client.from("libraries").select("id, name, read_access, visible_to").eq("org_id", orgId), 25_000, "Loading libraries"),
     withTimeout(client.from("collections").select("*").eq("org_id", orgId), 25_000, "Loading folders"),
     withTimeout(loadCodebook(orgId, client), 15_000, "Loading the codebook").catch(() => ({ units: [] as Array<{ code: string; label: string }> })),
     optional<Array<{ a: string; b: string; type: string; summary: string }>>(client.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").limit(20000), 15_000, "Loading estate links"),
     optional<Array<{ id: string; source_document_id: string | null; file_hash: string | null; status: string; pages_indexed: number; file_key?: string | null }>>(client.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed, file_key").eq("org_id", orgId).limit(20000), 15_000, "Loading read copies"),
+    optional<Array<{ id: string; tag: string; description: string | null; unit_code: string | null; cover_photo_id: string | null }>>(client.from("assets").select("id, tag, description, unit_code, cover_photo_id").eq("org_id", orgId).eq("archived", false).limit(20000), 15_000, "Loading equipment"),
   ]);
+  const assets: AssetLite[] = (assetsRes.error ? [] : ((assetsRes.data ?? []) as Array<{ id: string; tag: string; description: string | null; unit_code: string | null; cover_photo_id: string | null }>))
+    .map((a) => ({ id: a.id, tag: a.tag, description: a.description, unitCode: a.unit_code, coverPhotoId: a.cover_photo_id }));
   const estateMissing = !!edgesRes.error;
   const edges = estateMissing ? [] : (((edgesRes.data as Array<{ a: string; b: string; type: string; summary: string }> | null) ?? []));
   const folderUnit = new Map<string, string>();
@@ -106,32 +113,34 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     });
   }
 
-  // Documents, paged, capped.
-  const docs: Array<DocLike & { current_version_id?: string | null }> = [];
-  for (let from = 0; from < DOC_CAP; from += PAGE) {
-    const { data, error } = await withTimeout(client
-      .from("documents")
-      .select("id, library_id, collection_id, name, title, document_number, rev, status, effective_date, created_at, sheet_number, asset_tags, metadata, current_version_id")
-      .eq("org_id", orgId)
-      .order("created_at", { ascending: false })
-      .range(from, from + PAGE - 1), 30_000, `Loading documents ${from + 1}–${from + PAGE}`);
+  // Documents: the count first, then every page at once. Paging one after
+  // another was the slowest part of "Reading the estate".
+  type DocRow = DocLike & { current_version_id?: string | null };
+  const docs: DocRow[] = [];
+  const DOC_SEL = "id, library_id, collection_id, name, title, document_number, rev, status, effective_date, created_at, sheet_number, asset_tags, metadata, current_version_id";
+  const countRes = await optional<unknown[]>(client.from("documents").select("id", { count: "exact", head: true }).eq("org_id", orgId) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>, 15_000, "Counting documents");
+  const total = Math.min(DOC_CAP, ((countRes as unknown as { count?: number | null }).count ?? DOC_CAP));
+  if (total >= DOC_CAP) truncations.push(`Showing the newest ${DOC_CAP} documents.`);
+  const pageAt = (from: number) => withTimeout(client.from("documents").select(DOC_SEL).eq("org_id", orgId).order("created_at", { ascending: false }).range(from, from + PAGE - 1), 30_000, `Loading documents ${from + 1}–${from + PAGE}`);
+  const starts: number[] = [];
+  for (let from = 0; from < Math.max(1, total); from += PAGE) starts.push(from);
+  const pages = await Promise.all(starts.map(pageAt));
+  for (const { data, error } of pages) {
     if (error) throw new Error(error.message);
-    const rows = (data as Array<DocLike & { current_version_id?: string | null }>) ?? [];
-    docs.push(...rows.filter((d) => libIds.has(d.library_id)));
-    if (rows.length < PAGE) break;
-    if (from + PAGE >= DOC_CAP) truncations.push(`Showing the newest ${DOC_CAP} documents.`);
+    docs.push(...(((data as DocRow[]) ?? []).filter((d) => libIds.has(d.library_id))));
   }
 
   // Current-version file facts, chunked by id.
   const versionIds = docs.map((d) => d.current_version_id).filter((v): v is string => !!v);
   const versions = new Map<string, VersionMeta>();
-  for (let i = 0; i < versionIds.length; i += IN_CHUNK) {
-    const chunk = versionIds.slice(i, i + IN_CHUNK);
-    const { data, error } = await optional<Record<string, unknown>[]>(client
-      .from("document_versions")
-      .select("id, source_file_name, file_hash, effective_date")
-      .in("id", chunk), 15_000, "Loading file facts");
-    if (error) break; // a column missing on an older schema is not worth failing the page
+  const chunks: string[][] = [];
+  for (let i = 0; i < versionIds.length; i += IN_CHUNK) chunks.push(versionIds.slice(i, i + IN_CHUNK));
+  const facts = await Promise.all(chunks.map((chunk) => optional<Record<string, unknown>[]>(client
+    .from("document_versions")
+    .select("id, source_file_name, file_hash, effective_date")
+    .in("id", chunk), 20_000, "Loading file facts")));
+  for (const { data, error } of facts) {
+    if (error) continue; // a column missing on an older schema is not worth failing the page
     for (const v of (data as Record<string, unknown>[]) ?? []) {
       versions.set(String(v.id), {
         sourceFileName: (v.source_file_name as string | null) ?? null,
@@ -152,5 +161,29 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
   });
   const units: UnitLike[] = (codebook.units ?? []).map((u) => ({ code: u.code, label: u.label }));
   console.info(`[finder] loaded ${libraries.length} libraries, ${folders.size} folders, ${entries.length} files, ${edges.length} links, ${mirrors.length} read copies in ${Date.now() - t0}ms${estateMissing ? " (estate links off)" : ""}`);
-  return { libraries, folders, entries, units, truncations, edges, estateMissing };
+  return { libraries, folders, entries, units, truncations, edges, estateMissing, assets };
+}
+
+
+// ── Snapshot: the last map paints at once, the fresh one swaps in ─────────
+const SNAP_VERSION = 2;
+type Snap = { v: number; at: number; libraries: LibraryLike[]; folders: Array<[string, FolderLike]>; entries: IndexEntry[]; units: UnitLike[]; truncations: string[]; edges: FinderData["edges"]; estateMissing: boolean; assets: AssetLite[] };
+const snapKey = (orgId: string) => `finder:snap:${SNAP_VERSION}:${orgId}`;
+
+export function saveFinderSnapshot(orgId: string, d: FinderData): void {
+  try {
+    const snap: Snap = { v: SNAP_VERSION, at: Date.now(), libraries: d.libraries, folders: [...d.folders.entries()], entries: d.entries, units: d.units, truncations: d.truncations, edges: d.edges, estateMissing: d.estateMissing, assets: d.assets };
+    const text = JSON.stringify(snap);
+    if (text.length < 4_000_000) window.localStorage.setItem(snapKey(orgId), text);
+  } catch { /* quota or private mode: the fresh load still paints */ }
+}
+
+export function loadFinderSnapshot(orgId: string): { data: FinderData; at: number } | null {
+  try {
+    const raw = window.localStorage.getItem(snapKey(orgId));
+    if (!raw) return null;
+    const snap = JSON.parse(raw) as Snap;
+    if (snap.v !== SNAP_VERSION) return null;
+    return { at: snap.at, data: { libraries: snap.libraries, folders: new Map(snap.folders), entries: snap.entries, units: snap.units, truncations: snap.truncations, edges: snap.edges, estateMissing: snap.estateMissing, assets: snap.assets ?? [] } };
+  } catch { return null; }
 }

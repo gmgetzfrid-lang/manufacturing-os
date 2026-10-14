@@ -17,8 +17,10 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Search, X, Loader2, Waypoints, HardDrive, Sparkles, Plus, Trash2,
-  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye, Activity, Globe,
+  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye, Activity, Globe, Cpu, Factory, ImageIcon, FolderKanban, RefreshCw,
 } from "lucide-react";
+import SignedImg from "@/components/assets/SignedImg";
+import { listAssetPhotos, type AssetPhoto } from "@/lib/assets";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
@@ -32,7 +34,7 @@ import {
   aliasConfidence, tagVariants,
   type ParsedQuery, type QueryChip, type RankedHit, type IndexEntry, type FinderAlias, type FinderAliasKind,
 } from "@/lib/fileFinder";
-import { loadFinderData, type FinderData } from "@/lib/fileFinder/load";
+import { loadFinderData, loadFinderSnapshot, saveFinderSnapshot, type FinderData } from "@/lib/fileFinder/load";
 import { supabase } from "@/lib/supabase";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
 import { rowToVersion } from "@/lib/revisions";
@@ -87,6 +89,12 @@ function GraphPageInner() {
 
   const [data, setData] = useState<FinderData | null>(null);
   const dataRef = useRef<FinderData | null>(null); useEffect(() => { dataRef.current = data; }, [data]);
+  const [snapAt, setSnapAt] = useState<number | null>(null);
+  /** Units and equipment drawn beside what they belong to, with no search. */
+  const [showEstate, setShowEstate] = useState(true);
+  /** A unit / equipment / project picked on the map: its panel opens in place. */
+  const [selSat, setSelSat] = useState<FileGraphSatellite | null>(null);
+  const [lightbox, setLightbox] = useState<AssetPhoto | null>(null);
   const [aliases, setAliases] = useState<FinderAlias[]>([]);
   const [listings, setListings] = useState<FinderListing[]>([]);
   const [loading, setLoading] = useState(true);
@@ -135,10 +143,12 @@ function GraphPageInner() {
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     setLoading(true); setError(null);
+    // The last map paints at once from this browser; the fresh one swaps in.
+    if (!dataRef.current) { const snap = loadFinderSnapshot(activeOrgId); if (snap) { setData(snap.data); setSnapAt(snap.at); } }
     try {
       // The map first; aliases and drive listings are extras and never hold it up.
       const d = await loadFinderData(activeOrgId, activeRole, controller);
-      setData(d);
+      setData(d); setSnapAt(null); saveFinderSnapshot(activeOrgId, d);
       const [a, l] = await Promise.all([
         listFinderAliases(activeOrgId).catch((e) => { console.warn("[finder] aliases:", e); return []; }),
         listFinderListings(activeOrgId).catch((e) => { console.warn("[finder] listings:", e); return []; }),
@@ -316,7 +326,33 @@ function GraphPageInner() {
 
   // Entities the search resolved, drawn beside the files they relate to.
   const satellites = useMemo<FileGraphSatellite[]>(() => {
-    if (!serverFind) return [];
+    if (!serverFind) {
+      // No search: the estate lens. Every unit beside the folders and files
+      // linked to it, and the equipment tagged on what is in view — so the
+      // map shows the ecosystem, not only the paper.
+      if (!showEstate || !data) return [];
+      const vis = new Set(visible.map((n) => n.id));
+      const unitLinks = new Map<string, FileGraphSatellite["links"]>();
+      const assetLinks = new Map<string, FileGraphSatellite["links"]>();
+      for (const e of data.edges) {
+        if (!vis.has(e.a)) continue;
+        if (e.type === "belongs_to_unit" && e.b.startsWith("cbunit:")) unitLinks.set(e.b, [...(unitLinks.get(e.b) ?? []), { to: e.a, kind: "linked_unit" }]);
+        if (e.type === "tagged_to" && e.b.startsWith("asset:")) assetLinks.set(e.b, [...(assetLinks.get(e.b) ?? []), { to: e.a, kind: "tagged_to" }]);
+        if (e.type === "about_asset" && e.b.startsWith("asset:")) assetLinks.set(e.b, [...(assetLinks.get(e.b) ?? []), { to: e.a, kind: "filed_under" }]);
+      }
+      const out: FileGraphSatellite[] = [];
+      for (const [node, links] of unitLinks) {
+        const code = node.slice(7); const u = data.units.find((x) => x.code === code);
+        out.push({ id: node, label: u?.label ?? `Unit ${code}`, sub: `Unit ${code} · ${links.length} linked`, color: "#7c3aed", iconKey: "unit", links: links.slice(0, 60) });
+      }
+      const ranked = [...assetLinks.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, focusId ? 80 : 40);
+      for (const [node, links] of ranked) {
+        const a = data.assets.find((x) => x.id === node.slice(6));
+        if (!a) continue;
+        out.push({ id: node, label: a.tag, sub: `Equipment${a.description ? ` · ${a.description}` : ""}${a.unitCode ? ` · unit ${a.unitCode}` : ""}`, color: "#059669", iconKey: "equipment", href: `/assets/${encodeURIComponent(a.tag)}`, links: links.slice(0, 40) });
+      }
+      return out;
+    }
     const out: FileGraphSatellite[] = [];
     for (const ent of serverFind.entities) {
       const links: FileGraphSatellite["links"] = [];
@@ -327,10 +363,10 @@ function GraphPageInner() {
       if (!links.length) for (const r of serverFind.results.slice(0, 3)) if (nodeById.has(r.id)) links.push({ to: r.id, kind: "named" });
       if (!links.length) continue;
       out.push({ id: ent.node, label: ent.label, sub: ent.kind === "asset" ? `Equipment${ent.sub ? ` · ${ent.sub}` : ""}` : ent.kind === "unit" ? "Unit" : ent.kind === "tag" ? "Tag drawn on sheets · not in the registry" : "Project",
-        color: ent.kind === "asset" ? "#059669" : ent.kind === "unit" ? "#7c3aed" : ent.kind === "tag" ? "#64748b" : "#d97706", iconKey: ent.kind === "asset" || ent.kind === "tag" ? "file" : ent.kind === "unit" ? "library" : "folder", href: ent.href, links });
+        color: ent.kind === "asset" ? "#059669" : ent.kind === "unit" ? "#7c3aed" : ent.kind === "tag" ? "#64748b" : "#d97706", iconKey: ent.kind === "asset" ? "equipment" : ent.kind === "tag" ? "tag" : ent.kind === "unit" ? "unit" : "project", href: ent.href, links });
     }
     return out;
-  }, [serverFind, nodeById, entryById]);
+  }, [serverFind, nodeById, entryById, showEstate, data, visible, focusId]);
 
   // Symbolic links ("also filed under") between files and folders on the map.
   const filedLinks = useMemo<Array<[string, string]>>(() => {
@@ -593,13 +629,18 @@ function GraphPageInner() {
 
         {/* ── Centre: the map ─────────────────────────────────────────── */}
         <main className="relative min-h-0 bg-[var(--color-canvas)]">
+          {loading && data && (
+            <div className="absolute bottom-3 left-3 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1 text-[11px] inline-flex items-center gap-1.5 shadow-sm">
+              <RefreshCw className="w-3 h-3 animate-spin" /> {snapAt ? `Showing the map from ${Math.max(1, Math.round((Date.now() - snapAt) / 60000))} min ago while the fresh one loads` : "Refreshing…"}
+            </div>
+          )}
           {loading && !data ? (
             <div className="absolute inset-0 grid place-items-center text-sm text-[var(--color-text-muted)]">
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
             <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry}
-              satellites={satellites} onSatellite={(sat) => { if (sat.href) window.location.assign(sat.href); else window.location.assign(globalGraphHref(sat.id)); }} filedLinks={filedLinks} />
+              satellites={satellites} onSatellite={(sat) => { setSelSat(sat); setSelectedId(null); }} filedLinks={filedLinks} />
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
             <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
@@ -628,6 +669,10 @@ function GraphPageInner() {
                   {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Resolve links
                 </button>
               )}
+              <button onClick={() => setShowEstate((v) => !v)} title="Draw every unit and piece of equipment beside what belongs to it"
+                className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 ${showEstate ? "bg-purple-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
+                <Factory className="w-3 h-3" /> Units &amp; equipment
+              </button>
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
               <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
               <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph — equipment, units, projects and documents in one web"
@@ -682,6 +727,11 @@ function GraphPageInner() {
 
         {/* ── Right: results / selection ──────────────────────────────── */}
         <aside className="border-l border-[var(--color-border)] bg-[var(--color-surface)] min-h-0 overflow-y-auto">
+          {selSat && data && (
+            <EntityPanel sat={selSat} data={data} entryById={entryById} nodeById={nodeById} serverFind={serverFind}
+              onClose={() => setSelSat(null)} onOpen={(id) => void openEntry(id)} onOpenAtPage={openAtPage} onReveal={reveal}
+              onPhoto={setLightbox} onNarrow={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
+          )}
           {selectedEntry && (
             <SelectedCard entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
               onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={() => openEntry(selectedEntry.id)} />
@@ -772,6 +822,15 @@ function GraphPageInner() {
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-3 py-2 shadow-lg flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" /> {viewerError}
           <button onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+      {lightbox && (
+        <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
+          <div className="max-w-5xl max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <SignedImg path={lightbox.file_url} alt={lightbox.caption ?? ""} className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-2xl" placeholder={<Loader2 className="w-6 h-6 animate-spin text-white" />} />
+            <div className="text-xs text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString()}` : ""} · click outside to close</div>
+          </div>
+          <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/80 hover:text-white"><X className="w-6 h-6" /></button>
         </div>
       )}
       {pageView && activeOrgId && (
@@ -925,6 +984,104 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
         </div>
       )}
       {hit && <EvidenceList hit={hit} />}
+    </div>
+  );
+}
+
+/** A unit, piece of equipment, project or unregistered tag picked on the
+ *  map: everything the estate holds on it, in place. Photos open in a
+ *  lightbox, sheets and files open in the viewer, nothing leaves the map. */
+function EntityPanel({ sat, data, entryById, nodeById, serverFind, onClose, onOpen, onOpenAtPage, onReveal, onPhoto, onNarrow }: {
+  sat: FileGraphSatellite; data: FinderData; entryById: Map<string, IndexEntry>; nodeById: Map<string, FileGraphNode>; serverFind: FindResponse | null;
+  onClose: () => void; onOpen: (id: string) => void; onOpenAtPage: (id: string, page: number, tag?: string) => void; onReveal: (id: string) => void;
+  onPhoto: (p: AssetPhoto) => void; onNarrow: (code: string) => void;
+}) {
+  const kind = sat.id.startsWith("asset:") ? "asset" : sat.id.startsWith("cbunit:") ? "unit" : sat.id.startsWith("proj:") ? "project" : "tag";
+  const asset = kind === "asset" ? data.assets.find((a) => a.id === sat.id.slice(6)) : undefined;
+  const [photos, setPhotos] = useState<{ id: string; list: AssetPhoto[] } | null>(null);
+  useEffect(() => {
+    if (!asset) return;
+    let alive = true;
+    listAssetPhotos(asset.id).then((l) => { if (alive) setPhotos({ id: asset.id, list: l }); }).catch(() => { if (alive) setPhotos({ id: asset.id, list: [] }); });
+    return () => { alive = false; };
+  }, [asset]);
+  const unit = kind === "unit" ? data.units.find((u) => u.code === sat.id.slice(7)) : asset?.unitCode ? data.units.find((u) => u.code === asset.unitCode) : undefined;
+  // Every document related to it: from the map's links and, when a search
+  // is live, the sheets it is drawn on with the page.
+  const rows = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; how: string; page?: number; tag?: string; isDoc: boolean }>();
+    for (const l of sat.links) {
+      const n = nodeById.get(l.to); if (!n) continue;
+      const isDoc = n.kind === "file" || n.kind === "extfile";
+      m.set(l.to, { id: l.to, name: n.label, how: l.kind === "tagged_to" ? "tagged to it" : l.kind === "linked_unit" ? "belongs to it" : l.kind === "filed_under" ? "its folder" : l.kind === "drawn_on" ? "drawn on it" : l.kind === "mentioned_in" ? "mentions it" : l.kind === "in_project" ? "in the project" : "found with it", isDoc });
+    }
+    for (const r of serverFind?.results ?? []) for (const rel of r.relations) {
+      if (rel.node !== sat.id || !nodeById.has(r.id)) continue;
+      const cur = m.get(r.id);
+      if (rel.rel === "drawn_on" && rel.page) m.set(r.id, { id: r.id, name: r.name, how: `drawn on sheet ${rel.page}`, page: rel.page, tag: rel.label, isDoc: true });
+      else if (!cur) m.set(r.id, { id: r.id, name: r.name, how: rel.rel === "mentioned_in" ? `mentions it${rel.page ? ` (page ${rel.page})` : ""}` : rel.rel.replace("_", " "), page: rel.page, isDoc: true });
+    }
+    return [...m.values()].sort((a, b) => (a.page ?? 0) - (b.page ?? 0) || a.name.localeCompare(b.name));
+  }, [sat, nodeById, serverFind]);
+  const Icon = kind === "asset" ? Cpu : kind === "unit" ? Factory : kind === "project" ? FolderKanban : Tag;
+  const photoList = photos && asset && photos.id === asset.id ? photos.list : null;
+  return (
+    <div className="border-b border-[var(--color-border)] p-3 space-y-2" style={{ background: `${sat.color}0d` }}>
+      <div className="flex items-start gap-2">
+        <span className="w-8 h-8 rounded-full grid place-items-center text-white shrink-0" style={{ background: sat.color }}><Icon className="w-4 h-4" /></span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap">
+            {unit && kind !== "unit" ? <><button onClick={() => onNarrow(unit.code)} className="font-bold text-purple-700 hover:underline">{unit.label}</button><ChevronRight className="w-3 h-3" /></> : null}
+            <span className="font-bold" style={{ color: sat.color }}>{kind === "asset" ? "Equipment" : kind === "unit" ? "Unit" : kind === "project" ? "Project" : "Tag read off the drawings"}</span>
+          </div>
+          <div className="text-base font-black leading-tight">{sat.label}</div>
+          {asset?.description && <div className="text-xs text-[var(--color-text-muted)]">{asset.description}</div>}
+          {kind === "tag" && <div className="text-[11px] text-[var(--color-text-muted)]">Not in the equipment registry yet. Connect everything puts it there.</div>}
+        </div>
+        <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+      </div>
+      {asset && (
+        <div>
+          {photoList === null ? <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> photos…</div>
+            : photoList.length === 0 ? <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><ImageIcon className="w-3 h-3" /> No photos on file</div>
+            : (
+              <div className="flex flex-wrap gap-1.5">
+                {photoList.slice(0, 8).map((p) => (
+                  <button key={p.id} onClick={() => onPhoto(p)} className="w-20 h-20 rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface-2)]" title={p.caption ?? "Open photo"}>
+                    <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" placeholder={<ImageIcon className="w-4 h-4 m-auto text-[var(--color-text-faint)]" />} />
+                  </button>
+                ))}
+                {photoList.length > 8 && <div className="w-20 h-20 rounded-lg border border-dashed border-[var(--color-border)] grid place-items-center text-[11px] text-[var(--color-text-muted)]">+{photoList.length - 8}</div>}
+              </div>
+            )}
+        </div>
+      )}
+      <div>
+        <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">{rows.length} on file</div>
+        {rows.length === 0 && <div className="text-[11px] text-[var(--color-text-muted)]">Nothing is linked to it yet.</div>}
+        <ul className="space-y-1 max-h-72 overflow-y-auto">
+          {rows.slice(0, 60).map((r) => {
+            const entry = entryById.get(r.id);
+            return (
+              <li key={r.id} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-xs flex items-center gap-2">
+                {entry ? <FileTypeIcon type={fileTypeOf(entry.name)} className="w-3.5 h-3.5 shrink-0" /> : <Tag className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />}
+                <button onClick={() => onReveal(r.id)} className="min-w-0 flex-1 text-left hover:underline">
+                  <div className="font-bold truncate">{r.name}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">{r.how}</div>
+                </button>
+                {r.isDoc && entry && (r.page
+                  ? <button onClick={() => onOpenAtPage(r.id, r.page!, r.tag)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Sheet {r.page}</button>
+                  : <button onClick={() => onOpen(r.id)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Open</button>)}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
+        {sat.href && <Link href={sat.href} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Full page</Link>}
+        <Link href={globalGraphHref(sat.id)} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global graph</Link>
+      </div>
     </div>
   );
 }

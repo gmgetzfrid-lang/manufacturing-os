@@ -38,6 +38,7 @@ import {
 import { NODE_COLORS, EDGE_LABELS } from "@/components/graph/graphTheme";
 import GraphControls from "@/components/graph/GraphControls";
 import OrgGraph2D from "@/components/graph/OrgGraph2D";
+import EstateMap from "@/components/graph/EstateMap";
 
 // three.js only downloads when 3D is switched on.
 const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
@@ -523,7 +524,10 @@ function GraphPageInner() {
           </div>
         ) : (
           <>
-            {settings.mode === "3d" ? (
+            {settings.mode === "map" ? (
+              <EstateMap nodes={view.nodes} edges={[...view.edges, ...view.ghosts]} query={query} selectedId={selected?.id ?? null}
+                highlightIds={highlightIds} flyTo={highlight} onSelect={handleSelect} onOpen={open} />
+            ) : settings.mode === "3d" ? (
               <Suspense fallback={
                 <div className="absolute inset-0 flex items-center justify-center bg-[#0b1020]">
                   <div className="text-[11px] font-bold text-slate-400">Loading the 3D engine…</div>
@@ -732,7 +736,9 @@ function GraphPageInner() {
               <div className="text-[10px] font-bold text-[var(--color-text-faint)]">
                 {settings.mode === "3d"
                   ? "drag to orbit · shift-drag or right-drag to pan · scroll to zoom · double-click to open"
-                  : "scroll or pinch to zoom · drag to pan · drag a node to move it · double-click to open"}
+                  : settings.mode === "map"
+                    ? "click a unit or equipment to go in · Esc to climb out · scroll to zoom · double-click to open"
+                    : "scroll or pinch to zoom · drag to pan · drag a node to move it · double-click to open"}
               </div>
               {(graph?.truncations ?? []).map((t) => (
                 <div key={t} className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5">

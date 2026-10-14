@@ -11,6 +11,7 @@ import React from "react";
 import {
   SlidersHorizontal, Filter, Palette, Eye, Waves, ChevronDown, Plus, X,
   RotateCcw, Boxes, Square,
+  Map as MapIcon,
 } from "lucide-react";
 import type { GraphNodeType } from "@/lib/orgGraph";
 import {
@@ -118,6 +119,12 @@ export default function GraphControls({
       <div className="flex items-center gap-1.5">
         {/* 2D / 3D — the switch people will reach for first. */}
         <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm">
+          <button onClick={() => onChange({ mode: "map" })} title="The estate as a tree: units, equipment, documents — same map as Documents › Graph"
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black transition-colors ${
+              settings.mode === "map" ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"
+            }`}>
+            <MapIcon className="w-3 h-3" /> Map
+          </button>
           <button onClick={() => onChange({ mode: "2d" })}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black transition-colors ${
               settings.mode === "2d" ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"

@@ -20,7 +20,8 @@ export interface ColorGroup {
 }
 
 export interface GraphSettings {
-  mode: "2d" | "3d";
+  /** "map": the estate as a tree, same renderer as the Documents map. "2d"/"3d": force layouts. */
+  mode: "map" | "2d" | "3d";
 
   // ── Filters ──
   hiddenTypes: GraphNodeType[];
@@ -52,7 +53,7 @@ export interface GraphSettings {
 }
 
 export const DEFAULT_GRAPH_SETTINGS: GraphSettings = {
-  mode: "2d",
+  mode: "map",
   hiddenTypes: [],
   showLibraryEdges: false,
   hideUnlinked: false,
