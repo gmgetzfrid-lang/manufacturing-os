@@ -50,6 +50,9 @@ const CHIP_STYLE: Record<QueryChip["kind"], string> = {
   phrase: "bg-slate-50 text-slate-800 border-slate-300",
   year: "bg-amber-50 text-amber-800 border-amber-200",
   unit: "bg-purple-50 text-purple-800 border-purple-200",
+  sheet: "bg-teal-50 text-teal-800 border-teal-200",
+  rev: "bg-teal-50 text-teal-800 border-teal-200",
+  doctype: "bg-orange-50 text-orange-800 border-orange-200",
 };
 
 const LIT_CAP = 150;
@@ -330,7 +333,7 @@ function GraphPageInner() {
                       {parsed.chips.map((c, i) => (
                         <span key={i} title={c.via === "alias" ? `Through a taught alias (${Math.round(c.confidence * 100)}% trusted)` : c.via === "codebook" ? "From the Site Codebook" : "Typed"}
                           className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${CHIP_STYLE[c.kind]}`}>
-                          <span className="opacity-60">{c.kind === "identifier" ? "#" : c.kind === "unit" ? "unit" : c.kind === "year" ? "yr" : c.kind === "phrase" ? "“”" : ""}</span>
+                          <span className="opacity-60">{c.kind === "identifier" ? "#" : c.kind === "unit" ? "unit" : c.kind === "year" ? "yr" : c.kind === "phrase" ? "“”" : c.kind === "doctype" ? "type" : ""}</span>
                           {c.label}
                           {c.via !== "typed" && <span className="opacity-60">· {c.via}</span>}
                           <button onClick={() => removeChip(c)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>

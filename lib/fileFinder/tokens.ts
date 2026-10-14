@@ -27,9 +27,11 @@ export function stem(w: string): string {
  *  handled separately). */
 export function words(text: string): string[] {
   const out: string[] = [];
-  for (const raw of text.toLowerCase().split(/[^a-z0-9&]+/)) {
+  // "P&ID" is one word, "pid" — never "p", "id" or "pandid".
+  const glued = text.toLowerCase().replace(/([a-z])&([a-z])/g, "$1$2");
+  for (const raw of glued.split(/[^a-z0-9]+/)) {
     if (!raw) continue;
-    const w = raw.replace(/&/g, "and");
+    const w = raw;
     if (w.length < 2) continue;
     if (/^\d+$/.test(w)) continue;
     if (isStopword(w)) continue;

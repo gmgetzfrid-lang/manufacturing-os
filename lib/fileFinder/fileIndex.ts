@@ -10,6 +10,7 @@
 import { canonicalForm, findIdentifiers } from "./tagForms";
 import { words, years, yearOf } from "./tokens";
 import type { ListedFile } from "./dirTree";
+import { docTypesIn, sheetNumbersIn, revisionsIn, canonicalRev } from "./docTypes";
 
 export interface IndexEntry {
   id: string;
@@ -40,6 +41,12 @@ export interface IndexEntry {
   pathWords: string[];
   /** Years the file itself claims: effective date, dates in its name, metadata dates. */
   years: number[];
+  /** Sheet number, from the row or from "SHT05" in the name. */
+  sheet?: number;
+  /** Revision, canonical ("3", "A"), from the row or "_R38" in the name. */
+  revCanon?: string;
+  /** Document-type keys named by the name, folder chain, or metadata. */
+  docTypes: string[];
   /** Year it landed in the system (or was listed). Never a content signal. */
   uploadYear?: number;
   sizeBytes?: number | null;
@@ -67,6 +74,7 @@ export interface DocLike {
   status?: string | null;
   effective_date?: string | null;
   created_at?: string | null;
+  sheet_number?: number | null;
   tags?: string[] | null;
   asset_tags?: Array<{ tag?: string }> | null;
   metadata?: Record<string, unknown> | null;
@@ -122,6 +130,10 @@ export function entryFromDocument(
   const pathText = chain.map((f) => f.name).join(" ");
   const ys = new Set<number>();
   for (const y of [yearOf(v?.effectiveDate ?? d.effective_date), ...years(name), ...years(meta)]) if (y) ys.add(y);
+  const nameWords = [...new Set(words(nameText + " " + meta))];
+  const pathWordList = [...new Set(words(pathText))];
+  const sheetFromName = sheetNumbersIn(name)[0];
+  const revFromName = revisionsIn(name)[0];
   return {
     id: `doc:${d.id}`,
     source: "system",
@@ -139,9 +151,13 @@ export function entryFromDocument(
     nameCanon: canonicalForm(name.replace(/\.[A-Za-z0-9]{1,5}$/, "")),
     numberCanon: canonicalForm(d.document_number ?? ""),
     pathIdents: findIdentifiers(pathText),
-    words: [...new Set(words(nameText + " " + meta))],
-    pathWords: [...new Set(words(pathText))],
+    words: nameWords,
+    pathWords: pathWordList,
     years: [...ys].sort(),
+    sheet: d.sheet_number ?? sheetFromName,
+    revCanon: d.rev ? canonicalRev(String(d.rev)) : revFromName ? canonicalRev(revFromName) : undefined,
+    // What the file calls itself wins; the folder only speaks when the name is silent.
+    docTypes: docTypesIn(nameWords).length ? docTypesIn(nameWords) : docTypesIn(pathWordList),
     uploadYear: yearOf(d.created_at),
     sizeBytes: v?.fileSize ?? null,
     hash: v?.fileHash ?? null,
@@ -172,6 +188,9 @@ export function entriesFromListing(
       words: [...new Set(words(f.name))],
       pathWords: [...new Set(words(pathText))],
       years: [...ys].sort(),
+      sheet: sheetNumbersIn(f.name)[0],
+      revCanon: revisionsIn(f.name)[0] ? canonicalRev(revisionsIn(f.name)[0]) : undefined,
+      docTypes: docTypesIn(words(f.name)).length ? docTypesIn(words(f.name)) : docTypesIn(words(pathText)),
       sizeBytes: f.sizeBytes ?? null,
       hash: null,
     };

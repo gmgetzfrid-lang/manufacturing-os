@@ -67,7 +67,7 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
   for (let from = 0; from < DOC_CAP; from += PAGE) {
     const { data, error } = await supabase
       .from("documents")
-      .select("id, library_id, collection_id, name, title, document_number, rev, status, effective_date, created_at, asset_tags, metadata, current_version_id")
+      .select("id, library_id, collection_id, name, title, document_number, rev, status, effective_date, created_at, sheet_number, asset_tags, metadata, current_version_id")
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1);

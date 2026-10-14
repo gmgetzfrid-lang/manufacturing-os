@@ -9,10 +9,11 @@
 import { canonicalForm, findCodes, tagVariants } from "./tagForms";
 import { words, bigrams, years } from "./tokens";
 import { aliasConfidence, type FinderAlias } from "./aliasTypes";
+import { docTypesIn, docTypeByKey, sheetNumbersIn, revisionsIn, canonicalRev } from "./docTypes";
 
 export interface UnitLike { code: string; label: string }
 
-export type ChipKind = "identifier" | "word" | "phrase" | "year" | "unit";
+export type ChipKind = "identifier" | "word" | "phrase" | "year" | "unit" | "sheet" | "rev" | "doctype";
 
 export interface QueryChip {
   kind: ChipKind;
@@ -36,6 +37,9 @@ export interface ParsedQuery {
   phrases: QueryChip[];
   years: QueryChip[];
   units: QueryChip[];
+  sheets: QueryChip[];
+  revs: QueryChip[];
+  docTypes: QueryChip[];
 }
 
 function unitWordSet(u: UnitLike): string[] {
@@ -64,10 +68,19 @@ export function parseQuery(
     chips.push(c);
   };
 
+  // 0. Structure people say without knowing the naming convention: "sheet 5",
+  //    "rev 3", "P&ID". These come out first so "5" is never lost as a bare
+  //    digit and "pid" is never just a word.
+  for (const n of sheetNumbersIn(raw)) push({ kind: "sheet", value: String(n), label: `sheet ${n}`, via: "typed", confidence: 1 });
+  for (const r of revisionsIn(raw)) push({ kind: "rev", value: canonicalRev(r), label: `rev ${r}`, via: "typed", confidence: 1 });
+  const structural = raw
+    .replace(/(?<![A-Za-z0-9])(?:sheet|sht|sh|page|pg)\s*[-_.#]?\s*\d{1,3}(?![0-9])/gi, " ")
+    .replace(/(?<![A-Za-z0-9])(?:rev(?:ision)?\.?\s*[-_#]?\s*|r)(?:[A-Z]{1,2}|\d{1,3}[A-Z]?)(?![A-Za-z0-9])/gi, " ");
+
   // 1. Codes — before words, so "u1-a" is never also a word. The label keeps
   //    the spelling the person used ("EP10-1-15", "10-1-15"), the value is
   //    the canonical form the matcher compares.
-  const codes = findCodes(raw);
+  const codes = findCodes(structural);
   const idents = codes.map((c) => c.canon);
   for (const c of codes) {
     push({ kind: "identifier", value: c.canon, label: c.raw.toUpperCase(), via: "typed", confidence: 1 });
@@ -75,10 +88,16 @@ export function parseQuery(
   const identWords = new Set(idents.map((i) => i.toLowerCase()));
 
   // 2. Years.
-  for (const y of years(raw)) push({ kind: "year", value: String(y), label: String(y), via: "typed", confidence: 1 });
+  for (const y of years(structural)) push({ kind: "year", value: String(y), label: String(y), via: "typed", confidence: 1 });
 
-  // 3. Words and phrases.
-  const ws = words(raw).filter((w) => !identWords.has(canonicalForm(w).toLowerCase()) && !/^\d{4}$/.test(w));
+  // 3. Words and phrases. A word that names a document type becomes a
+  //    doctype chip AND stays a word, so "P&ID" also matches a folder
+  //    literally called that.
+  const ws = words(structural).filter((w) => !identWords.has(canonicalForm(w).toLowerCase()) && !/^\d{4}$/.test(w));
+  for (const key of docTypesIn(ws)) {
+    const t = docTypeByKey(key)!;
+    push({ kind: "doctype", value: key, label: t.label, via: "typed", confidence: 1 });
+  }
   for (const w of ws) push({ kind: "word", value: w, label: w, via: "typed", confidence: 1 });
   for (const b of bigrams(ws)) push({ kind: "phrase", value: b, label: `"${b}"`, via: "typed", confidence: 1 });
 
@@ -126,6 +145,9 @@ export function parseQuery(
     phrases: chips.filter((c) => c.kind === "phrase"),
     years: chips.filter((c) => c.kind === "year"),
     units: chips.filter((c) => c.kind === "unit"),
+    sheets: chips.filter((c) => c.kind === "sheet"),
+    revs: chips.filter((c) => c.kind === "rev"),
+    docTypes: chips.filter((c) => c.kind === "doctype"),
   };
 }
 
@@ -138,5 +160,8 @@ export function fromChips(raw: string, chips: QueryChip[]): ParsedQuery {
     phrases: chips.filter((c) => c.kind === "phrase"),
     years: chips.filter((c) => c.kind === "year"),
     units: chips.filter((c) => c.kind === "unit"),
+    sheets: chips.filter((c) => c.kind === "sheet"),
+    revs: chips.filter((c) => c.kind === "rev"),
+    docTypes: chips.filter((c) => c.kind === "doctype"),
   };
 }

@@ -6,3 +6,4 @@ export * from "./dirTree";
 export * from "./fileIndex";
 export * from "./rank";
 export * from "./fuzzy";
+export * from "./docTypes";

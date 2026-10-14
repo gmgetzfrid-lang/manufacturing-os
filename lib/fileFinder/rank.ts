@@ -22,9 +22,10 @@ import type { ParsedQuery, UnitLike, QueryChip } from "./queryParse";
 import { wordNamesUnit } from "./queryParse";
 import { digitsOf, tagVariants, splitCanonical } from "./tagForms";
 import { isClose } from "./fuzzy";
+import { docTypeByKey } from "./docTypes";
 
 export interface Evidence {
-  kind: "identifier" | "word" | "phrase" | "unit" | "year" | "size" | "junk" | "status" | "duplicate" | "source";
+  kind: "identifier" | "word" | "phrase" | "unit" | "year" | "size" | "junk" | "status" | "duplicate" | "source" | "sheet" | "rev" | "doctype";
   /** Human sentence: "Folder says Transmix, a different unit". */
   label: string;
   delta: number;
@@ -52,6 +53,7 @@ const W = {
   phraseName: 22, phrasePath: 12,
   wordName: 12, wordPath: 8, wordLoose: 7, wordLoosePath: 4,
   unitHit: 20, unitOther: -30,
+  sheetHit: 30, sheetOther: -15, docTypeHit: 18, docTypeOther: -10, revHit: 20, revOther: -8,
   yearHit: 15, yearOff1: -5, yearOff2: -12, yearOffMore: -20,
   emptyFile: -60, junk: -50, superseded: -15,
 };
@@ -204,6 +206,29 @@ export function rankEntries(
       }
     }
 
+    // Structure a person asks for without knowing the naming convention.
+    // The right sheet is the single strongest clue there is; the wrong one is
+    // close to disqualifying — the drawing set is right, the page isn't.
+    if (q.sheets.length) {
+      const asked = q.sheets.map((c) => Number(c.value));
+      if (e.sheet != null) {
+        if (asked.includes(e.sheet)) ev.push({ kind: "sheet", label: `Sheet ${e.sheet}`, delta: W.sheetHit, tier: "exact" });
+        else ev.push({ kind: "sheet", label: `This is sheet ${e.sheet}; you asked for sheet ${asked.join(" or ")}`, delta: W.sheetOther });
+      }
+    }
+    if (q.docTypes.length) {
+      const asked = q.docTypes.map((c) => c.value);
+      const have = e.docTypes;
+      const hit = have.find((k) => asked.includes(k));
+      if (hit) ev.push({ kind: "doctype", label: `It's a ${docTypeByKey(hit)?.label ?? hit}`, delta: W.docTypeHit, tier: "exact" });
+      else if (have.length) ev.push({ kind: "doctype", label: `It's a ${have.map((k) => docTypeByKey(k)?.label ?? k).join("/")}, not a ${asked.map((k) => docTypeByKey(k)?.label ?? k).join("/")}`, delta: W.docTypeOther });
+    }
+    if (q.revs.length && e.revCanon) {
+      const asked = q.revs.map((c) => c.value);
+      if (asked.includes(e.revCanon)) ev.push({ kind: "rev", label: `Rev ${e.revCanon}`, delta: W.revHit, tier: "exact" });
+      else ev.push({ kind: "rev", label: `This is rev ${e.revCanon}; you asked for rev ${asked.join(" or ")}`, delta: W.revOther });
+    }
+
     // Units: the one asked for is a plus; any OTHER codebook unit named in the
     // folder chain is a minus. "Transmix" is not where a crude heater lives.
     if (q.units.length && units.length) {
@@ -226,7 +251,7 @@ export function rankEntries(
     // A candidate has to match something the user actually named — a code, a
     // word or a phrase, exactly or loosely. Being in the right unit's folder
     // is support for a match, never a match on its own.
-    const positive = ev.filter((x) => x.delta > 0 && (x.kind === "identifier" || x.kind === "word" || x.kind === "phrase"))
+    const positive = ev.filter((x) => x.delta > 0 && (x.kind === "identifier" || x.kind === "word" || x.kind === "phrase" || x.kind === "sheet" || x.kind === "doctype"))
       .reduce((s, x) => s + x.delta, 0);
     if (positive <= 0) continue;
 

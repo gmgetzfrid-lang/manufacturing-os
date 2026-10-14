@@ -251,3 +251,63 @@ describe("thinking like a person who has never seen the drive", () => {
     expect(rankEntries([ep, pid, f101, other], parseQuery("ZZ-9999 compressor"), {})).toEqual([]);
   });
 });
+
+describe("asking the way people actually ask", () => {
+  const folders = new Map([
+    ["lib-d", { id: "lib-d", libraryId: "L", parentId: null, name: "P&ID's" }],
+    ["crude", { id: "crude", libraryId: "L", parentId: "lib-d", name: "20 - Crude" }],
+    ["alky", { id: "alky", libraryId: "L", parentId: "lib-d", name: "30 - Alky" }],
+  ]);
+  const libraries = new Map([["L", { id: "L", name: "Drawings" }]]);
+  const ctx = { folders, libraries };
+  const sheets = [1, 2, 3, 4, 5, 6].map((n) =>
+    entryFromDocument({ id: `s${n}`, library_id: "L", collection_id: "crude", name: `2002-D 2001_SHT0${n}_R3${n}.pdf`, rev: `3${n}` }, ctx));
+  const alkySheet5 = entryFromDocument({ id: "a5", library_id: "L", collection_id: "alky", name: `2002-D 3001_SHT05_R02.pdf`, rev: "02" }, ctx);
+  const isoCrude = entryFromDocument({ id: "iso", library_id: "L", collection_id: "crude", name: "Crude ISO-2001-05.pdf" }, ctx);
+
+  it("reads P&ID as a drawing type, not the word pandid", () => {
+    const q = parseQuery("crude P&ID sheet 5", { units: UNITS });
+    expect(q.docTypes.map((c) => c.value)).toEqual(["pid"]);
+    expect(q.sheets.map((c) => c.value)).toEqual(["5"]);
+    expect(q.words.map((c) => c.value)).not.toContain("pandid");
+    expect(q.words.map((c) => c.value)).not.toContain("sheet");
+    expect(q.identifiers).toEqual([]);
+  });
+  it("indexes sheet, rev and type from a conventional drawing name", () => {
+    expect(sheets[4]).toMatchObject({ sheet: 5, revCanon: "35" });
+    expect(sheets[4].docTypes).toContain("pid");
+  });
+  it("puts sheet 5 of the crude P&IDs first and says why the others are not it", () => {
+    const q = parseQuery("crude P&ID sheet 5", { units: UNITS });
+    const hits = rankEntries([...sheets, alkySheet5, isoCrude], q, { units: UNITS });
+    expect(hits[0].entry.id).toBe("doc:s5");
+    expect(hits[0].verdict).toBe("strong");
+    expect(hits[0].evidence.map((e) => e.label)).toEqual(expect.arrayContaining(["Sheet 5", "It's a P&ID"]));
+    const s1 = hits.find((h) => h.entry.id === "doc:s1")!;
+    expect(s1.evidence.map((e) => e.label)).toContain("This is sheet 1; you asked for sheet 5");
+    expect(s1.score).toBeLessThan(hits[0].score - 30);
+    // Sheet 5 of the alky set is the right page in the wrong unit: below the crude one.
+    const a5 = hits.find((h) => h.entry.id === "doc:a5")!;
+    expect(a5.score).toBeLessThan(hits[0].score);
+    expect(a5.evidence.map((e) => e.label)).toContain("Folder says Alky, a different unit");
+  });
+  it("knows the ISO is not the P&ID asked for", () => {
+    const q = parseQuery("crude P&ID", { units: UNITS });
+    const hits = rankEntries([sheets[0], isoCrude], q, { units: UNITS });
+    const iso = hits.find((h) => h.entry.id === "doc:iso")!;
+    expect(iso.evidence.map((e) => e.label)).toContain("It's a Isometric, not a P&ID");
+    expect(hits[0].entry.id).toBe("doc:s1");
+  });
+  it("matches a revision when asked, and says which one the file is otherwise", () => {
+    const hits = rankEntries(sheets, parseQuery("2002-D 2001 rev 33"), {});
+    expect(hits[0].entry.id).toBe("doc:s3");
+    expect(hits[0].evidence.map((e) => e.label)).toContain("Rev 33");
+    const s1 = hits.find((h) => h.entry.id === "doc:s1")!;
+    expect(s1.evidence.map((e) => e.label)).toContain("This is rev 31; you asked for rev 33");
+  });
+  it("accepts sht 5, SHT05 and page 5 as the same ask", () => {
+    for (const ask of ["sht 5", "SHT05", "page 5", "sheet #5"]) {
+      expect(parseQuery(ask).sheets.map((c) => c.value)).toEqual(["5"]);
+    }
+  });
+});
