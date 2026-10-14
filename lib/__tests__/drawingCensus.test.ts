@@ -11,10 +11,14 @@ describe("drawing census parsing", () => {
       '"title":{"drawingNumber":"2002-D 2001","sheet":"5","rev":"42"}}';
     const s = parseCensus(text);
     expect(s.equipment.map((e) => e.tag)).toEqual(["V-14", "X-60", "P-51"]);
-    expect(s.equipment[1]).toEqual({ tag: "X-60", code: "2030.60", name: "STEAM GENERATOR" });
+    expect(s.equipment[1]).toEqual({ tag: "X-60", code: "2030.60", name: "STEAM GENERATOR", details: null });
     expect(s.instruments).toEqual(["PIT-130", "FE-130", "LIC-222", "PSV-21"]);
     expect(s.offSheet.map((o) => [o.tag, o.direction])).toEqual([["X-45", "from"], ["LV-222", "to"]]);
     expect(s.title.rev).toBe("42");
+  });
+  it("keeps the design data printed in a callout", () => {
+    const s = parseCensus('{"equipment":[{"tag":"V-14","code":"6110.14","name":"35# STEAM DRUM","details":"4\'-0\\" I.D. x 10\'-0\\" T/T; DESIGN 75 PSIG @ 650 F"}]}');
+    expect(s.equipment[0].details).toBe("4'-0\" I.D. x 10'-0\" T/T; DESIGN 75 PSIG @ 650 F");
   });
   it("drops anything that is not shaped like a tag, and survives junk", () => {
     const s = parseCensus('{"equipment":[{"tag":"35# STEAM"},{"tag":""},{"tag":"2002-D 2001"}],"instruments":["130"]}');

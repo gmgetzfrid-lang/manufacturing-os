@@ -117,6 +117,11 @@ export async function GET(req: NextRequest) {
       for (const r of (data ?? []) as Array<{ id: string }>) aiExcluded.add(r.id);
       if ((data ?? []).length < 1000) break;
     }
+    // A library marked never-AI holds every one of its documents back.
+    {
+      const { excludedLibraryIds, documentIdsInLibrary } = await import("@/lib/aiLibraries");
+      for (const lib of await excludedLibraryIds(supabaseAdmin, orgId)) for (const id of await documentIdsInLibrary(supabaseAdmin, orgId, lib)) aiExcluded.add(id);
+    }
     // Paged with a stable order — a flat cap returns an ARBITRARY slice
     // past its limit, and this tree's whole promise is that no document
     // silently vanishes from it.

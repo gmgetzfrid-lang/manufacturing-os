@@ -28,7 +28,9 @@ import { globalGraphHref } from "@/lib/estate/lenses";
 import EstateReadiness from "@/components/documents/EstateReadiness";
 import SuspectEquipment from "@/components/documents/SuspectEquipment";
 import ReadDrawingPanel from "@/components/documents/ReadDrawingPanel";
-import { useConnectEverything, ConnectButton, ConnectProgress } from "@/components/documents/ConnectEverything";
+import { useConnectEverything, ConnectButton, ConnectProgress, UndoRunBox } from "@/components/documents/ConnectEverything";
+import ConnectPreview from "@/components/documents/ConnectPreview";
+import RunsPanel from "@/components/documents/RunsPanel";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf, CONTAINER_TYPES } from "@/lib/fileFinder/fileTypes";
 import {
@@ -566,7 +568,7 @@ function GraphPageInner() {
       if (e.key === "ArrowLeft" || e.key === "p") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx - 1); } return; }
       if (e.key === "Enter") { const id = selectedId ?? hits[activeIdx]?.entry.id; if (id) { e.preventDefault(); openEntry(id); } return; }
       if (e.key !== "Escape" && e.key !== "Backspace") return;
-      if (selectedId) { setSelectedId(null); return; }
+      if (selectedId || selSat) { setSelectedId(null); setSelSat(null); return; }
       if (focusId) { e.preventDefault(); up(); }
     };
     window.addEventListener("keydown", onKey);
@@ -659,7 +661,7 @@ function GraphPageInner() {
             )}
 
             {panel === "links" && data && (
-              <LinksPanel orgId={activeOrgId} edges={data.edges} units={data.units} estateMissing={data.estateMissing} onConnect={controller ? () => { setShowConnect(true); void connect.run(); } : undefined} connecting={connect.running} readinessKey={connect.status ? JSON.stringify(connect.status.readiness) : ""} onReveal={(id) => { const n = nodeById.get(id); if (!n) return; if (n.kind === "file" || n.kind === "extfile") reveal(id); else drill(id); }} />
+              <LinksPanel orgId={activeOrgId} edges={data.edges} units={data.units} estateMissing={data.estateMissing} onConnect={controller ? () => { setShowConnect(true); void connect.openPreview(); } : undefined} connecting={connect.running} readinessKey={connect.status ? JSON.stringify(connect.status.readiness) : ""} onReveal={(id) => { const n = nodeById.get(id); if (!n) return; if (n.kind === "file" || n.kind === "extfile") reveal(id); else drill(id); }} />
             )}
             {panel === "drives" && (
               <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail} systemHashes={systemHashes}
@@ -704,9 +706,15 @@ function GraphPageInner() {
                   {(childrenOf.get(focusId) ?? []).filter((n) => n.kind === "file" || n.kind === "extfile").length} files · {(childrenOf.get(focusId) ?? []).filter((n) => n.kind !== "file" && n.kind !== "extfile").length} folders inside
                 </span>
               )}
+              {selectedEntry && (
+                <button onClick={() => { setSelectedId(null); setSelSat(null); }} title="Stop focusing on this file (Esc)"
+                  className="ml-2 rounded-md bg-slate-900 text-white px-2 py-1 font-semibold inline-flex items-center gap-1 shadow">
+                  <ChevronLeft className="w-3 h-3" /> Back · Esc
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-1 pointer-events-auto">
-              {controller && <ConnectButton running={connect.running} disabled={data?.estateMissing} onClick={() => { setShowConnect(true); void connect.run(); }} />}
+              {controller && <ConnectButton running={connect.running || connect.planLoading} disabled={data?.estateMissing} onClick={() => { setShowConnect(true); void connect.openPreview(); }} />}
               {controller && (
                 <button onClick={runResolver} disabled={resolving || data?.estateMissing} title={data?.estateMissing ? "Apply migration 20261020 first" : "Link every folder and file to its unit, project and equipment from names and ancestry"}
                   className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 disabled:opacity-50">
@@ -757,7 +765,8 @@ function GraphPageInner() {
           )}
           {showConnect && (connect.status || connect.running || connect.error || connect.bulk) && (
             <div className="absolute top-12 right-3 pointer-events-auto">
-              <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} onRun={(o) => void connect.run(o)} bulk={connect.bulk} onReadAll={() => void connect.readAll()} />
+              <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} onRun={(o) => void connect.run(o)} bulk={connect.bulk} onReadAll={() => void connect.readAll()}
+                undoBox={<UndoRunBox runId={connect.runId} journaled={connect.journaled} undo={connect.undo} onUndo={() => void connect.undoLast()} />} />
               {controller && activeOrgId && !connect.running && connect.status && (
                 <div className="mt-2 max-w-md"><SuspectEquipment orgId={activeOrgId} refreshKey={JSON.stringify(connect.status.readiness)} onRemoved={() => void refresh()} /></div>
               )}
@@ -775,12 +784,12 @@ function GraphPageInner() {
         {/* ── Right: results / selection ──────────────────────────────── */}
         <aside className="border-l border-[var(--color-border)] bg-[var(--color-surface)] min-h-0 overflow-y-auto">
           {selSat && data && (
-            <EntityPanel sat={selSat} data={data} entryById={entryById} nodeById={nodeById} serverFind={serverFind}
+            <EntityPanel orgId={activeOrgId!} sat={selSat} data={data} entryById={entryById} nodeById={nodeById} serverFind={serverFind}
               onClose={() => setSelSat(null)} onOpen={(id) => void openEntry(id)} onOpenAtPage={openAtPage} onReveal={reveal}
               onPhoto={setLightbox} onNarrow={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
           )}
           {selectedEntry && (
-            <SelectedCard orgId={activeOrgId} canRead={controller || hasAnyRole(["Manager", "Supervisor"])} onRead={() => void refresh()} entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
+            <SelectedCard orgId={activeOrgId} canRead={controller} onRead={() => void refresh()} entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
               onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={() => openEntry(selectedEntry.id)} />
           )}
           <div className="p-3">
@@ -870,6 +879,10 @@ function GraphPageInner() {
           <AlertTriangle className="w-4 h-4" /> {viewerError}
           <button onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
+      )}
+      {connect.plan && activeOrgId && (
+        <ConnectPreview orgId={activeOrgId} plan={connect.plan} loading={connect.planLoading} canChange={controller}
+          onClose={connect.closePreview} onReplan={(ids) => void connect.openPreview(ids)} onStart={(ids) => void connect.start(ids)} />
       )}
       {lightbox && (
         <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
@@ -1042,8 +1055,8 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
 /** A unit, piece of equipment, project or unregistered tag picked on the
  *  map: everything the estate holds on it, in place. Photos open in a
  *  lightbox, sheets and files open in the viewer, nothing leaves the map. */
-function EntityPanel({ sat, data, entryById, nodeById, serverFind, onClose, onOpen, onOpenAtPage, onReveal, onPhoto, onNarrow }: {
-  sat: FileGraphSatellite; data: FinderData; entryById: Map<string, IndexEntry>; nodeById: Map<string, FileGraphNode>; serverFind: FindResponse | null;
+function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFind, onClose, onOpen, onOpenAtPage, onReveal, onPhoto, onNarrow }: {
+  orgId: string; sat: FileGraphSatellite; data: FinderData; entryById: Map<string, IndexEntry>; nodeById: Map<string, FileGraphNode>; serverFind: FindResponse | null;
   onClose: () => void; onOpen: (id: string) => void; onOpenAtPage: (id: string, page: number, tag?: string) => void; onReveal: (id: string) => void;
   onPhoto: (p: AssetPhoto) => void; onNarrow: (code: string) => void;
 }) {
@@ -1056,6 +1069,30 @@ function EntityPanel({ sat, data, entryById, nodeById, serverFind, onClose, onOp
     listAssetPhotos(asset.id).then((l) => { if (alive) setPhotos({ id: asset.id, list: l }); }).catch(() => { if (alive) setPhotos({ id: asset.id, list: [] }); });
     return () => { alive = false; };
   }, [asset]);
+  // What the registry and the drawings say about it, and the work around
+  // it: the same find every search uses, aimed at this one tag.
+  type AssetInfo = { code: string | null; location: string | null; typeName: string | null; callout: { code?: string | null; name?: string | null; details?: string | null; sheet?: string | null; page?: number | null } | null };
+  const [info, setInfo] = useState<{ id: string; v: AssetInfo } | null>(null);
+  const [found, setFound] = useState<{ id: string; r: FindResponse } | null>(null);
+  useEffect(() => {
+    if (kind !== "asset" && kind !== "tag") return;
+    let alive = true;
+    void findEstate({ orgId, query: sat.label, limit: 40, semantic: false })
+      .then((r) => { if (alive) setFound({ id: sat.id, r }); }).catch(() => undefined);
+    if (asset) {
+      void (async () => {
+        const { data: row } = await supabase.from("assets").select("code, location, type_id, metadata").eq("id", asset.id).maybeSingle();
+        const a = row as { code: string | null; location: string | null; type_id: string | null; metadata: Record<string, unknown> | null } | null;
+        let typeName: string | null = null;
+        if (a?.type_id) { const { data: t } = await supabase.from("asset_types").select("name").eq("id", a.type_id).maybeSingle(); typeName = (t as { name?: string } | null)?.name ?? null; }
+        if (alive) setInfo({ id: asset.id, v: { code: a?.code ?? null, location: a?.location ?? null, typeName, callout: (a?.metadata?.drawingCallout as AssetInfo["callout"]) ?? null } });
+      })();
+    }
+    return () => { alive = false; };
+  }, [orgId, sat.id, sat.label, kind, asset]);
+  const about = asset && info?.id === asset.id ? info.v : null;
+  const mine = found?.id === sat.id ? found.r : null;
+  const serverFind = mine ?? liveFind;
   const unit = kind === "unit" ? data.units.find((u) => u.code === sat.id.slice(7)) : asset?.unitCode ? data.units.find((u) => u.code === asset.unitCode) : undefined;
   // Every document related to it: from the map's links and, when a search
   // is live, the sheets it is drawn on with the page.
@@ -1093,10 +1130,25 @@ function EntityPanel({ sat, data, entryById, nodeById, serverFind, onClose, onOp
           </div>
           <div className="text-base font-black leading-tight">{sat.label}</div>
           {asset?.description && <div className="text-xs text-[var(--color-text-muted)]">{asset.description}</div>}
+          {about && (about.typeName || about.code || about.location) && (
+            <div className="mt-0.5 flex flex-wrap gap-1 text-[10px]">
+              {about.typeName && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1">{about.typeName}</span>}
+              {about.code && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 font-mono">site code {about.code}</span>}
+              {about.location && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1">{about.location}</span>}
+            </div>
+          )}
           {kind === "tag" && <div className="text-[11px] text-[var(--color-text-muted)]">Not in the equipment registry yet. Connect everything puts it there.</div>}
         </div>
         <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
       </div>
+      {about?.callout && (about.callout.name || about.callout.details) && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-xs">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">As printed on the drawing</div>
+          {about.callout.name && <div className="font-semibold">{about.callout.name}</div>}
+          {about.callout.details && <div className="text-[11px] text-[var(--color-text-muted)]">{about.callout.details}</div>}
+          {about.callout.sheet && <div className="text-[10px] text-[var(--color-text-faint)]">{about.callout.sheet}{about.callout.page ? `, page ${about.callout.page}` : ""}</div>}
+        </div>
+      )}
       {asset && (
         <div>
           {photoList === null ? <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> photos…</div>
@@ -1134,6 +1186,12 @@ function EntityPanel({ sat, data, entryById, nodeById, serverFind, onClose, onOp
           })}
         </ul>
       </div>
+      {mine && (mine.activity.tickets.length + mine.activity.checkouts.length + mine.activity.markups.length + mine.activity.holds.length + mine.activity.projects.length + mine.activity.milestones.length) > 0 && (
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">Work around it now</div>
+          <ActivityPanel activity={mine.activity} compact />
+        </div>
+      )}
       <div className="flex flex-wrap gap-1">
         {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
         {sat.href && <Link href={sat.href} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Full page</Link>}
@@ -1170,6 +1228,7 @@ function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, c
   return (
     <div className="space-y-3">
       {onConnect && <SuspectEquipment orgId={orgId} refreshKey={readinessKey} />}
+      {onConnect && <RunsPanel key={readinessKey} orgId={orgId} />}
       <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
       <div className="text-xs text-[var(--color-text-muted)]">What the estate knows about where things belong — every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
       <div className="flex flex-wrap gap-1">

@@ -34,6 +34,7 @@ export const ORG_SCOPED_TABLES = [
   // One Estate — derived and declared relationships with provenance
   // (folder→unit, project→unit, also-filed-under). Human decisions live here.
   "estate_edges",
+  "estate_run_changes",
   // Skills — the org's authored detectors and answer disciplines. Pure
   // human knowledge (names, patterns, packs, sharing); not re-derivable.
   "link_rules",

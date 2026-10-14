@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
+import { documentAiBlock } from "@/lib/aiLibraries";
 import { readPages, pagesAsText, pagesReadSummary } from "@/lib/pageReader";
 import { resolveDocumentFile } from "@/lib/docFileServer";
 import { validateSegmentedItems, type SegmentedItem } from "@/lib/checklistEngine";
@@ -73,6 +74,8 @@ export async function POST(req: NextRequest) {
     if (!documentId) return bad("documentId required", 400);
     const file = await resolveDocumentFile(orgId, documentId);
     if (!file) return bad("That document has no stored file to read.", 404);
+    const aiBlock = await documentAiBlock(supabaseAdmin, orgId, documentId);
+    if (aiBlock.blocked) return bad(aiBlock.reason ?? "This document is held back from AI.", 403);
 
     const read = await readPages({ orgId, fileKey: file.fileKey, pages: Array.from({ length: MAX_PAGES }, (_, i) => i + 1), maxPages: MAX_PAGES, images: "unread" });
     if (read.pages.length === 0) return bad("The pages could not be read — is it a PDF?", 502);

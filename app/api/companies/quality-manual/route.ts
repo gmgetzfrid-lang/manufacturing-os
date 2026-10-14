@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
+import { documentAiBlock } from "@/lib/aiLibraries";
 import { readPages, pagesAsText, pagesReadSummary } from "@/lib/pageReader";
 import { resolveDocumentFile } from "@/lib/docFileServer";
 import { QUALITY_MANUAL_RUBRIC, validateRubricFindings, rubricCoverageScore } from "@/lib/checklistEngine";
@@ -53,6 +54,8 @@ export async function POST(req: NextRequest) {
 
   const file = await resolveDocumentFile(orgId, documentId);
   if (!file) return bad("That document has no stored file to read.", 404);
+  const aiBlock = await documentAiBlock(supabaseAdmin, orgId, documentId);
+  if (aiBlock.blocked) return bad(aiBlock.reason ?? "This document is held back from AI.", 403);
   // Prose: pages already read (or with a usable text layer) go as text;
   // only the rest are sent as images.
   const read = await readPages({ orgId, fileKey: file.fileKey, pages: Array.from({ length: MAX_PAGES }, (_, i) => i + 1), maxPages: MAX_PAGES, images: "unread" });

@@ -27,6 +27,20 @@ async function ids(admin: SupabaseClient, table: string, among: string[], manual
   return out;
 }
 
+/** Registry items nobody has touched: no photos, files, notes, manual
+ *  document tags or edits. Only these may be removed by a machine. */
+export async function untouchedAssetIds(admin: SupabaseClient, orgId: string, among: string[]): Promise<Set<string>> {
+  if (!among.length) return new Set();
+  const { data } = await admin.from("assets").select("id, updated_by").eq("org_id", orgId).in("id", among);
+  const [photos, files, notes, manual] = await Promise.all([ids(admin, "asset_photos", among), ids(admin, "asset_files", among), ids(admin, "notes", among), ids(admin, "document_assets", among, true)]);
+  const out = new Set<string>();
+  for (const a of (data as Array<{ id: string; updated_by: string | null }> | null) ?? []) {
+    if (a.updated_by || photos.has(a.id) || files.has(a.id) || notes.has(a.id) || manual.has(a.id)) continue;
+    out.add(a.id);
+  }
+  return out;
+}
+
 export async function findSuspects(admin: SupabaseClient, orgId: string): Promise<SuspectList> {
   const { data: rows, error } = await admin.from("assets").select("id, tag, unit_code, updated_by").eq("org_id", orgId).eq("origin", "drawing").eq("archived", false).limit(5000);
   if (error || !rows?.length) return { items: [], readingInProgress: false, checked: 0 };

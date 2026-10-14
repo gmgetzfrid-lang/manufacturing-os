@@ -294,6 +294,17 @@ only, not in production as of 2026-10-14). "Done when" is what to test.
   kinds and marked so the cheap text pass never overwrites them. Reading a
   sheet corrects its equipment column and links. "Read with AI" on a
   selected sheet; Connect everything offers it for every unread sheet.
+- Only Admin and Doc Control run AI over drawings (Connect everything,
+  Read with AI, the equipment bridge). Connect opens with a preview of
+  exactly what will be read and what leaves the server; nothing runs
+  until Start, and it reads only the libraries ticked there.
+- A library can be marked "Never send to AI" (`libraries.ai_excluded`,
+  migration 20261021). Every door that hands a document to a model checks
+  it with the per-document hold-back; turning it on deletes the AI's copies
+  at once.
+- Every change an AI run makes to a drawing is journaled with its before
+  state (`estate_run_changes`) and can be undone per run; undo never
+  overwrites what a person changed since.
 - The org graph's Map is operating area → equipment type → equipment →
   documents; projects and "not placed yet" (by library) beside them. A
   thing has one place; its other ties are drawn only when it is picked.

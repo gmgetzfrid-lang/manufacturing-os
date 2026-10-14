@@ -114,14 +114,23 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     // behaviour before the feature existed.
   }
 
+  // ── Whole libraries marked never-AI: nothing in them is mirrored, and
+  //    a mirror that exists is removed below like any unwanted one.
+  const { excludedLibraryIds } = await import("@/lib/aiLibraries");
+  const neverAi = await excludedLibraryIds(supabaseAdmin, orgId);
+  const libraryOfDoc = (d: { library_id?: string | null; collection_id?: string | null }) =>
+    (d.library_id as string | null | undefined) ?? (d.collection_id ? landscape.folders.get(d.collection_id)?.library_id ?? null : null);
+
   // ── What SHOULD be mirrored: current PDFs in each source container ──────
   // Map dcDocId → { source, doc } (first source wins when containers overlap).
   const wanted = new Map<string, { sourceId: string; doc: DcDocRow }>();
   for (const source of sources) {
     let q = supabaseAdmin
       .from("documents")
-      .select("id, name, title, document_number, status, archived_at, current_version_id")
+      .select("id, name, title, document_number, status, archived_at, current_version_id, library_id, collection_id")
       .eq("org_id", orgId);
+    const sourceLib = source.source_type === "library" ? source.source_id : landscape.folders.get(source.source_id)?.library_id ?? null;
+    if (sourceLib && neverAi.has(sourceLib)) continue;
     if (source.source_type === "library") {
       q = q.eq("library_id", source.source_id);
     } else {
@@ -158,6 +167,8 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     }
     for (const d of enumerated) {
       if (wanted.has(d.id)) continue;
+      const lib = libraryOfDoc(d as { library_id?: string | null; collection_id?: string | null });
+      if (lib && neverAi.has(lib)) continue;
       // ONE gate, shared with every other door (lib/aiBoundary.ts). Held
       // back, superseded, archived, or fileless — each is a different reason
       // and all four end here.

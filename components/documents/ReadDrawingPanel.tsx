@@ -9,18 +9,20 @@
 
 import React, { useState } from "react";
 import { Loader2, Sparkles, Cpu, Gauge, ArrowRightLeft, CheckCircle2, XCircle } from "lucide-react";
-import { readDrawing, type CensusRun } from "@/lib/drawingCensusClient";
+import { readDrawing, newRunId, undoRun, type CensusRun } from "@/lib/drawingCensusClient";
 
 export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId: string; documentId: string; onDone?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [run, setRun] = useState<{ id: string; r: CensusRun } | null>(null);
+  const [run, setRun] = useState<{ id: string; r: CensusRun; runId: string } | null>(null);
+  const [undone, setUndone] = useState<{ busy: boolean; note: string | null }>({ busy: false, note: null });
   const [error, setError] = useState<{ id: string; msg: string } | null>(null);
   const [showInst, setShowInst] = useState(false);
   const go = async () => {
-    setBusy("Reading the sheet with your AI model…"); setError(null); setRun(null);
+    setBusy("Reading the sheet with your AI model…"); setError(null); setRun(null); setUndone({ busy: false, note: null });
+    const runId = newRunId();
     try {
-      const r = await readDrawing(orgId, { documentId }, (p, n) => setBusy(n > 1 ? `Reading page ${p} of ${n}…` : "Reading the sheet with your AI model…"));
-      setRun({ id: documentId, r });
+      const r = await readDrawing(orgId, { documentId }, (p, n) => setBusy(n > 1 ? `Reading page ${p} of ${n}…` : "Reading the sheet with your AI model…"), { runId, runLabel: "Read one drawing with AI" });
+      setRun({ id: documentId, r, runId });
       onDone?.();
     } catch (e) { setError({ id: documentId, msg: (e as Error).message }); }
     finally { setBusy(null); }
@@ -58,8 +60,22 @@ export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId:
               {r.correction.removed.length > 0 && <div className="inline-flex items-start gap-1 text-red-700"><XCircle className="w-3.5 h-3.5 mt-px shrink-0" /> Taken off this drawing (not on the sheet): <span className="font-mono">{r.correction.removed.join(", ")}</span></div>}
               {r.correction.added.length > 0 && <div className="inline-flex items-start gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5 mt-px shrink-0" /> Put on this drawing: <span className="font-mono">{r.correction.added.join(", ")}</span>{r.correction.createdAssets ? ` · ${r.correction.createdAssets} new in the registry` : ""}</div>}
               {!r.correction.removed.length && !r.correction.added.length && <div className="text-[var(--color-text-muted)]">The drawing&apos;s equipment tags already matched the sheet.</div>}
+              {r.correction.described > 0 && <div className="text-[var(--color-text-muted)]">{r.correction.described} registry item{r.correction.described === 1 ? "" : "s"} given the name and design data printed in their callout.</div>}
             </div>
           )}
+          <div className="border-t border-[var(--color-border)] pt-1.5">
+            {!r.journaled
+              ? <span className="text-[11px] text-amber-700">Undo is not available: apply migration 20261021_ai_boundary_runs.sql to record reads.</span>
+              : undone.note
+                ? <span className="text-[11px] text-emerald-700">{undone.note}</span>
+                : <button disabled={undone.busy} onClick={() => {
+                    if (!run || !window.confirm("Undo this read? The drawing's tags, links and reading go back to how they were.")) return;
+                    setUndone({ busy: true, note: null });
+                    void undoRun(orgId, run.runId)
+                      .then((u) => { setUndone({ busy: false, note: `Undone: ${u.columnsRestored} column, ${u.edgesRestored + u.edgesRemoved} links, ${u.readingsRestored} readings put back, ${u.assetsRemoved} registry items removed.` }); onDone?.(); })
+                      .catch((e) => setUndone({ busy: false, note: (e as Error).message }));
+                  }} className="rounded-full border border-rose-300 bg-rose-50 text-rose-700 px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50">Undo this read</button>}
+          </div>
         </>
       )}
     </div>

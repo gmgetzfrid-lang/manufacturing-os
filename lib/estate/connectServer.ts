@@ -31,6 +31,8 @@ import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { computeForKnowledgeDoc, applyForDocument } from "@/lib/equipmentBridgeServer";
 import { resolveEstate } from "./resolverServer";
 import { computeReadiness, type EstateReadiness } from "./readinessServer";
+import { snapshotDoc, recordDocChange, type RunCtx } from "./runJournal";
+import { looksLikeDrawings } from "./connectPlan";
 
 /** Bump when the tag reader learns to see more: every read copy is read
  *  again once, so sheets read by an older reader catch up on their own. */
@@ -77,7 +79,6 @@ async function ensureUnits(admin: SupabaseClient, orgId: string, actor: string |
   return { had: 0, added: codes };
 }
 
-function looksLikeDrawings(name: string): boolean { return /draw|p&id|p&amp;id|pid|iso|dwg|diagram|schematic|loop/i.test(name); }
 
 async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: Array<{ id: string; name: string }>, actor: { userId: string; name: string | null }, opts: { visionAllPages?: boolean; rereadAll?: boolean }): Promise<{ libraryId: string; libraryName: string; created: boolean; partial: Array<{ name: string; count: number }>; sourcesAdded: number; sync: { added: number; refreshed: number; errors: string[] }; rereads: number }> {
   // Which library reads the drawings. Rules, in order:
@@ -116,8 +117,12 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
   const partial: Array<{ name: string; count: number }> = [];
   {
     const others = libs.filter((l) => l.id !== libraryId);
+    const { data: folderRows } = await admin.from("collections").select("id, library_id").in("id", sources.filter((s) => s.source_type === "folder").map((s) => s.source_id).concat(["00000000-0000-0000-0000-000000000000"]));
+    const folderLib = new Map(((folderRows as Array<{ id: string; library_id: string }> | null) ?? []).map((f) => [f.id, f.library_id]));
     for (const l of others) {
-      const watchesSome = sources.some((s) => s.library_id === l.id);
+      // Only a library that reads part of THESE drawings; a library of specs
+      // reads different files, and its readings are no use here.
+      const watchesSome = sources.some((s) => s.library_id === l.id && dcIds.has(s.source_type === "library" ? s.source_id : folderLib.get(s.source_id) ?? ""));
       if (!watchesSome) continue;
       const { count } = await admin.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("library_id", l.id).eq("status", "ready").not("source_document_id", "is", null);
       if (count) partial.push({ name: l.name, count });
@@ -183,7 +188,7 @@ async function ensureBridge(admin: SupabaseClient, orgId: string, dcLibs: Array<
   }
 }
 
-async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: string, actor: string | null, deadline: number): Promise<{ drawings: number; applied: number; assets: number; left: number }> {
+async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: string, actor: string | null, deadline: number, run?: RunCtx): Promise<{ drawings: number; applied: number; assets: number; left: number }> {
   const out = { drawings: 0, applied: 0, assets: 0, left: 0 };
   const { data: ready } = await admin.from("knowledge_documents").select("id, source_document_id").eq("library_id", libraryId).eq("status", "ready").not("source_document_id", "is", null).limit(3000);
   const mirrors = (ready as Array<{ id: string; source_document_id: string }> | null) ?? [];
@@ -201,7 +206,9 @@ async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: st
       const c = await computeForKnowledgeDoc(admin, m.id);
       out.drawings++;
       if (!c || !c.suggestions.length) { done.add(m.source_document_id); continue; }
+      const before = run ? await snapshotDoc(admin, orgId, m.source_document_id) : null;
       const r = await applyForDocument(admin, { orgId, documentId: m.source_document_id, userId: actor });
+      if (run && before) await recordDocChange(admin, orgId, run, m.source_document_id, before, await snapshotDoc(admin, orgId, m.source_document_id));
       out.applied++; out.assets += r.createdAssets; done.add(m.source_document_id);
     } catch { /* one bad drawing never stops the pass */ }
   }
@@ -209,16 +216,22 @@ async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: st
   return out;
 }
 
-export async function connectEverything(admin: SupabaseClient, input: { orgId: string; libraryIds?: string[]; actor: { userId: string; name: string | null }; budgetMs?: number; visionAllPages?: boolean; rereadAll?: boolean }): Promise<ConnectStatus> {
+export async function connectEverything(admin: SupabaseClient, input: { orgId: string; libraryIds?: string[]; actor: { userId: string; name: string | null }; budgetMs?: number; visionAllPages?: boolean; rereadAll?: boolean; runId?: string }): Promise<ConnectStatus> {
+  const run: RunCtx | undefined = input.runId ? { runId: input.runId, label: "Connect everything", actor: input.actor } : undefined;
   const deadline = Date.now() + (input.budgetMs ?? 40_000);
   const steps: ConnectStep[] = [];
   const { orgId } = input;
 
   // Which Document Control libraries hold drawings.
   const { data: libRows } = await admin.from("libraries").select("id, name").eq("org_id", orgId).limit(200);
-  const all = ((libRows as Array<{ id: string; name: string }> | null) ?? []);
-  let dcLibs = input.libraryIds?.length ? all.filter((l) => input.libraryIds!.includes(l.id)) : all.filter((l) => looksLikeDrawings(l.name));
-  if (!dcLibs.length) dcLibs = all;
+  // A library marked never send to AI is never read, whatever its name.
+  const { excludedLibraryIds } = await import("@/lib/aiLibraries");
+  const neverAi = await excludedLibraryIds(admin, orgId);
+  const all = ((libRows as Array<{ id: string; name: string }> | null) ?? []).filter((l) => !neverAi.has(l.id));
+  // Exactly the libraries the person saw in the preview, or the drawing
+  // libraries. Never every library just because none matched.
+  const dcLibs = input.libraryIds?.length ? all.filter((l) => input.libraryIds!.includes(l.id)) : all.filter((l) => looksLikeDrawings(l.name));
+  if (!dcLibs.length) throw new Error("No library to read: pick at least one in the preview. Libraries marked never send to AI cannot be picked.");
 
   // 1. Units.
   const u = await ensureUnits(admin, orgId, input.actor.userId);
@@ -263,7 +276,7 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
 
   // 4. Registry from the read drawings.
   await ensureBridge(admin, orgId, dcLibs);
-  const reg = Date.now() < deadline ? await buildRegistry(admin, orgId, r.libraryId, input.actor.userId, deadline) : { drawings: 0, applied: 0, assets: 0, left: 0 };
+  const reg = Date.now() < deadline ? await buildRegistry(admin, orgId, r.libraryId, input.actor.userId, deadline, run) : { drawings: 0, applied: 0, assets: 0, left: 0 };
   steps.push({
     key: "registry", title: "Equipment registry", state: reg.left ? "working" : queued.length ? "waiting" : "done",
     detail: `${reg.applied} drawing${reg.applied === 1 ? "" : "s"} tagged just now · ${reg.assets} new item${reg.assets === 1 ? "" : "s"}${reg.left ? ` · ${reg.left} drawings to go` : ""}${queued.length ? " · more once the reading finishes" : ""}`,

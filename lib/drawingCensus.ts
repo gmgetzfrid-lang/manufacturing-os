@@ -28,9 +28,10 @@ import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { computeForKnowledgeDoc, applyForDocument } from "@/lib/equipmentBridgeServer";
 import { resolveEstate } from "@/lib/estate/resolverServer";
 import type { AiCallImage } from "@/lib/ai/providerCall";
+import { snapshotDoc, recordDocChange, recordReading, type RunCtx } from "@/lib/estate/runJournal";
 
 export interface CensusSheet {
-  equipment: Array<{ tag: string; code: string | null; name: string | null }>;
+  equipment: Array<{ tag: string; code: string | null; name: string | null; details?: string | null }>;
   instruments: string[];
   offSheet: Array<{ tag: string; direction: "from" | "to" | null; drawing: string | null; sheet: string | null }>;
   title: { drawingNumber: string | null; sheet: string | null; rev: string | null };
@@ -41,7 +42,9 @@ export interface CensusPageResult {
   pageCount: number;
   done: boolean;
   sheet: CensusSheet;
-  correction?: { removed: string[]; kept: string[]; added: string[]; createdAssets: number };
+  correction?: { removed: string[]; kept: string[]; added: string[]; createdAssets: number; described: number };
+  /** False when the undo journal is not installed (migration 20261021). */
+  journaled: boolean;
 }
 
 const RENDER_WIDTH = 3400;
@@ -52,7 +55,7 @@ const SYSTEM =
   "You get an OVERVIEW image of the whole sheet, then four zoomed TILES of it (top-left, top-right, " +
   "bottom-left, bottom-right) that overlap slightly. Read characters from the tiles; use the overview " +
   "for layout. Return STRICT JSON and nothing else:\n" +
-  '{"equipment":[{"tag":"V-14","code":"6110.14","name":"35# STEAM DRUM"}],' +
+  '{"equipment":[{"tag":"V-14","code":"6110.14","name":"35# STEAM DRUM","details":"4\'-0\\" I.D. x 10\'-0\\" T/T; DESIGN 75 PSIG @ 650 F"}],' +
   '"instruments":["PIT-130","PSV-21","LV-222"],' +
   '"offSheet":[{"tag":"X-45","direction":"from","drawing":"2002-D 2001","sheet":"12"}],' +
   '"title":{"drawingNumber":"2002-D 2001","sheet":"5","rev":"42"}}\n' +
@@ -61,7 +64,8 @@ const SYSTEM =
   "description, often with a site code in parentheses and design data (e.g. \"V-14 / (6110.14) / 35# STEAM " +
   "DRUM / 4'-0\\\" I.D. x 10'-0\\\" T/T\"). Vessels, drums, columns, exchangers, pumps, compressors, tanks, " +
   "heaters, filters, packages. One entry per item. code = the parenthesised site code if printed, else null. " +
-  "name = the service description if printed, else null.\n" +
+  "name = the service description if printed, else null. details = the rest of the callout as printed on one " +
+  "line — size, design pressure and temperature, capacity, head, duty, materials — separated by \"; \", else null.\n" +
   "- instruments: instrument bubbles (function letters over a loop number — PIT over 130 is \"PIT-130\"), " +
   "relief valves (PSV, PRV), control valves (PV, LV, FV, TV), gauges and switches. Join letters and number " +
   "with one dash.\n" +
@@ -85,7 +89,7 @@ export function parseCensus(text: string): CensusSheet {
   for (const e of Array.isArray(raw.equipment) ? raw.equipment : []) {
     const o = (e ?? {}) as Record<string, unknown>;
     const tag = normTag(o.tag); if (!tag || eq.has(tag)) continue;
-    eq.set(tag, { tag, code: str(o.code, 24), name: str(o.name) });
+    eq.set(tag, { tag, code: str(o.code, 24), name: str(o.name), details: str(o.details, 240) });
   }
   const inst = new Set<string>();
   for (const i of Array.isArray(raw.instruments) ? raw.instruments : []) {
@@ -134,14 +138,14 @@ async function renderTiles(bytes: Uint8Array, page: number): Promise<{ images: A
 }
 
 /** Read one page of a knowledge document's drawing and store the result. */
-export async function censusPage(input: { orgId: string; userId: string; knowledgeDocId: string; page: number; deadlineMs: number }): Promise<CensusPageResult> {
+export async function censusPage(input: { orgId: string; userId: string; knowledgeDocId: string; page: number; deadlineMs: number; run: RunCtx }): Promise<CensusPageResult> {
   const { data: kdoc } = await supabaseAdmin.from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count, source_document_id").eq("id", input.knowledgeDocId).eq("org_id", input.orgId).maybeSingle();
   if (!kdoc) throw new Error("That drawing has no read copy.");
   const k = kdoc as { id: string; library_id: string; name: string; file_key: string; page_count: number | null; source_document_id: string | null };
   const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: k.file_key }));
   const bytes = new Uint8Array(await new Response(obj.Body as ReadableStream).arrayBuffer());
   const { images, pageCount } = await renderTiles(bytes, input.page);
-  if (!images.length) return { page: input.page, pageCount, done: true, sheet: { equipment: [], instruments: [], offSheet: [], title: { drawingNumber: null, sheet: null, rev: null } } };
+  if (!images.length) return { page: input.page, pageCount, done: true, journaled: true, sheet: { equipment: [], instruments: [], offSheet: [], title: { drawingNumber: null, sheet: null, rev: null } } };
 
   const out = await governedAiCall({
     orgId: input.orgId, userId: input.userId, op: "drawingCensus", instructionScope: "equipment",
@@ -154,10 +158,12 @@ export async function censusPage(input: { orgId: string; userId: string; knowled
 
   // Replace this page's reading: equipment, instruments and off-sheet tags
   // from the old reader go; the census marker says this page is read right.
+  const { data: prior } = await supabaseAdmin.from("knowledge_page_entities").select("*").eq("document_id", k.id).eq("page", input.page).in("kind", ["equipment", "instrument", "xref", "census"]);
+  let journaled = await recordReading(supabaseAdmin, input.orgId, input.run, k.id, k.source_document_id, input.page, (prior as Array<Record<string, unknown>> | null) ?? []);
   await supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", k.id).eq("page", input.page).in("kind", ["equipment", "instrument", "xref", "census"]);
   const base = { org_id: input.orgId, library_id: k.library_id, document_id: k.id, page: input.page, x: null, y: null };
   const rows: Array<Record<string, unknown>> = [
-    ...sheet.equipment.map((e) => ({ ...base, kind: "equipment", tag: e.tag, raw: [e.tag, e.code ? `(${e.code})` : "", e.name ?? ""].filter(Boolean).join(" ").slice(0, 160) })),
+    ...sheet.equipment.map((e) => ({ ...base, kind: "equipment", tag: e.tag, raw: [e.tag, e.code ? `(${e.code})` : "", e.name ?? "", e.details ? `· ${e.details}` : ""].filter(Boolean).join(" ").slice(0, 400) })),
     ...sheet.instruments.map((t) => ({ ...base, kind: "instrument", tag: t, raw: t })),
     ...sheet.offSheet.map((o) => ({ ...base, kind: "xref", tag: o.tag, raw: [o.direction?.toUpperCase(), o.tag, o.drawing, o.sheet ? `SHT ${o.sheet}` : ""].filter(Boolean).join(" ").slice(0, 160) })),
     { ...base, kind: "census", tag: "census-v1", raw: `${sheet.equipment.length} equipment, ${sheet.instruments.length} instruments, ${sheet.offSheet.length} off-sheet` },
@@ -166,15 +172,19 @@ export async function censusPage(input: { orgId: string; userId: string; knowled
   if (error) throw new Error(`Could not store the reading: ${error.message}`);
 
   const done = input.page >= pageCount;
-  const res: CensusPageResult = { page: input.page, pageCount, done, sheet };
-  if (done && k.source_document_id) res.correction = await correctDocument(input.orgId, k.id, k.source_document_id, input.userId);
+  const res: CensusPageResult = { page: input.page, pageCount, done, sheet, journaled };
+  if (done && k.source_document_id) {
+    const c = await correctDocument(input.orgId, k.id, k.source_document_id, input.userId, input.run, k.name);
+    res.correction = c.correction; journaled = journaled && c.journaled; res.journaled = journaled;
+  }
   return res;
 }
 
 /** After a sheet is read right: take back what the old reading put on the
  *  document and is not on the sheet, apply what is. */
-export async function correctDocument(orgId: string, knowledgeDocId: string, documentId: string, userId: string): Promise<NonNullable<CensusPageResult["correction"]>> {
+export async function correctDocument(orgId: string, knowledgeDocId: string, documentId: string, userId: string, run: RunCtx, sheetName: string): Promise<{ correction: NonNullable<CensusPageResult["correction"]>; journaled: boolean }> {
   const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const before = await snapshotDoc(supabaseAdmin, orgId, documentId);
   const { data: ents } = await supabaseAdmin.from("knowledge_page_entities").select("tag").eq("document_id", knowledgeDocId).eq("kind", "equipment").limit(2000);
   const onSheet = new Set(((ents as Array<{ tag: string }> | null) ?? []).map((e) => norm(e.tag)));
 
@@ -222,5 +232,32 @@ export async function correctDocument(orgId: string, knowledgeDocId: string, doc
     if (r) { added = r.appliedTags.filter((t) => !kept.some((k) => norm(k) === norm(t))); createdAssets = r.createdAssets; }
   }
   await resolveEstate(supabaseAdmin, { orgId, documentIds: [documentId] }).catch(() => undefined);
-  return { removed: wrong, kept, added, createdAssets };
+
+  // 4. What the callout says about each piece of equipment, written onto
+  //    registry items nobody has described: the service name, the site
+  //    code, and the design data, with the sheet it came from.
+  const assetsUpdated: Array<{ id: string; before: Record<string, unknown>; after: Record<string, unknown> }> = [];
+  const { data: callouts } = await supabaseAdmin.from("knowledge_page_entities").select("tag, raw, page").eq("document_id", knowledgeDocId).eq("kind", "equipment").limit(500);
+  for (const c of (callouts as Array<{ tag: string; raw: string | null; page: number }> | null) ?? []) {
+    const m = String(c.raw ?? "").match(/^\S+(?:\s+\(([^)]+)\))?\s*([^·]*?)\s*(?:·\s*(.*))?$/);
+    const code = m?.[1]?.trim() || null, name = m?.[2]?.trim() || null, details = m?.[3]?.trim() || null;
+    if (!name && !details && !code) continue;
+    const { data: a } = await supabaseAdmin.from("assets").select("id, description, code, metadata").eq("org_id", orgId).eq("tag_normalized", norm(c.tag)).maybeSingle();
+    const asset = a as { id: string; description: string | null; code: string | null; metadata: Record<string, unknown> | null } | null;
+    if (!asset) continue;
+    const patch: Record<string, unknown> = {};
+    if (!asset.description && name) patch.description = name;
+    if (!asset.code && code) patch.code = code;
+    const md = asset.metadata ?? {};
+    if (!md.drawingCallout) patch.metadata = { ...md, drawingCallout: { code, name, details, sheet: sheetName, page: c.page, documentId } };
+    if (!Object.keys(patch).length) continue;
+    const prev: Record<string, unknown> = {};
+    for (const k of Object.keys(patch)) prev[k] = (asset as Record<string, unknown>)[k] ?? null;
+    const { error } = await supabaseAdmin.from("assets").update(patch).eq("id", asset.id).eq("org_id", orgId);
+    if (!error) assetsUpdated.push({ id: asset.id, before: prev, after: patch });
+  }
+
+  const after = await snapshotDoc(supabaseAdmin, orgId, documentId);
+  const journaled = await recordDocChange(supabaseAdmin, orgId, run, documentId, before, after, { assetsUpdated });
+  return { correction: { removed: wrong, kept, added, createdAssets, described: assetsUpdated.length }, journaled };
 }

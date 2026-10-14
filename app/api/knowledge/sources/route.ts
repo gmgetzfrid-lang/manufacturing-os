@@ -190,6 +190,8 @@ export async function POST(req: NextRequest) {
     .eq("org_id", orgId).eq("uid", user.id).maybeSingle();
   const userName = (memberRow?.display_name as string) || (memberRow?.email as string) || "Member";
 
+  const { excludedLibraryIds } = await import("@/lib/aiLibraries");
+  const neverAi = await excludedLibraryIds(supabaseAdmin, orgId);
   let linked = 0;
   for (const item of additions) {
     const type = item.type === "folder" ? "folder" : item.type === "library" ? "library" : null;
@@ -198,6 +200,10 @@ export async function POST(req: NextRequest) {
     // Server-side ACL check — the picker filter is convenience, THIS is law.
     if (!containerReadable(type, id, principal, landscape)) {
       return bad("One of the selected containers doesn't exist or isn't readable by you.", 403);
+    }
+    const ownerLib = type === "library" ? id : landscape.folders.get(id)?.library_id ?? null;
+    if (ownerLib && neverAi.has(ownerLib)) {
+      return bad(`"${landscape.libraries.get(ownerLib)?.name ?? "That library"}" is marked never send to AI. Turn that off in Library config first if it should be read.`, 403);
     }
     const sourceName = type === "library"
       ? landscape.libraries.get(id)?.name ?? "Library"

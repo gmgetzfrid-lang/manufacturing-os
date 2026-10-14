@@ -170,6 +170,22 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     if (target.size) { fitted.current = true; fitTo(target, upPosRef.current); }
   }, [target, byId]);
 
+  // Picking a file flies to it (its equipment rings round it); letting it
+  // go frames the whole view again.
+  const prevSel = useRef<string | null>(null);
+  useEffect(() => {
+    const was = prevSel.current; prevSel.current = selectedId;
+    const n = selectedId ? byId.get(selectedId) : undefined;
+    if (n && !isContainer(n.kind)) {
+      const p = targetRef.current.get(n.id);
+      const canvas = canvasRef.current;
+      if (p && canvas) camTarget.current = { scale: 1.25, x: -p.x * 1.25, y: -p.y * 1.25 };
+    } else if (!selectedId && was && targetRef.current.size) {
+      fitTo(targetRef.current, upPosRef.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
   const sameEdges = useMemo(() => {
     const vis = new Set(visible.map((n) => n.id));
     const out: Array<[string, string]> = [];
@@ -223,6 +239,23 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       }
 
       const litNow = litRef.current, searching = litNow.size > 0;
+      // FOCUS: a picked FILE is the subject. It, the folders above it and
+      // the equipment around it stay; everything else steps back and goes
+      // quiet, so nothing covers what you are looking at.
+      const selNow = selRef.current;
+      const selNode = selNow ? byId.get(selNow) : undefined;
+      const focusOn = !!selNode && !isContainer(selNode.kind);
+      const inFocus = new Set<string>();
+      if (focusOn && selNow) {
+        inFocus.add(selNow);
+        let p = selNode!.parentId; const seen = new Set<string>();
+        while (p && !seen.has(p)) { seen.add(p); inFocus.add(p); p = byId.get(p)?.parentId ?? null; }
+      }
+      const quiet = (id: string) => focusOn && !inFocus.has(id);
+      // Labels are placed most important first; one that would overlap a
+      // label already placed is not drawn.
+      const placed: Array<[number, number, number, number]> = [];
+      const free = (x: number, y: number, w: number, h: number) => !placed.some(([px, py, pw, ph]) => x < px + pw && px < x + w && y < py + ph && py < y + h);
       const litPath = new Set<string>();
       if (searching) {
         for (const id of litNow.keys()) {
@@ -266,8 +299,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         if (!n.parentId) continue;
         const a = pos.get(n.parentId), b = pos.get(n.id);
         if (!a || !b) continue;
-        const bright = !searching || litNow.has(n.id) || litPath.has(n.id);
-        ctx.strokeStyle = bright ? "rgba(100,116,139,0.55)" : "rgba(100,116,139,0.10)";
+        const bright = (!searching || litNow.has(n.id) || litPath.has(n.id)) && !quiet(n.id);
+        ctx.strokeStyle = bright ? "rgba(100,116,139,0.55)" : "rgba(100,116,139,0.08)";
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
       }
       // Same-bytes arcs.
@@ -309,6 +342,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       // label, and they keep the order of the direction their files lie in,
       // so each sits near its own files. Turned away from the "up" button.
       const upHere = upPosRef.current;
+      const satDraws: Array<() => void> = [];
       const centroids = new Map<string, { x: number; y: number }>();
       let ax = 0, ay = 0, an = 0;
       for (const sat of satsHere) {
@@ -340,6 +374,12 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         const cur = satPos.current.get(sat.id) ?? target;
         cur.x += (target.x - cur.x) * 0.2; cur.y += (target.y - cur.y) * 0.2;
         satPos.current.set(sat.id, cur);
+        // Reserve its place now so file labels steer round it; draw it last
+        // so nothing paints over it.
+        ctx.font = "800 12px ui-sans-serif, system-ui";
+        const rw = Math.max(52, ctx.measureText(sat.label).width + 6);
+        placed.push([cur.x - rw / 2, cur.y - 26, rw, 26 + 20 + 19]);
+        satDraws.push(() => {
         const LINK: Record<string, string> = { drawn_on: "rgba(14,165,233,0.8)", mentioned_in: "rgba(99,102,241,0.8)", tagged_to: "rgba(16,185,129,0.8)", filed_under: "rgba(217,119,6,0.8)", in_project: "rgba(245,158,11,0.8)", linked_unit: "rgba(124,58,237,0.8)", named: "rgba(148,163,184,0.5)" };
         ctx.setLineDash([5 / s, 4 / s]); ctx.lineWidth = Math.max(1, 1.4 / s);
         for (const l of sat.links) {
@@ -359,20 +399,23 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         const tw = ctx.measureText(sat.label).width;
         ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(cur.x - tw / 2 - 3, cur.y + r + 3, tw + 6, 16);
         ctx.fillStyle = "#0f172a"; ctx.fillText(sat.label, cur.x, cur.y + r + 5);
+        });
       });
       for (const sat of sats) if (!satsHere.includes(sat)) satPos.current.delete(sat.id);
 
       // Nodes.
       const sel = selRef.current, hov = hoverRef.current, imgs = imagesRef.current, col = collapsedRef.current;
+      const labels: Array<{ n: FileGraphNode; p: Placed; r: number; light: boolean; dim: boolean; pri: number }> = [];
       ctx.textAlign = "center"; ctx.textBaseline = "top";
       for (const n of visibleRef.current) {
         const p = pos.get(n.id);
         if (!p) continue;
         const light = litNow.get(n.id);
         const active = n.id === activeRef.current;
-        const dim = searching && !light && !litPath.has(n.id);
+        const hush = quiet(n.id);
+        const dim = (searching && !light && !litPath.has(n.id)) || hush;
         const r = RADIUS[n.kind];
-        ctx.globalAlpha = dim ? 0.22 : 1;
+        ctx.globalAlpha = hush ? 0.12 : dim ? 0.22 : 1;
         if (light) {
           ctx.beginPath(); ctx.arc(p.x, p.y, r + (active ? 14 : 9), 0, Math.PI * 2);
           ctx.fillStyle = VERDICT[light.verdict] + (active ? "55" : "40"); ctx.fill();
@@ -433,14 +476,23 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           ctx.fillText(t, bx + w / 2, byy + 6.8);
           ctx.textBaseline = "top";
         }
-        // Label.
-        const showLabel = isContainer(n.kind) || light || n.id === sel || n.id === hov || s > 0.75;
-        if (showLabel) {
+        // Label: queued, drawn after every node so nothing paints over it.
+        const showLabel = !hush && (isContainer(n.kind) || light || n.id === sel || n.id === hov || s > 0.75);
+        if (showLabel) labels.push({ n, p, r, light: !!light, dim, pri: n.id === sel ? 0 : n.id === hov ? 1 : active ? 2 : light ? 3 + (ranksRef.current?.get(n.id) ?? 50) / 100 : isContainer(n.kind) ? 4 : 5 });
+        ctx.globalAlpha = 1;
+      }
+      labels.sort((a, b) => a.pri - b.pri);
+      for (const { n, p, r, dim } of labels) {
+        {
           const container = isContainer(n.kind);
           const fontPx = container ? 12 : 11;
           ctx.font = `${container ? 700 : 500} ${fontPx}px ui-sans-serif, system-ui`;
           const label = n.label.length > 28 ? n.label.slice(0, 26) + "…" : n.label;
           const tw = ctx.measureText(label).width;
+          const lh = fontPx + 4 + (n.badge ? 15 : 0);
+          if (n.id !== sel && !free(p.x - tw / 2 - 3, p.y + r + 3, tw + 6, lh)) continue;
+          placed.push([p.x - tw / 2 - 3, p.y + r + 3, tw + 6, lh]);
+          ctx.globalAlpha = dim ? 0.5 : 1;
           ctx.fillStyle = "rgba(255,255,255,0.85)";
           ctx.fillRect(p.x - tw / 2 - 3, p.y + r + 3, tw + 6, fontPx + 4);
           ctx.fillStyle = dim ? "rgba(51,65,85,0.5)" : container ? "#0f172a" : "#334155";
@@ -456,6 +508,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         }
         ctx.globalAlpha = 1;
       }
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (const d of satDraws) d();
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);

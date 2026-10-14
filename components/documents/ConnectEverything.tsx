@@ -13,10 +13,14 @@ import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Loader2, Clock, AlertCircle, Sparkles, X } from "lucide-react";
 import { estatePost } from "@/lib/estate/client";
 import { ingestKnowledgeDocument } from "@/lib/knowledge";
-import { readDrawing, pendingDrawings } from "@/lib/drawingCensusClient";
+import { readDrawing, pendingDrawings, undoRun as undoRunCall, newRunId } from "@/lib/drawingCensusClient";
 import type { ConnectStatus } from "@/lib/estate/connectServer";
+import type { ConnectPlan } from "@/lib/estate/connectPlan";
 
 const MAX_PASSES = 40;
+
+type Bulk = { done: number; total: number; equipment: number; removed: number; added: number; created: number; failed: number; current: string | null; finished: boolean; lastError: string | null };
+type UndoResult = Awaited<ReturnType<typeof undoRunCall>>;
 
 export function useConnectEverything(orgId: string | null, onDone?: () => void) {
   const [status, setStatus] = useState<ConnectStatus | null>(null);
@@ -25,16 +29,49 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
   const [reading, setReading] = useState<{ done: number; total: number; visionPages: number; reusedPages: number; visionSkip: string | null } | null>(null);
   const stop = useRef(false);
   /** Reading every drawing with the person's model, sheet by sheet. */
-  const [bulk, setBulk] = useState<{ done: number; total: number; equipment: number; removed: number; added: number; created: number; failed: number; current: string | null; finished: boolean; lastError: string | null } | null>(null);
+  const [bulk, setBulk] = useState<Bulk | null>(null);
+  /** The preview shown before anything runs. */
+  const [plan, setPlan] = useState<ConnectPlan | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  /** The run in progress or just finished — what Undo puts back. */
+  const [runId, setRunId] = useState<string | null>(null);
+  const [journaled, setJournaled] = useState(true);
+  const [undo, setUndo] = useState<{ busy: boolean; result: UndoResult | null; error: string | null } | null>(null);
+  const libsRef = useRef<string[] | undefined>(undefined);
   const onDoneRef = useRef(onDone); useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
 
-  const run = async (opts: { visionAllPages?: boolean; rereadAll?: boolean } = {}) => {
+  /** Step 1: show what would be sent to AI. Nothing runs. */
+  const openPreview = async (libraryIds?: string[]) => {
+    if (!orgId) return;
+    setPlanLoading(true); setError(null);
+    try { setPlan(await estatePost<ConnectPlan>("/api/estate/connect", { orgId, action: "plan", libraryIds })); }
+    catch (e) { setError((e as Error).message); }
+    finally { setPlanLoading(false); }
+  };
+  const closePreview = () => setPlan(null);
+
+  /** Step 2: the person pressed Start with these libraries. */
+  const start = async (libraryIds: string[]) => {
+    setPlan(null);
+    const id = newRunId();
+    setRunId(id); setJournaled(true); setUndo(null); setBulk(null);
+    libsRef.current = libraryIds;
+    await run({ runId: id, libraryIds });
+    if (!stop.current) await readAll({ runId: id, libraryIds, consented: true });
+  };
+
+  const run = async (opts: { visionAllPages?: boolean; rereadAll?: boolean; runId?: string; libraryIds?: string[] } = {}) => {
     if (!orgId || running) return;
+    const rid = opts.runId ?? runId ?? newRunId();
+    const libraryIds = opts.libraryIds ?? libsRef.current;
+    if (!runId && !opts.runId) setRunId(rid);
     stop.current = false; setRunning(true); setError(null); setReading(null);
     try {
       for (let pass = 0; pass < MAX_PASSES && !stop.current; pass++) {
-        // Options apply on the first pass; later passes only continue.
-        const st = await estatePost<ConnectStatus>("/api/estate/connect", pass === 0 ? { orgId, ...opts } : { orgId });
+        // Options apply on the first pass; later passes only continue. The
+        // libraries and the run id go every time.
+        const body = { orgId, runId: rid, libraryIds, ...(pass === 0 ? { visionAllPages: opts.visionAllPages, rereadAll: opts.rereadAll } : {}) };
+        const st = await estatePost<ConnectStatus>("/api/estate/connect", body);
         setStatus(st);
         if (!st.more) break;
         if (st.queuedIds.length) {
@@ -68,21 +105,25 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
       }
     } catch (e) { setError((e as Error).message); }
     finally { setRunning(false); setReading(null); onDoneRef.current?.(); }
-    // Then the drawings themselves, read the way the chat reads them —
-    // asked once, because it spends on the person's key.
-    if (!stop.current) await readAll(true);
   };
 
-  const readAll = async (fromConnect = false) => {
+  /** Read drawings with the person's model. From the preview the person has
+   *  already seen and agreed; on its own it asks first. */
+  const readAll = async (opts: { runId?: string; libraryIds?: string[]; consented?: boolean } = {}) => {
     if (!orgId) return;
+    const libraryIds = opts.libraryIds ?? libsRef.current;
     let list: Awaited<ReturnType<typeof pendingDrawings>>;
-    try { list = await pendingDrawings(orgId); } catch (e) { setError((e as Error).message); return; }
-    const todo = fromConnect ? list.pending : list.pending.length ? list.pending : [];
-    if (!todo.length) { if (!fromConnect) setBulk({ done: 0, total: 0, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: true, lastError: null }); return; }
-    const ok = window.confirm(`Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nEach sheet is read the way the chat reads it — the whole sheet plus four zoomed tiles — and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time.`);
-    if (!ok) return;
+    try { list = await pendingDrawings(orgId, libraryIds); } catch (e) { setError((e as Error).message); return; }
+    const todo = list.pending;
+    if (!todo.length) { setBulk({ done: 0, total: 0, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: true, lastError: null }); return; }
+    if (!opts.consented) {
+      const ok = window.confirm(`Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nEach sheet is sent to your model whole, plus four zoomed tiles, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
+      if (!ok) return;
+    }
+    const rid = opts.runId ?? newRunId();
+    setRunId(rid); setUndo(null);
     stop.current = false; setRunning(true);
-    const st = { done: 0, total: todo.length, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null as string | null, finished: false, lastError: null as string | null };
+    const st: Bulk = { done: 0, total: todo.length, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: false, lastError: null };
     setBulk({ ...st });
     const queue = [...todo];
     const worker = async () => {
@@ -91,11 +132,12 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
         const next = queue.shift(); if (!next) return;
         st.current = next.name; setBulk({ ...st });
         try {
-          const r = await readDrawing(orgId, { knowledgeDocumentId: next.knowledgeDocumentId });
+          const r = await readDrawing(orgId, { knowledgeDocumentId: next.knowledgeDocumentId }, undefined, { runId: rid, runLabel: `Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with AI` });
           st.equipment += r.equipment.length;
           st.removed += r.correction?.removed.length ?? 0;
           st.added += r.correction?.added.length ?? 0;
           st.created += r.correction?.createdAssets ?? 0;
+          if (!r.journaled) setJournaled(false);
         } catch (e) {
           st.failed++; st.lastError = (e as Error).message;
           // Out of budget or no key: every next sheet would fail the same way.
@@ -109,8 +151,17 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     setRunning(false);
     onDoneRef.current?.();
   };
+
+  const undoLast = async () => {
+    if (!orgId || !runId) return;
+    if (!window.confirm("Undo this run?\n\nEquipment columns, links and readings go back to how they were before it. Registry items it created are removed unless someone has since added photos, files, notes or edits to them. Anything a person changed after the run is left alone.")) return;
+    setUndo({ busy: true, result: null, error: null });
+    try { setUndo({ busy: false, result: await undoRunCall(orgId, runId), error: null }); onDoneRef.current?.(); }
+    catch (e) { setUndo({ busy: false, result: null, error: (e as Error).message }); }
+  };
+
   const cancel = () => { stop.current = true; };
-  return { status, running, error, reading, run, cancel, bulk, readAll };
+  return { status, running, error, reading, run, cancel, bulk, readAll, plan, planLoading, openPreview, closePreview, start, runId, journaled, undo, undoLast };
 }
 
 export function ConnectButton({ running, onClick, disabled, className = "" }: { running: boolean; onClick: () => void; disabled?: boolean; className?: string }) {
@@ -122,15 +173,17 @@ export function ConnectButton({ running, onClick, disabled, className = "" }: { 
   );
 }
 
-export function ConnectProgress({ status, running, error, reading, onCancel, onClose, onRun, bulk, onReadAll }: {
+export function ConnectProgress({ status, running, error, reading, onCancel, onClose, onRun, bulk, onReadAll, undoBox }: {
   status: ConnectStatus | null; running: boolean; error: string | null; reading: { done: number; total: number; visionPages: number; reusedPages: number; visionSkip: string | null } | null;
   onCancel: () => void; onClose: () => void;
   /** Run again with options: read every page with vision, or re-read everything. */
   onRun?: (opts: { visionAllPages?: boolean; rereadAll?: boolean }) => void;
   bulk?: { done: number; total: number; equipment: number; removed: number; added: number; created: number; failed: number; current: string | null; finished: boolean; lastError: string | null } | null;
   onReadAll?: () => void;
+  /** Undo the run just finished. */
+  undoBox?: React.ReactNode;
 }) {
-  if (!status && !running && !error) return null;
+  if (!status && !running && !error && !bulk) return null;
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-xs shadow-md space-y-1.5 max-w-md">
       <div className="flex items-center justify-between gap-2">
@@ -164,6 +217,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
           {bulk.finished && bulk.total === 0 && <div>Every drawing is already read this way.</div>}
         </div>
       )}
+      {!running && undoBox}
       {status && (
         <div className="text-[11px] text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-1.5 space-y-1">
           <div>
@@ -183,6 +237,24 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
           {!running && !status.more && <div>Search a tag now. New drawings are picked up nightly, or press the button again.</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** "Undo this run", with what it put back. */
+export function UndoRunBox({ runId, journaled, undo, onUndo }: {
+  runId: string | null; journaled: boolean;
+  undo: { busy: boolean; result: { drawings: number; columnsRestored: number; edgesRestored: number; edgesRemoved: number; assetsRemoved: number; assetsKept: string[]; readingsRestored: number; skipped: string[] } | null; error: string | null } | null;
+  onUndo: () => void;
+}) {
+  if (!runId) return null;
+  if (!journaled) return <div className="text-[11px] text-amber-700">Undo is not available for this run: apply migration 20261021_ai_boundary_runs.sql to record runs.</div>;
+  const r = undo?.result;
+  return (
+    <div className="text-[11px] space-y-0.5">
+      {!r && <button onClick={onUndo} disabled={undo?.busy} className="rounded-full border border-rose-300 bg-rose-50 text-rose-700 px-2 py-0.5 font-semibold hover:bg-rose-100 disabled:opacity-50 inline-flex items-center gap-1">{undo?.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Undo this run</button>}
+      {undo?.error && <div className="text-red-700">{undo.error}</div>}
+      {r && <div className="text-emerald-700">Undone: {r.drawings} drawing{r.drawings === 1 ? "" : "s"} put back · {r.columnsRestored} equipment columns · {r.edgesRestored + r.edgesRemoved} links · {r.readingsRestored} readings · {r.assetsRemoved} registry items removed{r.assetsKept.length ? ` · kept ${r.assetsKept.join(", ")} (someone added to them)` : ""}{r.skipped.length ? ` · ${r.skipped.length} left as a person changed them since` : ""}.</div>}
     </div>
   );
 }

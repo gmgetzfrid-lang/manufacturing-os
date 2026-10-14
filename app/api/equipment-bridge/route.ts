@@ -13,7 +13,7 @@
 //          defaultUnitCode, createAssets }
 //                                  → save the library's bridge mapping
 //
-// Writer roles only (Admin / DocCtrl / Manager / Supervisor) — the bridge
+// Admin and Doc Control only — the bridge
 // writes documents and the registry.
 
 import { NextRequest, NextResponse } from "next/server";
@@ -23,7 +23,7 @@ import { computeForKnowledgeDoc, applyForDocument, type BridgeConfig } from "@/l
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const WRITER_ROLES = new Set(["Admin", "DocCtrl", "Manager", "Supervisor"]);
+const WRITER_ROLES = new Set(["Admin", "DocCtrl"]);
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
