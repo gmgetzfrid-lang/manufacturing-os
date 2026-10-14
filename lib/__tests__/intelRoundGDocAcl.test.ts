@@ -52,6 +52,7 @@ function chain(table: string) {
   let win: { from: number; to: number } | null = null;
   let cap: number | null = null;
   let op: "select" | "delete" | "insert" = "select";
+  let wantCount = false;
   let payload: unknown = null;
   const eqCols: string[] = [];
   const cmp = (a: unknown, b: unknown) => (a == null ? (b == null ? 0 : 1) : b == null ? -1 : a < b ? -1 : a > b ? 1 : 0);
@@ -92,7 +93,8 @@ function chain(table: string) {
       if (db.heldReads === 1 && db.afterFirstHeldRead) db.afterFirstHeldRead();
       return out;
     }
-    return { data: rows(), error: null };
+    const total = wantCount ? (db.tables[table] ?? []).filter((r) => preds.every((p) => p(r))).length : undefined;
+    return { data: rows(), error: null, ...(wantCount ? { count: total } : {}) };
   };
   const c: Row = {};
   const h: ProxyHandler<Row> = {
@@ -112,6 +114,7 @@ function chain(table: string) {
           case "order": orders.push({ col: args[0] as string, asc: (args[1] as { ascending?: boolean } | undefined)?.ascending !== false }); break;
           case "range": win = { from: args[0] as number, to: args[1] as number }; break;
           case "limit": cap = args[0] as number; break;
+          case "select": if ((args[1] as { count?: string } | undefined)?.count === "exact") wantCount = true; break;
           case "delete": op = "delete"; break;
           case "insert": op = "insert"; payload = args[0]; break;
           case "maybeSingle": case "single": {
@@ -325,7 +328,25 @@ describe("KACL-12 — the seam fails CLOSED on its own reads", () => {
     expect(containerReadable("folder", FOLDER, await viewer(), l)).toBe(false);
     expect(await aiReads()).toBe(false);
   });
-  it("done-when 4: the container reads page until a short page — with a row cap below the folder count, the folder past the cap keeps its deny", async () => {
+  it("done-when 4 (continuation): a project max-rows BELOW the page size — every page comes back short — still reads every folder (the exact count, not a short page, ends the read)", async () => {
+    seed();
+    const extra = Array.from({ length: 1300 }, (_, i) => ({
+      id: `g-${String(i).padStart(5, "0")}`, org_id: ORG, library_id: LIB, parent_id: null, path_ids: [], name: `G${i}`, path_names: [`G${i}`],
+      acl: null, visibility: "normal", owner_user_id: null, deleted_at: null,
+    }));
+    const last = extra[extra.length - 1];
+    last.acl = acl([deny("role", "Viewer", ["read"])]) as never;
+    db.tables.collections.push(...extra);
+    db.tables.documents[0].collection_id = last.id;
+    db.maxRows = 500; // below DC_LANDSCAPE_PAGE: a short page that is not the last
+    const l = await loadDcLandscape(ORG);
+    expect(l.folders.size).toBe(extra.length + 1);
+    expect(await aiReads()).toBe(false);
+    last.acl = null as never;
+    expect(await aiReads()).toBe(true);
+  });
+
+  it("done-when 4: the container reads page until every row is read — with a row cap below the folder count, the folder past the cap keeps its deny", async () => {
     seed();
     const extra = Array.from({ length: DC_LANDSCAPE_PAGE + 300 }, (_, i) => ({
       id: `f-${String(i).padStart(5, "0")}`, org_id: ORG, library_id: LIB, parent_id: null, path_ids: [], name: `F${i}`, path_names: [`F${i}`],
@@ -702,7 +723,7 @@ describe("DACL-9 / DACL-10 — the explorer's chains and the one library check (
 });
 
 describe("VFY-7 — the short link's resolver: punctuation-forgiving at the query, a chooser for two exact matches", () => {
-  it("source pins: an in-order character match across separators as the second candidate read, exact normalized matches only, a chooser for more than one, never rows[0]", () => {
+  it("source pins: the normalized number itself (an anchored ~* pattern) as the second candidate read, exact normalized matches only, a chooser for more than one, never rows[0]", () => {
     const home = readFileSync(join(process.cwd(), "app/(protected)/documents/page.tsx"), "utf8");
     // the second candidate read matches the normalized number itself (an
     // anchored ~* pattern), never a loose in-order window

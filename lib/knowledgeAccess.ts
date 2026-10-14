@@ -122,9 +122,12 @@ export class DcLandscapeUnreadableError extends Error {
   }
 }
 
-/** Rows per container read. Each read pages by `id` until a short page, so a
- *  PostgREST max-rows below an org's folder count never truncates the
- *  landscape (KACL-12 done-when 4). */
+/** Rows per container read. Each read pages by `id` until it holds every
+ *  row (KACL-12 done-when 4): the read asks PostgREST for the exact count,
+ *  and the next window starts where the rows already read end, so a
+ *  project max-rows BELOW this page size (a short page that is not the
+ *  last) never truncates the landscape. Without a count (an older
+ *  PostgREST), a short page ends the read, as before. */
 export const DC_LANDSCAPE_PAGE = 1000;
 
 async function readAllPages(
@@ -134,15 +137,18 @@ async function readAllPages(
 ): Promise<Array<Record<string, unknown>>> {
   const what = table === "collections" ? "folders" : table;
   const out: Array<Record<string, unknown>> = [];
-  for (let from = 0; ; from += DC_LANDSCAPE_PAGE) {
-    const { data, error } = await supabaseAdmin
-      .from(table).select(columns).eq("org_id", orgId)
+  for (;;) {
+    const from = out.length;
+    const { data, error, count } = await supabaseAdmin
+      .from(table).select(columns, { count: "exact" }).eq("org_id", orgId)
       .order("id", { ascending: true })
       .range(from, from + DC_LANDSCAPE_PAGE - 1);
     if (error) throw new DcLandscapeUnreadableError(what, error.message ?? String(error));
     const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
     out.push(...rows);
-    if (rows.length < DC_LANDSCAPE_PAGE) return out;
+    if (rows.length === 0) return out;
+    if (typeof count === "number") { if (out.length >= count) return out; }
+    else if (rows.length < DC_LANDSCAPE_PAGE) return out;
   }
 }
 
