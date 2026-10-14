@@ -1,14 +1,15 @@
 "use client";
 
 // Turns — one question, one answer, rendered the way a chat reads:
-//   • the question as a soft bubble that STAYS PINNED at the top of its
-//     pair while the answer below scrolls (sticky), with its attachments;
+//   • the question as a soft bubble, with its attachments; once it scrolls
+//     out of view a ONE-LINE pill of it stays pinned at the top while the
+//     answer scrolls (a full multi-line bubble pinned there ate the page);
 //   • the answer flat, no bubble — the library's hero/basis/sources card
 //     or the controller's answer with its proposals and collapsed trace.
 // Everything the two old surfaces showed is here, assigned a layer: inline
 // for what needs a decision, collapsed for what's about one answer.
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Wrench, ChevronDown, ChevronRight, ShieldAlert, ArrowUpRight, AlertTriangle, Check, Loader2,
@@ -31,8 +32,25 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
 }) {
   const focus = (m.payload as { focus?: string[] } | null)?.focus;
   const inputs = (m.payload as { inputs?: string } | null)?.inputs;
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  // "Stuck" = the full bubble has scrolled out ABOVE the stream. Observed
+  // against the stream's own scroller so the app header doesn't count.
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const el = bubbleRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const root = el.closest("[data-chat-scroller]");
+    const io = new IntersectionObserver(([e]) => {
+      const rootTop = e.rootBounds?.top ?? 0;
+      setStuck(!e.isIntersecting && e.boundingClientRect.bottom <= rootTop + 4);
+    }, { root, threshold: 0 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  const who = mine ? "You" : (m.userName ?? "Someone").split("@")[0];
   return (
-    <div className="sticky top-0 z-10 py-2 bg-[var(--color-canvas)]">
+    <>
+    <div ref={bubbleRef} className="py-2">
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-2xl rounded-tr-md bg-[var(--color-surface-2)] border border-[var(--color-border)] px-4 py-2.5 shadow-sm">
           <div className="text-[14px] text-[var(--color-text)] whitespace-pre-wrap leading-relaxed">{m.content}</div>
@@ -50,11 +68,28 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
             </div>
           )}
           <div className="mt-1 text-[10px] text-[var(--color-text-faint)] text-right">
-            {mine ? "You" : (m.userName ?? "Someone").split("@")[0]} · {relativeTime(m.createdAt)}
+            {who} · {relativeTime(m.createdAt)}
           </div>
         </div>
       </div>
     </div>
+    {/* Zero-height sticky anchor: when the bubble is gone, a one-line pill
+        of the question floats at the top of the stream over the answer.
+        Tap it to jump back to the full question. */}
+    <div className="sticky top-0 z-10 h-0 overflow-visible">
+      {stuck && (
+        <div className="flex justify-end pt-1.5 pr-1">
+          <button
+            onClick={() => bubbleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            title="Back to the question"
+            className="max-w-[70%] inline-flex items-center gap-2 h-8 px-3 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-md text-[12px] text-[var(--color-text)] animate-pop">
+            <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">{who}</span>
+            <span className="truncate">{m.content}</span>
+          </button>
+        </div>
+      )}
+    </div>
+    </>
   );
 }
 

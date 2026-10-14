@@ -82,10 +82,8 @@ export default function MessageStream({
     const el = scrollerRef.current;
     const node = el?.querySelector<HTMLElement>(`[data-turn="${last.id}"]`);
     if (!el || !node) return;
-    // The question bubble above it is sticky — leave room for it.
-    const q = node.previousElementSibling as HTMLElement | null;
-    const qHeight = q?.offsetHeight ?? 0;
-    const top = node.offsetTop - qHeight - 8;
+    // Leave room for the one-line question pill that pins above it.
+    const top = node.offsetTop - 48;
     el.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
   }, [messages]);
 
@@ -100,7 +98,7 @@ export default function MessageStream({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div ref={scrollerRef} onScroll={onScroll} className="h-full overflow-y-auto px-4 sm:px-6">
+      <div ref={scrollerRef} onScroll={onScroll} data-chat-scroller className="h-full overflow-y-auto px-4 sm:px-6">
         <div className="mx-auto max-w-3xl pt-4 pb-6">
           {empty ? (
             <div className="pt-[12vh] text-center animate-rise">
