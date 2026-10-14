@@ -351,7 +351,7 @@ default:
 ## RT-7 · The OS-level notification path is fully built on the service-worker side and completely unwired on the client side — no subscribe, no VAPID key, no sender
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:222-238`, `public/sw.js:240-256`, `supabase/migrations/20260804_push_subscriptions.sql`, `lib/schemaExpectations.ts:99`, `components/pwa/ServiceWorkerManager.tsx:30-50`, `app/layout.tsx:93`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide absence search. The SW handler and the push_subscriptions table exist; there is no subscribe call, no VAPID key, and no sender, so no push can ever be delivered.
@@ -375,6 +375,28 @@ self.addEventListener("push", (event) => {
 - [ ] a client surface calls `Notification.requestPermission()` at a deliberate moment (not on load) and on grant calls `registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`, persisting the result to `push_subscriptions` keyed by user + endpoint
 - [ ] a server sender (in the existing maintenance cron, or alongside `emit()`'s inapp branch) posts to the stored endpoints, with 404/410 responses pruning dead subscriptions
 - [ ] either `task_reminder` gains a producer or the kind is deleted from the union
+
+**Resolution (2026-10-14, notifications Round G).** Package N10 PUSH, branch `fleet/N10-push` (base `ce5a053`), commits `3f53779` (`web-push` 3.6.7), `b3358d9` (the channel) and `669afad` (no push for a registration older than the opt-in control). The build is recorded in full on `OS-2` / `OS-3` / `OS-9` / `OS-10` (`07-os-notifications-and-nudges.md`): one build closes the four lenses that found the same decapitated stack (the plan's sequencing note).
+**Reproduced first** on `ce5a053`, with both of the finding's search shapes:
+- no `pushManager`, `requestPermission`, `new Notification(` or `Notification.permission` outside `node_modules`;
+- `sendNotification`, `webpush`, `push_sub`, `'push'` and `"push"` appeared in `lib/` and `app/api/` only in the three bookkeeping lines (`lib/schemaExpectations.ts:161`, `lib/exportTables.ts:319`, `lib/dataRestore.ts:160`).
+`ServiceWorkerManager` never touched `reg.pushManager`.
+
+**What landed.**
+- The VAPID keypair is in env, documented in `.env.example`.
+- The settings card's deliberate click calls `Notification.requestPermission()`, then `pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`, persisted to `push_subscriptions` keyed by user and endpoint (`endpoint` is UNIQUE; the route writes `user_id` as the caller).
+- The sender, `lib/push/sendPush.ts`, runs alongside `emit()`'s in-app branch (after it, for the recipients whose bell row landed) and prunes on 404 / 410.
+- Verified (loop on `fleet/N10-push` at `669afad`, 2026-10-14): `npx tsc --noEmit` exit 0; `npx eslint` on the changed files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` in four shards (`--shard=N/4`), each exit 0 — 568 files, 12532 passed, 8 expected fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ A VAPID keypair exists in env and is documented in `.env.example` beside the existing entries. It uses the brief's names, which are `OS-2` done-when 2's: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
+  - The public half reaches the browser through `GET /api/push/subscribe`, rather than a `NEXT_PUBLIC_` build-time variable. A VAPID public key is public by design, and a key inlined at build would need a rebuild to rotate.
+  - The private key is read only by `lib/push/sendPush.ts` on the server. The route returns the public key only (pinned: `pushChannel.test.ts` "GET says whether push is configured and gives the PUBLIC key only").
+- ✓ A client surface calls `Notification.requestPermission()` at a deliberate moment (not on load) and, on grant, `registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`, persisting the result to `push_subscriptions` keyed by user and endpoint (`pushOptIn.test.ts`; `pushChannel.test.ts`).
+- ✓ A server sender, alongside `emit()`'s in-app branch, posts to the stored endpoints, and 404 / 410 responses prune dead subscriptions.
+- ✓ (by record) `task_reminder` is deleted from the union. It was removed before this package: `lib/inAppNotifications.ts:47` records it, and `lib/__tests__/notificationKinds.test.ts`'s `RETIRED` list pins it gone.
+
+**Scope / residual.** None in this finding (the producers outside `emit()`: `OS-14`).
 
 ---
 
