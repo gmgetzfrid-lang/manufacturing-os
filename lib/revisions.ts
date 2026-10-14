@@ -521,10 +521,10 @@ export function recallOnRetirement(
     const { recallRetiredDocument } = await staleCopiesLoad;
     await recallRetiredDocument({ ...input, docLabel: docLabel || "A document", libraryId });
   })().catch((e) => {
-    // Non-blocking — the retirement has landed — but never silent (P26 fix
-    // pass 2): a recall that did not run (the module failed to load after a
-    // deploy, a throw past recallRetiredDocument) is logged; the next
-    // recall retries the load.
+    // Non-blocking (the retirement has landed); logged when the recall never
+    // started (P26 fix pass 2): a failed module load, a throw past it. A
+    // failed download_audits read INSIDE recallRetiredDocument is silent
+    // there (notifications DELIV-17). The next recall retries the load.
     console.warn(`[revisions] PROD-17: the retirement recall of document ${input.documentId} did not run`, e);
   });
 }

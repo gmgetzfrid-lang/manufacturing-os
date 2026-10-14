@@ -22,12 +22,18 @@
 //     one IS recalled (fix pass 2: no live door that writes Void recalls,
 //     skipsRetirementRecall); a refused write recalls nothing; a
 //     rolled-back split recalls nothing.
-//   · A recall that does not run is logged, never silent (fix pass 2).
+//   · A recall that never starts (a failed module load, a throw past
+//     recallRetiredDocument) is logged (fix pass 2). Only that: a recall
+//     whose download_audits read fails is silent inside lib/staleCopies.ts
+//     (notifications DELIV-17, not this package's file).
 //   · CENSUS (fix pass): recallOnRetirement is called from exactly the four
 //     doors above and nowhere else — the status editors (the library page,
-//     BulkEditModal) are PROD-17 residual doors and do not call it, so a
-//     door that later routes a retirement through changeDocumentStatus or
-//     archiveDocument cannot also send a second recall unnoticed.
+//     BulkEditModal) are PROD-17 residual doors and do not call it — and
+//     (fix pass 3) recallRetiredDocument is called directly only from
+//     lib/revisions.ts, twice: inside recallOnRetirement and by
+//     supersedeDocument. A new call site of either, anywhere in app/,
+//     components/ or lib/, fails a census: no door can add a second
+//     recall unnoticed.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -354,7 +360,7 @@ describe("PROD-17 (P26) — a status change that retires the document recalls an
     expect(recallsFor("s8")).toHaveLength(1);
   });
 
-  it("fix pass 2: a recall that does not run is logged, never silent — and the door returns as before", async () => {
+  it("fix pass 2: a recall that never starts is logged — and the door returns as before", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       state.recallImpl = () => Promise.reject(new Error("chunk load failed"));
@@ -581,16 +587,18 @@ describe("PROD-17 (P26 fix pass) — census: who calls recallOnRetirement", () =
     return out;
   }
   const sources = ["app", "components", "lib"].flatMap((d) => walk(join(ROOT, d), []));
-  const callSites = (): Record<string, number> => {
+  /** Call sites of `name(` per file, its own definition (`definition`) not counted. */
+  const callSitesOf = (name: string, definition: RegExp): Record<string, number> => {
+    const call = new RegExp(`\\b${name}\\(`, "g");
     const sites: Record<string, number> = {};
     for (const f of sources) {
       const code = readFileSync(f, "utf8");
-      const n = (code.match(/\brecallOnRetirement\(/g) ?? []).length
-        - (code.match(/export function recallOnRetirement\(/g) ?? []).length;
+      const n = (code.match(call) ?? []).length - (code.match(definition) ?? []).length;
       if (n > 0) sites[relative(ROOT, f).split("\\").join("/")] = n;
     }
     return sites;
   };
+  const callSites = () => callSitesOf("recallOnRetirement", /export function recallOnRetirement\(/g);
 
   it("exactly the four doors: archiveDocument and changeDocumentStatus (lib/revisions.ts), the split, the merge", () => {
     expect(callSites()).toEqual({
@@ -598,6 +606,21 @@ describe("PROD-17 (P26 fix pass) — census: who calls recallOnRetirement", () =
       "lib/documentLifecycle/split.ts": 1,
       "lib/documentLifecycle/merge.ts": 1,
     });
+  });
+
+  it("fix pass 3: recallRetiredDocument is called directly only from lib/revisions.ts — once inside recallOnRetirement, once by supersedeDocument", () => {
+    const direct = callSitesOf("recallRetiredDocument", /export async function recallRetiredDocument\(/g);
+    expect(direct).toEqual({ "lib/revisions.ts": 2 });
+    // and those two are the ones named: the forward in recallOnRetirement and supersede's own
+    const revisions = readFileSync(join(ROOT, "lib/revisions.ts"), "utf8");
+    const body = (fn: RegExp) => {
+      const start = revisions.search(fn);
+      expect(start).toBeGreaterThanOrEqual(0);
+      const next = revisions.slice(start + 1).search(/\n(?:export )?(?:async )?function /);
+      return revisions.slice(start, next < 0 ? undefined : start + 1 + next);
+    };
+    expect(body(/export function recallOnRetirement\(/).match(/\brecallRetiredDocument\(/g)).toHaveLength(1);
+    expect(body(/export async function supersedeDocument\(/).match(/\brecallRetiredDocument\(/g)).toHaveLength(1);
   });
 
   it("the status editors call it nowhere (PROD-17 residual doors: the bulk editor's and the metadata editor's bare writes recall nothing)", () => {
