@@ -4,10 +4,12 @@
 //
 //   · DEC-30 one-paste shape (counts-only TEMP inventory before BEGIN, one
 //     BEGIN / COMMIT, one final (check, ok, n) SELECT).
-//   · DEC-90 ruling R2 (2026-10-14): the KACL-5 index is standalone before
-//     BEGIN (every paste); node_visible/6 is re-created only when the six
-//     drop-box precondition counts are 0 (a DO block EXECUTEs the definition,
-//     else a NOTICE). Both outcomes run on PostgreSQL 16 in
+//   · DEC-90 ruling R2 and its follow-up (2026-10-14): the KACL-5 index is
+//     standalone before BEGIN (every paste); node_visible/6 is re-created
+//     only when the operator switch app.i12_deny_binding is 'on' (default
+//     OFF — its SET LOCAL line ships commented out) AND the six drop-box
+//     precondition counts are 0 (a DO block EXECUTEs the definition, else a
+//     NOTICE naming why). Every outcome runs on PostgreSQL 16 in
 //     lib/__tests__/rls/intelI12DropBoxGate.test.ts (npm run test:db).
 //   · node_visible/6 re-created from its NEWEST earlier definition — found by
 //     scanning supabase/migrations, so a parallel re-creation folded in at a
@@ -103,31 +105,47 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(route).toMatch(/document_versions_source_file_key_idx/);
   });
 
-  it("DEC-90 R2 (drop boxes): node_visible/6 is re-created inside a DO block only when every precondition count is 0 — otherwise a NOTICE and nothing changes; the header says what applies when and that lifting the gate is intelligence I-30's", () => {
+  it("DEC-90 R2 and its follow-up: node_visible/6 is re-created inside a DO block only when the operator switch is 'on' (default off, its SET LOCAL commented out) AND every precondition count is 0 — otherwise a NOTICE naming why and nothing changes; the header says what applies when and that the binding lands with intelligence I-30", () => {
     const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
     const begin = code.indexOf("\nBEGIN;"), commit = code.indexOf("\nCOMMIT;");
     const gate = code.slice(begin, commit);
-    expect(gate).toMatch(/DO \$gate\$\nDECLARE\n  v_blockers bigint;\nBEGIN\n  SELECT COALESCE\(SUM\(n\), 0\) INTO v_blockers FROM intel_i12_20261212_inventory WHERE pre;\n  IF v_blockers = 0 THEN\n    EXECUTE \$node_visible\$\nCREATE OR REPLACE FUNCTION node_visible\(/);
-    expect(gate).toMatch(/\n\$\$;\n\$node_visible\$;\n  ELSE\n    RAISE NOTICE '20261212 left node_visible\/6 unchanged: % drop-box precondition row\(s\) are not 0 \(DEC-90 ruling R2\)[^']*(''[^']*)*', v_blockers;\n  END IF;\nEND\n\$gate\$;\n?$/);
+    expect(gate).toMatch(/DO \$gate\$\nDECLARE\n  v_blockers bigint;\n  v_switch   boolean := COALESCE\(current_setting\('app\.i12_deny_binding', true\), ''\) = 'on';\nBEGIN\n  SELECT COALESCE\(SUM\(n\), 0\) INTO v_blockers FROM intel_i12_20261212_inventory WHERE pre;\n  UPDATE intel_i12_20261212_before SET switch_on = v_switch, applied = \(v_switch AND v_blockers = 0\);\n  IF v_switch AND v_blockers = 0 THEN\n    EXECUTE \$node_visible\$\nCREATE OR REPLACE FUNCTION node_visible\(/);
+    expect(gate).toMatch(/\n\$\$;\n\$node_visible\$;\n  ELSE\n    RAISE NOTICE '20261212 left node_visible\/6 unchanged — the deny binding does not apply; the index was created\. Why: %\./);
+    expect(gate).toContain("CASE WHEN NOT v_switch THEN 'it is held back by default: the operator switch app.i12_deny_binding is not ''on'' (DEC-90 — leave it off)' END");
+    expect(gate).toContain("CASE WHEN v_blockers > 0 THEN v_blockers || ' drop-box precondition row(s) are not 0 (DEC-90 ruling R2) — read the precondition rows of the result' END");
+    expect(gate).toMatch(/\n  END IF;\nEND\n\$gate\$;\n?$/);
+    // the switch ships OFF: its only SET is a commented line inside the transaction; nothing else sets it
+    expect(SQL).toContain("-- ⚠ DO NOT UNCOMMENT (DEC-90, 2026-10-14): the operator switch stays OFF and\n-- the binding lands with intelligence I-30 (header, item 2).\n-- SET LOCAL app.i12_deny_binding = 'on';");
+    expect(code).not.toMatch(/SET\s+(LOCAL\s+)?app\.i12_deny_binding|set_config\(\s*'app\.i12_deny_binding'/i);
+    expect(SQL.indexOf("-- SET LOCAL app.i12_deny_binding = 'on';")).toBeGreaterThan(SQL.indexOf("\nBEGIN;"));
     // the CREATE is the only statement in the transaction, and it is the gated one
     expect(code.slice(0, begin)).not.toMatch(/CREATE OR REPLACE FUNCTION/);
     // six precondition rows (pre = true), every other inventory row pre = false
     const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), code.indexOf("DROP TABLE IF EXISTS pg_temp.intel_i12_20261212_before"));
+    expect(code).toMatch(/CREATE TEMP TABLE intel_i12_20261212_before AS\nSELECT \(SELECT md5\(p\.prosrc\) FROM pg_proc p\n[^\n]*\) AS body_md5,\n       NULL::boolean AS switch_on, NULL::boolean AS applied;/);
     const rows = [...inv.matchAll(/SELECT (\d+), '((?:[^']|'')*)',[\s\S]*?, (true|false)(?: FROM|\n|$)/g)];
     expect(rows.map((r) => Number(r[1]))).toEqual(Array.from({ length: 23 }, (_, i) => i + 1));
     expect(rows.filter((r) => r[3] === "true").map((r) => r[2].slice(0, 15))).toEqual(["precondition P1", "precondition P2", "precondition P3", "precondition P4", "precondition P5", "precondition P6"]);
-    // the result: 10 probes + 23 count rows = 33, as the header states
+    // the result: 11 probes + 23 count rows = 34, as the header states
     const tail = code.slice(commit);
-    expect(tail.match(/\nUNION ALL\n/g)).toHaveLength(10);
+    expect(tail.match(/\nUNION ALL\n/g)).toHaveLength(11);
     const header = SQL.slice(0, SQL.indexOf("-- ── 0. pre-apply inventory"));
-    expect(header).toMatch(/EXPECTED RESULT \(one result set, 33 rows: check, ok, n\)/);
+    expect(header).toMatch(/EXPECTED RESULT \(one result set, 34 rows: check, ok, n\)/);
     expect(header).toMatch(/WHAT APPLIES WHEN \(read this first\)/);
-    expect(header).toMatch(/2\. ONLY WHEN every drop-box precondition count is 0/);
-    expect(header).toMatch(/Lifting this gate —[\s\S]*is intelligence I-30's \(NODE_VISIBLE\s+--\s+ALLOW-LIST, DROP BOXES AND INHERITED GRANTS\)/);
-    expect(header).toMatch(/THE GATE IS DECIDED AT PASTE TIME/);
-    expect(tail).toMatch(/'R2 gate \(DEC-90, drop boxes\): every precondition count is 0/);
+    expect(header).toMatch(/2\. BY DEFAULT, NOTHING ELSE: node_visible\/6 is left exactly as it was/);
+    expect(header).toMatch(/only when BOTH hold: the operator switch app\.i12_deny_binding is 'on'/);
+    expect(header).toMatch(/⚠ DO NOT SET THE SWITCH\s+--\s+\(DEC-90\)/);
+    expect(header).toMatch(/THE SWITCH: paste the file AS IS\. Do NOT set app\.i12_deny_binding/);
+    expect(header).toMatch(/The binding lands with\s+--\s+intelligence I-30 \(NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED\s+--\s+GRANTS\)/);
+    expect(header).toMatch(/Lifting the switch and the gate is I-30's\./);
+    expect(header).toMatch(/THE GATE IS DECIDED AT PASTE TIME — WHY THE SWITCH STAYS OFF/);
+    expect(tail).toMatch(/'operator switch: app\.i12_deny_binding was NOT set to ''on'' in this paste/);
+    expect(tail).toMatch(/'deny binding gate \(DEC-90\): node_visible\/6 re-created with the binding — true only with the switch on AND every precondition count 0/);
     expect(tail).toMatch(/'node_visible\/6 is what the gate decided: applied/);
     expect(tail).toMatch(/IS NOT DISTINCT FROM \(SELECT b\.body_md5 FROM intel_i12_20261212_before b\)/);
+    // the decision is read back from the TEMP row the gate wrote (a SET LOCAL switch is gone after COMMIT)
+    expect(tail.match(/COALESCE\(\(SELECT b\.applied FROM intel_i12_20261212_before b\), false\)/g)!.length).toBe(5);
+    expect(tail).not.toMatch(/current_setting/);
   });
 
   it("DACL-9 (second review fix): the counts-only inventory sizes the inherit-flag change — non-inheriting libraries and folders, those with descendants carrying their own ACL, and those descendants (private / hidden counted apart)", () => {
@@ -152,7 +170,7 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(header).toMatch(/new\s+(--\s+)?row violates row-level security policy "documents_acl_select"/);
     expect(header).toMatch(/The same insert without RETURNING succeeds\./);
     expect(header).toMatch(/can no longer write it back or upload into\s+-- it \(WRITES TOO, above\)/);
-    expect(header).toMatch(/Ruling R2: a drop box is a legitimate, common pattern and must\s+--\s+keep working/);
+    expect(header).toMatch(/Ruling R2: a drop box is a legitimate, common pattern and must\s+--\s+keep working\. So the re-creation is held back by default/);
     for (const p of ["P1 normal documents", "P2 private / hidden", "P3 / P4 the same two tests on folders", "P5 libraries whose own ACL", "P6 folders whose own ACL"]) expect(header, p).toContain(p);
     const code = SQL.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
     const inv = code.slice(code.indexOf("INSERT INTO intel_i12_20261212_inventory"), code.indexOf("\nBEGIN;"));

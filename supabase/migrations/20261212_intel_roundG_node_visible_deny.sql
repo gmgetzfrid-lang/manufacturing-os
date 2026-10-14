@@ -1,8 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 20261212 — intelligence Round G, I-12 DOCUMENT ACL BOUNDARY: the KACL-5
 -- source-key index, and node_visible honouring an explicit read deny for
--- every subject and on every visibility — SELF-GATED on drop boxes (DEC-90
--- ruling R2, the integrator, 2026-10-14).
+-- every subject and on every visibility — HELD BACK BY DEFAULT behind an
+-- operator switch that stays OFF, and self-gated on drop boxes (DEC-90
+-- ruling R2 and its follow-up, the integrator, 2026-10-14).
 --
 -- WHAT APPLIES WHEN (read this first):
 --   1. ALWAYS, on every paste — the KACL-5 index
@@ -14,25 +15,35 @@
 --      a statement that ERRORED later — none is expected — would roll the
 --      whole paste back, the index included: re-paste.) The index is the
 --      I-12 deploy's ONLY prerequisite.
---   2. ONLY WHEN every drop-box precondition count is 0 — node_visible/6 is
---      re-created with the deny binding (DACL-12 c1, IEDGE-12 c2, below).
---      With any precondition count above 0 the file RAISEs a NOTICE and
---      leaves node_visible/6 exactly as it was (20261203's on a first paste):
---      the deny binding does not apply at the database, nothing else
---      changes, and every drop box keeps taking uploads. Lifting this gate —
---      making drop-box uploads keep working WITH the deny binding (an
---      uploader rule at insert, or a server-side insert), then re-creating
---      node_visible without the gate — is intelligence I-30's (NODE_VISIBLE
---      ALLOW-LIST, DROP BOXES AND INHERITED GRANTS).
+--   2. BY DEFAULT, NOTHING ELSE: node_visible/6 is left exactly as it was
+--      (20261203's), so the deny binding (DACL-12 c1, IEDGE-12 c2, below)
+--      does NOT apply at the database. It is re-created with the binding
+--      only when BOTH hold: the operator switch app.i12_deny_binding is 'on'
+--      in the same paste (a SET LOCAL inside the transaction, or set_config
+--      before the gate — the way 20261141's app.j11_deployed works), AND
+--      every drop-box precondition count is 0. ⚠ DO NOT SET THE SWITCH
+--      (DEC-90): the paste guide leaves it off. Why off: the precondition is
+--      read at paste time only, so with the binding applied a drop box an
+--      admin configures LATER would refuse its uploader (WRITES TOO, below)
+--      — a regression of a flow that works today. Otherwise (the default, or
+--      any precondition count above 0) the file RAISEs a NOTICE naming the
+--      reason (the switch is off; drop boxes counted) and changes nothing
+--      else; every drop box keeps taking uploads. The binding lands with
+--      intelligence I-30 (NODE_VISIBLE ALLOW-LIST, DROP BOXES AND INHERITED
+--      GRANTS), together with drop-box support (an uploader rule at insert,
+--      or a server-side insert) and with no switch, so a drop box made at any
+--      time keeps working. Lifting the switch and the gate is I-30's.
 --   3. ALWAYS — the counts-only inventory (DEC-30): the precondition counts,
 --      what the binding would touch, DACL-9's and DACL-10's counts. Captured
 --      before the transaction and reported in the one result set; it changes
 --      no row.
---   The app behaves correctly in both outcomes: it already refuses a read
+--   The app behaves correctly in every outcome: it already refuses a read
 --   the index denies (lib/permissions canReadNode — the library page, the AI
 --   seam, the bytes door), with or without the binding at the database.
---   A RE-PASTE never takes an applied binding away: with a precondition
---   count above 0 it leaves node_visible/6 as it is, whichever body it has.
+--   Until I-30, the PostgREST gap DACL-12 c1 describes (a direct read of a
+--   row whose index denies the caller) stays open at the database.
+--   A RE-PASTE never takes an applied binding away: when the gate holds, it
+--   leaves node_visible/6 as it is, whichever body it has.
 --
 --   DACL-12 c1  node_visible() consulted only USER-scoped deny entries: a
 --           deny of read / discover whose subject is a ROLE, a TEAM or the
@@ -92,8 +103,10 @@
 --           would disappear for them.
 --           The same insert without RETURNING succeeds.
 --           Ruling R2: a drop box is a legitimate, common pattern and must
---           keep working, so the re-creation runs only where the live data
---           holds none. THE PRECONDITION (section 0; each count
+--           keep working. So the re-creation is held back by default (item
+--           2 above: a drop box created after the paste cannot be counted at
+--           the paste), and even with the switch on it runs only where the
+--           live data holds none. THE PRECONDITION (section 0; each count
 --           must be 0; where the code leaves a doubt, the predicate counts):
 --             P1 normal documents whose acl_index denies READ to a subject
 --                (user, role, team or org) the same index does not deny
@@ -207,21 +220,25 @@
 -- and DACL-10's ACL-NULL legacy libraries and the members their lists leave
 -- out. Never a customer row. A pre-apply snapshot of node_visible/6's body
 -- hash (one md5, a catalog read) lets the result say the body was left
--- untouched when the gate held it back.
+-- untouched when the gate held it back; the gate writes what it read (the
+-- switch) and what it decided into that TEMP row, so the result reports the
+-- decision after COMMIT (a SET LOCAL switch is gone by then).
 --
 -- BEFORE THE PASTE the app already refuses these rows (canReadNode, the
--- library page, the AI seam, the bytes door). AFTER IT, when the binding
--- applied, a direct PostgREST read refuses them too: a member the deny
+-- library page, the AI seam, the bytes door). AFTER IT, BY DEFAULT, the
+-- database answers exactly as before (the binding is held back). Only if the
+-- binding were applied (switch on, no drop box) would a direct PostgREST
+-- read refuse them too: a member the deny
 -- names stops seeing a row the UI already hid from them — and
 -- can no longer write it back or upload into
 -- it (WRITES TOO, above), which is why the binding applies only where no
 -- drop box exists; no other member, and no controller or effective owner,
--- sees any change. When the gate held it back, the database answers
--- exactly as before the paste. NARROWS (or changes nothing but the index).
--- ⚠ THE GATE IS DECIDED AT PASTE TIME. Once the binding applied, a drop box
--- an admin configures LATER does not take its uploader's rows (the
--- INSERT ... RETURNING above) until intelligence I-30 lifts the gate; a
--- re-paste then holds the gate (NOTICE) but never removes the binding
+-- would see any change. By default this file changes nothing but the index
+-- (and its TEMP inventory). NARROWS, if anything.
+-- ⚠ THE GATE IS DECIDED AT PASTE TIME — WHY THE SWITCH STAYS OFF. Were the
+-- binding applied, a drop box an admin configures LATER would not take its
+-- uploader's rows (the INSERT ... RETURNING above) until intelligence I-30;
+-- a re-paste would then hold the gate (NOTICE) but never remove the binding
 -- (re-paste 20261203's node_visible — the ROLLBACK below — to restore the
 -- old behaviour). Pinned in lib/__tests__/rls/intelI12DropBoxGate.test.ts.
 --
@@ -237,26 +254,30 @@
 --   does not gate the deploy (the app refuses denied reads either way).
 --   Read the DACL-10 "members the lists leave out" count before the deploy
 --   (informational, DEC-90 R1).
---   EXPECTED RESULT (one result set, 33 rows: check, ok, n):
---     10 probes (n NULL). Binding APPLIED (every precondition count 0 — a
---     fresh install, or a live database with no drop box): every probe ok =
---     true. Binding HELD BACK (a precondition count above 0; a NOTICE says
---     how many): the gate probe ok = false, the three probes of the new body
---     ok = NULL (not applicable), every other probe ok = true — "node_visible
---     /6 is what the gate decided" then proves the body is byte-for-byte what
---     it was before the paste.
---     23 count rows (ok NULL): the six precondition counts (each 0 when the
---     binding applied; their sum is the NOTICE's number otherwise), then the
+--   THE SWITCH: paste the file AS IS. Do NOT set app.i12_deny_binding and do
+--   NOT uncomment the SET LOCAL line inside the transaction (DEC-90).
+--   EXPECTED RESULT (one result set, 34 rows: check, ok, n):
+--     11 probes (n NULL). AS PASTED (the default — the switch off): the
+--     switch probe ok = true (it was left off), the gate probe ok = false,
+--     the three probes of the new body ok = NULL (not applicable), every
+--     other probe ok = true — "node_visible/6 is what the gate decided" then
+--     proves the body is byte-for-byte what it was before the paste — and a
+--     NOTICE says the binding is held back by default (and, if any, how many
+--     drop-box precondition rows were counted). Only with the switch on (not
+--     for this paste): with every precondition count 0 the switch probe is
+--     false and every other probe true (the binding applied); with a count
+--     above 0, as the default but with the switch probe false.
+--     23 count rows (ok NULL): the six precondition counts, then the
 --     seventeen inventory counts.
---   WHAT TO SEND BACK: the 33 rows (or at least the gate row, the six
---   precondition rows, and the DACL-9 and DACL-10 rows) and any NOTICE.
+--   WHAT TO SEND BACK: the 34 rows (or at least the switch and gate rows, the
+--   six precondition rows, and the DACL-9 and DACL-10 rows) and the NOTICE.
 --   ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe (CREATE
---   INDEX IF NOT EXISTS; the gate re-checks the live data; a re-paste never
---   removes an applied binding).
+--   INDEX IF NOT EXISTS; the gate re-reads the switch and the live data; a
+--   re-paste never removes an applied binding).
 --
 -- ROLLBACK: re-paste 20261203's node_visible (section 3 of that file) —
--- only needed when the binding applied; the index may stay (it only speeds a
--- lookup) or be dropped with
+-- only needed if the binding was ever applied; the index may stay (it only
+-- speeds a lookup) or be dropped with
 -- DROP INDEX IF EXISTS document_versions_source_file_key_idx.
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -439,11 +460,12 @@ SELECT 23, 'DACL-10: libraries whose ACL has no rule and normal visibility while
 
 -- The body node_visible/6 has before this paste (one md5 of the catalog's
 -- prosrc), so the result can say it was left untouched when the gate held
--- the binding back.
+-- the binding back; the gate fills in what it read and decided.
 DROP TABLE IF EXISTS pg_temp.intel_i12_20261212_before;
 CREATE TEMP TABLE intel_i12_20261212_before AS
-SELECT md5(p.prosrc) AS body_md5 FROM pg_proc p
- WHERE p.proname = 'node_visible' AND p.pronargs = 6 AND p.pronamespace = 'public'::regnamespace;
+SELECT (SELECT md5(p.prosrc) FROM pg_proc p
+         WHERE p.proname = 'node_visible' AND p.pronargs = 6 AND p.pronamespace = 'public'::regnamespace) AS body_md5,
+       NULL::boolean AS switch_on, NULL::boolean AS applied;
 
 -- ── 0b. KACL-5: the native-source lookup the bytes door makes on every sign ─
 -- Standalone, before the transaction: it applies on every paste, whatever the
@@ -453,9 +475,15 @@ CREATE INDEX IF NOT EXISTS document_versions_source_file_key_idx
 
 BEGIN;
 
+-- ⚠ DO NOT UNCOMMENT (DEC-90, 2026-10-14): the operator switch stays OFF and
+-- the binding lands with intelligence I-30 (header, item 2).
+-- SET LOCAL app.i12_deny_binding = 'on';
+
 -- ── 1. node_visible: deny for every subject, on every visibility — GATED ───
--- R2 (DEC-90, 2026-10-14): only when every precondition count is 0.
--- Otherwise a NOTICE, and node_visible/6 is left exactly as it is.
+-- R2 and its follow-up (DEC-90, 2026-10-14): only when the operator switch
+-- app.i12_deny_binding is 'on' (default off) AND every precondition count is
+-- 0. Otherwise a NOTICE naming the reason, and node_visible/6 is left
+-- exactly as it is.
 -- Body from 20261203 (its newest definition). Changes: the normal fast path
 -- reads the index's read-deny lists; the deny check names user, every held
 -- role, team and org, and runs before the allow; a normal row the deny does
@@ -465,9 +493,11 @@ BEGIN;
 DO $gate$
 DECLARE
   v_blockers bigint;
+  v_switch   boolean := COALESCE(current_setting('app.i12_deny_binding', true), '') = 'on';
 BEGIN
   SELECT COALESCE(SUM(n), 0) INTO v_blockers FROM intel_i12_20261212_inventory WHERE pre;
-  IF v_blockers = 0 THEN
+  UPDATE intel_i12_20261212_before SET switch_on = v_switch, applied = (v_switch AND v_blockers = 0);
+  IF v_switch AND v_blockers = 0 THEN
     EXECUTE $node_visible$
 CREATE OR REPLACE FUNCTION node_visible(
   p_visibility text,
@@ -570,7 +600,10 @@ END;
 $$;
 $node_visible$;
   ELSE
-    RAISE NOTICE '20261212 left node_visible/6 unchanged: % drop-box precondition row(s) are not 0 (DEC-90 ruling R2), so the deny binding does not apply; the index was created. Read the precondition rows of the result; lifting this gate is intelligence I-30''s.', v_blockers;
+    RAISE NOTICE '20261212 left node_visible/6 unchanged — the deny binding does not apply; the index was created. Why: %. The binding lands with intelligence I-30, with drop-box support and no switch.',
+      concat_ws('; ',
+        CASE WHEN NOT v_switch THEN 'it is held back by default: the operator switch app.i12_deny_binding is not ''on'' (DEC-90 — leave it off)' END,
+        CASE WHEN v_blockers > 0 THEN v_blockers || ' drop-box precondition row(s) are not 0 (DEC-90 ruling R2) — read the precondition rows of the result' END);
   END IF;
 END
 $gate$;
@@ -578,21 +611,25 @@ $gate$;
 COMMIT;
 
 -- ── Verification + inventory (ONE result set) ───────────────────────────────
--- Probes carry ok, n NULL; count rows carry n, ok NULL. Binding applied:
--- every probe true. Held back: the gate probe false, the three probes of the
--- new body NULL (not applicable), every other probe true.
+-- Probes carry ok, n NULL; count rows carry n, ok NULL. As pasted (switch
+-- off — the default): the switch probe true, the gate probe false, the three
+-- probes of the new body NULL (not applicable), every other probe true.
 SELECT 'KACL-5: document_versions_source_file_key_idx exists on document_versions (source_file_key), partial on source_file_key IS NOT NULL — created before the transaction, on every paste whatever the gate decides' AS check,
        EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'document_versions'
                   AND indexname = 'document_versions_source_file_key_idx'
                   AND indexdef LIKE '%(source_file_key)%' AND indexdef LIKE '%WHERE (source_file_key IS NOT NULL)%') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'R2 gate (DEC-90, drop boxes): every precondition count is 0, so node_visible/6 was re-created with the deny binding — false: it was left untouched (a NOTICE gave the count; read the precondition rows); lifting the gate is intelligence I-30''s',
-       (SELECT COALESCE(SUM(i.n), 0) = 0 FROM intel_i12_20261212_inventory i WHERE i.pre),
+SELECT 'operator switch: app.i12_deny_binding was NOT set to ''on'' in this paste (the default; DEC-90 — the paste guide leaves it off)',
+       NOT COALESCE((SELECT b.switch_on FROM intel_i12_20261212_before b), false),
+       NULL
+UNION ALL
+SELECT 'deny binding gate (DEC-90): node_visible/6 re-created with the binding — true only with the switch on AND every precondition count 0; false (the default): left untouched, a NOTICE named why; the binding lands with intelligence I-30',
+       COALESCE((SELECT b.applied FROM intel_i12_20261212_before b), false),
        NULL
 UNION ALL
 SELECT 'node_visible/6 is what the gate decided: applied — the binding''s body (normal read-deny limb, every-subject deny); held back — its body is byte-for-byte what it was before this paste',
-       CASE WHEN (SELECT COALESCE(SUM(i.n), 0) = 0 FROM intel_i12_20261212_inventory i WHERE i.pre)
+       CASE WHEN COALESCE((SELECT b.applied FROM intel_i12_20261212_before b), false)
             THEN EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'node_visible' AND pronargs = 6
                             AND prosrc LIKE '%IF v_normal AND (p_acl_index IS NULL OR NOT EXISTS (%'
                             AND prosrc LIKE '%(p_acl_index->''deny''->''roles''->a.act) ? r%')
@@ -611,7 +648,7 @@ SELECT 'node_visible/6 (either body): SECURITY DEFINER, search_path pinned; cont
        NULL
 UNION ALL
 SELECT 'node_visible/6 (binding applied; NULL when held back): the deny check names user, every held role, team and org (DACL-12 c1), and runs before the allow',
-       CASE WHEN (SELECT COALESCE(SUM(i.n), 0) = 0 FROM intel_i12_20261212_inventory i WHERE i.pre) THEN
+       CASE WHEN COALESCE((SELECT b.applied FROM intel_i12_20261212_before b), false) THEN
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'node_visible' AND pronargs = 6
                   AND prosrc LIKE '%(p_acl_index->''deny''->''users''->a.act) ? v_uid%'
                   AND prosrc LIKE '%(p_acl_index->''deny''->''orgs''->a.act) ? p_org::text%'
@@ -621,14 +658,14 @@ SELECT 'node_visible/6 (binding applied; NULL when held back): the deny check na
        NULL
 UNION ALL
 SELECT 'node_visible/6 (binding applied; NULL when held back): a normal row reads its index''s read-deny lists before opening (IEDGE-12 c2), with no table read on the fast path',
-       CASE WHEN (SELECT COALESCE(SUM(i.n), 0) = 0 FROM intel_i12_20261212_inventory i WHERE i.pre) THEN
+       CASE WHEN COALESCE((SELECT b.applied FROM intel_i12_20261212_before b), false) THEN
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'node_visible' AND pronargs = 6
                   AND prosrc LIKE '%IF v_normal AND (p_acl_index IS NULL OR NOT EXISTS (%'
                   AND position('IF v_normal AND (p_acl_index IS NULL' in prosrc) < position('is_org_controller(p_org)' in prosrc)) END,
        NULL
 UNION ALL
 SELECT 'node_visible/6 (binding applied; NULL when held back): on a normal row the controller check and the ownership cascade run only after the deny names the caller (cost); a private / hidden row keeps the controller-first order',
-       CASE WHEN (SELECT COALESCE(SUM(i.n), 0) = 0 FROM intel_i12_20261212_inventory i WHERE i.pre) THEN
+       CASE WHEN COALESCE((SELECT b.applied FROM intel_i12_20261212_before b), false) THEN
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'node_visible' AND pronargs = 6
                   AND prosrc LIKE '%IF NOT v_normal THEN%IF is_org_controller(p_org) THEN%'
                   AND prosrc LIKE '%IF v_normal THEN%IF is_org_controller(p_org) THEN%RETURN COALESCE(user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()), false);%'
