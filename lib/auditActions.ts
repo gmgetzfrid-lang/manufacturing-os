@@ -314,3 +314,13 @@ export function auditActorNote(actorKind: unknown): string {
       : actorKind === "system" ? "system — no person"
         : "as sent by the writer (before identity was resolved by the database)";
 }
+
+// ── ALOG-16 (20261219): a document's trail is the reader's share of it ─────
+/** One neutral line for a reader that presents a document's audit trail as
+ *  its whole history (admin-and-org P13 integrator fix pass): after 20261219
+ *  the database leaves out the node-level authority rows the reader may not
+ *  see, so the reader says entries may be missing — never how many. */
+const UNSEEN_RULE = "permission, ownership and recertification changes on a library, folder or document are shown only to people with the Audit log permission and to those who may manage it.";
+export const AUDIT_TRAIL_UNSEEN_NOTE = `Entries you may not see are not listed: ${UNSEEN_RULE}`;
+/** The printed evidence pack's form: its reader is not the person who generated it. */
+export const AUDIT_TRAIL_UNSEEN_NOTE_PACK = `Entries the person who generated this pack may not see are not listed: ${UNSEEN_RULE}`;

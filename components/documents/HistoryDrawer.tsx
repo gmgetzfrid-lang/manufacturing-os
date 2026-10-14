@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { X, History, Shield, Eye, FileDiff, CheckCircle2, Lock, Clock, Users, ArrowRight } from "lucide-react";
 import type { DocumentRecord, DocumentVersion, CheckoutSession } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
-import { auditActorNote } from "@/lib/auditActions";
+import { auditActorNote, AUDIT_TRAIL_UNSEEN_NOTE } from "@/lib/auditActions";
 import { supabase } from "@/lib/supabase";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import TimelineFeed from "@/components/documents/TimelineFeed";
@@ -287,6 +287,11 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
             </button>
           </div>
 
+          {/* ALOG-16 (P13, 20261219): the trail shown is the reader's share of it
+              (the Timeline tab's feed says the same itself — TimelineFeed). */}
+          {tab === 'audit' && (
+            <p className="mb-3 text-[11px] text-[var(--color-text-muted)]" data-testid="audit-trail-unseen-note">{AUDIT_TRAIL_UNSEEN_NOTE}</p>
+          )}
           {tab === 'timeline' ? (
             <div className="space-y-4">
               {docRecord.id && <RevisionChainStrip documentId={docRecord.id} />}
