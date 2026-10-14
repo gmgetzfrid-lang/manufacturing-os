@@ -189,6 +189,19 @@ describe("UI-7 / FRIC-3 / EDGE-8 — a row in words", () => {
   });
 });
 
+describe("UI-2 — the workflow map is reachable from the queue", () => {
+  it("'How requests flow' opens the map, by click, with the status labels as its stages", async () => {
+    await mount();
+    const map = () => Array.from(host!.querySelectorAll("h2")).find((h) => /How a drafting request flows/.test(h.textContent ?? ""))?.closest("div.fixed, [class*='fixed']") ?? null;
+    expect(map()).toBeNull();
+    await click(byText("button", /How requests flow/));
+    const m = map();
+    expect(m).toBeTruthy();
+    expect(m!.textContent).toMatch(/Ready to issue \(IFC\)/);
+    expect(m!.textContent).toMatch(/Engineer sign-off/);
+  });
+});
+
 describe("AUTHZ-15 — an unreadable policy is said, never guessed under the defaults", () => {
   it("the needs-me lens, Archive and Force Close are held back with the reason; Try again re-reads", async () => {
     s.policyEntries = [{ policy: {}, version: null, unreadable: "permission denied for org_configurations" }];

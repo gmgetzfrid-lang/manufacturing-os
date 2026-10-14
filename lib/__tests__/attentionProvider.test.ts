@@ -615,6 +615,30 @@ describe("drafting-flow Round G (DF-P9) — the badge counts what the page offer
     expect(lastStatus()).toMatchObject({ ticketsLoaded: 501, ticketsTotal: 501, ticketsOldestFirst: false });
   });
 
+  it("EDGE-3 done-when 3: a drafter with 500 closed assignments and 1 old DRAFTING one — the DRAFTING one is in the feed and counted; closed ones are read only when unread", async () => {
+    fx.role = { roles: ["Drafter"], activeOrgId: "o1", uid: "u1", membershipState: "member" };
+    const scopes: string[] = [];
+    fx.ticketQuery = (own) => {
+      const closed = own.some((c) => c.method === "in" && c.args[0] === "status");
+      const assigned = own.some((c) => c.method === "eq" && c.args[0] === "assigned_drafter_id");
+      if (closed) {
+        scopes.push("closed");
+        // the closed scope asks only for tickets still unread by me
+        expect(own.some((c) => c.method === "contains" && c.args[0] === "unread_by" && JSON.stringify(c.args[1]) === JSON.stringify(["u1"]))).toBe(true);
+        return { data: Array.from({ length: 500 }, (_, i) => trow(7000 + i, { status: "CLOSED", assigned_drafter_id: "u1", unread_by: [] })), error: null };
+      }
+      if (assigned) {
+        scopes.push("open");
+        return { data: [trow(1, { status: "DRAFTING", assigned_drafter_id: "u1", last_modified: "2026-06-01T00:00:00Z" })], error: null, count: 1 };
+      }
+      return { data: [], error: null, count: 0 };
+    };
+    await mount(withProvider(1));
+    expect(scopes).toEqual(expect.arrayContaining(["open", "closed"]));
+    expect(last().items.some((i) => i.key === "ticket:t1")).toBe(true);
+    expect(actionKeys()).toContain("ticket:t1");
+  });
+
   it("ROUTE-7 / EDGE-3: past the scan ceiling the oldest-modified requests are the ones evaluated, and the surface says so", async () => {
     fx.role = { roles: ["DraftingSupervisor"], activeOrgId: "o1", uid: "s-1", membershipState: "member" };
     const orders: boolean[] = [];

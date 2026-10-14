@@ -18,7 +18,7 @@
 //   PROD-4 dw3   computeTransition's default audience includes the engineer
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   TICKET_STATUS_LABELS,
@@ -530,5 +530,30 @@ describe("census — the request surfaces read the shared rules (no local stand-
     const hook = src("hooks/useTicketNotifications.ts");
     expect(hook).toContain("unit: typeof row.unit === 'string' ? row.unit : null,");
     expect(hook).not.toContain("unit: row.unit as string");
+  });
+});
+
+describe("PERS-3 done-when 3 — no unchecked supabase write in the /requests tree", () => {
+  const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
+    const f = join(dir, n);
+    return statSync(f).isDirectory() ? walk(f) : /\.(ts|tsx)$/.test(n) ? [f] : [];
+  });
+  it("every .update / .insert / .upsert / .delete on a supabase chain destructures its error (and the census is not empty)", () => {
+    const root = join(process.cwd(), "app/(protected)/requests");
+    const sites: string[] = [];
+    const unchecked: string[] = [];
+    for (const f of walk(root)) {
+      const code = readFileSync(f, "utf8").replace(/\/\/[^\n]*/g, "");
+      const re = /\.from\(\s*['"][a-z_]+['"]\s*\)\s*\.(update|insert|upsert|delete)\(/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(code))) {
+        const at = `${f.slice(root.length + 1)}@${code.slice(0, m.index).split("\n").length}`;
+        sites.push(at);
+        // the statement's result is read: `{ … error … }` destructured within the next few hundred characters
+        if (!/\{[^{}]*\berror\b[^{}]*\}/.test(code.slice(m.index, m.index + 600))) unchecked.push(at);
+      }
+    }
+    expect(sites.length).toBeGreaterThanOrEqual(3); // the unread clear, the notifications read mark, mark urgent
+    expect(unchecked).toEqual([]);
   });
 });

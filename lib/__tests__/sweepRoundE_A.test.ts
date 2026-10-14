@@ -220,6 +220,27 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     state.user = { id: "a-1" };
     expect((await commentPatch(req("/api/tickets/comment", "PATCH", { ticketId: "t1", commentId: "c-1" }))).status).toBe(400);
   });
+  it("drafting-flow PERS-2 done-when 3 (DF-P9): a root-cause edit racing a workflow action — the edit's compare-and-set loses (409), nothing of it lands, and the action's write stands", async () => {
+    state.user = { id: "a-1" };
+    state.rows.org_members = [member("a-1", "Admin"), member("d-1", "Drafter"), member("req-1", "Requester")];
+    const revision = { id: "c-9", text: "Fix the nozzle orientation", user: "e-1@x.io", role: "Engineer-2", category: null, authorUid: "e-1" };
+    state.rows.tickets = [ticketRow({ comments: [{ id: "c-1", text: "leak", user: "req-1@x.io", role: "Requester", category: null, authorUid: "req-1" }] })];
+    // between the edit's read and its write, a workflow action appends a comment and moves the token
+    state.onCall = (table, method) => {
+      if (table === "tickets" && method === "update") {
+        state.rows.tickets[0].last_modified = "2026-09-17T00:00:09.000Z";
+        state.rows.tickets[0].comments = [...(state.rows.tickets[0].comments as unknown[]), revision];
+      }
+    };
+    const res = await commentPatch(req("/api/tickets/comment", "PATCH", { ticketId: "t1", commentId: "c-1", category: "Vendor data" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).conflict).toBe(true);
+    // the edit wrote nothing that stuck: no mirror row, no audit of a change that did not happen
+    expect(updateOf("ticket_comments")).toHaveLength(0);
+    expect(insertsOf("audit_logs").some((a) => a.action === "TICKET_ROOT_CAUSE_UPDATE")).toBe(false);
+    // the concurrent action's comment is still on the row
+    expect((state.rows.tickets[0].comments as Array<{ id: string }>).map((c) => c.id)).toEqual(["c-1", "c-9"]);
+  });
   it("comment route PATCH: two authorities — the AUTHOR edits their text but cannot reclassify it; a DocCtrl classifies but cannot edit another's text", async () => {
     const comment = { id: "c-1", text: "leak", user: "req-1@x.io", role: "Requester", category: "Vendor data", authorUid: "req-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("c-1", "DocCtrl"), member("d-1", "Drafter")];
