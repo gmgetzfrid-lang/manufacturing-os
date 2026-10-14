@@ -1905,12 +1905,12 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
     ];
     const made = new Date().toISOString();
     db.tables.push_subscriptions = [
-      { id: "ps1", user_id: U(1), endpoint: "https://push.example/1", created_at: made },
-      { id: "ps2", user_id: U(2), endpoint: "https://push.example/2", created_at: made },
-      { id: "ps3", user_id: U(3), endpoint: "https://push.example/3", created_at: made },
-      { id: "ps4", user_id: U(4), endpoint: "https://push.example/4", created_at: made },
+      { id: "ps1", user_id: U(1), endpoint: "https://fcm.googleapis.com/fcm/send/1", created_at: made },
+      { id: "ps2", user_id: U(2), endpoint: "https://fcm.googleapis.com/fcm/send/2", created_at: made },
+      { id: "ps3", user_id: U(3), endpoint: "https://fcm.googleapis.com/fcm/send/3", created_at: made },
+      { id: "ps4", user_id: U(4), endpoint: "https://fcm.googleapis.com/fcm/send/4", created_at: made },
       // the deleted reminders stack's registration (OS-10 done-when 3): never pushed, removed
-      { id: "ps5", user_id: U(1), endpoint: "https://push.example/5", created_at: "2026-08-04T09:00:00Z" },
+      { id: "ps5", user_id: U(1), endpoint: "https://fcm.googleapis.com/fcm/send/5", created_at: "2026-08-04T09:00:00Z" },
     ];
     const r = await runCron();
     expect(r.pushSubscriptionsPruned).toBe(3);
@@ -1921,7 +1921,7 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
   it("pages through every registration (more than one page)", async () => {
     db.tables.org_members = [member(ORG_A, U(1))];
     db.tables.push_subscriptions = Array.from({ length: 160 }, (_, i) => ({
-      id: `ps${String(i).padStart(3, "0")}`, user_id: i % 2 === 0 ? U(1) : U(500 + i), endpoint: `https://push.example/${i}`, created_at: new Date().toISOString(),
+      id: `ps${String(i).padStart(3, "0")}`, user_id: i % 2 === 0 ? U(1) : U(500 + i), endpoint: `https://fcm.googleapis.com/fcm/send/${i}`, created_at: new Date().toISOString(),
     }));
     const r = await runCron();
     expect(r.pushSubscriptionsPruned).toBe(80);
@@ -1930,7 +1930,7 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
   });
 
   it("an unreadable membership prunes nothing and says so; before 20260804 (no table) the step is silent", async () => {
-    db.tables.push_subscriptions = [{ id: "ps1", user_id: U(1), endpoint: "https://push.example/1", created_at: new Date().toISOString() }];
+    db.tables.push_subscriptions = [{ id: "ps1", user_id: U(1), endpoint: "https://fcm.googleapis.com/fcm/send/1", created_at: new Date().toISOString() }];
     db.readError.org_members = { message: "upstream timeout" };
     let r = await runCron();
     expect(rows("push_subscriptions")).toHaveLength(1);
@@ -1939,5 +1939,42 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
     r = await runCron();
     expect(r.errors.filter((e) => e.startsWith("push-subscriptions"))).toEqual([]);
     expect(r.pushSubscriptionsPruned).toBe(0);
+  });
+
+  // fix pass (the review's blocker): a row naming no browser push service is
+  // never sent to — the cron removes it, whoever's it is
+  it("a registration whose endpoint names no browser push service is removed; push services' rows stay", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    const made = new Date().toISOString();
+    db.tables.push_subscriptions = [
+      { id: "ok1", user_id: U(1), endpoint: "https://fcm.googleapis.com/fcm/send/1", created_at: made },
+      { id: "ok2", user_id: U(1), endpoint: "https://updates.push.services.mozilla.com/wpush/v2/2", created_at: made },
+      { id: "bad1", user_id: U(1), endpoint: "https://10.0.3.7:8443/admin/x", created_at: made },
+      { id: "bad2", user_id: U(1), endpoint: "https://victim.example/hook", created_at: made },
+      { id: "bad3", user_id: U(1), endpoint: null, created_at: made },
+    ];
+    const r = await runCron();
+    expect(r.pushSubscriptionsPruned).toBe(3);
+    expect(rows("push_subscriptions").map((x) => x.id)).toEqual(["ok1", "ok2"]);
+  });
+
+  // fix pass (the review's minor): PostgREST's max-rows can cut the
+  // membership read short WITHOUT an error — an owner missing from a cut
+  // read must never be taken for a departed member
+  it("a membership read cut short by max-rows (> 1000 memberships among one page's owners) unsubscribes no active member", async () => {
+    db.maxRows = 1000;
+    const orgs = Array.from({ length: 30 }, (_, i) => `00000000-0000-4000-9000-${String(i).padStart(12, "0")}`);
+    // 50 consultants, each an ACTIVE member of 30 workspaces: 1,500 membership rows
+    const consultants = Array.from({ length: 50 }, (_, i) => U(100 + i));
+    db.tables.org_members = consultants.flatMap((u) => orgs.map((o) => member(o, u)));
+    const made = new Date().toISOString();
+    db.tables.push_subscriptions = [
+      ...consultants.map((u, i) => ({ id: `c${String(i).padStart(3, "0")}`, user_id: u, endpoint: `https://fcm.googleapis.com/fcm/send/c${i}`, created_at: made })),
+      { id: "gone", user_id: U(999), endpoint: "https://fcm.googleapis.com/fcm/send/gone", created_at: made },
+    ];
+    const r = await runCron();
+    expect(rows("push_subscriptions").map((x) => x.id).sort()).toEqual(consultants.map((_, i) => `c${String(i).padStart(3, "0")}`));
+    expect(r.pushSubscriptionsPruned).toBe(1);
+    expect(r.errors.filter((e) => e.startsWith("push-subscriptions"))).toEqual([]);
   });
 });

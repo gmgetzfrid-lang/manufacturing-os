@@ -23,6 +23,16 @@
 //     request pushes a device once; a browser's request is capped per writer.
 //   * the three routes, the cron's prune step, the env documentation, the
 //     single permission-prompt site and no new cron entry (acceptance 5).
+//
+// Fix pass (the review of N10): the sender POSTs only to a browser push
+// service's host and deletes any other row; at most PUSH_DEVICE_CAP devices
+// per person; a device is CLAIMED for a row before the send (two requests at
+// once send once); POST /api/push/notify answers before the sends (after());
+// /api/push/subscribe stores only push-service endpoints, hands an endpoint
+// over only on matching keys, in one conditional update (nothing deleted
+// first), and keeps a person's newest PUSH_DEVICE_CAP; a server emit pushes
+// only when its caller passes serverPush — loading lib/push/sendPush
+// registers nothing, so the maintenance cron's scanStaleHolds never pushes.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -40,7 +50,51 @@ const h = vi.hoisted(() => ({
   sendError: new Map<string, unknown>(),
   vapidThrows: false,
   user: null as null | { id: string },
+  after: [] as Array<() => unknown>,
+  insertError: null as null | { message: string; code?: string },
+  writeBell: false,
 }));
+
+/** PostgREST's `or=(…)` for the claim the sender makes — the memory stand-in
+ *  has no `or`, so this adds it: the rows matching ANY `col.is.null` /
+ *  `col.lt."ts"` / `col.eq.v` term, as an `in("id", …)` filter evaluated when
+ *  the chain is built (the write applies right after, as one statement does). */
+function idsMatchingOr(table: string, cond: string): string[] {
+  const terms = cond.match(/(?:[^,"]|"[^"]*")+/g) ?? [];
+  const rows = h.state.tables[table] ?? [];
+  const test = (r: Record<string, unknown>, term: string) => {
+    const m = /^(\w+)\.(is|lt|eq)\.(.*)$/.exec(term);
+    if (!m) throw new Error(`unsupported or-term ${term}`);
+    const v = m[3].replace(/^"|"$/g, "");
+    const cur = r[m[1]];
+    if (m[2] === "is") return v === "null" ? cur == null : String(cur) === v;
+    if (m[2] === "eq") return String(cur) === v;
+    return cur != null && Date.parse(String(cur)) < Date.parse(v);
+  };
+  return rows.filter((r) => terms.some((t) => test(r, t))).map((r) => String(r.id));
+}
+function withOr(table: string, q: Record<string, unknown>): Record<string, unknown> {
+  return new Proxy(q, {
+    get(t, prop: string) {
+      const v = (t as Record<string, unknown>)[prop];
+      if (prop === "then" || typeof v !== "function") return v;
+      if (prop === "or") {
+        return (cond: string) => {
+          h.state.calls.push({ table, method: "or", args: [cond] });
+          return withOr(table, (t as unknown as { in: (c: string, ids: string[]) => Record<string, unknown> }).in("id", idsMatchingOr(table, cond)));
+        };
+      }
+      if (prop === "insert" && table === "push_subscriptions" && h.insertError) {
+        const err = h.insertError;
+        return () => ({ select: () => ({ single: async () => ({ data: null, error: err }) }) });
+      }
+      return (...args: unknown[]) => {
+        const r = (v as (...a: unknown[]) => unknown)(...args);
+        return r && typeof r === "object" && !(r instanceof Promise) ? withOr(table, r as Record<string, unknown>) : r;
+      };
+    },
+  });
+}
 
 vi.mock("@/lib/supabase", async () => {
   const mem = await import("./helpers/memoryDb");
@@ -50,21 +104,40 @@ vi.mock("@/lib/supabase", async () => {
 vi.mock("@/lib/supabaseAdmin", async () => {
   const mem = await import("./helpers/memoryDb");
   if (!h.state) h.state = mem.freshState();
+  const base = mem.makeSupabase(h.state);
   return {
     supabaseAdmin: {
-      ...mem.makeSupabase(h.state),
+      ...base,
+      from: (t: string) => withOr(t, base.from(t) as unknown as Record<string, unknown>),
       auth: { getUser: vi.fn(async () => (h.user ? { data: { user: h.user }, error: null } : { data: { user: null }, error: { message: "bad token" } })) },
     },
   };
 });
+// next/server after(): collected, run by the test (the route's answer never waits for it)
+vi.mock("next/server", async (orig) => ({
+  ...(await orig<typeof import("next/server")>()),
+  after: (fn: () => unknown) => { h.after.push(fn); },
+}));
+const runAfter = async () => { for (const fn of h.after.splice(0)) await fn(); };
 vi.mock("@/lib/notifications", () => ({
   queueEmail: vi.fn(async (input: Record<string, unknown>) => { h.order.push("email"); h.emails.push(input); }),
 }));
 vi.mock("@/lib/complianceNotify", () => ({
   notifyCompliance: vi.fn(async (input: Record<string, unknown>) => {
     h.order.push("inapp");
-    return !h.failFor.has(String(input.userId));
+    const ok = !h.failFor.has(String(input.userId));
+    // h.writeBell: the row lands as notifyCompliance writes it, so a sender
+    // that ran would find its evidence
+    if (ok && h.writeBell) {
+      (h.state.tables.notifications ??= []).push({
+        id: `bell-${(h.state.tables.notifications ?? []).length + 1}`, org_id: input.orgId, user_id: input.userId, kind: input.kind,
+        resource_id: input.resourceId, link: input.link ?? null, actor_user_id: input.actorUserId ?? null,
+        created_at: new Date().toISOString(), metadata: input.metadata ?? null,
+      });
+    }
+    return ok;
   }),
+  loadScanRetryPlan: vi.fn(async () => ({ unreadable: false, has: () => false, only: () => () => false })),
 }));
 vi.mock("@/lib/inAppNotifications", async (orig) => ({
   ...(await orig<typeof import("@/lib/inAppNotifications")>()),
@@ -89,12 +162,14 @@ vi.mock("web-push", () => {
   return { default: api, ...api };
 });
 
-import { emit, __registerServerPushSender, PUSH_LEG_TIMEOUT_MS, PUSH_REQUEST_MAX_RECIPIENTS, PUSH_OPT_IN_SINCE, type EmitInput, type PushSendInput } from "@/lib/notify/dispatch";
+import { emit, PUSH_LEG_TIMEOUT_MS, PUSH_REQUEST_MAX_RECIPIENTS, PUSH_OPT_IN_SINCE, type EmitInput, type PushSendInput } from "@/lib/notify/dispatch";
 import { __registerServerDiscoverCheck } from "@/lib/notify/recipients";
 import {
-  sendPushSafe, pushConfig, pushPayloadFor, safePushUrl, __resetPushLogOnceForTests,
+  sendPushSafe, pushFromServer, pushConfig, pushPayloadFor, safePushUrl, __resetPushLogOnceForTests,
   PUSH_KINDS, PUSH_TITLES, PUSH_BODY, PUSH_FALLBACK_TITLE, PUSH_WRITER_CAP, PUSH_EVIDENCE_WINDOW_MS,
 } from "@/lib/push/sendPush";
+import { pushEndpointAllowed, PUSH_DEVICE_CAP, PUSH_KEYS_MISMATCH, PUSH_SERVICE_HOSTS, PUSH_SERVICE_HOST_SUFFIXES } from "@/lib/push/endpoints";
+import { scanStaleHolds } from "@/lib/holds";
 import { KIND_META, NOTIFICATION_KINDS, kindMeta } from "@/lib/notificationKinds";
 import { POST as notifyRoute } from "@/app/api/push/notify/route";
 import { GET as subscribeGet, POST as subscribeRoute } from "@/app/api/push/subscribe/route";
@@ -115,6 +190,7 @@ beforeEach(() => {
   resetState(h.state);
   h.order.length = 0; h.many.length = 0; h.emails.length = 0; h.failFor.clear();
   h.sent.length = 0; h.sendError.clear(); h.vapidThrows = false; h.user = null;
+  h.after.length = 0; h.insertError = null; h.writeBell = false;
   h.state.tables.org_members = members("a", "b", "actor");
   __registerServerDiscoverCheck(null);
   setVapid(false);
@@ -128,14 +204,15 @@ afterEach(() => {
 // ─── emit()'s push leg (lib/notify/dispatch.ts) ─────────────────────────────
 
 describe("OS-9 — emit() has a third, push, channel: guarded, after the other two, never throwing", () => {
+  let calls: PushSendInput[];
+  const spy = vi.fn(async (input: PushSendInput) => { h.order.push("push"); calls.push(input); });
+  // a server caller allowed to push passes its sender per call (serverPush)
   const ev = (over: Partial<EmitInput> = {}): EmitInput => ({
     orgId: ORG, category: "status", kind: "checkout_force_released", title: "Checkout force-released by Pat", body: "b",
     resource: { type: "document", id: "d-1" }, actorUserId: "actor", actorName: "Pat",
-    audience: { involved: ["a", "b", "actor"] }, ...over,
+    audience: { involved: ["a", "b", "actor"] }, serverPush: spy, ...over,
   });
-  let calls: PushSendInput[];
-  const spy = vi.fn(async (input: PushSendInput) => { h.order.push("push"); calls.push(input); });
-  beforeEach(() => { calls = []; spy.mockClear(); __registerServerPushSender(spy); });
+  beforeEach(() => { calls = []; spy.mockClear(); });
 
   it("NotifChannel includes \"push\"; the default channels are in-app, email and push", () => {
     const src = read("lib/notify/dispatch.ts");
@@ -195,17 +272,15 @@ describe("OS-9 — emit() has a third, push, channel: guarded, after the other t
   it("a sender that throws never fails emit() and never changes its answer", async () => {
     const quiet = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const baseline = await emit(ev({ kind: "checkout_message" }));
-    __registerServerPushSender(async () => { throw new Error("push service down"); });
-    const r = await emit(ev());
+    const r = await emit(ev({ serverPush: async () => { throw new Error("push service down"); } }));
     expect(r).toEqual(baseline);
     expect(quiet.mock.calls.some((c) => /push failed \(bell and email are unaffected\)/.test(String(c[0])))).toBe(true);
   });
 
   it("a sender that hangs is abandoned after PUSH_LEG_TIMEOUT_MS: emit() still resolves with the bell and email legs done", async () => {
     vi.useFakeTimers();
-    __registerServerPushSender(() => new Promise<void>(() => undefined));
     let settled = false;
-    const p = emit(ev()).then((r) => { settled = true; return r; });
+    const p = emit(ev({ serverPush: () => new Promise<void>(() => undefined) })).then((r) => { settled = true; return r; });
     await vi.advanceTimersByTimeAsync(PUSH_LEG_TIMEOUT_MS - 1);
     expect(settled).toBe(false);
     expect(h.emails.length).toBe(2); // email already queued before the push leg
@@ -213,15 +288,49 @@ describe("OS-9 — emit() has a third, push, channel: guarded, after the other t
     expect(await p).toEqual({ recipients: 2, inapp: { sent: 2, failed: 0 } });
   });
 
-  it("no server sender in this context (the maintenance cron, a route that did not load it): nothing pushed, said once, emit() unchanged", async () => {
-    __registerServerPushSender(null);
+  it("a server emit whose caller passes no serverPush (the maintenance cron): nothing pushed, said once, emit() unchanged", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const r1 = await emit(ev());
-    const r2 = await emit(ev());
+    const r1 = await emit(ev({ serverPush: undefined }));
+    const r2 = await emit(ev({ serverPush: undefined }));
     expect(r1).toEqual({ recipients: 2, inapp: { sent: 2, failed: 0 } });
     expect(r2).toEqual(r1);
-    // said at most once per process (the first emit in this file without a sender says it)
-    expect(info.mock.calls.filter((c) => /no push sender in this server context/.test(String(c[0]))).length).toBeLessThanOrEqual(1);
+    expect(spy).not.toHaveBeenCalled();
+    // said at most once per process (the first such emit in this file says it)
+    expect(info.mock.calls.filter((c) => /passed no push sender/.test(String(c[0]))).length).toBeLessThanOrEqual(1);
+  });
+
+  it("major 2: loading lib/push/sendPush registers no global sender — with VAPID on, a device and a landed bell row, a server emit without serverPush sends nothing; the same emit WITH pushFromServer does", async () => {
+    // this file imports lib/push/sendPush at the top: the sender is loaded
+    setVapid(true);
+    h.writeBell = true;
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    h.state.tables.push_subscriptions = [{ id: "s-a", user_id: "a", org_id: ORG, endpoint: "https://fcm.googleapis.com/fcm/send/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: new Date().toISOString() }];
+    await emit(ev({ audience: { involved: ["a"] }, inappRetry: {}, serverPush: undefined }));
+    expect(h.sent).toHaveLength(0);
+    expect(h.state.calls.filter((c) => c.table === "push_subscriptions")).toHaveLength(0);
+    // control: the caller that is allowed to push passes the sender, and the push goes
+    await emit(ev({ audience: { involved: ["a"] }, inappRetry: {}, serverPush: pushFromServer }));
+    expect(h.sent.map((x) => x.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/a"]);
+  });
+
+  it("major 2: the maintenance cron's stale-hold nudge (scanStaleHolds → hold_opened) runs through the REAL emit and attempts no push, though the sender is loaded", async () => {
+    setVapid(true);
+    h.writeBell = true;
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const old = new Date(Date.now() - 30 * 86400_000).toISOString();
+    h.state.tables.document_holds = [{
+      id: "h-1", org_id: ORG, document_id: "d-1", reason: "Client Review", opened_by: "a", opened_by_name: "Pat",
+      opened_at: old, expected_release_at: new Date(Date.now() - 86400_000).toISOString(), released_at: null,
+    }];
+    h.state.tables.push_subscriptions = [{ id: "s-a", user_id: "a", org_id: ORG, endpoint: "https://fcm.googleapis.com/fcm/send/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: new Date().toISOString() }];
+    expect(await scanStaleHolds(ORG)).toBe(1);
+    // the nudge's bell row landed (so a sender that ran would have had its evidence) …
+    expect((h.state.tables.notifications ?? []).filter((n) => n.kind === "hold_opened" && n.user_id === "a")).toHaveLength(1);
+    // … and no push was attempted: no device read, nothing sent
+    expect(h.state.calls.filter((c) => c.table === "push_subscriptions")).toHaveLength(0);
+    expect(h.sent).toHaveLength(0);
+    expect(read("lib/holds.ts")).not.toMatch(/serverPush|pushFromServer|lib\/push\//);
   });
 
   it("the browser path sends an audience past the route's cap in parts of PUSH_REQUEST_MAX_RECIPIENTS", async () => {
@@ -318,7 +427,7 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     link: "/documents/lib-1?doc=d-1", title: "HOLD placed on PID-4412-R3 — litigation hold for Acme", body: "Pat placed a hold",
     actor_user_id: "actor", created_at: now(), metadata: null, ...over,
   });
-  const device = (user_id: string, endpoint = `https://push.example/${user_id}`, over: Record<string, unknown> = {}) => ({
+  const device = (user_id: string, endpoint = `https://fcm.googleapis.com/fcm/send/${user_id}`, over: Record<string, unknown> = {}) => ({
     id: `s-${endpoint}`, user_id, org_id: ORG, endpoint, p256dh: "p256", auth: "authk", last_reminded_at: null, created_at: now(), ...over,
   });
   const input = (over: Partial<PushSendInput> = {}): PushSendInput => ({ orgId: ORG, kind: "hold_opened", resourceId: "d-1", recipients: ["a", "b"], ...over });
@@ -348,10 +457,10 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     setVapid(true);
     const row = bell("a");
     h.state.tables.notifications = [row];
-    h.state.tables.push_subscriptions = [device("a", "https://push.example/a-phone"), device("a", "https://push.example/a-laptop")];
+    h.state.tables.push_subscriptions = [device("a", "https://fcm.googleapis.com/fcm/send/a-phone"), device("a", "https://fcm.googleapis.com/fcm/send/a-laptop")];
     const out = await sendPushSafe(input({ recipients: ["a"] }));
     expect(out).toMatchObject({ eligible: 1, attempted: 2, sent: 2, pruned: 0 });
-    expect(h.sent.map((s) => s.endpoint).sort()).toEqual(["https://push.example/a-laptop", "https://push.example/a-phone"]);
+    expect(h.sent.map((s) => s.endpoint).sort()).toEqual(["https://fcm.googleapis.com/fcm/send/a-laptop", "https://fcm.googleapis.com/fcm/send/a-phone"]);
     const payload = JSON.parse(h.sent[0].payload);
     expect(payload).toEqual({ title: "A document hold needs your attention", body: PUSH_BODY, url: "/documents/lib-1?doc=d-1", tag: "mfgos-hold_opened-d-1" });
     // GAP-205 "Do not put document titles, hold reasons or requester names in the push body"
@@ -376,7 +485,7 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     h.state.tables.push_subscriptions = [device("a"), device("b")];
     const out = await sendPushSafe(input());
     expect(out).toMatchObject({ eligible: 1, sent: 1 });
-    expect(h.sent.map((s) => s.endpoint)).toEqual(["https://push.example/b"]);
+    expect(h.sent.map((s) => s.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/b"]);
     expect(h.state.writes.filter((w) => w.table === "push_subscriptions" && w.method === "delete")).toHaveLength(0);
     expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>).find((d) => d.user_id === "a")).toMatchObject({ last_reminded_at: null });
   });
@@ -395,13 +504,13 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     setVapid(true);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     h.state.tables.notifications = [bell("a"), bell("b")];
-    h.state.tables.push_subscriptions = [device("a", "https://push.example/gone"), device("a", "https://push.example/missing"), device("b", "https://push.example/flaky")];
-    h.sendError.set("https://push.example/gone", Object.assign(new Error("Received unexpected response code"), { statusCode: 410 }));
-    h.sendError.set("https://push.example/missing", Object.assign(new Error("Received unexpected response code"), { statusCode: 404 }));
-    h.sendError.set("https://push.example/flaky", Object.assign(new Error("Received unexpected response code"), { statusCode: 500 }));
+    h.state.tables.push_subscriptions = [device("a", "https://fcm.googleapis.com/fcm/send/gone"), device("a", "https://fcm.googleapis.com/fcm/send/missing"), device("b", "https://fcm.googleapis.com/fcm/send/flaky")];
+    h.sendError.set("https://fcm.googleapis.com/fcm/send/gone", Object.assign(new Error("Received unexpected response code"), { statusCode: 410 }));
+    h.sendError.set("https://fcm.googleapis.com/fcm/send/missing", Object.assign(new Error("Received unexpected response code"), { statusCode: 404 }));
+    h.sendError.set("https://fcm.googleapis.com/fcm/send/flaky", Object.assign(new Error("Received unexpected response code"), { statusCode: 500 }));
     const out = await sendPushSafe(input());
     expect(out).toMatchObject({ attempted: 3, sent: 0, pruned: 2 });
-    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>).map((d) => d.endpoint)).toEqual(["https://push.example/flaky"]);
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>).map((d) => d.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/flaky"]);
   });
 
   it("push follows a bell row: no row of this kind about this resource, an older one, or a REDACTED one — no push", async () => {
@@ -452,8 +561,8 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     setVapid(true);
     h.state.tables.notifications = [bell("a")];
     h.state.tables.push_subscriptions = [
-      device("a", "https://push.example/reminders-era", { created_at: "2026-08-04T09:00:00Z" }),
-      device("a", "https://push.example/no-date", { created_at: null }),
+      device("a", "https://fcm.googleapis.com/fcm/send/reminders-era", { created_at: "2026-08-04T09:00:00Z" }),
+      device("a", "https://fcm.googleapis.com/fcm/send/no-date", { created_at: null }),
     ];
     expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ eligible: 1, attempted: 0, sent: 0 });
     expect(h.sent).toHaveLength(0);
@@ -477,6 +586,96 @@ describe("lib/push/sendPush.ts — who is pushed", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(sendPushSafe(null as unknown as PushSendInput)).resolves.toMatchObject({ sent: 0 });
     await expect(sendPushSafe(input({ recipients: undefined as unknown as string[] }))).resolves.toMatchObject({ sent: 0 });
+  });
+
+  // ── fix pass: the review's blocker (SSRF / amplification) ──────────────────
+  it("blocker: a device row naming anything but a push service's host is NEVER sent to, and is deleted; the push services' hosts are", async () => {
+    setVapid(true);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    h.state.tables.notifications = [bell("a")];
+    const bad = [
+      "https://10.0.3.7:8443/admin/x", "https://169.254.169.254/latest/meta-data", "https://victim.example/hook",
+      "https://fcm.googleapis.com:8443/fcm/send/x", "https://evil@fcm.googleapis.com/fcm/send/x", "http://fcm.googleapis.com/fcm/send/x",
+      "https://fcm.googleapis.com.evil.example/x", "https://notify.windows.com/w", "https://localhost/x",
+    ];
+    const good = [
+      "https://fcm.googleapis.com/fcm/send/ok", "https://updates.push.services.mozilla.com/wpush/v2/ok",
+      "https://wns2-par02p.notify.windows.com/w/?token=ok", "https://web.push.apple.com/ok",
+    ];
+    h.state.tables.push_subscriptions = [...bad, ...good].map((e) => device("a", e));
+    const out = await sendPushSafe(input({ recipients: ["a"] }));
+    expect(h.sent.map((x) => x.endpoint).sort()).toEqual([...good].sort());
+    for (const e of bad) expect(h.sent.some((x) => x.endpoint === e), e).toBe(false);
+    expect(out).toMatchObject({ attempted: good.length, sent: good.length, pruned: bad.length });
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>).map((d) => d.endpoint).sort()).toEqual([...good].sort());
+    expect(warn.mock.calls.some((c) => /naming no push service were not sent to/.test(String(c[0])))).toBe(true);
+  });
+
+  it("pushEndpointAllowed: exact hosts and label-boundary suffixes only; https, default port, no user-info", () => {
+    for (const ok of ["https://fcm.googleapis.com/fcm/send/x", "https://FCM.googleapis.com/x", "https://fcm.googleapis.com:443/x",
+      "https://autopush.push.services.mozilla.com/x", "https://db5p.notify.windows.com/w/?token=1", "https://api.push.apple.com/3/device/x"]) {
+      expect(pushEndpointAllowed(ok), ok).toBe(true);
+    }
+    for (const bad of ["https://push.apple.com/x", "https://xpush.apple.com/x", "https://fcm.googleapis.com./x", "https://user:pw@web.push.apple.com/x",
+      "ftp://fcm.googleapis.com/x", "https://[::1]/x", "not a url", "", null, 42, `https://fcm.googleapis.com/${"x".repeat(2100)}`]) {
+      expect(pushEndpointAllowed(bad), String(bad).slice(0, 40)).toBe(false);
+    }
+    expect([...PUSH_SERVICE_HOSTS].sort()).toEqual(["fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"]);
+    expect([...PUSH_SERVICE_HOST_SUFFIXES].sort()).toEqual([".notify.windows.com", ".push.apple.com", ".push.services.mozilla.com"]);
+  });
+
+  it("blocker: at most PUSH_DEVICE_CAP devices per person are pushed — the newest", async () => {
+    setVapid(true);
+    h.state.tables.notifications = [bell("a")];
+    const t0 = Date.now() - 60 * 60_000;
+    h.state.tables.push_subscriptions = Array.from({ length: PUSH_DEVICE_CAP + 5 }, (_, i) =>
+      device("a", `https://fcm.googleapis.com/fcm/send/dev-${String(i).padStart(2, "0")}`, { created_at: new Date(t0 + i * 60_000).toISOString() }));
+    const out = await sendPushSafe(input({ recipients: ["a"] }));
+    expect(PUSH_DEVICE_CAP).toBe(10);
+    expect(out).toMatchObject({ attempted: PUSH_DEVICE_CAP, sent: PUSH_DEVICE_CAP });
+    // the five OLDEST were left out
+    expect(h.sent.map((x) => x.endpoint).sort()).toEqual(Array.from({ length: PUSH_DEVICE_CAP }, (_, i) => `https://fcm.googleapis.com/fcm/send/dev-${String(i + 5).padStart(2, "0")}`));
+    expect(read("lib/push/sendPush.ts")).toMatch(/\.order\("created_at", \{ ascending: false \}\)\s*\.limit\(DEVICE_READ_LIMIT\)/);
+  });
+
+  // ── fix pass: one push per device per bell row, claimed BEFORE the send ──
+  it("two requests about the same row at once send ONE push per device (the claim lands once)", async () => {
+    setVapid(true);
+    h.state.tables.notifications = [bell("a")];
+    h.state.tables.push_subscriptions = [device("a")];
+    const [o1, o2] = await Promise.all([sendPushSafe(input({ recipients: ["a"] })), sendPushSafe(input({ recipients: ["a"] }))]);
+    expect(h.sent).toHaveLength(1);
+    expect(o1.sent + o2.sent).toBe(1);
+    expect(o1.attempted + o2.attempted).toBe(1);
+    const claims = h.state.calls.filter((c) => c.table === "push_subscriptions" && c.method === "or");
+    expect(claims).toHaveLength(2);
+    expect(String(claims[0].args[0])).toMatch(/^last_reminded_at\.is\.null,last_reminded_at\.lt\."[^"]+"$/);
+  });
+
+  it("the claim comes before the send; a failed send (not 404 / 410) puts it back, so a later request about the row tries again", async () => {
+    setVapid(true);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const row = bell("a");
+    h.state.tables.notifications = [row];
+    h.state.tables.push_subscriptions = [device("a")];
+    h.sendError.set("https://fcm.googleapis.com/fcm/send/a", Object.assign(new Error("Received unexpected response code"), { statusCode: 503 }));
+    expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ attempted: 1, sent: 0, pruned: 0 });
+    const writes = h.state.writes.filter((w) => w.table === "push_subscriptions" && w.method === "update");
+    expect(writes.map((w) => (w.payload as Record<string, unknown>).last_reminded_at)).toEqual([row.created_at, null]);
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0].last_reminded_at).toBeNull();
+    h.sendError.clear();
+    expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ sent: 1 });
+    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>)[0].last_reminded_at).toBe(row.created_at);
+  });
+
+  it("a claim the database refuses with an error sends nothing (at most once, never twice)", async () => {
+    setVapid(true);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    h.state.tables.notifications = [bell("a")];
+    h.state.tables.push_subscriptions = [device("a")];
+    h.state.tableWriteError = { push_subscriptions: { message: "upstream timeout" } };
+    expect(await sendPushSafe(input({ recipients: ["a"] }))).toMatchObject({ attempted: 0, sent: 0 });
+    expect(h.sent).toHaveLength(0);
   });
 });
 
@@ -516,13 +715,35 @@ describe("POST /api/push/notify — the browser half of the push leg", () => {
       { id: "n2", org_id: ORG, user_id: "b", kind: "hold_opened", resource_id: "d-1", link: "/x", actor_user_id: "other", created_at: new Date().toISOString(), metadata: null },
     ];
     h.state.tables.push_subscriptions = [
-      { id: "s1", user_id: "a", endpoint: "https://push.example/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: new Date().toISOString() },
-      { id: "s2", user_id: "b", endpoint: "https://push.example/b", p256dh: "p", auth: "k", last_reminded_at: null, created_at: new Date().toISOString() },
+      { id: "s1", user_id: "a", endpoint: "https://fcm.googleapis.com/fcm/send/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: new Date().toISOString() },
+      { id: "s2", user_id: "b", endpoint: "https://fcm.googleapis.com/fcm/send/b", p256dh: "p", auth: "k", last_reminded_at: null, created_at: new Date().toISOString() },
     ];
     const res = await post(notifyRoute, "/api/push/notify", body);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(h.sent.map((s) => s.endpoint)).toEqual(["https://push.example/a"]);
+    expect(h.sent).toHaveLength(0); // nothing sent before the answer …
+    await runAfter();               // … the sends run after it
+    expect(h.sent.map((s) => s.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/a"]);
+  });
+
+  it("blocker: the answer never waits for the sends — a push service that hangs does not hold the response, and every outcome answers the same", async () => {
+    setVapid(true);
+    h.user = { id: "actor" };
+    const now = new Date().toISOString();
+    h.state.tables.notifications = [{ id: "n1", org_id: ORG, user_id: "a", kind: "hold_opened", resource_id: "d-1", link: "/x", actor_user_id: "actor", created_at: now, metadata: null }];
+    h.state.tables.push_subscriptions = [{ id: "s1", user_id: "a", endpoint: "https://fcm.googleapis.com/fcm/send/a", p256dh: "p", auth: "k", last_reminded_at: null, created_at: now }];
+    const webpush = (await import("web-push")).default as unknown as { sendNotification: ReturnType<typeof vi.fn> };
+    webpush.sendNotification.mockImplementationOnce(() => new Promise(() => undefined)); // never answers
+    const res = await post(notifyRoute, "/api/push/notify", body);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(h.after).toHaveLength(1);
+    // the route itself read nothing about devices or bell rows before answering
+    expect(h.state.calls.filter((c) => c.table === "push_subscriptions" || c.table === "notifications")).toHaveLength(0);
+    // the one send in the route is inside after()
+    const route = read("app/api/push/notify/route.ts");
+    expect(route).toMatch(/after\(async \(\) => \{\s*await sendPushSafe\(/);
+    expect(route.match(/sendPushSafe\(/g)).toHaveLength(1);
   });
 });
 
@@ -543,6 +764,13 @@ describe("/api/push/subscribe and /api/push/unsubscribe — the per-device opt-i
     expect((await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: sub })).status).toBe(503);
     setVapid(true);
     expect((await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: { ...sub, endpoint: "http://insecure.example/x" } })).status).toBe(400);
+    // blocker: an https URL that is not a push service's is refused too
+    for (const e of ["https://10.0.3.7:8443/admin/x", "https://victim.example/hook", "https://fcm.googleapis.com:8443/x", "https://evil@fcm.googleapis.com/x"]) {
+      const r = await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: { ...sub, endpoint: e } });
+      expect(r.status, e).toBe(400);
+      expect((await r.json()).error).toBe("That is not a browser push subscription.");
+    }
+    expect(h.state.tables.push_subscriptions ?? []).toEqual([]);
     h.user = { id: "stranger" };
     expect((await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: sub })).status).toBe(403);
     h.user = { id: "a" };
@@ -553,14 +781,61 @@ describe("/api/push/subscribe and /api/push/unsubscribe — the per-device opt-i
     ]);
   });
 
-  it("the same browser turned on by a second person becomes theirs (the endpoint is the browser's); a re-subscribe replaces the caller's own row", async () => {
+  it("the same browser turned on by a second person becomes theirs — only when they present the SAME keys (they hold the live subscription); one conditional update, nothing deleted", async () => {
     setVapid(true);
-    h.state.tables.push_subscriptions = [{ id: "old", user_id: "b", org_id: ORG, endpoint: sub.endpoint, p256dh: "x", auth: "y" }];
+    const earlier = new Date(Date.now() - 3600_000).toISOString();
+    h.state.tables.push_subscriptions = [{ id: "old", user_id: "b", org_id: ORG, endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth, created_at: earlier, last_reminded_at: earlier }];
     h.user = { id: "a" };
     expect((await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: sub })).status).toBe(200);
-    expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>).map((r) => r.user_id)).toEqual(["a"]);
+    const rows = h.state.tables.push_subscriptions as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "old", user_id: "a", org_id: ORG, last_reminded_at: null });
+    expect(Date.parse(String(rows[0].created_at))).toBeGreaterThan(Date.parse(earlier)); // a fresh opt-in
+    expect(h.state.writes.filter((w) => w.table === "push_subscriptions" && w.method === "delete")).toHaveLength(0);
+    // a re-subscribe by the same person is the same conditional update
     expect((await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: sub })).status).toBe(200);
     expect(h.state.tables.push_subscriptions).toHaveLength(1);
+  });
+
+  it("minor: knowing someone's endpoint takes nothing over — other keys answer 409 keys_mismatch and the stored row is untouched, in any tenant", async () => {
+    setVapid(true);
+    const theirs = { id: "theirs", user_id: "b", org_id: "o-other", endpoint: sub.endpoint, p256dh: "theirP256", auth: "theirAuth", created_at: "2026-10-14T08:00:00.000Z", last_reminded_at: null };
+    h.state.tables.push_subscriptions = [{ ...theirs }];
+    h.user = { id: "a" };
+    h.insertError = { message: "duplicate key value violates unique constraint \"push_subscriptions_endpoint_key\"", code: "23505" };
+    const res = await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: sub });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: PUSH_KEYS_MISMATCH });
+    expect(h.state.tables.push_subscriptions).toEqual([theirs]);
+    expect(h.state.writes.filter((w) => w.table === "push_subscriptions" && w.method === "delete")).toHaveLength(0);
+  });
+
+  it("minor: a write that fails leaves the earlier registration as it was (no delete-then-insert)", async () => {
+    setVapid(true);
+    const before = { id: "old", user_id: "b", org_id: ORG, endpoint: sub.endpoint, p256dh: sub.keys.p256dh, auth: sub.keys.auth, created_at: "2026-10-14T08:00:00.000Z", last_reminded_at: null };
+    h.state.tables.push_subscriptions = [{ ...before }];
+    h.user = { id: "a" };
+    h.state.tableWriteError = { push_subscriptions: { message: "upstream timeout" } };
+    const res = await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: sub });
+    expect(res.status).toBe(500);
+    expect(h.state.tables.push_subscriptions).toEqual([before]);
+  });
+
+  it("blocker: a person keeps at most PUSH_DEVICE_CAP registrations — a new one removes their oldest, never the one just made, never anyone else's", async () => {
+    setVapid(true);
+    h.user = { id: "a" };
+    const t0 = Date.parse("2026-10-14T01:00:00.000Z");
+    h.state.tables.push_subscriptions = [
+      ...Array.from({ length: PUSH_DEVICE_CAP }, (_, i) => ({ id: `a-${i}`, user_id: "a", org_id: ORG, endpoint: `https://fcm.googleapis.com/fcm/send/a-${i}`, p256dh: "p", auth: "k", created_at: new Date(t0 + i * 60_000).toISOString() })),
+      { id: "b-0", user_id: "b", org_id: ORG, endpoint: "https://fcm.googleapis.com/fcm/send/b-0", p256dh: "p", auth: "k", created_at: new Date(t0 - 60_000).toISOString() },
+    ];
+    expect((await post(subscribeRoute, "/api/push/subscribe", { orgId: ORG, subscription: sub })).status).toBe(200);
+    const rows = h.state.tables.push_subscriptions as Array<Record<string, unknown>>;
+    const mine = rows.filter((r) => r.user_id === "a");
+    expect(mine).toHaveLength(PUSH_DEVICE_CAP);
+    expect(mine.some((r) => r.endpoint === sub.endpoint)).toBe(true);
+    expect(mine.some((r) => r.id === "a-0")).toBe(false); // the oldest went
+    expect(rows.some((r) => r.id === "b-0")).toBe(true);
   });
 
   it("before 20260804 the POST says the database update is missing and changes nothing", async () => {
@@ -574,13 +849,13 @@ describe("/api/push/subscribe and /api/push/unsubscribe — the per-device opt-i
 
   it("unsubscribe removes only the caller's own row for that endpoint; nothing to remove is not an error", async () => {
     h.state.tables.push_subscriptions = [
-      { id: "s1", user_id: "a", endpoint: "https://push.example/1" },
-      { id: "s2", user_id: "b", endpoint: "https://push.example/2" },
+      { id: "s1", user_id: "a", endpoint: "https://fcm.googleapis.com/fcm/send/1" },
+      { id: "s2", user_id: "b", endpoint: "https://fcm.googleapis.com/fcm/send/2" },
     ];
-    expect((await post(unsubscribeRoute, "/api/push/unsubscribe", { endpoint: "https://push.example/1" }, null)).status).toBe(401);
+    expect((await post(unsubscribeRoute, "/api/push/unsubscribe", { endpoint: "https://fcm.googleapis.com/fcm/send/1" }, null)).status).toBe(401);
     h.user = { id: "a" };
-    expect(await (await post(unsubscribeRoute, "/api/push/unsubscribe", { endpoint: "https://push.example/2" })).json()).toEqual({ ok: true, removed: 0 });
-    expect(await (await post(unsubscribeRoute, "/api/push/unsubscribe", { endpoint: "https://push.example/1" })).json()).toEqual({ ok: true, removed: 1 });
+    expect(await (await post(unsubscribeRoute, "/api/push/unsubscribe", { endpoint: "https://fcm.googleapis.com/fcm/send/2" })).json()).toEqual({ ok: true, removed: 0 });
+    expect(await (await post(unsubscribeRoute, "/api/push/unsubscribe", { endpoint: "https://fcm.googleapis.com/fcm/send/1" })).json()).toEqual({ ok: true, removed: 1 });
     expect((h.state.tables.push_subscriptions as Array<Record<string, unknown>>).map((r) => r.id)).toEqual(["s2"]);
   });
 });
@@ -647,7 +922,25 @@ describe("the rest of the build", () => {
   it("dispatch.ts stays browser-safe: it never imports web-push, the service role or the sender", () => {
     const src = read("lib/notify/dispatch.ts");
     expect(src).not.toMatch(/from "web-push"|supabaseAdmin|from "@\/lib\/push\/sendPush"|import\("@\/lib\/push\/sendPush"\)/);
-    expect(read("lib/push/sendPush.ts")).toContain("__registerServerPushSender(async (input) => { await sendPushSafe(input); });");
+  });
+
+  it("major 2: no module-level push sender anywhere — a server push is the caller's serverPush, never load order", () => {
+    const dispatch = read("lib/notify/dispatch.ts");
+    expect(dispatch).not.toMatch(/__registerServerPushSender|let serverPushSender/);
+    expect(dispatch).toContain("serverPush?: PushSender;");
+    expect(dispatch).toContain("await pushLeg({ orgId: input.orgId, kind: input.kind, resourceId: input.resource.id, recipients: pushTo }, input.serverPush);");
+    const sender = read("lib/push/sendPush.ts");
+    expect(sender).not.toMatch(/__register\w*\(/);
+    expect(sender).toContain("export const pushFromServer: PushSender = async (input) => { await sendPushSafe(input); };");
+    // the maintenance cron passes no sender and loads none
+    expect(read("app/api/cron/maintenance/route.ts")).not.toMatch(/pushFromServer|serverPush|from "@\/lib\/push\/sendPush"/);
+  });
+
+  it("blocker: the subscribe route and the sender share ONE allow-list (lib/push/endpoints.ts), and the cron prunes by it too", () => {
+    expect(read("app/api/push/subscribe/route.ts")).toMatch(/!pushEndpointAllowed\(endpoint\)/);
+    expect(read("app/api/push/subscribe/route.ts")).not.toMatch(/protocol === "https:"/);
+    expect(read("lib/push/sendPush.ts")).toMatch(/if \(!pushEndpointAllowed\(d\.endpoint\)\) \{ offService\.push\(d\.id\); continue; \}/);
+    expect(read("app/api/cron/maintenance/route.ts")).toMatch(/!pushEndpointAllowed\(r\.endpoint\)/);
   });
 
   it("OS-11 by record: the three registrations name a table the app now reads and writes", () => {

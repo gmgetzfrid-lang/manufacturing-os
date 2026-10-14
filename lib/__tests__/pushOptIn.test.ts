@@ -13,9 +13,19 @@
 //     { userVisibleOnly: true, applicationServerKey }) from
 //     navigator.serviceWorker.ready, POSTed to /api/push/subscribe.
 //   GAP-205 acceptance 1: the opt-in from settings lands the row.
+//
+// Fix pass (the review's major 3 and a minor): the card lists only what is
+// pushed TODAY (PUSH_SENT_TODAY — each kind has an emit() producer) and says
+// what is not sent to devices yet (PUSH_NOT_SENT_YET — no emit() producer:
+// OS-14); a subscription made before the click (another person's, on a
+// shared browser) is never taken back when registration fails; an endpoint
+// the server holds under other keys (409 keys_mismatch) gets ONE fresh
+// subscription.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { createRoot, type Root } from "react-dom/client";
 
 const db = vi.hoisted(() => ({
@@ -50,8 +60,10 @@ vi.mock("@/lib/supabase", () => ({
 
 import PushOptIn, {
   PUSH_WHAT_IS_SENT, PUSH_PRIVACY_NOTE, PUSH_DENIED_TEXT, PUSH_UNSUPPORTED_TEXT, PUSH_UNCONFIGURED_TEXT, PUSH_DECLINE_KEY,
+  PUSH_SENT_TODAY, PUSH_NOT_SENT_YET, PUSH_NOT_YET_NOTE,
   urlBase64ToUint8Array,
 } from "@/components/settings/PushOptIn";
+import { PUSH_KEYS_MISMATCH } from "@/lib/push/endpoints";
 import { KIND_META, NOTIFICATION_KINDS } from "@/lib/notificationKinds";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -66,6 +78,8 @@ const env = {
   existing: null as Sub | null,
   configured: true,
   subscribeResult: 200,
+  /** answers for successive subscribe POSTs (then subscribeResult) */
+  subscribeQueue: [] as Array<{ status: number; body: Record<string, unknown> }>,
 };
 const calls = {
   requestPermission: vi.fn(),
@@ -103,6 +117,8 @@ function installBrowser(supported = true) {
       return new Response(JSON.stringify({ configured: env.configured, publicKey: env.configured ? PUBLIC_KEY : null }), { status: 200 });
     }
     if (url === "/api/push/subscribe") {
+      const next = env.subscribeQueue.shift();
+      if (next) return new Response(JSON.stringify(next.body), { status: next.status });
       return new Response(JSON.stringify(env.subscribeResult === 200 ? { ok: true } : { error: "Device notifications need a database update that has not been applied yet (20260804_push_subscriptions.sql). Nothing was changed." }), { status: env.subscribeResult });
     }
     if (url === "/api/push/unsubscribe") return new Response(JSON.stringify({ ok: true, removed: 1 }), { status: 200 });
@@ -124,7 +140,7 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   db.prefRow = null; db.prefError = null; db.subRow = null; db.upserts.length = 0;
-  env.permission = "default"; env.requestResult = "granted"; env.existing = null; env.configured = true; env.subscribeResult = 200;
+  env.permission = "default"; env.requestResult = "granted"; env.existing = null; env.configured = true; env.subscribeResult = 200; env.subscribeQueue = [];
   calls.requestPermission.mockClear(); calls.subscribe.mockClear(); calls.fetch.length = 0;
   window.localStorage.clear();
 });
@@ -159,18 +175,47 @@ describe("OS-3 — the permission prompt is reached only by a deliberate click, 
     expect(button(/Turn on notifications for this device/)).toBeTruthy();
   });
 
-  it("the first click explains what will be sent — every push-worthy kind, and that the notification names nothing — and still asks nothing", async () => {
+  it("the first click explains what will be sent — only what is pushed today, what is not sent to devices yet, and that the notification names nothing — and still asks nothing", async () => {
     installBrowser();
     await mount();
     await click(button(/Turn on notifications for this device/));
     const panel = host.querySelector("[data-push-explain]")!;
     expect(panel).toBeTruthy();
     for (const line of PUSH_WHAT_IS_SENT) expect(panel.textContent).toContain(line);
+    expect(panel.textContent).toContain(PUSH_NOT_YET_NOTE);
     expect(panel.textContent).toContain(PUSH_PRIVACY_NOTE);
     expect(panel.textContent).toMatch(/Your browser will ask for permission next/);
     expect(calls.requestPermission).not.toHaveBeenCalled();
-    // one line per push-worthy kind (a kind made push-worthy updates this copy)
-    expect(PUSH_WHAT_IS_SENT).toHaveLength(NOTIFICATION_KINDS.filter((k) => (KIND_META[k] as { pushWorthy?: boolean }).pushWorthy).length);
+    // major 3: no line promises a request mention or assignment (never pushed — OS-14)
+    expect(panel.querySelectorAll("li")).toHaveLength(PUSH_SENT_TODAY.length);
+    for (const li of panel.querySelectorAll("li")) expect(li.textContent).not.toMatch(/mention|assigned/i);
+    expect(PUSH_WHAT_IS_SENT).toEqual(PUSH_SENT_TODAY.map((l) => l.line));
+    expect(PUSH_WHAT_IS_SENT).toHaveLength(4);
+  });
+
+  it("major 3: the card's two lists split the push-worthy set exactly — each listed kind has an emit() producer, and each 'not yet' kind has none (when OS-14 lands, this fails until the line moves)", () => {
+    const pushWorthy = NOTIFICATION_KINDS.filter((k) => (KIND_META[k] as { pushWorthy?: boolean }).pushWorthy).sort();
+    const today = PUSH_SENT_TODAY.map((l) => l.pushKind);
+    expect([...today, ...PUSH_NOT_SENT_YET].sort()).toEqual(pushWorthy);
+    expect(today.filter((k) => PUSH_NOT_SENT_YET.includes(k))).toEqual([]);
+    // the emit() producers, read from source: an `emit({ … kind: "<k>" …` call
+    const root = process.cwd();
+    const files: string[] = [];
+    const walk = (d: string) => {
+      for (const n of readdirSync(d)) {
+        const p = join(d, n);
+        if (statSync(p).isDirectory()) { if (n !== "node_modules" && n !== "__tests__" && !n.startsWith(".")) walk(p); }
+        else if (/\.tsx?$/.test(n) && !n.endsWith(".d.ts")) files.push(p);
+      }
+    };
+    for (const d of ["app", "components", "lib", "hooks"]) walk(join(root, d));
+    const emitKinds = new Set<string>();
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (const m of src.matchAll(/\bemit\(\{[\s\S]{0,600}?\bkind:\s*(?:input\.opened \? )?"(\w+)"/g)) emitKinds.add(m[1]);
+    }
+    for (const k of today) expect(emitKinds.has(k), `${k} has an emit() producer`).toBe(true);
+    for (const k of PUSH_NOT_SENT_YET) expect(emitKinds.has(k), `${k} has no emit() producer yet (OS-14)`).toBe(false);
   });
 
   it("acceptance 1: 'Allow notifications' → the browser's dialog → subscribe({ userVisibleOnly: true, applicationServerKey }) from serviceWorker.ready → the device POSTed → 'On for this device'", async () => {
@@ -203,6 +248,40 @@ describe("OS-3 — the permission prompt is reached only by a deliberate click, 
     expect(deviceState()).toBe("off");
     expect(host.textContent).toMatch(/20260804_push_subscriptions\.sql/);
     expect(env.existing!.unsubscribe).toHaveBeenCalled();
+  });
+
+  it("minor: a subscription that existed BEFORE the click (another person's, on a shared browser) is never taken back when registration fails", async () => {
+    installBrowser();
+    env.permission = "granted";
+    const theirs = makeSub("https://fcm.googleapis.com/fcm/send/shared-pc");
+    env.existing = theirs;
+    db.subRow = null; // not this member's row → the card reads "off"
+    env.subscribeResult = 500;
+    await mount();
+    expect(deviceState()).toBe("off");
+    await click(button(/Turn on notifications for this device/));
+    await click(button(/Allow notifications/));
+    expect(deviceState()).toBe("off");
+    expect(calls.subscribe).not.toHaveBeenCalled();
+    expect(theirs.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it("minor: an endpoint the server holds under other keys (409 keys_mismatch) gets ONE fresh subscription, then registers", async () => {
+    installBrowser();
+    env.permission = "granted";
+    const stale = makeSub("https://fcm.googleapis.com/fcm/send/stale");
+    env.existing = stale;
+    env.subscribeQueue = [{ status: 409, body: { error: "This browser's notification registration could not be confirmed", code: PUSH_KEYS_MISMATCH } }];
+    await mount();
+    await click(button(/Turn on notifications for this device/));
+    await click(button(/Allow notifications/));
+    expect(stale.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(calls.subscribe).toHaveBeenCalledTimes(1);
+    const posts = calls.fetch.filter((f) => f.url === "/api/push/subscribe" && f.init?.method === "POST");
+    expect(posts.map((p) => JSON.parse(String(p.init!.body)).subscription.endpoint)).toEqual([
+      "https://fcm.googleapis.com/fcm/send/stale", "https://fcm.googleapis.com/fcm/send/device-1",
+    ]);
+    expect(deviceState()).toBe("on");
   });
 
   it("'Not now' is recorded (this account, this workspace) and the card stops inviting — the browser was never asked", async () => {

@@ -11,8 +11,10 @@
 // the workforce).
 //
 //   1. The person clicks "Turn on notifications for this device".
-//   2. The card says what will be sent — the push-worthy kinds, by name of
-//      kind only — BEFORE the browser's dialog (OS-3 done-when 3).
+//   2. The card says what will be sent — only what is pushed TODAY, by name
+//      of kind only, and what is not sent to devices yet — BEFORE the
+//      browser's dialog (OS-3 done-when 3; fix pass: the first pass listed
+//      request mentions and assignments, which no producer pushes — OS-14).
 //   3. "Allow notifications" calls Notification.requestPermission() first
 //      thing in the click, then subscribes from navigator.serviceWorker.ready
 //      (registration.pushManager.subscribe({ userVisibleOnly: true,
@@ -40,22 +42,46 @@ import { supabase } from "@/lib/supabase";
 import { useDismissed } from "@/hooks/useDismissed";
 import { Button } from "@/components/ui/Button";
 import { PUSH_OPT_IN_SINCE } from "@/lib/notify/dispatch";
+import { PUSH_KEYS_MISMATCH } from "@/lib/push/endpoints";
+import type { ClassifiedKind } from "@/lib/notificationKinds";
 
 /** useDismissed key for "Not now" (scope `<uid>:<orgId>`). A later nudge that
  *  invites push reads the same key and stays quiet. */
 export const PUSH_DECLINE_KEY = "push-optin-declined";
 
-/** What a device notification is ever about — one line per push-worthy kind
- *  (lib/notificationKinds.ts KIND_META.pushWorthy; a test pins the count).
- *  Said before the browser's dialog. */
-export const PUSH_WHAT_IS_SENT: readonly string[] = Object.freeze([
-  "A hold placed on a document you work on",
-  "Your checkout released by someone else",
-  "A request to acknowledge a document",
-  "A request to sign off a document",
-  "A mention on a request",
-  "A request assigned to you",
+/** What a device notification is about TODAY: one line per push-worthy kind
+ *  whose producer reaches emit()'s push leg, worded for exactly that
+ *  producer (fix pass — the review's major 3). Said before the browser's
+ *  dialog.
+ *   - hold_opened: openHold's stop-work notice (lib/holds.ts
+ *     notifyHoldChange — the hold strip, check-in);
+ *   - checkout_force_released: lib/checkoutEpisodes.ts forceReleaseDocument;
+ *   - ack_requested: the distribution list's request (lib/distributionAcks.ts
+ *     — DistributionAcks / DistributionRecall), NOT the read-&-understood
+ *     roster (lib/acknowledgments.ts writes outside emit() — OS-14);
+ *   - review_requested: a change proposed at check-in, sent to the document's
+ *     owner (components/documents/CheckInPanel.tsx), NOT the sign-off roster
+ *     (lib/reviewControl.ts writes outside emit() — OS-14).
+ *  ticket_mention / ticket_assigned are push-worthy but no producer pushes
+ *  them yet (the ticket routes' fan-out bypasses emit() — OS-14): they are
+ *  in PUSH_NOT_SENT_YET, not here. A test pins both lists against the
+ *  push-worthy set and the emit() producers. (`pushKind`, not `kind`: this
+ *  card writes no notification — lib/__tests__/kindSplitProducers.test.ts
+ *  counts a `kind: "…"` literal as a writer.) */
+export const PUSH_SENT_TODAY: ReadonlyArray<{ pushKind: ClassifiedKind; line: string }> = Object.freeze([
+  { pushKind: "hold_opened", line: "A hold placed on a document you work on or follow" },
+  { pushKind: "checkout_force_released", line: "Your checkout released by someone else" },
+  { pushKind: "ack_requested", line: "A request, from a document's distribution list, to confirm you have its current revision" },
+  { pushKind: "review_requested", line: "A change proposed at check-in to a document you own, waiting for your review" },
 ]);
+export const PUSH_WHAT_IS_SENT: readonly string[] = Object.freeze(PUSH_SENT_TODAY.map((l) => l.line));
+
+/** The push-worthy kinds no producer pushes yet (OS-14), and the sentence the
+ *  card says about them — so nobody relies on a device notification that
+ *  never comes. */
+export const PUSH_NOT_SENT_YET: readonly ClassifiedKind[] = Object.freeze(["ticket_mention", "ticket_assigned"] as ClassifiedKind[]);
+export const PUSH_NOT_YET_NOTE =
+  "Not sent to devices yet: mentions and assignments on requests, read-and-understood requests, and sign-off requests from a review roster. The bell and email still bring them.";
 
 export const PUSH_PRIVACY_NOTE =
   "The notification says only what kind of thing happened — never a document number, a title, a reason or a person's name — so nothing sensitive shows on a lock screen. Open it to see the details.";
@@ -225,22 +251,37 @@ export default function PushOptIn({ uid, orgId }: { uid: string | null; orgId: s
         await sub.unsubscribe().catch(() => false);
         sub = null;
       }
-      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      // Whether THIS click made the subscription. One made before it (another
+      // person's, on a shared browser) is never taken back on a failure here
+      // — it may be their working registration (fix pass).
+      let made = false;
+      if (!sub) { sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }); made = true; }
       const headers = await bearer();
       if (!headers) {
-        await sub.unsubscribe().catch(() => false);
+        if (made) await sub.unsubscribe().catch(() => false);
         setDeviceError("You're signed out — sign in again and retry.");
         setDevice("off");
         return;
       }
-      const res = await fetch("/api/push/subscribe", {
+      const register = (s: PushSubscription) => fetch("/api/push/subscribe", {
         method: "POST",
         headers,
-        body: JSON.stringify({ orgId, subscription: sub.toJSON() }),
+        body: JSON.stringify({ orgId, subscription: s.toJSON() }),
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+      let res = await register(sub);
+      let body = res.ok ? null : ((await res.json().catch(() => null)) as { error?: unknown; code?: unknown } | null);
+      if (!res.ok && res.status === 409 && body?.code === PUSH_KEYS_MISMATCH && !made) {
+        // The server holds this endpoint under other keys than this browser's
+        // live subscription: that registration is not this browser's, so a
+        // fresh subscription (a new endpoint) is started, once.
         await sub.unsubscribe().catch(() => false);
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+        made = true;
+        res = await register(sub);
+        body = res.ok ? null : ((await res.json().catch(() => null)) as { error?: unknown; code?: unknown } | null);
+      }
+      if (!res.ok) {
+        if (made) await sub.unsubscribe().catch(() => false);
         setDeviceError(typeof body?.error === "string" ? body.error : "This device could not be registered — try again.");
         setDevice("off");
         return;
@@ -342,6 +383,7 @@ export default function PushOptIn({ uid, orgId }: { uid: string | null; orgId: s
                 <ul className="list-disc pl-5 mt-1 space-y-0.5">
                   {PUSH_WHAT_IS_SENT.map((line) => <li key={line}>{line}</li>)}
                 </ul>
+                <div data-push-not-yet className="mt-2 text-[var(--color-text-muted)]">{PUSH_NOT_YET_NOTE}</div>
                 <div className="mt-2 text-[var(--color-text-muted)]">{PUSH_PRIVACY_NOTE}</div>
                 <div className="mt-2 text-[var(--color-text-muted)]">Your browser will ask for permission next.</div>
                 <div className="mt-3 flex flex-wrap gap-2">

@@ -19,9 +19,10 @@
 //     you, a mention or an assignment on a request). Everything else stays
 //     bell / email only.
 //   * Only to a person who turned this channel on for a DEVICE — a
-//     push_subscriptions row exists only because they clicked "Turn on
-//     notifications for this device" (components/settings/PushOptIn.tsx) —
-//     and whose notification_preferences.push_enabled is not false. The
+//     push_subscriptions row is written by /api/push/subscribe after they
+//     clicked "Turn on notifications for this device"
+//     (components/settings/PushOptIn.tsx; the route is the table's only
+//     writer once 20261211 is pasted) — and whose notification_preferences.push_enabled is not false. The
 //     column's DEFAULT TRUE alone sends nothing (OS-10 done-when 1). A row
 //     older than that control (PUSH_OPT_IN_SINCE — the deleted reminders
 //     stack's) is never pushed (OS-10 done-when 3).
@@ -41,29 +42,42 @@
 //   * A 404 / 410 from the push service means the subscription is gone:
 //     its row is deleted (OS-2 done-when 4). Anything else is logged.
 //   * A device is pushed once per bell row: last_reminded_at holds the
-//     created_at of the newest bell row it was pushed for, so a replayed
-//     request — or two tabs asking about the same row — sends nothing more.
+//     created_at of the newest bell row it was pushed for, and the device is
+//     CLAIMED for a row before the send (a conditional update that lands only
+//     while last_reminded_at is older than the row — fix pass), so a replayed
+//     request, or two tabs asking about the same row at once, sends once. A
+//     send that fails (not 404 / 410) puts the claim back.
 //   * A browser's request is capped per writer: past PUSH_WRITER_CAP push-
 //     worthy rows from one member to one person in PUSH_WRITER_WINDOW_MS,
 //     the bell keeps them and no more pushes go (the 20261160 caps bound the
 //     rows themselves).
+//   * Only to a push service (fix pass — the review's blocker): a device row
+//     whose endpoint is not on a browser push service's own host
+//     (lib/push/endpoints.ts pushEndpointAllowed) is never sent to and is
+//     deleted; at most the PUSH_DEVICE_CAP newest devices of a person are
+//     read. /api/push/subscribe stores nothing else, and 20261211 drops the
+//     own-row INSERT policy, so the route is the only writer.
 //
 // Push is best-effort by design and is never a delivery record (GAP-205;
 // drafting-flow GAP-113): nothing reads a push to decide anything.
 //
-// Loading this module registers it as emit()'s server sender
-// (__registerServerPushSender), the way lib/documentDiscoverers.ts registers
-// the discover check: lib/notify/dispatch.ts is bundled for the browser and
-// never imports web-push or the service role. The browser asks
-// POST /api/push/notify, which calls sendPushSafe here. The maintenance cron
-// does not load it: the cron only prunes (app/api/cron/maintenance/route.ts
-// step 4e), so its scan reminders stay bell / email.
+// Who calls this (fix pass — the review's major 2): POST /api/push/notify
+// (the browser half of emit()'s push leg), and a server caller of emit()
+// that is allowed to push, by passing `serverPush: pushFromServer` in its
+// EmitInput. Loading this module changes nothing else: it registers no
+// global sender, so whether a server emit pushes never depends on which
+// modules a long-lived process happens to have loaded.
+// lib/notify/dispatch.ts is bundled for the browser and never imports
+// web-push or the service role. The maintenance cron passes no sender: the
+// cron only prunes (app/api/cron/maintenance/route.ts step 7c), so its scan
+// reminders (scanStaleHolds' hold_opened among them) stay bell / email.
 
 import webpush, { type PushSubscription as WebPushSubscription } from "web-push";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
 import { NOTIFICATION_KINDS, kindMeta, type ClassifiedKind } from "@/lib/notificationKinds";
-import { __registerServerPushSender, PUSH_OPT_IN_SINCE, PUSH_REQUEST_MAX_RECIPIENTS, type PushSendInput } from "@/lib/notify/dispatch";
+import { PUSH_OPT_IN_SINCE, PUSH_REQUEST_MAX_RECIPIENTS, type PushSender, type PushSendInput } from "@/lib/notify/dispatch";
+import { PUSH_DEVICE_CAP, pushEndpointAllowed } from "@/lib/push/endpoints";
 
 /** The push-worthy kinds, in registry order (KIND_META.pushWorthy). */
 export const PUSH_KINDS: readonly ClassifiedKind[] = Object.freeze(
@@ -102,6 +116,11 @@ export const PUSH_TTL_SECONDS = 3600;
 export const PUSH_MAX_RECIPIENTS = PUSH_REQUEST_MAX_RECIPIENTS;
 /** uids per `in.(…)` read (a long list is a long URL; the DIST-15 chunking). */
 const CHUNK = 150;
+/** uids per device read: PUSH_DEVICE_CAP devices each stay well under
+ *  DEVICE_READ_LIMIT (PostgREST's default max-rows), so a read is cut short
+ *  only when someone holds more rows than the cap (it is said when it is). */
+const DEVICE_CHUNK = 50;
+const DEVICE_READ_LIMIT = 1000;
 
 export interface PushConfig {
   publicKey: string;
@@ -187,7 +206,7 @@ export interface PushOutcome {
   /** device sends attempted */
   attempted: number;
   sent: number;
-  /** subscriptions deleted after a 404 / 410 */
+  /** subscriptions deleted: answered 404 / 410, or naming no push service */
   pruned: number;
   /** recipients over the per-writer cap */
   capped: number;
@@ -198,11 +217,19 @@ const none = (skipped?: PushOutcome["skipped"]): PushOutcome => ({ skipped, elig
 type BellRow = { id: string; user_id: string; kind: string; resource_id: string | null; link: string | null; created_at: string; metadata: Record<string, unknown> | null };
 type DeviceRow = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string; last_reminded_at: string | null; created_at: string | null };
 
-const chunks = <T,>(xs: T[]): T[][] => {
+const chunks = <T,>(xs: T[], size = CHUNK): T[][] => {
   const out: T[][] = [];
-  for (let i = 0; i < xs.length; i += CHUNK) out.push(xs.slice(i, i + CHUNK));
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
   return out;
 };
+
+/** The claim's condition: the device's last push is older than this bell row
+ *  (or it has none). The row's created_at comes from the database; anything
+ *  that is not a plain timestamp claims nothing (the device is not pushed). */
+function claimCondition(createdAt: string): string | null {
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+(Z|[+-][0-9:]+)?$/.test(createdAt)) return null;
+  return `last_reminded_at.is.null,last_reminded_at.lt."${createdAt}"`;
+}
 
 /** Send the push for one emit (see the header). NEVER throws. */
 export async function sendPushSafe(input: PushSendInput): Promise<PushOutcome> {
@@ -284,14 +311,21 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
   const eligible = [...evidence.keys()].filter((u) => !off.has(u));
   if (eligible.length === 0) return { ...none(), capped };
 
-  // 3) The devices each eligible person turned on.
+  // 3) The devices each eligible person turned on: the PUSH_DEVICE_CAP newest
+  //    per person, and only those on a push service's own host — a row that
+  //    names anything else is never sent to, and is deleted (fix pass).
   const devices: DeviceRow[] = [];
-  for (const part of chunks(eligible)) {
+  const offService: string[] = [];
+  let cutShort = false;
+  const optInSince = Date.parse(PUSH_OPT_IN_SINCE);
+  for (const part of chunks(eligible, DEVICE_CHUNK)) {
     const { data, error } = await supabaseAdmin
       .from("push_subscriptions")
       .select("id, user_id, endpoint, p256dh, auth, last_reminded_at, created_at")
       .in("user_id", part)
-      .gte("created_at", PUSH_OPT_IN_SINCE);
+      .gte("created_at", PUSH_OPT_IN_SINCE)
+      .order("created_at", { ascending: false })
+      .limit(DEVICE_READ_LIMIT);
     if (error) {
       if (isMissingSchemaError(error)) {
         logOnce("no-table", "[push] push_subscriptions does not exist (20260804_push_subscriptions.sql not applied) — no device can be pushed");
@@ -300,18 +334,58 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
       console.warn(`[push] device registrations could not be read (${error.message}) — the ${input.kind} push was not sent`);
       return { ...none("unreadable"), eligible: eligible.length, capped };
     }
-    // the deleted reminders stack's registrations are never pushed (checked
-    // here too, not only by the query's filter)
-    devices.push(...((data as DeviceRow[] | null) ?? []).filter((d) => !!d.created_at && Date.parse(d.created_at) >= Date.parse(PUSH_OPT_IN_SINCE)));
+    const rows = [...((data as DeviceRow[] | null) ?? [])];
+    if (rows.length >= DEVICE_READ_LIMIT) cutShort = true;
+    // newest first, whatever order the read came back in
+    rows.sort((a, b) => (Date.parse(b.created_at ?? "") || 0) - (Date.parse(a.created_at ?? "") || 0));
+    const kept = new Map<string, number>();
+    for (const d of rows) {
+      // the deleted reminders stack's registrations are never pushed (checked
+      // here too, not only by the query's filter)
+      if (!d.created_at || !(Date.parse(d.created_at) >= optInSince)) continue;
+      if (!pushEndpointAllowed(d.endpoint)) { offService.push(d.id); continue; }
+      const n = kept.get(d.user_id) ?? 0;
+      if (n >= PUSH_DEVICE_CAP) continue;
+      kept.set(d.user_id, n + 1);
+      devices.push(d);
+    }
+  }
+  if (cutShort) console.warn(`[push] a device read reached ${DEVICE_READ_LIMIT} rows (someone holds more than ${PUSH_DEVICE_CAP} registrations) — some devices may not have been pushed`);
+  const outcome: PushOutcome = { eligible: eligible.length, attempted: 0, sent: 0, pruned: 0, capped };
+  if (offService.length > 0) {
+    // never sent to: an endpoint off every push service's host (ids in
+    // parts — a long `in.(…)` is a long URL)
+    for (const ids of chunks(offService)) {
+      const del = await checkedWrite(supabaseAdmin.from("push_subscriptions").delete().in("id", ids).select("id"));
+      if (del.ok) outcome.pruned += del.ids.length;
+      else if (del.code === "db") console.warn(`[push] ${ids.length} registration(s) naming no push service could not be removed: ${del.error}`);
+    }
+    console.warn(`[push] ${offService.length} registration(s) naming no push service were not sent to`);
   }
 
-  // 4) Send — once per device per bell row (last_reminded_at), in parallel.
-  const outcome: PushOutcome = { eligible: eligible.length, attempted: 0, sent: 0, pruned: 0, capped };
+  // 4) Send — once per device per bell row, in parallel. The device is
+  //    claimed for the row first (a conditional update that lands only while
+  //    its last push is older than the row), so two requests at once send
+  //    once; the second finds the claim taken and sends nothing.
   const vapidDetails = { subject: config.subject, publicKey: config.publicKey, privateKey: config.privateKey };
   await Promise.allSettled(devices.map(async (d) => {
     const row = evidence.get(d.user_id);
     if (!row) return;
     if (d.last_reminded_at && Date.parse(d.last_reminded_at) >= Date.parse(row.created_at)) return;
+    const condition = claimCondition(row.created_at);
+    if (!condition) return;
+    const claim = await checkedWrite(supabaseAdmin
+      .from("push_subscriptions")
+      .update({ last_reminded_at: row.created_at })
+      .eq("id", d.id)
+      .or(condition)
+      .select("id"));
+    if (!claim.ok) {
+      // refused: another request claimed this device for this row (or a
+      // newer one), or the device was removed meanwhile — nothing to send
+      if (claim.code === "db") console.warn(`[push] a device could not be claimed (${claim.error}) — not pushed; bell and email are unaffected`);
+      return;
+    }
     outcome.attempted += 1;
     const subscription: WebPushSubscription = { endpoint: d.endpoint, keys: { p256dh: d.p256dh, auth: d.auth } };
     try {
@@ -319,13 +393,6 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
         vapidDetails, TTL: PUSH_TTL_SECONDS, urgency: "high", timeout: PUSH_SEND_TIMEOUT_MS,
       });
       outcome.sent += 1;
-      const w = await checkedWrite(supabaseAdmin
-        .from("push_subscriptions")
-        .update({ last_reminded_at: row.created_at })
-        .eq("id", d.id)
-        .select("id"));
-      // refused: the device was removed meanwhile — nothing to keep
-      if (!w.ok && w.code === "db") console.warn(`[push] a device's last push could not be recorded (${w.error}) — a repeat request may push it again`);
     } catch (e) {
       const status = (e as { statusCode?: unknown })?.statusCode;
       if (status === 404 || status === 410) {
@@ -335,13 +402,23 @@ async function sendPush(input: PushSendInput): Promise<PushOutcome> {
         else if (del.code === "db") console.warn(`[push] a dead subscription (${status}) could not be removed: ${del.error}`);
         return;
       }
+      // put the claim back (only if it is still this row's), so a later
+      // request about this row may try again
+      const back = await checkedWrite(supabaseAdmin
+        .from("push_subscriptions")
+        .update({ last_reminded_at: d.last_reminded_at })
+        .eq("id", d.id)
+        .eq("last_reminded_at", row.created_at)
+        .select("id"));
+      if (!back.ok && back.code === "db") console.warn(`[push] a failed push's claim could not be put back (${back.error})`);
       console.warn(`[push] a device push failed (${typeof status === "number" ? status : (e as Error)?.message ?? "error"}) — kept; bell and email are unaffected`);
     }
   }));
   return outcome;
 }
 
-// emit()'s server sender (lib/notify/dispatch.ts): a server entry that loads
-// this module pushes from its own emits. Bounded there, never awaited
-// beyond PUSH_LEG_TIMEOUT_MS.
-__registerServerPushSender(async (input) => { await sendPushSafe(input); });
+/** emit()'s server push leg, for a SERVER caller that is allowed to push:
+ *  `emit({ …, serverPush: pushFromServer })` (lib/notify/dispatch.ts calls
+ *  it after the bell and email legs, bounded by PUSH_LEG_TIMEOUT_MS). A
+ *  server emit without it pushes nothing. Never throws. */
+export const pushFromServer: PushSender = async (input) => { await sendPushSafe(input); };

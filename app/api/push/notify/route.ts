@@ -15,14 +15,18 @@
 // every browser row with its writer), never for a redacted notice, at most
 // PUSH_WRITER_CAP times per writer and person in ten minutes, once per row
 // per device, and only if that person turned a device on and left
-// push_enabled on. The push says only the kind (PUSH_TITLES). The answer
-// never says who was pushed.
+// push_enabled on. The push says only the kind (PUSH_TITLES), and goes only
+// to a push service's own host (lib/push/endpoints.ts). The answer never
+// says who was pushed, and (fix pass) it never waits for the sends: the
+// route answers once the caller is known to be a member, and the sends run
+// after the response (next/server after()), so how long the push services
+// took cannot be read from the answer's timing.
 //
 // Off without VAPID keys: 204 before any database call, so a deployment
 // that never set push up pays one cheap request per push-worthy notice and
 // behaves exactly as before.
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { kindMeta } from "@/lib/notificationKinds";
 import type { NotificationKind } from "@/lib/inAppNotifications";
@@ -58,7 +62,11 @@ export async function POST(req: NextRequest) {
   if (memberErr) return answer({ error: "Couldn't confirm your membership — try again." }, 503);
   if (!member) return answer({ error: "Not an active member of this organization." }, 403);
 
+  // After the response (the answer's timing says nothing about the sends).
   // Never throws; the outcome (who was pushed) stays on the server.
-  await sendPushSafe({ orgId, kind: kind as NotificationKind, resourceId, recipients, writerUid: user.id });
+  const writerUid = user.id;
+  after(async () => {
+    await sendPushSafe({ orgId, kind: kind as NotificationKind, resourceId, recipients, writerUid });
+  });
   return answer({ ok: true });
 }

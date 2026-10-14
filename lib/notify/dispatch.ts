@@ -13,11 +13,13 @@
 // follower sent the redacted notice gets no push — DEC-106 item 2), and only
 // beside the bell leg (push follows a bell row). In the browser the leg asks
 // POST /api/push/notify (fire-and-forget, keepalive); on the server it calls
-// the sender lib/push/sendPush.ts registered when loaded
-// (__registerServerPushSender) — this file is bundled for the browser and
-// never imports web-push or the service role. Who is actually pushed —
-// push_enabled, a device the person turned on, the bell row that landed,
-// VAPID configured — is decided there.
+// the sender THE CALLER passes (EmitInput.serverPush — lib/push/sendPush.ts
+// pushFromServer), and without one it pushes nothing (fix pass: no global
+// registration, so a server emit never pushes because some other route
+// loaded the sender into the same process). This file is bundled for the
+// browser and never imports web-push or the service role. Who is actually
+// pushed — push_enabled, a device the person turned on, the bell row that
+// landed, VAPID configured — is decided in the sender.
 //
 // It wraps the existing notifyMany()/queueEmail() helpers rather than replacing
 // them, so producers can migrate to emit() one at a time with zero regression.
@@ -71,6 +73,13 @@ export interface EmitInput {
    *  for a KIND_META.pushWorthy kind, beside the in-app leg). Pass a subset
    *  to force-limit a noisy event: `["inapp"]` never attempts push. */
   channels?: NotifChannel[];
+  /** The SERVER push sender (N10 fix pass), passed only by a server caller
+   *  that is allowed to push: `serverPush: pushFromServer`
+   *  (lib/push/sendPush.ts). On the server, an emit without it attempts no
+   *  push — whichever modules the process has loaded; the maintenance cron
+   *  passes none (DEC-90 ruling 3: the cron only prunes). In the browser it
+   *  is ignored: the leg asks POST /api/push/notify. */
+  serverPush?: PushSender;
   /** Write the in-app rows as ONE insert statement (notifyBatchWithReason)
    *  instead of one request per recipient (notifyMany). For a chatty fan-out
    *  written from the browser to many people (the schedule's notices to a
@@ -493,7 +502,7 @@ async function deliver(input: EmitInput, recipients: string[], opts: { push: boo
   if (opts.push && channels.includes("push") && channels.includes("inapp") && kindMeta(input.kind)?.pushWorthy === true) {
     const pushTo = pushLanded ? recipients.filter((u) => pushLanded!.has(u)) : recipients;
     if (pushTo.length > 0 && (result.inapp?.sent ?? 0) > 0) {
-      await pushLeg({ orgId: input.orgId, kind: input.kind, resourceId: input.resource.id, recipients: pushTo });
+      await pushLeg({ orgId: input.orgId, kind: input.kind, resourceId: input.resource.id, recipients: pushTo }, input.serverPush);
     }
   }
 
@@ -516,16 +525,10 @@ export interface PushSendInput {
   recipients: string[];
   writerUid?: string | null;
 }
+/** A server push sender (lib/push/sendPush.ts pushFromServer), passed per
+ *  call as EmitInput.serverPush. There is no module-level sender: whether a
+ *  server emit pushes is decided by its caller, never by load order. */
 export type PushSender = (input: PushSendInput) => Promise<void>;
-
-/** The SERVER sender (lib/push/sendPush.ts sendPushSafe), registered when
- *  that module is loaded — it imports web-push and the service role, so this
- *  file (bundled for the browser too) never imports it. A server entry that
- *  does not load it sends no push from its emits (logged once). */
-let serverPushSender: PushSender | null = null;
-export function __registerServerPushSender(fn: PushSender | null): void {
-  serverPushSender = fn;
-}
 
 /** How long a server emit waits for its push leg before it returns (the bell
  *  and email legs have already finished). */
@@ -547,17 +550,17 @@ export const PUSH_REQUEST_MAX_RECIPIENTS = 500;
 
 let pushNoSenderLogged = false;
 
-/** The push leg. Never throws. */
-async function pushLeg(input: PushSendInput): Promise<void> {
+/** The push leg. Never throws. `sender`: the caller's EmitInput.serverPush
+ *  (server only). */
+async function pushLeg(input: PushSendInput, sender: PushSender | undefined): Promise<void> {
   if (typeof window !== "undefined") {
     browserPushRequest(input);
     return;
   }
-  const sender = serverPushSender;
-  if (!sender) {
+  if (typeof sender !== "function") {
     if (!pushNoSenderLogged) {
       pushNoSenderLogged = true;
-      console.info(`[notify] no push sender in this server context — ${input.kind} notices from it are not pushed (a server entry that should push loads lib/push/sendPush; the maintenance cron does not)`);
+      console.info(`[notify] a server emit passed no push sender — ${input.kind} notices from it are not pushed (a server caller allowed to push passes serverPush: pushFromServer from lib/push/sendPush; the maintenance cron passes none)`);
     }
     return;
   }

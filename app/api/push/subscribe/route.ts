@@ -14,11 +14,25 @@
 //        browser's permission — a row here is the explicit per-device opt-in
 //        the sender requires (OS-10 done-when 1).
 //
+// Only a browser push service's endpoint is stored (fix pass — the review's
+// blocker): an https URL on a push service's own host, default port, no
+// user-info (lib/push/endpoints.ts pushEndpointAllowed). Anything else is
+// refused as "not a browser push subscription"; the sender re-checks before
+// every send. This route is the table's only writer once 20261211 is pasted
+// (it drops the own-row INSERT policy).
+//
 // One browser profile has one push endpoint. When a second person turns
 // notifications on in the same browser, the endpoint is theirs from then on:
-// the previous person's row for it is replaced (the takeover needs the
-// service role — the table's own-row RLS lets a member delete only their own
-// row). The caller proves the device by presenting its live subscription.
+// the row for it is handed over in ONE conditional update (the takeover
+// needs the service role) — and only when the stored row carries the same
+// p256dh and auth keys the caller presents. Those keys are secret to the
+// browser that holds the live subscription, so a match proves the caller is
+// at that browser; knowing someone's endpoint alone takes nothing over (an
+// endpoint stored under other keys answers 409). Nothing is deleted first, so
+// a failed write leaves the previous registration as it was.
+//
+// A person keeps at most PUSH_DEVICE_CAP registrations: adding one past the
+// cap removes their oldest.
 //
 // Before 20260804 is applied the POST answers 503 and says so; the page shows
 // it and nothing else changes.
@@ -27,6 +41,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
 import { pushConfig } from "@/lib/push/sendPush";
+import { PUSH_DEVICE_CAP, PUSH_KEYS_MISMATCH, pushEndpointAllowed } from "@/lib/push/endpoints";
 
 export const runtime = "nodejs";
 
@@ -37,11 +52,9 @@ const PUSH_TABLE_MISSING =
   "Device notifications need a database update that has not been applied yet (20260804_push_subscriptions.sql). Nothing was changed.";
 const PUSH_NOT_CONFIGURED = "Device notifications are not set up on this server yet.";
 
-/** A push endpoint: an https URL of sane length. */
-function validEndpoint(v: unknown): v is string {
-  if (typeof v !== "string" || v.length > 2048) return false;
-  try { return new URL(v).protocol === "https:"; } catch { return false; }
-}
+const KEYS_MISMATCH_TEXT =
+  "This browser's notification registration could not be confirmed — try again to start a fresh one.";
+
 /** A subscription key: base64url, bounded. */
 function validKey(v: unknown): v is string {
   return typeof v === "string" && v.length > 0 && v.length <= 256 && /^[A-Za-z0-9_-]+=*$/.test(v);
@@ -66,7 +79,7 @@ export async function POST(req: NextRequest) {
   const p256dh = body.subscription?.keys?.p256dh;
   const auth = body.subscription?.keys?.auth;
   if (!orgId) return answer({ error: "orgId is required" }, 400);
-  if (!validEndpoint(endpoint) || !validKey(p256dh) || !validKey(auth)) {
+  if (!pushEndpointAllowed(endpoint) || !validKey(p256dh) || !validKey(auth)) {
     return answer({ error: "That is not a browser push subscription." }, 400);
   }
 
@@ -75,30 +88,71 @@ export async function POST(req: NextRequest) {
   if (memberErr) return answer({ error: "Couldn't confirm your membership — try again." }, 503);
   if (!member) return answer({ error: "Not an active member of this organization." }, 403);
 
-  // The endpoint is this browser's: whoever held it before (an earlier
-  // subscription of the caller's, or another person who turned notifications
-  // on in this browser) is replaced. Zero rows matched is the usual case.
-  const cleared = await checkedWrite(supabaseAdmin.from("push_subscriptions").delete().eq("endpoint", endpoint).select("id"));
-  if (!cleared.ok && cleared.code === "db") {
-    if (cleared.pgCode && isMissingSchemaError({ message: cleared.error, code: cleared.pgCode })) return answer({ error: PUSH_TABLE_MISSING }, 503);
-    return answer({ error: cleared.error }, 500);
-  }
-
   const userAgent = (req.headers.get("user-agent") ?? "").slice(0, 300) || null;
-  const { error: insErr } = await supabaseAdmin
+  // A fresh opt-in: created_at is now (the sender's PUSH_OPT_IN_SINCE rule and
+  // the device cap read it), and the new holder has had no push yet.
+  const holder = { user_id: user.id, org_id: orgId, user_agent: userAgent, created_at: new Date().toISOString(), last_reminded_at: null };
+
+  // 1) This browser's endpoint, already stored under THESE keys (the caller's
+  //    own earlier registration, or another person's in this same browser):
+  //    handed to the caller in one conditional update.
+  const taken = await checkedWrite(supabaseAdmin
     .from("push_subscriptions")
-    .insert({ user_id: user.id, org_id: orgId, endpoint, p256dh, auth, user_agent: userAgent })
-    .select("id")
-    .single();
-  if (insErr) {
-    if (isMissingSchemaError(insErr)) return answer({ error: PUSH_TABLE_MISSING }, 503);
-    if (insErr.code === "23505") {
-      // a second tab registered the same endpoint a moment ago
-      const { data: held } = await supabaseAdmin.from("push_subscriptions").select("user_id").eq("endpoint", endpoint).maybeSingle();
-      if ((held as { user_id?: string } | null)?.user_id === user.id) return answer({ ok: true });
-      return answer({ error: "This browser was registered at the same moment by someone else — try again." }, 409);
-    }
+    .update(holder)
+    .eq("endpoint", endpoint)
+    .eq("p256dh", p256dh)
+    .eq("auth", auth)
+    .select("id"));
+  if (!taken.ok && taken.code === "db") {
+    if (taken.pgCode && isMissingSchemaError({ message: taken.error, code: taken.pgCode })) return answer({ error: PUSH_TABLE_MISSING }, 503);
     return answer({ error: "The device could not be registered — try again." }, 500);
   }
+
+  if (!taken.ok) {
+    // 2) Not stored under these keys: a new registration.
+    const { error: insErr } = await supabaseAdmin
+      .from("push_subscriptions")
+      .insert({ ...holder, endpoint, p256dh, auth })
+      .select("id")
+      .single();
+    if (insErr) {
+      if (isMissingSchemaError(insErr)) return answer({ error: PUSH_TABLE_MISSING }, 503);
+      if (insErr.code === "23505") {
+        // The endpoint is stored already: a second tab of the caller's
+        // registered it a moment ago (same keys — fine), or it is stored
+        // under OTHER keys, which this caller has not shown it holds.
+        const { data: held } = await supabaseAdmin
+          .from("push_subscriptions").select("user_id, p256dh, auth").eq("endpoint", endpoint).maybeSingle();
+        const h = held as { user_id?: string; p256dh?: string; auth?: string } | null;
+        if (h && h.user_id === user.id && h.p256dh === p256dh && h.auth === auth) return answer({ ok: true });
+        return answer({ error: KEYS_MISMATCH_TEXT, code: PUSH_KEYS_MISMATCH }, 409);
+      }
+      return answer({ error: "The device could not be registered — try again." }, 500);
+    }
+  }
+
+  // 3) At most PUSH_DEVICE_CAP registrations per person: the oldest go.
+  //    Best-effort — the sender reads no more than the cap either way.
+  await keepNewestDevices(user.id, endpoint);
   return answer({ ok: true });
+}
+
+/** Remove a person's registrations past their PUSH_DEVICE_CAP newest (never
+ *  the one just registered). Never throws; a failure is logged. */
+async function keepNewestDevices(uid: string, keep: string): Promise<void> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("push_subscriptions").select("id, endpoint, created_at").eq("user_id", uid).limit(1000);
+    if (error) { console.warn(`[push] the device cap could not be checked (${error.message})`); return; }
+    const rows = [...((data as Array<{ id: string; endpoint: string; created_at: string | null }> | null) ?? [])]
+      .sort((a, b) => (Date.parse(b.created_at ?? "") || 0) - (Date.parse(a.created_at ?? "") || 0));
+    const current = rows.filter((r) => r.endpoint === keep);
+    const others = rows.filter((r) => r.endpoint !== keep);
+    const extra = others.slice(Math.max(0, PUSH_DEVICE_CAP - current.length)).map((r) => r.id);
+    if (extra.length === 0) return;
+    const del = await checkedWrite(supabaseAdmin.from("push_subscriptions").delete().in("id", extra).eq("user_id", uid).select("id"));
+    if (!del.ok && del.code === "db") console.warn(`[push] ${extra.length} registration(s) past the device cap could not be removed: ${del.error}`);
+  } catch (e) {
+    console.warn(`[push] the device cap could not be applied: ${(e as Error)?.message ?? e}`);
+  }
 }

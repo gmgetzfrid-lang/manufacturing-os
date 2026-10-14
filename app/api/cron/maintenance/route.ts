@@ -49,9 +49,10 @@
 //      90 days (VFY-12; prune_verify_scans(), 20261134).
 //   7c. Web Push device registrations (notifications N10 — GAP-205): a
 //      push_subscriptions row whose person is no longer an ACTIVE member of
-//      any workspace, or made before the opt-in control existed (the deleted
-//      reminders stack's — PUSH_OPT_IN_SINCE), is removed
-//      (prunePushSubscriptions). The cron only
+//      any workspace, made before the opt-in control existed (the deleted
+//      reminders stack's — PUSH_OPT_IN_SINCE), or naming no browser push
+//      service (lib/push/endpoints.ts — the sender never POSTs to one), is
+//      removed (prunePushSubscriptions). The cron only
 //      prunes: pushes are sent by emit() at the moment of the event
 //      (lib/push/sendPush.ts), and a subscription the push service answers
 //      404 / 410 for is deleted there and then. No time-based prune: a device
@@ -94,6 +95,7 @@ import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { KIND_META } from "@/lib/notificationKinds";
 import { isMissingSchemaError } from "@/lib/checkedWrite";
+import { pushEndpointAllowed } from "@/lib/push/endpoints";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -568,7 +570,8 @@ async function handler(req: NextRequest) {
   //     active member of any workspace — they can receive nothing, and the
   //     row is a device credential — are removed, and so are the deleted
   //     reminders stack's (made before PUSH_OPT_IN_SINCE: never pushed — OS-10
-  //     done-when 3; their people turn the device on again). Dead endpoints are removed
+  //     done-when 3; their people turn the device on again), and the rows
+  //     naming no browser push service (never sent to — N10 fix pass). Dead endpoints are removed
   //     by the sender at the first 404 / 410 (lib/push/sendPush.ts). No-op
   //     before 20260804; it takes what the run has left (N6's run clock).
   if (!noTimeFor("push-subscriptions", PUSH_PRUNE_MIN_MS)) {
@@ -676,21 +679,57 @@ async function handler(req: NextRequest) {
 
 /** Step 7c's floor: it is not started with less than this left. */
 const PUSH_PRUNE_MIN_MS = 5_000;
-/** Registrations read per page (each page's owners are one membership read). */
+/** Registrations read per page. */
 const PUSH_PRUNE_PAGE = 150;
+/** Owners per membership read, and the most rows one such read may answer
+ *  (PostgREST's default max-rows). A read that comes back AT the limit may
+ *  have been cut short without an error, so the owners it did not name are
+ *  asked one by one (fix pass: a cut-short read must never read as "not a
+ *  member" and unsubscribe an active member's device). */
+const PUSH_PRUNE_MEMBER_CHUNK = 50;
+const PUSH_PRUNE_MEMBER_READ_LIMIT = 1000;
+
+/** The owners holding at least one ACTIVE membership, or null when that
+ *  cannot be told (an error is recorded). */
+async function ownersStillMembers(sb: SupabaseClient, owners: string[], errors: string[]): Promise<Set<string> | null> {
+  const active = new Set<string>();
+  const unreadable = (message: string) => {
+    errors.push(`push-subscriptions: memberships unreadable (${message}) — nothing pruned from here`);
+    return null;
+  };
+  for (let i = 0; i < owners.length; i += PUSH_PRUNE_MEMBER_CHUNK) {
+    const part = owners.slice(i, i + PUSH_PRUNE_MEMBER_CHUNK);
+    const { data, error } = await sb
+      .from("org_members").select("uid").eq("status", "active").in("uid", part).limit(PUSH_PRUNE_MEMBER_READ_LIMIT);
+    if (error) return unreadable(error.message);
+    const found = (data as Array<{ uid: string }> | null) ?? [];
+    for (const m of found) active.add(m.uid);
+    if (found.length < PUSH_PRUNE_MEMBER_READ_LIMIT) continue;
+    // possibly cut short: ask each owner it did not name, one by one
+    for (const uid of part) {
+      if (active.has(uid)) continue;
+      const { data: one, error: oneErr } = await sb
+        .from("org_members").select("uid").eq("status", "active").eq("uid", uid).limit(1);
+      if (oneErr) return unreadable(oneErr.message);
+      if (((one as unknown[] | null) ?? []).length > 0) active.add(uid);
+    }
+  }
+  return active;
+}
 
 /** Step 7c (notifications N10 — GAP-205): remove the push_subscriptions rows
  *  of people with no ACTIVE membership in any workspace (removed, suspended,
- *  inactive everywhere), and the rows made before PUSH_OPT_IN_SINCE (the
- *  deleted reminders stack's, which the sender never pushes). Pages by id;
- *  stops at `stopBy`. A membership read that fails removes nothing from that
- *  page on (fail safe: a transient error never unsubscribes a member's
- *  device). Returns how many rows went. */
+ *  inactive everywhere), the rows made before PUSH_OPT_IN_SINCE (the deleted
+ *  reminders stack's, which the sender never pushes), and the rows whose
+ *  endpoint names no browser push service (lib/push/endpoints.ts — never
+ *  sent to; fix pass). Pages by id; stops at `stopBy`. A membership read
+ *  that fails removes nothing from that page on (fail safe: a transient
+ *  error never unsubscribes a member's device). Returns how many rows went. */
 async function prunePushSubscriptions(sb: SupabaseClient, errors: string[], stopBy: number): Promise<number> {
   let pruned = 0;
   let after: string | null = null;
   while (Date.now() < stopBy) {
-    let q = sb.from("push_subscriptions").select("id, user_id, created_at").order("id", { ascending: true }).limit(PUSH_PRUNE_PAGE);
+    let q = sb.from("push_subscriptions").select("id, user_id, endpoint, created_at").order("id", { ascending: true }).limit(PUSH_PRUNE_PAGE);
     if (after) q = q.gt("id", after);
     const { data, error } = await q;
     if (error) {
@@ -698,20 +737,15 @@ async function prunePushSubscriptions(sb: SupabaseClient, errors: string[], stop
       if (!isMissingSchemaError(error)) errors.push(`push-subscriptions: ${error.message}`);
       return pruned;
     }
-    const rows = (data as Array<{ id: string; user_id: string; created_at: string | null }> | null) ?? [];
+    const rows = (data as Array<{ id: string; user_id: string; endpoint: string | null; created_at: string | null }> | null) ?? [];
     if (rows.length === 0) return pruned;
     after = rows[rows.length - 1].id;
     const owners = [...new Set(rows.map((r) => r.user_id))];
-    const { data: members, error: memberErr } = await sb
-      .from("org_members").select("uid").eq("status", "active").in("uid", owners);
-    if (memberErr) {
-      errors.push(`push-subscriptions: memberships unreadable (${memberErr.message}) — nothing pruned from here`);
-      return pruned;
-    }
-    const active = new Set(((members as Array<{ uid: string }> | null) ?? []).map((m) => m.uid));
+    const active = await ownersStillMembers(sb, owners, errors);
+    if (!active) return pruned;
     const optInSince = Date.parse(PUSH_OPT_IN_SINCE);
     const gone = rows
-      .filter((r) => !active.has(r.user_id) || !r.created_at || Date.parse(r.created_at) < optInSince)
+      .filter((r) => !active.has(r.user_id) || !r.created_at || Date.parse(r.created_at) < optInSince || !pushEndpointAllowed(r.endpoint))
       .map((r) => r.id);
     if (gone.length > 0) {
       const { data: removed, error: delErr } = await sb.from("push_subscriptions").delete().in("id", gone).select("id");
