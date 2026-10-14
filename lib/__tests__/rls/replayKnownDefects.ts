@@ -55,6 +55,9 @@ export interface OutOfOrderFile {
   mode: "retry" | "unparseable";
 }
 
+// 20261075_dc_roundF_checkout_episode_seal.sql left this list on 2026-10-14
+// (intelligence I-27, IRLS-19): its final SELECT's bare `check` is quoted in
+// place, so the file parses and applies as one paste.
 export const OUT_OF_ORDER_FILES: readonly OutOfOrderFile[] = [
   {
     file: "20260630_perf_indexes.sql",
@@ -62,13 +65,6 @@ export const OUT_OF_ORDER_FILES: readonly OutOfOrderFile[] = [
     finding: "intelligence IRLS-18",
     owner: "the integrator, to route (team_members is created by 20260707_teams.sql)",
     mode: "retry",
-  },
-  {
-    file: "20261075_dc_roundF_checkout_episode_seal.sql",
-    error: /syntax error at or near "check"/,
-    finding: "intelligence IRLS-19",
-    owner: "document-control (DCK-14's file; the integrator to route)",
-    mode: "unparseable",
   },
 ];
 

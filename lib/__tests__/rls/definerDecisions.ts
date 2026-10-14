@@ -146,6 +146,7 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "documents_intake_adoption_guard()",
   "documents_resync_assets()",
   "enforce_change_order_decision_guard()",
+  "enforce_checkout_episode_guard()", // 20261075 (DCK-14), on the replay since IRLS-19's in-place correction
   "enforce_checkout_release_guard()",
   "enforce_checkout_session_guard()",
   "enforce_cost_document_award_registry()",

@@ -873,7 +873,7 @@ lib/__tests__/rls/freshReplay.test.ts — "supabase/schema.sql: the statements t
 ## IRLS-19 · `20261075`'s final SELECT names its `check` column bare — a syntax error, so the pasted file changes nothing and the checkout-episode seal never installs
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-27 FRESH-INSTALL REPLAY (to be added to the fleet plan by the integrator at the I-17 merge). The file is document-control's (`DCK-14`, P6). Opened 2026-10-14 by intelligence Round G I-17 (`IRLS-6`'s replay, DEC-31).
 - **Verification:** CONFIRMED (reproduced on PostgreSQL 16.13 by the database harness; the paste protocol is the editor's single simple-query message)
 - **Independently verified:** — (`author`: opened 2026-10-14 by intelligence Round G I-17 on its PostgreSQL 16 replay; confirmed by the integrator by reading at the I-17 merge; not yet challenged by a second party).
@@ -899,5 +899,28 @@ lib/__tests__/rls/freshReplay.test.ts — "20261075 cannot be pasted as written:
 
 - [ ] `20261075`'s final SELECT quotes the column (`SELECT "check", NULL::boolean, n …`), in place (above), and the file parses and applies as one paste.
 - [ ] `20261075` leaves `OUT_OF_ORDER_FILES`, its definer trigger function `enforce_checkout_episode_guard()` joins the census (`TRIGGER_FUNCTIONS` in `lib/__tests__/rls/definerDecisions.ts`), and `npm run test:db` passes.
+
+
+**Resolution (2026-10-14, intelligence Round G).** Corrected in place, as the record decided (intelligence I-27 FRESH-INSTALL REPLAY; the integrator's exception for this package allowed the edit to `20261075`, never applied anywhere). Reproduced first on HEAD `e13bc7b` with `npm run test:db` (PostgreSQL 16.13): the replay logged `20261075_dc_roundF_checkout_episode_seal.sql: syntax error at or near "check"`, and the guard was absent. What landed, in its own commit, before anything else in the package:
+
+- `supabase/migrations/20261075_dc_roundF_checkout_episode_seal.sql:126`: `SELECT check, NULL::boolean, n …` became `SELECT "check", NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;`. That is the only bare reference in the file. The two `AS check` column labels (`:44`, `:97`) are legal and stay, so every existing shape pin on them holds. Nothing else in the file changed (a one-line diff).
+- `lib/__tests__/rls/replayKnownDefects.ts`: the `20261075` entry left `OUT_OF_ORDER_FILES` (its `mode: "unparseable"` is kept in the type for any future file).
+- `lib/__tests__/rls/definerDecisions.ts`: `enforce_checkout_episode_guard()` joined `TRIGGER_FUNCTIONS` (decision `trigger-only`). The opt-in census `lib/__tests__/rls/definerCensus.test.ts` now sees it on the replay and checks it.
+- `lib/__tests__/rls/freshReplay.test.ts`: the two IRLS-19 pins are flipped, and three proofs are added, each run on a copy of the replay with 20261075's objects removed (an operator who never pasted it):
+  - "20261075 replays in filename order: the checkout-episode guard is installed on the fresh install". The trigger is present, and the function is SECURITY DEFINER with `search_path` pinned.
+  - "20261075 sent as one script (the SQL editor's paste) …" and "… statement by statement (psql -f) …". Both modes apply with no error, and both leave the function and trigger installed (`1/1`). The one-script run returns exactly the file's final SELECT: five probes with `ok = t` and `n` NULL, then the four counts-only inventory rows with `ok` NULL and `n` a count. A second paste returns the same nine rows and leaves one guard ("Idempotent; safe to re-run").
+  - "a database that ran the pre-fix file statement by statement … takes the corrected paste cleanly and ends the same". Pasted as one script, the pre-fix text applies nothing (`syntax error at or near "check"`, `0/0`). Run with `psql -f`, it installed everything but its SELECT. The corrected paste then runs over that with no error, and the `pg_get_functiondef` / `pg_get_triggerdef` hashes are unchanged and equal the fresh replay's. So the edit is a no-op on the only kind of database where any of the file ever ran.
+  - "the installed guard does what DCK-14 asks". As a signed-in member, rewriting or reopening a closed episode is refused with `23514` ("sealed record and cannot be changed"). Closing an episode while a member session on it is active is refused with `23514` ("still has active sessions and cannot be sealed"). Today's legitimate flows still pass: a close with nobody left on it (1 row), and the service role on a closed episode (1 row).
+- `lib/__tests__/dcRoundFCheckoutMigration.test.ts`: the final-SELECT pin now reads `SELECT "check", …`. A new pin says `check` is never named bare once comments and string literals are stripped (exactly two `AS check` labels and one `"check"`). Against the pre-fix file it fails, and so does the old ONE-result-set pin, so the default suite (CI) now catches this class of defect without a database.
+
+Measured 2026-10-14 on PostgreSQL 16.13 with pgvector 0.6.0, `npm run test:db` exit 0. The replay logs no `20261075` line, and the four suites pass (55 tests). The existing 20261075 tests pass: `dcRoundFCheckoutMigration.test.ts`, `checkoutRoundF.test.ts` and `realtimePublication.test.ts`. The scratch cluster was deleted afterwards.
+
+**Pending migration:** `20261075_dc_roundF_checkout_episode_seal.sql`. Paste guide row 70 goes from HOLD back to PASTE, which the integrator writes at merge. Its order is unchanged: after `20261074`, before `20261077`. It does not widen anything, and it re-creates nothing that another file defines (the only definer of the guard is this file, which the shape test pins). Expected result: one result set of nine rows. Five probes have `ok = true` and `n` NULL: guard installed; closed episodes immutable; no seal over an active session; service role passes; `search_path` pinned. Four inventory rows have `ok` NULL and `n` a count: closed episodes still carrying an active member session; active episodes with no active member session; closed episodes; active episodes. It is safe to re-paste. The app works before and after the paste. Before it, a close takes today's path. After it, `closeEpisode` reads the guard's "still has active sessions" refusal as "reconcile, do not seal" (`lib/checkoutEpisodes.ts` `EPISODE_LIVE_SESSIONS_RAIL`: DCK-14's app half, in the code since document-control P6; the shape test holds the two texts equal), and the service-role sweep and admin routes pass the guard.
+
+**Done-when.**
+- ✓ `20261075`'s final SELECT quotes the column in place (`:126`). The file parses and applies as one paste: on PostgreSQL 16, sent as one simple-query message (the editor's way), it returns its nine-row final SELECT with no error (`freshReplay.test.ts`, "IRLS-19: 20261075 sent as one script …").
+- ✓ `20261075` has left `OUT_OF_ORDER_FILES`. `enforce_checkout_episode_guard()` is in `TRIGGER_FUNCTIONS`, and the opt-in census checks it against the replayed catalog. `npm run test:db` passes (exit 0).
+
+**Scope / residual.** None in this finding. Document-control `DCK-14` done-when 1 ("holds only once the SQL is applied") now waits only on the user's paste of row 70. That is document-control's record, and the integrator updates it at merge. This package does not edit it.
 
 ---

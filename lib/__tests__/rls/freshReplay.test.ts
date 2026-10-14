@@ -6,9 +6,11 @@
 // schema-health route's own GET handler is run against that fresh install.
 
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { admin, asCaller, mosDb, skipReason } from "./dbKit";
+import { admin, asCaller, mosDb, seedOrg, skipReason } from "./dbKit";
 import { BASELINE_KNOWN_ERRORS, OUT_OF_ORDER_FILES, OPERATOR_SWITCHES } from "./replayKnownDefects";
 import { MAX_C_BYTES, numberedMigrations, REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
@@ -110,38 +112,130 @@ describe.skipIf(skip !== null)("IRLS-6: a fresh install replays in filename orde
     expect(admin(REPLAY_DB, "SELECT to_regclass('public.team_members_uid_idx') IS NOT NULL")).toBe("t");
   });
 
-  it("20261075 cannot be pasted as written: the editor parses the whole script first, so its final SELECT's syntax error leaves the guard uninstalled (IRLS-19)", () => {
-    expect(admin(REPLAY_DB, `SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_checkout_episode_guard' AND tgrelid = 'checkout_episodes'::regclass`)).toBe("0");
+  it("20261075 replays in filename order: the checkout-episode guard is installed on the fresh install (IRLS-19)", () => {
+    expect(report().files.find((x) => x.file === "20261075_dc_roundF_checkout_episode_seal.sql")?.ok).toBe(true);
+    expect(admin(REPLAY_DB, `SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_checkout_episode_guard' AND tgrelid = 'checkout_episodes'::regclass AND NOT tgisinternal`)).toBe("1");
+    expect(admin(REPLAY_DB, `SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%' FROM pg_proc WHERE proname = 'enforce_checkout_episode_guard'`)).toBe("t");
   });
 
-  // IRLS-19's question — does any statement of 20261075 apply when it is
-  // pasted today? — answered both ways on a copy of the replay.
+  // IRLS-19, corrected in place (intelligence I-27): the file now parses, so
+  // it applies the same way whichever way it is sent, on a copy of the
+  // sequence up to (not including) 20261075, and a re-paste changes nothing.
   const f75 = "20261075_dc_roundF_checkout_episode_seal.sql";
   const installed = (db: string) => admin(db, `SELECT (SELECT count(*) FROM pg_proc WHERE proname = 'enforce_checkout_episode_guard') || '/' || (SELECT count(*) FROM pg_trigger WHERE tgname = 'trg_checkout_episode_guard')`);
+  /** A copy of the replay without 20261075's objects: the sequence up to that file, as an operator who never pasted it has. */
+  const withoutF75 = (db: string) => {
+    admin("postgres", `CREATE DATABASE ${db} TEMPLATE ${REPLAY_DB}`);
+    admin(db, "DROP TRIGGER trg_checkout_episode_guard ON checkout_episodes; DROP FUNCTION enforce_checkout_episode_guard();");
+    expect(installed(db)).toBe("0/0");
+  };
+  // The final SELECT the SQL editor shows: five probes (ok = true, n NULL),
+  // then the four counts-only inventory rows (ok NULL, n a count).
+  const EXPECTED_FINAL_SELECT = [
+    /^guard installed: BEFORE UPDATE ON checkout_episodes, FOR EACH ROW\|t\|$/,
+    /^closed episodes are immutable to signed-in writers\|t\|$/,
+    /^an episode cannot be sealed over an active member session\|t\|$/,
+    /^service role passes \(auth\.uid\(\) IS NULL → RETURN NEW\)\|t\|$/,
+    /^search_path pinned on the guard\|t\|$/,
+    /^inventory: closed episodes that still carry an active member session \(residue the rail now prevents\)\|\|\d+$/,
+    /^inventory: active episodes with NO active member session \(stray opens; reconcile closes them\)\|\|\d+$/,
+    /^inventory: closed episodes \(all orgs\)\|\|\d+$/,
+    /^inventory: active episodes \(all orgs\)\|\|\d+$/,
+  ];
   for (const mode of ["one script (the SQL editor's paste)", "statement by statement (psql -f)"] as const) {
-    it(`IRLS-19: 20261075 sent as ${mode}`, () => {
+    it(`IRLS-19: 20261075 sent as ${mode} applies with no error and installs the guard`, () => {
       const db = "mos_irls19";
-      admin("postgres", `CREATE DATABASE ${db} TEMPLATE ${REPLAY_DB}`);
+      withoutF75(db);
       try {
         const path = join(process.cwd(), "supabase", "migrations", f75);
         const r = mode.startsWith("one")
           ? runPsql(mosDb().conn!, db, "postgres", { sql: readFileSync(path, "utf8") })
-          : runPsql(mosDb().conn!, db, "postgres", { file: path, stopOnError: false });
-        // either way the one error is the final SELECT's bare `check`
-        expect(r.errors).toEqual(['syntax error at or near "check"']);
+          : runPsql(mosDb().conn!, db, "postgres", { file: path, stopOnError: true });
+        expect(r.errors).toEqual([]);
+        expect(r.ok).toBe(true);
+        expect(installed(db)).toBe("1/1");
+        expect(admin(db, `SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%' FROM pg_proc WHERE proname = 'enforce_checkout_episode_guard'`)).toBe("t");
         if (mode.startsWith("one")) {
-          // nothing applies: not the inventory, not the function, not the trigger
-          expect(installed(db)).toBe("0/0");
-        } else {
-          // every statement before the final SELECT applies: the guard is installed
+          // the one result set the editor shows is the file's final SELECT, exactly
+          const rows = r.stdout.split("\n").filter((l) => l.includes("|"));
+          expect(rows).toHaveLength(EXPECTED_FINAL_SELECT.length);
+          rows.forEach((row, i) => expect(row).toMatch(EXPECTED_FINAL_SELECT[i]));
+          // "Idempotent; safe to re-run": a second paste answers the same and leaves one guard
+          const again = runPsql(mosDb().conn!, db, "postgres", { sql: readFileSync(path, "utf8") });
+          expect(again.errors).toEqual([]);
+          expect(again.stdout.split("\n").filter((l) => l.includes("|"))).toEqual(rows);
           expect(installed(db)).toBe("1/1");
-          expect(admin(db, `SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%' FROM pg_proc WHERE proname = 'enforce_checkout_episode_guard'`)).toBe("t");
         }
       } finally {
         admin("postgres", `DROP DATABASE ${db}`);
       }
     });
   }
+
+  it("IRLS-19: a database that ran the pre-fix file statement by statement (everything but its final SELECT applied) takes the corrected paste cleanly and ends the same", () => {
+    const db = "mos_irls19_prefix";
+    withoutF75(db);
+    const dir = mkdtempSync(join(tmpdir(), "mos-irls19-"));
+    try {
+      const fixed = readFileSync(join(process.cwd(), "supabase", "migrations", f75), "utf8");
+      // the file as it stood before the correction: the one identifier bare
+      const preFix = fixed.replace('SELECT "check", NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;', "SELECT check, NULL::boolean, n FROM _dc_roundf_episode_seal_inventory;");
+      expect(preFix).not.toBe(fixed);
+      // one script, the pre-fix file applies nothing (the editor's outcome before the correction)
+      const pasted = runPsql(mosDb().conn!, db, "postgres", { sql: preFix });
+      expect(pasted.errors).toEqual(['syntax error at or near "check"']);
+      expect(installed(db)).toBe("0/0");
+      // statement by statement, it applied everything but the final SELECT
+      const path = join(dir, f75);
+      writeFileSync(path, preFix);
+      const partial = runPsql(mosDb().conn!, db, "postgres", { file: path, stopOnError: false });
+      expect(partial.errors).toEqual(['syntax error at or near "check"']);
+      expect(installed(db)).toBe("1/1");
+      const def = (d: string) => admin(d, `SELECT md5(pg_get_functiondef('enforce_checkout_episode_guard()'::regprocedure)) || '/' || (SELECT md5(pg_get_triggerdef(oid)) FROM pg_trigger WHERE tgname = 'trg_checkout_episode_guard')`);
+      const before = def(db);
+      // the corrected paste re-runs over it with no error and the same definitions
+      const r = runPsql(mosDb().conn!, db, "postgres", { sql: fixed });
+      expect(r.errors).toEqual([]);
+      expect(installed(db)).toBe("1/1");
+      expect(def(db)).toBe(before);
+      expect(def(REPLAY_DB)).toBe(before);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      admin("postgres", `DROP DATABASE ${db}`);
+    }
+  });
+
+  it("IRLS-19: the installed guard does what DCK-14 asks — a closed episode is sealed to a signed-in writer, a close over a live session is refused, the service role and a clean close pass", () => {
+    const db = "mos_irls19_guard";
+    admin("postgres", `CREATE DATABASE ${db} TEMPLATE ${REPLAY_DB}`);
+    try {
+      const { orgId, m } = seedOrg(db, { member: { role: "Engineer" } });
+      const libId = randomUUID();
+      const docId = randomUUID();
+      const closedEp = randomUUID();
+      const liveEp = randomUUID();
+      const doc2 = randomUUID();
+      const cleanEp = randomUUID();
+      admin(db, `INSERT INTO libraries (id, org_id, name, type) VALUES ('${libId}', '${orgId}', 'Drawings', 'documents');
+        INSERT INTO documents (id, org_id, library_id, title, status) VALUES ('${docId}', '${orgId}', '${libId}', 'P&ID 300', 'Draft'), ('${doc2}', '${orgId}', '${libId}', 'P&ID 301', 'Draft');
+        INSERT INTO checkout_episodes (id, org_id, document_id, library_id, seq, status, closed_at, close_reason) VALUES ('${closedEp}', '${orgId}', '${docId}', '${libId}', 1, 'closed', now(), 'released');
+        INSERT INTO checkout_episodes (id, org_id, document_id, library_id, seq, status) VALUES ('${liveEp}', '${orgId}', '${docId}', '${libId}', 2, 'active'), ('${cleanEp}', '${orgId}', '${doc2}', '${libId}', 1, 'active');
+        INSERT INTO checkout_sessions (org_id, document_id, library_id, user_id, mode, status, episode_id) VALUES ('${orgId}', '${docId}', '${libId}', '${m.member.uid}', 'edit', 'active', '${liveEp}');`);
+      const sealed = asCaller(db, m.member.caller, `UPDATE checkout_episodes SET close_reason = 'rewritten' WHERE id = '${closedEp}'`);
+      expect(sealed).toMatchObject({ ok: false, code: "23514" });
+      expect(!sealed.ok && sealed.message).toMatch(/sealed record and cannot be changed/);
+      const reopen = asCaller(db, m.member.caller, `UPDATE checkout_episodes SET status = 'active' WHERE id = '${closedEp}'`);
+      expect(reopen).toMatchObject({ ok: false, code: "23514" });
+      const overLive = asCaller(db, m.member.caller, `UPDATE checkout_episodes SET status = 'closed', closed_at = now() WHERE id = '${liveEp}'`);
+      expect(overLive).toMatchObject({ ok: false, code: "23514" });
+      expect(!overLive.ok && overLive.message).toMatch(/still has active sessions and cannot be sealed/);
+      // today's legitimate flows keep working: a close with nobody left on it, and the trusted backend
+      expect(asCaller(db, m.member.caller, `UPDATE checkout_episodes SET status = 'closed', closed_at = now() WHERE id = '${cleanEp}'`)).toEqual({ ok: true, rows: 1 });
+      expect(asCaller(db, { role: "service_role" }, `UPDATE checkout_episodes SET close_reason = 'swept' WHERE id = '${closedEp}'`)).toEqual({ ok: true, rows: 1 });
+    } finally {
+      admin("postgres", `DROP DATABASE ${db}`);
+    }
+  });
 
   it("the operator-gated file refuses without its switch and changes nothing (the harness supplies only the documented switch)", () => {
     const file = "20261141_prj_roundG_intake_token_hash_and_adoption.sql";
