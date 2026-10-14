@@ -6,11 +6,11 @@
 // schema-health route's own GET handler is run against that fresh install.
 
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { admin, asCaller, mosDb, skipReason } from "./dbKit";
 import { BASELINE_KNOWN_ERRORS, OUT_OF_ORDER_FILES, OPERATOR_SWITCHES } from "./replayKnownDefects";
-import { numberedMigrations, REPLAY_DB } from "./replay";
+import { MAX_C_BYTES, numberedMigrations, REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
 
 const skip = skipReason();
@@ -73,6 +73,15 @@ describe.skipIf(skip !== null)("IRLS-6: a fresh install replays in filename orde
     expect(r.files.map((f) => f.file)).toEqual(numberedMigrations(process.cwd()));
     expect(r.files.length).toBeGreaterThan(290);
     expect(r.engine).toMatch(/PostgreSQL 1[6-9]/);
+  });
+
+  it("every numbered migration fits in one simple-query message (the replay stops on one that does not, naming it)", () => {
+    // Checked here, in the opt-in run, never in the default suite: the limit
+    // is the harness's transport's (psql -c), not the app's or the editor's.
+    const over = numberedMigrations(process.cwd())
+      .map((f) => ({ f, bytes: statSync(join(process.cwd(), "supabase", "migrations", f)).size }))
+      .filter((x) => x.bytes > MAX_C_BYTES);
+    expect(over).toEqual([]);
   });
 
   it("supabase/schema.sql: the statements that fail on an empty database are exactly the recorded IRLS-17 set", () => {

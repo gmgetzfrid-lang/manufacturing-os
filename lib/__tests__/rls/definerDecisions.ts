@@ -39,7 +39,14 @@
 //   signed-in             anon and PUBLIC revoked by its own migration;
 //                         authenticated keeps EXECUTE; the body judges the
 //                         signed-in caller.
-//   signed-in-rpc         the same state, reached by 20261217.
+//   anon-refused-by-body  anon keeps EXECUTE (Supabase's default grant; no
+//                         migration revokes it), the app calls it only as a
+//                         signed-in member, and the body refuses (raises, or
+//                         answers NULL to) a caller with no session. Recorded,
+//                         not revoked: DEC-90 ruling 4 allows a REVOKE only for
+//                         a function the app never calls as anon/authenticated,
+//                         and records the decision and its owner (the
+//                         integrator) when unsure.
 //   revoked-20261217      EXECUTE for service_role only, by 20261217.
 //   service-only          EXECUTE for service_role only, by its own migration.
 //   role-only             EXECUTE by name to the intake_door role only.
@@ -55,7 +62,8 @@
 // A client-callable function that takes a person (an IN parameter matching
 // PERSON_PARAM: p_uid, p_to_user, p_actor, p_member_id, p_new_owner, …)
 // either carries an oracle decision with an owner, or says in `person` how the
-// body binds that parameter (PersonBinding), with its own evidence. The census
+// body binds that parameter (PersonBinding), with its own evidence; a binding
+// that still leaks (caller-supplied-oracle) carries an owner too. The census
 // checks this against the catalog, so a templated reason cannot hide a new
 // oracle.
 
@@ -64,6 +72,12 @@ export type PersonBinding =
   | "is-the-caller"
   /** The parameter is a row's attribute (an owner column); the answer is about auth.uid(). */
   | "judged-for-caller"
+  /**
+   * The answer is judged for auth.uid(), but over RPC the caller supplies the
+   * parameter, and the answer still depends on that person (their membership):
+   * a narrow oracle. Recorded with an owner (INTK-19), like an oracle decision.
+   */
+  | "caller-supplied-oracle"
   /** The caller's own authority over that person's workspace is checked first (an Admin acting on a member). */
   | "caller-authority"
   /** The caller must be an active member of the workspace, and a person outside it gets a constant answer. */
@@ -78,7 +92,7 @@ export interface DefinerDecision {
     | "signed-in-oracle"
     | "own-scope-unused"
     | "signed-in"
-    | "signed-in-rpc"
+    | "anon-refused-by-body"
     | "revoked-20261217"
     | "service-only"
     | "role-only"
@@ -96,8 +110,12 @@ export interface DefinerDecision {
 
 /** Decisions whose claim is about what the body does; each such row cites the body (`evidence`). */
 export const BODY_CLAIM_DECISIONS: readonly DefinerDecision["decision"][] = [
-  "policy-helper", "policy-helper-oracle", "signed-in-oracle", "own-scope-unused", "signed-in", "signed-in-rpc",
+  "policy-helper", "policy-helper-oracle", "signed-in-oracle", "own-scope-unused", "signed-in", "anon-refused-by-body",
 ];
+
+/** Who owns DEC-90 ruling 4's open question for an "anon-refused-by-body" row. */
+export const RULING_4_OWNER =
+  "the integrator (DEC-90 ruling 4: the app calls it as authenticated, so a REVOKE of anon alone needs an explicit ruling; recorded, not revoked)";
 
 /** Decisions that record an oracle: the narrowing is owned by projects-and-cost INTK-19. */
 export const ORACLE_DECISIONS: readonly DefinerDecision["decision"][] = ["policy-helper-oracle", "signed-in-oracle"];
@@ -330,9 +348,10 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   },
   {
     signature: "force_release_document(uuid,text)",
-    decision: "signed-in-rpc",
-    execute: { anon: false, authenticated: true, service_role: true },
-    reason: "lib/checkoutEpisodes.ts calls it as a signed-in member. The body raises when auth.uid() is NULL or not an active member of the document's workspace; force authority itself is judged by the checkout release guard on the rows it writes. 20261043 revoked PUBLIC, but Supabase's default grant left anon; 20261217 revokes anon and grants authenticated and service_role by name.",
+    decision: "anon-refused-by-body",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "lib/checkoutEpisodes.ts:709 calls it as a signed-in member. 20261043 revoked PUBLIC and granted authenticated, but Supabase's default grant left anon, so the anon key reaches it: the body then raises (P0001) because auth.uid() is NULL, and a signed-in caller who is not an active member of the document's workspace is refused the same way. Force authority itself is judged by the checkout release guard on the rows it writes. Not revoked from anon (DEC-90 ruling 4: the app calls it as authenticated).",
+    owner: RULING_4_OWNER,
     evidence: ["v_actor uuid := auth.uid();", "IF v_actor IS NULL THEN RAISE EXCEPTION 'force_release_document: must be called by a signed-in member';", "IF NOT EXISTS (SELECT 1 FROM org_members WHERE org_id = v_doc.org_id AND uid = v_actor AND status = 'active') THEN"],
   },
   { signature: "intake_door_append_redline(text,uuid,jsonb,jsonb)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261184_prj_roundG_intake_door_identity.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/intake/upload/route.ts." },
@@ -388,12 +407,13 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   },
   {
     signature: "issue_document_number(uuid)",
-    decision: "signed-in-rpc",
-    execute: { anon: false, authenticated: true, service_role: true },
-    reason: "lib/libraryNumbering.ts calls it as a signed-in member; the body returns NULL unless auth.uid() is an active member of the library's workspace. 20261217 revokes PUBLIC and anon (it had no grant statement at all) and grants authenticated and service_role by name.",
+    decision: "anon-refused-by-body",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "lib/libraryNumbering.ts:46 calls it as a signed-in member. 20260806 has no grant statement at all, so PUBLIC and Supabase's default grants leave it callable with the anon key; the body then answers NULL without advancing the counter, because a NULL auth.uid() is no active member of the library's workspace. Not revoked from anon (DEC-90 ruling 4: the app calls it as authenticated).",
+    owner: RULING_4_OWNER,
     evidence: ["IF NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = cfg.org_id AND m.uid = auth.uid() AND m.status = 'active') THEN RETURN NULL;"],
   },
-  { signature: "member_is_active(uuid,uuid)", decision: "revoked-20261217", execute: { anon: false, authenticated: false, service_role: true }, reason: "A membership oracle for ANY uid (\"is uid X active in org Y?\"), callable with the public anon key. Its only caller is user_is_effective_owner, a SECURITY DEFINER function owned by postgres that keeps calling it as its owner; no app .rpc( call, no policy, no SECURITY INVOKER function names it. 20261217 leaves EXECUTE to service_role only." },
+  { signature: "member_is_active(uuid,uuid)", decision: "revoked-20261217", execute: { anon: false, authenticated: false, service_role: true }, reason: "A membership oracle for ANY uid (\"is uid X active in org Y?\"), callable with the public anon key. Its only caller is user_is_effective_owner, a SECURITY DEFINER function owned by postgres that keeps calling it as its owner; no app .rpc( call, no policy, no SECURITY INVOKER function names it. 20261217 leaves EXECUTE to service_role only. That removes the direct door, not the answer: user_is_effective_owner(X, NULL, <library>, X) still returns it to the anon key, and node_visible's caller-supplied p_owner to a signed-in library owner, until INTK-19 lands.", owner: "projects-and-cost INTK-19 (the same membership answer through user_is_effective_owner and node_visible)" },
   { signature: "mfg_dedup_stats()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20260807_dedup_stats_fn.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/storage-stats/route.ts." },
   { signature: "mfg_storage_estimate()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261008_storage_estimate_knowledge.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/storage-stats/route.ts." },
   { signature: "mfg_table_stats()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20260805_storage_stats_fn.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/purge/route.ts, app/api/admin/storage-stats/route.ts, lib/storageUsage.ts." },
@@ -420,9 +440,10 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   },
   {
     signature: "next_ticket_number(uuid,integer)",
-    decision: "signed-in-rpc",
-    execute: { anon: false, authenticated: true, service_role: true },
-    reason: "lib/ticketNumber.ts and app/api/tickets/create/route.ts call it with a signed-in member's JWT; the body refuses a caller with no active membership of p_org (auth.uid()), so a signed-out call never worked. 20261217 revokes PUBLIC and anon and grants authenticated and service_role by name.",
+    decision: "anon-refused-by-body",
+    execute: { anon: true, authenticated: true, service_role: true },
+    reason: "app/api/tickets/create/route.ts:673 (with the caller's JWT) and lib/ticketNumber.ts:84 call it as a signed-in member. schema.sql / 20260724 grant authenticated and never revoke PUBLIC or anon, so the anon key reaches it; the body then raises 'not an active member of this org' (P0001) before any counter moves, because a NULL auth.uid() has no active membership of p_org. Not revoked from anon (DEC-90 ruling 4: the app calls it as authenticated).",
+    owner: RULING_4_OWNER,
     evidence: ["WHERE org_id = p_org AND uid = auth.uid() AND status = 'active' ) THEN RAISE EXCEPTION 'not an active member of this org';"],
   },
   {
@@ -436,9 +457,10 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
     signature: "node_visible(text,jsonb,uuid,uuid,uuid,uuid)",
     decision: "policy-helper",
     execute: { anon: true, authenticated: true, service_role: true },
-    reason: "Called inside 5 policies written for PUBLIC, and by doc_is_visible and document_share_refusal. Normal visibility answers true (the policies add the membership test); otherwise a controller of p_org sees the row, then its effective owner, then the acl_index grants — each judged for auth.uid(), never for a uid the caller passes. p_owner is the row's owner column.",
+    reason: "Called inside 5 policies written for PUBLIC, and by doc_is_visible and document_share_refusal. Normal visibility answers true (the policies add the membership test); otherwise a controller of p_org sees the row, then its effective owner, then the acl_index grants — each judged for auth.uid(). A policy passes the row's owner column as p_owner, but over PostgREST the caller supplies it, and the ownership walk skips a p_owner who is not active: a signed-in library owner who passes ('restricted', '{}', org, X, NULL, <their library>) gets true exactly when X is not an active member. That narrow membership oracle is recorded with INTK-19 as owner.",
     evidence: ["IF is_org_controller(p_org) THEN RETURN true;", "WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' LIMIT 1;"],
-    person: { param: "p_owner", binding: "judged-for-caller", evidence: ["IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN RETURN true;"] },
+    person: { param: "p_owner", binding: "caller-supplied-oracle", evidence: ["IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN RETURN true;"] },
+    owner: "projects-and-cost INTK-19 (p_owner's membership leaks through the ownership walk)",
   },
   {
     signature: "notifications_i_sent(uuid,text,timestamp with time zone,text,text,jsonb)",

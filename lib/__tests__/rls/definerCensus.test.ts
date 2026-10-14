@@ -1,15 +1,16 @@
 // INTK-14 done-when 2 (intelligence I-17): the census of every SECURITY
 // DEFINER function's EXECUTE grants, read from the live catalog of the fresh
 // replay and held to the reasoned decisions in definerDecisions.ts — and the
-// before / after proof for 20261217, the four narrowings the census needed
-// (DEC-30: the app works before and after the paste).
+// before / after proof for 20261217, the one narrowing the census needed
+// (DEC-30: the app works before and after the paste), with the membership
+// answer it does NOT take away pinned as INTK-19's remainder.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { admin, asCaller, mosDb, seedOrg, selectAs, skipReason, type SeededMember } from "./dbKit";
-import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, TRIGGER_FUNCTIONS, type DefinerDecision } from "./definerDecisions";
+import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_OWNER, TRIGGER_FUNCTIONS, type DefinerDecision } from "./definerDecisions";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
 
@@ -117,6 +118,12 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
       if (d.decision === "service-only" || d.decision === "revoked-20261217") {
         expect(d.execute, d.signature).toEqual({ anon: false, authenticated: false, service_role: true });
       }
+      // DEC-90 ruling 4's tie-breaker: recorded, not revoked, with its owner
+      if (d.decision === "anon-refused-by-body") {
+        expect(d.execute, d.signature).toEqual({ anon: true, authenticated: true, service_role: true });
+        expect(d.owner, d.signature).toBe(RULING_4_OWNER);
+      }
+      if (d.person?.binding === "caller-supplied-oracle") expect(d.owner, d.signature).toMatch(/INTK-19/);
     }
   });
 
@@ -168,9 +175,10 @@ describe.skipIf(skip !== null)("INTK-14: every SECURITY DEFINER function's EXECU
       const named = d.person.evidence.filter((f) => new RegExp(`\\b${d.person!.param}\\b`).test(f));
       if (named.length === 0) problems.push(`${l.sig}: no person evidence names ${d.person.param}`);
       for (const f of d.person.evidence) if (!body.includes(squash(f))) problems.push(`${l.sig}: person evidence not in the live body: ${f}`);
-      if ((d.person.binding === "is-the-caller" || d.person.binding === "judged-for-caller") && !named.some((f) => /auth\.uid\(\)/.test(f))) {
+      if ((d.person.binding === "is-the-caller" || d.person.binding === "judged-for-caller" || d.person.binding === "caller-supplied-oracle") && !named.some((f) => /auth\.uid\(\)/.test(f))) {
         problems.push(`${l.sig}: ${d.person.binding} needs a fragment that sets ${d.person.param} against auth.uid()`);
       }
+      if (d.person.binding === "caller-supplied-oracle" && !/INTK-19/.test(d.owner ?? "")) problems.push(`${l.sig}: a caller-supplied-oracle binding with no owner`);
       // A function with several person parameters binds each, or is an oracle.
       if (persons.length > 1) problems.push(`${l.sig}: ${persons.length} person parameters; record an oracle or extend the row`);
     }
@@ -255,27 +263,73 @@ describe.skipIf(skip !== null)("20261217: the app works before and after the pas
     });
   }
 
-  it("before the paste the anon key can call all four (the gap); after it each is refused 42501", () => {
+  it("before the paste the anon key can call member_is_active (the direct door); after it, it is refused 42501", () => {
     const w0 = worlds.before;
     const w1 = worlds.after;
     const anon = { role: "anon" as const };
-    // before: reachable — each body answers for itself
     expect(asCaller(before(), anon, `SELECT member_is_active('${w0.orgId}', '${w0.member.uid}')`)).toEqual({ ok: true, rows: 1 });
-    expect(asCaller(before(), anon, `SELECT issue_document_number('${w0.libId}')`)).toEqual({ ok: true, rows: 1 });
-    expect(asCaller(before(), anon, `SELECT next_ticket_number('${w0.orgId}', 2026)`)).toMatchObject({ ok: false, code: "P0001" });
-    expect(asCaller(before(), anon, `SELECT force_release_document('${w0.docId}', 'x')`)).toMatchObject({ ok: false, code: "P0001" });
-    // after: refused at the door
-    for (const call of [
-      `SELECT member_is_active('${w1.orgId}', '${w1.member.uid}')`,
-      `SELECT issue_document_number('${w1.libId}')`,
-      `SELECT next_ticket_number('${w1.orgId}', 2026)`,
-      `SELECT force_release_document('${w1.docId}', 'x')`,
-    ]) {
-      expect(asCaller(after, anon, call), call).toMatchObject({ ok: false, code: "42501" });
-    }
-    // and a signed-in member can no longer use member_is_active as an oracle
+    expect(asCaller(after, anon, `SELECT member_is_active('${w1.orgId}', '${w1.member.uid}')`)).toMatchObject({ ok: false, code: "42501" });
+    // and a signed-in member can no longer call it directly either
     expect(asCaller(before(), w0.member.caller, `SELECT member_is_active('${w0.orgId}', '${w0.member.uid}')`)).toEqual({ ok: true, rows: 1 });
     expect(asCaller(after, w1.member.caller, `SELECT member_is_active('${w1.orgId}', '${w1.member.uid}')`)).toMatchObject({ ok: false, code: "42501" });
+  });
+
+  it("DEC-90 ruling 4: the three functions the app calls as authenticated are untouched — the anon key reaches them, and each body refuses it, before and after", () => {
+    const anon = { role: "anon" as const };
+    for (const phase of ["before", "after"] as const) {
+      const db = phase === "before" ? before() : after;
+      const w = worlds[phase];
+      // issue_document_number answers NULL (one row) and the counter does not move
+      const nextBefore = admin(db, `SELECT next_number FROM library_numbering WHERE library_id = '${w.libId}'`);
+      expect(selectAs(db, anon, `SELECT issue_document_number('${w.libId}') IS NULL`), phase).toEqual(["t"]);
+      expect(admin(db, `SELECT next_number FROM library_numbering WHERE library_id = '${w.libId}'`), phase).toBe(nextBefore);
+      // next_ticket_number and force_release_document raise in their bodies
+      expect(asCaller(db, anon, `SELECT next_ticket_number('${w.orgId}', 2026)`), phase).toMatchObject({ ok: false, code: "P0001" });
+      expect(asCaller(db, anon, `SELECT force_release_document('${w.docId}', 'x')`), phase).toMatchObject({ ok: false, code: "P0001" });
+      for (const fn of ["next_ticket_number(uuid,integer)", "issue_document_number(uuid)", "force_release_document(uuid,text)"]) {
+        expect(admin(db, `SELECT has_function_privilege('anon', '${fn}'::regprocedure, 'EXECUTE')`), `${phase}: ${fn}`).toBe("t");
+      }
+    }
+    // the same ACL before and after the paste
+    const acl = (db: string) => admin(db, `SELECT string_agg(p.oid::regprocedure::text || '=' || COALESCE(array_to_string(p.proacl, ','), ''), ';' ORDER BY 1) FROM pg_proc p WHERE p.proname IN ('next_ticket_number', 'issue_document_number', 'force_release_document')`);
+    expect(acl(after)).toBe(acl(before()));
+  });
+
+  it("INTK-19's remainder, pinned: after the paste the same membership answer is still reachable — user_is_effective_owner to the anon key, node_visible's p_owner to a signed-in library owner", () => {
+    const { orgId, m } = seedOrg(after, { active: { role: "Viewer" }, gone: { role: "Viewer" }, owner: { role: "Viewer" } });
+    const libId = randomUUID();
+    admin(after, `
+      UPDATE org_members SET status = 'suspended' WHERE org_id = '${orgId}' AND uid = '${m.gone.uid}';
+      INSERT INTO libraries (id, org_id, name, type, owner_user_id) VALUES ('${libId}', '${orgId}', 'Owned', 'documents', '${m.owner.uid}');`);
+    const anon = { role: "anon" as const };
+    const owns = (x: SeededMember) => `SELECT user_is_effective_owner('${x.uid}', NULL, '${libId}', '${x.uid}')`;
+    // anon: true for the active member, false for the suspended one — member_is_active's answer
+    expect(selectAs(after, anon, owns(m.active))).toEqual(["t"]);
+    expect(selectAs(after, anon, owns(m.gone))).toEqual(["f"]);
+    // with no library at all: "is X active in any org?"
+    expect(selectAs(after, anon, `SELECT user_is_effective_owner('${m.active.uid}', NULL, NULL, '${m.active.uid}')`)).toEqual(["t"]);
+    expect(selectAs(after, anon, `SELECT user_is_effective_owner('${m.gone.uid}', NULL, NULL, '${m.gone.uid}')`)).toEqual(["f"]);
+    expect(asCaller(after, anon, `SELECT member_is_active('${orgId}', '${m.gone.uid}')`)).toMatchObject({ ok: false, code: "42501" });
+    // a signed-in Viewer who owns the library: node_visible is true exactly when p_owner is NOT active
+    const vis = (x: SeededMember) => `SELECT node_visible('restricted', '{}'::jsonb, '${orgId}', '${x.uid}', NULL, '${libId}')`;
+    expect(selectAs(after, m.owner.caller, vis(m.active))).toEqual(["f"]);
+    expect(selectAs(after, m.owner.caller, vis(m.gone))).toEqual(["t"]);
+  });
+
+  it("the header's ROLLBACK restores member_is_active's pre-paste ACL exactly", () => {
+    const body = readFileSync(join(process.cwd(), "supabase", "migrations", "20261217_intel_roundG_definer_grants.sql"), "utf8");
+    const rollback = /^--\s+(GRANT EXECUTE ON FUNCTION public\.member_is_active\(uuid, uuid\)[^\n]*;)$/m.exec(body)?.[1];
+    expect(rollback).toBeDefined();
+    const acl = `SELECT string_agg(e, ',' ORDER BY e) FROM (
+                   SELECT (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END) || ':' || a.privilege_type || ':' || a.grantor::regrole::text AS e
+                     FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+                    WHERE p.oid = 'public.member_is_active(uuid,uuid)'::regprocedure) x`;
+    const was = admin(before(), acl);
+    expect(was).toContain("PUBLIC:EXECUTE");
+    expect(admin(after, acl)).not.toBe(was);
+    // in a transaction that is rolled back, so the replay keeps the pasted state
+    expect(admin(after, `BEGIN; ${rollback} ${acl}; ROLLBACK;`)).toBe(was);
+    expect(admin(after, acl)).not.toContain("PUBLIC:EXECUTE");
   });
 
   it("a second paste of 20261217 is clean and changes nothing", () => {

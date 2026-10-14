@@ -8,11 +8,14 @@
 //   * the opt-in config includes only lib/__tests__/rls/;
 //   * with no PostgreSQL the discovery names what is missing (the opt-in run
 //     then skips loudly, never fails);
-//   * 20261217's one-paste shape (DEC-30) and its guarded REVOKEs (DRLS-16);
-//   * the call sites the four narrowings were reasoned from, so a new caller
+//   * 20261217's one-paste shape (DEC-30) and its one guarded REVOKE
+//     (DRLS-16), and the three functions DEC-90 ruling 4 leaves recorded;
+//   * the call sites those decisions were reasoned from, so a new caller
 //     makes someone re-read the decision;
 //   * discovery runs on PostgreSQL 16 unless the operator says otherwise, and
-//     no numbered migration is too large to send as one paste;
+//     the replay stops on a migration too large to send as one paste (the
+//     size itself is checked by the opt-in run only: a limit of the harness's
+//     transport never gates this suite or CI);
 //   * every decision about a function's body cites that body (the opt-in
 //     census checks the fragments against the live catalog; here, against
 //     the migrations' text), and a function that takes a person either binds
@@ -23,9 +26,9 @@ import { readFileSync, readdirSync, existsSync, statSync, mkdtempSync, writeFile
 import { tmpdir, userInfo } from "node:os";
 import { delimiter, join } from "node:path";
 import { discoverPostgres } from "./rls/pgHarness";
-import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, TRIGGER_FUNCTIONS } from "./rls/definerDecisions";
+import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_OWNER, TRIGGER_FUNCTIONS } from "./rls/definerDecisions";
 import { BASELINE_KNOWN_ERRORS, CHECKPOINTS, OPERATOR_SWITCHES, OUT_OF_ORDER_FILES } from "./rls/replayKnownDefects";
-import { MAX_C_BYTES, numberedMigrations } from "./rls/replay";
+import { numberedMigrations } from "./rls/replay";
 
 const root = process.cwd();
 const read = (p: string) => readFileSync(join(root, p), "utf8");
@@ -108,11 +111,9 @@ describe("I-17: the database harness is opt-in", () => {
     });
   });
 
-  it("no numbered migration is too large to send as one simple-query message (the replay refuses one that is)", () => {
-    const over = numberedMigrations(root)
-      .map((f) => ({ f, bytes: statSync(join(root, "supabase", "migrations", f)).size }))
-      .filter((x) => x.bytes > MAX_C_BYTES);
-    expect(over).toEqual([]);
+  it("the replay stops, naming the file, on a migration too large to send as one simple-query message (it never runs one another way)", () => {
+    // Static only: whether any file IS too large is the opt-in run's question
+    // (freshReplay.test.ts, and the replay itself throws), never this suite's.
     const replay = read("lib/__tests__/rls/replay.ts");
     expect(replay).toMatch(/if \(bytes > MAX_C_BYTES\) \{\s+throw new Error\(/);
     expect(replay).not.toMatch(/\{ file: path, stopOnError/);
@@ -180,10 +181,16 @@ describe("I-17: the replay's recorded defects and decisions are well-formed", ()
       const p = d.person!;
       expect(p.param, d.signature).toMatch(PERSON_PARAM);
       expect(p.evidence.some((f) => new RegExp(`\\b${p.param}\\b`).test(f)), d.signature).toBe(true);
-      if (p.binding === "is-the-caller" || p.binding === "judged-for-caller") {
+      if (p.binding === "is-the-caller" || p.binding === "judged-for-caller" || p.binding === "caller-supplied-oracle") {
         expect(p.evidence.some((f) => f.includes(p.param) && f.includes("auth.uid()")), d.signature).toBe(true);
       }
+      // a binding that still leaks is owned, like an oracle
+      if (p.binding === "caller-supplied-oracle") expect(d.owner, d.signature).toMatch(/INTK-19/);
     }
+    // The review's case: node_visible's p_owner is the row's column when a
+    // policy calls it, but a caller supplies it over RPC, and the answer
+    // depends on that person's membership.
+    expect(CALLABLE_DEFINERS.find((d) => d.signature === "node_visible(text,jsonb,uuid,uuid,uuid,uuid)")?.person?.binding).toBe("caller-supplied-oracle");
     // The review's case: org_capability_allows_for judges a p_uid it is given,
     // so it is an oracle (authenticated-only), not "signed-in".
     expect(CALLABLE_DEFINERS.find((d) => d.signature === "org_capability_allows_for(uuid,text,uuid,jsonb)")).toMatchObject({
@@ -208,7 +215,7 @@ describe("I-17: the replay's recorded defects and decisions are well-formed", ()
   });
 });
 
-describe("20261217: the definer-grant narrowings (DEC-30 shape, DRLS-16)", () => {
+describe("20261217: the definer-grant narrowing (DEC-30 shape, DRLS-16; DEC-90 ruling 4)", () => {
   const file = "supabase/migrations/20261217_intel_roundG_definer_grants.sql";
   const sql = read(file);
   const code = sql.replace(/--[^\n]*/g, "");
@@ -235,33 +242,40 @@ describe("20261217: the definer-grant narrowings (DEC-30 shape, DRLS-16)", () =>
     expect(inventory).not.toMatch(/FROM\s+(public\.)?(documents|org_members|orgs|users|tickets|assets)\b/i);
   });
 
-  it("creates or re-creates nothing; every REVOKE is guarded by to_regprocedure and paired with a narrow GRANT", () => {
+  it("creates or re-creates nothing; its one REVOKE (member_is_active) is guarded by to_regprocedure and paired with a narrow GRANT", () => {
     expect(code).not.toMatch(/CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|POLICY|TRIGGER)\b/i);
     const body = code.slice(code.search(/^BEGIN;/m), code.search(/^COMMIT;/m));
     const revokes = body.match(/REVOKE ALL ON FUNCTION public\.(\w+)\(/g) ?? [];
-    expect(revokes.map((r) => r.replace(/.*public\.(\w+)\(/, "$1")).sort()).toEqual(
-      ["force_release_document", "issue_document_number", "member_is_active", "next_ticket_number"],
-    );
-    for (const name of ["member_is_active", "next_ticket_number", "issue_document_number", "force_release_document"]) {
-      const guard = body.indexOf(`IF to_regprocedure('public.${name}(`);
-      const revoke = body.indexOf(`REVOKE ALL ON FUNCTION public.${name}(`);
-      expect(guard, name).toBeGreaterThan(-1);
-      expect(guard, name).toBeLessThan(revoke);
-    }
+    expect(revokes.map((r) => r.replace(/.*public\.(\w+)\(/, "$1"))).toEqual(["member_is_active"]);
+    const guard = body.indexOf("IF to_regprocedure('public.member_is_active(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(body.indexOf("REVOKE ALL ON FUNCTION public.member_is_active("));
     expect(body).toMatch(/REVOKE ALL ON FUNCTION public\.member_is_active\(uuid, uuid\) FROM PUBLIC, anon, authenticated;\s+GRANT EXECUTE ON FUNCTION public\.member_is_active\(uuid, uuid\) TO service_role;/);
-    for (const sig of ["next_ticket_number(uuid, integer)", "issue_document_number(uuid)", "force_release_document(uuid, text)"]) {
-      const esc = sig.replace(/[()]/g, "\\$&");
-      expect(body, sig).toMatch(new RegExp(`REVOKE ALL ON FUNCTION public\\.${esc} FROM PUBLIC, anon;\\s+GRANT EXECUTE ON FUNCTION public\\.${esc} TO authenticated, service_role;`));
+    // DEC-90 ruling 4: the app calls these as authenticated, so the file
+    // leaves their grants alone (no GRANT or REVOKE names them).
+    for (const name of ["next_ticket_number", "issue_document_number", "force_release_document"]) {
+      expect(code, name).not.toMatch(new RegExp(`(GRANT|REVOKE)[^;]*\\b${name}\\b`));
     }
   });
 
-  it("the decision table records exactly these four as 20261217's", () => {
+  it("the header's ROLLBACK restores member_is_active's pre-paste ACL, PUBLIC included", () => {
+    expect(sql).toMatch(/^--\s+GRANT EXECUTE ON FUNCTION public\.member_is_active\(uuid, uuid\) TO PUBLIC, anon, authenticated;$/m);
+  });
+
+  it("the decision table: member_is_active is 20261217's; the other three are recorded with the integrator as owner, anon still executing", () => {
     const by = (d: string) => CALLABLE_DEFINERS.filter((x) => x.decision === d).map((x) => x.signature).sort();
     expect(by("revoked-20261217")).toEqual(["member_is_active(uuid,uuid)"]);
-    expect(by("signed-in-rpc")).toEqual(["force_release_document(uuid,text)", "issue_document_number(uuid)", "next_ticket_number(uuid,integer)"]);
+    expect(by("anon-refused-by-body")).toEqual(["force_release_document(uuid,text)", "issue_document_number(uuid)", "next_ticket_number(uuid,integer)"]);
+    for (const d of CALLABLE_DEFINERS.filter((x) => x.decision === "anon-refused-by-body")) {
+      expect(d.execute, d.signature).toEqual({ anon: true, authenticated: true, service_role: true });
+      expect(d.owner, d.signature).toBe(RULING_4_OWNER);
+      expect(d.reason, d.signature).toMatch(/DEC-90 ruling 4/);
+    }
+    // the membership answer member_is_active gave stays reachable until INTK-19 lands
+    expect(CALLABLE_DEFINERS.find((d) => d.signature === "member_is_active(uuid,uuid)")?.owner).toMatch(/INTK-19/);
   });
 
-  // The narrowings were reasoned from these call sites (grep every .rpc( site,
+  // The decisions were reasoned from these call sites (grep every .rpc( site,
   // DEC-90 ruling 4). A new caller — above all a signed-out page — must make
   // someone re-read the decision before it ships.
   function namedIn(fn: string): string[] {
@@ -278,7 +292,7 @@ describe("20261217: the definer-grant narrowings (DEC-30 shape, DRLS-16)", () =>
     return hits.sort();
   }
 
-  it("member_is_active is named by no app code; the other three only by the signed-in callers the decisions cite", () => {
+  it("member_is_active is named by no app code; the other three only by the signed-in callers their decisions cite", () => {
     expect(namedIn("member_is_active")).toEqual([]);
     expect(namedIn("next_ticket_number")).toEqual(["app/api/tickets/create/route.ts", "lib/ticketNumber.ts"]);
     expect(namedIn("issue_document_number")).toEqual(["lib/libraryNumbering.ts"]);

@@ -16,9 +16,10 @@
 //     the replay then STOPS, naming the file, rather than run it any other
 //     way (psql -f would run it statement by statement in autocommit, and a
 //     late error would leave its earlier statements applied — not what a
-//     paste does). The default suite holds every numbered migration under
-//     the limit (lib/__tests__/intelRoundGDbHarness.test.ts); the largest
-//     today, 20261157, is about 99 kB.
+//     paste does). Only the opt-in run checks the files against the limit
+//     (freshReplay.test.ts, and this stop): it is a limit of the harness's
+//     transport, so it never gates the default suite or CI, which pins only
+//     that the stop exists. The largest file today, 20261157, is about 99 kB.
 //
 // The replay never edits a file. A file that fails is recorded; the known
 // ones (OUT_OF_ORDER_FILES) are re-run once at the end when they rolled back.
