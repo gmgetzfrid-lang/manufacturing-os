@@ -47,6 +47,14 @@ export interface IndexEntry {
   revCanon?: string;
   /** Document-type keys named by the name, folder chain, or metadata. */
   docTypes: string[];
+  /** Unit codes this file is LINKED to (estate edges on it or its folders), as
+   *  opposed to units merely named in words. */
+  unitCodes: string[];
+  /** Asset ids and project ids linked by applied estate edges. */
+  linkedAssets: string[];
+  linkedProjects: string[];
+  /** The AI-readable copy, when one exists for these bytes. */
+  read?: { knowledgeDocId: string; status: string; pages: number; byHash: boolean };
   /** Year it landed in the system (or was listed). Never a content signal. */
   uploadYear?: number;
   sizeBytes?: number | null;
@@ -59,6 +67,8 @@ export interface FolderLike {
   libraryId: string;
   parentId: string | null;
   name: string;
+  /** Unit this folder is linked to by an applied estate edge. */
+  unitCode?: string;
 }
 
 export interface LibraryLike { id: string; name: string }
@@ -113,11 +123,20 @@ function metadataText(meta: Record<string, unknown> | null | undefined): string 
   return parts.join(" ");
 }
 
+export interface LinkMeta {
+  unitCodes?: string[];
+  assets?: string[];
+  projects?: string[];
+  read?: IndexEntry["read"];
+}
+
 export function entryFromDocument(
   d: DocLike,
-  ctx: { folders: Map<string, FolderLike>; libraries: Map<string, LibraryLike>; version?: VersionMeta },
+  ctx: { folders: Map<string, FolderLike>; libraries: Map<string, LibraryLike>; version?: VersionMeta; links?: LinkMeta },
 ): IndexEntry {
   const chain = folderChain(d.collection_id, ctx.folders);
+  const unitCodes = new Set<string>(ctx.links?.unitCodes ?? []);
+  for (const f of chain) if (f.unitCode) unitCodes.add(f.unitCode);
   const lib = ctx.libraries.get(d.library_id);
   const v = ctx.version;
   const name = (v?.sourceFileName || d.name || d.document_number || d.title || "Untitled").trim();
@@ -158,6 +177,10 @@ export function entryFromDocument(
     revCanon: d.rev ? canonicalRev(String(d.rev)) : revFromName ? canonicalRev(revFromName) : undefined,
     // What the file calls itself wins; the folder only speaks when the name is silent.
     docTypes: docTypesIn(nameWords).length ? docTypesIn(nameWords) : docTypesIn(pathWordList),
+    unitCodes: [...unitCodes],
+    linkedAssets: ctx.links?.assets ?? [],
+    linkedProjects: ctx.links?.projects ?? [],
+    read: ctx.links?.read,
     uploadYear: yearOf(d.created_at),
     sizeBytes: v?.fileSize ?? null,
     hash: v?.fileHash ?? null,
@@ -193,6 +216,9 @@ export function entriesFromListing(
       sheet: sheetNumbersIn(f.name)[0],
       revCanon: revisionsIn(f.name)[0] ? canonicalRev(revisionsIn(f.name)[0]) : undefined,
       docTypes: docTypesIn(words(f.name)).length ? docTypesIn(words(f.name)) : docTypesIn(words(pathText)),
+      unitCodes: [],
+      linkedAssets: [],
+      linkedProjects: [],
       sizeBytes: f.sizeBytes ?? null,
       hash: null,
     };

@@ -31,6 +31,9 @@ export const ORG_SCOPED_TABLES = [
   // listings (paths only). Taught by document control; not re-derivable.
   "finder_aliases",
   "finder_listings",
+  // One Estate — derived and declared relationships with provenance
+  // (folder→unit, project→unit, also-filed-under). Human decisions live here.
+  "estate_edges",
   // Skills — the org's authored detectors and answer disciplines. Pure
   // human knowledge (names, patterns, packs, sharing); not re-derivable.
   "link_rules",

@@ -17,7 +17,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Search, X, Loader2, Waypoints, HardDrive, Sparkles, Plus, Trash2,
-  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair,
+  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
@@ -41,6 +41,7 @@ import {
   listFinderAliases, addFinderAlias, removeFinderAlias, bumpFinderAlias,
   listFinderListings, saveFinderListing, deleteFinderListing, storeState, type FinderListing,
 } from "@/lib/fileFinder/stores";
+import { estatePost } from "@/lib/estate/client";
 
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-green-100 text-green-800 border-green-200",
@@ -89,6 +90,20 @@ function GraphPageInner() {
   const [viewer, setViewer] = useState<{ doc: DocumentRecord; version: DocumentVersion } | null>(null);
   const [viewerLoading, setViewerLoading] = useState<string | null>(null);
   const [viewerError, setViewerError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [resolveNote, setResolveNote] = useState<string | null>(null);
+
+  /** Document control runs the resolver over the whole estate on demand. */
+  const runResolver = async () => {
+    if (!activeOrgId) return;
+    setResolving(true); setResolveNote(null);
+    try {
+      const r = await estatePost<{ folders: number; documents: number; applied: number; pending: number; unchanged: number; notes: string[] }>("/api/estate/resolve", { orgId: activeOrgId, all: true });
+      setResolveNote(`${r.folders} folders, ${r.documents} documents looked at — ${r.applied} links applied, ${r.pending} waiting in Review, ${r.unchanged} already known.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
+      await refresh();
+    } catch (e) { setResolveNote((e as Error).message); }
+    finally { setResolving(false); }
+  };
   const [panel, setPanel] = useState<"search" | "drives" | "aliases">("search");
   const graphRef = useRef<FileGraphHandle | null>(null);
 
@@ -131,7 +146,8 @@ function GraphPageInner() {
     for (const f of data.folders.values()) bump(folderParent(f));
     for (const e of data.entries) bump(e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`);
     for (const l of data.libraries) out.push({ id: `lib:${l.id}`, kind: "library", label: l.name, parentId: null, childCount: counts.get(`lib:${l.id}`) ?? 0, type: CONTAINER_TYPES.library });
-    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: CONTAINER_TYPES.folder });
+    const unitLabel = (code?: string) => { const u = data.units.find((x) => x.code === code); return u ? ` · ${u.label}` : ""; };
+    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: f.unitCode ? { ...CONTAINER_TYPES.folder, label: `Folder${unitLabel(f.unitCode)}` } : CONTAINER_TYPES.folder });
     for (const e of data.entries) {
       out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name) });
     }
@@ -482,6 +498,12 @@ function GraphPageInner() {
               )}
             </div>
             <div className="flex items-center gap-1 pointer-events-auto">
+              {controller && (
+                <button onClick={runResolver} disabled={resolving || data?.estateMissing} title={data?.estateMissing ? "Apply migration 20261020 first" : "Link every folder and file to its unit, project and equipment from names and ancestry"}
+                  className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 disabled:opacity-50">
+                  {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Resolve links
+                </button>
+              )}
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
               <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
               <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
@@ -515,6 +537,12 @@ function GraphPageInner() {
                   {viewerLoading === activeHit.entry.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Open
                 </button>
               )}
+            </div>
+          )}
+          {resolveNote && (
+            <div className="absolute top-12 right-3 max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-xs shadow-md flex items-start gap-2">
+              <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{resolveNote}</span>
+              <button onClick={() => setResolveNote(null)} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
             </div>
           )}
           <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · ← → step results · Esc goes up</div>
@@ -631,6 +659,7 @@ function HitCard({ hit, rank, active, onReveal, onOpen }: { hit: RankedHit; rank
             <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
             <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
             <span className="text-sm font-semibold truncate">{e.name}</span>
+            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 text-[10px] font-bold"><Eye className="w-3 h-3" /> read</span>}
           </div>
           {e.title && e.title !== e.name && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
           <PathCrumbs entry={e} />
@@ -661,6 +690,8 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
             {entry.number && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.number}{entry.rev ? ` rev ${entry.rev}` : ""}</span>}
             {entry.status && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.status}</span>}
             {entry.years.length > 0 && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">dated {entry.years.join(", ")}</span>}
+            {entry.read && <span className={`rounded border px-1 ${entry.read.status === "ready" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>{entry.read.status === "ready" ? `read by AI · ${entry.read.pages} pages` : `AI read: ${entry.read.status}`}</span>}
+            {entry.unitCodes.map((c) => <span key={c} className="rounded bg-purple-50 border border-purple-200 text-purple-800 px-1">unit {c}</span>)}
             {entry.sizeBytes != null && <span className={`rounded border px-1 ${entry.sizeBytes === 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>{entry.sizeBytes === 0 ? "0 KB" : `${Math.max(1, Math.round(entry.sizeBytes / 1024))} KB`}</span>}
             {entry.idents.map((t) => <span key={t} className="rounded bg-blue-50 border border-blue-200 text-blue-800 px-1">{tagVariants(t)[1] ?? t}</span>)}
           </div>

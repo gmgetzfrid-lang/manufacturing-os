@@ -8,7 +8,7 @@
 import { supabase } from "@/lib/supabase";
 import { loadCodebook } from "@/lib/codebook";
 import type { Role } from "@/types/schema";
-import { entryFromDocument, type DocLike, type FolderLike, type IndexEntry, type LibraryLike, type VersionMeta } from "./fileIndex";
+import { entryFromDocument, type DocLike, type FolderLike, type IndexEntry, type LibraryLike, type VersionMeta, type LinkMeta } from "./fileIndex";
 import type { UnitLike } from "./queryParse";
 
 export interface FinderData {
@@ -18,6 +18,10 @@ export interface FinderData {
   units: UnitLike[];
   /** Human notes about anything capped. */
   truncations: string[];
+  /** Applied estate edges, by node id, for the lenses. */
+  edges: Array<{ a: string; b: string; type: string; summary: string }>;
+  /** True when the One Estate migration has not been applied. */
+  estateMissing: boolean;
 }
 
 export const DOC_CAP = 4000;
@@ -35,11 +39,34 @@ function libraryReadable(row: Record<string, unknown>, role: Role, controller: b
 
 export async function loadFinderData(orgId: string, role: Role, controller: boolean): Promise<FinderData> {
   const truncations: string[] = [];
-  const [libsRes, foldersRes, codebook] = await Promise.all([
+  const [libsRes, foldersRes, codebook, edgesRes, mirrorsRes] = await Promise.all([
     supabase.from("libraries").select("id, name, read_access, visible_to").eq("org_id", orgId),
     supabase.from("collections").select("*").eq("org_id", orgId),
     loadCodebook(orgId).catch(() => ({ units: [] as Array<{ code: string; label: string }> })),
+    supabase.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").limit(20000),
+    supabase.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed").eq("org_id", orgId).limit(20000),
   ]);
+  const estateMissing = !!edgesRes.error;
+  const edges = estateMissing ? [] : (((edgesRes.data as Array<{ a: string; b: string; type: string; summary: string }> | null) ?? []));
+  const folderUnit = new Map<string, string>();
+  const docUnits = new Map<string, string[]>();
+  const docAssets = new Map<string, string[]>();
+  const docProjects = new Map<string, string[]>();
+  for (const e of edges) {
+    if (e.type === "belongs_to_unit" && e.a.startsWith("folder:") && e.b.startsWith("cbunit:")) folderUnit.set(e.a.slice(7), e.b.slice(7));
+    if (e.type === "belongs_to_unit" && e.a.startsWith("doc:") && e.b.startsWith("cbunit:")) docUnits.set(e.a.slice(4), [...(docUnits.get(e.a.slice(4)) ?? []), e.b.slice(7)]);
+    if (e.type === "tagged_to" && e.a.startsWith("doc:") && e.b.startsWith("asset:")) docAssets.set(e.a.slice(4), [...(docAssets.get(e.a.slice(4)) ?? []), e.b.slice(6)]);
+    if (e.type === "in_project" && e.a.startsWith("doc:") && e.b.startsWith("proj:")) docProjects.set(e.a.slice(4), [...(docProjects.get(e.a.slice(4)) ?? []), e.b.slice(5)]);
+  }
+  // The AI-readable copies: by source document, and by bytes.
+  type Mirror = { id: string; source_document_id: string | null; file_hash: string | null; status: string; pages_indexed: number };
+  const mirrors = (mirrorsRes.error ? [] : ((mirrorsRes.data as Mirror[] | null) ?? []));
+  const mirrorByDoc = new Map<string, Mirror>();
+  const mirrorByHash = new Map<string, Mirror>();
+  for (const m of mirrors) {
+    if (m.source_document_id) mirrorByDoc.set(m.source_document_id, m);
+    if (m.file_hash) mirrorByHash.set(m.file_hash, m);
+  }
   if (libsRes.error) throw new Error(libsRes.error.message);
   if (foldersRes.error) throw new Error(foldersRes.error.message);
 
@@ -59,6 +86,7 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     if (!libIds.has(libraryId)) continue;
     folders.set(String(c.id), {
       id: String(c.id), libraryId, parentId: (c.parent_id as string | null) ?? null, name: String(c.name ?? "Folder"),
+      unitCode: folderUnit.get(String(c.id)),
     });
   }
 
@@ -97,9 +125,15 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     }
   }
 
-  const entries = docs.map((d) =>
-    entryFromDocument(d, { folders, libraries: libMap, version: d.current_version_id ? versions.get(d.current_version_id) : undefined }),
-  );
+  const entries = docs.map((d) => {
+    const v = d.current_version_id ? versions.get(d.current_version_id) : undefined;
+    const m = mirrorByDoc.get(d.id) ?? (v?.fileHash ? mirrorByHash.get(v.fileHash) : undefined);
+    const links: LinkMeta = {
+      unitCodes: docUnits.get(d.id), assets: docAssets.get(d.id), projects: docProjects.get(d.id),
+      read: m ? { knowledgeDocId: m.id, status: m.status, pages: m.pages_indexed, byHash: !mirrorByDoc.has(d.id) } : undefined,
+    };
+    return entryFromDocument(d, { folders, libraries: libMap, version: v, links });
+  });
   const units: UnitLike[] = (codebook.units ?? []).map((u) => ({ code: u.code, label: u.label }));
-  return { libraries, folders, entries, units, truncations };
+  return { libraries, folders, entries, units, truncations, edges, estateMissing };
 }
