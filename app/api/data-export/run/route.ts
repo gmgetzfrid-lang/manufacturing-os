@@ -53,7 +53,7 @@ export const maxDuration = 300;
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, exportRateLimitRefusal, pushesToBucket, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
-import { alertAdminsOfExport, destinationConfirmation, unconfirmedNote } from "@/lib/exportAlerts";
+import { alertAdminsOfExport, destinationConfirmation, unconfirmedNote, pauseToKeep, withPauseKept, PAUSE_KEPT_SENTENCE } from "@/lib/exportAlerts";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
@@ -67,7 +67,22 @@ type ScheduledDestination = ExportDestination & {
   schedule_day_of_month?: ScheduleParams["schedule_day_of_month"];
   created_by?: string | null;
   updated_by?: string | null;
+  /** IEDGE-10 residual (P13): the card a Run Now rewrites (pauseToKeep). */
+  last_run_error?: string | null;
+  last_run_at?: string | null;
+  updated_at?: string | null;
 };
+
+/** IEDGE-10 residual (admin-and-org P13, DEC-87 §1 as amended under DEC-90):
+ *  a Run Now is never the Admin's confirming save, so when the card in hand
+ *  says the destination is paused (and no Admin has saved it since that
+ *  card's run — pauseToKeep), the card it writes keeps the pause, and a later
+ *  night whose grace count cannot be read still finds it paused
+ *  (pausedAtLastRun). Any other destination's card is written as before. */
+function cardKeepingPause(dest: ScheduledDestination, text: string | null): string | null {
+  if (!pauseToKeep(dest)) return text ? text.slice(0, 500) : null;
+  return text ? withPauseKept(text) : PAUSE_KEPT_SENTENCE;
+}
 
 /** DEC-87 §1: the card's request to confirm a destination its last
  *  configurer could not set up today, or null (also when that could not be
@@ -222,7 +237,7 @@ export async function POST(req: NextRequest) {
       const { error: destUpdErr } = await auth.admin.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "succeeded",
-        last_run_error: cardNote ? cardNote.slice(0, 500) : null,
+        last_run_error: cardKeepingPause(dest, cardNote),
         last_run_bytes: result.bytes,
         next_run_at: computeNextRunAt({
           schedule_kind: dest.schedule_kind,
@@ -302,9 +317,9 @@ export async function POST(req: NextRequest) {
       const { error: destUpdErr } = await auth.admin.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "failed",
-        last_run_error: confirmNote
+        last_run_error: cardKeepingPause(dest, confirmNote
           ? `${msg.slice(0, Math.max(0, 500 - confirmNote.length - 1))} ${confirmNote}`.slice(0, 500)
-          : msg.slice(0, 500),
+          : msg.slice(0, 500)),
       }).eq("id", dest.id);
       if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
     }

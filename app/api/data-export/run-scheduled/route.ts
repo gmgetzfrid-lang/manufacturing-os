@@ -96,7 +96,7 @@ import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTIO
 import {
   alertAdminsOfExport, destinationConfirmation, unconfirmedNote as unconfirmedNoteFor,
   unconfirmedGraceTonight, graceSentence, graceNightStep, graceUnverifiedStep, pausedNote, pausedUnverifiedNote,
-  pausedCountUnreadSentence, pausedAtLastRun, savedSince, SAVED_SINCE_PAUSE_NOTE, PAUSE_ANNOUNCED_EARLIER,
+  pausedCountUnreadSentence, pausedAtLastRun, pausedInLatestRuns, savedSince, SAVED_SINCE_PAUSE_NOTE, PAUSE_ANNOUNCED_EARLIER,
   GRACE_PAUSED_STEP, GRACE_PAUSE_ANNOUNCED_STEP, ALERT_UNSENT_STEP, ALERT_SENT_STEP, PAUSE_BELL_UNSURE_STEP, UNCONFIRMED_GRACE_NIGHTS,
   pauseToKeep, withPauseKept, PAUSE_KEPT_SENTENCE, earlierBellFate, type UnconfirmedGrace,
 } from "@/lib/exportAlerts";
@@ -292,6 +292,20 @@ async function handler(req: NextRequest) {
       // row in hand — a destination whose last scheduled run left it paused
       // stays paused (never a whole-workspace push on a failed read).
       let paused = tonight.paused || (countError !== null && pausedAtLastRun(dest));
+      // IEDGE-10 residual (admin-and-org P13): the card can lack the pause —
+      // a refused card write on the night that paused it (or, before P13, a
+      // Run Now since) — so an unreadable count also reads the pause from the
+      // run rows themselves, in one bounded query (pausedInLatestRuns). When
+      // that read fails too, the night runs uncounted, as before.
+      if (!paused && countError !== null) {
+        const recheck = await pausedInLatestRuns(sb, dest.id);
+        if ("paused" in recheck && recheck.paused) {
+          paused = true;
+          console.warn(`[run-scheduled] destination ${dest.id}: the unconfirmed-night count could not be read (${countError}), but its newest scheduled runs show it paused, so it stays paused`);
+        } else if ("error" in recheck) {
+          console.warn(`[run-scheduled] destination ${dest.id}: the pause could not be read from its run rows either (${recheck.error})`);
+        }
+      }
       // P14 fix pass (minor): on an unverified night, a destination saved
       // since its pause (only an Admin can save one) is not held paused on
       // that guess — it runs, uncounted (grace:unverified).
