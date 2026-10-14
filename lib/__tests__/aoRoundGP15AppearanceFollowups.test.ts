@@ -155,6 +155,23 @@ describe("20261216 — paste order and what the paste may rely on", () => {
     expect(p11).toContain("AND (tg.tgtype & (4 | 8 | 32)) = 0),  -- not INSERT / DELETE / TRUNCATE");
     expect(p11).not.toContain("NEW.color");
   });
+
+  it("supersession holds: 20261210 does nothing this file does not also do (one function and its REVOKE, one trigger name dropped and re-created on the same two tables; no policy, ALTER or GRANT)", () => {
+    const p11 = read(P11).split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    const ddl = (code: string) => [...code.matchAll(/^(CREATE OR REPLACE FUNCTION \w+|REVOKE ALL ON FUNCTION [^;]+|DROP TRIGGER IF EXISTS \w+ ON \w+|CREATE TRIGGER \w+)/gm)].map((m) => m[1]);
+    expect(ddl(CODE)).toHaveLength(6);
+    expect(ddl(p11)).toEqual(ddl(CODE));
+    expect(p11).not.toMatch(/\b(ALTER|CREATE POLICY|DROP POLICY|GRANT)\b/);
+    // every other top-level statement of 20261210 is its own TEMP inventory (counts only) or the final SELECT
+    const others = [...p11.matchAll(/^(CREATE|DROP|ALTER|INSERT|UPDATE|DELETE|GRANT|REVOKE|COMMENT|TRUNCATE)\b[^\n]*/gm)]
+      .map((m) => m[0])
+      .filter((l) => !/^(CREATE OR REPLACE FUNCTION|REVOKE ALL ON FUNCTION|DROP TRIGGER IF EXISTS|CREATE TRIGGER) /.test(l));
+    expect(others).toEqual([
+      "CREATE TEMP TABLE IF NOT EXISTS ao_p11_20261210_inventory (check_name text, n bigint);",
+      "TRUNCATE ao_p11_20261210_inventory;",
+      "INSERT INTO ao_p11_20261210_inventory",
+    ]);
+  });
 });
 
 // ── 20261216: the re-created function, line-diffed against its newest earlier body ──
