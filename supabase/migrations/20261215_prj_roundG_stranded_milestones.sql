@@ -216,7 +216,7 @@ SELECT 'it counts first (expected NULL writes nothing), re-counts under lock, re
 UNION ALL
 SELECT '20261198''s rail still judges a signed-in move of milestones.project_id (the put-back included)',
        EXISTS (SELECT 1 FROM pg_trigger t
-                WHERE t.tgname = 'trg_milestones_project_move' AND NOT t.tgisinternal
+                WHERE t.tgfoid = 'public.enforce_milestone_project_move()'::regprocedure AND NOT t.tgisinternal
                   AND t.tgrelid = 'public.milestones'::regclass AND t.tgenabled <> 'D'),
        NULL
 UNION ALL
