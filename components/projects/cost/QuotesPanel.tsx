@@ -139,7 +139,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <div className="divide-y divide-[var(--color-border)]">
           {groups.map(({ group, docs: groupDocs }) => (
             <BidGroup key={group} group={group} docs={groupDocs} allDocs={docs}
-              accounts={accounts} companies={companies} canManage={canManage} actor={actor}
+              accounts={accounts} parties={parties} companies={companies} canManage={canManage} actor={actor}
               busy={busy} setBusy={setBusy} readDoc={readDoc} typeTotal={typeTotal}
               onChanged={onChanged} setErr={setErr} />
           ))}
@@ -365,9 +365,9 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
 
 // ── One RFQ group: the tabulation ────────────────────────────────────────
 
-function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, canManage, actor, busy, setBusy, readDoc, typeTotal, onChanged, setErr }: {
+function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companies, canManage, actor, busy, setBusy, readDoc, typeTotal, onChanged, setErr }: {
   group: string; docs: CostDocument[]; allDocs: CostDocument[];
-  accounts: CostAccount[]; companies: Company[]; canManage: boolean; actor: Actor;
+  accounts: CostAccount[]; parties: CostParty[]; companies: Company[]; canManage: boolean; actor: Actor;
   busy: string | null; setBusy: (v: string | null) => void;
   readDoc: (d: CostDocument) => Promise<void>;
   typeTotal: (d: CostDocument) => Promise<void>;
@@ -392,6 +392,13 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, canMan
     () => groupDocs.filter((d) =>
       d.status !== "void" && d.status !== "draft" && !parsedQuoteFrom(d) && (d.totalAmount ?? 0) > 0),
     [groupDocs]);
+
+  // The budget line a bid belongs on: its vendor's line, else the line
+  // whose name matches the RFQ group / priced scope ("Scaffolding").
+  const suggestFor = (doc: CostDocument) => suggestAccountForInvoice({
+    vendorName: doc.vendorName, partyId: doc.partyId,
+    lineDescriptions: [group.replace(/^Ungrouped — /, ""), ...(parsedQuoteFrom(doc)?.lineItems.map((l) => l.description) ?? [])],
+  }, accounts, parties);
 
   const award = async (doc: CostDocument, accountId: string) => {
     const total = doc.totalAmount ?? parsedQuoteFrom(doc)?.total ?? 0;
@@ -491,7 +498,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, canMan
                           {canManage && !awarded && (
                             <td className="px-3 py-2 text-right">
                               {doc && (doc.status === "parsed" || doc.status === "draft") && (
-                                <PostControls accounts={accounts} busy={busy === doc.id}
+                                <PostControls accounts={accounts} busy={busy === doc.id} suggested={suggestFor(doc)}
                                   onPost={(accountId) => award(doc, accountId)} label="Award" />
                               )}
                             </td>
@@ -536,7 +543,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, canMan
                   </span>
                   <StatusChip status={d.status} />
                   {canManage && !awarded && d.status === "parsed" && (
-                    <PostControls accounts={accounts} busy={busy === d.id}
+                    <PostControls accounts={accounts} busy={busy === d.id} suggested={suggestFor(d)}
                       onPost={(accountId) => award(d, accountId)} label="Award" />
                   )}
                   {canManage && d.status === "parsed" && (
@@ -664,8 +671,8 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
     <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30 flex items-center gap-2 flex-wrap">
       <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] text-xs">
         <UploadCloud className="w-3.5 h-3.5 text-[var(--color-accent)]" />
-        <span className="text-[var(--color-text-muted)] max-w-48 truncate">{file ? file.name : `${kind === "quote" ? "Quote" : "Invoice"} PDF…`}</span>
-        <input type="file" accept=".pdf,application/pdf" className="hidden"
+        <span className="text-[var(--color-text-muted)] max-w-48 truncate">{file ? file.name : `${kind === "quote" ? "Quote" : "Invoice"} PDF or photo…`}</span>
+        <input type="file" accept={INVOICE_ACCEPT} className="hidden"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
       </label>
       <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor (or let the AI read it)"
