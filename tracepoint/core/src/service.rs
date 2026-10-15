@@ -629,6 +629,108 @@ impl Service {
         stop(&self, reason.or(if ok { None } else { Some("Could not save the results.".into()) }));
     }
 
+    /// A library is a saved search: its files are whatever that search finds.
+    fn library_files(&self, e: &Engine, query: &str) -> std::collections::HashSet<u32> {
+        let r = e.search(&SearchRequest { query: query.to_string(), limit: 5000, include_photos: false, ..Default::default() });
+        r.hits.iter().map(|h| h.id).collect()
+    }
+
+    fn chat_emit(&self, thread_id: i64, v: Value) {
+        let mut v = v;
+        v["thread_id"] = json!(thread_id);
+        self.platform.emit("chat", v);
+    }
+
+    fn chat_ask(self: &Arc<Self>, a: &Value) -> R {
+        let question = s(a, "question");
+        if question.trim().is_empty() {
+            return Err(ApiError::new(400, "Ask a question."));
+        }
+        let (cur, key) = self.current_ai()?;
+        let e = self.engine()?;
+        if e.content.read().unwrap().is_none() {
+            return Err(ApiError::new(409, "No document contents have been read yet. An administrator can start that under Sources › Document contents."));
+        }
+        let scope_v = a.get("scope").cloned().unwrap_or(json!({"kind": "thor"}));
+        let scope_s = scope_v.to_string();
+        let uid = self.with_session(|s| Ok(s.user.id))?;
+        let thread_id = match a.get("thread_id").and_then(|x| x.as_i64()) {
+            Some(t) => {
+                if self.users.lock().unwrap().thread_owned(uid, t)?.is_none() {
+                    return Err(ApiError::new(404, "No such conversation."));
+                }
+                t
+            }
+            None => {
+                let title: String = question.chars().take(70).collect();
+                self.users.lock().unwrap().thread_create(uid, &title, &scope_s)?
+            }
+        };
+        let history: Vec<(String, String)> = self.users.lock().unwrap().turns(thread_id)?.into_iter().map(|t| (t.1, t.2)).collect();
+        // Asked before (same scope, no thumbs-down): reuse it for free.
+        if !a.get("force").and_then(|x| x.as_bool()).unwrap_or(false) && history.is_empty() {
+            let recent = self.users.lock().unwrap().recent_turns(uid, 300)?;
+            if let Some((tid, _, ans, src, _, at)) = recent.into_iter().find(|r| r.4 == scope_s && crate::ask::similar(&r.1, &question)) {
+                let meta = json!({"reused_from": tid, "reused_at": at, "cost_usd": 0.0, "ms": 0});
+                let turn = self.users.lock().unwrap().turn_add(thread_id, &question, &ans, &src, &meta.to_string())?;
+                let me = self.clone();
+                let ans2 = ans.clone();
+                std::thread::spawn(move || {
+                    me.chat_emit(thread_id, json!({"type": "sources", "sources": serde_json::from_str::<Value>(&src).unwrap_or(json!([]))}));
+                    me.chat_emit(thread_id, json!({"type": "done", "text": ans2, "meta": meta, "turn_id": turn}));
+                });
+                return Ok(json!({"thread_id": thread_id, "reused": true}));
+            }
+        }
+        let scope: Option<std::collections::HashSet<u32>> = match scope_v["kind"].as_str().unwrap_or("thor") {
+            "equipment" => scope_v["id"].as_u64().filter(|&i| (i as usize) < e.idx.equipment.len()).map(|i| e.idx.equip_files[i as usize].iter().copied().collect()),
+            "library" => {
+                let id = scope_v["id"].as_i64().unwrap_or(0);
+                let q = self.users.lock().unwrap().libraries()?.into_iter().find(|l| l.0 == id).map(|l| l.2);
+                q.map(|q| self.library_files(&e, &q))
+            }
+            _ => None,
+        };
+        let cheap = AiChoice { provider: cur.provider, model: crate::content::vision_model(cur.provider).to_string(), reasoning: None };
+        self.chat_cancel.store(false, Ordering::SeqCst);
+        let me = self.clone();
+        std::thread::spawn(move || {
+            let t0 = std::time::Instant::now();
+            let spent = std::cell::Cell::new(0.0f64);
+            let call = |c: &AiChoice, sys: &str, msgs: &[ai::Msg], max: u32, on: &mut dyn FnMut(&str)| {
+                let (r, cost) = me.ai_call("ask", c, &key, sys, msgs, max, &|| me.chat_cancel.load(Ordering::Relaxed), on)?;
+                spent.set(spent.get() + cost);
+                Ok(r)
+            };
+            let res = crate::ask::ask(
+                &e,
+                &cheap,
+                &cur,
+                &call,
+                &question,
+                &history,
+                scope.as_ref(),
+                &|st| me.chat_emit(thread_id, json!({"type": "status", "status": st})),
+                &|ps| me.chat_emit(thread_id, json!({"type": "sources", "sources": crate::ask::sources_json(ps, &[])})),
+                &mut |d| me.chat_emit(thread_id, json!({"type": "delta", "text": d})),
+            );
+            match res {
+                Ok(out) => {
+                    let files: std::collections::HashSet<u32> = out.passages.iter().map(|p| p.file_id).collect();
+                    let meta = json!({"model": out.model, "ms": t0.elapsed().as_millis(), "input_tokens": out.tokens_in, "output_tokens": out.tokens_out,
+                                      "read": files.len(), "searched": out.searched, "missing": out.missing, "cost_usd": spent.get()});
+                    let src = crate::ask::sources_json(&out.passages, &out.cited);
+                    let turn = me.users.lock().unwrap().turn_add(thread_id, &question, &out.answer, &src.to_string(), &meta.to_string()).unwrap_or(0);
+                    me.chat_emit(thread_id, json!({"type": "sources", "sources": src}));
+                    me.chat_emit(thread_id, json!({"type": "done", "text": out.answer, "meta": meta, "turn_id": turn}));
+                    me.audit("ask", &format!("{} · ${:.4}", question.chars().take(80).collect::<String>(), spent.get()));
+                }
+                Err(err) => me.chat_emit(thread_id, json!({"type": "error", "error": err.message})),
+            }
+        });
+        Ok(json!({"thread_id": thread_id}))
+    }
+
     fn fail_index(&self, e: &str) {
         let mut st = self.index_state.write().unwrap();
         st.ready = false;
@@ -636,6 +738,11 @@ impl Service {
         st.message = e.to_string();
         drop(st);
         self.platform.emit("index", json!({"error": e}));
+    }
+
+    /// The loaded search engine (tools and tests).
+    pub fn current_engine(&self) -> Option<Arc<Engine>> {
+        self.engine.read().unwrap().clone()
     }
 
     fn engine(&self) -> Result<Arc<Engine>, ApiError> {
@@ -1112,10 +1219,65 @@ impl Service {
 
             // ── About / for IT ───────────────────────────────────────
             "about" => Ok(self.about()),
-            "chat.threads" | "library.list" => {
+            // ── Ask THOR ─────────────────────────────────────────────
+            "chat.threads" => self.with_session(|sess| {
+                if !sess.is_admin() {
+                    return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
+                }
+                let rows = self.users.lock().unwrap().threads(sess.user.id)?;
+                Ok(Value::Array(rows.into_iter().map(|(id, title, scope, at)| json!({"id": id, "title": title, "updated_at": at, "scope": serde_json::from_str::<Value>(&scope).unwrap_or(json!({"kind": "thor"}))})).collect()))
+            }),
+            "chat.thread" => self.with_session(|sess| {
+                let id = a["id"].as_i64().unwrap_or(0);
+                let users = self.users.lock().unwrap();
+                let Some(scope) = users.thread_owned(sess.user.id, id)? else { return Err(ApiError::new(404, "No such conversation.")) };
+                let mut msgs = Vec::new();
+                for (tid, q, ans, src, meta, rating, _) in users.turns(id)? {
+                    msgs.push(json!({"id": tid, "role": "user", "content": q}));
+                    msgs.push(json!({"id": tid, "role": "assistant", "content": ans, "sources": serde_json::from_str::<Value>(&src).unwrap_or(json!([])), "meta": serde_json::from_str::<Value>(&meta).unwrap_or(json!({})), "rating": rating}));
+                }
+                Ok(json!({"id": id, "scope": serde_json::from_str::<Value>(&scope).unwrap_or(json!({"kind": "thor"})), "messages": msgs}))
+            }),
+            "chat.delete" => self.with_session(|sess| {
+                self.users.lock().unwrap().thread_delete(sess.user.id, a["id"].as_i64().unwrap_or(0))?;
+                Ok(json!({"ok": true}))
+            }),
+            "chat.rate" => self.with_session(|sess| {
+                self.users.lock().unwrap().turn_rate(sess.user.id, a["turn_id"].as_i64().unwrap_or(0), a["rating"].as_i64().unwrap_or(0))?;
+                Ok(json!({"ok": true}))
+            }),
+            "chat.ask" => self.chat_ask(a),
+            "library.list" => {
                 self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
-                Ok(json!([]))
+                let e = self.engine()?;
+                let libs = self.users.lock().unwrap().libraries()?;
+                let read = e.content.read().unwrap().as_ref().map(|c| c.read.clone()).unwrap_or_default();
+                Ok(Value::Array(
+                    libs.into_iter()
+                        .map(|(id, name, query, at)| {
+                            let files = self.library_files(&e, &query);
+                            let indexed = files.iter().filter(|f| read.contains(f)).count();
+                            json!({"id": id, "name": name, "query": query, "files": files.len(), "indexed": indexed, "created_at": at})
+                        })
+                        .collect(),
+                ))
             }
+            "library.create" => self.with_session(|sess| {
+                if !sess.is_admin() {
+                    return Err(ApiError::new(403, "Administrators only."));
+                }
+                let id = self.users.lock().unwrap().library_create(sess, &s(a, "name"), &s(a, "query"))?;
+                let e = self.engine()?;
+                let files = self.library_files(&e, &s(a, "query"));
+                Ok(json!({"id": id, "name": s(a, "name"), "query": s(a, "query"), "files": files.len(), "indexed": 0, "created_at": auth::now()}))
+            }),
+            "library.delete" => self.with_session(|sess| {
+                if !sess.is_admin() {
+                    return Err(ApiError::new(403, "Administrators only."));
+                }
+                self.users.lock().unwrap().library_delete(sess, a["id"].as_i64().unwrap_or(0))?;
+                Ok(json!({"ok": true}))
+            }),
             "indexer.status" => {
                 self.with_session(|_| Ok(()))?;
                 Ok(serde_json::to_value(&*self.scan.lock().unwrap()).unwrap())

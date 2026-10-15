@@ -253,6 +253,10 @@ create table if not exists ai_usage(
   note text
 );
 create index if not exists ix_ai_usage_user_month on ai_usage(user_id, month);
+create table if not exists ask_threads(id integer primary key, user_id integer not null, title text not null, scope text not null, created_at text not null, updated_at text not null);
+create table if not exists ask_turns(id integer primary key, thread_id integer not null references ask_threads(id) on delete cascade, question text not null,
+  answer text not null, sources text not null, meta text not null, rating integer, created_at text not null);
+create table if not exists libraries(id integer primary key, name text not null, query text not null, created_by text, created_at text not null);
 create table if not exists audit(id integer primary key, at text not null, actor text, action text not null, detail text, machine text);
 ";
 
@@ -589,6 +593,80 @@ impl UserStore {
             }))
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    // ── Ask THOR conversations (private to their owner) ─────────────
+    pub fn thread_create(&self, user_id: i64, title: &str, scope: &str) -> Result<i64, AuthError> {
+        self.conn.execute("insert into ask_threads(user_id,title,scope,created_at,updated_at) values(?1,?2,?3,?4,?4)", params![user_id, title, scope, now()])?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn thread_owned(&self, user_id: i64, id: i64) -> Result<Option<String>, AuthError> {
+        Ok(self.conn.query_row("select scope from ask_threads where id=?1 and user_id=?2", params![id, user_id], |r| r.get(0)).optional()?)
+    }
+
+    pub fn turn_add(&self, thread_id: i64, q: &str, answer: &str, sources: &str, meta: &str) -> Result<i64, AuthError> {
+        self.conn.execute("insert into ask_turns(thread_id,question,answer,sources,meta,created_at) values(?1,?2,?3,?4,?5,?6)", params![thread_id, q, answer, sources, meta, now()])?;
+        let id = self.conn.last_insert_rowid();
+        self.conn.execute("update ask_threads set updated_at=?2 where id=?1", params![thread_id, now()])?;
+        Ok(id)
+    }
+
+    pub fn threads(&self, user_id: i64) -> Result<Vec<(i64, String, String, String)>, AuthError> {
+        let mut st = self.conn.prepare("select id,title,scope,updated_at from ask_threads where user_id=?1 order by updated_at desc limit 200")?;
+        let rows = st.query_map([user_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// (turn id, question, answer, sources json, meta json, rating, created)
+    pub fn turns(&self, thread_id: i64) -> Result<Vec<(i64, String, String, String, String, Option<i64>, String)>, AuthError> {
+        let mut st = self.conn.prepare("select id,question,answer,sources,meta,rating,created_at from ask_turns where thread_id=?1 order by id")?;
+        let rows = st.query_map([thread_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// The user's recent questions (for reusing an earlier answer for free).
+    pub fn recent_turns(&self, user_id: i64, limit: i64) -> Result<Vec<(i64, String, String, String, String, String)>, AuthError> {
+        let mut st = self.conn.prepare(
+            "select t.id,t.question,t.answer,t.sources,h.scope,t.created_at from ask_turns t join ask_threads h on h.id=t.thread_id where h.user_id=?1 and coalesce(t.rating,0)>=0 order by t.id desc limit ?2",
+        )?;
+        let rows = st.query_map(params![user_id, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn thread_delete(&self, user_id: i64, id: i64) -> Result<(), AuthError> {
+        self.conn.execute("delete from ask_turns where thread_id in (select id from ask_threads where id=?1 and user_id=?2)", params![id, user_id])?;
+        self.conn.execute("delete from ask_threads where id=?1 and user_id=?2", params![id, user_id])?;
+        Ok(())
+    }
+
+    pub fn turn_rate(&self, user_id: i64, turn_id: i64, rating: i64) -> Result<(), AuthError> {
+        self.conn.execute(
+            "update ask_turns set rating=?3 where id=?1 and thread_id in (select id from ask_threads where user_id=?2)",
+            params![turn_id, user_id, rating.clamp(-1, 1)],
+        )?;
+        Ok(())
+    }
+
+    pub fn libraries(&self) -> Result<Vec<(i64, String, String, String)>, AuthError> {
+        let mut st = self.conn.prepare("select id,name,query,created_at from libraries order by name")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn library_create(&self, s: &Session, name: &str, query: &str) -> Result<i64, AuthError> {
+        if name.trim().is_empty() || query.trim().is_empty() {
+            return err("Give the library a name and a search that defines it.");
+        }
+        self.conn.execute("insert into libraries(name,query,created_by,created_at) values(?1,?2,?3,?4)", params![name.trim(), query.trim(), s.user.email, now()])?;
+        self.audit(Some(&s.user.email), "library_created", &format!("{name}: {query}"))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn library_delete(&self, s: &Session, id: i64) -> Result<(), AuthError> {
+        self.conn.execute("delete from libraries where id=?1", [id])?;
+        self.audit(Some(&s.user.email), "library_deleted", &id.to_string())?;
+        Ok(())
     }
 
     // ── Preferences and policy ──────────────────────────────────────

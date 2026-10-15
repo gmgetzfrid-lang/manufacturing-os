@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, Bot, Boxes, BookOpen, Brain, ExternalLink, FileText, Globe, Library, Loader2, MessageSquarePlus, Plus, Search, Settings2, Square, Trash2, X } from "lucide-react";
+import { ArrowUp, Bot, Boxes, BookOpen, ExternalLink, FileText, Globe, Library, Loader2, MessageSquarePlus, Plus, Search, Settings2, Square, ThumbsDown, ThumbsUp, Trash2, TriangleAlert, X } from "lucide-react";
 import { api, fileUrl, onEvent } from "../lib/api";
 import type { AppState, Facet } from "../lib/types";
-import { Button, Empty, IconButton, Input, Modal, Pill, cx, useToast } from "../components/ui";
+import { Button, Empty, IconButton, Input, Modal, cx, useToast } from "../components/ui";
 import { when } from "../lib/format";
 import type { Nav } from "../Shell";
 
 export interface Scope { kind: "thor" | "equipment" | "library"; id?: number; label?: string }
-interface Source { n: number; file_id: number; name: string; page?: number | null; path: string; folder: string; snippet: string; score?: number }
-interface Msg { id?: number; role: "user" | "assistant"; content: string; sources?: Source[]; meta?: { model?: string; ms?: number; input_tokens?: number; output_tokens?: number; read?: number; searched?: string[] }; pending?: boolean; status?: string[]; error?: string }
+interface Source { n: number; file_id: number; name: string; page?: number | null; path: string; folder: string; snippet: string; label?: string; cited?: boolean }
+interface Msg { id?: number; role: "user" | "assistant"; content: string; sources?: Source[]; meta?: { model?: string; ms?: number; input_tokens?: number; output_tokens?: number; read?: number; searched?: string[]; cost_usd?: number; reused_from?: number; reused_at?: string }; rating?: number | null; pending?: boolean; status?: string[]; error?: string }
 interface ThreadSummary { id: number; title: string; updated_at: string; scope: Scope }
 interface LibrarySummary { id: number; name: string; files: number; indexed: number; created_at: string }
 
@@ -43,7 +43,7 @@ export function AskPage({ state, nav }: { state: AppState; nav: Nav }) {
   }, [loadLists]);
   useEffect(() => { scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" }); }, [messages]);
 
-  useEffect(() => onEvent("chat", (p: { thread_id: number; type: string; text?: string; sources?: Source[]; meta?: Msg["meta"]; error?: string; status?: string }) => {
+  useEffect(() => onEvent("chat", (p: { thread_id: number; type: string; text?: string; sources?: Source[]; meta?: Msg["meta"]; error?: string; status?: string; turn_id?: number }) => {
     setThreadId((cur) => cur ?? p.thread_id);
     setMessages((ms) => {
       const copy = [...ms];
@@ -53,7 +53,7 @@ export function AskPage({ state, nav }: { state: AppState; nav: Nav }) {
       if (p.type === "status" && p.status) m.status = [...(m.status ?? []), p.status];
       if (p.type === "sources") m.sources = p.sources;
       if (p.type === "delta") m.content += p.text ?? "";
-      if (p.type === "done") { m.pending = false; m.meta = p.meta; if (p.text !== undefined) m.content = p.text; }
+      if (p.type === "done") { m.pending = false; m.meta = p.meta; m.id = p.turn_id; if (p.text !== undefined) m.content = p.text; }
       if (p.type === "error") { m.pending = false; m.error = p.error; }
       copy[copy.length - 1] = m;
       return copy;
@@ -149,7 +149,7 @@ export function AskPage({ state, nav }: { state: AppState; nav: Nav }) {
             </div>
           ) : (
             <div className="mx-auto max-w-[820px] space-y-6 px-6 py-6">
-              {messages.map((m, i) => <Message key={i} m={m} onSource={setActiveSource} active={activeSource} />)}
+              {messages.map((m, i) => <Message key={i} m={m} onSource={setActiveSource} active={activeSource} onRate={(r) => { if (m.id == null) return; api("chat.rate", { turn_id: m.id, rating: r }); setMessages((ms) => ms.map((x, j) => (j === i ? { ...x, rating: r } : x))); }} />)}
             </div>
           )}
         </div>
@@ -222,90 +222,171 @@ function ScopePicker({ scope, setScope, libs }: { scope: Scope; setScope: (s: Sc
   );
 }
 
-/** Minimal, safe Markdown: paragraphs, lists, bold, code, headings, and
- *  [n] citation chips. No raw HTML is ever rendered. */
-function renderAnswer(text: string, sources: Source[] | undefined, onSource: (s: Source) => void, active: Source | null): ReactNode {
-  const inline = (s: string, key: string): ReactNode[] => {
-    const out: ReactNode[] = [];
-    const re = /(\*\*[^*]+\*\*|`[^`]+`|\[(\d{1,2}(?:\s*,\s*\d{1,2})*)\])/g;
-    let last = 0, m: RegExpExecArray | null, k = 0;
-    while ((m = re.exec(s))) {
-      if (m.index > last) out.push(s.slice(last, m.index));
-      const tok = m[0];
-      if (tok.startsWith("**")) out.push(<strong key={`${key}-${k++}`}>{tok.slice(2, -2)}</strong>);
-      else if (tok.startsWith("`")) out.push(<code key={`${key}-${k++}`}>{tok.slice(1, -1)}</code>);
-      else {
-        const nums = m[2].split(",").map((x) => Number(x.trim()));
-        nums.forEach((nn) => {
-          const src = sources?.find((x) => x.n === nn);
-          out.push(
-            <button key={`${key}-${k++}`} onClick={() => src && onSource(src)} title={src ? `${src.name}${src.page ? ` · page ${src.page}` : ""}` : undefined}
-              className={cx("mx-0.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-md px-1 align-[1px] text-[11px] font-semibold transition cursor-pointer", active?.n === nn ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)]")}>
-              {nn}
-            </button>,
-          );
-        });
-      }
-      last = m.index + tok.length;
+// ── Answer layout (Manufacturing OS Knowledge Intelligence) ──────────────
+
+type Block = { type: "hero" | "label" | "bullet" | "important" | "check" | "text"; text: string };
+
+/** Answer / Basis / Check text → blocks. Tolerant of how models actually
+ *  write: "**Answer:**" alone on a line, bold-line headings, run-on prose. */
+function parseBlocks(answer: string): Block[] {
+  const blocks: Block[] = [];
+  let heroPending = false;
+  for (const raw of answer.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (blocks.length === 0 && /^\*{0,2}Answer:?\*{0,2}:?\s*$/i.test(line)) { heroPending = true; continue; }
+    if (heroPending) { heroPending = false; if (!/^[-*•#!]/.test(line)) { blocks.push({ type: "hero", text: line }); continue; } }
+    const hero = line.match(/^\*{0,2}Answer:?\*{0,2}:?\s*(.+)$/i);
+    if (hero && blocks.length === 0) { blocks.push({ type: "hero", text: hero[1].trim() }); continue; }
+    const check = line.match(/^\*{0,2}Check:?\*{0,2}:?\s*(.+)$/i);
+    if (check) { blocks.push({ type: "check", text: check[1].trim() }); continue; }
+    const important = line.match(/^(?:!\s+|[-*•]\s+!\s+|\*{0,2}(?:IMPORTANT|WARNING|MUST|CRITICAL):?\*{0,2}:?\s+)(.+)$/);
+    if (important) { blocks.push({ type: "important", text: important[1].trim() }); continue; }
+    const label = line.match(/^\*{0,2}([A-Z][A-Za-z0-9 /&()'.’-]{2,58}?):\*{0,2}\s*$/);
+    if (label && !line.startsWith("-")) { blocks.push({ type: "label", text: label[1].trim() }); continue; }
+    const boldHeading = line.match(/^\*\*([^*]{3,70})\*\*$/) ?? line.match(/^#{1,4}\s+(.{3,70})$/);
+    if (boldHeading) { blocks.push({ type: "label", text: boldHeading[1].replace(/:$/, "").trim() }); continue; }
+    const bullet = line.match(/^[-*•]\s+(.+)$/) ?? line.match(/^\d{1,2}[.)]\s+(.+)$/);
+    if (bullet) { blocks.push({ type: "bullet", text: bullet[1].trim() }); continue; }
+    blocks.push({ type: "text", text: line });
+  }
+  // Two-plus consecutive paragraphs are a wall: keep the first, bullet the rest.
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].type !== "text") continue;
+    let j = i;
+    while (j + 1 < blocks.length && blocks[j + 1].type === "text") j++;
+    for (let k = i + 1; k <= j; k++) blocks[k] = { ...blocks[k], type: "bullet" };
+    i = j;
+  }
+  // A short line right above bullets is a heading written as prose.
+  for (let i = 0; i < blocks.length - 1; i++) {
+    const b = blocks[i], next = blocks[i + 1];
+    if (b.type === "text" && (next.type === "bullet" || next.type === "label") && b.text.length <= 60 && !/\[\d/.test(b.text) && !/[.!?;,]$/.test(b.text.replace(/\*+$/, ""))) {
+      blocks[i] = { type: "label", text: b.text.replace(/\*+/g, "").replace(/:$/, "").trim() };
     }
-    if (last < s.length) out.push(s.slice(last));
-    return out;
-  };
-  const blocks = text.split(/\n{2,}/);
-  return blocks.map((b, i) => {
-    const lines = b.split("\n");
-    if (lines.every((l) => /^\s*([-*•]|\d+[.)])\s+/.test(l))) {
-      const ordered = /^\s*\d/.test(lines[0]);
-      const items = lines.map((l, j) => <li key={j}>{inline(l.replace(/^\s*([-*•]|\d+[.)])\s+/, ""), `${i}-${j}`)}</li>);
-      return ordered ? <ol key={i}>{items}</ol> : <ul key={i}>{items}</ul>;
-    }
-    if (/^#{1,4}\s/.test(b)) return <h4 key={i}>{inline(b.replace(/^#+\s/, ""), `${i}`)}</h4>;
-    return <p key={i}>{lines.flatMap((l, j) => (j ? [<br key={`br${j}`} />, ...inline(l, `${i}-${j}`)] : inline(l, `${i}-${j}`)))}</p>;
-  });
+  }
+  return blocks;
 }
 
-function Message({ m, onSource, active }: { m: Msg; onSource: (s: Source) => void; active: Source | null }) {
+function Inline({ text, sources, onSource, active }: { text: string; sources?: Source[]; onSource: (s: Source) => void; active: Source | null }) {
+  const toast = useToast();
+  const out: ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\])/g;
+  let last = 0, m: RegExpExecArray | null, k = 0;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith("**")) out.push(<strong key={k++} className="font-bold text-[var(--color-text)]">{tok.slice(2, -2)}</strong>);
+    else if (tok.startsWith("`")) {
+      const v = tok.slice(1, -1);
+      out.push(<button key={k++} title="Copy" onClick={() => navigator.clipboard?.writeText(v).then(() => toast("ok", `Copied ${v}`))} className="mx-0.5 inline-flex items-center rounded-md border border-[color-mix(in_srgb,var(--color-info)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_9%,transparent)] px-1.5 py-px align-[1px] font-mono text-[0.9em] font-semibold text-[var(--color-text)] cursor-pointer">{v}</button>);
+    } else {
+      for (const nn of m[2].split(",").map((x) => Number(x.trim()))) {
+        const src = sources?.find((x) => x.n === nn);
+        out.push(
+          <button key={k++} onClick={() => src && onSource(src)} title={src ? `${src.name} · page ${src.page}` : undefined}
+            className={cx("mx-px inline-flex h-[17px] min-w-[17px] -translate-y-[0.35em] items-center justify-center rounded px-1 text-[10.5px] font-bold transition cursor-pointer", active?.n === nn ? "bg-[var(--color-accent)] text-white" : "bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-white")}>{nn}</button>,
+        );
+      }
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return <>{out}</>;
+}
+
+function AnswerView({ m, onSource, active, onRate }: { m: Msg; onSource: (s: Source) => void; active: Source | null; onRate: (r: number) => void }) {
+  const blocks = useMemo(() => parseBlocks(m.content), [m.content]);
+  const cited = (m.sources ?? []).filter((s) => s.cited);
+  const byDoc = useMemo(() => {
+    const g = new Map<number, Source[]>();
+    for (const s of m.sources ?? []) { if (!g.has(s.file_id)) g.set(s.file_id, []); g.get(s.file_id)!.push(s); }
+    return [...g.values()].sort((a, b) => Number(b.some((x) => x.cited)) - Number(a.some((x) => x.cited)));
+  }, [m.sources]);
+  const P = (t: string) => <Inline text={t} sources={m.sources} onSource={onSource} active={active} />;
+  const hero = blocks.find((b) => b.type === "hero");
+  return (
+    <div className="space-y-3">
+      {hero && (
+        <div className="rounded-2xl border border-[color-mix(in_srgb,var(--color-accent)_30%,transparent)] bg-[var(--color-surface)] p-4 shadow-sm">
+          <div className="text-[11.5px] font-bold uppercase tracking-wider text-[var(--color-accent)]">Answer</div>
+          <div className="mt-1 text-[17px] font-semibold leading-snug">{P(hero.text)}</div>
+          {cited.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              <span className="text-[12px] text-[var(--color-text-faint)]">Sources · tap to open</span>
+              {cited.slice(0, 4).map((s) => (
+                <button key={s.n} onClick={() => onSource(s)} className="max-w-[260px] truncate rounded-lg border border-[var(--color-border)] px-2 py-0.5 text-[12px] hover:border-[var(--color-accent)] cursor-pointer"><b>[{s.n}]</b> {s.name} · p.{s.page}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {blocks.filter((b) => b !== hero).map((b, i) => {
+        if (b.type === "label") return b.text.toLowerCase() === "basis" ? <div key={i} className="pt-1 text-[12px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Basis</div> : <h4 key={i} className="pt-2 text-[15px] font-bold">{b.text}</h4>;
+        if (b.type === "bullet") return <div key={i} className="flex gap-2.5 text-[14.5px] leading-relaxed"><span className="mt-[9px] size-1.5 shrink-0 rounded-full bg-[var(--color-text-faint)]" /><span>{P(b.text)}</span></div>;
+        if (b.type === "important") return <div key={i} className="flex gap-2.5 rounded-xl border-l-4 border-[var(--color-bad)] bg-[color-mix(in_srgb,var(--color-bad)_8%,transparent)] px-3.5 py-2.5 text-[14.5px] font-semibold leading-relaxed"><TriangleAlert className="mt-0.5 size-4 shrink-0 text-[var(--color-bad)]" /><span>{P(b.text)}</span></div>;
+        if (b.type === "check") return <div key={i} className="rounded-xl border border-[color-mix(in_srgb,var(--color-warn)_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warn)_10%,transparent)] px-3.5 py-2.5 text-[14px] leading-relaxed"><b>Check:</b> {P(b.text)}</div>;
+        return <p key={i} className="text-[14.5px] leading-relaxed">{P(b.text)}</p>;
+      })}
+      {byDoc.length > 0 && (
+        <div className="pt-2">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]"><BookOpen className="size-3.5" />Sources read</div>
+          <div className="space-y-1">
+            {byDoc.map((g) => (
+              <div key={g[0].file_id} className={cx("flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px]", g.some((x) => x.cited) ? "bg-[var(--color-surface-2)]" : "opacity-70")}>
+                <FileText className="size-4 shrink-0 text-[var(--color-text-faint)]" />
+                <span className="min-w-0 flex-1 truncate font-medium" title={g[0].folder}>{g[0].name}</span>
+                {g.map((s) => (
+                  <button key={s.n} onClick={() => onSource(s)} className={cx("shrink-0 rounded-md px-1.5 py-0.5 text-[12px] font-semibold cursor-pointer", s.cited ? "bg-[color-mix(in_srgb,var(--color-accent)_14%,transparent)] text-[var(--color-accent)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-3)]")}>[{s.n}] p.{s.page}</button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {m.meta && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[12px] text-[var(--color-text-faint)]">
+          {m.meta.reused_from ? <span className="font-medium text-[var(--color-ok)]">Same question as {when(m.meta.reused_at ?? "")} — earlier answer reused, no cost</span> : <>
+            {m.meta.model && <span>{m.meta.model}</span>}
+            {m.meta.read != null && <span>read {m.meta.read} documents</span>}
+            {m.meta.ms != null && <span>{(m.meta.ms / 1000).toFixed(1)} s</span>}
+            {m.meta.cost_usd != null && <span>cost ${m.meta.cost_usd.toFixed(4)}</span>}
+          </>}
+          {m.id != null && (
+            <span className="ml-auto flex items-center gap-1">
+              <IconButton label="Helpful" active={m.rating === 1} onClick={() => onRate(1)} className="size-7"><ThumbsUp className="size-3.5" /></IconButton>
+              <IconButton label="Not helpful (won't be reused)" active={m.rating === -1} onClick={() => onRate(-1)} className="size-7"><ThumbsDown className="size-3.5" /></IconButton>
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Message({ m, onSource, active, onRate }: { m: Msg; onSource: (s: Source) => void; active: Source | null; onRate: (r: number) => void }) {
   if (m.role === "user") {
-    return <div className="flex justify-end animate-[var(--animate-rise)]"><div className="max-w-[80%] rounded-2xl rounded-br-md bg-[var(--color-accent)] px-4 py-2.5 text-[14px] leading-relaxed text-[var(--color-accent-fg)] shadow-sm whitespace-pre-wrap">{m.content}</div></div>;
+    return <div className="flex justify-end animate-[var(--animate-rise)]"><div className="max-w-[80%] rounded-2xl rounded-br-md bg-[var(--color-accent)] px-4 py-2.5 text-[14.5px] leading-relaxed text-[var(--color-accent-fg)] shadow-sm whitespace-pre-wrap">{m.content}</div></div>;
   }
   return (
     <div className="flex gap-3 animate-[var(--animate-rise)]">
       <div className="flex size-8 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ background: "var(--brand-gradient)" }}><Bot className="size-4" /></div>
       <div className="min-w-0 flex-1">
-        {(m.status?.length ?? 0) > 0 && (
+        {m.pending && (m.status?.length ?? 0) > 0 && (
           <div className="mb-2 space-y-1">
             {m.status!.map((s, i) => (
-              <div key={i} className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
-                {m.pending && i === m.status!.length - 1 ? <Loader2 className="size-3.5 animate-spin text-[var(--color-accent)]" /> : <span className="size-1.5 rounded-full bg-[var(--color-ok)]" />}{s}
+              <div key={i} className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+                {i === m.status!.length - 1 ? <Loader2 className="size-3.5 animate-spin text-[var(--color-accent)]" /> : <span className="size-1.5 rounded-full bg-[var(--color-ok)]" />}{s}
               </div>
             ))}
           </div>
         )}
         {m.error ? (
-          <div className="rounded-xl border border-[color-mix(in_srgb,var(--color-bad)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-bad)_7%,transparent)] px-4 py-3 text-[13.5px] text-[var(--color-bad)]">{m.error}</div>
+          <div className="rounded-xl border border-[color-mix(in_srgb,var(--color-bad)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-bad)_7%,transparent)] px-4 py-3 text-[14px] text-[var(--color-bad)]">{m.error}</div>
+        ) : m.pending ? (
+          <div className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-[var(--color-text)]">{m.content}{m.content && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-[var(--color-accent)] align-middle" />}</div>
         ) : (
-          <div className="prose-tp text-[14.5px] text-[var(--color-text)]">{renderAnswer(m.content, m.sources, onSource, active)}{m.pending && m.content && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-[var(--color-accent)] align-middle" />}</div>
-        )}
-        {m.sources && m.sources.length > 0 && (
-          <div className="mt-3">
-            <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]"><BookOpen className="size-3.5" />Sources read</div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {m.sources.map((s) => (
-                <button key={s.n} onClick={() => onSource(s)} className={cx("flex items-start gap-2 rounded-xl border p-2.5 text-left transition cursor-pointer", active?.n === s.n ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]")}>
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-[var(--color-accent-soft)] text-[11px] font-semibold text-[var(--color-accent)]">{s.n}</span>
-                  <span className="min-w-0"><span className="block truncate text-[12.5px] font-medium">{s.name}</span><span className="block truncate text-[11.5px] text-[var(--color-text-faint)]">{s.page ? `Page ${s.page} · ` : ""}{s.folder}</span></span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {m.meta && !m.pending && (
-          <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11.5px] text-[var(--color-text-faint)]">
-            {m.meta.model && <Pill color="var(--color-text-muted)"><Brain className="size-3" />{m.meta.model}</Pill>}
-            {m.meta.read != null && <span>read {m.meta.read} documents</span>}
-            {m.meta.ms != null && <span>· {(m.meta.ms / 1000).toFixed(1)} s</span>}
-            {m.meta.input_tokens != null && <span>· {m.meta.input_tokens.toLocaleString()} in / {m.meta.output_tokens?.toLocaleString()} out tokens</span>}
-          </div>
+          <AnswerView m={m} onSource={onSource} active={active} onRate={onRate} />
         )}
       </div>
     </div>

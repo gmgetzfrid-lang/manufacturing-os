@@ -92,6 +92,33 @@ fn admin_rescan_builds_and_loads_index() {
         let inside = r["inside"].as_array().cloned().unwrap_or_default();
         let listed = r["hits"].as_array().unwrap().iter().any(|h| h["snippet"].is_string());
         assert!(!inside.is_empty() || listed, "{r}");
+        // Ask THOR's pipeline end to end, with a stand-in for the AI.
+        let e = svc.current_engine().unwrap();
+        let ai = tp_core::ai::AiChoice { provider: tp_core::ai::Provider::Anthropic, model: "claude-test".into(), reasoning: None };
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let fake = |_c: &tp_core::ai::AiChoice, system: &str, msgs: &[tp_core::ai::Msg], _max: u32, on: &mut dyn FnMut(&str)| {
+            calls.borrow_mut().push(msgs[0].content.clone());
+            let text = if system.starts_with("You generate full-text search queries") {
+                if msgs[0].content.contains("zebra") { r#"["zebra mussel", "quagga"]"#.to_string() } else { r#"["minimum thickness nozzle N3", "t-min nozzle"]"#.to_string() }
+            } else if system.starts_with("You review passages") {
+                r#"{"queries": [], "missing_documents": []}"#.to_string()
+            } else {
+                assert!(msgs[0].content.contains("[1] (Field Notes.pdf"), "{}", msgs[0].content);
+                "**Answer:** Nozzle N3 measured `0.312 inch`, below t-min [1].\n**Basis:**\n- Field notes: readings at N3 were **0.312** [1] [7]\n**Check:** confirm on page 1.".to_string()
+            };
+            on(&text);
+            Ok(tp_core::ai::ChatResult { text, model: "claude-test".into(), input_tokens: 100, output_tokens: 50, ..Default::default() })
+        };
+        let out = tp_core::ask::ask(&e, &ai, &ai, &fake, "what were the readings at nozzle N3?", &[], None, &|_| {}, &|_| {}, &mut |_| {}).unwrap();
+        assert_eq!(out.cited, vec![1], "{}", out.answer);
+        assert!(out.answer.contains("pointed to passages that don't exist"), "[7] is out of range and must be flagged");
+        assert_eq!(out.passages[0].name, "Field Notes.pdf");
+        assert_eq!(calls.borrow().len(), 3, "rewrite, refine, answer");
+        // Nothing relevant: answered without the AI.
+        let calls0 = calls.borrow().len();
+        let none = tp_core::ask::ask(&e, &ai, &ai, &fake, "zebra mussel quagga", &[], None, &|_| {}, &|_| {}, &mut |_| {}).unwrap();
+        assert!(none.answer.starts_with("**Answer:** Nothing in the documents"), "{}", none.answer);
+        assert_eq!(calls.borrow().len(), calls0 + 2, "no answer call when nothing was found");
         let snip = inside.first().map(|h| h["snippet"].as_str().unwrap().to_string()).unwrap_or_default();
         assert!(snip.is_empty() || snip.contains('«'), "{snip}");
     }
