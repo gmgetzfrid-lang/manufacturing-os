@@ -236,7 +236,7 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
               {!aiOpen && resp.total === 0 ? (
                 <NoResults resp={resp} onTry={(q) => { setQuery(q); submit(q); }} />
               ) : (
-                <div className="px-3 py-2">
+                <div>
                   {hits.map((h, i) => (
                     <ResultRow key={h.id} hit={h} i={i} active={i === selected} words={words} topScore={hits[0]?.score ?? 1} onSelect={() => setSelected(i)} onOpen={() => openFile(h)} onReveal={() => openFile(h, "reveal")} onEquip={(id) => { setPinned(id); setSubmitted(""); setQuery(""); }} />
                   ))}
@@ -342,36 +342,62 @@ const CHIP_STYLE: Record<string, { color: string; label: string }> = {
   ignored: { color: "var(--color-text-faint)", label: "Ignored" },
 };
 
+/** Plain-English summary of how the search was read: one sentence with the
+ *  parts that matter in bold. The raw chips sit behind "Details". */
 function Interpretation({ resp, pinned, onUnpin, onPick }: { resp: SearchResponse; pinned: number | null; onUnpin: () => void; onPick: (id: number) => void }) {
+  const [details, setDetails] = useState(false);
+  const of = (k: string) => resp.chips.filter((c) => c.kind === k);
+  const B = ({ children, color }: { children: ReactNode; color?: string }) => <b className="font-[650] text-[var(--color-text)]" style={color ? { boxShadow: `inset 0 -0.35em 0 color-mix(in srgb, ${color} 18%, transparent)` } : undefined}>{children}</b>;
+  const list = (xs: ReactNode[]) => xs.flatMap((x, i) => (i === 0 ? [x] : i === xs.length - 1 ? [" and ", x] : [", ", x]));
+  const what = of("concept").map((c) => <B key={c.text} color="var(--color-violet)">{c.text.toLowerCase()}</B>);
+  const eqs = [...of("equipment"), ...of("tag")].map((c) => <B key={c.text} color="var(--color-accent)">{c.text}{c.kind === "equipment" && c.detail ? ` ${c.detail.split(" — ")[0]}` : ""}</B>);
+  const units = of("unit").map((c) => <B key={c.text} color="var(--color-ok)">{c.text}</B>);
+  const words = [...of("word"), ...of("phrase"), ...of("wildcard"), ...of("sheet"), ...of("rev")].map((c) => <B key={c.kind + c.text}>{c.text}</B>);
+  const year = of("year")[0];
+  const sort = of("recent")[0];
+  const fixes = of("fuzzy");
+  const sentence: ReactNode[] = [];
+  sentence.push(what.length ? <>Finding {list(what)}</> : <>Finding files</>);
+  if (eqs.length) sentence.push(<> for {list(eqs)}</>);
+  if (units.length) sentence.push(<> in {list(units)}</>);
+  if (words.length) sentence.push(<> {what.length || eqs.length ? "mentioning" : "matching"} {list(words)}</>);
+  if (year) sentence.push(<> from <B color="var(--cat-code)">{year.text}</B></>);
+  if (sort) sentence.push(<>, <B>{sort.text}</B></>);
   return (
-    <div className="mt-2.5 space-y-2">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-[11.5px] font-medium text-[var(--color-text-faint)]">{resp.mode === "natural" ? "Here's how I read that" : "Reading this as"}</span>
-        {resp.chips.map((c, i) => {
-          const st = CHIP_STYLE[c.kind] ?? CHIP_STYLE.word;
-          return (
-            <span key={i} title={c.detail} className="inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[12px]" style={{ borderColor: `color-mix(in srgb, ${st.color} 28%, transparent)`, background: `color-mix(in srgb, ${st.color} 7%, transparent)` }}>
-              <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: st.color }}>{st.label}</span>
-              <span className="font-medium">{c.text}</span>
-              {c.detail && c.kind !== "ignored" && <span className="max-w-[300px] truncate text-[var(--color-text-faint)]">{c.detail}</span>}
-            </span>
-          );
-        })}
+    <div className="mt-3 space-y-2.5">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
+        <p className="text-[15.5px] leading-snug text-[var(--color-text-muted)]">{sentence}.</p>
+        {fixes.length > 0 && <span className="text-[13px] text-[var(--color-text-faint)]">Spelling fixed: {fixes.map((f) => `${f.detail.replace(/^you typed /, "")} → ${f.text}`).join(", ")}</span>}
         {pinned != null && (
-          <button onClick={onUnpin} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent-soft)] px-2 py-1 text-[12px] font-medium text-[var(--color-accent)] cursor-pointer">
-            Showing one piece of equipment <X className="size-3" />
+          <button onClick={onUnpin} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent-soft)] px-2 py-0.5 text-[12.5px] font-medium text-[var(--color-accent)] cursor-pointer">
+            One piece of equipment only <X className="size-3" />
           </button>
         )}
+        <button onClick={() => setDetails(!details)} className="text-[12.5px] text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:underline cursor-pointer">{details ? "Hide details" : "Details"}</button>
       </div>
+      {details && (
+        <div className="flex flex-wrap gap-1.5 px-1">
+          {resp.chips.map((c, i) => {
+            const st = CHIP_STYLE[c.kind] ?? CHIP_STYLE.word;
+            return (
+              <span key={i} title={c.detail} className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[12px]">
+                <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: st.color }}>{st.label}</span>
+                <span className="font-medium">{c.text}</span>
+                {c.detail && c.kind !== "ignored" && <span className="max-w-[280px] truncate text-[var(--color-text-faint)]">{c.detail}</span>}
+              </span>
+            );
+          })}
+        </div>
+      )}
       {resp.ambiguity.map((a) => (
-        <div key={a.token} className="rounded-xl border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_6%,transparent)] p-3 animate-[var(--animate-rise)]">
-          <div className="flex items-center gap-2 text-[13px] font-semibold"><MapPin className="size-4 text-[var(--color-info)]" /> {a.token.startsWith("the equipment") ? `Did you mean one of these? (${a.options.length} fit your description — showing them all)` : `Which ${a.token}? It names ${a.options.length} pieces of equipment — showing all. Pick one to narrow down.`}</div>
+        <div key={a.token} className="rounded-xl border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_6%,transparent)] p-3.5 animate-[var(--animate-rise)]">
+          <div className="flex items-center gap-2 text-[14px] font-semibold"><MapPin className="size-4 text-[var(--color-info)]" /> {a.token.startsWith("the equipment") ? "Which equipment did you mean?" : `Which ${a.token}?`}<span className="font-normal text-[var(--color-text-muted)]">{a.token.startsWith("the equipment") ? `${a.options.length} fit your description — showing all until you pick one.` : `${a.options.length} pieces of equipment use that tag — showing all until you pick one.`}</span></div>
           <div className="mt-2.5 flex gap-2 overflow-x-auto pb-1">
             {a.options.map((o) => (
               <button key={o.id} onClick={() => onPick(o.id)} className="group shrink-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-left shadow-xs transition hover:border-[var(--color-accent)] hover:shadow-md cursor-pointer">
-                <div className="flex items-center gap-2 text-[13px] font-semibold">{o.number}<span className="text-[11.5px] font-normal text-[var(--color-text-faint)]">{n(o.files)} files</span></div>
-                <div className="max-w-[220px] truncate text-[12px] text-[var(--color-text-muted)]">{o.description || "—"}</div>
-                <div className="text-[11px] text-[var(--color-text-faint)]">{o.unit}</div>
+                <div className="text-[14px] font-bold">{o.number}{o.tag ? <span className="ml-1.5 font-semibold text-[var(--color-accent)]">{o.tag}</span> : null}</div>
+                <div className="max-w-[240px] truncate text-[13px] text-[var(--color-text)]">{o.description || "—"}</div>
+                <div className="text-[11.5px] text-[var(--color-text-faint)]">{o.unit} · {n(o.files)} files</div>
               </button>
             ))}
           </div>
@@ -418,7 +444,7 @@ function FacetGroup({ title, children, defaultOpen = true }: { title: string; ch
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="border-b border-[var(--color-border)] px-3 py-3">
-      <button onClick={() => setOpen(!open)} className="mb-1 flex w-full items-center justify-between text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)] cursor-pointer">
+      <button onClick={() => setOpen(!open)} className="mb-1.5 flex w-full items-center justify-between text-[13.5px] font-bold text-[var(--color-text)] cursor-pointer">
         {title} {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
       </button>
       {open && <div className="space-y-0.5">{children}</div>}
@@ -428,11 +454,11 @@ function FacetGroup({ title, children, defaultOpen = true }: { title: string; ch
 
 function FacetRow({ label, count, max, active, color, onClick }: { label: string; count: number; max: number; active: boolean; color?: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className={cx("relative flex w-full items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left text-[12.5px] transition cursor-pointer", active ? "bg-[var(--color-accent-soft)] font-medium text-[var(--color-text)]" : "hover:bg-[var(--color-surface-3)] text-[var(--color-text-muted)]")}>
+    <button onClick={onClick} className={cx("relative flex w-full items-center gap-2 overflow-hidden rounded-lg px-2 py-1.5 text-left text-[13.5px] transition cursor-pointer", active ? "bg-[var(--color-accent-soft)] font-semibold text-[var(--color-text)]" : "hover:bg-[var(--color-surface-3)] text-[var(--color-text-muted)]")}>
       <span className="absolute inset-y-1 left-0 rounded-r opacity-[0.09]" style={{ width: `${Math.max(4, (count / Math.max(1, max)) * 100)}%`, background: color ?? "var(--color-text)" }} />
       {color && <span className="relative size-2 shrink-0 rounded-full" style={{ background: color }} />}
       <span className="relative min-w-0 flex-1 truncate">{label}</span>
-      <span className="relative tabular-nums text-[11.5px] text-[var(--color-text-faint)]">{n(count)}</span>
+      <span className="relative tabular-nums text-[12.5px] font-medium text-[var(--color-text-faint)]">{n(count)}</span>
     </button>
   );
 }
@@ -450,8 +476,8 @@ function FacetPanel({ resp, filters, setFilters }: { resp: SearchResponse; filte
   const anyFilter = filters.categories.length || filters.units.length || filters.exts.length || filters.year_min || filters.year_max || filters.hide_archive || filters.include_photos;
   return (
     <aside className="w-[226px] shrink-0 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface-2)]">
-      <div className="flex h-11 items-center justify-between border-b border-[var(--color-border)] px-4 text-[12.5px] font-semibold">
-        Refine
+      <div className="flex h-12 items-center justify-between border-b border-[var(--color-border)] px-4 text-[15px] font-bold">
+        Narrow down
         {anyFilter ? <button onClick={() => setFilters({ ...NO_FILTERS, sort: filters.sort })} className="text-[12px] font-medium text-[var(--color-accent)] hover:underline cursor-pointer">Clear all</button> : null}
       </div>
       <FacetGroup title="Document type">
@@ -484,7 +510,7 @@ function FacetPanel({ resp, filters, setFilters }: { resp: SearchResponse; filte
       )}
       {f.units.length > 1 && (
         <FacetGroup title="Unit / area">
-          {f.units.slice(0, 14).map((u) => <FacetRow key={u.key} label={u.label} count={u.count} max={maxUnit} active={filters.units.includes(u.key)} onClick={() => toggle("units", u.key)} />)}
+          {f.units.slice(0, 8).map((u) => <FacetRow key={u.key} label={u.label} count={u.count} max={maxUnit} active={filters.units.includes(u.key)} onClick={() => toggle("units", u.key)} />)}
         </FacetGroup>
       )}
       {f.exts.length > 1 && (
@@ -506,53 +532,43 @@ function FacetPanel({ resp, filters, setFilters }: { resp: SearchResponse; filte
   );
 }
 
-function ResultRow({ hit, i, active, words, topScore, onSelect, onOpen, onReveal, onEquip }: { hit: Hit; i: number; active: boolean; words: string[]; topScore: number; onSelect: () => void; onOpen: () => void; onReveal: () => void; onEquip: (id: number) => void }) {
+function ResultRow({ hit, i, active, words, onSelect, onOpen, onReveal, onEquip }: { hit: Hit; i: number; active: boolean; words: string[]; topScore: number; onSelect: () => void; onOpen: () => void; onReveal: () => void; onEquip: (id: number) => void }) {
   const color = catColor(hit.category);
   const crumbs = hit.folder.split("\\").filter(Boolean);
-  const unitCode = (hit.unit ?? crumbs[0] ?? "").split(" - ")[0];
-  const tail = crumbs.slice(1).slice(-2);
-  const skipped = Math.max(0, crumbs.length - 1 - tail.length);
-  const rel = Math.max(0.06, Math.min(1, hit.score / Math.max(1, topScore)));
+  const tail = crumbs.slice(-3);
+  const flags = [hit.latest && "Latest revision", hit.archived && "Archive", hit.blank && "Blank template", hit.sheet && `Sheet ${hit.sheet}`, hit.rev && `Rev ${hit.rev}`].filter(Boolean) as string[];
   return (
     <div
       data-row={i}
       onClick={onSelect}
       onDoubleClick={onOpen}
       className={cx(
-        "group relative mb-1 flex cursor-default gap-3 rounded-xl border px-3 py-2.5 transition-all",
-        active ? "border-[color-mix(in_srgb,var(--color-accent)_45%,transparent)] bg-[var(--color-accent-soft)] shadow-sm" : "border-transparent hover:border-[var(--color-border)] hover:bg-[var(--color-surface)]",
+        "group relative flex cursor-default gap-3.5 border-b border-[var(--color-border)] px-4 py-3 transition-colors",
+        active ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface)]",
       )}
     >
-      <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-[10px]" style={{ color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}>{extIcon(hit.ext, hit.category)}</div>
+      {active && <span className="absolute inset-y-0 left-0 w-[3px] bg-[var(--color-accent)]" />}
+      <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl" style={{ color, background: `color-mix(in srgb, ${color} 13%, transparent)` }}>{extIcon(hit.ext, hit.category)}</div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          <div className={cx("truncate text-[13.5px] font-semibold", hit.junk && "opacity-60")}>{highlight(hit.name, words)}</div>
-          {hit.latest && <Pill color="var(--color-ok)">Latest rev</Pill>}
-          {hit.archived && <Pill color="var(--color-text-faint)">Archive</Pill>}
-          {hit.blank && <Pill color="var(--color-warn)">Template</Pill>}
-        </div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-[var(--color-text-faint)]" title={hit.folder}>
-          {unitCode && <span className="shrink-0 rounded bg-[var(--color-surface-3)] px-1.5 py-px font-mono text-[10.5px] font-medium text-[var(--color-text-muted)]">{unitCode}</span>}
-          <span className="min-w-0 truncate">{skipped > 0 ? "… › " : ""}{tail.join(" › ") || crumbs[0]}</span>
-        </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <Pill color={color}>{hit.doctype}</Pill>
-          {hit.year && <Pill color="var(--color-text-muted)">{hit.year}</Pill>}
-          {hit.sheet && <Pill color="var(--cat-drawings)">Sht {hit.sheet}</Pill>}
-          {hit.rev && <Pill color="var(--cat-drawings)">Rev {hit.rev}</Pill>}
-          {hit.equipment.slice(0, 3).map((e) => (
-            <button key={e.id} onClick={(ev) => { ev.stopPropagation(); onEquip(e.id); }} title={`${e.description} · ${e.unit ?? ""} · linked by ${e.via}`} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11.5px] font-medium hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] cursor-pointer">
-              <Boxes className="size-3" />{e.number}{e.tag ? ` · ${e.tag}` : ""}
-            </button>
+        <div className={cx("truncate text-[15px] font-semibold leading-snug text-[var(--color-text)]", hit.junk && "opacity-60")}>{highlight(hit.name, words)}</div>
+        <div className="mt-1 flex min-w-0 items-center gap-2 text-[13px]">
+          <span className="shrink-0 font-semibold" style={{ color }}>{hit.doctype}</span>
+          {hit.year && <><span className="text-[var(--color-text-faint)]">·</span><span className="shrink-0 font-semibold tabular-nums text-[var(--color-text)]">{hit.year}</span></>}
+          {hit.equipment.slice(0, 2).map((e) => (
+            <span key={e.id} className="contents">
+              <span className="text-[var(--color-text-faint)]">·</span>
+              <button onClick={(ev) => { ev.stopPropagation(); onEquip(e.id); }} title={`${e.description} · ${e.unit ?? ""} · linked by ${e.via}`} className="shrink-0 font-medium text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:underline cursor-pointer">
+                {e.number}{e.tag ? ` ${e.tag}` : ""}
+              </button>
+            </span>
           ))}
+          {flags.map((f) => <span key={f} className="shrink-0 rounded bg-[var(--color-surface-3)] px-1.5 text-[11.5px] font-medium text-[var(--color-text-muted)]">{f}</span>)}
         </div>
+        <div className="mt-0.5 truncate text-[12px] text-[var(--color-text-faint)]" title={hit.folder}>{crumbs.length > 3 ? "… › " : ""}{tail.join(" › ")}</div>
       </div>
-      <div className="flex shrink-0 flex-col items-end justify-between gap-2">
-        <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-          <IconButton label="Open" onClick={(e) => { e.stopPropagation(); onOpen(); }} className="size-7"><ExternalLink className="size-3.5" /></IconButton>
-          <IconButton label="Show in folder" onClick={(e) => { e.stopPropagation(); onReveal(); }} className="size-7"><FolderOpen className="size-3.5" /></IconButton>
-        </div>
-        <div title={`Relevance score ${hit.score}`} className="h-1 w-12 overflow-hidden rounded-full bg-[var(--color-surface-3)]"><div className="h-full rounded-full" style={{ width: `${rel * 100}%`, background: "var(--color-text-faint)" }} /></div>
+      <div className="flex shrink-0 items-start gap-0.5 opacity-0 transition group-hover:opacity-100">
+        <IconButton label="Open" onClick={(e) => { e.stopPropagation(); onOpen(); }} className="size-8"><ExternalLink className="size-4" /></IconButton>
+        <IconButton label="Show in folder" onClick={(e) => { e.stopPropagation(); onReveal(); }} className="size-8"><FolderOpen className="size-4" /></IconButton>
       </div>
     </div>
   );
@@ -560,54 +576,40 @@ function ResultRow({ hit, i, active, words, topScore, onSelect, onOpen, onReveal
 
 function EquipmentCardView({ card, nav, onFilter }: { card: EquipCard; nav: Nav; onFilter: (c: string) => void }) {
   const total = card.by_category.reduce((s, c) => s + c.count, 0) || 1;
+  const facts = [`${n(card.files)} documents`, card.latest_inspection ? `last inspected ${card.latest_inspection}` : "no dated inspection", card.first_year ? `records since ${card.first_year}` : null, card.drawing_families.length ? `${card.drawing_families.length} drawing sets` : null].filter(Boolean);
   return (
-    <div className="mx-3 mt-3 mb-1 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-md animate-[var(--animate-rise)]">
-      <div className="relative px-5 pt-4 pb-3">
-        <div className="absolute inset-x-0 top-0 h-1" style={{ background: "var(--brand-gradient)" }} />
+    <div className="mx-4 mt-4 mb-2 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm animate-[var(--animate-rise)]">
+      <div className="px-5 pt-4 pb-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[20px] font-[750] tracking-tight">{card.number}</span>
-              {card.tags.map((t) => <Pill key={t} color="var(--color-accent)" className="text-[12px]">{t}</Pill>)}
-              {card.kind && <Pill color="var(--color-text-muted)">{card.kind}</Pill>}
+            <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">{card.kind || "Equipment"}{card.unit ? ` · ${card.unit}` : ""}</div>
+            <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2.5">
+              <span className="text-[24px] font-[800] tracking-tight">{card.number}</span>
+              {card.tags.length > 0 && <span className="text-[20px] font-[700] text-[var(--color-accent)]">{card.tags[0]}</span>}
+              <span className="text-[18px] font-semibold text-[var(--color-text)]">{card.description || "No description in THOR"}</span>
             </div>
-            <div className="mt-0.5 text-[14px] text-[var(--color-text-muted)]">{card.description || "No description in THOR"}{card.unit ? <span className="text-[var(--color-text-faint)]"> · {card.unit}</span> : null}</div>
+            <div className="mt-1 text-[14px] text-[var(--color-text-muted)]">{facts.join(" · ")}</div>
             {card.historical.length > 0 && (
-              <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-[var(--color-warn)]"><History className="size-3.5" />{card.historical.map((h) => (h.startsWith("now ") ? `Renumbered: ${h}` : `Formerly ${h}`)).join(" · ")}</div>
+              <div className="mt-1.5 flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-warn)]"><History className="size-4" />{card.historical.map((h) => (h.startsWith("now ") ? `Renumbered: ${h}` : `Formerly ${h}`)).join(" · ")}</div>
             )}
-            {card.hint_numbers.length > 0 && <div className="mt-1 text-[12px] text-[var(--color-text-faint)]">Possible old number{card.hint_numbers.length > 1 ? "s" : ""}: {card.hint_numbers.join(", ")} (unconfirmed)</div>}
+            {card.hint_numbers.length > 0 && <div className="mt-1 text-[12.5px] text-[var(--color-text-faint)]">Possible old number{card.hint_numbers.length > 1 ? "s" : ""}: {card.hint_numbers.join(", ")} (unconfirmed)</div>}
           </div>
           <div className="flex shrink-0 gap-2">
             <Button size="sm" icon={<Network className="size-3.5" />} onClick={() => nav.go("graph", { eq: card.id })}>Graph</Button>
-            <Button size="sm" icon={<Layers className="size-3.5" />} onClick={() => nav.go("equipment", { id: card.id })}>Equipment page</Button>
+            <Button size="sm" variant="primary" icon={<Layers className="size-3.5" />} onClick={() => nav.go("equipment", { id: card.id })}>Open equipment</Button>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-4 gap-2">
-          <MiniStat label="Documents" value={n(card.files)} />
-          <MiniStat label="Last inspection" value={card.latest_inspection ?? "—"} />
-          <MiniStat label="Records from" value={card.first_year ?? "—"} />
-          <MiniStat label="Drawing sets" value={card.drawing_families.length || "—"} />
-        </div>
       </div>
-      <div className="flex h-2 w-full">
+      <div className="flex h-1.5 w-full">
         {card.by_category.map((c) => <div key={c.key} title={`${c.label}: ${c.count}`} style={{ width: `${(c.count / total) * 100}%`, background: catColor(c.key) }} />)}
       </div>
-      <div className="flex flex-wrap gap-1.5 px-5 py-3">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 px-5 py-2.5">
         {card.by_category.map((c) => (
-          <button key={c.key} onClick={() => onFilter(c.key)} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2 py-1 text-[12px] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] cursor-pointer">
-            <span className="size-2 rounded-full" style={{ background: catColor(c.key) }} />{c.label}<span className="tabular-nums text-[var(--color-text-faint)]">{c.count}</span>
+          <button key={c.key} onClick={() => onFilter(c.key)} title={`Show only ${c.label}`} className="inline-flex items-center gap-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline cursor-pointer">
+            <span className="size-2 rounded-full" style={{ background: catColor(c.key) }} />{c.label}<span className="font-semibold tabular-nums text-[var(--color-text)]">{c.count}</span>
           </button>
         ))}
       </div>
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="rounded-xl bg-[var(--color-surface-2)] px-3 py-2">
-      <div className="truncate text-[11px] font-medium text-[var(--color-text-faint)]">{label}</div>
-      <div className="mt-0.5 text-[15px] font-semibold tabular-nums">{value}</div>
     </div>
   );
 }

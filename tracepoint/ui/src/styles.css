@@ -163,7 +163,7 @@ body {
   background-size: 44px 44px;
   mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
 }
-mark.hl { background: color-mix(in srgb, var(--color-accent) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+mark.hl { background: none; color: inherit; font-weight: 750; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--color-accent) 70%, transparent); text-decoration-thickness: 2px; text-underline-offset: 3px; }
 
 /* Markdown-ish answer text. */
 .prose-tp p { margin: 0.45em 0; line-height: 1.65; }
