@@ -35,6 +35,9 @@ import { scanDistributionAcks } from "@/lib/distributionAcks";
 import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
+import { resolveAllOrgs } from "@/lib/estate/resolverServer";
+import { registryAllOrgs } from "@/lib/estate/connectServer";
+import { supabaseAdmin as estateAdmin } from "@/lib/supabaseAdmin";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
 
 export const runtime = "nodejs";
@@ -72,6 +75,8 @@ async function handler(req: NextRequest) {
     knowledgeIngest?: { docs: number; pages: number; completed: number };
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
     embedDrain?: { libraries: number; embedded: number };
+    estateResolve?: { orgs: number; applied: number; pending: number };
+    estateRegistry?: { libraries: number; applied: number; assets: number };
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -299,7 +304,31 @@ async function handler(req: NextRequest) {
     result.errors.push(`embed-drain: ${(e as Error).message}`);
   }
 
-  return NextResponse.json(result);
+    // 11. ONE ESTATE RESOLVER — every folder learns its unit, project and
+  //     equipment from its name and ancestry; documents from the last two
+  //     days get the same. Provable links apply, the rest wait in Review.
+  //     Insert-only, so a human's decision is never overwritten. No-op on a
+  //     pre-20261020 DB.
+  try {
+    const r = await resolveAllOrgs(estateAdmin, { deadlineMs: Date.now() + 15_000 });
+    result.estateResolve = { orgs: r.orgs, applied: r.applied, pending: r.pending };
+    if (r.errors.length) result.errors.push(...r.errors.slice(0, 3).map((m) => `estate-resolve: ${m}`));
+  } catch (e) {
+    result.errors.push(`estate-resolve: ${(e as Error).message}`);
+  }
+
+  // 12. REGISTRY FROM THE DRAWINGS — every drawing-set library's freshly
+  //     read copies feed the equipment registry, so a sheet filed today is
+  //     labelled by morning. Bounded; errors never eat the cron.
+  try {
+    const r = await registryAllOrgs(estateAdmin, { deadlineMs: Date.now() + 10_000 });
+    result.estateRegistry = { libraries: r.libraries, applied: r.applied, assets: r.assets };
+    if (r.errors.length) result.errors.push(...r.errors.slice(0, 3).map((m) => `estate-registry: ${m}`));
+  } catch (e) {
+    result.errors.push(`estate-registry: ${(e as Error).message}`);
+  }
+
+return NextResponse.json(result);
 }
 
 const STALE_ESCALATION_DAYS = 14;

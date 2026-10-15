@@ -27,6 +27,8 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
+import { findEstate } from "@/lib/find/client";
+import type { FindResult } from "@/lib/find/types";
 import { openEvidencePack, openProjectEvidencePack } from "@/lib/evidencePack";
 import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
 import { searchAtlas } from "@/lib/featureAtlas";
@@ -118,6 +120,7 @@ export default function GlobalCommandPalette() {
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
   const [hits, setHits] = useState<GlobalHit[]>([]);
+  const [findHits, setFindHits] = useState<FindResult[]>([]);
   const [busy, setBusy] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -177,12 +180,19 @@ export default function GlobalCommandPalette() {
     if (!open || !activeOrgId) return;
     if (query.trim() === "?") { setShowShortcuts(true); setHits([]); return; }
     setShowShortcuts(false);
-    if (query.startsWith("g ") || query.trim().length < 2) { setHits([]); return; }
+    if (query.startsWith("g ") || query.trim().length < 2) { setHits([]); setFindHits([]); return; }
     const handle = setTimeout(async () => {
       setBusy(true);
       try {
-        const found = await globalSearch({ orgId: activeOrgId, query, perKindLimit: 5 });
+        // The one find service (names, folders, tags, drawn-on, mentions, text)
+        // alongside the per-kind lookups. It answers "X-35" with the sheets it
+        // is drawn on, not only files named after it.
+        const [found, est] = await Promise.all([
+          globalSearch({ orgId: activeOrgId, query, perKindLimit: 5 }),
+          findEstate({ orgId: activeOrgId, query, limit: 6, activity: false, semantic: false }).catch(() => null),
+        ]);
         setHits(found);
+        setFindHits(est?.results ?? []);
         setActiveIdx(0);
       } catch (e) {
         console.warn("[GlobalCommandPalette] search failed", e);
@@ -257,7 +267,19 @@ export default function GlobalCommandPalette() {
           href: p.href, isAction: true, badge: "Place",
         });
       }
+      // The finder's best, with the reason it was found.
+      const seenDocs = new Set<string>();
+      for (const r of findHits) {
+        seenDocs.add(r.documentId);
+        const why = r.relations[0] ? `${r.relations[0].rel.replace("_", " ")} ${r.relations[0].label}${r.relations[0].detail ? ` · ${r.relations[0].detail}` : ""}` : r.evidence[0]?.label ?? "";
+        items.push({
+          key: `find-${r.id}`, label: r.name, subtitle: why || [r.libraryName, ...r.path].filter(Boolean).join(" / "),
+          href: r.href, kind: "document", badge: r.verdict === "strong" ? "Strong" : r.verdict === "possible" ? "Possible" : undefined,
+        });
+      }
+      items.push({ key: "find-explore", label: `Explore “${trimmed}” on the map`, subtitle: "Documents › Graph — every match lit, with reasons", href: `/documents/graph?q=${encodeURIComponent(trimmed)}`, isAction: true, badge: "Find" });
       for (const h of hits) {
+        if (h.kind === "document" && seenDocs.has(h.id)) continue;
         items.push({
           key: `${h.kind}-${h.id}`, label: h.title, subtitle: h.subtitle, href: h.href,
           kind: h.kind, badge: h.badge,
@@ -265,7 +287,7 @@ export default function GlobalCommandPalette() {
       }
     }
     return items;
-  }, [query, hits, contextActions, recents]);
+  }, [query, hits, findHits, contextActions, recents]);
 
   const onSelect = useCallback((item: { label?: string; subtitle?: string; href?: string; kind?: GlobalHitKind; isAction?: boolean; run?: () => void | Promise<void> }) => {
     setOpen(false);

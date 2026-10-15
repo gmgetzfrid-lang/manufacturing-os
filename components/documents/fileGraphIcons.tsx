@@ -6,7 +6,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   File, FileText, FileSpreadsheet, FileCode, FileImage, FileArchive, Presentation, Mail,
-  DraftingCompass, Library, Folder, FolderOpen, HardDrive, type LucideIcon,
+  DraftingCompass, Library, Folder, FolderOpen, HardDrive, Factory, Cpu, FolderKanban, Tag, Globe, type LucideIcon,
 } from "lucide-react";
 import type { FileIconKey, FileTypeInfo } from "@/lib/fileFinder/fileTypes";
 
@@ -14,6 +14,7 @@ export const ICONS: Record<FileIconKey, LucideIcon> = {
   pdf: FileText, cad: DraftingCompass, sheet: FileSpreadsheet, doc: FileText, code: FileCode,
   image: FileImage, archive: FileArchive, slides: Presentation, mail: Mail, file: File,
   library: Library, folder: Folder, folderOpen: FolderOpen, drive: HardDrive,
+  unit: Factory, equipment: Cpu, project: FolderKanban, tag: Tag, estate: Globe,
 };
 
 /** A type's icon in its colour, for lists and cards. */

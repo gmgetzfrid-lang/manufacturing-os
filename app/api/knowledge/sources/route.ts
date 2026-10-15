@@ -21,7 +21,7 @@
 // Auth mirrors the other knowledge routes: bearer session + active org
 // membership; mutations require Admin/DocCtrl.
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   loadPrincipal, loadDcLandscape, containerReadable,
@@ -135,6 +135,7 @@ export async function POST(req: NextRequest) {
   // idempotent reconcile the cron runs, for the libraries whose sources
   // watch the changed DC library.
   if (body.action === "dc-changed") {
+    const t0 = Date.now();
     const dcLibraryId = String((body as { dcLibraryId?: string }).dcLibraryId ?? "").trim();
     if (!dcLibraryId) return bad("dcLibraryId is required");
     const { data: srcRows } = await supabaseAdmin
@@ -163,6 +164,20 @@ export async function POST(req: NextRequest) {
         added += r.added; refreshed += r.refreshed; removed += r.removed;
       } catch { /* one bad library must not block the rest */ }
     }
+    // Drawing libraries set to "read new drawings automatically" read the
+    // new sheets now, after the response, instead of at the nightly run.
+    if (added + refreshed > 0 && affected.length) {
+      const { data: libs } = await supabaseAdmin.from("knowledge_libraries").select("id, ai_features").in("id", affected.slice(0, 8));
+      const { readAutoRead, pagesLeft } = await import("@/lib/estate/autoRead");
+      const auto = ((libs ?? []) as Array<{ id: string; ai_features: Record<string, unknown> | null }>)
+        .filter((l) => l.ai_features?.drawingIntel === true && pagesLeft(readAutoRead(l.ai_features)) > 0).map((l) => l.id);
+      if (auto.length) {
+        after(async () => {
+          const { drainKnowledgeIngestQueue } = await import("@/lib/knowledgeIngest");
+          await drainKnowledgeIngestQueue({ maxPages: 60, deadlineMs: t0 + (maxDuration - 12) * 1000, libraryIds: auto }).catch(() => undefined);
+        });
+      }
+    }
     return NextResponse.json({ affectedLibraries: affected.length, added, refreshed, removed });
   }
 
@@ -190,6 +205,8 @@ export async function POST(req: NextRequest) {
     .eq("org_id", orgId).eq("uid", user.id).maybeSingle();
   const userName = (memberRow?.display_name as string) || (memberRow?.email as string) || "Member";
 
+  const { excludedLibraryIds } = await import("@/lib/aiLibraries");
+  const neverAi = await excludedLibraryIds(supabaseAdmin, orgId);
   let linked = 0;
   for (const item of additions) {
     const type = item.type === "folder" ? "folder" : item.type === "library" ? "library" : null;
@@ -198,6 +215,10 @@ export async function POST(req: NextRequest) {
     // Server-side ACL check — the picker filter is convenience, THIS is law.
     if (!containerReadable(type, id, principal, landscape)) {
       return bad("One of the selected containers doesn't exist or isn't readable by you.", 403);
+    }
+    const ownerLib = type === "library" ? id : landscape.folders.get(id)?.library_id ?? null;
+    if (ownerLib && neverAi.has(ownerLib)) {
+      return bad(`"${landscape.libraries.get(ownerLib)?.name ?? "That library"}" is marked never send to AI. Turn that off in Library config first if it should be read.`, 403);
     }
     const sourceName = type === "library"
       ? landscape.libraries.get(id)?.name ?? "Library"

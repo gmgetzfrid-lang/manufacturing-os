@@ -24,6 +24,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { normalizeTag, splitTag, tagToCode, parseDrawingNumber, typeForTag, type Codebook } from "@/lib/codebook";
+import { EQUIPMENT_CATEGORIES } from "@/lib/drawingText";
 
 export interface BridgeSuggestion {
   tag: string;              // normalized display form ("E-22")
@@ -47,7 +48,8 @@ const assetNorm = (tag: string) => tag.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 // ─── Compute ────────────────────────────────────────────────────────────────
 
-export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDocId: string): Promise<{
+/** `autoApply: false` when the caller applies (and journals) itself. */
+export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDocId: string, opts: { autoApply?: boolean } = {}): Promise<{
   documentId: string | null;
   suggestions: BridgeSuggestion[];
   autoApplied: boolean;
@@ -125,10 +127,15 @@ export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDoc
 
   // Auto-apply when the library opted in AND a target column is mapped.
   let autoApplied = false;
-  if (bridge?.autoApply && bridge.targetColumnKey) {
+  if (bridge?.autoApply && opts.autoApply !== false) {
     try {
+      // Journaled like any run, so automatic tagging can be undone from
+      // Documents › Graph › Connect › Undo, a day at a time.
+      const { snapshotDoc, recordDocChange, automaticRun } = await import("@/lib/estate/runJournal");
+      const before = await snapshotDoc(admin, orgId, documentId);
       await applyForDocument(admin, { orgId, documentId, userId: null });
       autoApplied = true;
+      await recordDocChange(admin, orgId, automaticRun(), documentId, before, await snapshotDoc(admin, orgId, documentId)).catch(() => false);
     } catch { /* stays pending for manual review — never breaks ingest */ }
   }
   return { documentId, suggestions, autoApplied };
@@ -170,6 +177,10 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   userId: string | null;
   /** Restrict to a subset of suggested tags (review UI); omit = all. */
   tags?: string[];
+  /** A person pressed Apply after seeing the suggestions. The automatic
+   *  paths (after a read, Connect everything, nightly) leave it unset and
+   *  only create equipment whose prefix is known. */
+  byPerson?: boolean;
 }): Promise<{ appliedTags: string[]; createdAssets: number }> {
   const { orgId, documentId } = input;
   const { data: row } = await admin
@@ -187,10 +198,11 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     .eq("id", documentId).eq("org_id", orgId).maybeSingle();
   if (!doc) throw new Error("Document not found");
   const bridge = await loadBridgeConfig(admin, String(doc.library_id ?? ""));
-  const targetKey = bridge?.targetColumnKey;
-  if (!targetKey) {
-    throw new Error("No equipment column mapped for this library — pick one in the sweep dialog first.");
-  }
+  // A column is optional: without one the registry is still built and the
+  // drawing still tagged to it, the column just stays as it was. The old
+  // behaviour (refuse without a column) was the single biggest reason a
+  // registry stayed empty.
+  const targetKey = bridge?.targetColumnKey ?? null;
 
   // ── Registry reconcile with DISCOVERY: unmatched tags become real assets,
   //    filed under the right unit + type, provenance attached. The drawings
@@ -201,6 +213,12 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     const typeIdByLabel = await ensureAssetTypes(admin, orgId, book, wanted);
     for (const s of wanted) {
       if (s.assetId) continue;
+      // The automatic path (Connect, after-read, nightly) only CREATES
+      // equipment whose prefix is known — the codebook's equipment types or
+      // the standard table. Anything else stays a suggestion in the
+      // library's Equipment dialog, where a person picks it by hand.
+      const reviewed = !!input.tags || !!input.byPerson;
+      if (!reviewed && !typeForTag(s.tag, book) && !(splitTag(s.tag)?.prefix && splitTag(s.tag)!.prefix in EQUIPMENT_CATEGORIES)) continue;
       const t = typeForTag(s.tag, book);
       const insert = {
         org_id: orgId,
@@ -259,15 +277,19 @@ export async function applyForDocument(admin: SupabaseClient, input: {
 
   // ── Populate the column: array-union merge, never clobbering manual tags.
   const metadata = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
-  const current = metadata[targetKey];
+  const current = targetKey ? metadata[targetKey] : undefined;
   const existingTags: string[] = Array.isArray(current)
     ? current.map((v) => String(v).trim()).filter(Boolean)
     : typeof current === "string" && current.trim()
       ? current.split(",").map((v) => v.trim()).filter(Boolean)
       : [];
   const existingNorms = new Set(existingTags.map(assetNorm));
-  const additions = wanted.map((s) => s.tag).filter((t) => !existingNorms.has(assetNorm(t)));
-  if (additions.length > 0) {
+  // What actually landed: everything a person picked, or on the automatic
+  // path only the tags that resolved to registry equipment. The rest stay
+  // suggestions — not written to the column, not marked applied.
+  const landed = input.tags || input.byPerson ? wanted : wanted.filter((s) => !!s.assetId);
+  const additions = landed.map((s) => s.tag).filter((t) => !existingNorms.has(assetNorm(t)));
+  if (targetKey && additions.length > 0) {
     const next = [...existingTags, ...additions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
     const { error: updErr } = await admin.from("documents")
       .update({ metadata: { ...metadata, [targetKey]: next }, updated_at: new Date().toISOString() })
@@ -275,11 +297,12 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     if (updErr) throw new Error(updErr.message);
   }
 
-  const appliedNow = wanted.map((s) => s.tag);
+  const appliedNow = landed.map((s) => s.tag);
   const appliedUnion = [...new Set([...alreadyApplied, ...appliedNow])];
+  const leftOver = suggested.some((s) => !appliedUnion.includes(s.tag));
   await admin.from("document_equipment_suggestions").update({
     applied: appliedUnion,
-    status: "applied",
+    status: leftOver ? "pending" : "applied",
     applied_at: new Date().toISOString(),
     applied_by: input.userId,
   }).eq("org_id", orgId).eq("document_id", documentId);

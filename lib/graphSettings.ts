@@ -20,13 +20,20 @@ export interface ColorGroup {
 }
 
 export interface GraphSettings {
-  mode: "2d" | "3d";
+  /** "map": the estate as a tree, same renderer as the Documents map. "2d"/"3d": force layouts. */
+  mode: "map" | "2d" | "3d";
+  /** 3D: "estate" stands the Map's tree up in levels with fixed positions;
+   *  "web" is the free force layout. */
+  layout3d: "estate" | "web";
 
   // ── Filters ──
   hiddenTypes: GraphNodeType[];
   showLibraryEdges: boolean;
   hideUnlinked: boolean;
   showProposals: boolean;
+  /** A document whose only link is one hub (its unit, its library) is drawn
+   *  inside that hub as a count — the starburst becomes one node. */
+  foldLeaves: boolean;
 
   // ── Groups ──
   groups: ColorGroup[];
@@ -52,11 +59,13 @@ export interface GraphSettings {
 }
 
 export const DEFAULT_GRAPH_SETTINGS: GraphSettings = {
-  mode: "2d",
+  mode: "map",
+  layout3d: "estate",
   hiddenTypes: [],
   showLibraryEdges: false,
   hideUnlinked: false,
   showProposals: true,
+  foldLeaves: true,
   groups: [],
   labelThreshold: 0.55,
   nodeScale: 1,

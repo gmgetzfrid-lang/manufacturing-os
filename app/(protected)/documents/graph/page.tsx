@@ -17,11 +17,21 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Search, X, Loader2, Waypoints, HardDrive, Sparkles, Plus, Trash2,
-  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair,
+  ExternalLink, ChevronRight, ChevronLeft, Info, AlertTriangle, Tag, Minus, Maximize2, Crosshair, Link2, Eye, Activity, Globe, Cpu, Factory, ImageIcon, FolderKanban, RefreshCw,
 } from "lucide-react";
+import SignedImg from "@/components/assets/SignedImg";
+import { listAssetPhotos, type AssetPhoto } from "@/lib/assets";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
-import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle } from "@/components/documents/FileGraph";
+import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
+import { globalGraphHref } from "@/lib/estate/lenses";
+import EstateReadiness from "@/components/documents/EstateReadiness";
+import SuspectEquipment from "@/components/documents/SuspectEquipment";
+import { FolderMarkBar, LibrarySetup } from "@/components/documents/FolderMarks";
+import ReadDrawingPanel from "@/components/documents/ReadDrawingPanel";
+import { useConnectEverything, ConnectButton, ConnectProgress, UndoRunBox } from "@/components/documents/ConnectEverything";
+import ConnectPreview from "@/components/documents/ConnectPreview";
+import RunsPanel from "@/components/documents/RunsPanel";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf, CONTAINER_TYPES } from "@/lib/fileFinder/fileTypes";
 import {
@@ -29,7 +39,8 @@ import {
   aliasConfidence, tagVariants,
   type ParsedQuery, type QueryChip, type RankedHit, type IndexEntry, type FinderAlias, type FinderAliasKind,
 } from "@/lib/fileFinder";
-import { loadFinderData, type FinderData } from "@/lib/fileFinder/load";
+import { loadFinderSnapshot, saveFinderSnapshot, type FinderData } from "@/lib/fileFinder/load";
+import { fetchFinderData } from "@/lib/fileFinder/remote";
 import { supabase } from "@/lib/supabase";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
 import { rowToVersion } from "@/lib/revisions";
@@ -37,10 +48,20 @@ import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
 // The drawing viewer is heavy (pdf.js); it only downloads when a file is opened.
 const FullScreenViewer = React.lazy(() => import("@/components/viewers/FullScreenViewer"));
+// Landing on a page with the tag ringed reuses the citation viewer.
+const CitedPageViewer = React.lazy(() => import("@/components/knowledge/CitedPageViewer"));
+import { listKnowledgeLibraries, type KnowledgeLibrary } from "@/lib/knowledge";
+import type { FindCoverage } from "@/lib/find/types";
 import {
   listFinderAliases, addFinderAlias, removeFinderAlias, bumpFinderAlias,
   listFinderListings, saveFinderListing, deleteFinderListing, storeState, type FinderListing,
 } from "@/lib/fileFinder/stores";
+import { estatePost } from "@/lib/estate/client";
+import { labelNodes, type NodeLabel } from "@/lib/estate/labels";
+import { triageListing } from "@/lib/fileFinder/triage";
+import { findEstate } from "@/lib/find/client";
+import type { FindResponse, FindRelation } from "@/lib/find/types";
+import { EntityStrip, EquipmentCards, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
 
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-green-100 text-green-800 border-green-200",
@@ -73,6 +94,13 @@ function GraphPageInner() {
   const controller = hasAnyRole(["Admin", "DocCtrl"]);
 
   const [data, setData] = useState<FinderData | null>(null);
+  const dataRef = useRef<FinderData | null>(null); useEffect(() => { dataRef.current = data; }, [data]);
+  const [snapAt, setSnapAt] = useState<number | null>(null);
+  /** Units and equipment drawn beside what they belong to, with no search. */
+  const [showEstate, setShowEstate] = useState(true);
+  /** A unit / equipment / project picked on the map: its panel opens in place. */
+  const [selSat, setSelSat] = useState<FileGraphSatellite | null>(null);
+  const [lightbox, setLightbox] = useState<AssetPhoto | null>(null);
   const [aliases, setAliases] = useState<FinderAlias[]>([]);
   const [listings, setListings] = useState<FinderListing[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,20 +117,57 @@ function GraphPageInner() {
   const [viewer, setViewer] = useState<{ doc: DocumentRecord; version: DocumentVersion } | null>(null);
   const [viewerLoading, setViewerLoading] = useState<string | null>(null);
   const [viewerError, setViewerError] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"search" | "drives" | "aliases">("search");
+  const [resolving, setResolving] = useState(false);
+  const [resolveNote, setResolveNote] = useState<string | null>(null);
+  /** The server's answer (tags, drawn-on, mentions, text, activity). The
+   *  browser's own name/folder ranking shows instantly; this replaces it. */
+  const [serverFind, setServerFind] = useState<FindResponse | null>(null);
+  /** A sheet opened AT a page, with the tag ringed. */
+  const [pageView, setPageView] = useState<{ fileKey: string; page: number; title: string; knowledgeDocId: string; tags: string[] } | null>(null);
+  /** The "read these" chooser: which knowledge library should read a folder. */
+  const [readAsk, setReadAsk] = useState<{ folder: FindCoverage["unreadFolders"][number]; libs: KnowledgeLibrary[]; pick: string; busy: boolean; note: string | null } | null>(null);
+  const [finding, setFinding] = useState(false);
+  const findSeq = useRef(0);
+
+  const connect = useConnectEverything(activeOrgId, () => { void refresh(); });
+  const [showConnect, setShowConnect] = useState(true);
+  /** The library being set up as an equipment library. */
+  const [setupLib, setSetupLib] = useState<string | null>(null);
+
+  /** Document control runs the resolver over the whole estate on demand. */
+  const runResolver = async () => {
+    if (!activeOrgId) return;
+    setResolving(true); setResolveNote(null);
+    try {
+      const r = await estatePost<{ folders: number; documents: number; applied: number; pending: number; unchanged: number; notes: string[] }>("/api/estate/resolve", { orgId: activeOrgId, all: true });
+      setResolveNote(`${r.folders} folders and ${r.documents} documents looked at — ${r.applied} new links applied, ${r.pending} new waiting in Review, ${r.unchanged} links already in place. See the Links tab.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
+      await refresh();
+    } catch (e) { setResolveNote((e as Error).message); }
+    finally { setResolving(false); }
+  };
+  const [panel, setPanel] = useState<"search" | "drives" | "aliases" | "links">("search");
   const graphRef = useRef<FileGraphHandle | null>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     setLoading(true); setError(null);
+    // The last map paints at once from this browser; the fresh one swaps in.
+    if (!dataRef.current) { const snap = loadFinderSnapshot(activeOrgId); if (snap) { setData(snap.data); setSnapAt(snap.at); } }
     try {
-      const [d, a, l] = await Promise.all([
-        loadFinderData(activeOrgId, activeRole, controller),
-        listFinderAliases(activeOrgId),
-        listFinderListings(activeOrgId),
+      // The map first; aliases and drive listings are extras and never hold it up.
+      const d = await fetchFinderData(activeOrgId, activeRole, controller);
+      setData(d); setSnapAt(null); saveFinderSnapshot(activeOrgId, d);
+      const [a, l] = await Promise.all([
+        listFinderAliases(activeOrgId).catch((e) => { console.warn("[finder] aliases:", e); return []; }),
+        listFinderListings(activeOrgId).catch((e) => { console.warn("[finder] listings:", e); return []; }),
       ]);
-      setData(d); setAliases(a); setListings(l);
-    } catch (e) { setError((e as Error).message); }
+      setAliases(a); setListings(l);
+    } catch (e) {
+      const msg = (e as Error).message;
+      // A dropped connection ("Failed to fetch") mid-refresh must not take a
+      // working map away: keep what is on screen and say so quietly.
+      setError(dataRef.current ? `Couldn't refresh the map (${msg}). Showing the last good one — reload the page to try again.` : msg);
+    }
     finally { setLoading(false); }
   }, [activeOrgId, activeRole, controller]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -115,6 +180,7 @@ function GraphPageInner() {
   const entries = useMemo(() => [...(data?.entries ?? []), ...listingEntries], [data, listingEntries]);
   const entryById = useMemo(() => new Map(entries.map((e) => [e.id, e])), [entries]);
   const sameBytesByHash = useMemo(() => clusterByHash(entries), [entries]);
+  const systemHashes = useMemo(() => new Set((data?.entries ?? []).map((e) => e.hash).filter((h): h is string => !!h)), [data]);
   const sameBytesById = useMemo(() => {
     const m = new Map<string, string[]>();
     for (const group of sameBytesByHash.values()) for (const e of group) m.set(e.id, group.filter((x) => x.id !== e.id).map((x) => x.id));
@@ -130,10 +196,30 @@ function GraphPageInner() {
     const folderParent = (f: { parentId: string | null; libraryId: string }) => (f.parentId && data.folders.has(f.parentId) ? `folder:${f.parentId}` : `lib:${f.libraryId}`);
     for (const f of data.folders.values()) bump(folderParent(f));
     for (const e of data.entries) bump(e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`);
-    for (const l of data.libraries) out.push({ id: `lib:${l.id}`, kind: "library", label: l.name, parentId: null, childCount: counts.get(`lib:${l.id}`) ?? 0, type: CONTAINER_TYPES.library });
-    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: CONTAINER_TYPES.folder });
+    // Distinct equipment tagged to each file, and rolled up through its
+    // folders to its library, so a closed folder still says what it holds.
+    const eqOf = new Map<string, Set<string>>();
+    if (showEstate) {
+      const add = (id: string, a: string) => { const set = eqOf.get(id) ?? new Set<string>(); set.add(a); eqOf.set(id, set); };
+      const entryOf = new Map(data.entries.map((e) => [e.id, e]));
+      for (const ed of data.edges) {
+        if (ed.type !== "tagged_to" || !ed.a.startsWith("doc:") || !ed.b.startsWith("asset:")) continue;
+        const e = entryOf.get(ed.a); if (!e) continue;
+        add(e.id, ed.b);
+        for (const fid of e.pathIds) add(`folder:${fid}`, ed.b);
+        if (e.libraryId) add(`lib:${e.libraryId}`, ed.b);
+      }
+    }
+    const eq = (id: string) => eqOf.get(id)?.size || undefined;
+    for (const l of data.libraries) out.push({ id: `lib:${l.id}`, kind: "library", label: l.name, parentId: null, childCount: counts.get(`lib:${l.id}`) ?? 0, type: CONTAINER_TYPES.library, equipment: eq(`lib:${l.id}`) });
+    const unitLabel = (code?: string) => { const u = data.units.find((x) => x.code === code); return u ? ` · ${u.label}` : ""; };
+    const unitBadge = (code?: string) => { if (!code) return undefined; const u = data.units.find((x) => x.code === code); return u ? `${u.label}` : `unit ${code}`; };
+    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: f.unitCode ? { ...CONTAINER_TYPES.folder, label: `Folder${unitLabel(f.unitCode)}` } : CONTAINER_TYPES.folder, badge: unitBadge(f.unitCode), equipment: eq(`folder:${f.id}`) });
     for (const e of data.entries) {
-      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name) });
+      // A file's own unit link is worth a badge only when its folder does not already say so.
+      const parentUnit = e.folderId ? data.folders.get(e.folderId)?.unitCode : undefined;
+      const own = e.unitCodes.find((c) => c !== parentUnit);
+      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name), badge: unitBadge(own), equipment: eq(e.id) });
     }
     for (const l of listings) {
       const drive = `drive:${l.id}`;
@@ -159,15 +245,22 @@ function GraphPageInner() {
       for (const e of le) out.push({ id: e.id, kind: "extfile", label: e.name, parentId: e.pathIds.length ? e.pathIds[e.pathIds.length - 1] : drive, childCount: 0, type: fileTypeOf(e.name) });
     }
     return out;
-  }, [data, listings, listingEntries]);
+  }, [data, listings, listingEntries, showEstate]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
   // ── Search ────────────────────────────────────────────────────────────
   const runSearch = useCallback((q: string) => {
     const trimmed = q.trim();
-    if (!trimmed) { setParsed(null); return; }
+    if (!trimmed) { setParsed(null); setServerFind(null); return; }
     setParsed(parseQuery(trimmed, { units: data?.units ?? [], aliases }));
-  }, [data, aliases]);
+    if (!activeOrgId) return;
+    const seq = ++findSeq.current;
+    setFinding(true);
+    findEstate({ orgId: activeOrgId, query: trimmed, limit: 200 })
+      .then((r) => { if (seq === findSeq.current) setServerFind(r); })
+      .catch(() => { if (seq === findSeq.current) setServerFind(null); })
+      .finally(() => { if (seq === findSeq.current) setFinding(false); });
+  }, [data, aliases, activeOrgId]);
 
   const ancestorsOf = useCallback((id: string) => {
     const out: string[] = [];
@@ -177,10 +270,25 @@ function GraphPageInner() {
     return out;
   }, [nodeById]);
 
-  const allHits = useMemo<RankedHit[]>(() => {
+  const localHits = useMemo<RankedHit[]>(() => {
     if (!parsed || !parsed.chips.length) return [];
     return rankEntries(entries, parsed, { units: data?.units ?? [], sameBytes: sameBytesByHash });
   }, [parsed, entries, data, sameBytesByHash]);
+  // Server results, mapped onto the entries this browser holds (listing hits
+  // the server does not know about are kept from the local ranking).
+  const serverById = useMemo(() => new Map((serverFind?.results ?? []).map((r) => [r.id, r])), [serverFind]);
+  const allHits = useMemo<RankedHit[]>(() => {
+    if (!serverFind) return localHits;
+    const out: RankedHit[] = [];
+    for (const r of serverFind.results) {
+      const entry = entryById.get(r.id);
+      if (!entry) continue;
+      const same = (entry.hash && sameBytesByHash.get(entry.hash)?.filter((x) => x.id !== entry.id)) || [];
+      out.push({ entry, score: r.score, verdict: r.verdict, evidence: r.evidence, sameBytes: same });
+    }
+    for (const h of localHits) if (h.entry.source === "listing") out.push(h);
+    return out;
+  }, [serverFind, localHits, entryById, sameBytesByHash]);
 
   // Exploring a folder narrows the results to what is inside it.
   const hits = useMemo(() => (focusId ? allHits.filter((h) => ancestorsOf(h.entry.id).includes(focusId)) : allHits), [allHits, focusId, ancestorsOf]);
@@ -239,6 +347,44 @@ function GraphPageInner() {
     return { visible: [...vis.values()], collapsed, upNode };
   }, [nodes, nodeById, childrenOf, focusId, hits, activeIdx, ancestorsOf]);
 
+  // Entities the search resolved, drawn beside the files they relate to.
+  const satellites = useMemo<FileGraphSatellite[]>(() => {
+    if (!serverFind) {
+      // No search: units are the purple pills under their folders and every
+      // file carries a green count of its equipment. The equipment itself
+      // is drawn only for the file picked — in a ring around it, each piece
+      // named — so the map never turns into a pile of markers.
+      if (!showEstate || !data || !selectedId) return [];
+      const out: FileGraphSatellite[] = [];
+      const picked = data.edges.filter((e) => e.a === selectedId && e.type === "tagged_to" && e.b.startsWith("asset:"));
+      for (const e of picked.slice(0, 60)) {
+        const a = data.assets.find((x) => x.id === e.b.slice(6));
+        if (!a) continue;
+        out.push({ id: e.b, label: a.tag, sub: `Equipment${a.description ? ` · ${a.description}` : ""}${a.unitCode ? ` · unit ${a.unitCode}` : ""}`, color: "#059669", iconKey: "equipment", href: `/assets/${encodeURIComponent(a.tag)}`, links: [{ to: selectedId, kind: "tagged_to" }] });
+      }
+      return out;
+    }
+    const out: FileGraphSatellite[] = [];
+    for (const ent of serverFind.entities) {
+      const links: FileGraphSatellite["links"] = [];
+      for (const r of serverFind.results) for (const rel of r.relations) if (rel.node === ent.node && nodeById.has(r.id)) links.push({ to: r.id, kind: rel.rel });
+      if (ent.kind === "unit") for (const r of serverFind.results) if (nodeById.has(r.id) && entryById.get(r.id)?.unitCodes.includes(ent.node.slice(7))) links.push({ to: r.id, kind: "linked_unit" });
+      // Resolved but nothing linked yet: still drawn, beside the top hits,
+      // so the person sees the equipment the map knows and what it lacks.
+      if (!links.length) for (const r of serverFind.results.slice(0, 3)) if (nodeById.has(r.id)) links.push({ to: r.id, kind: "named" });
+      if (!links.length) continue;
+      out.push({ id: ent.node, label: ent.label, sub: ent.kind === "asset" ? `Equipment${ent.sub ? ` · ${ent.sub}` : ""}` : ent.kind === "unit" ? "Unit" : ent.kind === "tag" ? "Tag drawn on sheets · not in the registry" : "Project",
+        color: ent.kind === "asset" ? "#059669" : ent.kind === "unit" ? "#7c3aed" : ent.kind === "tag" ? "#64748b" : "#d97706", iconKey: ent.kind === "asset" ? "equipment" : ent.kind === "tag" ? "tag" : ent.kind === "unit" ? "unit" : "project", href: ent.href, links });
+    }
+    return out;
+  }, [serverFind, nodeById, entryById, showEstate, data, selectedId]);
+
+  // Symbolic links ("also filed under") between files and folders on the map.
+  const filedLinks = useMemo<Array<[string, string]>>(() => {
+    if (!data) return [];
+    return data.edges.filter((e) => e.type === "filed_under" && e.a.startsWith("doc:") && e.b.startsWith("folder:")).map((e) => [e.a, e.b] as [string, string]);
+  }, [data]);
+
   const ranks = useMemo(() => {
     const m = new Map<string, number>();
     hits.slice(0, 9).forEach((h, i) => m.set(h.entry.id, i + 1));
@@ -281,13 +427,19 @@ function GraphPageInner() {
     return chain.map((id) => nodeById.get(id)).filter((n): n is FileGraphNode => !!n);
   }, [focusId, ancestorsOf, nodeById]);
 
-  // ?q= runs once data is in.
+  // ?q= runs once data is in; ?reveal=<node id> lands on that node.
   const ranInitial = useRef(false);
   useEffect(() => {
     if (ranInitial.current || !data) return;
     ranInitial.current = true;
     if (query.trim()) runSearch(query);
-  }, [data, query, runSearch]);
+    const rv = params.get("reveal");
+    if (rv && nodeById.has(rv)) {
+      const n = nodeById.get(rv)!;
+      if (n.kind === "file" || n.kind === "extfile") { if (n.parentId) setFocusId(n.parentId); setSelectedId(rv); window.setTimeout(() => graphRef.current?.focus(rv, 1.6), 120); }
+      else setFocusId(rv);
+    }
+  }, [data, query, runSearch, params, nodeById]);
 
   const removeChip = (chip: QueryChip) => {
     if (!parsed) return;
@@ -313,39 +465,104 @@ function GraphPageInner() {
     setSelectedId(id);
     window.setTimeout(() => graphRef.current?.focus(id), 80);
   };
-  /** Open a system document right here: fetch its row and current version,
-   *  then put the viewer over the map. The library page is never loaded. */
-  const openEntry = useCallback(async (id: string) => {
+  /** Open ON the page: the read copy's file at that sheet, with the tag
+   *  ringed where it was read. Falls back to the plain viewer for a file
+   *  whose contents have not been read. */
+  const openAtPage = (id: string, page: number, tag?: string) => {
+    const r = serverById.get(id);
+    const entry = entryById.get(id);
+    if (r?.read?.fileKey) {
+      onOpenHit();
+      setPageView({ fileKey: r.read.fileKey, page, title: entry?.name ?? r.name, knowledgeDocId: r.read.knowledgeDocId, tags: tag ? [tag] : [] });
+      return;
+    }
+    void openEntry(id);
+  };
+  const askToRead = async (f: FindCoverage["unreadFolders"][number]) => {
+    if (!activeOrgId) return;
+    const libs = await listKnowledgeLibraries(activeOrgId).catch(() => [] as KnowledgeLibrary[]);
+    setReadAsk({ folder: f, libs, pick: libs[0]?.id ?? "", busy: false, note: libs.length ? null : "No knowledge library yet — create one under Intelligence › Knowledge first." });
+  };
+  const linkAndRead = async () => {
+    if (!readAsk || !activeOrgId || !readAsk.pick) return;
+    setReadAsk({ ...readAsk, busy: true, note: null });
+    try {
+      await estatePost("/api/knowledge/sources", { orgId: activeOrgId, libraryId: readAsk.pick, add: [{ type: readAsk.folder.folderId ? "folder" : "library", id: readAsk.folder.folderId ?? readAsk.folder.libraryId }] });
+      setReadAsk({ ...readAsk, busy: false, note: `Linked. Text pages read for free; pages with no text use vision on the cheap tier within your cap. Indexing runs in the background — or open the knowledge library to watch it.` });
+    } catch (e) { setReadAsk({ ...readAsk, busy: false, note: (e as Error).message }); }
+  };
+
+  /** Everything opening a file needs — its row, its current version and a
+   *  signed link to the bytes — fetched together and kept for a while. A
+   *  single click starts it, so the double-click finds it ready. */
+  const openCache = useRef(new Map<string, { at: number; p: Promise<{ doc: DocumentRecord; version: DocumentVersion }> }>());
+  const prepareOpen = useCallback((id: string) => {
     const e = entryById.get(id);
-    if (!e || e.source !== "system") return;
+    if (!e || e.source !== "system") return null;
+    const hit = openCache.current.get(id);
+    if (hit && Date.now() - hit.at < 45 * 60_000) return hit.p;
     const docId = id.replace(/^doc:/, "");
+    const p = (async () => {
+      const versionQ = e.versionId
+        ? supabase.from("document_versions").select("*").eq("id", e.versionId).maybeSingle()
+        : Promise.resolve({ data: null, error: null });
+      const [{ data: row, error }, { data: vFirst }, { data: { session } }] = await Promise.all([
+        supabase.from("documents").select("*").eq("id", docId).maybeSingle(),
+        versionQ,
+        supabase.auth.getSession(),
+      ]);
+      if (error) throw new Error(error.message);
+      if (!row) throw new Error("That document is no longer available.");
+      const doc = docRowToDocumentRecord(row as Record<string, unknown>);
+      let vrow = (vFirst as Record<string, unknown> | null) ?? null;
+      if (!vrow || (doc.currentVersionId && vrow.id !== doc.currentVersionId)) {
+        const { data } = doc.currentVersionId
+          ? await supabase.from("document_versions").select("*").eq("id", doc.currentVersionId).maybeSingle()
+          : await supabase.from("document_versions").select("*").eq("record_id", docId).or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }).limit(1).maybeSingle();
+        vrow = (data as Record<string, unknown> | null) ?? null;
+      }
+      if (!vrow) throw new Error("This document has no file to open yet.");
+      const version = rowToVersion(vrow);
+      // Sign the link now; the viewer then streams page 1 straight away.
+      const path = version.fileUrl;
+      if (path && !/^(https?:|blob:)/.test(path) && session?.access_token) {
+        const res = await fetch(`/api/storage/download-url?path=${encodeURIComponent(path)}&expiresIn=3600`, { headers: { authorization: `Bearer ${session.access_token}` } }).catch(() => null);
+        const signed = res && res.ok ? ((await res.json().catch(() => null)) as { url?: string } | null)?.url : null;
+        if (signed) return { doc, version: { ...version, fileUrl: signed } };
+      }
+      return { doc, version };
+    })();
+    openCache.current.set(id, { at: Date.now(), p });
+    p.catch(() => openCache.current.delete(id));
+    return p;
+  }, [entryById]);
+
+  /** Open a system document right here, over the map. The library page is
+   *  never loaded. */
+  const openEntry = useCallback(async (id: string) => {
+    const p = prepareOpen(id);
+    if (!p) return;
     onOpenHit();
     setViewerError(null);
     setViewerLoading(id);
     try {
-      const { data: row, error } = await supabase.from("documents").select("*").eq("id", docId).maybeSingle();
-      if (error) throw new Error(error.message);
-      if (!row) throw new Error("That document is no longer available.");
-      const doc = docRowToDocumentRecord(row as Record<string, unknown>);
-      let vrow: Record<string, unknown> | null = null;
-      if (doc.currentVersionId) {
-        const { data } = await supabase.from("document_versions").select("*").eq("id", doc.currentVersionId).maybeSingle();
-        vrow = (data as Record<string, unknown> | null) ?? null;
-      }
-      if (!vrow) {
-        const { data } = await supabase.from("document_versions").select("*").eq("record_id", docId)
-          .or("review_state.is.null,review_state.eq.approved").order("created_at", { ascending: false }).limit(1);
-        vrow = ((data as Record<string, unknown>[] | null) ?? [])[0] ?? null;
-      }
-      if (!vrow) throw new Error("This document has no file to open yet.");
-      setViewer({ doc, version: rowToVersion(vrow) });
+      setViewer(await p);
     } catch (err) {
       setViewerError((err as Error).message);
     } finally {
       setViewerLoading(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entryById, parsed, activeOrgId]);
+  }, [prepareOpen, parsed, activeOrgId]);
+
+  // The viewer's code (PDF engine, markup tools) loads while the map is idle,
+  // not after the first double-click.
+  useEffect(() => {
+    const t = window.setTimeout(() => { void import("@/components/viewers/FullScreenViewer"); }, 1500);
+    return () => window.clearTimeout(t);
+  }, []);
+  // A single click on a file starts preparing it.
+  useEffect(() => { if (selectedId) void prepareOpen(selectedId)?.catch(() => undefined); }, [selectedId, prepareOpen]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -354,7 +571,7 @@ function GraphPageInner() {
       if (e.key === "ArrowLeft" || e.key === "p") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx - 1); } return; }
       if (e.key === "Enter") { const id = selectedId ?? hits[activeIdx]?.entry.id; if (id) { e.preventDefault(); openEntry(id); } return; }
       if (e.key !== "Escape" && e.key !== "Backspace") return;
-      if (selectedId) { setSelectedId(null); return; }
+      if (selectedId || selSat) { setSelectedId(null); setSelSat(null); return; }
       if (focusId) { e.preventDefault(); up(); }
     };
     window.addEventListener("keydown", onKey);
@@ -370,19 +587,22 @@ function GraphPageInner() {
     <div className="flex flex-col h-[calc(100vh-56px)]">
       <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
       {error && (
-        <div className="mx-4 mt-3 px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4" /> {error}
+        <div className={`mx-4 mt-3 px-3 py-2 rounded-lg border text-sm flex items-center gap-2 ${data ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+          <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="flex-1">{error}</span>
+          <button onClick={() => { setError(null); void refresh(); }} className="font-bold hover:underline">Retry</button>
+          <button onClick={() => setError(null)} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
       )}
       <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr_380px]">
         {/* ── Left: search, drives, aliases ───────────────────────────── */}
         <aside className="border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0">
           <div className="flex border-b border-[var(--color-border)] text-xs font-bold">
-            {([["search", "Find", Search], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
+            {([["search", "Find", Search], ["links", "Links", Link2], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setPanel(k)}
                 className={`flex-1 px-2 py-2 inline-flex items-center justify-center gap-1 border-b-2 ${panel === k ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)]"}`}>
                 <Icon className="w-3.5 h-3.5" /> {label}
                 {k === "drives" && listings.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-teal-100 text-teal-800">{listings.length}</span>}
+                {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="ml-1 px-1.5 rounded-full bg-sky-100 text-sky-800">{data!.edges.length}</span>}
                 {k === "aliases" && aliases.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-purple-100 text-purple-800">{aliases.length}</span>}
               </button>
             ))}
@@ -403,7 +623,7 @@ function GraphPageInner() {
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Find
                     </button>
                     {parsed && (
-                      <button type="button" onClick={() => { setParsed(null); setQuery(""); }} className="rounded-lg border border-[var(--color-border)] px-3 text-sm"><X className="w-4 h-4" /></button>
+                      <button type="button" onClick={() => { setParsed(null); setServerFind(null); setQuery(""); }} className="rounded-lg border border-[var(--color-border)] px-3 text-sm"><X className="w-4 h-4" /></button>
                     )}
                   </div>
                 </form>
@@ -443,8 +663,11 @@ function GraphPageInner() {
               </>
             )}
 
+            {panel === "links" && data && (
+              <LinksPanel orgId={activeOrgId} edges={data.edges} units={data.units} estateMissing={data.estateMissing} onConnect={controller ? () => { setShowConnect(true); void connect.openPreview(); } : undefined} connecting={connect.running} readinessKey={connect.status ? JSON.stringify(connect.status.readiness) : ""} onReveal={(id) => { const n = nodeById.get(id); if (!n) return; if (n.kind === "file" || n.kind === "extfile") reveal(id); else drill(id); }} />
+            )}
             {panel === "drives" && (
-              <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail}
+              <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail} systemHashes={systemHashes}
                 onChange={setListings} onReveal={(id) => drill(id)} />
             )}
             {panel === "aliases" && (
@@ -455,12 +678,18 @@ function GraphPageInner() {
 
         {/* ── Centre: the map ─────────────────────────────────────────── */}
         <main className="relative min-h-0 bg-[var(--color-canvas)]">
+          {loading && data && (
+            <div className="absolute bottom-3 left-3 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1 text-[11px] inline-flex items-center gap-1.5 shadow-sm">
+              <RefreshCw className="w-3 h-3 animate-spin" /> {snapAt ? `Showing the map from ${Math.max(1, Math.round((Date.now() - snapAt) / 60000))} min ago while the fresh one loads` : "Refreshing…"}
+            </div>
+          )}
           {loading && !data ? (
             <div className="absolute inset-0 grid place-items-center text-sm text-[var(--color-text-muted)]">
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
-            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry} />
+            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); if (id) setSelSat(null); }} onDrill={drill} onUp={up} onOpen={openEntry}
+              satellites={satellites} onSatellite={(sat) => setSelSat(sat)} filedLinks={filedLinks} />
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
             <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
@@ -480,10 +709,36 @@ function GraphPageInner() {
                   {(childrenOf.get(focusId) ?? []).filter((n) => n.kind === "file" || n.kind === "extfile").length} files · {(childrenOf.get(focusId) ?? []).filter((n) => n.kind !== "file" && n.kind !== "extfile").length} folders inside
                 </span>
               )}
+              {controller && activeOrgId && focusId?.startsWith("folder:") && !selectedEntry && (
+                <div className="basis-full"><FolderMarkBar orgId={activeOrgId} folderId={focusId.slice(7)} onChanged={() => void refresh()} /></div>
+              )}
+              {controller && activeOrgId && focusId?.startsWith("lib:") && !selectedEntry && (
+                <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is — operating area, equipment type, equipment — and everything filed underneath inherits it"
+                  className="ml-1 rounded-md border border-purple-300 bg-purple-50 text-purple-800 px-2 py-1 font-semibold inline-flex items-center gap-1"><Factory className="w-3 h-3" /> Set up as equipment library</button>
+              )}
+              {selectedEntry && (
+                <button onClick={() => { setSelectedId(null); setSelSat(null); }} title="Stop focusing on this file (Esc)"
+                  className="ml-2 rounded-md bg-slate-900 text-white px-2 py-1 font-semibold inline-flex items-center gap-1 shadow">
+                  <ChevronLeft className="w-3 h-3" /> Back · Esc
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-1 pointer-events-auto">
+              {controller && <ConnectButton running={connect.running || connect.planLoading} disabled={data?.estateMissing} onClick={() => { setShowConnect(true); void connect.openPreview(); }} />}
+              {controller && (
+                <button onClick={runResolver} disabled={resolving || data?.estateMissing} title={data?.estateMissing ? "Apply migration 20261020 first" : "Link every folder and file to its unit, project and equipment from names and ancestry"}
+                  className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 disabled:opacity-50">
+                  {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Resolve links
+                </button>
+              )}
+              <button onClick={() => setShowEstate((v) => !v)} title="Green counts of equipment on every file and folder; click a file to see its equipment around it"
+                className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 ${showEstate ? "bg-purple-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
+                <Factory className="w-3 h-3" /> Units &amp; equipment
+              </button>
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
               <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
+              <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph — equipment, units, projects and documents in one web"
+                className={`rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 ${selectedId || focusId ? "" : "opacity-50 pointer-events-none"}`}><Globe className="w-3 h-3" /> Global view</Link>
               <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
                 {data ? `${data.libraries.length} libraries · ${data.folders.size} folders · ${data.entries.length} files` : "…"}
                 {listingEntries.length > 0 && ` · ${listingEntries.length} on drives`}
@@ -498,6 +753,7 @@ function GraphPageInner() {
               <span key={l} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-2.5 h-2.5 rounded-full border-2" style={{ borderColor: c }} /> {l}</span>
             ))}
             <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-red-600" /> Same bytes</span>
+            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-amber-600" /> Also filed under</span>
           </div>
           {activeHit && (
             <div className="absolute left-1/2 -translate-x-1/2 bottom-12 flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 shadow-md px-2 py-1.5 text-xs">
@@ -517,13 +773,34 @@ function GraphPageInner() {
               )}
             </div>
           )}
+          {showConnect && (connect.status || connect.running || connect.error || connect.bulk) && (
+            <div className="absolute top-12 right-3 pointer-events-auto">
+              <ConnectProgress status={connect.status} running={connect.running} error={connect.error} reading={connect.reading} onCancel={connect.cancel} onClose={() => setShowConnect(false)} onRun={(o) => void connect.run(o)} bulk={connect.bulk} onReadAll={() => void connect.readAll()}
+                undoBox={<UndoRunBox runId={connect.runId} journaled={connect.journaled} undo={connect.undo} onUndo={() => void connect.undoLast()} />}
+                onAutoRead={(on, cap) => void connect.setAutoRead(on, cap)} />
+              {controller && activeOrgId && !connect.running && connect.status && (
+                <div className="mt-2 max-w-md"><SuspectEquipment orgId={activeOrgId} refreshKey={JSON.stringify(connect.status.readiness)} onRemoved={() => void refresh()} /></div>
+              )}
+            </div>
+          )}
+          {resolveNote && !(showConnect && (connect.status || connect.running)) && (
+            <div className="absolute top-12 right-3 max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-xs shadow-md flex items-start gap-2">
+              <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{resolveNote}</span>
+              <button onClick={() => setResolveNote(null)} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          )}
           <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · ← → step results · Esc goes up</div>
         </main>
 
         {/* ── Right: results / selection ──────────────────────────────── */}
         <aside className="border-l border-[var(--color-border)] bg-[var(--color-surface)] min-h-0 overflow-y-auto">
+          {selSat && data && (
+            <EntityPanel orgId={activeOrgId!} sat={selSat} data={data} entryById={entryById} nodeById={nodeById} serverFind={serverFind}
+              onClose={() => setSelSat(null)} onOpen={(id) => void openEntry(id)} onOpenAtPage={openAtPage} onReveal={reveal}
+              onPhoto={setLightbox} onNarrow={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
+          )}
           {selectedEntry && (
-            <SelectedCard entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
+            <SelectedCard orgId={activeOrgId} canRead={controller} onRead={() => void refresh()} entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
               onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={() => openEntry(selectedEntry.id)} />
           )}
           <div className="p-3">
@@ -542,23 +819,67 @@ function GraphPageInner() {
                     {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} — show the whole estate
                   </button>
                 )}
-                {hits.length === 0 && hiddenHits === 0 && (
+                {serverFind && serverFind.entities.length > 0 && <div className="mb-2"><EntityStrip entities={serverFind.entities} /></div>}
+                {serverFind && (
+                  <div className="mb-2">
+                    <EquipmentCards entities={serverFind.entities} results={serverFind.results}
+                      onReveal={(node) => { const r = serverFind.results.find((x) => x.relations.some((rel) => rel.node === node) && nodeById.has(x.id)); if (r) reveal(r.id); }}
+                      onUnit={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
+                  </div>
+                )}
+                {finding && <div className="mb-2 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
+                {serverFind && serverFind.hidden.count > 0 && (
+                  <div className="mb-2 text-[11px] text-[var(--color-text-muted)]">
+                    {serverFind.hidden.count} hidden because you asked for a different type: {Object.entries(serverFind.hidden.byType).map(([t, n]) => `${n} ${t}`).join(", ")}.
+                  </div>
+                )}
+                {hits.length === 0 && hiddenHits === 0 && !finding && (
                   <div className="text-sm text-[var(--color-text-muted)]">
                     Nothing in the system or on any pasted drive listing matched. Try fewer words, or teach an alias if people call this something else.
                   </div>
                 )}
                 <div className="space-y-2">
-                  {hits.slice(0, 80).map((h, i) => (
-                    <HitCard key={h.entry.id} hit={h} rank={i + 1} active={activeHit?.entry.id === h.entry.id} onReveal={() => jumpTo(i)} onOpen={() => openEntry(h.entry.id)} />
-                  ))}
-                  {hits.length > 80 && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
+                  {(() => {
+                    const idx = new Map(hits.map((h, i) => [h.entry.id, i]));
+                    const card = (h: RankedHit) => (
+                      <HitCard key={h.entry.id} hit={h} rank={(idx.get(h.entry.id) ?? 0) + 1} active={activeHit?.entry.id === h.entry.id}
+                        relations={serverById.get(h.entry.id)?.relations} pages={serverById.get(h.entry.id)?.pages}
+                        onReveal={() => jumpTo(idx.get(h.entry.id) ?? 0)} onOpen={() => openEntry(h.entry.id)} onPage={(r) => openAtPage(h.entry.id, r.page!, r.rel === "drawn_on" || r.rel === "mentioned_in" ? r.label : undefined)} onPageHit={(p) => openAtPage(h.entry.id, p)} />
+                    );
+                    if (serverFind && serverFind.groups.length > 1) {
+                      const hitById = new Map(hits.map((h) => [h.entry.id, h]));
+                      return serverFind.groups.map((g) => {
+                        const list = g.ids.map((id) => hitById.get(id)).filter((x): x is RankedHit => !!x).slice(0, 40);
+                        if (!list.length) return null;
+                        return (
+                          <div key={g.key}>
+                            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mt-2 mb-1">{g.label} · {g.ids.length}</div>
+                            <div className="space-y-2">{list.map(card)}</div>
+                          </div>
+                        );
+                      });
+                    }
+                    return hits.slice(0, 80).map(card);
+                  })()}
+                  {hits.length > 80 && !(serverFind && serverFind.groups.length > 1) && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
                 </div>
+                {serverFind && (
+                  <div className="mt-4 space-y-3 border-t border-[var(--color-border)] pt-3">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
+                      <ActivityPanel activity={serverFind.activity} compact />
+                    </div>
+                    <CoverageLine coverage={serverFind.coverage} onReadFolder={controller ? askToRead : undefined} />
+                    {serverFind.notes.map((n, i) => <div key={i} className="text-[11px] text-amber-700">{n}</div>)}
+                  </div>
+                )}
               </>
             ) : (
               <div className="text-sm text-[var(--color-text-muted)] space-y-2">
                 <div className="font-bold text-[var(--color-text)]">Nothing searched yet</div>
                 <div>Type what you would ask a colleague. Tags in any spelling, the words on the drawing, the unit as people call it, the year.</div>
                 <div>Or just explore: click a library or folder on the map and it becomes the whole view. Esc climbs back out.</div>
+                {controller && <div className="mt-2"><b>First time here?</b> Press <b>Connect everything</b> above the map. It teaches the units, reads the drawings, builds the equipment registry and links it all. One button, safe to press again.</div>}
               </div>
             )}
           </div>
@@ -568,6 +889,47 @@ function GraphPageInner() {
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-3 py-2 shadow-lg flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" /> {viewerError}
           <button onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+      {connect.plan && activeOrgId && (
+        <ConnectPreview orgId={activeOrgId} plan={connect.plan} loading={connect.planLoading} canChange={controller}
+          onClose={connect.closePreview} onReplan={(ids) => void connect.openPreview(ids)} onStart={(ids) => void connect.start(ids)} />
+      )}
+      {lightbox && (
+        <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
+          <div className="max-w-5xl max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <SignedImg path={lightbox.file_url} alt={lightbox.caption ?? ""} className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-2xl" placeholder={<Loader2 className="w-6 h-6 animate-spin text-white" />} />
+            <div className="text-xs text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString()}` : ""} · click outside to close</div>
+          </div>
+          <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/80 hover:text-white"><X className="w-6 h-6" /></button>
+        </div>
+      )}
+      {pageView && activeOrgId && (
+        <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-black/60 text-white text-sm"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening sheet {pageView.page}…</div>}>
+          <CitedPageViewer fileKey={pageView.fileKey} page={pageView.page} quote={null} title={pageView.title} orgId={activeOrgId} documentId={pageView.knowledgeDocId} tags={pageView.tags} onClose={() => setPageView(null)} />
+        </Suspense>
+      )}
+      {setupLib && activeOrgId && (
+        <LibrarySetup orgId={activeOrgId} libraryId={setupLib} libraryName={data?.libraries.find((l) => l.id === setupLib)?.name ?? "this library"} onDone={() => void refresh()} onClose={() => setSetupLib(null)} />
+      )}
+      {readAsk && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40" onClick={() => !readAsk.busy && setReadAsk(null)}>
+          <div className="w-[28rem] max-w-[92vw] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-black inline-flex items-center gap-2"><Eye className="w-4 h-4 text-emerald-600" /> Read the contents of {readAsk.folder.path || "this library"}</div>
+            <div className="text-xs text-[var(--color-text-muted)]">{readAsk.folder.count} file{readAsk.folder.count === 1 ? "" : "s"} here have never been read. Linking the folder as a source of a knowledge library reads them: text pages cost nothing, scanned or SHX pages use vision on the cheap tier within your monthly cap, and every tag read becomes a link. Nothing outside the folder is touched.</div>
+            {readAsk.libs.length > 0 && (
+              <select value={readAsk.pick} onChange={(e) => setReadAsk({ ...readAsk, pick: e.target.value })} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
+                {readAsk.libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            )}
+            {readAsk.note && <div className="text-xs text-[var(--color-text)]">{readAsk.note}{readAsk.pick && readAsk.note.startsWith("Linked") && <> <Link href={`/knowledge/${readAsk.pick}`} className="font-bold text-[var(--color-accent)] hover:underline">Open the library →</Link></>}</div>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setReadAsk(null)} disabled={readAsk.busy} className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm">Close</button>
+              {!readAsk.note?.startsWith("Linked") && readAsk.libs.length > 0 && (
+                <button onClick={linkAndRead} disabled={readAsk.busy || !readAsk.pick} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-sm font-bold disabled:opacity-60">{readAsk.busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Link and read</button>
+              )}
+            </div>
+          </div>
         </div>
       )}
       {viewer && (
@@ -620,7 +982,10 @@ function EvidenceList({ hit }: { hit: RankedHit }) {
   );
 }
 
-function HitCard({ hit, rank, active, onReveal, onOpen }: { hit: RankedHit; rank: number; active: boolean; onReveal: () => void; onOpen: () => void }) {
+function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage, onPageHit }: {
+  hit: RankedHit; rank: number; active: boolean; relations?: FindRelation[]; pages?: Array<{ page: number; snippet: string; knowledgeDocId: string }>;
+  onReveal: () => void; onOpen: () => void; onPage?: (r: FindRelation) => void; onPageHit?: (page: number) => void;
+}) {
   const e = hit.entry;
   return (
     <div className={`rounded-lg border p-2.5 ${active ? "border-sky-400 bg-sky-50/40" : "border-[var(--color-border)] bg-[var(--color-canvas)]"}`}>
@@ -631,9 +996,12 @@ function HitCard({ hit, rank, active, onReveal, onOpen }: { hit: RankedHit; rank
             <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
             <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
             <span className="text-sm font-semibold truncate">{e.name}</span>
+            {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 text-[10px] font-bold"><Eye className="w-3 h-3" /> read</span>}
           </div>
           {e.title && e.title !== e.name && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
           <PathCrumbs entry={e} />
+          {relations && <RelationChips relations={relations} onPage={onPage} />}
+          {pages && <PageHits pages={pages} onPage={(p) => onPageHit?.(p)} />}
         </button>
         {e.href && (
           <button onClick={onOpen} className="shrink-0 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-surface)]" title="Open the drawing here">
@@ -646,8 +1014,9 @@ function HitCard({ hit, rank, active, onReveal, onOpen }: { hit: RankedHit; rank
   );
 }
 
-function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
+function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId, canRead, onRead }: {
   entry: IndexEntry; hit?: RankedHit; sameBytes: IndexEntry[]; onClose: () => void; onReveal: (id: string) => void; onOpen: () => void;
+  orgId?: string | null; canRead?: boolean; onRead?: () => void;
 }) {
   return (
     <div className="p-3 border-b border-[var(--color-border)] bg-sky-50/30">
@@ -661,6 +1030,8 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
             {entry.number && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.number}{entry.rev ? ` rev ${entry.rev}` : ""}</span>}
             {entry.status && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">{entry.status}</span>}
             {entry.years.length > 0 && <span className="rounded bg-[var(--color-surface)] border border-[var(--color-border)] px-1">dated {entry.years.join(", ")}</span>}
+            {entry.read && <span className={`rounded border px-1 ${entry.read.status === "ready" ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}>{entry.read.status === "ready" ? `read by AI · ${entry.read.pages} pages` : `AI read: ${entry.read.status}`}</span>}
+            {entry.unitCodes.map((c) => <span key={c} className="rounded bg-purple-50 border border-purple-200 text-purple-800 px-1">unit {c}</span>)}
             {entry.sizeBytes != null && <span className={`rounded border px-1 ${entry.sizeBytes === 0 ? "bg-red-50 border-red-200 text-red-700" : "bg-[var(--color-surface)] border-[var(--color-border)]"}`}>{entry.sizeBytes === 0 ? "0 KB" : `${Math.max(1, Math.round(entry.sizeBytes / 1024))} KB`}</span>}
             {entry.idents.map((t) => <span key={t} className="rounded bg-blue-50 border border-blue-200 text-blue-800 px-1">{tagVariants(t)[1] ?? t}</span>)}
           </div>
@@ -671,10 +1042,14 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
         <div className="mt-2 flex items-center gap-3">
           <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
           <Link href={entry.href} className="text-xs font-semibold text-[var(--color-text-muted)] hover:underline">Go to it in the library</Link>
+          <Link href={globalGraphHref(entry.id)} className="text-xs font-semibold text-[var(--color-text-muted)] hover:underline inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global view</Link>
         </div>
       )}
       {entry.source === "listing" && (
         <div className="mt-2 text-xs text-teal-800 inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
+      )}
+      {canRead && orgId && entry.source === "system" && fileTypeOf(entry.name).key === "pdf" && (
+        <ReadDrawingPanel orgId={orgId} documentId={entry.id.replace(/^doc:/, "")} onDone={onRead} />
       )}
       {sameBytes.length > 0 && (
         <div className="mt-2">
@@ -691,8 +1066,216 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
   );
 }
 
-function DrivesPanel({ orgId, controller, listings, uid, userEmail, onChange, onReveal }: {
+/** A unit, piece of equipment, project or unregistered tag picked on the
+ *  map: everything the estate holds on it, in place. Photos open in a
+ *  lightbox, sheets and files open in the viewer, nothing leaves the map. */
+function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFind, onClose, onOpen, onOpenAtPage, onReveal, onPhoto, onNarrow }: {
+  orgId: string; sat: FileGraphSatellite; data: FinderData; entryById: Map<string, IndexEntry>; nodeById: Map<string, FileGraphNode>; serverFind: FindResponse | null;
+  onClose: () => void; onOpen: (id: string) => void; onOpenAtPage: (id: string, page: number, tag?: string) => void; onReveal: (id: string) => void;
+  onPhoto: (p: AssetPhoto) => void; onNarrow: (code: string) => void;
+}) {
+  const kind = sat.id.startsWith("asset:") ? "asset" : sat.id.startsWith("cbunit:") ? "unit" : sat.id.startsWith("proj:") ? "project" : "tag";
+  const asset = kind === "asset" ? data.assets.find((a) => a.id === sat.id.slice(6)) : undefined;
+  const [photos, setPhotos] = useState<{ id: string; list: AssetPhoto[] } | null>(null);
+  useEffect(() => {
+    if (!asset) return;
+    let alive = true;
+    listAssetPhotos(asset.id).then((l) => { if (alive) setPhotos({ id: asset.id, list: l }); }).catch(() => { if (alive) setPhotos({ id: asset.id, list: [] }); });
+    return () => { alive = false; };
+  }, [asset]);
+  // What the registry and the drawings say about it, and the work around
+  // it: the same find every search uses, aimed at this one tag.
+  type AssetInfo = { code: string | null; location: string | null; typeName: string | null; callout: { code?: string | null; name?: string | null; details?: string | null; sheet?: string | null; page?: number | null } | null };
+  const [info, setInfo] = useState<{ id: string; v: AssetInfo } | null>(null);
+  const [found, setFound] = useState<{ id: string; r: FindResponse } | null>(null);
+  useEffect(() => {
+    if (kind !== "asset" && kind !== "tag") return;
+    let alive = true;
+    void findEstate({ orgId, query: sat.label, limit: 40, semantic: false })
+      .then((r) => { if (alive) setFound({ id: sat.id, r }); }).catch(() => undefined);
+    if (asset) {
+      void (async () => {
+        const { data: row } = await supabase.from("assets").select("code, location, type_id, metadata").eq("id", asset.id).maybeSingle();
+        const a = row as { code: string | null; location: string | null; type_id: string | null; metadata: Record<string, unknown> | null } | null;
+        let typeName: string | null = null;
+        if (a?.type_id) { const { data: t } = await supabase.from("asset_types").select("name").eq("id", a.type_id).maybeSingle(); typeName = (t as { name?: string } | null)?.name ?? null; }
+        if (alive) setInfo({ id: asset.id, v: { code: a?.code ?? null, location: a?.location ?? null, typeName, callout: (a?.metadata?.drawingCallout as AssetInfo["callout"]) ?? null } });
+      })();
+    }
+    return () => { alive = false; };
+  }, [orgId, sat.id, sat.label, kind, asset]);
+  const about = asset && info?.id === asset.id ? info.v : null;
+  const mine = found?.id === sat.id ? found.r : null;
+  const serverFind = mine ?? liveFind;
+  const unit = kind === "unit" ? data.units.find((u) => u.code === sat.id.slice(7)) : asset?.unitCode ? data.units.find((u) => u.code === asset.unitCode) : undefined;
+  // Every document related to it: from the map's links and, when a search
+  // is live, the sheets it is drawn on with the page.
+  const rows = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; how: string; page?: number; tag?: string; isDoc: boolean }>();
+    for (const l of sat.links) {
+      const n = nodeById.get(l.to); if (!n) continue;
+      const isDoc = n.kind === "file" || n.kind === "extfile";
+      m.set(l.to, { id: l.to, name: n.label, how: l.kind === "tagged_to" ? "tagged to it" : l.kind === "linked_unit" ? "belongs to it" : l.kind === "filed_under" ? "its folder" : l.kind === "drawn_on" ? "drawn on it" : l.kind === "mentioned_in" ? "mentions it" : l.kind === "in_project" ? "in the project" : "found with it", isDoc });
+    }
+    // Every file the estate ties it to, not only the ones on screen now.
+    for (const e of data.edges) {
+      if (e.b !== sat.id || !e.a.startsWith("doc:") || m.has(e.a)) continue;
+      const entry = entryById.get(e.a); if (!entry) continue;
+      m.set(e.a, { id: e.a, name: entry.name, how: e.type === "tagged_to" ? "tagged to it" : e.type === "belongs_to_unit" ? "belongs to it" : e.type === "in_project" ? "in the project" : "linked", isDoc: true });
+    }
+    for (const r of serverFind?.results ?? []) for (const rel of r.relations) {
+      if (rel.node !== sat.id || !nodeById.has(r.id)) continue;
+      const cur = m.get(r.id);
+      if (rel.rel === "drawn_on" && rel.page) m.set(r.id, { id: r.id, name: r.name, how: `drawn on sheet ${rel.page}`, page: rel.page, tag: rel.label, isDoc: true });
+      else if (!cur) m.set(r.id, { id: r.id, name: r.name, how: rel.rel === "mentioned_in" ? `mentions it${rel.page ? ` (page ${rel.page})` : ""}` : rel.rel.replace("_", " "), page: rel.page, isDoc: true });
+    }
+    return [...m.values()].sort((a, b) => (a.page ?? 0) - (b.page ?? 0) || a.name.localeCompare(b.name));
+  }, [sat, nodeById, serverFind, data.edges, entryById]);
+  const Icon = kind === "asset" ? Cpu : kind === "unit" ? Factory : kind === "project" ? FolderKanban : Tag;
+  const photoList = photos && asset && photos.id === asset.id ? photos.list : null;
+  return (
+    <div className="border-b border-[var(--color-border)] p-3 space-y-2" style={{ background: `${sat.color}0d` }}>
+      <div className="flex items-start gap-2">
+        <span className="w-8 h-8 rounded-full grid place-items-center text-white shrink-0" style={{ background: sat.color }}><Icon className="w-4 h-4" /></span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1 flex-wrap">
+            {unit && kind !== "unit" ? <><button onClick={() => onNarrow(unit.code)} className="font-bold text-purple-700 hover:underline">{unit.label}</button><ChevronRight className="w-3 h-3" /></> : null}
+            <span className="font-bold" style={{ color: sat.color }}>{kind === "asset" ? "Equipment" : kind === "unit" ? "Unit" : kind === "project" ? "Project" : "Tag read off the drawings"}</span>
+          </div>
+          <div className="text-base font-black leading-tight">{sat.label}</div>
+          {asset?.description && <div className="text-xs text-[var(--color-text-muted)]">{asset.description}</div>}
+          {about && (about.typeName || about.code || about.location) && (
+            <div className="mt-0.5 flex flex-wrap gap-1 text-[10px]">
+              {about.typeName && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1">{about.typeName}</span>}
+              {about.code && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 font-mono">site code {about.code}</span>}
+              {about.location && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1">{about.location}</span>}
+            </div>
+          )}
+          {kind === "tag" && <div className="text-[11px] text-[var(--color-text-muted)]">Not in the equipment registry yet. Connect everything puts it there.</div>}
+        </div>
+        <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+      </div>
+      {about?.callout && (about.callout.name || about.callout.details) && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-xs">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">As printed on the drawing</div>
+          {about.callout.name && <div className="font-semibold">{about.callout.name}</div>}
+          {about.callout.details && <div className="text-[11px] text-[var(--color-text-muted)]">{about.callout.details}</div>}
+          {about.callout.sheet && <div className="text-[10px] text-[var(--color-text-faint)]">{about.callout.sheet}{about.callout.page ? `, page ${about.callout.page}` : ""}</div>}
+        </div>
+      )}
+      {asset && (
+        <div>
+          {photoList === null ? <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> photos…</div>
+            : photoList.length === 0 ? <div className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><ImageIcon className="w-3 h-3" /> No photos on file</div>
+            : (
+              <div className="flex flex-wrap gap-1.5">
+                {photoList.slice(0, 8).map((p) => (
+                  <button key={p.id} onClick={() => onPhoto(p)} className="w-20 h-20 rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface-2)]" title={p.caption ?? "Open photo"}>
+                    <SignedImg path={p.file_url} alt="" className="w-full h-full object-cover" placeholder={<ImageIcon className="w-4 h-4 m-auto text-[var(--color-text-faint)]" />} />
+                  </button>
+                ))}
+                {photoList.length > 8 && <div className="w-20 h-20 rounded-lg border border-dashed border-[var(--color-border)] grid place-items-center text-[11px] text-[var(--color-text-muted)]">+{photoList.length - 8}</div>}
+              </div>
+            )}
+        </div>
+      )}
+      <div>
+        <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">{rows.length} on file</div>
+        {rows.length === 0 && <div className="text-[11px] text-[var(--color-text-muted)]">Nothing is linked to it yet.</div>}
+        <ul className="space-y-1 max-h-72 overflow-y-auto">
+          {rows.slice(0, 60).map((r) => {
+            const entry = entryById.get(r.id);
+            return (
+              <li key={r.id} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-xs flex items-center gap-2">
+                {entry ? <FileTypeIcon type={fileTypeOf(entry.name)} className="w-3.5 h-3.5 shrink-0" /> : <Tag className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />}
+                <button onClick={() => onReveal(r.id)} className="min-w-0 flex-1 text-left hover:underline">
+                  <div className="font-bold truncate">{r.name}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">{r.how}</div>
+                </button>
+                {r.isDoc && entry && (r.page
+                  ? <button onClick={() => onOpenAtPage(r.id, r.page!, r.tag)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Sheet {r.page}</button>
+                  : <button onClick={() => onOpen(r.id)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Open</button>)}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      {mine && (mine.activity.tickets.length + mine.activity.checkouts.length + mine.activity.markups.length + mine.activity.holds.length + mine.activity.projects.length + mine.activity.milestones.length) > 0 && (
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1">Work around it now</div>
+          <ActivityPanel activity={mine.activity} compact />
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
+        {sat.href && <Link href={sat.href} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Full page</Link>}
+        <Link href={globalGraphHref(sat.id)} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[11px] font-semibold inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global graph</Link>
+      </div>
+    </div>
+  );
+}
+
+const EDGE_WORDS: Record<string, string> = {
+  belongs_to_unit: "belongs to unit", in_project: "is in project", project_scope: "project covers", about_asset: "is the folder for",
+  tagged_to: "is about", filed_under: "is also filed under", alias_of: "is a nickname for", related: "is related to",
+};
+
+function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, connecting, readinessKey }: {
+  orgId: string; edges: Array<{ a: string; b: string; type: string; summary: string }>; units: Array<{ code: string; label: string }>; estateMissing: boolean; onReveal: (id: string) => void;
+  onConnect?: () => void; connecting?: boolean; readinessKey?: string;
+}) {
+  const [labels, setLabels] = useState<Map<string, NodeLabel>>(new Map());
+  const [filter, setFilter] = useState<string>("all");
+  const counts = useMemo(() => { const m = new Map<string, number>(); for (const e of edges) m.set(e.type, (m.get(e.type) ?? 0) + 1); return m; }, [edges]);
+  const shown = useMemo(() => edges.filter((e) => filter === "all" || e.type === filter).slice(0, 120), [edges, filter]);
+  useEffect(() => {
+    const ids = shown.flatMap((e) => [e.a, e.b]).filter((id) => !id.startsWith("cbunit:") && !id.startsWith("term:"));
+    if (!ids.length) return;
+    void labelNodes(orgId, ids).then(setLabels).catch(() => undefined);
+  }, [orgId, shown]);
+  const L = (id: string): NodeLabel => {
+    if (id.startsWith("cbunit:")) { const u = units.find((x) => x.code === id.slice(7)); return { label: u ? `${u.label} (${u.code})` : `Unit ${id.slice(7)}` }; }
+    if (id.startsWith("term:")) return { label: `"${id.slice(5).toLowerCase()}"` };
+    return labels.get(id) ?? { label: "…" };
+  };
+  if (estateMissing) return <div className="space-y-3"><div className="text-xs text-amber-700">Estate links are off until migration 20261020 is applied.</div><EstateReadiness key={readinessKey} orgId={orgId} /></div>;
+  return (
+    <div className="space-y-3">
+      {onConnect && <SuspectEquipment orgId={orgId} refreshKey={readinessKey} />}
+      {onConnect && <RunsPanel key={readinessKey} orgId={orgId} />}
+      <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
+      <div className="text-xs text-[var(--color-text-muted)]">What the estate knows about where things belong — every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
+      <div className="flex flex-wrap gap-1">
+        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === "all" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
+        {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
+          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === t ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
+        ))}
+      </div>
+      {edges.length === 0 && <div className="text-xs text-[var(--color-text-muted)]">No links yet. Add your units to the Site Codebook, then press &ldquo;Resolve links&rdquo; above the map.</div>}
+      <ul className="space-y-1">
+        {shown.map((e, i) => {
+          const a = L(e.a), b = L(e.b);
+          const canReveal = e.a.startsWith("folder:") || e.a.startsWith("doc:");
+          return (
+            <li key={i} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-x-1">
+                {canReveal ? <button onClick={() => onReveal(e.a)} className="font-bold hover:underline text-left">{a.label}</button> : <span className="font-bold">{a.label}</span>}
+                <span className="text-[var(--color-text-muted)]">{EDGE_WORDS[e.type] ?? e.type}</span>
+                {b.href ? <Link href={b.href} className="font-bold hover:underline">{b.label}</Link> : <span className="font-bold">{b.label}</span>}
+              </div>
+              <div className="text-[11px] text-[var(--color-text-muted)]">{e.summary}</div>
+            </li>
+          );
+        })}
+        {edges.length > shown.length && <li className="text-[11px] text-[var(--color-text-muted)]">…and {edges.length - shown.length} more. Filter by type to see them.</li>}
+      </ul>
+    </div>
+  );
+}
+
+function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes, onChange, onReveal }: {
   orgId: string; controller: boolean; listings: FinderListing[]; uid: string | null; userEmail: string | null;
+  systemHashes: Set<string>;
   onChange: (l: FinderListing[]) => void; onReveal: (id: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -719,7 +1302,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, onChange, on
   return (
     <div className="space-y-3">
       <div className="text-xs text-[var(--color-text-muted)]">
-        A drive the system doesn&apos;t hold. Paste the output of <code>tree /f</code>, <code>dir /s</code>, <code>tree</code>, or one path per line. Names and paths only — nothing is copied.
+        A drive the system doesn&apos;t hold. Paste the output of <code>tree /f</code>, <code>dir /s</code>, <code>tree</code>, one path per line — or the JSON from <code>node scripts/thor-scan.mjs</code>, which adds sizes, dates and hashes so files already in the system are identified by their bytes. Names and paths only — nothing is copied.
       </div>
       {storeState.listingsLocal && <div className="text-[11px] text-amber-700 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
       {listings.map((l) => (
@@ -738,9 +1321,21 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, onChange, on
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} placeholder={"T:\\Crude\\Heaters\\born-u1a.pdf\nT:\\Transmix\\U1A.pdf"}
             className="w-full text-[11px] font-mono rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           {preview && (
-            <div className="text-[11px] text-[var(--color-text-muted)]">
-              Read as <b>{preview.format}</b>: {preview.files.length} files, {preview.folders.length} folders.
+            <div className="text-[11px] text-[var(--color-text-muted)] space-y-1">
+              <div>Read as <b>{preview.format}</b>: {preview.files.length} files, {preview.folders.length} folders.</div>
               {preview.warnings.map((w, i) => <div key={i} className="text-amber-700">{w}</div>)}
+              {preview.files.length > 0 && (() => {
+                const t = triageListing(preview.files, preview.folders, systemHashes);
+                return (
+                  <ul className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-2 space-y-0.5">
+                    {t.hashed > 0 && <li><b>{t.knownInSystem}</b> already in the system by bytes · <b>{t.duplicateFiles}</b> are copies of another file on the drive ({t.duplicateGroups} groups)</li>}
+                    {t.hashed === 0 && <li className="text-amber-700">No hashes — paste the scanner&apos;s JSON (<code>node scripts/thor-scan.mjs</code>) to see what is already in the system and what is a copy.</li>}
+                    <li><b>{t.drawingLike}</b> look like drawings by name · <b>{t.copierLike}</b> are copier-named (worth reading first) · <b>{t.empty}</b> empty</li>
+                    {t.personalFolders.length > 0 && <li>{t.personalFolders.length} folder{t.personalFolders.length === 1 ? "" : "s"} look personal or temporary: {t.personalFolders.slice(0, 4).join(", ")}{t.personalFolders.length > 4 ? "…" : ""}</li>}
+                    <li>Busiest: {t.topFolders.slice(0, 3).map((f) => `${f.path} (${f.count})`).join(" · ")}</li>
+                  </ul>
+                );
+              })()}
             </div>
           )}
           {err && <div className="text-[11px] text-red-700">{err}</div>}

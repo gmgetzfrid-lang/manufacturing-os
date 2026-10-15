@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
-import { renderKnowledgePages } from "@/lib/knowledgePageRender";
+import { readPages, pagesAsText } from "@/lib/pageReader";
 import { validateParsedQuote } from "@/lib/bidTab";
 import { fetchBytes } from "@/lib/r2Bytes";
 import { matchParty } from "@/lib/budgetDoc";
@@ -104,8 +104,13 @@ export async function POST(req: NextRequest) {
   if (!looksPdf && !imageType) return bad("Send the quote or invoice as a PDF or a photo (PNG/JPG).", 415);
 
   let images: Array<AiCallImage & { page: number }>;
+  let pageText = "";
   if (looksPdf) {
-    images = await renderKnowledgePages(doc.file_url, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
+    // Tables need the page as printed; the text layer rides along so every
+    // number is read twice and the model can cross-check columns.
+    const read = await readPages({ orgId, fileKey: doc.file_url, pages: Array.from({ length: MAX_PAGES }, (_, i) => i + 1), maxPages: MAX_PAGES, images: "always" });
+    images = read.images;
+    pageText = pagesAsText(read);
   } else {
     try {
       const bytes = await fetchBytes(doc.file_url);
@@ -122,7 +127,7 @@ export async function POST(req: NextRequest) {
       orgId, userId,
       op: isQuote ? "quoteParse" : "invoiceParse",
       system: isQuote ? QUOTE_SYSTEM : INVOICE_SYSTEM,
-      user: `File: ${doc.file_name ?? "document"}\nPages attached in order: ${images.map((i) => i.page).join(", ")}${doc.vendor_name ? `\nExpected sender (from the submission channel): ${doc.vendor_name}` : ""}`,
+      user: `File: ${doc.file_name ?? "document"}\nPages attached in order: ${images.map((i) => i.page).join(", ")}${doc.vendor_name ? `\nExpected sender (from the submission channel): ${doc.vendor_name}` : ""}${pageText}`,
       images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })),
       maxTokens: 3000,
       timeoutMs: 90_000,

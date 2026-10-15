@@ -121,6 +121,12 @@ import {
   type PathedFile,
 } from "@/lib/folderUpload";
 import { makeLibraryStoragePath, uploadToPath } from "@/lib/storage";
+import { nudgeEstateResolver } from "@/lib/estate/nudge";
+import { estatePost, declareEdge, dismissEdge } from "@/lib/estate/client";
+import { nid } from "@/lib/estate/ids";
+import type { HomeSuggestion } from "@/lib/estate/watchdog";
+import WatchdogBanner from "@/components/documents/WatchdogBanner";
+import AlsoFiledHere from "@/components/documents/AlsoFiledHere";
 import type {
   AccessControl,
   CheckoutSession,
@@ -333,6 +339,36 @@ export default function LibraryExplorerPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  // The convention watchdog: after an upload or a new folder, what looks
+  // like it belongs elsewhere. Non-blocking; link-not-move.
+  const [watchdog, setWatchdog] = useState<HomeSuggestion[]>([]);
+  const [watchdogBusy, setWatchdogBusy] = useState<string | null>(null);
+  const askWatchdog = (what: { documentIds?: string[]; folderIds?: string[] }) => {
+    if (!activeOrgId) return;
+    void estatePost<{ suggestions: HomeSuggestion[] }>("/api/estate/watchdog", { orgId: activeOrgId, ...what })
+      .then((r) => { if (r.suggestions.length) setWatchdog((prev) => [...r.suggestions, ...prev.filter((p) => !r.suggestions.some((n) => n.targetId === p.targetId))]); })
+      .catch(() => undefined);
+  };
+  const watchdogLink = async (sug: HomeSuggestion) => {
+    if (!activeOrgId) return;
+    setWatchdogBusy(sug.targetId);
+    try {
+      const isFolder = !documents.some((d) => d.id === sug.targetId) && !!folderMapRef.current?.get(sug.targetId);
+      await declareEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under",
+        summary: `Also filed under ${[sug.home.libraryName, ...sug.home.chain].join(" / ")} — ${sug.reason}`, evidence: { unit: sug.unitCode, docType: sug.docType }, actor: { userId: uid, name: userEmail } });
+      setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
+    } catch (e) { setError((e as Error).message); }
+    finally { setWatchdogBusy(null); }
+  };
+  const watchdogDismiss = async (sug: HomeSuggestion) => {
+    if (!activeOrgId) return;
+    setWatchdogBusy(sug.targetId);
+    try {
+      const isFolder = !documents.some((d) => d.id === sug.targetId) && !!folderMapRef.current?.get(sug.targetId);
+      await dismissEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under", summary: sug.reason, actor: { userId: uid, name: userEmail } }).catch(() => undefined);
+      setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
+    } finally { setWatchdogBusy(null); }
+  };
   const [search, setSearch] = useState("");
 
   const [selectedDoc, setSelectedDoc] = useState<DocumentRecord | null>(null);
@@ -604,6 +640,7 @@ export default function LibraryExplorerPage() {
           .update({ acl_index: aclIndex ?? null }).eq("id", newId);
         if (idxErr) throw new Error(`Couldn't apply permissions to the new folder "${node.name}": ${idxErr.message}`);
       }
+      nudgeEstateResolver(activeOrgId, { folderIds: [newId] });
       chainByFolderId.set(newId, myChain);
       register(parentCollectionId, node.name, newId);
       idByKey.set(node.key, newId);
@@ -1619,6 +1656,7 @@ export default function LibraryExplorerPage() {
     return () => { alive = false; };
   }, [activeOrgId, documents, columnDefs]);
 
+  const folderMapRef = useRef<Map<string, LibraryCollection> | null>(null);
   const folderMap = useMemo(() => {
     const map = new Map<string, LibraryCollection>();
     for (const f of folders) {
@@ -1627,6 +1665,7 @@ export default function LibraryExplorerPage() {
     return map;
   }, [folders]);
 
+  useEffect(() => { folderMapRef.current = folderMap; }, [folderMap]);
   const currentFolder = currentFolderId ? folderMap.get(currentFolderId) ?? null : null;
 
   // Resolved hero header (inherits cover/color up the folder→library chain).
@@ -2073,6 +2112,8 @@ export default function LibraryExplorerPage() {
         await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
       }
 
+      nudgeEstateResolver(activeOrgId, { folderIds: [newId] });
+      askWatchdog({ folderIds: [newId] });
       setCreatingFolder(false);
       setRenameValue("");
     } catch (e) {
@@ -2297,6 +2338,10 @@ export default function LibraryExplorerPage() {
   //    8 files don't take 8× one-file time.
   const UPLOAD_CONCURRENCY = 4;
   const handleStagedUpload = async (items: StagedItem[], signal?: AbortSignal) => {
+    // Every document that lands is handed to the estate resolver once the
+    // upload is done — unit, project and equipment links from its name,
+    // folder and (once read) pages. Fire-and-forget; never blocks an upload.
+    const createdDocIds: string[] = [];
     const notifyLibrarySubscribers = (count: number, firstName: string) => {
       if (!activeOrgId || !uid || count === 0) return;
       void import("@/lib/notify/dispatch").then((m) =>
@@ -2465,6 +2510,9 @@ export default function LibraryExplorerPage() {
           file_url: uploadResult.url,
           file_type: file.type || "application/octet-stream",
           size: uploadResult.size,
+          // The key every copy is known by: duplicate warnings, the read
+          // copy and the estate all match on it.
+          file_hash: item.fileHash ?? null,
           created_by: uid,
           created_by_name: userEmail || uid,
           created_at: now,
@@ -2473,6 +2521,7 @@ export default function LibraryExplorerPage() {
         if (verErr || !newVersion) throw new Error(verErr?.message || "Failed to create document version");
 
         await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+        createdDocIds.push(newDoc.id as string);
       };
 
       // ── Run in capped-concurrency chunks ──────────────────────────
@@ -2531,6 +2580,7 @@ export default function LibraryExplorerPage() {
         // A file just landed in doc control — any AI library watching this
         // one picks it up NOW, not at the next cron pass.
         nudgeKnowledgeSources(activeOrgId!, libraryId);
+        if (createdDocIds.length) { nudgeEstateResolver(activeOrgId!, { documentIds: createdDocIds }); askWatchdog({ documentIds: createdDocIds }); }
         setPendingUploadFiles([]);
         uploadPathsRef.current = new Map();
         uploadFolderPlanRef.current = null;
@@ -3455,6 +3505,9 @@ export default function LibraryExplorerPage() {
         {/* MAIN AREA — full width, no inspector grid */}
         <div className={`flex-1 overflow-auto p-3 lg:p-4 ${stagedDocs.length > 0 ? "pb-20" : ""}`}>
           <div className="max-w-[1920px] mx-auto">
+
+            <WatchdogBanner suggestions={watchdog} busyId={watchdogBusy} onLink={watchdogLink} onDismiss={watchdogDismiss} onClose={() => setWatchdog([])} />
+            {currentFolderId && activeOrgId && <AlsoFiledHere orgId={activeOrgId} folderId={currentFolderId} />}
 
             {/* Phase 2 + 3: Curated Collections + Favorites */}
             {library && activeOrgId && uid && (
@@ -4531,6 +4584,7 @@ export default function LibraryExplorerPage() {
         onAddColumn={isController ? () => { setWizardInitType("text"); setWizardInitStep(2); setShowCreateColumn(true); } : undefined}
         uniquenessKeys={library?.uniquenessKeys}
         onAddSheetAndUseForUniqueness={isController ? handleAddSheetAndUseForUniqueness : undefined}
+        orgId={activeOrgId ?? undefined}
       />
 
       {/* NEW: Checkout Flow Modal */}

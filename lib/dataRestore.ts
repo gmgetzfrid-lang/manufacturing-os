@@ -292,6 +292,9 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "asset_aliases", "proposed_links", "link_rules", "answer_skills",
   // File finder: aliases and drive listings reference only the org.
   "finder_aliases", "finder_listings",
+  // Estate edges reference nodes by string id; restore last among org data.
+  "estate_edges",
+  "estate_run_changes",
   // Flows may reference knowledge documents (source PFD), restored earlier.
   "process_flows",
   // Mentions reference BOTH an asset and a document (controlled or

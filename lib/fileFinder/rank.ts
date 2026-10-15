@@ -233,17 +233,21 @@ export function rankEntries(
     // folder chain is a minus. "Transmix" is not where a crude heater lives.
     if (q.units.length && units.length) {
       const asked = new Set(q.units.map((u) => u.value));
-      const named = new Set<string>();
+      // Units named in words, and units LINKED by the estate (a folder taught
+      // to be Crude counts even when no word says so).
+      const named = new Map<string, "words" | "link">();
       for (const w of [...e.pathWords, ...e.words]) {
-        for (const u of units) if (wordNamesUnit(w, u)) named.add(u.code);
+        for (const u of units) if (wordNamesUnit(w, u)) named.set(u.code, "words");
       }
-      for (const code of named) {
-        const u = units.find((x) => x.code === code)!;
+      for (const code of e.unitCodes ?? []) if (!named.has(code)) named.set(code, "link");
+      for (const [code, how] of named) {
+        const u = units.find((x) => x.code === code);
+        if (!u) continue;
         if (asked.has(code)) {
           const chip = q.units.find((c) => c.value === code)!;
-          ev.push({ kind: "unit", label: `Lives under ${u.label}${via(chip)}`, delta: W.unitHit * scale(chip) });
+          ev.push({ kind: "unit", label: how === "link" ? `Linked to ${u.label}${via(chip)}` : `Lives under ${u.label}${via(chip)}`, delta: W.unitHit * scale(chip) });
         } else {
-          ev.push({ kind: "unit", label: `Folder says ${u.label}, a different unit`, delta: W.unitOther });
+          ev.push({ kind: "unit", label: how === "link" ? `Linked to ${u.label}, a different unit` : `Folder says ${u.label}, a different unit`, delta: W.unitOther });
         }
       }
     }
@@ -251,8 +255,24 @@ export function rankEntries(
     // A candidate has to match something the user actually named — a code, a
     // word or a phrase, exactly or loosely. Being in the right unit's folder
     // is support for a match, never a match on its own.
-    const positive = ev.filter((x) => x.delta > 0 && (x.kind === "identifier" || x.kind === "word" || x.kind === "phrase" || x.kind === "sheet" || x.kind === "doctype"))
+    let positive = ev.filter((x) => x.delta > 0 && (x.kind === "identifier" || x.kind === "word" || x.kind === "phrase" || x.kind === "sheet" || x.kind === "doctype"))
       .reduce((s, x) => s + x.delta, 0);
+    // Identical bytes are the same document whatever the name: "copy of
+    // sheet.pdf" on a drive IS 2002-D-2001 if the hashes agree. A twin's name
+    // match carries over at a discount, with the twin named in the evidence.
+    if (positive <= 0 && e.hash && ctx.sameBytes) {
+      const twins = (ctx.sameBytes.get(e.hash) ?? []).filter((x) => x.id !== e.id);
+      for (const t of twins) {
+        const hits: string[] = [];
+        for (const c of q.identifiers) if (t.idents.includes(c.value) || t.numberCanon === c.value) hits.push(c.label);
+        for (const c of q.words) if (t.words.includes(c.value)) hits.push(`"${c.value}"`);
+        if (!hits.length) continue;
+        const delta = Math.round(0.8 * (hits.length >= 1 && q.identifiers.some((c) => t.idents.includes(c.value) || t.numberCanon === c.value) ? W.codeExactName : W.wordName * hits.length));
+        ev.push({ kind: "identifier", label: `Same bytes as "${t.name}", which says ${hits.join(", ")}`, delta, tier: "exact" });
+        positive += delta;
+        break;
+      }
+    }
     if (positive <= 0) continue;
 
     // Years: soft. Late uploads are common, so a one-year miss is a nudge.
@@ -281,7 +301,12 @@ export function rankEntries(
 
     const same = (e.hash && ctx.sameBytes?.get(e.hash)?.filter((x) => x.id !== e.id)) || [];
     if (same.length) ev.push({ kind: "duplicate", label: `Same bytes in ${same.length + 1} places`, delta: 0 });
-    if (e.source === "listing") ev.push({ kind: "source", label: `Listed on ${e.listingName}, not in the system`, delta: 0 });
+    if (e.source === "listing") {
+      const twin = same.find((x) => x.source === "system");
+      if (twin) ev.push({ kind: "source", label: `On ${e.listingName} — same bytes as "${twin.name}", already in the system`, delta: 0 });
+      else ev.push({ kind: "source", label: `Listed on ${e.listingName}, not in the system`, delta: 0 });
+    }
+    if (e.read) ev.push({ kind: "source", label: e.read.status === "ready" ? `Content read by AI (${e.read.pages} pages${e.read.byHash ? ", same bytes as an indexed copy" : ""})` : `Content read: ${e.read.status}`, delta: 0 });
 
     const score = Math.round(ev.reduce((s, x) => s + x.delta, 0));
     const verdict: Verdict = rejected ? "rejected" : score >= STRONG_AT ? "strong" : score >= POSSIBLE_AT ? "possible" : "weak";

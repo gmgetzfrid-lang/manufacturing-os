@@ -311,3 +311,42 @@ describe("asking the way people actually ask", () => {
     }
   });
 });
+
+describe("scanner listings and triage", () => {
+  it("reads the scanner's JSON with hashes", () => {
+    const json = JSON.stringify({ format: "thor-scan/1", folders: ["Crude", "Dave's stuff"], files: [
+      { path: ["Crude"], name: "2002-D-2001_SHT05.pdf", sizeBytes: 100, date: "2019-01-15", hash: "a".repeat(64) },
+      { path: ["Dave's stuff"], name: "OC74321.pdf", sizeBytes: 90, hash: "b".repeat(64) },
+      { path: ["Dave's stuff"], name: "copy of sheet.pdf", sizeBytes: 100, hash: "a".repeat(64) },
+      { path: ["Dave's stuff"], name: "empty.pdf", sizeBytes: 0 },
+    ] });
+    const out = parseDirectoryListing(json);
+    expect(out.format).toBe("scan");
+    expect(out.files).toHaveLength(4);
+    expect(out.files[0].hash).toBe("a".repeat(64));
+    const entries = entriesFromListing({ id: "t", name: "Thor", files: out.files });
+    expect(entries[0].hash).toBe("a".repeat(64));
+  });
+  it("triages: duplicates, known-by-hash, drawings, copier scans, personal folders", async () => {
+    const { triageListing } = await import("@/lib/fileFinder/triage");
+    const out = parseDirectoryListing(JSON.stringify({ format: "thor-scan/1", folders: ["Crude", "Dave's stuff"], files: [
+      { path: ["Crude"], name: "2002-D-2001_SHT05.pdf", sizeBytes: 100, hash: "a".repeat(64) },
+      { path: ["Dave's stuff"], name: "OC74321.pdf", sizeBytes: 90, hash: "b".repeat(64) },
+      { path: ["Dave's stuff"], name: "copy of sheet.pdf", sizeBytes: 100, hash: "a".repeat(64) },
+      { path: ["Dave's stuff"], name: "empty.pdf", sizeBytes: 0 },
+    ] }));
+    const t = triageListing(out.files, out.folders, new Set(["a".repeat(64)]));
+    expect(t).toMatchObject({ files: 4, duplicateGroups: 1, duplicateFiles: 1, knownInSystem: 2, drawingLike: 1, copierLike: 1, empty: 1 });
+    expect(t.personalFolders).toEqual(["Dave's stuff"]);
+    expect(t.readFirst.map((f) => f.name)).toEqual(["OC74321.pdf"]);
+  });
+  it("tells a drive file apart from its twin already in the system", () => {
+    const folders = new Map([["f", { id: "f", libraryId: "L", parentId: null, name: "Crude" }]]);
+    const libraries = new Map([["L", { id: "L", name: "Drawings" }]]);
+    const sys = entryFromDocument({ id: "d1", library_id: "L", collection_id: "f", name: "2002-D-2001_SHT05.pdf" }, { folders, libraries, version: { fileHash: "a".repeat(64) } });
+    const [drive] = entriesFromListing({ id: "t", name: "Thor", files: [{ path: ["Dave's stuff"], name: "copy of sheet.pdf", hash: "a".repeat(64) }] });
+    const hits = rankEntries([sys, drive as IndexEntry], parseQuery("2002-D-2001 sheet 5"), { sameBytes: clusterByHash([sys, drive as IndexEntry]) });
+    const d = hits.find((h) => h.entry.id === drive.id);
+    expect(d?.evidence.map((e) => e.label)).toEqual(expect.arrayContaining([expect.stringMatching(/same bytes as "2002-D-2001_SHT05.pdf", already in the system/)]));
+  });
+});

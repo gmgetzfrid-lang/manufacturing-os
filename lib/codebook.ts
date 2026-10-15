@@ -319,11 +319,15 @@ function rowToEntry(r: Record<string, unknown>): CodebookEntry {
 /** Load the whole codebook in one round trip pair. Resilient: a missing
  *  migration (table not found) returns EMPTY_CODEBOOK instead of throwing so
  *  every consumer keeps working pre-migration. */
-export async function loadCodebook(orgId: string): Promise<Codebook> {
+export async function loadCodebook(
+  orgId: string,
+  /** A server caller passes its admin client; the browser uses the default. */
+  client: Pick<typeof supabase, "from"> = supabase,
+): Promise<Codebook> {
   try {
     const [entriesRes, configRes] = await Promise.all([
-      supabase.from("codebook_entries").select("*").eq("org_id", orgId).order("sort").order("code"),
-      supabase.from("codebook_config").select("*").eq("org_id", orgId).maybeSingle(),
+      client.from("codebook_entries").select("*").eq("org_id", orgId).order("sort").order("code"),
+      client.from("codebook_config").select("*").eq("org_id", orgId).maybeSingle(),
     ]);
     if (entriesRes.error) return EMPTY_CODEBOOK;
     const entries = ((entriesRes.data ?? []) as Array<Record<string, unknown>>).map(rowToEntry);
