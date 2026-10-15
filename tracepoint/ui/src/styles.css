@@ -1,0 +1,178 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* Design tokens carried over from Manufacturing OS (globals.css), with the
+   TracePoint brand as the default palette. Dark mode is a `.dark` class on
+   <html>, toggled by the theme switcher. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --color-canvas: #f3f5f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f8fafc;
+  --color-surface-3: #eef2f7;
+  --color-text: #0f172a;
+  --color-text-muted: #5b6b82;
+  --color-text-faint: #94a3b8;
+  --color-border: #e3e8ef;
+  --color-border-strong: #cbd5e1;
+
+  --color-accent: #dc2626;
+  --color-accent-hover: #b91c1c;
+  --color-accent-fg: #ffffff;
+  --color-accent-soft: #fef2f2;
+  --color-accent-ring: #f87171;
+  --color-accent-2: #f97316;
+  --color-accent-2-soft: #fff7ed;
+  --brand-gradient: linear-gradient(135deg, #ef4444, #f97316);
+
+  --color-ok: #059669;
+  --color-warn: #d97706;
+  --color-bad: #dc2626;
+  --color-info: #2563eb;
+  --color-violet: #7c3aed;
+
+  --cat-inspection: #2563eb;
+  --cat-drawings: #7c3aed;
+  --cat-pid: #0891b2;
+  --cat-datasheets: #0d9488;
+  --cat-code: #b45309;
+  --cat-calc: #4f46e5;
+  --cat-service: #be123c;
+  --cat-procedures: #475569;
+  --cat-certs: #a16207;
+  --cat-photos: #db2777;
+  --cat-email: #0284c7;
+  --cat-general: #64748b;
+
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-fluid: cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pop: pop 0.18s var(--ease-fluid) both;
+  --animate-rise: rise 0.24s var(--ease-fluid) both;
+  --animate-fade: fade 0.2s ease-out both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+
+  --shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+  --shadow-sm: 0 1px 2px -1px rgb(15 23 42 / 0.06), 0 2px 4px 0 rgb(15 23 42 / 0.05);
+  --shadow-md: 0 2px 4px -2px rgb(15 23 42 / 0.06), 0 6px 12px -2px rgb(15 23 42 / 0.09);
+  --shadow-lg: 0 4px 8px -3px rgb(15 23 42 / 0.07), 0 14px 24px -6px rgb(15 23 42 / 0.11);
+  --shadow-xl: 0 8px 16px -6px rgb(15 23 42 / 0.08), 0 24px 40px -10px rgb(15 23 42 / 0.14);
+  --shadow-2xl: 0 12px 24px -8px rgb(15 23 42 / 0.12), 0 36px 64px -16px rgb(15 23 42 / 0.2);
+}
+
+@keyframes pop { from { opacity: 0; transform: scale(0.96); } }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes fade { from { opacity: 0; } }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+.dark {
+  --color-canvas: #090d16;
+  --color-surface: #0f1522;
+  --color-surface-2: #0c111c;
+  --color-surface-3: #151d2c;
+  --color-text: #eef2f8;
+  --color-text-muted: #94a3b8;
+  --color-text-faint: #5e6b80;
+  --color-border: #1c2536;
+  --color-border-strong: #2b3649;
+  --color-accent-soft: color-mix(in srgb, var(--color-accent) 18%, #090d16);
+  --color-accent-2-soft: color-mix(in srgb, var(--color-accent-2) 16%, #090d16);
+  --cat-inspection: #60a5fa;
+  --cat-drawings: #a78bfa;
+  --cat-pid: #22d3ee;
+  --cat-datasheets: #2dd4bf;
+  --cat-code: #fbbf24;
+  --cat-calc: #818cf8;
+  --cat-service: #fb7185;
+  --cat-procedures: #94a3b8;
+  --cat-certs: #facc15;
+  --cat-photos: #f472b6;
+  --cat-email: #38bdf8;
+  --cat-general: #94a3b8;
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 0.4), 0 2px 4px 0 rgb(0 0 0 / 0.3);
+  --shadow-md: 0 2px 4px -2px rgb(0 0 0 / 0.4), 0 6px 12px -2px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 4px 8px -3px rgb(0 0 0 / 0.45), 0 14px 24px -6px rgb(0 0 0 / 0.55);
+  --shadow-xl: 0 8px 16px -6px rgb(0 0 0 / 0.5), 0 24px 40px -10px rgb(0 0 0 / 0.6);
+  --shadow-2xl: 0 12px 24px -8px rgb(0 0 0 / 0.55), 0 36px 64px -16px rgb(0 0 0 / 0.7);
+  color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+::selection { background: color-mix(in srgb, var(--color-accent) 24%, transparent); }
+
+/* Thin, theme-aware scrollbars. */
+* { scrollbar-width: thin; scrollbar-color: var(--color-border-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+@utility card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  border-radius: 14px;
+}
+@utility hover-lift {
+  transition: transform 0.18s var(--ease-fluid), box-shadow 0.18s var(--ease-fluid), border-color 0.18s;
+  &:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+}
+@utility focus-ring {
+  &:focus-visible { outline: 2px solid var(--color-accent-ring); outline-offset: 2px; }
+}
+@utility glass {
+  background: color-mix(in srgb, var(--color-surface) 78%, transparent);
+  backdrop-filter: blur(14px) saturate(1.4);
+}
+@utility brand-text {
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@utility skeleton {
+  background: linear-gradient(90deg, var(--color-surface-3) 25%, color-mix(in srgb, var(--color-surface-3) 40%, var(--color-surface)) 50%, var(--color-surface-3) 75%);
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+  border-radius: 8px;
+}
+
+/* Subtle grid + glow backdrop for hero/login surfaces. */
+.hero-backdrop {
+  background:
+    radial-gradient(900px 500px at 15% -10%, color-mix(in srgb, var(--color-accent) 16%, transparent), transparent 60%),
+    radial-gradient(700px 420px at 100% 10%, color-mix(in srgb, var(--color-accent-2) 12%, transparent), transparent 60%),
+    linear-gradient(var(--color-canvas), var(--color-canvas));
+}
+.grid-lines {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--color-text) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--color-text) 5%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+mark.hl { background: color-mix(in srgb, var(--color-accent) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+/* Markdown-ish answer text. */
+.prose-tp p { margin: 0.45em 0; line-height: 1.65; }
+.prose-tp ul, .prose-tp ol { margin: 0.4em 0 0.4em 1.2em; }
+.prose-tp li { margin: 0.2em 0; line-height: 1.55; }
+.prose-tp ul { list-style: disc; }
+.prose-tp ol { list-style: decimal; }
+.prose-tp h3, .prose-tp h4 { font-weight: 650; margin: 0.9em 0 0.3em; }
+.prose-tp code { font-family: var(--font-mono); font-size: 0.86em; background: var(--color-surface-3); padding: 1px 5px; border-radius: 5px; }
+.prose-tp strong { font-weight: 650; }
+.prose-tp table { border-collapse: collapse; margin: 0.6em 0; font-size: 0.9em; }
+.prose-tp td, .prose-tp th { border: 1px solid var(--color-border); padding: 4px 8px; text-align: left; }

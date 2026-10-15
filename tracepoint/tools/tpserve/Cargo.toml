@@ -1,0 +1,12 @@
+[package]
+name = "tpserve"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+# Development server: runs the real TracePoint service over plain HTTP so the
+# interface can be exercised in a browser without Windows. Not shipped.
+[dependencies]
+tp-core = { path = "../../core" }
+tiny_http = "0.12"
+serde_json = "1"

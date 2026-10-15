@@ -387,7 +387,8 @@ impl Index {
             }
             role_chain.retain(|r| *r != DirRole::None);
             let archived = own_role == DirRole::Archive || parent.map(|p| dirs[p as usize].archived).unwrap_or(false);
-            let year = if depth >= 1 { year_of(&name).or_else(|| parent.and_then(|p| dirs[p as usize].year)) } else { None };
+            // A unit folder ("2000 - CRUDE UNIT") names a unit, not a year.
+            let year = if depth >= 1 && !(depth == 1 && UNIT_RE.is_match(&name)) { year_of(&name).or_else(|| parent.and_then(|p| dirs[p as usize].year)) } else { parent.and_then(|p| dirs[p as usize].year) };
             let mut terms: Vec<u32> = parent.map(|p| dirs[p as usize].terms.clone()).unwrap_or_default();
             let mut tags: Vec<u32> = parent.map(|p| dirs[p as usize].tags.clone()).unwrap_or_default();
             if depth >= 1 {

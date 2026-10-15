@@ -427,6 +427,12 @@ impl Service {
                 }
                 Ok(json!({"ok": true}))
             }
+            "file.reachable" => {
+                self.with_session(|_| Ok(()))?;
+                let path = self.file_path(a["id"].as_u64().unwrap_or(u64::MAX) as u32)?;
+                let meta = std::fs::metadata(&path).ok();
+                Ok(json!({"ok": meta.is_some(), "size": meta.map(|m| m.len())}))
+            }
             "file.reveal" => {
                 self.with_session(|_| Ok(()))?;
                 let path = self.file_path(a["id"].as_u64().unwrap_or(u64::MAX) as u32)?;
@@ -618,6 +624,14 @@ impl Service {
 
             // ── About / for IT ───────────────────────────────────────
             "about" => Ok(self.about()),
+            "chat.threads" | "library.list" => {
+                self.with_session(|_| Ok(()))?;
+                Ok(json!([]))
+            }
+            "indexer.status" => {
+                self.with_session(|_| Ok(()))?;
+                Ok(json!({"running": false}))
+            }
             _ => Err(ApiError::new(404, format!("Unknown command {cmd}"))),
         }
     }
@@ -667,6 +681,56 @@ impl Service {
             let (_, key) = self.ai_key_for(&json!({"provider": provider.as_str()}))?;
             Ok((AiChoice { provider, model, reasoning }, key))
         })
+    }
+
+    /// Bytes for the preview pane: the file itself, a PNG of a TIFF's first
+    /// page, or the first 256 KB of a text file. Read-only.
+    pub fn serve_file(&self, id: u32, as_: &str) -> Result<(String, Vec<u8>), ApiError> {
+        self.with_session(|_| Ok(()))?;
+        let path = self.file_path(id)?;
+        let meta = std::fs::metadata(&path).map_err(|_| ApiError::new(404, "File not reachable"))?;
+        if meta.len() > 300 * 1024 * 1024 {
+            return Err(ApiError::new(413, "Too large to preview"));
+        }
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        match as_ {
+            "png" => {
+                let img = image::open(&path).map_err(|e| ApiError::new(415, format!("Can't render this image: {e}")))?;
+                let img = if img.width() > 2400 || img.height() > 2400 { img.thumbnail(2400, 2400) } else { img };
+                let mut out = std::io::Cursor::new(Vec::new());
+                img.write_to(&mut out, image::ImageFormat::Png).map_err(|e| ApiError::new(500, e.to_string()))?;
+                Ok(("image/png".into(), out.into_inner()))
+            }
+            "text" => {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                std::fs::File::open(&path).and_then(|f| f.take(256 * 1024).read_to_end(&mut buf)).map_err(|_| ApiError::new(404, "File not reachable"))?;
+                Ok(("text/plain; charset=utf-8".into(), String::from_utf8_lossy(&buf).into_owned().into_bytes()))
+            }
+            _ => {
+                let ct = match ext.as_str() {
+                    "pdf" => "application/pdf",
+                    "jpg" | "jpeg" | "jfif" => "image/jpeg",
+                    "png" => "image/png",
+                    "gif" => "image/gif",
+                    "bmp" => "image/bmp",
+                    "webp" => "image/webp",
+                    "txt" | "log" | "csv" => "text/plain; charset=utf-8",
+                    _ => "application/octet-stream",
+                };
+                let bytes = std::fs::read(&path).map_err(|_| ApiError::new(404, "File not reachable"))?;
+                Ok((ct.into(), bytes))
+            }
+        }
+    }
+
+    pub fn serve_asset(name: &str) -> Option<(&'static str, &'static [u8])> {
+        match name {
+            "cat.gif" => Some(("image/gif", include_bytes!("../../assets/Loading_Cat.gif"))),
+            "logo.png" => Some(("image/png", include_bytes!("../../assets/TracePoint_Logo_Transparent.png"))),
+            "mark.png" => Some(("image/png", include_bytes!("../../assets/mark512.png"))),
+            _ => None,
+        }
     }
 
     pub fn cancel_flag(&self) -> &AtomicBool {

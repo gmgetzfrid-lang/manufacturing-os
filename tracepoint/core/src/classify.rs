@@ -204,8 +204,10 @@ pub fn classify(name: &str, ext: &str, roles: &[DirRole]) -> (Category, &'static
     if ext == ".dwg" || ext == ".dxf" || ext == ".dgn" {
         return (Category::Drawings, "CAD Drawing");
     }
-    let stem = name.rsplit_once('.').map(|(a, _)| a).unwrap_or(name);
-    let by_name = NAME_RULES.iter().find(|(re, _, _)| re.is_match(stem)).map(|(_, c, t)| (*c, *t));
+    // Underscores join words in THOR names ("56_5610.15_report_022218");
+    // treat them as spaces so word rules see "report".
+    let stem = name.rsplit_once('.').map(|(a, _)| a).unwrap_or(name).replace('_', " ");
+    let by_name = NAME_RULES.iter().find(|(re, _, _)| re.is_match(&stem)).map(|(_, c, t)| (*c, *t));
     let by_role = nearest.map(|r| match r {
         DirRole::Inspection => (Category::Inspection, "Inspection / MI Record"),
         DirRole::Drawings => (Category::Drawings, "Drawing"),
@@ -249,6 +251,8 @@ mod tests {
         assert_eq!(classify("3002-D 1086_SHT06_R50_02-27-25.pdf", ".pdf", &[]).0, Category::Drawings);
         assert_eq!(classify("U-1A.pdf", ".pdf", &[]).0, Category::CodeDocuments);
         assert_eq!(classify("V-02 report.msg", ".msg", &[]).0, Category::Email);
+        assert_eq!(classify("CRU-FE-100_P&ID.pdf", ".pdf", &[]).0, Category::Pid);
+        assert_eq!(classify("56_5610.15_field-notes_022218.pdf", ".pdf", &[]).1, "Field Notes");
         assert_eq!(DirRole::from_name("DATA SHEETS"), DirRole::Datasheets);
         assert_eq!(DirRole::from_name("2018-02-22 EXT UT"), DirRole::Inspection);
         assert_eq!(DirRole::from_name("PICTURES"), DirRole::Photos);

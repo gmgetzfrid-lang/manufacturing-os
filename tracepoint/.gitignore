@@ -1,3 +1,5 @@
 /target
 /assets/index.tpz
 /assets/pdfium.dll
+/ui/node_modules
+/ui/dist

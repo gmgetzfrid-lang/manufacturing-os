@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "app"]
+members = ["core", "app", "tools/tpserve"]
 
 [workspace.package]
 version = "2.0.0"
