@@ -356,40 +356,73 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ── Word rarity ──────────────────────────────────────────────────────────────
+--
+-- How many files hold each search token. A rare word ("tray": 913 files) says
+-- far more about what is wanted than a common one ("crude": 40,000), so the
+-- search weighs every word by its rarity. Rebuilt from the search vectors by
+-- thor_refresh_lexemes() after each import; the '' row holds the file count.
+
+CREATE TABLE IF NOT EXISTS thor_lexemes (
+  org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  lexeme TEXT NOT NULL,
+  df INTEGER NOT NULL,
+  PRIMARY KEY (org_id, lexeme)
+);
+CREATE INDEX IF NOT EXISTS thor_lexemes_prefix_idx ON thor_lexemes (org_id, lexeme text_pattern_ops);
+ALTER TABLE thor_lexemes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS thor_lexemes_read ON thor_lexemes;
+CREATE POLICY thor_lexemes_read ON thor_lexemes FOR SELECT USING (caller_is_active_member(org_id));
+REVOKE ALL ON thor_lexemes FROM anon;
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON thor_lexemes FROM authenticated;
+
+-- Importer-only (not granted to API roles).
+CREATE OR REPLACE FUNCTION thor_refresh_lexemes(p_org UUID)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+DECLARE v_n INTEGER;
+BEGIN
+  DELETE FROM thor_lexemes WHERE org_id = p_org;
+  INSERT INTO thor_lexemes (org_id, lexeme, df)
+  SELECT p_org, word, ndoc FROM ts_stat(format('SELECT search_tsv FROM thor_files WHERE org_id = %L', p_org));
+  INSERT INTO thor_lexemes (org_id, lexeme, df)
+  SELECT p_org, '', count(*) FROM thor_files WHERE org_id = p_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN (SELECT count(*) FROM thor_lexemes WHERE org_id = p_org);
+END;
+$$;
+REVOKE ALL ON FUNCTION thor_refresh_lexemes FROM PUBLIC, anon, authenticated;
+
 -- ── Search ───────────────────────────────────────────────────────────────────
 --
 -- One call answers a search box + filters with a page of ranked results.
 --
 -- What the person asked for outright is REQUIRED: a type ("only PDFs"), a
--- document kind ("drawings"), a unit, an equipment tag that resolved, dates,
--- sizes, a folder. p_tags are equipment tags ("v3"); with p_units they
+-- document kind ("only drawings"), a unit, an equipment tag that resolved,
+-- dates, sizes, a folder. p_tags are equipment tags ("v3"); with p_units they
 -- resolve through thor_aliases — "V-3 in the crude unit" means 2010.03, not
--- the five other V-3s. A kind is either-or: p_kind_exts (dwg, dxf) OR
--- p_kind_roles (a drawings / p_and_id folder).
+-- the five other V-3s. A tag that does not resolve is still required, matched
+-- whole as a word (V-1 in a unit that has none finds nothing, and says so).
 --
--- Every other word RANKS. p_terms are already normalised by lib/thor/tokens.ts
--- (lowercase, [a-z0-9.]) and each is a prefix ("prefrac" finds
--- PREFRACTIONATOR). A file scores per word by where it hits — 3 in its name,
--- 2 in its linked equipment's names, 1 in its folder chain — and files that
--- hit more of the words come first. A requested order (newest, largest…)
--- sorts within each level of words matched. With nothing required, a file
--- must hit at least one word. A tag that did not resolve (V-1 asked for in a
--- unit that has none) is still required, matched whole as a word in the
--- file's name, equipment or folders — so V-1 neither finds V-10 nor quietly
--- turns into "any PDF in the crude unit".
+-- Every other word RANKS. p_terms are normalised by lib/thor/tokens.ts and
+-- each is a prefix ("prefrac" finds PREFRACTIONATOR). A file's score is, per
+-- word it holds, the word's rarity (log of files / files holding it) × where
+-- it hit (3 in the filename, 2 in its linked equipment's names, 1 in its
+-- folder chain) × 2 for what the person said they are looking for
+-- (p_primary: "…I'm looking for TRAY DRAWINGS"). Files are grouped strong /
+-- partial / weak by score against the best possible; within a group the
+-- requested order applies (newest…), or the score itself for best match.
+-- Backup and lock files (.bak, .tmp, .dwl) score half: real, rarely wanted.
 --
--- Results come in tiers by how many words a file hits; within a tier the
--- requested order applies (or, for best match, where the words hit). Only
--- the tier a page falls in is read, so a broad word stays fast.
+-- Fast on 211k files: the rarest words pick the candidates (a few thousand
+-- files at most, scored whole); files holding only common words follow in
+-- date order, scored a page at a time. Counts stop at 1,000.
 --
--- total_count is everything that qualifies and full_count what hits every
--- word, both counted up to 1,000 (total_capped / full_capped say there are
--- more). matched_terms lists the words each file hit, for the UI to show.
---
--- SECURITY DEFINER so the per-row RLS check does not run 211k times; the
--- membership check is done once, up front.
+-- matched_terms says, per word hit, where: 'tray:name', 'prefrac:folder',
+-- 'v3:equipment' — the UI turns that into "why this file".
 
--- Signature changes would otherwise leave an overload PostgREST cannot pick.
 DO $$
 DECLARE f REGPROCEDURE;
 BEGIN
@@ -417,7 +450,8 @@ CREATE OR REPLACE FUNCTION thor_search(
   p_include_excluded BOOLEAN DEFAULT FALSE,
   p_sort TEXT DEFAULT 'relevance',
   p_limit INTEGER DEFAULT 50,
-  p_offset INTEGER DEFAULT 0
+  p_offset INTEGER DEFAULT 0,
+  p_primary TEXT[] DEFAULT '{}'
 )
 RETURNS TABLE (
   file_id TEXT,
@@ -435,7 +469,9 @@ RETURNS TABLE (
   folder_role TEXT,
   equipment_numbers TEXT[],
   observation_state TEXT,
+  -- Score as a share of the best possible (0–1), and its group: 2 strong, 1 partial, 0 weak.
   rank REAL,
+  strength INTEGER,
   matched_terms TEXT[],
   total_count BIGINT,
   total_capped BOOLEAN,
@@ -451,40 +487,48 @@ DECLARE
   v_q TSQUERY[] := '{}';
   v_qa TSQUERY[] := '{}';
   v_qb TSQUERY[] := '{}';
+  v_wt REAL[] := '{}';
+  v_df BIGINT[] := '{}';
   v_any TSQUERY;
   v_all TSQUERY;
+  v_sel TSQUERY;
   v_must TSQUERY;
   v_tag_equipment TEXT[];
   v_unresolved TEXT[] := '{}';
   v_tag TEXT;
   v_hit TEXT[];
   v_w TEXT;
+  v_pre BOOLEAN;
   v_lex TEXT;
+  v_n BIGINT;
+  v_d BIGINT;
+  v_max REAL := 0;
+  v_cum BIGINT := 0;
   v_limit INTEGER := LEAST(GREATEST(COALESCE(p_limit, 50), 1), 200);
+  v_offset INTEGER := GREATEST(COALESCE(p_offset, 0), 0);
   v_cap CONSTANT INTEGER := 1000;
+  v_sel_cap CONSTANT INTEGER := 6000;
   v_total BIGINT;
   v_full BIGINT;
-  v_n INTEGER;
-  v_k INTEGER;
   v_c BIGINT;
   v_got BIGINT;
-  v_need INTEGER;
-  v_skip INTEGER;
-  v_tq TEXT;
-  v_tiers TSQUERY[] := '{}';
-  v_cond TEXT;
-  v_from TEXT;
-  -- Per file: words hit, and where (name 3, equipment 2, folder 1 each).
-  v_score CONSTANT TEXT := 'SELECT count(*) FILTER (WHERE f.search_tsv @@ u.q) AS matched,
-       COALESCE(sum(CASE WHEN f.search_tsv @@ u.qa THEN 3 WHEN f.search_tsv @@ u.qb THEN 2
-                         WHEN f.search_tsv @@ u.q THEN 1 ELSE 0 END), 0) AS weighted,
-       COALESCE(array_agg(u.w) FILTER (WHERE f.search_tsv @@ u.q), ''{}'') AS words
-  FROM unnest($26::text[], $27::tsquery[], $28::tsquery[], $29::tsquery[]) AS u(w, q, qa, qb)';
   v_where TEXT;
   v_order TEXT;
   v_hard BOOLEAN;
   v_folder_like TEXT;
   v_name_like TEXT;
+  -- Per file: the score, its group, and where each word hit.
+  v_score CONSTANT TEXT := 'SELECT COALESCE(sum(u.wt * CASE WHEN f.search_tsv @@ u.qa THEN 3 WHEN f.search_tsv @@ u.qb THEN 2
+                                     WHEN f.search_tsv @@ u.q THEN 1 ELSE 0 END), 0) / $27
+         * CASE WHEN f.ext IN (''bak'', ''tmp'', ''dwl'', ''dwl2'', ''sv$'') THEN 0.5 ELSE 1 END AS score,
+       COALESCE(array_agg(u.w || CASE WHEN f.search_tsv @@ u.qa THEN '':name'' WHEN f.search_tsv @@ u.qb THEN '':equipment''
+                                      ELSE '':folder'' END) FILTER (WHERE f.search_tsv @@ u.q), ''{}'') AS words
+  FROM unnest($23::text[], $24::tsquery[], $25::tsquery[], $26::tsquery[], $28::real[]) AS u(w, q, qa, qb, wt)';
+  v_cols CONSTANT TEXT := 'f.file_id, f.root_id, f.unc_path, f.rel_path, f.folder_rel, f.filename, f.ext, f.size_bytes,
+       f.modified_at, f.unit_folder, f.unit_code, f.category_folder, f.folder_role, f.equipment_numbers,
+       f.observation_state, s.score::real,
+       (CASE WHEN s.score >= 0.6 THEN 2 WHEN s.score >= 0.3 THEN 1 ELSE 0 END)::int, s.words,
+       $17::bigint, $18::boolean, $21::bigint, $22::boolean, $3::text[]';
 BEGIN
   IF NOT caller_is_active_member(p_org) THEN
     RAISE EXCEPTION 'not a member of this organisation' USING ERRCODE = '42501';
@@ -506,30 +550,46 @@ BEGIN
       v_tag_equipment := COALESCE(v_tag_equipment, '{}') || v_hit;
     END IF;
   END LOOP;
+  SELECT string_agg(quote_literal(t), ' & ')::tsquery INTO v_must
+    FROM (SELECT regexp_replace(lower(x), '[^a-z0-9.]', '', 'g') AS t FROM unnest(v_unresolved) x) u
+   WHERE t !~ '^[.]*$';
 
-  -- Words, as tsqueries: any weight / name only (A) / name or equipment (A,B).
-  -- Lexemes keep [a-z0-9.] only — they are quoted straight into a tsquery.
-  FOR v_w, v_lex IN
-    SELECT w, CASE WHEN pre THEN quote_literal(w) || ':*' ELSE quote_literal(w) || ':' END
-      FROM (SELECT DISTINCT ON (w) w, pre FROM (
-              SELECT regexp_replace(lower(x), '[^a-z0-9.]', '', 'g') AS w, TRUE AS pre, o
-                FROM unnest(COALESCE(p_terms, '{}')) WITH ORDINALITY AS t(x, o)) s0
-             WHERE w !~ '^[.]*$' ORDER BY w, o) s
+  -- Words, rarest first, each with its weight. Lexemes keep [a-z0-9.] only —
+  -- they are quoted straight into a tsquery.
+  SELECT df INTO v_n FROM thor_lexemes WHERE org_id = p_org AND lexeme = '';
+  v_n := GREATEST(COALESCE(v_n, 1), 1);
+  FOR v_w, v_pre IN
+    SELECT w, bool_or(pr) FROM (
+      SELECT regexp_replace(lower(x), '[^a-z0-9.]', '', 'g') AS w,
+             regexp_replace(lower(x), '[^a-z0-9.]', '', 'g') = ANY (
+               SELECT regexp_replace(lower(y), '[^a-z0-9.]', '', 'g') FROM unnest(COALESCE(p_primary, '{}')) y) AS pr
+        FROM unnest(COALESCE(p_terms, '{}')) x) s
+     WHERE w !~ '^[.]*$' GROUP BY w
   LOOP
+    SELECT COALESCE(sum(l.df), 0) INTO v_d FROM thor_lexemes l
+     WHERE l.org_id = p_org AND l.lexeme LIKE replace(v_w, '_', '\_') || '%' AND l.lexeme <> '';
+    v_d := LEAST(v_d, v_n);
+    v_lex := quote_literal(v_w) || ':*';
     v_words := v_words || v_w;
-    -- 'w':* is any weight; 'w':*A only the name; 'w':*AB name or equipment.
-    -- A whole-word lexeme takes the weights directly: 'v1':A.
-    v_q := v_q || (CASE WHEN v_lex LIKE '%:*' THEN v_lex ELSE rtrim(v_lex, ':') END)::tsquery;
+    v_q := v_q || v_lex::tsquery;
     v_qa := v_qa || (v_lex || 'A')::tsquery;
     v_qb := v_qb || (v_lex || 'AB')::tsquery;
+    v_df := v_df || v_d;
+    v_wt := v_wt || (ln((v_n + 1)::real / (v_d + 1)) * CASE WHEN v_pre THEN 2 ELSE 1 END)::real;
   END LOOP;
   IF array_length(v_words, 1) > 0 THEN
     SELECT string_agg('(' || q::text || ')', ' | ')::tsquery, string_agg('(' || q::text || ')', ' & ')::tsquery
       INTO v_any, v_all FROM unnest(v_q) q;
+    SELECT sum(w * 3) INTO v_max FROM unnest(v_wt) w;
+    v_max := GREATEST(v_max, 0.0001);
+    -- The selective words: rarest first, until they cover ~6,000 files.
+    FOR v_lex, v_d IN SELECT q::text, d FROM unnest(v_q, v_df) AS t(q, d) ORDER BY d LOOP
+      EXIT WHEN v_sel IS NOT NULL AND v_cum + v_d > v_sel_cap;
+      EXIT WHEN v_d > v_sel_cap * 2;
+      v_sel := CASE WHEN v_sel IS NULL THEN v_lex::tsquery ELSE v_sel || v_lex::tsquery END;
+      v_cum := v_cum + v_d;
+    END LOOP;
   END IF;
-  SELECT string_agg(quote_literal(t), ' & ')::tsquery INTO v_must
-    FROM (SELECT regexp_replace(lower(x), '[^a-z0-9.]', '', 'g') AS t FROM unnest(v_unresolved) x) u
-   WHERE t !~ '^[.]*$';
 
   -- Required: only what was asked for outright. Values travel as
   -- parameters, never as SQL text.
@@ -556,120 +616,86 @@ BEGIN
     v_where := v_where || ' AND lower(f.filename) LIKE $16';
     v_name_like := '%' || replace(replace(replace(lower(p_name_contains), '\', '\\'), '%', '\%'), '_', '\_') || '%';
   END IF;
-  v_hard := v_where <> 'f.org_id = $1' AND v_where <> 'f.org_id = $1 AND f.useful';
+  v_hard := v_where !~ '^f\.org_id = \$1( AND f\.useful)?$';
   -- Nothing required: a file must hit at least one word.
   IF v_any IS NOT NULL AND NOT v_hard THEN v_where := v_where || ' AND f.search_tsv @@ $2'; END IF;
 
-  -- How many qualify, and how many hit every word — counted up to a cap
-  -- (the UI says "1,000+"): counting 100,000 matches would read 100,000 rows.
+  -- Counted up to a cap (the UI says "1,000+"): counting 100,000 matches
+  -- would read 100,000 rows.
   EXECUTE format('SELECT count(*) FROM (SELECT 1 FROM thor_files f WHERE %s LIMIT %s) c', v_where, v_cap + 1)
      INTO v_total
     USING p_org, v_any, v_tag_equipment, p_equipment, p_kind_exts, p_kind_roles, p_exts, p_units, p_roles,
           p_folder, v_folder_like, p_min_size, p_max_size, p_after, p_before, v_name_like;
+  IF v_all IS NOT NULL THEN
+    EXECUTE format('SELECT count(*) FROM (SELECT 1 FROM thor_files f WHERE %s AND f.search_tsv @@ $17 LIMIT %s) c', v_where, v_cap + 1)
+       INTO v_full
+      USING p_org, v_any, v_tag_equipment, p_equipment, p_kind_exts, p_kind_roles, p_exts, p_units, p_roles,
+            p_folder, v_folder_like, p_min_size, p_max_size, p_after, p_before, v_name_like, v_all;
+  ELSE
+    v_full := v_total;
+  END IF;
+
+  v_order := CASE
+    WHEN p_sort = 'oldest' THEN 'f.modified_at ASC NULLS FIRST, f.file_id'
+    WHEN p_sort = 'largest' THEN 'f.size_bytes DESC NULLS FIRST, f.file_id'
+    WHEN p_sort = 'smallest' THEN 'f.size_bytes ASC NULLS LAST, f.file_id'
+    WHEN p_sort = 'name' THEN 'lower(f.filename), f.file_id'
+    ELSE 'f.modified_at DESC NULLS LAST, f.file_id' END;
 
   IF v_any IS NULL THEN
-    -- No words: a plain ORDER BY; the planner estimates these filters well
-    -- and picks between walking the sort's index and sorting the matches.
-    v_order := CASE
-      WHEN p_sort = 'oldest' THEN 'f.modified_at ASC NULLS FIRST, f.file_id'
-      WHEN p_sort = 'largest' THEN 'f.size_bytes DESC NULLS FIRST, f.file_id'
-      WHEN p_sort = 'smallest' THEN 'f.size_bytes ASC NULLS LAST, f.file_id'
-      WHEN p_sort = 'name' THEN 'lower(f.filename), f.file_id'
-      ELSE 'f.modified_at DESC NULLS LAST, f.file_id' END;
+    -- No words: a plain ORDER BY; the planner estimates these filters well.
     RETURN QUERY EXECUTE format(
       'SELECT f.file_id, f.root_id, f.unc_path, f.rel_path, f.folder_rel, f.filename, f.ext, f.size_bytes,
               f.modified_at, f.unit_folder, f.unit_code, f.category_folder, f.folder_role, f.equipment_numbers,
-              f.observation_state, 0::real, ''{}''::text[], $17::bigint, $18::boolean, $17::bigint, $18::boolean, $3::text[]
+              f.observation_state, 0::real, 0, ''{}''::text[], $17::bigint, $18::boolean, $17::bigint, $18::boolean, $3::text[]
          FROM thor_files f WHERE %s ORDER BY %s LIMIT $19 OFFSET $20', v_where, v_order)
       USING p_org, v_any, v_tag_equipment, p_equipment, p_kind_exts, p_kind_roles, p_exts, p_units, p_roles,
             p_folder, v_folder_like, p_min_size, p_max_size, p_after, p_before, v_name_like,
-            LEAST(v_total, v_cap), v_total > v_cap, v_limit, GREATEST(COALESCE(p_offset, 0), 0);
+            LEAST(v_total, v_cap), v_total > v_cap, v_limit, v_offset;
     RETURN;
   END IF;
 
-  -- Words: results come in tiers — every word, then one fewer, … then (when
-  -- something else was required) none. tier[k] matches files holding at
-  -- least k of the words: an OR of every k-word AND, which the GIN index
-  -- answers without reading the files. Only the tier a page falls in is read.
-  v_n := LEAST(array_length(v_q, 1), 6);
-  FOR v_k IN 1..v_n LOOP
-    WITH RECURSIVE c(idx, last) AS (
-      SELECT ARRAY[i], i FROM generate_series(1, v_n) i
-      UNION ALL
-      SELECT c.idx || j, j FROM c, generate_series(1, v_n) j WHERE j > c.last AND array_length(c.idx, 1) < v_k)
-    SELECT string_agg('(' || (SELECT string_agg('(' || v_q[i]::text || ')', ' & ') FROM unnest(c.idx) i) || ')', ' | ')
-      INTO v_tq FROM c WHERE array_length(c.idx, 1) = v_k;
-    v_tiers := v_tiers || v_tq::tsquery;
-  END LOOP;
-
-  EXECUTE format('SELECT count(*) FROM (SELECT 1 FROM thor_files f WHERE %s AND f.search_tsv @@ $17 LIMIT %s) c', v_where, v_cap + 1)
-     INTO v_full
-    USING p_org, v_any, v_tag_equipment, p_equipment, p_kind_exts, p_kind_roles, p_exts, p_units, p_roles,
-          p_folder, v_folder_like, p_min_size, p_max_size, p_after, p_before, v_name_like, v_tiers[v_n];
-
-  v_need := v_limit;
-  v_skip := GREATEST(COALESCE(p_offset, 0), 0);
-  FOR v_k IN REVERSE v_n..(CASE WHEN v_hard THEN 0 ELSE 1 END) LOOP
-    -- Exactly k words: in tier k, not in tier k+1.
-    v_cond := CASE WHEN v_k = 0 THEN 'NOT (f.search_tsv @@ $21)'
-                   WHEN v_k = v_n THEN 'f.search_tsv @@ $22'
-                   ELSE 'f.search_tsv @@ $22 AND NOT (f.search_tsv @@ $23)' END;
-    IF v_k = v_n THEN v_c := v_full;
-    ELSE
-      EXECUTE format('SELECT count(*) FROM (SELECT 1 FROM thor_files f WHERE %s AND %s LIMIT %s) c', v_where, v_cond, v_cap + 1)
-         INTO v_c
-        USING p_org, v_any, v_tag_equipment, p_equipment, p_kind_exts, p_kind_roles, p_exts, p_units, p_roles,
-              p_folder, v_folder_like, p_min_size, p_max_size, p_after, p_before, v_name_like,
-              NULL, NULL, NULL, NULL, v_tiers[1], v_tiers[GREATEST(v_k, 1)], v_tiers[LEAST(v_k + 1, v_n)];
-    END IF;
-    CONTINUE WHEN v_c = 0;
-    IF v_c <= v_cap AND v_skip >= v_c THEN v_skip := v_skip - v_c; CONTINUE; END IF;
-
-    IF v_c <= v_cap THEN
-      -- A tier this size is scored whole: where each word hit decides the order.
-      v_order := CASE
-        WHEN p_sort = 'newest' THEN 'f.modified_at DESC NULLS LAST, s.weighted DESC, f.file_id'
-        WHEN p_sort = 'oldest' THEN 'f.modified_at ASC NULLS FIRST, s.weighted DESC, f.file_id'
-        WHEN p_sort = 'largest' THEN 'f.size_bytes DESC NULLS FIRST, f.file_id'
-        WHEN p_sort = 'smallest' THEN 'f.size_bytes ASC NULLS LAST, f.file_id'
-        WHEN p_sort = 'name' THEN 'lower(f.filename), f.file_id'
-        ELSE 's.weighted DESC, f.modified_at DESC NULLS LAST, f.file_id' END;
-      v_from := format('thor_files f CROSS JOIN LATERAL (%s) s WHERE %s AND %s ORDER BY %s LIMIT $19 OFFSET $20',
-                       v_score, v_where, v_cond, v_order);
-    ELSE
-      -- A broad tier ("inspection" is in half of THOR): walk the date (or
-      -- size, name) index and stop after one page; score just that page.
-      -- The planner can't tell a word in half the files from one in a few,
-      -- so it is told.
-      PERFORM set_config('enable_bitmapscan', 'off', TRUE);
-      v_order := CASE
-        WHEN p_sort = 'oldest' THEN 'f.modified_at ASC NULLS FIRST, f.file_id'
-        WHEN p_sort = 'largest' THEN 'f.size_bytes DESC NULLS FIRST, f.file_id'
-        WHEN p_sort = 'smallest' THEN 'f.size_bytes ASC NULLS LAST, f.file_id'
-        WHEN p_sort = 'name' THEN 'lower(f.filename), f.file_id'
-        ELSE 'f.modified_at DESC NULLS LAST, f.file_id' END;
-      v_from := format('(SELECT * FROM thor_files f WHERE %s AND %s ORDER BY %s LIMIT $19 OFFSET $20) f CROSS JOIN LATERAL (%s) s ORDER BY %s',
-                       v_where, v_cond, v_order, v_score, v_order);
-    END IF;
-
-    RETURN QUERY EXECUTE
-      'SELECT f.file_id, f.root_id, f.unc_path, f.rel_path, f.folder_rel, f.filename, f.ext, f.size_bytes,
-              f.modified_at, f.unit_folder, f.unit_code, f.category_folder, f.folder_role, f.equipment_numbers,
-              f.observation_state, (s.matched * 10 + s.weighted)::real, s.words,
-              $17::bigint, $18::boolean, $24::bigint, $25::boolean, $3::text[]
-         FROM ' || v_from
+  -- 1. Files holding a rare word: scored whole, best group first.
+  IF v_sel IS NOT NULL THEN
+    RETURN QUERY EXECUTE format(
+      'SELECT %s FROM thor_files f CROSS JOIN LATERAL (%s) s WHERE %s AND f.search_tsv @@ $29
+        ORDER BY (CASE WHEN s.score >= 0.6 THEN 2 WHEN s.score >= 0.3 THEN 1 ELSE 0 END) DESC, %s
+        LIMIT $19 OFFSET $20',
+      v_cols, v_score, v_where,
+      CASE WHEN p_sort IN ('newest', 'oldest', 'largest', 'smallest', 'name') THEN v_order || ', s.score DESC'
+           ELSE 's.score DESC, f.modified_at DESC NULLS LAST, f.file_id' END)
       USING p_org, v_any, v_tag_equipment, p_equipment, p_kind_exts, p_kind_roles, p_exts, p_units, p_roles,
             p_folder, v_folder_like, p_min_size, p_max_size, p_after, p_before, v_name_like,
-            LEAST(v_total, v_cap), v_total > v_cap, v_need, v_skip,
-            v_tiers[1], v_tiers[GREATEST(v_k, 1)], v_tiers[LEAST(v_k + 1, v_n)],
-            LEAST(v_full, v_cap), v_full > v_cap, v_words, v_q, v_qa, v_qb;
+            LEAST(v_total, v_cap), v_total > v_cap, v_limit, v_offset,
+            LEAST(v_full, v_cap), v_full > v_cap, v_words, v_q, v_qa, v_qb, v_max, v_wt, v_sel;
     GET DIAGNOSTICS v_got = ROW_COUNT;
-    PERFORM set_config('enable_bitmapscan', 'on', TRUE);
-    v_need := v_need - v_got;
-    EXIT WHEN v_need <= 0;
-    -- Past a capped tier the page runs on into the next from its start.
-    v_skip := CASE WHEN v_c > v_cap THEN 0 ELSE GREATEST(v_skip - v_c, 0) END;
-  END LOOP;
+    IF v_got >= v_limit THEN RETURN; END IF;
+    -- How many there were, to know where the rest starts.
+    EXECUTE format('SELECT count(*) FROM thor_files f WHERE %s AND f.search_tsv @@ $17', v_where)
+       INTO v_c
+      USING p_org, v_any, v_tag_equipment, p_equipment, p_kind_exts, p_kind_roles, p_exts, p_units, p_roles,
+            p_folder, v_folder_like, p_min_size, p_max_size, p_after, p_before, v_name_like, v_sel;
+    v_offset := GREATEST(v_offset - v_c, 0);
+    v_limit := v_limit - v_got::int;
+  END IF;
+
+  -- 2. The rest — files holding only common words (or, when something else
+  -- was required, none): in the requested order, a page at a time. The
+  -- planner can't tell a word in half the files from one in a few, so for a
+  -- broad set it is told to walk the order's index.
+  PERFORM set_config('enable_bitmapscan', 'off', TRUE);
+  RETURN QUERY EXECUTE format(
+    'SELECT %s FROM (SELECT * FROM thor_files f WHERE %s %s ORDER BY %s LIMIT $19 OFFSET $20) f
+       CROSS JOIN LATERAL (%s) s ORDER BY %s',
+    v_cols, v_where, CASE WHEN v_sel IS NOT NULL THEN 'AND NOT (f.search_tsv @@ $29)' ELSE '' END,
+    v_order, v_score,
+    CASE WHEN v_sel IS NULL AND p_sort NOT IN ('newest', 'oldest', 'largest', 'smallest', 'name')
+         THEN 's.score DESC, ' || v_order ELSE v_order END)
+    USING p_org, v_any, v_tag_equipment, p_equipment, p_kind_exts, p_kind_roles, p_exts, p_units, p_roles,
+          p_folder, v_folder_like, p_min_size, p_max_size, p_after, p_before, v_name_like,
+          LEAST(v_total, v_cap), v_total > v_cap, v_limit, v_offset,
+          LEAST(v_full, v_cap), v_full > v_cap, v_words, v_q, v_qa, v_qb, v_max, v_wt, v_sel;
+  PERFORM set_config('enable_bitmapscan', 'on', TRUE);
 END;
 $$;
 

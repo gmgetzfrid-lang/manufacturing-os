@@ -24,9 +24,11 @@ export interface ThorFile {
   folder_role: string | null;
   equipment_numbers: string[];
   observation_state: string;
-  /** Words matched × 10 + where they hit (name 3, equipment 2, folder 1 each). */
+  /** Score as a share of the best possible, 0–1 (rarity × where each word hit). */
   rank: number;
-  /** The search words this file hit. */
+  /** 2 strong, 1 partial, 0 weak. */
+  strength: number;
+  /** Each word hit and where: "tray:name", "prefrac:equipment", "drawing:folder". */
   matched_terms: string[];
 }
 
@@ -76,6 +78,7 @@ export interface ThorSearchArgs {
   p_sort: ThorSort;
   p_limit: number;
   p_offset: number;
+  p_primary: string[];
 }
 
 const uniq = <T,>(xs: T[]) => [...new Set(xs)];
@@ -110,6 +113,7 @@ export function buildArgs(orgId: string, q: ThorQuery | null, f: ThorFilters, pa
     p_sort: sort,
     p_limit: page.limit,
     p_offset: page.offset,
+    p_primary: q?.primary ?? [],
   };
 }
 
@@ -251,4 +255,13 @@ export async function thorFileDetail(orgId: string, f: Pick<ThorFile, "file_id" 
     }),
     identifiers: (idents.data ?? []) as ThorFileDetail["identifiers"],
   };
+}
+
+/** Files directly in one THOR folder (for drilling into THOR on the map). */
+export async function thorFilesIn(orgId: string, folderRel: string, limit = 300): Promise<ThorFile[]> {
+  const { data, error } = await supabase.from("thor_files")
+    .select("file_id, root_id, unc_path, rel_path, folder_rel, filename, ext, size_bytes, modified_at, unit_folder, unit_code, category_folder, folder_role, equipment_numbers, observation_state")
+    .eq("org_id", orgId).eq("folder_rel", folderRel).eq("useful", true).order("modified_at", { ascending: false }).limit(limit);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Omit<ThorFile, "rank" | "strength" | "matched_terms">[]).map((f) => ({ ...f, rank: 0, strength: 0, matched_terms: [] }));
 }

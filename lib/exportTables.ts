@@ -198,7 +198,7 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
   ...Object.fromEntries(
     ["thor_roots", "thor_crawls", "thor_directories", "thor_files", "thor_entities", "thor_aliases",
       "thor_alias_entities", "thor_file_entities", "thor_relationships", "thor_doc_families",
-      "thor_doc_members", "thor_identifiers", "thor_evidence", "thor_issues"].map((t) => [t,
+      "thor_doc_members", "thor_identifiers", "thor_evidence", "thor_issues", "thor_lexemes"].map((t) => [t,
       "THOR NAS index (paths, sizes, dates, indexer inferences) — copied from the THOR Indexer's database, never authored here; restore by re-running scripts/thor_import.py"]),
   ),
 };

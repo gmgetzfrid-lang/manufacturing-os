@@ -12,13 +12,19 @@
 //   ThorViewerLayer  — the original, read locally, shown in place.
 
 import React, { Suspense, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Copy, ExternalLink, FolderOpen, HardDrive, Loader2, X, Check, Info } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Copy, ExternalLink, FolderOpen, HardDrive, Loader2, X, Check, Info, Eye, FolderSearch } from "lucide-react";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf } from "@/lib/fileFinder/fileTypes";
 import { countLabel, formatBytes, unitName, type ThorSort } from "@/lib/thor/query";
 import { thorFileDetail, type ThorFile, type ThorFileDetail } from "@/lib/thor/client";
 import type { ThorSearchState } from "@/hooks/useThorSearch";
 import { copyText, type ThorOpener } from "./useThorOpener";
+import OpenerSetup from "./OpenerSetup";
+import { explainThor, type ThorReason } from "@/lib/thor/explain";
+import { launch, openerInstalled, thorOpenUrl } from "@/lib/thor/opener";
+import { viewKind } from "@/lib/thor/nasAccess";
+import type { ThorQuery } from "@/lib/thor/query";
+import type { ThorVocabulary } from "@/lib/thor/client";
 
 const FullScreenViewer = React.lazy(() => import("@/components/viewers/FullScreenViewer"));
 
@@ -218,12 +224,72 @@ export function ThorHitList({ search, systemEmpty, onSelect, onShowAll, selected
   );
 }
 
+/** How each kind of reason reads: hits green, misses struck through, requirements purple. */
+const REASON_STYLE: Record<ThorReason["where"], string> = {
+  name: "text-green-800",
+  equipment: "text-emerald-800",
+  folder: "text-teal-800",
+  missing: "text-[var(--color-text-muted)] line-through decoration-1",
+  required: "text-purple-800",
+  backup: "text-amber-800",
+};
+
+const CHIP: Record<ThorReason["where"], string> = {
+  name: "bg-green-100 text-green-900 border-green-300",
+  equipment: "bg-emerald-50 text-emerald-900 border-emerald-300",
+  folder: "bg-teal-50 text-teal-900 border-teal-200",
+  missing: "text-[var(--color-text-muted)] line-through border-transparent",
+  required: "text-purple-800 border-transparent",
+  backup: "bg-amber-50 text-amber-900 border-amber-200",
+};
+const CHIP_HINT: Record<ThorReason["where"], string> = {
+  name: "in the file name", equipment: "in its equipment's name", folder: "in its folders", missing: "not in this file", required: "", backup: "",
+};
+
+/** The reasons as one line of chips: green = file name, emerald = equipment, teal = folder, struck = missing. */
+export function ReasonChips({ reasons }: { reasons: ThorReason[] }) {
+  if (!reasons.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] font-semibold">
+      {reasons.map((r, i) => (
+        <span key={i} title={r.text} className={`rounded border px-1 ${CHIP[r.where]}`}>
+          {r.word ? r.word : r.text}{r.word && r.where !== "missing" ? <span className="font-normal opacity-70"> {r.where === "name" ? "name" : r.where === "equipment" ? "equip" : "folder"}</span> : null}
+        </span>
+      ))}
+      <span className="sr-only">{reasons.map((r) => `${r.word ?? ""} ${CHIP_HINT[r.where]}`).join(", ")}</span>
+    </div>
+  );
+}
+
+export function Reasons({ reasons, max = 6 }: { reasons: ThorReason[]; max?: number }) {
+  if (!reasons.length) return null;
+  return (
+    <ul className="mt-1 space-y-0.5 text-[11px]">
+      {reasons.slice(0, max).map((r, i) => (
+        <li key={i} className={`flex items-start gap-1 ${REASON_STYLE[r.where]}`}>
+          <span className="w-3 shrink-0 text-center">{r.where === "missing" ? "·" : r.where === "required" ? "✓" : "+"}</span>
+          <span className="min-w-0 break-words">{r.text}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 // ── One file ──────────────────────────────────────────────────────────────
 
-export function ThorFileCard({ orgId, f, opener, onClose, onFolder, onEquipment, root }: {
+export function ThorFileCard({ orgId, f, opener, onClose, onFolder, onEquipment, root, rootUnc, q, vocab, resolved }: {
   orgId: string; f: ThorFile; opener: ThorOpener; onClose: () => void;
   onFolder: (rel: string) => void; onEquipment: (n: string) => void; root?: string;
+  /** The share, for the opener's setup file. */
+  rootUnc: string; q: ThorQuery | null; vocab: ThorVocabulary | null; resolved: string[] | null;
 }) {
+  const [setup, setSetup] = useState<null | "open" | "show">(null);
+  /** Open in its own program (or show it in Explorer) through the one-time helper. */
+  const native = (action: "open" | "show") => {
+    if (!openerInstalled()) { setSetup(action); return; }
+    launch(thorOpenUrl(action, f.rel_path));
+  };
+  const canPreview = viewKind(f.ext) !== "none";
   const [loaded, setLoaded] = useState<{ id: string; d: ThorFileDetail } | null>(null);
   const detail = loaded?.id === f.file_id ? loaded.d : null;
   const [copied, setCopied] = useState(false);
@@ -256,19 +322,38 @@ export function ThorFileCard({ orgId, f, opener, onClose, onFolder, onEquipment,
       <ThorLocation f={f} root={root} max={8} />
 
       <div className="flex flex-wrap items-center gap-2">
-        <button onClick={() => void opener.open(f)} disabled={opener.opening === f.file_id}
-          className="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold disabled:opacity-60"
-          title="Read the original from THOR in this browser — read-only, nothing is uploaded">
-          {opener.opening === f.file_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Open original
+        <button onClick={() => native("open")}
+          className="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold"
+          title="Open the file from THOR in its own program (Adobe, AutoCAD, Excel…)">
+          <ExternalLink className="w-3.5 h-3.5" /> Open
+        </button>
+        {canPreview && (
+          <button onClick={() => void opener.open(f)} disabled={opener.opening === f.file_id}
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold disabled:opacity-60"
+            title="Show it here, read from THOR in this browser — nothing is uploaded">
+            {opener.opening === f.file_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />} Preview
+          </button>
+        )}
+        <button onClick={() => native("show")} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold" title="Open File Explorer with this file selected">
+          <FolderOpen className="w-3.5 h-3.5" /> Show in folder
         </button>
         <button onClick={async () => { if (await copyText(f.unc_path)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
           className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold">
           {copied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />} Copy path
         </button>
-        <button onClick={() => onFolder(f.folder_rel)} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold" title="List everything in this folder">
-          <FolderOpen className="w-3.5 h-3.5" /> Folder
+        <button onClick={() => onFolder(f.folder_rel)} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold" title="List everything in this folder here">
+          <FolderSearch className="w-3.5 h-3.5" /> List folder
         </button>
       </div>
+      {setup && (
+        <OpenerSetup root={rootUnc} onClose={() => setSetup(null)} onDone={() => { const a = setup; setSetup(null); launch(thorOpenUrl(a, f.rel_path)); }} />
+      )}
+      {(q?.terms.length || resolved?.length) ? (
+        <div>
+          <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Why it came up</div>
+          <Reasons reasons={explainThor(f, q, vocab, resolved)} max={12} />
+        </div>
+      ) : null}
       {problem && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900 flex items-start gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />

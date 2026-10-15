@@ -68,6 +68,13 @@ describe("parseThorQuery", () => {
     expect(parseThorQuery("rev3 sht04", UNITS, NOW).tags).toEqual([]);
   });
 
+  it("what comes after 'looking for' is what is wanted", () => {
+    const q = parseThorQuery("prefrac drawings to the crude tower im looking for tray drawings", UNITS, NOW);
+    expect(q.units).toEqual(["2000"]);
+    expect(q.terms).toEqual(["prefrac", "drawing", "tower", "tray"]);
+    expect(q.primary.sort()).toEqual(["drawing", "tray"]);
+  });
+
   it("keeps the words that describe the document", () => {
     expect(parseThorQuery("prefrac tower inspection report", UNITS, NOW).terms).toEqual(["prefrac", "tower", "inspection", "report"]);
   });

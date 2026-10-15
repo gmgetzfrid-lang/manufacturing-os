@@ -534,6 +534,11 @@ def main():
             ("created_at", "timestamptz"), ("details", "jsonb"),
         ], ["org_id", "issue_id"], batch=args.batch)
 
+    # Word rarity for ranking ("tray" is in 900 files, "crude" in 40,000).
+    if ("files" in tables or args.vectors_only) and not args.dry_run:
+        n = tgt.sql(f"SELECT thor_refresh_lexemes('{org}') AS n")[0]["n"]
+        print(f"  word rarity: {n:,} distinct words", file=sys.stderr)
+
     # ── Validate
     print("\nvalidation", file=sys.stderr)
     checks = [("thor_roots", "roots"), ("thor_crawls", "crawls"), ("thor_directories", "dir_queue"),

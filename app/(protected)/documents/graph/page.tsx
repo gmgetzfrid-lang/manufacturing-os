@@ -63,13 +63,16 @@ import { findEstate } from "@/lib/find/client";
 import type { FindResponse, FindRelation } from "@/lib/find/types";
 import { EntityStrip, EquipmentCards, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
 import { parseThorQuery, withoutChip, type ThorQuery, type ThorSort } from "@/lib/thor/query";
-import { thorOverview, thorVocabulary, EMPTY_FILTERS, type ThorFile, type ThorFilters as ThorFilterState, type ThorOverview, type ThorVocabulary } from "@/lib/thor/client";
+import { thorOverview, thorVocabulary, thorChildren, thorFilesIn, filtersActive, EMPTY_FILTERS, type ThorFile, type ThorDirectory, type ThorFilters as ThorFilterState, type ThorOverview, type ThorVocabulary } from "@/lib/thor/client";
+import { ThorResultList } from "@/components/thor/ThorList";
+import { launch, openerInstalled, thorOpenUrl } from "@/lib/thor/opener";
+import { viewKind } from "@/lib/thor/nasAccess";
 import { ghostCompletion, exampleSearches, resolveTags, categoryChips, describe as describeEquipment } from "@/lib/thor/suggest";
 import GhostField from "@/components/thor/GhostField";
 import { useThorSearch } from "@/hooks/useThorSearch";
 import ThorFilters from "@/components/thor/ThorFilters";
 import ThorIndexPanel from "@/components/thor/ThorIndexPanel";
-import { ThorResultsTable, ThorHitList, ThorFileCard, ThorViewerLayer } from "@/components/thor/ThorResults";
+import { ThorResultsTable, ThorFileCard, ThorViewerLayer } from "@/components/thor/ThorResults";
 import { useThorOpener } from "@/components/thor/useThorOpener";
 
 /** Which sources a search covers: everything, the system's own documents, or THOR (the NAS index). */
@@ -152,6 +155,14 @@ function GraphPageInner() {
   const [thorDropped, setThorDropped] = useState<string[]>([]);
   const [thorFilters, setThorFilters] = useState<ThorFilterState>(() => { const f = params.get("thorFolder"); return f ? { ...EMPTY_FILTERS, folder: f } : EMPTY_FILTERS; });
   const [thorSel, setThorSel] = useState<ThorFile | null>(null);
+  /** Which source's results the left panel shows when searching both; null = the one with results. */
+  const [tabPick, setTabPick] = useState<"system" | "thor" | null>(null);
+  /** THOR results as the wide table over the map. */
+  const [thorTable, setThorTable] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [thorFiltersOpen, setThorFiltersOpen] = useState(false);
+  /** THOR folders opened on the map: their subfolders and files, fetched as they are opened. */
+  const [thorTree, setThorTree] = useState<Record<string, { dirs: ThorDirectory[]; files: ThorFile[] }>>({});
   const thorUnits = useMemo(() => (thorInfo?.units ?? []).filter((u) => u.code).map((u) => ({ code: u.code!, folder: u.folder })), [thorInfo]);
   // Parsed against the units THOR knows — re-read if they arrive after the words.
   const thorQuery = useMemo<ThorQuery | null>(
@@ -177,7 +188,7 @@ function GraphPageInner() {
   const thorExamples = useMemo(() => exampleSearches(thorVocab), [thorVocab]);
   const ghost = useMemo(() => (thorInfo ? ghostCompletion(query, thorVocab) : ""), [query, thorVocab, thorInfo]);
   /** Narrow THOR to a folder and show it. */
-  const thorFolder = useCallback((rel: string) => { setThorFilters((f) => ({ ...f, folder: rel || undefined })); setSource("thor"); setPanel("search"); }, []);
+  const thorFolder = useCallback((rel: string) => { setThorFilters((f) => ({ ...f, folder: rel || undefined })); setSource((s) => (s === "system" ? "all" : s)); setTabPick("thor"); setPanel("search"); }, []);
 
   const connect = useConnectEverything(activeOrgId, () => { void refresh(); });
   const [showConnect, setShowConnect] = useState(true);
@@ -294,16 +305,73 @@ function GraphPageInner() {
       }
       for (const e of le) out.push({ id: e.id, kind: "extfile", label: e.name, parentId: e.pathIds.length ? e.pathIds[e.pathIds.length - 1] : drive, childCount: 0, type: fileTypeOf(e.name) });
     }
+    // THOR — the NAS index as a place of its own: its unit folders always,
+    // deeper folders as they are opened, and the files a search found, each
+    // in its real folder chain.
+    if (thorInfo) {
+      const THOR_FOLDER = { ...CONTAINER_TYPES.folder, color: "#0f766e" };
+      const folders = new Map<string, number>();
+      const files = new Map<string, ThorFile>();
+      const want = (rel: string, n?: number) => {
+        const segs = rel.split("/");
+        for (let i = 1; i <= segs.length; i++) {
+          const r = segs.slice(0, i).join("/");
+          if (!folders.has(r)) folders.set(r, 0);
+        }
+        if (n != null) folders.set(rel, n);
+      };
+      for (const u of thorInfo.units) want(u.folder, u.files);
+      for (const [rel, t] of Object.entries(thorTree)) {
+        for (const d of t.dirs) want(d.rel_path, d.total_files);
+        for (const f of t.files) files.set(f.file_id, f);
+        if (rel) want(rel);
+      }
+      for (const f of thor.rows.slice(0, 60)) { files.set(f.file_id, f); if (f.folder_rel) want(f.folder_rel); }
+      if (thorSel) { files.set(thorSel.file_id, thorSel); if (thorSel.folder_rel) want(thorSel.folder_rel); }
+      out.push({ id: "thor:", kind: "drive", label: `THOR · ${thorInfo.roots[0]?.unc_path.split(/[\\/]/).filter(Boolean).pop() ?? "NAS"}`, parentId: null, childCount: thorInfo.units.length, type: { ...CONTAINER_TYPES.drive, color: "#0f766e", label: "THOR (NAS index)" } });
+      for (const [rel, n] of folders) {
+        const parent = rel.includes("/") ? `thorf:${rel.slice(0, rel.lastIndexOf("/"))}` : "thor:";
+        out.push({ id: `thorf:${rel}`, kind: "extfolder", label: rel.split("/").pop() ?? rel, parentId: parent, childCount: n, type: THOR_FOLDER });
+      }
+      for (const f of files.values()) {
+        out.push({ id: `thorfile:${f.file_id}`, kind: "extfile", label: f.filename, parentId: f.folder_rel ? `thorf:${f.folder_rel}` : "thor:", childCount: 0, type: fileTypeOf(f.filename) });
+      }
+    }
     return out;
-  }, [data, listings, listingEntries, showEstate]);
+  }, [data, listings, listingEntries, showEstate, thorInfo, thorTree, thor.rows, thorSel]);
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+
+  // THOR files on the map, by node id; opening a THOR folder fetches what is in it.
+  const thorFileById = useMemo(() => {
+    const m = new Map<string, ThorFile>();
+    for (const t of Object.values(thorTree)) for (const f of t.files) m.set(`thorfile:${f.file_id}`, f);
+    for (const f of thor.rows) m.set(`thorfile:${f.file_id}`, f);
+    if (thorSel) m.set(`thorfile:${thorSel.file_id}`, thorSel);
+    return m;
+  }, [thorTree, thor.rows, thorSel]);
+  useEffect(() => {
+    if (!activeOrgId || !focusId?.startsWith("thorf:")) return;
+    const rel = focusId.slice(6);
+    if (thorTree[rel]) return;
+    let live = true;
+    Promise.all([thorChildren(activeOrgId, rel), thorFilesIn(activeOrgId, rel)])
+      .then(([dirs, files]) => { if (live) setThorTree((t) => ({ ...t, [rel]: { dirs, files } })); })
+      .catch((e) => console.warn("[finder] thor folder:", e));
+    return () => { live = false; };
+  }, [activeOrgId, focusId, thorTree]);
+  /** Open a THOR file: in its own program once the helper is set up, else preview it here. */
+  const openThor = useCallback((f: ThorFile) => {
+    setThorSel(f);
+    if (openerInstalled()) launch(thorOpenUrl("open", f.rel_path));
+    else if (viewKind(f.ext) !== "none") void thorOpener.open(f);
+  }, [thorOpener]);
 
   // ── Search ────────────────────────────────────────────────────────────
   const runSearch = useCallback((q: string) => {
     const trimmed = q.trim();
     if (!trimmed) { setParsed(null); setServerFind(null); setThorRaw(null); return; }
     setThorRaw(trimmed); setThorDropped([]);
-    setThorSel(null);
+    setThorSel(null); setTabPick(null);
     setParsed(parseQuery(trimmed, { units: data?.units ?? [], aliases }));
     if (!activeOrgId) return;
     const seq = ++findSeq.current;
@@ -349,8 +417,9 @@ function GraphPageInner() {
   const lit = useMemo(() => {
     const m = new Map<string, FileGraphLight>();
     for (const h of hits.slice(0, LIT_CAP)) m.set(h.entry.id, { verdict: h.verdict, score: h.score });
+    for (const f of thor.rows.slice(0, 60)) m.set(`thorfile:${f.file_id}`, { verdict: f.strength >= 2 ? "strong" : f.strength === 1 ? "possible" : "weak", score: Math.round(f.rank * 100) });
     return m;
-  }, [hits]);
+  }, [hits, thor.rows]);
 
   // ── What is in view ───────────────────────────────────────────────────
   // Rooted at the focus (or at the libraries and drives), the subtree fans
@@ -388,6 +457,15 @@ function GraphPageInner() {
       for (const id of chain.slice(0, cut)) { const n = nodeById.get(id); if (n) vis.set(id, n); }
       const n = nodeById.get(h.entry.id); if (n) vis.set(n.id, n);
     }
+    const thorWanted = thor.rows.slice(0, 12).map((f) => `thorfile:${f.file_id}`);
+    if (thorSel) thorWanted.push(`thorfile:${thorSel.file_id}`);
+    for (const id of thorWanted) {
+      const chain = ancestorsOf(id);
+      const cut = focusId ? chain.indexOf(focusId) : chain.length;
+      if (focusId && cut < 0) continue;
+      for (const a of chain.slice(0, cut)) { const n = nodeById.get(a); if (n) vis.set(a, n); }
+      const n = nodeById.get(id); if (n) vis.set(id, n);
+    }
     const collapsed = new Set<string>();
     for (const n of vis.values()) {
       if (n.kind === "file" || n.kind === "extfile") continue;
@@ -397,7 +475,7 @@ function GraphPageInner() {
     const focusNode = focusId ? nodeById.get(focusId) : null;
     const upNode = focusNode ? (focusNode.parentId ? nodeById.get(focusNode.parentId) ?? null : { id: "__all__", kind: "library" as const, label: "Whole estate", parentId: null, childCount: 0, type: { ...CONTAINER_TYPES.library, color: "#475569" } }) : null;
     return { visible: [...vis.values()], collapsed, upNode };
-  }, [nodes, nodeById, childrenOf, focusId, hits, activeIdx, ancestorsOf]);
+  }, [nodes, nodeById, childrenOf, focusId, hits, activeIdx, ancestorsOf, thor.rows, thorSel]);
 
   // Entities the search resolved, drawn beside the files they relate to.
   const satellites = useMemo<FileGraphSatellite[]>(() => {
@@ -437,11 +515,15 @@ function GraphPageInner() {
     return data.edges.filter((e) => e.type === "filed_under" && e.a.startsWith("doc:") && e.b.startsWith("folder:")).map((e) => [e.a, e.b] as [string, string]);
   }, [data]);
 
+  const thorSearching = thorOn && (!!thorQuery || filtersActive(thorFilters) > 0);
+  const resultTab: "system" | "thor" = source === "thor" ? "thor" : source === "system" || !thorSearching ? "system"
+    : tabPick ?? (!finding && hits.length === 0 && (thor.total > 0 || thor.searching) ? "thor" : "system");
   const ranks = useMemo(() => {
     const m = new Map<string, number>();
-    hits.slice(0, 9).forEach((h, i) => m.set(h.entry.id, i + 1));
+    if (resultTab === "thor") thor.rows.slice(0, 9).forEach((f, i) => m.set(`thorfile:${f.file_id}`, i + 1));
+    else hits.slice(0, 9).forEach((h, i) => m.set(h.entry.id, i + 1));
     return m;
-  }, [hits]);
+  }, [hits, thor.rows, resultTab]);
   const activeHit = hits[activeIdx] ?? null;
 
   // A new result set hones the map in on its best hit; stepping does the same
@@ -621,8 +703,8 @@ function GraphPageInner() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-      // The THOR list has its own keys (Enter opens the row in focus).
-      if (source === "thor") { if (e.key === "Escape" && thorSel) setThorSel(null); return; }
+      if (e.key === "Escape" && thorSel) { setThorSel(null); return; }
+      if (resultTab === "thor" || thorTable) return;
       if (e.key === "ArrowRight" || e.key === "n") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx + 1); } return; }
       if (e.key === "ArrowLeft" || e.key === "p") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx - 1); } return; }
       if (e.key === "Enter") { const id = selectedId ?? hits[activeIdx]?.entry.id; if (id) { e.preventDefault(); openEntry(id); } return; }
@@ -649,9 +731,9 @@ function GraphPageInner() {
           <button onClick={() => setError(null)} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
       )}
-      <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr_380px]">
-        {/* ── Left: search, drives, aliases ───────────────────────────── */}
-        <aside className="border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0">
+      <div className={`flex-1 min-h-0 grid ${panelOpen ? "grid-cols-[400px_1fr]" : "grid-cols-[0px_1fr]"}`}>
+        {/* ── Left: search and results, links, drives, aliases ─────────── */}
+        <aside className={`border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0 ${panelOpen ? "" : "invisible"}`}>
           <div className="flex border-b border-[var(--color-border)] text-xs font-bold">
             {([["search", "Find", Search], ["links", "Links", Link2], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setPanel(k)}
@@ -692,9 +774,125 @@ function GraphPageInner() {
                   </div>
                 )}
 
-                {thorOn && thorQuery && thorQuery.chips.length > 0 && (
+                {(parsed || thorSearching) && (
+                  <div className="space-y-3">
+                    {source === "all" && thorSearching && (
+                      <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--color-canvas)] p-1" role="tablist" aria-label="Results from">
+                        <button role="tab" aria-selected={resultTab === "system"} onClick={() => setTabPick("system")}
+                          className={`rounded-md px-2 py-1.5 text-xs font-bold text-left border-l-4 ${resultTab === "system" ? "bg-[var(--color-surface)] shadow-sm border-purple-600" : "border-transparent text-[var(--color-text-muted)]"}`}>
+                          In the system
+                          <div className="text-[11px] font-semibold opacity-80">{finding ? "…" : `${hits.length} file${hits.length === 1 ? "" : "s"}`}</div>
+                        </button>
+                        <button role="tab" aria-selected={resultTab === "thor"} onClick={() => setTabPick("thor")}
+                          className={`rounded-md px-2 py-1.5 text-xs font-bold text-left border-l-4 ${resultTab === "thor" ? "bg-[var(--color-surface)] shadow-sm border-teal-600 text-teal-900" : "border-transparent text-[var(--color-text-muted)]"}`}>
+                          <span className="inline-flex items-center gap-1"><HardDrive className="w-3 h-3" /> On THOR</span>
+                          <div className="text-[11px] font-semibold opacity-80">{thor.searching ? "…" : `${thor.full < thor.total && thorQuery?.terms.length ? `${thor.full.toLocaleString()}${thor.fullCapped ? "+" : ""} strong · ` : ""}${thor.total.toLocaleString()}${thor.capped ? "+" : ""} files`}</div>
+                        </button>
+                      </div>
+                    )}
+
+                    {resultTab === "system" ? (
+                      <div className="space-y-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wide text-purple-800 border-b border-purple-200 pb-1">In the system — libraries and controlled documents</div>
+                {parsed && (
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] flex items-center gap-1">
+                      What I understood <Info className="w-3 h-3" />
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {parsed.chips.map((c, i) => (
+                        <span key={i} title={c.via === "alias" ? `Through a taught alias (${Math.round(c.confidence * 100)}% trusted)` : c.via === "codebook" ? "From the Site Codebook" : "Typed"}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${CHIP_STYLE[c.kind]}`}>
+                          <span className="opacity-60">{c.kind === "identifier" ? "#" : c.kind === "unit" ? "unit" : c.kind === "year" ? "yr" : c.kind === "phrase" ? "“”" : c.kind === "doctype" ? "type" : ""}</span>
+                          {c.label}
+                          {c.via !== "typed" && <span className="opacity-60">· {c.via}</span>}
+                          <button onClick={() => removeChip(c)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
+                        </span>
+                      ))}
+                      {parsed.chips.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">Nothing to search on — add a tag, a word or a year.</span>}
+                    </div>
+                    {parsed.identifiers.length > 0 && (
+                      <div className="text-[11px] text-[var(--color-text-muted)]">
+                        Also matching {parsed.identifiers.map((c) => tagVariants(c.value).filter((v) => v !== c.label).join(", ")).join("; ")}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {hits.length} candidate{hits.length === 1 ? "" : "s"}{focusId ? " here" : ""}
+                  </div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
+                    {hits.filter((h) => h.verdict === "strong").length} strong · {hits.filter((h) => h.verdict === "possible").length} possible
+                  </div>
+                </div>
+                {hiddenHits > 0 && (
+                  <button onClick={() => drill(null)} className="mb-2 w-full text-left rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+                    {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} — show the whole estate
+                  </button>
+                )}
+                {serverFind && serverFind.entities.length > 0 && <div className="mb-2"><EntityStrip entities={serverFind.entities} /></div>}
+                {serverFind && (
+                  <div className="mb-2">
+                    <EquipmentCards entities={serverFind.entities} results={serverFind.results}
+                      onReveal={(node) => { const r = serverFind.results.find((x) => x.relations.some((rel) => rel.node === node) && nodeById.has(x.id)); if (r) reveal(r.id); }}
+                      onUnit={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
+                  </div>
+                )}
+                {finding && <div className="mb-2 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
+                {serverFind && serverFind.hidden.count > 0 && (
+                  <div className="mb-2 text-[11px] text-[var(--color-text-muted)]">
+                    {serverFind.hidden.count} hidden because you asked for a different type: {Object.entries(serverFind.hidden.byType).map(([t, n]) => `${n} ${t}`).join(", ")}.
+                  </div>
+                )}
+                {hits.length === 0 && hiddenHits === 0 && !finding && (
+                  <div className="text-sm text-[var(--color-text-muted)]">
+                    Nothing in the system matched{thorSearching && thor.total > 0 ? <> — <button onClick={() => setTabPick("thor")} className="font-bold text-teal-800 underline">THOR has {thor.total.toLocaleString()}</button></> : ""}. Try fewer words, or teach an alias if people call this something else.
+                  </div>
+                )}
+                <div className="space-y-2">
+                  {(() => {
+                    const idx = new Map(hits.map((h, i) => [h.entry.id, i]));
+                    const card = (h: RankedHit) => (
+                      <HitCard key={h.entry.id} hit={h} rank={(idx.get(h.entry.id) ?? 0) + 1} active={activeHit?.entry.id === h.entry.id}
+                        relations={serverById.get(h.entry.id)?.relations} pages={serverById.get(h.entry.id)?.pages}
+                        onReveal={() => jumpTo(idx.get(h.entry.id) ?? 0)} onOpen={() => openEntry(h.entry.id)} onPage={(r) => openAtPage(h.entry.id, r.page!, r.rel === "drawn_on" || r.rel === "mentioned_in" ? r.label : undefined)} onPageHit={(p) => openAtPage(h.entry.id, p)} />
+                    );
+                    if (serverFind && serverFind.groups.length > 1) {
+                      const hitById = new Map(hits.map((h) => [h.entry.id, h]));
+                      return serverFind.groups.map((g) => {
+                        const list = g.ids.map((id) => hitById.get(id)).filter((x): x is RankedHit => !!x).slice(0, 40);
+                        if (!list.length) return null;
+                        return (
+                          <div key={g.key}>
+                            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mt-2 mb-1">{g.label} · {g.ids.length}</div>
+                            <div className="space-y-2">{list.map(card)}</div>
+                          </div>
+                        );
+                      });
+                    }
+                    return hits.slice(0, 80).map(card);
+                  })()}
+                  {hits.length > 80 && !(serverFind && serverFind.groups.length > 1) && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
+                </div>
+                {serverFind && (
+                  <div className="mt-4 space-y-3 border-t border-[var(--color-border)] pt-3">
+                    <div>
+                      <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
+                      <ActivityPanel activity={serverFind.activity} compact />
+                    </div>
+                    <CoverageLine coverage={serverFind.coverage} onReadFolder={controller ? askToRead : undefined} />
+                    {serverFind.notes.map((n, i) => <div key={i} className="text-[11px] text-amber-700">{n}</div>)}
+                  </div>
+                )}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wide text-teal-800 border-b border-teal-200 pb-1 inline-flex items-center gap-1 w-full"><HardDrive className="w-3 h-3" /> On THOR — the NAS index, not in the system</div>
+                {thorQuery && thorQuery.chips.length > 0 && (
                   <div className="space-y-1">
-                    <div className="text-[11px] font-bold uppercase tracking-wide text-teal-800 flex items-center gap-1"><HardDrive className="w-3 h-3" /> On THOR, searching for</div>
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-teal-800">Searching THOR for</div>
                     <div className="flex flex-wrap gap-1">
                       {thorCats.map((c) => (
                         <span key={c.name} title="An equipment-type folder on THOR — files in it rank higher" className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold bg-sky-50 text-sky-800 border-sky-200">
@@ -733,37 +931,29 @@ function GraphPageInner() {
                     ))}
                   </div>
                 )}
-                {thorOn && (
-                  <div className="pt-2 border-t border-[var(--color-border)]">
-                    <ThorFilters filters={thorFilters} onChange={setThorFilters} overview={thorInfo} />
-                  </div>
-                )}
-
-                {parsed && source !== "thor" && (
-                  <div className="space-y-1.5">
-                    <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] flex items-center gap-1">
-                      What I understood <Info className="w-3 h-3" />
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {parsed.chips.map((c, i) => (
-                        <span key={i} title={c.via === "alias" ? `Through a taught alias (${Math.round(c.confidence * 100)}% trusted)` : c.via === "codebook" ? "From the Site Codebook" : "Typed"}
-                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${CHIP_STYLE[c.kind]}`}>
-                          <span className="opacity-60">{c.kind === "identifier" ? "#" : c.kind === "unit" ? "unit" : c.kind === "year" ? "yr" : c.kind === "phrase" ? "“”" : c.kind === "doctype" ? "type" : ""}</span>
-                          {c.label}
-                          {c.via !== "typed" && <span className="opacity-60">· {c.via}</span>}
-                          <button onClick={() => removeChip(c)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
-                        </span>
-                      ))}
-                      {parsed.chips.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">Nothing to search on — add a tag, a word or a year.</span>}
-                    </div>
-                    {parsed.identifiers.length > 0 && (
-                      <div className="text-[11px] text-[var(--color-text-muted)]">
-                        Also matching {parsed.identifiers.map((c) => tagVariants(c.value).filter((v) => v !== c.label).join(", ")).join("; ")}
+                        <div className="rounded-lg border border-[var(--color-border)]">
+                          <button onClick={() => setThorFiltersOpen((v) => !v)} className="w-full px-2 py-1.5 text-xs font-bold flex items-center gap-1">
+                            {thorFiltersOpen ? <ChevronLeft className="w-3.5 h-3.5 -rotate-90" /> : <ChevronRight className="w-3.5 h-3.5" />} Filters
+                            {filtersActive(thorFilters) > 0 && <span className="ml-1 rounded-full bg-teal-100 text-teal-800 px-1.5">{filtersActive(thorFilters)}</span>}
+                          </button>
+                          {thorFiltersOpen && <div className="px-2 pb-2"><ThorFilters filters={thorFilters} onChange={setThorFilters} overview={thorInfo} /></div>}
+                        </div>
+                        <ThorResultList search={thor} q={thorQuery} vocab={thorVocab} selectedId={thorSel?.file_id ?? null}
+                          onSelect={(f) => { setThorSel(f); setSelectedId(null); setSelSat(null); window.setTimeout(() => graphRef.current?.focus(`thorfile:${f.file_id}`, 1.6), 120); }}
+                          onOpen={openThor} onTable={() => setThorTable(true)} />
                       </div>
                     )}
                   </div>
                 )}
 
+                {!parsed && !thorSearching && (
+                  <div className="space-y-3">
+                    <div className="text-sm text-[var(--color-text-muted)] space-y-2">
+                <div className="font-bold text-[var(--color-text)]">Nothing searched yet</div>
+                <div>Type what you would ask a colleague. Tags in any spelling, the words on the drawing, the unit as people call it, the year.</div>
+                <div>Or just explore: click a library or folder on the map and it becomes the whole view. Esc climbs back out.</div>
+                {controller && <div className="mt-2"><b>First time here?</b> Press <b>Connect everything</b> above the map. It teaches the units, reads the drawings, builds the equipment registry and links it all. One button, safe to press again.</div>}
+              </div>
                 {source !== "thor" && <div className="text-xs text-[var(--color-text-muted)] space-y-1 pt-2 border-t border-[var(--color-border)]">
                   <div className="font-bold text-[var(--color-text)]">How it ranks</div>
                   <div>Codes, words and phrases in the name count most; the folder chain counts less.</div>
@@ -776,6 +966,8 @@ function GraphPageInner() {
                     <div>Every word must appear in the file&apos;s name, its folders or its linked equipment — the start of a word is enough (&ldquo;prefrac&rdquo; finds PREFRACTIONATOR).</div>
                     <div>Say the order and the type: &ldquo;newest prefrac drawings&rdquo;, &ldquo;V-3 in the crude unit oldest first&rdquo;, &ldquo;inspection PDFs after 2020 over 5 MB&rdquo;.</div>
                     <div>A tag with a unit means that unit&apos;s piece of equipment: V-3 exists in six units.</div>
+                  </div>
+                )}
                   </div>
                 )}
                 {data?.truncations.map((t, i) => <div key={i} className="text-[11px] text-amber-700">{t}</div>)}
@@ -811,7 +1003,16 @@ function GraphPageInner() {
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
-            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks} activeId={activeHit?.entry.id ?? null} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); if (id) setSelSat(null); }} onDrill={drill} onUp={up} onOpen={openEntry}
+            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} ranks={ranks}
+              activeId={resultTab === "thor" ? (thorSel ? `thorfile:${thorSel.file_id}` : null) : activeHit?.entry.id ?? null}
+              selectedId={thorSel ? `thorfile:${thorSel.file_id}` : selectedId}
+              onSelect={(id) => {
+                const tf = id ? thorFileById.get(id) : undefined;
+                if (tf) { setThorSel(tf); setSelectedId(null); setSelSat(null); return; }
+                setSelectedId(id); if (id) { setSelSat(null); setThorSel(null); }
+              }}
+              onDrill={drill} onUp={up}
+              onOpen={(id) => { const tf = thorFileById.get(id); if (tf) openThor(tf); else openEntry(id); }}
               satellites={satellites} onSatellite={(sat) => setSelSat(sat)} filedLinks={filedLinks} />
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
@@ -913,129 +1114,40 @@ function GraphPageInner() {
             </div>
           )}
           <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · ← → step results · Esc goes up</div>
-          {source === "thor" && (
+          <button onClick={() => setPanelOpen((v) => !v)} title={panelOpen ? "Hide the search panel" : "Show the search panel"}
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-20 rounded-r-md border border-l-0 border-[var(--color-border)] bg-[var(--color-surface)] px-0.5 py-3 shadow-sm">
+            {panelOpen ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </button>
+          {thorTable && (
             <div className="absolute inset-0 z-20">
               <ThorResultsTable search={thor} sort={thorSort} words={thorQuery?.terms ?? []} onSort={(s) => setThorFilters((f) => ({ ...f, sort: s }))}
-                selectedId={thorSel?.file_id ?? null} onSelect={setThorSel} onOpen={(f) => { setThorSel(f); void thorOpener.open(f); }} opener={thorOpener}
-                header={!thorQuery && !thorFilters.folder && thor.total === 0 && !thor.searching ? (
-                  <div className="text-sm text-[var(--color-text-muted)]">Type what you are after, or pick a quick filter, to search {thorInfo?.files.toLocaleString()} files on THOR. Drives › THOR shows every indexed folder.</div>
-                ) : undefined} />
+                selectedId={thorSel?.file_id ?? null} onSelect={setThorSel} onOpen={openThor} opener={thorOpener}
+                header={
+                  <button onClick={() => setThorTable(false)} className="rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold inline-flex items-center gap-1"><ChevronLeft className="w-3.5 h-3.5" /> Back to the map</button>
+                } />
+            </div>
+          )}
+          {/* ── Details: what is picked, over the map ───────────────────── */}
+          {(thorSel || selectedEntry || (selSat && data)) && (
+            <div className="absolute top-12 right-3 z-30 w-[400px] max-h-[calc(100%-6rem)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl">
+              {thorSel && activeOrgId && (
+                <ThorFileCard orgId={activeOrgId} f={thorSel} opener={thorOpener} onClose={() => setThorSel(null)} root={thorOpener.rootName}
+                  rootUnc={thorInfo?.roots[0]?.unc_path ?? "\\\\thor\\Equipment Files"} q={thorQuery} vocab={thorVocab} resolved={thor.resolvedEquipment}
+                  onFolder={thorFolder} onEquipment={(n) => { setThorFilters((f) => ({ ...f, equipment: [n] })); setTabPick("thor"); }} />
+              )}
+              {!thorSel && selSat && data && (
+                <EntityPanel orgId={activeOrgId!} sat={selSat} data={data} entryById={entryById} nodeById={nodeById} serverFind={serverFind}
+                  onClose={() => setSelSat(null)} onOpen={(id) => void openEntry(id)} onOpenAtPage={openAtPage} onReveal={reveal}
+                  onPhoto={setLightbox} onNarrow={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
+              )}
+              {!thorSel && selectedEntry && (
+                <SelectedCard orgId={activeOrgId} canRead={controller} onRead={() => void refresh()} entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
+                  onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={() => openEntry(selectedEntry.id)} />
+              )}
             </div>
           )}
         </main>
 
-        {/* ── Right: results / selection ──────────────────────────────── */}
-        <aside className="border-l border-[var(--color-border)] bg-[var(--color-surface)] min-h-0 overflow-y-auto">
-          {thorSel && activeOrgId && (
-            <ThorFileCard orgId={activeOrgId} f={thorSel} opener={thorOpener} onClose={() => setThorSel(null)} root={thorOpener.rootName}
-              onFolder={thorFolder} onEquipment={(n) => { setThorFilters((f) => ({ ...f, equipment: [n] })); setSource("thor"); }} />
-          )}
-          {source === "thor" ? (
-            <div className="p-3 text-sm text-[var(--color-text-muted)] space-y-2">
-              {!thorSel && <>
-                <div className="font-bold text-[var(--color-text)]">THOR · {SOURCE_LABEL.thor}</div>
-                <div>Click a file for where it is and what it&apos;s linked to; double-click to open the original. Click a column to sort.</div>
-                <div>Originals open read-only from THOR in this browser — nothing is uploaded. When the browser can&apos;t reach THOR, copy the path and open it in File Explorer.</div>
-              </>}
-            </div>
-          ) : (<>
-          {selSat && data && (
-            <EntityPanel orgId={activeOrgId!} sat={selSat} data={data} entryById={entryById} nodeById={nodeById} serverFind={serverFind}
-              onClose={() => setSelSat(null)} onOpen={(id) => void openEntry(id)} onOpenAtPage={openAtPage} onReveal={reveal}
-              onPhoto={setLightbox} onNarrow={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
-          )}
-          {selectedEntry && (
-            <SelectedCard orgId={activeOrgId} canRead={controller} onRead={() => void refresh()} entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
-              onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={() => openEntry(selectedEntry.id)} />
-          )}
-          <div className="p-3">
-            {parsed ? (
-              <>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
-                    {hits.length} candidate{hits.length === 1 ? "" : "s"}{focusId ? " here" : ""}
-                  </div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">
-                    {hits.filter((h) => h.verdict === "strong").length} strong · {hits.filter((h) => h.verdict === "possible").length} possible
-                  </div>
-                </div>
-                {hiddenHits > 0 && (
-                  <button onClick={() => drill(null)} className="mb-2 w-full text-left rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
-                    {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} — show the whole estate
-                  </button>
-                )}
-                {serverFind && serverFind.entities.length > 0 && <div className="mb-2"><EntityStrip entities={serverFind.entities} /></div>}
-                {serverFind && (
-                  <div className="mb-2">
-                    <EquipmentCards entities={serverFind.entities} results={serverFind.results}
-                      onReveal={(node) => { const r = serverFind.results.find((x) => x.relations.some((rel) => rel.node === node) && nodeById.has(x.id)); if (r) reveal(r.id); }}
-                      onUnit={(code) => { const next = query.includes(code) ? query : `${query} ${code}`.trim(); setQuery(next); runSearch(next); }} />
-                  </div>
-                )}
-                {finding && <div className="mb-2 text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking tags, drawings, text and work in flight…</div>}
-                {serverFind && serverFind.hidden.count > 0 && (
-                  <div className="mb-2 text-[11px] text-[var(--color-text-muted)]">
-                    {serverFind.hidden.count} hidden because you asked for a different type: {Object.entries(serverFind.hidden.byType).map(([t, n]) => `${n} ${t}`).join(", ")}.
-                  </div>
-                )}
-                {hits.length === 0 && hiddenHits === 0 && !finding && !(thorOn && (thor.searching || thor.total > 0)) && (
-                  <div className="text-sm text-[var(--color-text-muted)]">
-                    Nothing in the system{thorOn ? ", on THOR" : ""} or on any pasted drive listing matched. Try fewer words, or teach an alias if people call this something else.
-                  </div>
-                )}
-                {thorOn && hits.length === 0 && !finding && (
-                  <div className="mb-2"><ThorHitList search={thor} systemEmpty selectedId={thorSel?.file_id ?? null} onSelect={setThorSel} onShowAll={() => setSource("thor")} /></div>
-                )}
-                <div className="space-y-2">
-                  {(() => {
-                    const idx = new Map(hits.map((h, i) => [h.entry.id, i]));
-                    const card = (h: RankedHit) => (
-                      <HitCard key={h.entry.id} hit={h} rank={(idx.get(h.entry.id) ?? 0) + 1} active={activeHit?.entry.id === h.entry.id}
-                        relations={serverById.get(h.entry.id)?.relations} pages={serverById.get(h.entry.id)?.pages}
-                        onReveal={() => jumpTo(idx.get(h.entry.id) ?? 0)} onOpen={() => openEntry(h.entry.id)} onPage={(r) => openAtPage(h.entry.id, r.page!, r.rel === "drawn_on" || r.rel === "mentioned_in" ? r.label : undefined)} onPageHit={(p) => openAtPage(h.entry.id, p)} />
-                    );
-                    if (serverFind && serverFind.groups.length > 1) {
-                      const hitById = new Map(hits.map((h) => [h.entry.id, h]));
-                      return serverFind.groups.map((g) => {
-                        const list = g.ids.map((id) => hitById.get(id)).filter((x): x is RankedHit => !!x).slice(0, 40);
-                        if (!list.length) return null;
-                        return (
-                          <div key={g.key}>
-                            <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mt-2 mb-1">{g.label} · {g.ids.length}</div>
-                            <div className="space-y-2">{list.map(card)}</div>
-                          </div>
-                        );
-                      });
-                    }
-                    return hits.slice(0, 80).map(card);
-                  })()}
-                  {hits.length > 80 && !(serverFind && serverFind.groups.length > 1) && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
-                </div>
-                {thorOn && hits.length > 0 && (
-                  <div className="mt-3"><ThorHitList search={thor} systemEmpty={false} selectedId={thorSel?.file_id ?? null} onSelect={setThorSel} onShowAll={() => setSource("thor")} /></div>
-                )}
-                {serverFind && (
-                  <div className="mt-4 space-y-3 border-t border-[var(--color-border)] pt-3">
-                    <div>
-                      <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] mb-1 inline-flex items-center gap-1"><Activity className="w-3 h-3" /> Happening now</div>
-                      <ActivityPanel activity={serverFind.activity} compact />
-                    </div>
-                    <CoverageLine coverage={serverFind.coverage} onReadFolder={controller ? askToRead : undefined} />
-                    {serverFind.notes.map((n, i) => <div key={i} className="text-[11px] text-amber-700">{n}</div>)}
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="text-sm text-[var(--color-text-muted)] space-y-2">
-                <div className="font-bold text-[var(--color-text)]">Nothing searched yet</div>
-                <div>Type what you would ask a colleague. Tags in any spelling, the words on the drawing, the unit as people call it, the year.</div>
-                <div>Or just explore: click a library or folder on the map and it becomes the whole view. Esc climbs back out.</div>
-                {controller && <div className="mt-2"><b>First time here?</b> Press <b>Connect everything</b> above the map. It teaches the units, reads the drawings, builds the equipment registry and links it all. One button, safe to press again.</div>}
-              </div>
-            )}
-          </div>
-          </>)}
-        </aside>
       </div>
       {viewerError && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-red-200 bg-red-50 text-red-800 text-sm px-3 py-2 shadow-lg flex items-center gap-2">

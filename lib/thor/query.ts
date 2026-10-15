@@ -76,6 +76,7 @@ const STOP = new Set([
   "units", "area", "equipment", "can", "you", "it", "its", "have", "has", "do", "does", "thor", "nas",
   "folder", "folders", "which", "need", "only", "just", "everything",
   "looking", "look", "like", "would", "pls", "thanks", "them", "they", "be", "was", "were", "any", "some",
+  "im", "am", "searching", "trying", "want", "wanted", "need", "needed", "where", "there", "here", "these", "has",
 ]);
 const NEWEST = new Set(["newest", "latest", "recent", "newer", "current"]);
 const OLDEST = new Set(["oldest", "earliest", "older", "original"]);
@@ -86,6 +87,8 @@ const NOT_TAG_PREFIX = new Set(["rev", "r", "sht", "sh", "wo", "afe", "pg", "pag
 export interface ThorChip {
   kind: "word" | "tag" | "unit" | "type" | "kind" | "date" | "size" | "sort";
   label: string;
+  /** A word the person said they are looking for. */
+  primary?: boolean;
   /** Removing a chip removes exactly this. */
   key: string;
 }
@@ -103,6 +106,8 @@ export interface ThorQuery {
   minSize?: number;
   maxSize?: number;
   sort?: ThorSort;
+  /** The words that say what is wanted ("…I'm looking for TRAY DRAWINGS"): they count double. */
+  primary: string[];
   chips: ThorChip[];
 }
 
@@ -137,7 +142,10 @@ export function unitName(folder: string | null | undefined): string {
 }
 
 export function parseThorQuery(raw: string, units: ThorUnit[], now: Date = new Date()): ThorQuery {
-  const q: ThorQuery = { raw, terms: [], tags: [], units: [], kinds: [], types: [], chips: [] };
+  const q: ThorQuery = { raw, terms: [], tags: [], units: [], kinds: [], types: [], primary: [], chips: [] };
+  // What comes after "looking for" / "need" / "want" is the thing itself;
+  // the rest is context. Remembered here, matched to terms below.
+  const intent = /\b(?:looking for|searching for|search for|trying to find|find me|find|need|want|show me|get me)\b(.*)$/i.exec(raw);
   let text = ` ${raw.toLowerCase()} `;
 
   const take = (re: RegExp, fn: (m: RegExpMatchArray) => void) => {
@@ -242,8 +250,22 @@ export function parseThorQuery(raw: string, units: ThorUnit[], now: Date = new D
     }
   }
 
+  if (intent) {
+    const tail = new Set<string>();
+    for (const w0 of intent[1].toLowerCase().split(/\s+/)) {
+      const w = w0.replace(/^[^a-z0-9&]+|[^a-z0-9&]+$/g, "");
+      const kind = KIND_WORDS.find(([re]) => re.test(w))?.[1];
+      if (kind && KIND_STEM[kind]) { tail.add(KIND_STEM[kind]); continue; }
+      for (let t of tokens(w)) {
+        if (t.length > 4 && t.endsWith("s") && !t.endsWith("ss") && !/\d/.test(t)) t = t.slice(0, -1);
+        tail.add(t);
+      }
+    }
+    q.primary = q.terms.filter((t) => tail.has(t));
+  }
+
   // ── Chips
-  for (const t of q.terms) q.chips.push({ kind: "word", label: t, key: `word:${t}` });
+  for (const t of q.terms) q.chips.push({ kind: "word", label: t, key: `word:${t}`, primary: q.primary.includes(t) || undefined });
   for (const t of q.tags) q.chips.push({ kind: "tag", label: t.toUpperCase().replace(/^([A-Z]+)(\d)/, "$1-$2"), key: `tag:${t}` });
   for (const c of q.units) {
     const u = units.find((x) => x.code === c);
@@ -268,7 +290,7 @@ export const SORT_LABEL: Record<ThorSort, string> = {
 export function withoutChip(q: ThorQuery, key: string): ThorQuery {
   const [k, v] = key.split(":");
   const next: ThorQuery = { ...q, chips: q.chips.filter((c) => c.key !== key) };
-  if (k === "word") next.terms = q.terms.filter((t) => t !== v);
+  if (k === "word") { next.terms = q.terms.filter((t) => t !== v); next.primary = q.primary.filter((t) => t !== v); }
   else if (k === "tag") next.tags = q.tags.filter((t) => t !== v);
   else if (k === "unit") next.units = q.units.filter((t) => t !== v);
   else if (k === "kind") next.kinds = q.kinds.filter((t) => t !== v);
