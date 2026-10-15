@@ -18,9 +18,12 @@ use std::sync::LazyLock;
 
 pub struct Engine {
     pub idx: Index,
-    postings: Vec<Vec<u32>>,
-    tag_postings: HashMap<u32, Vec<u32>>,
+    pub(crate) postings: Vec<Vec<u32>>,
+    pub(crate) tag_postings: HashMap<u32, Vec<u32>>,
     vocab_by_len: Vec<Vec<u32>>,
+    /// Stemmed description + kind words per equipment (natural-language search).
+    pub(crate) eq_tokens: Vec<Vec<String>>,
+    pub(crate) eq_df: HashMap<String, u32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -40,6 +43,9 @@ pub struct SearchRequest {
     /// Pin results to one piece of equipment (from a "which V-2?" choice).
     pub equipment: Option<u32>,
     pub sort: String,
+    /// "" / "auto": spoken requests use natural-language ranking, keyword
+    /// searches stay exact. "exact": TracePoint rules only. "natural".
+    pub mode: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -148,6 +154,8 @@ pub struct SearchResponse {
     pub card: Option<EquipCard>,
     pub suggestions: Vec<String>,
     pub notice: Option<String>,
+    /// "exact" or "natural": which engine produced these results.
+    pub mode: String,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -255,7 +263,21 @@ impl Engine {
             let l = t.chars().count().min(39);
             vocab_by_len[l].push(i as u32);
         }
-        Engine { idx, postings, tag_postings, vocab_by_len }
+        let mut eq_tokens: Vec<Vec<String>> = Vec::with_capacity(idx.equipment.len());
+        let mut eq_df: HashMap<String, u32> = HashMap::new();
+        for e in &idx.equipment {
+            let mut t: Vec<String> = text::word_tokens(&format!("{} {}", e.description, e.kind))
+                .into_iter()
+                .filter(|w| w.len() >= 2 && !w.chars().all(|c| c.is_ascii_digit()) && !text::STOPS.contains(w.as_str()))
+                .collect();
+            t.sort();
+            t.dedup();
+            for w in &t {
+                *eq_df.entry(w.clone()).or_default() += 1;
+            }
+            eq_tokens.push(t);
+        }
+        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df }
     }
 
     fn term_posting(&self, word: &str) -> Option<&Vec<u32>> {
@@ -263,6 +285,14 @@ impl Engine {
     }
 
     /// Vocabulary words within the typo budget, most frequent first.
+    pub(crate) fn fuzzy_terms_pub(&self, word: &str) -> Vec<u32> {
+        self.fuzzy_terms(word)
+    }
+
+    pub(crate) fn equip_option_pub(&self, ei: u32) -> EquipOption {
+        self.equip_option(ei)
+    }
+
     fn fuzzy_terms(&self, word: &str) -> Vec<u32> {
         let n = word.chars().count();
         let budget = text::typo_budget(n);
@@ -376,8 +406,25 @@ impl Engine {
     }
 
     pub fn search(&self, req: &SearchRequest) -> SearchResponse {
+        let mode = req.mode.as_str();
+        if mode == "natural" || ((mode.is_empty() || mode == "auto") && crate::nl::is_natural(&req.query)) {
+            return self.search_natural(req);
+        }
+        let exact = self.search_exact(req);
+        // Nothing matched every word: fall back to best-fit matches.
+        if exact.total == 0 && (mode.is_empty() || mode == "auto") && req.query.split_whitespace().count() >= 2 && exact.notice.as_deref().map(|n| !n.starts_with("No equipment numbered")).unwrap_or(true) {
+            let mut nl = self.search_natural(req);
+            if nl.total > 0 {
+                nl.notice = Some(format!("Nothing matched every word of “{}”, so these are the closest matches for what you described.", req.query.trim()));
+                return nl;
+            }
+        }
+        exact
+    }
+
+    fn search_exact(&self, req: &SearchRequest) -> SearchResponse {
         let t0 = std::time::Instant::now();
-        let mut resp = SearchResponse { query: req.query.clone(), ..Default::default() };
+        let mut resp = SearchResponse { query: req.query.clone(), mode: "exact".into(), ..Default::default() };
         let limit = if req.limit == 0 { 50 } else { req.limit.min(5000) };
         let mut q = format!(" {} ", req.query.trim());
 

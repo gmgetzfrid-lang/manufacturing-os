@@ -48,7 +48,28 @@ fn fixture() -> Engine {
 }
 
 fn q(e: &Engine, query: &str) -> tp_core::engine::SearchResponse {
+    // TracePoint 1.x semantics: exact mode.
+    e.search(&SearchRequest { query: query.into(), limit: 100, mode: "exact".into(), ..Default::default() })
+}
+
+fn talk(e: &Engine, query: &str) -> tp_core::engine::SearchResponse {
     e.search(&SearchRequest { query: query.into(), limit: 100, ..Default::default() })
+}
+
+#[test]
+fn natural_language_requests() {
+    let e = fixture();
+    let r = talk(&e, "I need the external inspection report for the suction bottle");
+    assert_eq!(r.mode, "natural");
+    assert!(r.total > 0, "{:?}", r.notice);
+    assert_eq!(r.hits[0].name, "Bottle EXT INSPECTION REPORT.pdf", "{:?}", r.hits.iter().map(|h| (&h.name, h.score)).collect::<Vec<_>>());
+    let r = talk(&e, "can you find pictures of that suction bottle in the LRU");
+    assert!(r.hits.iter().take(5).all(|h| h.category == "Photos"), "{:?}", r.hits.iter().map(|h| &h.name).collect::<Vec<_>>());
+    let r = talk(&e, "where are the field notes from when they checked the suction bottle in 2023");
+    assert_eq!(r.hits[0].name, "Field Notes.pdf");
+    // Auto mode falls back to best fit when an exact search finds nothing.
+    let r = talk(&e, "suction bottle checklist");
+    assert!(r.total > 0 && r.hits[0].name.to_lowercase().contains("checklist"), "{:?}", r.hits.iter().map(|h| &h.name).collect::<Vec<_>>());
 }
 
 #[test]
@@ -80,7 +101,7 @@ fn explicit_photo_request_expands_group() {
 #[test]
 fn include_photos_setting_preserves_all_photos() {
     let e = fixture();
-    let r = e.search(&SearchRequest { query: "bottle inspection".into(), limit: 100, include_photos: true, ..Default::default() });
+    let r = e.search(&SearchRequest { query: "bottle inspection".into(), limit: 100, include_photos: true, mode: "exact".into(), ..Default::default() });
     assert_eq!(r.hits.iter().filter(|h| h.category == "Photos").count(), 5);
 }
 
@@ -102,10 +123,10 @@ fn historical_equipment_mapping_retained() {
 #[test]
 fn alias_and_year_bounds() {
     let e = fixture();
-    let r = e.search(&SearchRequest { query: "V02 inspection".into(), limit: 20, year_min: Some(2023), ..Default::default() });
+    let r = e.search(&SearchRequest { query: "V02 inspection".into(), limit: 20, year_min: Some(2023), mode: "exact".into(), ..Default::default() });
     assert!(r.total > 0);
     assert_eq!(r.hits[0].equipment[0].number, "5610.15");
-    let r = e.search(&SearchRequest { query: "V02 inspection".into(), limit: 20, year_min: Some(2024), ..Default::default() });
+    let r = e.search(&SearchRequest { query: "V02 inspection".into(), limit: 20, year_min: Some(2024), mode: "exact".into(), ..Default::default() });
     assert_eq!(r.total, 0, "year bound excludes earlier records");
 }
 
@@ -145,7 +166,7 @@ fn ambiguous_tag_asks_which() {
     let e = fixture();
     let r = q(&e, "V-2");
     assert_eq!(r.ambiguity.len(), 1, "V-2 is 5610.15 in LRU and 5510.06 in TRANSMIX");
-    let pinned = e.search(&SearchRequest { query: "V-2".into(), limit: 50, equipment: Some(r.ambiguity[0].options[0].id), ..Default::default() });
+    let pinned = e.search(&SearchRequest { query: "V-2".into(), limit: 50, equipment: Some(r.ambiguity[0].options[0].id), mode: "exact".into(), ..Default::default() });
     assert!(pinned.ambiguity.is_empty());
     assert!(pinned.card.is_some());
 }
