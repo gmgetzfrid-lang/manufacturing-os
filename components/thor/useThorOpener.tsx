@@ -57,22 +57,14 @@ export function useThorOpener(orgId: string | null, rootUnc: string | null) {
     setGrants(await listGrants(orgId));
   }, [orgId]);
 
-  const open = useCallback(async (f: ThorFile) => {
-    setProblem(null);
+  const read = useCallback(async (f: ThorFile, list: ThorGrant[]) => {
     const kind = viewKind(f.ext);
     if (kind === "none") {
-      setProblem({ file: f, reason: "unviewable", message: `A ${f.ext ? `.${f.ext}` : "file of this type"} cannot be shown in the browser. Copy the path and open it from File Explorer.` });
+      setProblem({ file: f, reason: "unviewable", message: `A .${f.ext || "?"} file can't be shown in the browser — use Open in program.` });
       return;
     }
     setOpening(f.file_id);
     try {
-      let list = grants;
-      if (!list.length) {
-        // First time: the picker opens straight from this click.
-        const g = await connect();
-        if (!g) return;
-        list = orgId ? await listGrants(orgId) : [g];
-      }
       const file = await readThorFile(list, f.rel_path);
       const url = URL.createObjectURL(file.type ? file : new Blob([file], { type: kind === "pdf" ? "application/pdf" : "" }));
       urls.current.push(url);
@@ -81,14 +73,36 @@ export function useThorOpener(orgId: string | null, rootUnc: string | null) {
       if (e instanceof NasError) setProblem({ file: f, reason: e.reason, message: e.message });
       else setProblem({ file: f, reason: "error", message: (e as Error).message });
     } finally { setOpening(null); }
-  }, [grants, connect, orgId]);
+  }, []);
+
+  /** Show a PDF / image here. Without a folder grant yet, say so — the UI walks the person through it. */
+  const open = useCallback(async (f: ThorFile) => {
+    setProblem(null);
+    if (!grants.length) {
+      setProblem({ file: f, reason: "no-grant", message: "To show THOR files here, this browser needs read access to the THOR folder — once." });
+      return;
+    }
+    await read(f, grants);
+  }, [grants, read]);
+
+  /** The folder picker, then straight on to the file that asked for it. */
+  const connectAndOpen = useCallback(async (f: ThorFile) => {
+    setProblem(null);
+    try {
+      const g = await connect();
+      if (!g || !orgId) return;
+      await read(f, await listGrants(orgId));
+    } catch (e) {
+      setProblem({ file: f, reason: e instanceof NasError ? e.reason : "error", message: (e as Error).message });
+    }
+  }, [connect, orgId, read]);
 
   const close = useCallback(() => setViewing(null), []);
 
   // Server render says "no"; the browser answers for itself (no hydration mismatch).
   const supported = useSyncExternalStore(noop, nasSupported, () => false);
 
-  return { supported, grants, connect, forget, open, opening, viewing, close, problem, clearProblem: () => setProblem(null), rootName };
+  return { supported, grants, connect, connectAndOpen, forget, open, opening, viewing, close, problem, clearProblem: () => setProblem(null), rootName };
 }
 
 const noop = () => () => {};

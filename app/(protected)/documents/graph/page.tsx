@@ -359,11 +359,12 @@ function GraphPageInner() {
       .catch((e) => console.warn("[finder] thor folder:", e));
     return () => { live = false; };
   }, [activeOrgId, focusId, thorTree]);
-  /** Open a THOR file: in its own program once the helper is set up, else preview it here. */
+  /** Open a THOR file: PDFs and photos here, anything else in its own program (once the helper is set up). */
   const openThor = useCallback((f: ThorFile) => {
     setThorSel(f);
-    if (openerInstalled()) launch(thorOpenUrl("open", f.rel_path));
-    else if (viewKind(f.ext) !== "none") void thorOpener.open(f);
+    if (viewKind(f.ext) !== "none") void thorOpener.open(f);
+    else if (openerInstalled()) launch(thorOpenUrl("open", f.rel_path));
+    // Otherwise the card that just opened offers the one-time setup on Open.
   }, [thorOpener]);
 
   // ── Search ────────────────────────────────────────────────────────────

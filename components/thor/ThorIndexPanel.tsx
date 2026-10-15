@@ -14,6 +14,7 @@ import { thorChildren, type ThorDirectory, type ThorOverview } from "@/lib/thor/
 import { formatBytes } from "@/lib/thor/query";
 import { fmtDate } from "./ThorResults";
 import type { ThorOpener } from "./useThorOpener";
+import { FolderSetup } from "./OpenerSetup";
 
 const ROLE_LABEL: Record<string, string> = {
   inspection: "inspection", drawings: "drawings", p_and_id: "P&ID", datasheets: "datasheets", calculations: "calculations",
@@ -62,13 +63,8 @@ export default function ThorIndexPanel({ orgId, overview, opener, onSearchFolder
         {!opener.supported ? (
           <div className="text-amber-800">This browser can&apos;t read folders. Use Chrome or Edge; until then, copy a file&apos;s path and open it in File Explorer.</div>
         ) : opener.grants.length === 0 ? (
-          <>
-            <div className="text-[var(--color-text-muted)]">Pick <b>{opener.rootName}</b> on THOR once (read-only). After that, Open shows PDFs here straight from the share. Nothing is uploaded.</div>
-            <button onClick={() => { setConnectErr(null); void opener.connect().catch((e) => setConnectErr((e as Error).message)); }}
-              className="w-full inline-flex items-center justify-center gap-1 rounded-md bg-teal-700 text-white font-bold px-2 py-1">
-              <Plug className="w-3.5 h-3.5" /> Connect THOR (read-only)
-            </button>
-          </>
+          <FolderSetup root={root?.unc_path ?? "\\\\thor\\Equipment Files"} onClose={() => setConnectErr(null)} error={connectErr}
+            onPick={() => { setConnectErr(null); void opener.connect().catch((e) => setConnectErr((e as Error).message)); }} />
         ) : (
           <ul className="space-y-0.5">
             {opener.grants.map((g) => (
@@ -81,7 +77,7 @@ export default function ThorIndexPanel({ orgId, overview, opener, onSearchFolder
             <li><button onClick={() => { setConnectErr(null); void opener.connect().catch((e) => setConnectErr((e as Error).message)); }} className="font-semibold hover:underline">Connect another folder…</button></li>
           </ul>
         )}
-        {connectErr && <div className="text-amber-800 flex items-start gap-1"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {connectErr}</div>}
+        {connectErr && opener.grants.length > 0 && <div className="text-amber-800 flex items-start gap-1"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {connectErr}</div>}
       </div>
 
       <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Indexed folders</div>

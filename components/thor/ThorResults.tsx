@@ -19,9 +19,9 @@ import { countLabel, formatBytes, unitName, type ThorSort } from "@/lib/thor/que
 import { thorFileDetail, type ThorFile, type ThorFileDetail } from "@/lib/thor/client";
 import type { ThorSearchState } from "@/hooks/useThorSearch";
 import { copyText, type ThorOpener } from "./useThorOpener";
-import OpenerSetup from "./OpenerSetup";
+import OpenerSetup, { FolderSetup } from "./OpenerSetup";
 import { explainThor, type ThorReason } from "@/lib/thor/explain";
-import { launch, openerInstalled, thorOpenUrl } from "@/lib/thor/opener";
+import { launchWatched, openerInstalled, thorOpenUrl } from "@/lib/thor/opener";
 import { viewKind } from "@/lib/thor/nasAccess";
 import type { ThorQuery } from "@/lib/thor/query";
 import type { ThorVocabulary } from "@/lib/thor/client";
@@ -283,12 +283,18 @@ export function ThorFileCard({ orgId, f, opener, onClose, onFolder, onEquipment,
   /** The share, for the opener's setup file. */
   rootUnc: string; q: ThorQuery | null; vocab: ThorVocabulary | null; resolved: string[] | null;
 }) {
-  const [setup, setSetup] = useState<null | "open" | "show">(null);
+  const [setup, setSetup] = useState<null | { action: "open" | "show"; failed: boolean }>(null);
+  const [launching, setLaunching] = useState<null | "open" | "show">(null);
   /** Open in its own program (or show it in Explorer) through the one-time helper. */
   const native = (action: "open" | "show") => {
-    if (!openerInstalled()) { setSetup(action); return; }
-    launch(thorOpenUrl(action, f.rel_path));
+    if (!openerInstalled()) { setSetup({ action, failed: false }); return; }
+    setLaunching(action);
+    void launchWatched(thorOpenUrl(action, f.rel_path)).then((ok) => {
+      setLaunching(null);
+      if (!ok) setSetup({ action, failed: true });
+    });
   };
+  /** PDFs and photos show here; everything else opens in its program. */
   const canPreview = viewKind(f.ext) !== "none";
   const [loaded, setLoaded] = useState<{ id: string; d: ThorFileDetail } | null>(null);
   const detail = loaded?.id === f.file_id ? loaded.d : null;
@@ -322,20 +328,18 @@ export function ThorFileCard({ orgId, f, opener, onClose, onFolder, onEquipment,
       <ThorLocation f={f} root={root} max={8} />
 
       <div className="flex flex-wrap items-center gap-2">
-        <button onClick={() => native("open")}
-          className="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold"
-          title="Open the file from THOR in its own program (Adobe, AutoCAD, Excel…)">
-          <ExternalLink className="w-3.5 h-3.5" /> Open
+        <button onClick={() => (canPreview ? void opener.open(f) : native("open"))} disabled={opener.opening === f.file_id}
+          className="inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 text-xs font-bold disabled:opacity-60"
+          title={canPreview ? "Show it here, read straight from THOR" : "Open it from THOR in its own program"}>
+          {opener.opening === f.file_id || launching === "open" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : canPreview ? <Eye className="w-3.5 h-3.5" /> : <ExternalLink className="w-3.5 h-3.5" />} Open
         </button>
         {canPreview && (
-          <button onClick={() => void opener.open(f)} disabled={opener.opening === f.file_id}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold disabled:opacity-60"
-            title="Show it here, read from THOR in this browser — nothing is uploaded">
-            {opener.opening === f.file_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />} Preview
+          <button onClick={() => native("open")} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold" title="Open it in its own program (Adobe…)">
+            {launching === "open" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Open in program
           </button>
         )}
         <button onClick={() => native("show")} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold" title="Open File Explorer with this file selected">
-          <FolderOpen className="w-3.5 h-3.5" /> Show in folder
+          {launching === "show" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderOpen className="w-3.5 h-3.5" />} Show in folder
         </button>
         <button onClick={async () => { if (await copyText(f.unc_path)) { setCopied(true); setTimeout(() => setCopied(false), 1500); } }}
           className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs font-semibold">
@@ -345,9 +349,25 @@ export function ThorFileCard({ orgId, f, opener, onClose, onFolder, onEquipment,
           <FolderSearch className="w-3.5 h-3.5" /> List folder
         </button>
       </div>
+      {launching && <div className="text-[11px] text-[var(--color-text-muted)]">Handing it to Windows… if the browser asks to open Windows PowerShell, choose Open.</div>}
       {setup && (
-        <OpenerSetup root={rootUnc} onClose={() => setSetup(null)} onDone={() => { const a = setup; setSetup(null); launch(thorOpenUrl(a, f.rel_path)); }} />
+        <OpenerSetup root={rootUnc} failed={setup.failed} onClose={() => setSetup(null)}
+          onDone={() => { const a = setup.action; setSetup(null); native(a); }} />
       )}
+      {problem && (problem.reason === "no-grant" || problem.reason === "denied" || problem.reason === "unrecognised" || problem.reason === "rejected") ? (
+        opener.supported ? (
+          <FolderSetup root={rootUnc} onClose={opener.clearProblem} onPick={() => void opener.connectAndOpen(f)}
+            error={problem.reason === "no-grant" ? null : problem.message} />
+        ) : (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900">This browser can&apos;t read folders — use Chrome or Edge to see THOR files here, or Open in program.</div>
+        )
+      ) : problem ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900 flex items-start gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <div className="flex-1">{problem.message}</div>
+          <button onClick={opener.clearProblem} className="opacity-60 hover:opacity-100"><X className="w-3 h-3" /></button>
+        </div>
+      ) : null}
       {(q?.terms.length || resolved?.length) ? (
         <div>
           <div className="text-[11px] font-bold text-[var(--color-text-muted)]">Why it came up</div>

@@ -39,6 +39,7 @@ param([string]$u)
 Add-Type -AssemblyName System.Windows.Forms
 $root = '${r}'
 $openable = @(${OPENABLE.map((e) => `'${e}'`).join(",")})
+if ($u -eq 'thor-open:selftest') { exit 0 }
 try {
   if ($u -notmatch '^thor-open:(open|show)\\?p=(.+)$') { throw "Not a THOR link." }
   $action = $Matches[1]
@@ -77,10 +78,24 @@ export function installerCmd(root: string): string {
     'reg add "HKCU\\Software\\Classes\\thor-open" /ve /d "URL:THOR opener" /f >nul',
     'reg add "HKCU\\Software\\Classes\\thor-open" /v "URL Protocol" /d "" /f >nul',
     'reg add "HKCU\\Software\\Classes\\thor-open\\shell\\open\\command" /ve /d "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \\"%DIR%\\thor-open.ps1\\" \\"%%1\\"" /f >nul',
+    // Prove it runs here: some IT policies block PowerShell scripts outright.
+    'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%DIR%\\thor-open.ps1" "thor-open:selftest"',
+    "if errorlevel 1 goto blocked",
     "echo.",
-    "echo THOR opener installed. Go back to the app and click Open again.",
-    "echo The first time, the browser asks to allow it - tick 'Always allow' and choose Open.",
+    "echo  OK - the THOR opener is installed and works on this PC.",
+    "echo.",
+    "echo  Go back to the app and click Open. The first time, the browser asks",
+    "echo  to open 'Windows PowerShell' - tick 'Always allow' and choose Open.",
+    "echo.",
     "pause",
+    "exit /b 0",
+    ":blocked",
+    "echo.",
+    "echo  NOT WORKING - this PC does not allow PowerShell scripts (IT policy).",
+    "echo  Open-in-program will not work here. Use Preview for PDFs, or Copy path.",
+    "echo.",
+    "pause",
+    "exit /b 1",
   ];
   return lines.join("\r\n") + "\r\n";
 }
@@ -109,4 +124,29 @@ export function launch(url: string): void {
   const a = document.createElement("a");
   a.href = url;
   document.body.appendChild(a); a.click(); a.remove();
+}
+
+/**
+ * Follow the link and report whether Windows seemed to answer: the page loses
+ * focus when a program (or the browser's "open PowerShell?" prompt) comes up.
+ * A browser drops a link nobody handles silently, so no answer within a few
+ * seconds most likely means the helper is not on this PC.
+ */
+export function launchWatched(url: string, ms = 3500): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVis);
+      resolve(ok);
+    };
+    const onBlur = () => finish(true);
+    const onVis = () => { if (document.visibilityState === "hidden") finish(true); };
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVis);
+    launch(url);
+    window.setTimeout(() => finish(false), ms);
+  });
 }
