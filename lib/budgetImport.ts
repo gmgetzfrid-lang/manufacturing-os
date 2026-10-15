@@ -98,7 +98,9 @@ export async function ensureParties(input: {
   if (toCreate.length > 0) {
     const rows = toCreate.map((s) => ({
       org_id: input.orgId, project_id: input.projectId,
-      name: s.name.trim(), kind: partyKindFor(s.types), status: "active",
+      // status is left to the column default, as everywhere else in the
+      // app: live databases differ in the values their CHECK allows.
+      name: s.name.trim(), kind: partyKindFor(s.types),
       company_id: input.registry?.find((c) => sameCompany(c.name, s.name))?.id ?? null,
       created_by: input.actor.uid,
     }));
@@ -130,11 +132,12 @@ export function suppliersOf(lines: Array<Pick<BudgetLine, "supplier" | "costType
  *  authorization facts on the project. Best-effort on pre-migration DBs. */
 export async function recordBudgetBasis(input: {
   orgId: string; projectId: string; parsed: ParsedBudgetDoc; source: BudgetSource | null; actor: Actor;
-}): Promise<{ docId: string | null }> {
+}): Promise<{ docId: string | null; error?: string }> {
   const { parsed, source } = input;
   let docId: string | null = null;
+  let docError: string | undefined;
   if (source) {
-    const { data } = await supabase.from("cost_documents").insert({
+    const { data, error } = await supabase.from("cost_documents").insert({
       org_id: input.orgId, project_id: input.projectId,
       kind: "budget", status: "posted",
       file_url: source.fileKey, file_name: source.fileName, mime_type: source.mimeType,
@@ -146,6 +149,7 @@ export async function recordBudgetBasis(input: {
       created_by: input.actor.uid,
     }).select("id").single();
     docId = data?.id ? String(data.id) : null;
+    if (error) docError = `the document itself wasn't attached (${error.message})`;
   }
   const patch: Record<string, unknown> = {};
   if (parsed.docNumber) patch.afe_number = parsed.docNumber;
@@ -156,7 +160,7 @@ export async function recordBudgetBasis(input: {
     const { error } = await supabase.from("projects").update(patch).eq("id", input.projectId);
     if (error && !pgMissingColumn(error)) console.warn("[budget] basis not saved:", error.message);
   }
-  return { docId };
+  return { docId, error: docError };
 }
 
 /**
@@ -189,7 +193,7 @@ export async function applyBudgetToProject(input: {
       org_id: input.orgId, project_id: input.projectId,
       name: a.name, budget: a.budget, cost_type: a.costType, currency,
       party_id: parties2.resolve(a.supplier),
-      status: "active",
+      // status: column default (see ensureParties).
       created_by: input.actor.uid,
     }))).select("id");
     if (error) {
@@ -198,7 +202,7 @@ export async function applyBudgetToProject(input: {
     accountsCreated = (data ?? []).length;
   }
 
-  const { docId } = await recordBudgetBasis({
+  const { docId, error: basisError } = await recordBudgetBasis({
     orgId: input.orgId, projectId: input.projectId, parsed: input.parsed, source: input.source, actor: input.actor,
   });
   await audit("COST_BUDGET_IMPORTED", input.orgId, docId ?? input.projectId, input.actor, {
@@ -207,7 +211,7 @@ export async function applyBudgetToProject(input: {
     skipped: plan.accountsSkipped.map((s) => s.name), fileName: input.source?.fileName ?? null,
   });
   return {
-    ok: true, error: parties2.error,
+    ok: true, error: [parties2.error, basisError].filter(Boolean).join("; ") || undefined,
     accountsCreated, partiesCreated: parties2.created,
     skipped: plan.accountsSkipped.map((s) => s.name),
   };
