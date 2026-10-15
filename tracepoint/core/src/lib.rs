@@ -6,6 +6,7 @@ pub mod export;
 pub mod graph;
 pub mod guard;
 pub mod index;
+pub mod selftest;
 pub mod service;
 pub mod snapshot;
 pub mod text;
