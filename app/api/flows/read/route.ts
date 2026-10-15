@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
-import { renderKnowledgePages } from "@/lib/knowledgePageRender";
+import { readPages, pagesAsText } from "@/lib/pageReader";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { openAiKey } from "@/lib/ai/keyVault";
@@ -75,7 +75,10 @@ export async function POST(req: NextRequest) {
   const pages = wanted.length > 0
     ? wanted
     : Array.from({ length: Math.min(doc.page_count ?? 1, MAX_PAGES) }, (_, i) => i + 1);
-  const images = await renderKnowledgePages(doc.file_key, pages, MAX_PAGES);
+  // Flow arrows need the drawing as printed; the stored reading of the sheet
+  // (tags, stream names) rides along so the model grounds every handle.
+  const read = await readPages({ orgId, fileKey: doc.file_key, pages, maxPages: MAX_PAGES, images: "always" });
+  const images = read.images;
   if (images.length === 0) return bad("The pages could not be rendered for reading.", 502);
 
   // ── Already-decided pairs are settled — a dismissal must stick. ────────
@@ -125,7 +128,7 @@ export async function POST(req: NextRequest) {
       model: String(conn.model),
       apiKey: openAiKey(String(conn.api_key)),
       system: SYSTEM,
-      user: `Document: ${doc.name}\nPages attached in order: ${images.map((i) => i.page).join(", ")}\n\nROSTER (the only entities you may connect):\n${rosterText}`,
+      user: `Document: ${doc.name}\nPages attached in order: ${images.map((i) => i.page).join(", ")}\n\nROSTER (the only entities you may connect):\n${rosterText}${pagesAsText(read)}`,
       images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })),
       maxTokens: 1600,
       timeoutMs: 90_000,

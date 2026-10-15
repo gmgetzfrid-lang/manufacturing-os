@@ -114,14 +114,23 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     // behaviour before the feature existed.
   }
 
+  // ── Whole libraries marked never-AI: nothing in them is mirrored, and
+  //    a mirror that exists is removed below like any unwanted one.
+  const { excludedLibraryIds } = await import("@/lib/aiLibraries");
+  const neverAi = await excludedLibraryIds(supabaseAdmin, orgId);
+  const libraryOfDoc = (d: { library_id?: string | null; collection_id?: string | null }) =>
+    (d.library_id as string | null | undefined) ?? (d.collection_id ? landscape.folders.get(d.collection_id)?.library_id ?? null : null);
+
   // ── What SHOULD be mirrored: current PDFs in each source container ──────
   // Map dcDocId → { source, doc } (first source wins when containers overlap).
   const wanted = new Map<string, { sourceId: string; doc: DcDocRow }>();
   for (const source of sources) {
     let q = supabaseAdmin
       .from("documents")
-      .select("id, name, title, document_number, status, archived_at, current_version_id")
+      .select("id, name, title, document_number, status, archived_at, current_version_id, library_id, collection_id")
       .eq("org_id", orgId);
+    const sourceLib = source.source_type === "library" ? source.source_id : landscape.folders.get(source.source_id)?.library_id ?? null;
+    if (sourceLib && neverAi.has(sourceLib)) continue;
     if (source.source_type === "library") {
       q = q.eq("library_id", source.source_id);
     } else {
@@ -158,6 +167,8 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     }
     for (const d of enumerated) {
       if (wanted.has(d.id)) continue;
+      const lib = libraryOfDoc(d as { library_id?: string | null; collection_id?: string | null });
+      if (lib && neverAi.has(lib)) continue;
       // ONE gate, shared with every other door (lib/aiBoundary.ts). Held
       // back, superseded, archived, or fileless — each is a different reason
       // and all four end here.
@@ -172,11 +183,11 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
 
   // Current version files for everything wanted.
   const versionIds = [...wanted.values()].map((w) => w.doc.current_version_id as string);
-  const versionById = new Map<string, { file_url: string | null; file_type: string | null; revision_label: string | null; size: number | null }>();
+  const versionById = new Map<string, { file_url: string | null; file_type: string | null; revision_label: string | null; size: number | null; file_hash?: string | null }>();
   for (let i = 0; i < versionIds.length; i += 100) {
     const { data } = await supabaseAdmin
       .from("document_versions")
-      .select("id, file_url, file_type, revision_label, size")
+      .select("id, file_url, file_type, revision_label, size, file_hash")
       .in("id", versionIds.slice(i, i + 100));
     for (const v of data ?? []) {
       versionById.set(v.id as string, {
@@ -184,6 +195,7 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
         file_type: (v.file_type as string | null) ?? null,
         revision_label: (v.revision_label as string | null) ?? null,
         size: (v.size as number | null) ?? null,
+        file_hash: (v.file_hash as string | null) ?? null,
       });
     }
   }
@@ -235,10 +247,15 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
         source_document_id: dcDocId,
         source_version_id: doc.current_version_id,
         source_rev: version.revision_label,
+        // The bytes' identity: what was read for them anywhere is reused.
+        file_hash: version.file_hash ?? null,
       });
     } else if (existing.source_version_id !== doc.current_version_id) {
       // Rev published: drop the old index and queue a re-ingest of the new
       // file. The knowledge doc id is stable so past citations keep linking.
+      // New bytes: every reading of the old ones goes, the drawing census
+      // included, so the new revision is read fresh.
+      await supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", existing.id as string).then(() => undefined, () => undefined);
       const { error: chunkErr } = await supabaseAdmin
         .from("knowledge_chunks").delete().eq("document_id", existing.id as string);
       if (chunkErr) {
@@ -257,6 +274,7 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
         source_id: sourceId,
         source_version_id: doc.current_version_id,
         source_rev: version.revision_label,
+        file_hash: version.file_hash ?? null,
       }).eq("id", existing.id as string);
       if (error) out.errors.push(`refresh ${displayName(doc)}: ${error.message}`);
       else out.refreshed++;

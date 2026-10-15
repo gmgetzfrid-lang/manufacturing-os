@@ -29,6 +29,7 @@ import {
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import ConnectionSkillsPanel from "@/components/intelligence/ConnectionSkillsPanel";
+import EstateReviewPanel from "@/components/intelligence/EstateReviewPanel";
 
 const TIER_STYLE: Record<ProposalTier, string> = {
   provable: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300",
@@ -166,6 +167,8 @@ export default function ProposedLinksPage() {
           </button>
         ) : undefined}
       />
+
+      <EstateReviewPanel />
 
       <ConnectionSkillsPanel />
 

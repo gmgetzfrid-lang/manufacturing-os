@@ -21,7 +21,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
-import { renderKnowledgePages } from "@/lib/knowledgePageRender";
+import { documentAiBlock } from "@/lib/aiLibraries";
+import { readPages, pagesAsText, pagesReadSummary } from "@/lib/pageReader";
 import { resolveDocumentFile } from "@/lib/docFileServer";
 import { validateSegmentedItems, type SegmentedItem } from "@/lib/checklistEngine";
 
@@ -73,17 +74,20 @@ export async function POST(req: NextRequest) {
     if (!documentId) return bad("documentId required", 400);
     const file = await resolveDocumentFile(orgId, documentId);
     if (!file) return bad("That document has no stored file to read.", 404);
+    const aiBlock = await documentAiBlock(supabaseAdmin, orgId, documentId);
+    if (aiBlock.blocked) return bad(aiBlock.reason ?? "This document is held back from AI.", 403);
 
-    const images = await renderKnowledgePages(file.fileKey, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
-    if (images.length === 0) return bad("The pages could not be rendered for reading — is it a PDF?", 502);
+    const read = await readPages({ orgId, fileKey: file.fileKey, pages: Array.from({ length: MAX_PAGES }, (_, i) => i + 1), maxPages: MAX_PAGES, images: "unread" });
+    if (read.pages.length === 0) return bad("The pages could not be read — is it a PDF?", 502);
+    const images = read.images;
 
     let text: string;
     try {
       const out = await governedAiCall({
         orgId, userId, op: "checklistSegment",
         system: SEGMENT_SYSTEM,
-        user: `Document: ${file.label}\nPages attached in order: ${images.map((i) => i.page).join(", ")}`,
-        images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })),
+        user: `Document: ${file.label}\nPages given in order: ${read.pages.map((p) => p.page).join(", ")} (some as images, some as text already read from the page — treat both as the printed page)${pagesAsText(read)}`,
+        images: images.length ? images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })) : undefined,
         maxTokens: 4000,
         timeoutMs: 90_000,
       });
@@ -101,7 +105,7 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       return bad((e as Error).message, 422);
     }
-    return NextResponse.json({ items, pagesRead: images.map((i) => i.page), sourceLabel: file.label });
+    return NextResponse.json({ items, pagesRead: read.pages.map((p) => p.page), readFrom: pagesReadSummary(read), sourceLabel: file.label });
   }
 
   // ── assess ──────────────────────────────────────────────────────────────

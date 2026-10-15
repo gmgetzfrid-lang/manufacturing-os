@@ -71,13 +71,14 @@ export async function listFinderAliases(orgId: string): Promise<FinderAlias[]> {
 
 export async function addFinderAlias(input: {
   orgId: string; term: string; means: string; kind: FinderAliasKind; note?: string;
+  origin?: FinderAlias["origin"];
   userId?: string | null; userName?: string | null;
 }): Promise<FinderAlias> {
   const term = input.term.trim(), means = input.means.trim();
   if (!term || !means) throw new Error("Both the alias and what it means are required.");
   const row = {
     org_id: input.orgId, term, term_canonical: canonicalForm(term),
-    means, means_canonical: canonicalForm(means), kind: input.kind, origin: "human",
+    means, means_canonical: canonicalForm(means), kind: input.kind, origin: input.origin ?? "human",
     note: input.note?.trim() || null, created_by: input.userId ?? null, created_by_name: input.userName ?? null,
   };
   const { data, error } = await supabase.from("finder_aliases").insert(row).select("*").single();
@@ -86,7 +87,7 @@ export async function addFinderAlias(input: {
     if (!missing(error)) throw new Error(error.message);
     const local: FinderAlias = {
       id: newId(), orgId: input.orgId, term, termCanonical: row.term_canonical,
-      means, meansCanonical: row.means_canonical, kind: input.kind, origin: "human",
+      means, meansCanonical: row.means_canonical, kind: input.kind, origin: input.origin ?? "human",
       hits: 0, misses: 0, note: row.note, createdByName: input.userName ?? null, createdAt: new Date().toISOString(),
     };
     const key = lsKey("aliases", input.orgId);

@@ -152,10 +152,12 @@ export async function runLinkProposers(
   let docRows: Array<{ id: string; document_number: string | null; rev: string | null }> = [];
   const withFlag = await admin
     .from("documents")
-    .select("id, document_number, rev, ai_excluded")
+    .select("id, document_number, rev, ai_excluded, library_id")
     .eq("org_id", orgId)
     .eq("ai_excluded", false)
     .limit(5000);
+  const { excludedLibraryIds } = await import("@/lib/aiLibraries");
+  const neverAi = await excludedLibraryIds(admin, orgId);
   if (withFlag.error) {
     const plain = await admin
       .from("documents").select("id, document_number, rev")
@@ -164,7 +166,8 @@ export async function runLinkProposers(
     docRows = (plain.data as typeof docRows) ?? [];
     notes.push("Per-document AI exclusions not applied — run the link-proposal migration.");
   } else {
-    docRows = ((withFlag.data as Array<{ id: string; document_number: string | null; rev: string | null; ai_excluded: boolean }>) ?? [])
+    docRows = ((withFlag.data as Array<{ id: string; document_number: string | null; rev: string | null; ai_excluded: boolean; library_id: string | null }>) ?? [])
+      .filter((d) => !(d.library_id && neverAi.has(d.library_id)))
       .map(({ id, document_number, rev }) => ({ id, document_number, rev }));
   }
   inputs.documents = docRows.length;

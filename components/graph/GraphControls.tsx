@@ -11,6 +11,7 @@ import React from "react";
 import {
   SlidersHorizontal, Filter, Palette, Eye, Waves, ChevronDown, Plus, X,
   RotateCcw, Boxes, Square,
+  Map as MapIcon,
 } from "lucide-react";
 import type { GraphNodeType } from "@/lib/orgGraph";
 import {
@@ -118,6 +119,12 @@ export default function GraphControls({
       <div className="flex items-center gap-1.5">
         {/* 2D / 3D — the switch people will reach for first. */}
         <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm">
+          <button onClick={() => onChange({ mode: "map" })} title="The estate as a tree: units, equipment, documents — same map as Documents › Graph"
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black transition-colors ${
+              settings.mode === "map" ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"
+            }`}>
+            <MapIcon className="w-3 h-3" /> Map
+          </button>
           <button onClick={() => onChange({ mode: "2d" })}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black transition-colors ${
               settings.mode === "2d" ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"
@@ -131,6 +138,16 @@ export default function GraphControls({
             <Boxes className="w-3 h-3" /> 3D
           </button>
         </div>
+        {settings.mode === "3d" && (
+          <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm" title="Estate: the Map's tree as a globe, each operating area its own cluster, nothing moves. Web: every link pulling freely.">
+            {(["estate", "web"] as const).map((k) => (
+              <button key={k} onClick={() => onChange({ layout3d: k })}
+                className={`px-2 py-1 rounded-full text-[10px] font-black ${settings.layout3d === k ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"}`}>
+                {k === "estate" ? "Estate" : "Web"}
+              </button>
+            ))}
+          </div>
+        )}
         <button onClick={() => setOpen((v) => !v)}
           className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-black shadow-sm ${
             open ? "border-violet-400 text-violet-700 bg-[var(--color-surface)]"
@@ -160,6 +177,9 @@ export default function GraphControls({
               <Toggle label="Library links" checked={settings.showLibraryEdges}
                 onChange={(v) => onChange({ showLibraryEdges: v })}
                 hint="Every document links to its library — usually noise." />
+              <Toggle label="Fold lone documents" checked={settings.foldLeaves}
+                onChange={(v) => onChange({ foldLeaves: v })}
+                hint="A document linked only to one hub sits inside it as a count. Click the hub to open it." />
               <Toggle label="Hide unlinked" checked={settings.hideUnlinked}
                 onChange={(v) => onChange({ hideUnlinked: v })}
                 hint="Drop nodes with no connections in this view." />

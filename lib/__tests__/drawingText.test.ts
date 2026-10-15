@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef,
+  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, normalizeRef, tagKindOf,
   buildEquipmentCensus, auditDrawingRefs, equipmentRegisterCsv,
   pageNeedsVision, refSeries, extractTitleBlock, parseUnitMap, unitOfRef, parseOpcBoxes,
   matchEquipmentListIntent, parsePrefixMap,
@@ -34,6 +34,51 @@ describe("extractEquipmentTags", () => {
 
   it("requires the dash — prose abbreviations don't count", () => {
     expect(extractEquipmentTags("the V3 nozzle and P101 casing")).toEqual([]);
+  });
+
+  it("keeps a unit-prefixed tag and remembers the unit", () => {
+    const tags = extractEquipmentTags("10-V-101 feeds 10-P-101A; see 2002-D-2001");
+    expect(tags.map((t) => t.tag)).toEqual(["V-101", "P-101A"]);
+    expect(tags[0].unit).toBe("10");
+  });
+
+  it("still reads 21-D-1105 as a drawing number, not a drum", () => {
+    expect(extractEquipmentTags("CONT ON 21-D-1105")).toEqual([]);
+  });
+
+  it("reads dashless and spaced tags only when told the page is a drawing", () => {
+    expect(extractEquipmentTags("V101 P 101A E.204 A1 R2")).toEqual([]);
+    const loose = extractEquipmentTags("V101 P 101A E.204 A1 R2", { loose: true }).map((t) => t.tag);
+    expect(loose).toEqual(["V-101", "P-101A", "E-204"]);
+  });
+
+  it("never reads the sheet's own drawing number, pipe specs, nameplates or revisions as equipment", () => {
+    const sheet = [
+      "2002-D 2001 SHT 05 REV 42", "DWG NO. 2002-D 2001", "6\" SCH 40 CS 150# RF",
+      "MOTOR 75 HP 460 V", "R39 05-12-23", "FROM 20-E-22 TO 21-D-1105", "LINE 8\"-P-20015-A1A",
+    ];
+    const strict = sheet.flatMap((l) => extractEquipmentTags(l)).map((t) => t.tag);
+    const loose = sheet.flatMap((l) => extractEquipmentTags(l, { loose: true })).map((t) => t.tag);
+    expect(strict).toEqual(["E-22"]);
+    expect(loose).toEqual(["E-22"]);
+  });
+
+  it("accepts a codebook prefix in loose mode", () => {
+    expect(extractEquipmentTags("BA 101", { loose: true })).toEqual([]);
+    expect(extractEquipmentTags("BA 101", { loose: true, knownPrefixes: ["BA"] }).map((t) => t.tag)).toEqual(["BA-101"]);
+  });
+
+  it("tells equipment from instruments and off-sheet references", () => {
+    const kinds = (line: string) => extractEquipmentTags(line, { loose: true }).map((h) => `${h.tag}:${tagKindOf(h, line)}`);
+    expect(kinds("V-14 35# STEAM DRUM")).toEqual(["V-14:equipment"]);
+    expect(kinds("FROM X-45 2002-D 2001 SHT. 12")).toEqual(["X-45:xref"]);
+    expect(kinds("TO LV-222")).toEqual(["LV-222:xref"]);
+    expect(kinds("PSV-21 SET 65 PSI")).toEqual(["PSV-21:instrument"]);
+    expect(kinds("LIC-222 PIT-130")).toEqual(["LIC-222:instrument", "PIT-130:instrument"]);
+  });
+
+  it("reports each tag once per call", () => {
+    expect(extractEquipmentTags("V-3 V-3 V-3", { loose: true }).length).toBe(1);
   });
 
   it("normalizes case and en-dashes", () => {

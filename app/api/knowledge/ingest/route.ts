@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
         action: "KNOWLEDGE_DOC_INDEXED",
         resource_type: "knowledge_document", resource_id: String(doc.id),
         org_id: doc.org_id, user_id: user.id,
-        details: { name: doc.name, pages: res.pageCount, visionPages: res.visionPages },
+        details: { name: doc.name, pages: res.pageCount, visionPages: res.visionPages, reusedPages: res.reusedPages },
       }).then(() => undefined, () => undefined);
 
       // Feed the GRAPH the moment indexing finishes. The mention indexer —

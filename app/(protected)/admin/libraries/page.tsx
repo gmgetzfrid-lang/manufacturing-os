@@ -7,12 +7,14 @@ import { useRole } from "@/components/providers/RoleContext";
 import { Settings } from "lucide-react";
 import LibraryWizard from "./LibraryWizard";
 import DeleteSafetyModal from "./DeleteSafetyModal";
+import LibraryAiSwitch from "@/components/documents/LibraryAiSwitch";
 import { LibraryConfig } from "@/types/schema";
 import { appAlert } from "@/components/providers/DialogProvider";
 
 export default function LibraryAdminPage() {
   const router = useRouter();
   const { activeRole, activeOrgId, uid } = useRole();
+  const canManageAi = activeRole === "Admin" || activeRole === "DocCtrl";
 
   const [loading, setLoading] = useState(true);
   const [libraries, setLibraries] = useState<LibraryConfig[]>([]);
@@ -23,6 +25,7 @@ export default function LibraryAdminPage() {
   const [editingLib, setEditingLib] = useState<LibraryConfig | null>(null);
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [neverAi, setNeverAi] = useState<Set<string>>(new Set());
   const [libraryToDelete, setLibraryToDelete] = useState<LibraryConfig | null>(null);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -63,6 +66,7 @@ export default function LibraryAdminPage() {
           defaultNewAcl: r.default_new_acl, acl: r.acl,
         } as LibraryConfig));
         setLibraries(libs);
+        setNeverAi(new Set(((data || []) as Array<{ id: string; ai_excluded?: boolean }>).filter((r) => r.ai_excluded).map((r) => r.id)));
       } catch (err) {
         console.error("Error fetching libraries:", err);
         setLibraries([]);
@@ -289,7 +293,13 @@ export default function LibraryAdminPage() {
                 <div className="min-w-0">
                   <div className="text-lg font-black text-[var(--color-text)] truncate">{lib.name}</div>
                   <div className="text-sm text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
-                  <div className="text-[11px] text-[var(--color-text-faint)] mt-3 font-mono truncate">
+                  <div className="mt-3">
+                    {activeOrgId && (
+                      <LibraryAiSwitch orgId={activeOrgId} libraryId={lib.id!} libraryName={lib.name} excluded={neverAi.has(lib.id!)} canChange={canManageAi}
+                        onChanged={(x) => setNeverAi((s) => { const n = new Set(s); if (x) n.add(lib.id!); else n.delete(lib.id!); return n; })} />
+                    )}
+                  </div>
+                  <div className="text-[11px] text-[var(--color-text-faint)] mt-2 font-mono truncate">
                     libraryId: {lib.id}
                   </div>
                 </div>

@@ -38,6 +38,9 @@ import {
 import { NODE_COLORS, EDGE_LABELS } from "@/components/graph/graphTheme";
 import GraphControls from "@/components/graph/GraphControls";
 import OrgGraph2D from "@/components/graph/OrgGraph2D";
+import EstateMap from "@/components/graph/EstateMap";
+import { foldLeaves } from "@/lib/graphFold";
+import { estateGlobe } from "@/lib/estate3d";
 
 // three.js only downloads when 3D is switched on.
 const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
@@ -147,6 +150,30 @@ function GraphPageInner() {
   const query = rawQuery.toLowerCase().replace(/[^a-z0-9]+/g, "");
   const posKey = `orgGraph:pos${settings.mode === "3d" ? "3d" : ""}:${activeOrgId ?? ""}`;
 
+  // ── Folding ───────────────────────────────────────────────────────────
+  // Hubs a person opened, plus the hubs holding anything an answer or a
+  // deep link points at. Kept as a string so the view (and the layout)
+  // only changes when the set really changes — never on a keystroke.
+  const [openHubs, setOpenHubs] = React.useState<Set<string>>(new Set());
+  const leafHubOf = React.useMemo(() => {
+    const m = new Map<string, string>();
+    if (!graph) return m;
+    const nb = new Map<string, Set<string>>();
+    for (const e of graph.edges) {
+      if (e.type === "proposed") continue;
+      nb.set(e.a, new Set([...(nb.get(e.a) ?? []), e.b]));
+      nb.set(e.b, new Set([...(nb.get(e.b) ?? []), e.a]));
+    }
+    for (const n of graph.nodes) if (n.type === "document") { const s = nb.get(n.id); if (s && s.size === 1) m.set(n.id, [...s][0]); }
+    return m;
+  }, [graph]);
+  const openKey = React.useMemo(() => {
+    const s = new Set(openHubs);
+    for (const id of highlight?.ids ?? []) { const h = leafHubOf.get(id); if (h) s.add(h); }
+    if (focusParam) { const id = focusParam.includes(":") ? focusParam : `doc:${focusParam}`; const h = leafHubOf.get(id); if (h) s.add(h); }
+    return [...s].sort().join("|");
+  }, [openHubs, highlight, leafHubOf, focusParam]);
+
   // ── The visible slice ─────────────────────────────────────────────────
   const view = React.useMemo(() => {
     if (!graph) return null;
@@ -173,15 +200,44 @@ function GraphPageInner() {
       edges = edges.filter((e) => ids.has(e.a) && ids.has(e.b));
     }
 
+    // Fold: documents whose only tie in this view is one hub go inside it.
+    // Not in focus mode (a neighbourhood is already small) and not in Map
+    // mode (it drills into hubs instead). Only hubs with five or more.
+    let folded = new Map<string, number>();
+    if (settings.foldLeaves && !focusId && settings.mode !== "map") {
+      const f = foldLeaves(nodes, edges, { open: new Set(openKey ? openKey.split("|") : []) });
+      nodes = f.nodes; edges = f.edges; folded = f.folded;
+      ids = new Set(nodes.map((n) => n.id));
+    }
+
     const ghosts = settings.showProposals
       ? proposals.filter((e) => ids.has(e.a) && ids.has(e.b))
       : [];
-    return { nodes, edges, ghosts };
-  }, [graph, settings, proposals, focusId]);
+    const foldedTotal = [...folded.values()].reduce((a, b) => a + b, 0);
+    return { nodes, edges, ghosts, folded, foldedTotal };
+  }, [graph, settings, proposals, focusId, openKey]);
+
+  // ── 3D estate: the Map's tree as a globe, every position fixed. What a
+  // lens hides stays hidden; documents open on click.
+  const [globeOpen, setGlobeOpen] = React.useState<Set<string>>(new Set());
+  const globeOn = !!graph && settings.mode === "3d" && settings.layout3d !== "web";
+  const layered = React.useMemo(() => (globeOn && graph ? estateGlobe(graph.nodes, graph.edges, { open: globeOpen, hiddenTypes: settings.hiddenTypes }) : null), [globeOn, graph, globeOpen, settings.hiddenTypes]);
+  // Framed once per estate and lens, not every time something opens.
+  const globeFrame = React.useMemo(() => (globeOn && graph ? estateGlobe(graph.nodes, graph.edges, { hiddenTypes: settings.hiddenTypes }).nodes : null), [globeOn, graph, settings.hiddenTypes]);
 
   // ── Feed the simulation ───────────────────────────────────────────────
   React.useEffect(() => {
     if (!view || !activeOrgId) return;
+    if (layered) {
+      sim.configure({ dimensions: 3 });
+      sim.setGraph(layered.nodes.map((n) => ({ id: n.id, mass: 1 })), layered.edges.map((e) => ({ a: e.a, b: e.b, strength: 0 })));
+      for (const n of sim.nodes) {
+        const p = layered.pos[n.id];
+        if (p) { n.x = p[0]; n.y = p[1]; n.z = p[2]; }
+        n.vx = 0; n.vy = 0; n.vz = 0; n.fixed = true;
+      }
+      return;
+    }
     // 2D and 3D keep SEPARATE saved layouts. Restoring a flat disc into the
     // 3D view guarantees a pancake that looks exactly like the 2D map.
     let restore: Record<string, [number, number, number]> | undefined;
@@ -199,7 +255,7 @@ function GraphPageInner() {
       })),
       { restore },
     );
-  }, [view, activeOrgId, sim, posKey]);
+  }, [view, activeOrgId, sim, posKey, layered]);
 
   // Live forces: dragging a slider is answered on the next frame, which is
   // the whole point of having sliders.
@@ -299,6 +355,8 @@ function GraphPageInner() {
   // `from=graph` lets the destination page offer a way back that restores
   // this exact map (layout and settings persist per-org already).
   const open = React.useCallback((n: GraphNode) => {
+    // Groups drawn only on the globe have nowhere to go.
+    if (!n.href || n.href === "#") return;
     router.push(`${n.href}${n.href.includes("?") ? "&" : "?"}from=graph`);
   }, [router]);
 
@@ -381,6 +439,22 @@ function GraphPageInner() {
       setPathEnds((prev) => (!prev.from || prev.to ? { from: n, to: null } : { ...prev, to: n }));
       return;
     }
+    if (n && view?.folded.has(n.id)) setOpenHubs((s) => new Set([...s, n.id]));
+    // 3D estate: picking something with documents opens them; picking it
+    // again (already selected) folds them back. Either way the camera goes
+    // to its whole tree.
+    if (n && layered?.info.get(n.id)?.openable) {
+      const again = selected?.id === n.id;
+      setGlobeOpen((s) => { const x = new Set(s); if (again && x.has(n.id)) x.delete(n.id); else x.add(n.id); return x; });
+    }
+    if (n && layered) {
+      const kids = new Map<string, string[]>();
+      for (const e of layered.edges) kids.set(e.a, [...(kids.get(e.a) ?? []), e.b]);
+      const ids: string[] = [];
+      const walk = (id: string) => { ids.push(id); for (const k of kids.get(id) ?? []) walk(k); };
+      walk(n.id);
+      setHighlight({ ids, nonce: Date.now() });
+    }
     setSelected((prev) => {
       // Only a genuine hop is history — reselecting the same node isn't.
       if (n && prev && prev.id !== n.id) setTrail((t) => [...t.slice(-19), prev]);
@@ -388,7 +462,7 @@ function GraphPageInner() {
       return n;
     });
     if (!n) setHighlight(null);
-  }, [pathMode, connect, completeConnect]);
+  }, [pathMode, connect, completeConnect, view, layered, selected]);
 
   const peekBack = React.useCallback(() => {
     setTrail((t) => {
@@ -405,17 +479,25 @@ function GraphPageInner() {
     if (select) setSelected(select);
   }, []);
 
-  const connections = React.useMemo(() => {
-    if (!selected || !view) return [];
+  // One hop from the selection, each with WHY it is linked. On the globe,
+  // the tree's links plus the cross-links the tree has no room for (a
+  // drawing tagged to two pieces of equipment, a project's documents).
+  const { connections, reasons } = React.useMemo(() => {
+    const reasons = new Map<string, string>();
+    if (!selected || !view) return { connections: [] as GraphNode[], reasons };
     const ids = new Set<string>();
-    for (const e of [...view.edges, ...view.ghosts]) {
-      if (e.a === selected.id) ids.add(e.b);
-      if (e.b === selected.id) ids.add(e.a);
+    const srcEdges = layered ? [...layered.edges, ...(graph?.edges ?? [])] : [...view.edges, ...view.ghosts];
+    for (const e of srcEdges) {
+      const other = e.a === selected.id ? e.b : e.b === selected.id ? e.a : null;
+      if (!other) continue;
+      ids.add(other);
+      if (e.why && !reasons.has(other)) reasons.set(other, e.why);
     }
-    const byId = new Map(view.nodes.map((n) => [n.id, n]));
-    return [...ids].map((id) => byId.get(id)).filter((n): n is GraphNode => !!n)
-      .sort((a, b) => b.degree - a.degree).slice(0, 12);
-  }, [selected, view]);
+    const byId = new Map([...(graph?.nodes ?? []), ...view.nodes, ...(layered?.nodes ?? [])].map((n) => [n.id, n]));
+    const connections = [...ids].map((id) => byId.get(id)).filter((n): n is GraphNode => !!n)
+      .sort((a, b) => b.degree - a.degree).slice(0, 40);
+    return { connections, reasons };
+  }, [selected, view, layered, graph]);
 
   if (!activeOrgId) {
     return <div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" /></div>;
@@ -504,6 +586,13 @@ function GraphPageInner() {
           </button>
         )}
 
+        {view && !layered && (view.foldedTotal > 0 || openHubs.size > 0) && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[var(--color-text-muted)]">
+            {view.foldedTotal > 0 && <>{view.foldedTotal} documents folded into {view.folded.size} hub{view.folded.size === 1 ? "" : "s"} — click a hub to open it</>}
+            {openHubs.size > 0 && <button onClick={() => setOpenHubs(new Set())} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Fold again</button>}
+            {view.foldedTotal > 0 && <button onClick={() => patchSettings({ foldLeaves: false })} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Unfold all</button>}
+          </span>
+        )}
         {view && (
           <span className="text-[10px] font-mono text-[var(--color-text-faint)] ml-auto">
             {view.nodes.length} nodes · {view.edges.length} links
@@ -523,15 +612,18 @@ function GraphPageInner() {
           </div>
         ) : (
           <>
-            {settings.mode === "3d" ? (
+            {settings.mode === "map" ? (
+              <EstateMap nodes={graph?.nodes ?? view.nodes} edges={graph?.edges ?? view.edges} query={query} selectedId={selected?.id ?? null}
+                highlightIds={highlightIds} flyTo={highlight} onSelect={handleSelect} onOpen={open} />
+            ) : settings.mode === "3d" ? (
               <Suspense fallback={
                 <div className="absolute inset-0 flex items-center justify-center bg-[#0b1020]">
                   <div className="text-[11px] font-bold text-slate-400">Loading the 3D engine…</div>
                 </div>
               }>
                 <OrgGraph3D
-                  nodes={view.nodes}
-                  edges={[...view.edges, ...view.ghosts]}
+                  nodes={layered?.nodes ?? view.nodes}
+                  edges={layered?.edges ?? [...view.edges, ...view.ghosts]}
                   sim={sim}
                   settings={settings}
                   query={query}
@@ -542,7 +634,10 @@ function GraphPageInner() {
                   flyTo={highlight}
                   onSelect={handleSelect}
                   onOpen={open}
-                  onSettled={persistPositions}
+                  onSettled={layered ? undefined : persistPositions}
+                  frameAll={globeFrame}
+                  pinned={!!layered}
+                  info={layered?.info}
                 />
               </Suspense>
             ) : (
@@ -732,7 +827,9 @@ function GraphPageInner() {
               <div className="text-[10px] font-bold text-[var(--color-text-faint)]">
                 {settings.mode === "3d"
                   ? "drag to orbit · shift-drag or right-drag to pan · scroll to zoom · double-click to open"
-                  : "scroll or pinch to zoom · drag to pan · drag a node to move it · double-click to open"}
+                  : settings.mode === "map"
+                    ? "click a unit or equipment to go in · Esc to climb out · scroll to zoom · double-click to open"
+                    : "scroll or pinch to zoom · drag to pan · drag a node to move it · double-click to open"}
               </div>
               {(graph?.truncations ?? []).map((t) => (
                 <div key={t} className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5">
@@ -858,6 +955,7 @@ function GraphPageInner() {
                 node={selected}
                 orgId={activeOrgId}
                 connections={connections}
+                reasons={reasons}
                 focused={!!focusId}
                 historyDepth={trail.length}
                 colorFor={(t) => NODE_COLORS[t]}

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filenameParser";
 import { computeUniquenessKey } from "@/lib/uniqueness";
+import { hashFile, findExistingCopies, type ExistingCopy } from "@/lib/duplicateFiles";
 
 export interface CustomColumnDef {
   key: string;
@@ -38,6 +39,8 @@ export interface StagedItem {
   status: string;
   customFields: Record<string, string>;
   hints: ParsedFilename["hints"];
+  /** SHA-256 of the bytes, worked out while the person reviews. */
+  fileHash?: string;
 }
 
 interface MetadataStagingModalProps {
@@ -63,6 +66,8 @@ interface MetadataStagingModalProps {
    *  the uniqueness tuple. Surfaced as a banner action when the modal
    *  detects same-doc-number-multiple-files. */
   onAddSheetAndUseForUniqueness?: () => Promise<void>;
+  /** When set, each file is checked against what the org already holds. */
+  orgId?: string;
 }
 
 const DEFAULT_STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded"];
@@ -71,8 +76,31 @@ export default function MetadataStagingModal({
   isOpen, files, customColumns = [], defaultStatus = "Issued",
   statusOptions = DEFAULT_STATUS_OPTIONS,
   onCancel, onSubmit, onAddColumn,
-  uniquenessKeys, onAddSheetAndUseForUniqueness,
+  uniquenessKeys, onAddSheetAndUseForUniqueness, orgId,
 }: MetadataStagingModalProps) {
+  // ── Same bytes already here? ──────────────────────────────────────
+  // Hashed in the browser while the person reviews; nothing waits on it.
+  const [hashes, setHashes] = useState<Map<File, string>>(new Map());
+  const [copies, setCopies] = useState<Map<string, ExistingCopy[]>>(new Map());
+  const [checking, setChecking] = useState(false);
+  useEffect(() => {
+    if (!isOpen || files.length === 0) { setHashes(new Map()); setCopies(new Map()); return; }
+    let live = true;
+    setChecking(true);
+    (async () => {
+      const h = new Map<File, string>();
+      for (const f of files) {
+        const x = await hashFile(f);
+        if (!live) return;
+        if (x) h.set(f, x);
+      }
+      setHashes(h);
+      const found = orgId ? await findExistingCopies(orgId, [...h.values()]) : new Map<string, ExistingCopy[]>();
+      if (live) { setCopies(found); setChecking(false); }
+    })().catch(() => { if (live) setChecking(false); });
+    return () => { live = false; };
+  }, [isOpen, files, orgId]);
+
   const [fixingUniqueness, setFixingUniqueness] = useState(false);
   const [items, setItems] = useState<StagedItem[]>([]);
   // Count of fields auto-filled by reading page-1 title-block text.
@@ -391,10 +419,11 @@ export default function MetadataStagingModal({
       // the parent doesn't save the same value into both the canonical
       // column AND the metadata JSONB.
       const cleaned = items.map((it) => {
-        if (canonicalKeys.size === 0) return it;
+        const fileHash = hashes.get(it.file);
+        if (canonicalKeys.size === 0) return { ...it, fileHash };
         const customFields = { ...it.customFields };
         for (const k of canonicalKeys) delete customFields[k];
-        return { ...it, customFields };
+        return { ...it, customFields, fileHash };
       });
       await onSubmit(cleaned, ctl.signal);
     } catch (e) {
@@ -528,6 +557,48 @@ export default function MetadataStagingModal({
           </div>
         )}
 
+        {/* Files whose exact bytes are already in the system. */}
+        {(() => {
+          const already = items.filter((it) => (copies.get(hashes.get(it.file) ?? "")?.length ?? 0) > 0);
+          const seen = new Map<string, number>();
+          for (const it of items) { const h = hashes.get(it.file); if (h) seen.set(h, (seen.get(h) ?? 0) + 1); }
+          const twiceInBatch = [...new Set(items.filter((it) => (seen.get(hashes.get(it.file) ?? "") ?? 0) > 1).map((it) => it.file))];
+          if (checking) return (
+            <div className="px-4 sm:px-6 py-1.5 border-b border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 shrink-0">
+              <Loader2 className="w-3 h-3 animate-spin" /> Checking whether these files are already in the system…
+            </div>
+          );
+          if (!already.length && !twiceInBatch.length) return null;
+          return (
+            <div className="px-4 sm:px-6 py-3 bg-amber-50 border-b border-amber-200 shrink-0 text-[11px] text-amber-900">
+              <div className="flex items-start gap-2 flex-wrap sm:flex-nowrap">
+                <Copy className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  {already.length > 0 && (
+                    <div className="text-xs font-black">
+                      {already.length === 1 ? "1 file is" : `${already.length} files are`} already in the system — same bytes, maybe a different name. Each is marked below.
+                    </div>
+                  )}
+                  {twiceInBatch.length > 0 && (
+                    <div className={already.length ? "mt-0.5" : "text-xs font-black"}>
+                      {twiceInBatch.length} file{twiceInBatch.length === 1 ? " is" : "s are"} identical to another file in this batch.
+                    </div>
+                  )}
+                  <div className="mt-0.5 text-amber-800">Uploading them anyway makes another copy. To avoid that, take them out of this batch.</div>
+                </div>
+                {already.length > 0 && (
+                  <button
+                    onClick={() => setItems((prev) => prev.filter((it) => !(copies.get(hashes.get(it.file) ?? "")?.length)))}
+                    className="shrink-0 inline-flex items-center justify-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-700 hover:bg-amber-600 text-white"
+                  >
+                    <Trash2 className="w-3 h-3" /> Skip {already.length === 1 ? "it" : `these ${already.length}`}
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Title-block reader result — quiet until it actually helped. */}
         {tbFilled > 0 && (
           <div className="px-4 sm:px-6 py-2 bg-indigo-50 border-b border-indigo-200 text-[11px] text-indigo-800 flex items-center gap-2 shrink-0 animate-in fade-in">
@@ -619,6 +690,11 @@ export default function MetadataStagingModal({
                     <td className="px-3 py-1.5 max-w-[16ch]">
                       <div className="text-[11px] text-[var(--color-text)] font-mono truncate" title={it.file.name}>{it.file.name}</div>
                       <div className="text-[9px] text-[var(--color-text-faint)]">{formatBytes(it.file.size)}</div>
+                      {(copies.get(hashes.get(it.file) ?? "") ?? []).map((c) => (
+                        <a key={c.href} href={c.href} target="_blank" rel="noreferrer" title={`Already here: ${c.where}`} className="block text-[9px] font-bold text-amber-700 hover:underline truncate">
+                          Already in {c.where}
+                        </a>
+                      ))}
                     </td>
                     {!canonical.docNumber && (
                       <td className="px-3 py-1.5">

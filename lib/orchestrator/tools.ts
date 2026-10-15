@@ -90,7 +90,9 @@ const findDocuments: ToolDef = {
   ],
   async run(args, ctx) {
     const q = String(args.query);
-    const { data } = await supabaseAdmin
+    const { excludedLibraryIds } = await import("@/lib/aiLibraries");
+    const neverAi = [...(await excludedLibraryIds(supabaseAdmin, ctx.orgId))];
+    let docQ = supabaseAdmin
       .from("documents")
       .select("id, document_number, title, rev, status, library_id, updated_at")
       .eq("org_id", ctx.orgId)
@@ -103,6 +105,8 @@ const findDocuments: ToolDef = {
       .neq("status", "Archived")
       .order("updated_at", { ascending: false })
       .limit(LIMIT);
+    if (neverAi.length) docQ = docQ.not("library_id", "in", `(${neverAi.join(",")})`);
+    const { data } = await docQ;
     return {
       data: {
         matches: (data ?? []).map((d) => {

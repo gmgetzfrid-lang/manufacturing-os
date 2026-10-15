@@ -55,32 +55,111 @@ export const EQUIPMENT_CATEGORIES: Record<string, string> = {
 export interface EquipmentTagHit {
   tag: string;        // "V-3", "P-101A" (normalized uppercase, dashed)
   prefix: string;     // "V", "PSV"
+  /** The unit someone wrote in front of it ("10-V-101" → "10"), when any. */
+  unit?: string;
+  /** Where the match starts in the text it was read from. */
+  at?: number;
+}
+
+/** Instrument and control-valve function codes (ISA-5.1 style). A tag with
+ *  one of these prefixes is an instrument, not process equipment. */
+export const INSTRUMENT_PREFIXES = new Set([
+  "PI", "PIT", "PIC", "PT", "PV", "PY", "PSV", "PSE", "PCV", "PDI", "PDT", "PDIT", "PDIC", "PAH", "PAL", "PSH", "PSL", "PRV", "PG",
+  "FE", "FI", "FIT", "FIC", "FT", "FV", "FY", "FCV", "FQ", "FQI", "FO", "FSL", "FSH", "FG",
+  "LG", "LI", "LIT", "LIC", "LT", "LV", "LY", "LCV", "LSH", "LSL", "LSHH", "LSLL", "LAH", "LAL",
+  "TE", "TI", "TIT", "TIC", "TT", "TV", "TY", "TW", "TCV", "TSH", "TSL", "TG",
+  "AE", "AI", "AIT", "AIC", "AT", "AV", "HV", "HS", "HIC", "XV", "ZS", "ZSO", "ZSC", "ZT", "RV", "SDV", "BDV",
+]);
+
+/** What a tag read off a drawing is: process equipment, an instrument, or
+ *  a reference to something on another sheet ("FROM X-45", "TO LV-222"). */
+export function tagKindOf(hit: EquipmentTagHit, text: string): "equipment" | "instrument" | "xref" {
+  const before = text.slice(Math.max(0, (hit.at ?? 0) - 8), hit.at ?? 0).toUpperCase();
+  if (/(?:^|[^A-Z])(?:FROM|TO)\s*$/.test(before)) return "xref";
+  if (INSTRUMENT_PREFIXES.has(hit.prefix)) return "instrument";
+  return "equipment";
 }
 
 // LETTERS-DASH-DIGITS(optional letter suffix). The dash is required — it's
 // what separates real tags from prose abbreviations. Longest-prefix rules
 // (PSV before P) come from the prefix itself being captured.
 const EQUIPMENT_RE = /\b([A-Z]{1,3})[-–](\d{1,5})([A-Z]{1,2})?\b/g;
+// On a DRAWING there is no prose, so the dash can be missing or be a space
+// or a dot: "V101", "V 101", "P.101A". Two digits at least, so a sheet size
+// (A1) or a revision (R2) never passes.
+const LOOSE_EQUIPMENT_RE = /(?<![A-Z0-9])([A-Z]{1,3})[\s.]?(\d{2,5})([A-Z]{1,2})?(?![A-Z0-9])/g;
 
 // Tokens that match the shape but are never equipment on real drawings.
 const EQUIPMENT_STOP_PREFIXES = new Set([
   "NO", "DWG", "REV", "PID", "DRW", "SHT", "SH", "PG", "ISO", "API", "ANSI", "NPS",
 ]);
 
-export function extractEquipmentTags(text: string): EquipmentTagHit[] {
+/** Is this match an inner segment of a drawing or line number? "2002-D 2001"
+ *  (a drawing number: digits, a separator, then our letters) and
+ *  `8"-P-20015` (a line number: pipe size in inches, then a dash). */
+function insideANumber(upper: string, at: number): boolean {
+  const before = upper.slice(Math.max(0, at - 10), at);
+  // Digits standing alone (not the end of a tag like V101): 2002-D…, 2002 D…
+  // (preceded by a space or the start — "-222 " is the end of the previous
+  // tag, "LIC-222 PIT-130", not a drawing number).
+  if (/(?:^|[\s(.:])\d{3,}[-–\s]$/.test(before)) return true;
+  if (/["”]\s*[-–]$/.test(before)) return true;       // 8"-P…
+  return false;
+}
+
+export function extractEquipmentTags(text: string, opts: {
+  /** Drawing pages only: also read "V101", "P 101A", "E.204". Only prefixes
+   *  that are KNOWN equipment (the table above plus the site codebook) are
+   *  accepted this way, so pipe specs (SCH 40), nameplates (HP 460),
+   *  revisions (R39) and words (TO 21) never become equipment. */
+  loose?: boolean;
+  /** Tag prefixes the site codebook teaches, on top of the built-in table. */
+  knownPrefixes?: Iterable<string>;
+} = {}): EquipmentTagHit[] {
   const out: EquipmentTagHit[] = [];
+  const seen = new Set<string>();
   const upper = text.toUpperCase();
   for (const m of upper.matchAll(EQUIPMENT_RE)) {
     const prefix = m[1];
     if (EQUIPMENT_STOP_PREFIXES.has(prefix)) continue;
+    if (insideANumber(upper, m.index ?? 0)) continue;
     // "2002-D-2001" is a DRAWING NUMBER — reading D-2001 out of its middle
     // would mint a phantom drum for every sheet in the set. A digit-dash
     // immediately before the prefix means the letters are an inner segment
-    // of a larger number, not a tag.
+    // of a larger number… unless those digits are a short UNIT prefix:
+    // "10-V-101" is the vessel V-101 in unit 10, and refineries write it
+    // that way on half their sheets. One or two digits with nothing
+    // alphanumeric before them read as a unit; three or more read as a
+    // drawing number's first segment.
     const at = m.index ?? 0;
-    if (at >= 2 && /[-–]/.test(upper[at - 1]) && /\d/.test(upper[at - 2])) continue;
+    let unit: string | undefined;
+    if (at >= 2 && /[-–]/.test(upper[at - 1]) && /\d/.test(upper[at - 2])) {
+      const lead = upper.slice(0, at - 1).match(/(?:^|[^A-Z0-9])(\d{1,2})$/);
+      // A lone D/P after a unit with four digits ("21-D-1105") is a drawing
+      // number in most sets; a longer prefix or a shorter number is a tag.
+      const number = m[2];
+      if (!lead || (prefix.length === 1 && number.length >= 4)) continue;
+      unit = lead[1];
+    }
     const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
-    out.push({ tag, prefix });
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(unit ? { tag, prefix, unit, at } : { tag, prefix, at });
+  }
+  if (opts.loose) {
+    const known = new Set<string>([...Object.keys(EQUIPMENT_CATEGORIES), ...[...(opts.knownPrefixes ?? [])].map((p) => p.toUpperCase())]);
+    for (const m of upper.matchAll(LOOSE_EQUIPMENT_RE)) {
+      const prefix = m[1];
+      if (EQUIPMENT_STOP_PREFIXES.has(prefix) || !known.has(prefix)) continue;
+      // A single letter with two digits is a revision, a grid square or a
+      // sheet size far more often than a vessel: R39, A10, B12.
+      if (prefix.length === 1 && m[2].length < 3) continue;
+      if (insideANumber(upper, m.index ?? 0)) continue;
+      const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
+      if (seen.has(tag)) continue;
+      seen.add(tag);
+      out.push({ tag, prefix, at: m.index ?? 0 });
+    }
   }
   return out;
 }

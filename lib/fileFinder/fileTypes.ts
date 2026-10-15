@@ -6,7 +6,8 @@
 
 export type FileIconKey =
   | "pdf" | "cad" | "sheet" | "doc" | "code" | "image" | "archive" | "slides" | "mail" | "file"
-  | "library" | "folder" | "folderOpen" | "drive";
+  | "library" | "folder" | "folderOpen" | "drive"
+  | "unit" | "equipment" | "project" | "tag" | "estate";
 
 export interface FileTypeInfo {
   key: FileIconKey;
@@ -53,11 +54,17 @@ const BY_EXT: Record<string, { key: FileIconKey; label: string; color: string }>
   eml: { key: "mail", label: "Email", color: "#0891b2" },
 };
 
-export const CONTAINER_TYPES: Record<"library" | "folder" | "folderOpen" | "drive", FileTypeInfo> = {
+export const CONTAINER_TYPES: Record<"library" | "folder" | "folderOpen" | "drive" | "unit" | "equipment" | "project" | "tag" | "estate", FileTypeInfo> = {
   library: { key: "library", label: "Library", color: "#7c3aed", ext: "" },
   folder: { key: "folder", label: "Folder", color: "#d97706", ext: "" },
   folderOpen: { key: "folderOpen", label: "Folder", color: "#d97706", ext: "" },
   drive: { key: "drive", label: "Drive listing", color: "#0f766e", ext: "" },
+  // The estate's own things, drawn with the same hand as the paper.
+  estate: { key: "estate", label: "Estate", color: "#475569", ext: "" },
+  unit: { key: "unit", label: "Unit", color: "#7c3aed", ext: "" },
+  equipment: { key: "equipment", label: "Equipment", color: "#059669", ext: "" },
+  project: { key: "project", label: "Project", color: "#d97706", ext: "" },
+  tag: { key: "tag", label: "Tag", color: "#64748b", ext: "" },
 };
 
 export function fileTypeOf(name: string): FileTypeInfo {

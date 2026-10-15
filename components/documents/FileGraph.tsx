@@ -35,11 +35,28 @@ export interface FileGraphNode {
   parentId: string | null;
   childCount: number;
   type: FileTypeInfo;
+  /** A small pill under the label — the unit this node is linked to. */
+  badge?: string;
+  /** Equipment linked to it: a green count on the icon's shoulder. */
+  equipment?: number;
 }
 
 export interface FileGraphLight {
   verdict: "strong" | "possible" | "weak" | "rejected";
   score: number;
+}
+
+/** An entity the search resolved (equipment, unit, project), drawn beside the
+ *  files it relates to with a dashed line per relationship. */
+export interface FileGraphSatellite {
+  id: string;
+  label: string;
+  sub?: string;
+  color: string;
+  iconKey: FileTypeInfo["key"];
+  href?: string;
+  /** "named" is the fallback: the entity resolved but no result is linked to it yet, so it sits beside the top hits. */
+  links: Array<{ to: string; kind: "drawn_on" | "mentioned_in" | "tagged_to" | "filed_under" | "in_project" | "linked_unit" | "named" }>;
 }
 
 export interface FileGraphHandle {
@@ -68,6 +85,10 @@ interface Props {
   onUp: () => void;
   /** A file was double-clicked. */
   onOpen: (id: string) => void;
+  satellites?: FileGraphSatellite[];
+  onSatellite?: (s: FileGraphSatellite) => void;
+  /** Symbolic links: [document id, folder id] pairs ("also filed under"). */
+  filedLinks?: Array<[string, string]>;
   className?: string;
 }
 
@@ -80,7 +101,7 @@ const isContainer = (k: FileNodeKind) => k !== "file" && k !== "extfile";
 interface Camera { x: number; y: number; scale: number }
 
 const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
-  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, className = "" }, ref,
+  { visible, collapsed, upNode, sameBytes, lit, ranks, activeId = null, selectedId, onSelect, onDrill, onUp, onOpen, satellites = [], onSatellite, filedLinks = [], className = "" }, ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { images, hostRef } = useIconImages();
@@ -98,6 +119,10 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   const collapsedRef = useRef(collapsed); useEffect(() => { collapsedRef.current = collapsed; }, [collapsed]);
   const ranksRef = useRef(ranks); useEffect(() => { ranksRef.current = ranks; }, [ranks]);
   const activeRef = useRef(activeId); useEffect(() => { activeRef.current = activeId; }, [activeId]);
+  const satRef = useRef(satellites); useEffect(() => { satRef.current = satellites; }, [satellites]);
+  const filedRef = useRef(filedLinks); useEffect(() => { filedRef.current = filedLinks; }, [filedLinks]);
+  /** Satellite positions, recomputed each frame from the files they link to. */
+  const satPos = useRef<Map<string, Placed>>(new Map());
   const upRef = useRef(upNode); useEffect(() => { upRef.current = upNode; }, [upNode]);
 
   const byId = useMemo(() => new Map(visible.map((n) => [n.id, n])), [visible]);
@@ -144,6 +169,26 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     // Every change of what is in view re-fits: a drill-down lands framed.
     if (target.size) { fitted.current = true; fitTo(target, upPosRef.current); }
   }, [target, byId]);
+
+  // Picking a file flies to it (its equipment rings round it); letting it
+  // go frames the whole view again.
+  const prevSel = useRef<string | null>(null);
+  useEffect(() => {
+    const was = prevSel.current; prevSel.current = selectedId;
+    const n = selectedId ? byId.get(selectedId) : undefined;
+    if (n && !isContainer(n.kind)) {
+      const p = targetRef.current.get(n.id);
+      const canvas = canvasRef.current;
+      if (p && canvas) {
+        const ring = 125 + 60;
+        const z = Math.min(1.4, Math.max(0.5, Math.min(canvas.clientWidth, canvas.clientHeight) / (2 * ring + 80)));
+        camTarget.current = { scale: z, x: -p.x * z, y: -p.y * z };
+      }
+    } else if (!selectedId && was && targetRef.current.size) {
+      fitTo(targetRef.current, upPosRef.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   const sameEdges = useMemo(() => {
     const vis = new Set(visible.map((n) => n.id));
@@ -198,6 +243,22 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       }
 
       const litNow = litRef.current, searching = litNow.size > 0;
+      // FOCUS: a picked FILE is the subject. It, the folders above it and
+      // the equipment around it stay; everything else steps back and goes
+      // quiet, so nothing covers what you are looking at.
+      const selNow = selRef.current;
+      const selNode = selNow ? byId.get(selNow) : undefined;
+      const focusOn = !!selNode && !isContainer(selNode.kind);
+      const inFocus = new Set<string>();
+      if (focusOn && selNow) {
+        inFocus.add(selNow);
+        let p = selNode!.parentId; const seen = new Set<string>();
+        while (p && !seen.has(p)) { seen.add(p); inFocus.add(p); p = byId.get(p)?.parentId ?? null; }
+      }
+      const quiet = (id: string) => focusOn && !inFocus.has(id);
+      // Labels are placed most important first; one that would overlap a
+      // label already placed is not drawn.
+      const placed: Array<[number, number, number, number]> = [];
       const litPath = new Set<string>();
       if (searching) {
         for (const id of litNow.keys()) {
@@ -223,7 +284,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.beginPath(); ctx.moveTo(upP.x, upP.y); ctx.lineTo(rootP.x, rootP.y); ctx.stroke();
         ctx.setLineDash([]);
         const r = RADIUS[up.kind] * 0.8;
-        ctx.globalAlpha = hoverRef.current === "__up__" ? 0.95 : 0.5;
+        ctx.globalAlpha = hoverRef.current === "__up__" ? 0.95 : focusOn ? 0.15 : 0.5;
         ctx.beginPath(); ctx.arc(upP.x, upP.y, r, 0, Math.PI * 2);
         ctx.fillStyle = up.type.color; ctx.fill();
         ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
@@ -241,8 +302,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         if (!n.parentId) continue;
         const a = pos.get(n.parentId), b = pos.get(n.id);
         if (!a || !b) continue;
-        const bright = !searching || litNow.has(n.id) || litPath.has(n.id);
-        ctx.strokeStyle = bright ? "rgba(100,116,139,0.55)" : "rgba(100,116,139,0.10)";
+        const bright = (!searching || litNow.has(n.id) || litPath.has(n.id)) && !quiet(n.id);
+        ctx.strokeStyle = bright ? "rgba(100,116,139,0.55)" : "rgba(100,116,139,0.08)";
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
       }
       // Same-bytes arcs.
@@ -261,18 +322,106 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.stroke();
       }
       ctx.setLineDash([]);
+      // Also-filed-under: amber dashed arcs from a file to its other home.
+      ctx.setLineDash([3 / s, 4 / s]); ctx.lineWidth = Math.max(1, 1.4 / s);
+      for (const [docId, folderId] of filedRef.current) {
+        const a = pos.get(docId), b = pos.get(folderId);
+        if (!a || !b) continue;
+        const bright = !searching || litNow.has(docId);
+        ctx.strokeStyle = bright ? "rgba(217,119,6,0.8)" : "rgba(217,119,6,0.15)";
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+        const off = Math.min(100, len * 0.2);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(mx + (dy / len) * off, my - (dx / len) * off, b.x, b.y); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      // Satellites: each sits beside the centroid of the visible files it
+      // relates to, spread around it so several never overlap.
+      const sats = satRef.current;
+      const satsHere = sats.filter((sat) => sat.links.some((l) => pos.has(l.to)));
+      // One ring for all of them, never overlapping: the ring sits outside
+      // everything they link to, each marker gets an arc as wide as its
+      // label, and they keep the order of the direction their files lie in,
+      // so each sits near its own files. Turned away from the "up" button.
+      const upHere = upPosRef.current;
+      const satDraws: Array<() => void> = [];
+      const centroids = new Map<string, { x: number; y: number }>();
+      let ax = 0, ay = 0, an = 0;
+      for (const sat of satsHere) {
+        let cx = 0, cy = 0, n = 0;
+        for (const l of sat.links) { const p = pos.get(l.to); if (p) { cx += p.x; cy += p.y; n++; ax += p.x; ay += p.y; an++; } }
+        if (n) centroids.set(sat.id, { x: cx / n, y: cy / n });
+      }
+      const anchor = an ? { x: ax / an, y: ay / an } : { x: 0, y: 0 };
+      let reach = 0;
+      for (const sat of satsHere) for (const l of sat.links) { const p = pos.get(l.to); if (p) reach = Math.max(reach, Math.hypot(p.x - anchor.x, p.y - anchor.y)); }
+      ctx.font = "800 12px ui-sans-serif, system-ui";
+      const arcOf = (sat: FileGraphSatellite) => Math.max(66, ctx.measureText(sat.label).width + 16);
+      const total = satsHere.reduce((a, sat) => a + arcOf(sat), 0);
+      const oneAnchor = new Set(satsHere.flatMap((sat) => sat.links.map((l) => l.to))).size === 1;
+      const radius = Math.max(reach + (oneAnchor ? 125 : 90), total / (2 * Math.PI) + 20);
+      // The free arc: under a single file (where its name is), else toward
+      // the "up" button.
+      const gap = oneAnchor ? Math.PI / 2 : upHere ? Math.atan2(upHere.y - anchor.y, upHere.x - anchor.x) : -Math.PI / 2;
+      const dirOf = (sat: FileGraphSatellite) => { const c = centroids.get(sat.id) ?? anchor; const a = Math.atan2(c.y - anchor.y, c.x - anchor.x) - gap; return ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI); };
+      const ordered = [...satsHere].sort((a, b) => dirOf(a) - dirOf(b));
+      const slot = new Map<string, number>();
+      {
+        // Spread the free arc evenly so the gap at the "up" side stays clear.
+        const free = Math.max(oneAnchor ? 150 : 0, 2 * Math.PI * radius - total);
+        let at = free / 2;
+        for (const sat of ordered) { const w = arcOf(sat); slot.set(sat.id, gap + (at + w / 2) / radius); at += w; }
+      }
+      satsHere.forEach((sat) => {
+        if (!centroids.has(sat.id)) return;
+        const ang = slot.get(sat.id) ?? 0;
+        const target = { x: anchor.x + Math.cos(ang) * radius, y: anchor.y + Math.sin(ang) * radius };
+        const cur = satPos.current.get(sat.id) ?? target;
+        cur.x += (target.x - cur.x) * 0.2; cur.y += (target.y - cur.y) * 0.2;
+        satPos.current.set(sat.id, cur);
+        // Reserve its place now so file labels steer round it; draw it last
+        // so nothing paints over it.
+        ctx.font = "800 12px ui-sans-serif, system-ui";
+        const rw = Math.max(52, ctx.measureText(sat.label).width + 6);
+        placed.push([cur.x - rw / 2, cur.y - 26, rw, 26 + 20 + 19]);
+        satDraws.push(() => {
+        const LINK: Record<string, string> = { drawn_on: "rgba(14,165,233,0.8)", mentioned_in: "rgba(99,102,241,0.8)", tagged_to: "rgba(16,185,129,0.8)", filed_under: "rgba(217,119,6,0.8)", in_project: "rgba(245,158,11,0.8)", linked_unit: "rgba(124,58,237,0.8)", named: "rgba(148,163,184,0.5)" };
+        ctx.setLineDash([5 / s, 4 / s]); ctx.lineWidth = Math.max(1, 1.4 / s);
+        for (const l of sat.links) {
+          const p = pos.get(l.to);
+          if (!p) continue;
+          ctx.strokeStyle = LINK[l.kind] ?? "rgba(100,116,139,0.6)";
+          ctx.beginPath(); ctx.moveTo(cur.x, cur.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        const r = 20;
+        ctx.beginPath(); ctx.arc(cur.x, cur.y, r + 6, 0, Math.PI * 2); ctx.fillStyle = sat.color + "33"; ctx.fill();
+        ctx.beginPath(); ctx.arc(cur.x, cur.y, r, 0, Math.PI * 2); ctx.fillStyle = sat.color; ctx.fill();
+        ctx.lineWidth = hoverRef.current === `sat:${sat.id}` ? 3 : 1.5; ctx.strokeStyle = hoverRef.current === `sat:${sat.id}` ? "#0ea5e9" : "rgba(255,255,255,0.95)"; ctx.stroke();
+        const img = imagesRef.current.get(sat.iconKey);
+        if (img) ctx.drawImage(img, cur.x - r * 0.6, cur.y - r * 0.6, r * 1.2, r * 1.2);
+        ctx.font = "800 12px ui-sans-serif, system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        const tw = ctx.measureText(sat.label).width;
+        ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(cur.x - tw / 2 - 3, cur.y + r + 3, tw + 6, 16);
+        ctx.fillStyle = "#0f172a"; ctx.fillText(sat.label, cur.x, cur.y + r + 5);
+        });
+      });
+      for (const sat of sats) if (!satsHere.includes(sat)) satPos.current.delete(sat.id);
 
       // Nodes.
       const sel = selRef.current, hov = hoverRef.current, imgs = imagesRef.current, col = collapsedRef.current;
+      const labels: Array<{ n: FileGraphNode; p: Placed; r: number; light: boolean; dim: boolean; pri: number }> = [];
       ctx.textAlign = "center"; ctx.textBaseline = "top";
       for (const n of visibleRef.current) {
         const p = pos.get(n.id);
         if (!p) continue;
         const light = litNow.get(n.id);
         const active = n.id === activeRef.current;
-        const dim = searching && !light && !litPath.has(n.id);
+        const hush = quiet(n.id);
+        const dim = (searching && !light && !litPath.has(n.id)) || hush;
         const r = RADIUS[n.kind];
-        ctx.globalAlpha = dim ? 0.22 : 1;
+        ctx.globalAlpha = hush ? 0.12 : dim ? 0.22 : 1;
         if (light) {
           ctx.beginPath(); ctx.arc(p.x, p.y, r + (active ? 14 : 9), 0, Math.PI * 2);
           ctx.fillStyle = VERDICT[light.verdict] + (active ? "55" : "40"); ctx.fill();
@@ -290,7 +439,10 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.strokeStyle = n.id === sel ? "#0ea5e9" : n.id === hov ? "#0ea5e9" : "rgba(255,255,255,0.9)";
         ctx.stroke();
         // Icon.
-        const key = n.kind === "folder" || n.kind === "extfolder" ? (col.has(n.id) ? "folder" : "folderOpen") : n.type.key;
+        // Folders show open or closed; any other container (an operating
+        // area, an equipment type, a piece of equipment) keeps its own icon.
+        const plainFolder = (n.kind === "folder" || n.kind === "extfolder") && (n.type.key === "folder" || n.type.key === "folderOpen");
+        const key = plainFolder ? (col.has(n.id) ? "folder" : "folderOpen") : n.type.key;
         const img = imgs.get(key);
         const iconSize = r * 1.15;
         if (img) ctx.drawImage(img, p.x - iconSize / 2, p.y - iconSize / 2, iconSize, iconSize);
@@ -317,21 +469,60 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
           ctx.fillText(n.childCount > 999 ? "999+" : String(n.childCount), bx, by);
           ctx.textBaseline = "top";
         }
-        // Label.
-        const showLabel = isContainer(n.kind) || light || n.id === sel || n.id === hov || s > 0.75;
-        if (showLabel) {
+        // Equipment count, on the icon's right shoulder: always visible.
+        if (n.equipment) {
+          const t = n.equipment > 99 ? "99+" : String(n.equipment);
+          ctx.font = "800 9px ui-sans-serif, system-ui";
+          const w = Math.max(15, ctx.measureText(t).width + 8);
+          const bx = p.x + r * 0.62, byy = p.y - 6.5;
+          ctx.fillStyle = dim ? "rgba(5,150,105,0.35)" : "#059669";
+          ctx.beginPath(); ctx.roundRect(bx, byy, w, 13, 6.5); ctx.fill();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(t, bx + w / 2, byy + 6.8);
+          ctx.textBaseline = "top";
+        }
+        if (!hush) placed.push([p.x - r - 2, p.y - r - 2, 2 * r + 4, 2 * r + 4]);
+        // Label: queued, drawn after every node so nothing paints over it.
+        const showLabel = !hush && (isContainer(n.kind) || light || n.id === sel || n.id === hov || s > 0.75);
+        if (showLabel) labels.push({ n, p, r, light: !!light, dim, pri: n.id === sel ? 0 : n.id === hov ? 1 : active ? 2 : light ? 3 + (ranksRef.current?.get(n.id) ?? 50) / 100 : isContainer(n.kind) ? 4 : 5 });
+        ctx.globalAlpha = 1;
+      }
+      labels.sort((a, b) => a.pri - b.pri);
+      for (const { n, p, r, dim } of labels) {
+        {
           const container = isContainer(n.kind);
           const fontPx = container ? 12 : 11;
           ctx.font = `${container ? 700 : 500} ${fontPx}px ui-sans-serif, system-ui`;
           const label = n.label.length > 28 ? n.label.slice(0, 26) + "…" : n.label;
           const tw = ctx.measureText(label).width;
+          const lh = fontPx + 4 + (n.badge ? 15 : 0);
+          // Under the icon if there is room, else over it, else not at all.
+          const own = (rect: [number, number, number, number]) => placed.filter((q) => !(q[0] === p.x - r - 2 && q[1] === p.y - r - 2)).some(([px, py, pw, ph]) => rect[0] < px + pw && px < rect[0] + rect[2] && rect[1] < py + ph && py < rect[1] + rect[3]);
+          const below: [number, number, number, number] = [p.x - tw / 2 - 3, p.y + r + 3, tw + 6, lh];
+          const above: [number, number, number, number] = [p.x - tw / 2 - 3, p.y - r - 3 - lh, tw + 6, lh];
+          const spot = n.id === sel || !own(below) ? below : !own(above) ? above : null;
+          if (!spot) continue;
+          placed.push(spot);
+          const ly = spot[1];
+          ctx.globalAlpha = dim ? 0.5 : 1;
           ctx.fillStyle = "rgba(255,255,255,0.85)";
-          ctx.fillRect(p.x - tw / 2 - 3, p.y + r + 3, tw + 6, fontPx + 4);
+          ctx.fillRect(spot[0], ly, tw + 6, fontPx + 4);
           ctx.fillStyle = dim ? "rgba(51,65,85,0.5)" : container ? "#0f172a" : "#334155";
-          ctx.fillText(label, p.x, p.y + r + 5);
+          ctx.fillText(label, p.x, ly + 2);
+          if (n.badge) {
+            ctx.font = "700 9px ui-sans-serif, system-ui";
+            const bw = ctx.measureText(n.badge).width + 8;
+            const by = ly + 2 + fontPx + 5;
+            ctx.fillStyle = dim ? "rgba(124,58,237,0.25)" : "#7c3aed";
+            ctx.beginPath(); ctx.roundRect(p.x - bw / 2, by, bw, 12, 6); ctx.fill();
+            ctx.fillStyle = "#fff"; ctx.fillText(n.badge, p.x, by + 2);
+          }
         }
         ctx.globalAlpha = 1;
       }
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (const d of satDraws) d();
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -368,6 +559,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     let best: string | null = null, bestD = Infinity;
     const upP = upPosRef.current, up = upRef.current;
     if (up && upP && Math.hypot(upP.x - wx, upP.y - wy) < RADIUS[up.kind] * 0.8 + 4 / camRef.current.scale) return "__up__";
+    for (const [id, p] of satPos.current) if (Math.hypot(p.x - wx, p.y - wy) < 20 + 4 / camRef.current.scale) return `sat:${id}`;
     for (const n of visibleRef.current) {
       const p = posRef.current.get(n.id);
       if (!p) continue;
@@ -404,6 +596,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     const { x, y } = toWorld(e);
     const id = hit(x, y);
     if (id === "__up__") { onUp(); return; }
+    if (id?.startsWith("sat:")) { const sat = satRef.current.find((x) => `sat:${x.id}` === id); if (sat) onSatellite?.(sat); return; }
     const now = performance.now();
     const dbl = id && lastClick.current.id === id && now - lastClick.current.at < 350;
     lastClick.current = { id, at: now };
@@ -417,7 +610,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     if (p) { const scale = Math.max(camRef.current.scale, 1.5); camTarget.current = { scale, x: -p.x * scale, y: -p.y * scale }; }
   };
 
-  const hoverNode = hoverId === "__up__" ? upNode : hoverId ? byId.get(hoverId) : null;
+  const hoverSat = hoverId?.startsWith("sat:") ? satellites.find((x) => `sat:${x.id}` === hoverId) : null;
+  const hoverNode = hoverId === "__up__" ? upNode : hoverSat ? { id: hoverSat.id, kind: "file" as const, label: hoverSat.label, parentId: null, childCount: 0, type: { key: hoverSat.iconKey, label: hoverSat.sub ?? "Entity", color: hoverSat.color, ext: "" } } : hoverId ? byId.get(hoverId) : null;
 
   return (
     <div className={`relative w-full h-full ${className}`}>
@@ -441,7 +635,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         >
           <div className="font-bold truncate">{hoverNode.label}</div>
           <div className="text-[var(--color-text-muted)]">
-            {hoverId === "__up__" ? "Click to go back up" : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
+            {hoverId === "__up__" ? "Click to go back up" : hoverSat ? `${hoverSat.sub ?? "Entity"} · ${hoverSat.links.length} linked file${hoverSat.links.length === 1 ? "" : "s"} · click to open` : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
           </div>
         </div>
       )}
