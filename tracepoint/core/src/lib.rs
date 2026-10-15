@@ -2,6 +2,7 @@ pub mod ai;
 pub mod aifind;
 pub mod auth;
 pub mod classify;
+pub mod crawl;
 pub mod engine;
 pub mod export;
 pub mod graph;

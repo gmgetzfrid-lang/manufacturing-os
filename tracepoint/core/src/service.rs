@@ -64,6 +64,29 @@ pub struct Service {
     session: Mutex<Option<Session>>,
     config: RwLock<LocalConfig>,
     chat_cancel: AtomicBool,
+    /// The database file the engine was loaded from (rescans start from it).
+    active_db: RwLock<Option<PathBuf>>,
+    scan: Mutex<ScanState>,
+    scan_cancel: Arc<AtomicBool>,
+}
+
+/// What the Sources page shows while THOR is being rescanned.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ScanState {
+    pub running: bool,
+    pub root: Option<String>,
+    pub phase: String,
+    pub files: usize,
+    pub dirs: usize,
+    pub new: usize,
+    pub changed: usize,
+    pub missing: usize,
+    pub errors: usize,
+    pub files_per_sec: f64,
+    pub started: Option<String>,
+    pub finished: Option<String>,
+    pub error: Option<String>,
+    pub log: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -133,6 +156,9 @@ impl Service {
             session: Mutex::new(None),
             config: RwLock::new(config),
             chat_cancel: AtomicBool::new(false),
+            active_db: RwLock::new(None),
+            scan: Mutex::new(ScanState::default()),
+            scan_cancel: Arc::new(AtomicBool::new(false)),
         }))
     }
 
@@ -206,6 +232,7 @@ impl Service {
             return;
         };
         self.set_index_msg("Reading 200,000+ THOR file records…");
+        *self.active_db.write().unwrap() = Some(path.clone());
         match Index::load(&path) {
             Ok(idx) => {
                 for r in &idx.roots {
@@ -658,10 +685,186 @@ impl Service {
             }
             "indexer.status" => {
                 self.with_session(|_| Ok(()))?;
-                Ok(json!({"running": false}))
+                Ok(serde_json::to_value(&*self.scan.lock().unwrap()).unwrap())
+            }
+            "indexer.start" => {
+                self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can rescan THOR.")?;
+                if self.scan.lock().unwrap().running {
+                    return Err(ApiError::new(409, "A scan is already running."));
+                }
+                let mut roots: Vec<String> = Vec::new();
+                if a.get("pick").and_then(|x| x.as_bool()).unwrap_or(false) {
+                    match self.platform.pick_folder("Choose a THOR folder to add to the index") {
+                        Some(p) => roots.push(p.display().to_string()),
+                        None => return Ok(json!({"cancelled": true})),
+                    }
+                } else if let Some(r) = a.get("root").and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
+                    roots.push(r.to_string());
+                } else if let Some(e) = self.engine.read().unwrap().clone() {
+                    roots.extend(e.idx.roots.iter().filter(|r| r.enabled).map(|r| r.path.clone()));
+                }
+                if roots.is_empty() {
+                    return Err(ApiError::new(400, "No THOR folder to scan. Add one first."));
+                }
+                for r in &roots {
+                    // A source is read-only from now on, and can't be one of our own folders.
+                    if self.guard.check(Path::new(r)).is_ok() && self.guard.writable_dirs().iter().any(|w| crate::guard::normalize(r).starts_with(&crate::guard::normalize(w))) {
+                        return Err(ApiError::new(400, "That folder is one of TracePoint's own folders, not a THOR source."));
+                    }
+                    self.guard.protect(r);
+                }
+                let workers = a.get("workers").and_then(|x| x.as_u64()).unwrap_or(8) as usize;
+                self.scan_cancel.store(false, Ordering::SeqCst);
+                *self.scan.lock().unwrap() = ScanState { running: true, root: Some(roots.join(", ")), phase: "starting".into(), started: Some(auth::now()), ..Default::default() };
+                self.audit("rescan_started", &roots.join(", "));
+                let me = self.clone();
+                std::thread::spawn(move || me.run_scan(roots, workers));
+                Ok(serde_json::to_value(&*self.scan.lock().unwrap()).unwrap())
+            }
+            "indexer.stop" => {
+                self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can stop a scan.")?;
+                self.scan_cancel.store(true, Ordering::SeqCst);
+                Ok(json!({"stopping": true}))
             }
             _ => Err(ApiError::new(404, format!("Unknown command {cmd}"))),
         }
+    }
+
+    fn scan_log(&self, line: impl Into<String>) {
+        let mut st = self.scan.lock().unwrap();
+        st.log.push(line.into());
+        let v = serde_json::to_value(&*st).unwrap();
+        drop(st);
+        self.platform.emit("scan", v);
+    }
+
+    fn scan_fail(&self, e: &str) {
+        let mut st = self.scan.lock().unwrap();
+        st.running = false;
+        st.error = Some(e.to_string());
+        st.finished = Some(auth::now());
+        st.log.push(e.to_string());
+        let v = serde_json::to_value(&*st).unwrap();
+        drop(st);
+        self.platform.emit("scan", v);
+        self.audit("rescan_failed", e);
+    }
+
+    /// Rescan on a working copy, then swap the new index in and publish it.
+    /// THOR is only read. Search keeps working on the old index meanwhile.
+    fn run_scan(self: Arc<Self>, roots: Vec<String>, workers: usize) {
+        let dir = self.paths.local.join("index");
+        let work = dir.join("work.db");
+        if let Err(e) = self.guard.create_dir_all(&dir) {
+            return self.scan_fail(&format!("Could not create {}: {e}", dir.display()));
+        }
+        let _ = self.guard.remove_own_file(&work);
+        if let Some(src) = self.active_db.read().unwrap().clone() {
+            self.scan_log("Copying the current index to a working copy…");
+            if let Err(e) = self.guard.copy_into(&src, &work) {
+                return self.scan_fail(&format!("Could not copy the index: {e}"));
+            }
+        }
+        if let Err(e) = self.guard.check(&work) {
+            return self.scan_fail(&e.to_string());
+        }
+        let mut c = match rusqlite::Connection::open(&work) {
+            Ok(c) => c,
+            Err(e) => return self.scan_fail(&format!("Could not open the working index: {e}")),
+        };
+        // A scratch copy: speed over durability (it is discarded on failure).
+        let _ = c.pragma_update(None, "journal_mode", "MEMORY");
+        let _ = c.pragma_update(None, "synchronous", "OFF");
+        let opts = crate::crawl::Options { workers, cancel: self.scan_cancel.clone() };
+        let mut total = crate::crawl::Progress::default();
+        for root in &roots {
+            self.scan_log(format!("Scanning {root} with {workers} parallel readers (read-only)…"));
+            let me = self.clone();
+            let last = std::cell::Cell::new(std::time::Instant::now());
+            let res = crate::crawl::scan(&mut c, root, &opts, &|p| {
+                if last.get().elapsed().as_millis() < 400 && p.phase == "scanning" {
+                    return;
+                }
+                last.set(std::time::Instant::now());
+                let mut st = me.scan.lock().unwrap();
+                st.phase = p.phase.to_string();
+                st.files = total.files + p.files;
+                st.dirs = total.dirs + p.dirs;
+                st.new = total.new + p.new;
+                st.changed = total.changed + p.changed;
+                st.missing = total.missing + p.missing;
+                st.errors = total.issues + p.issues;
+                st.files_per_sec = p.files_per_sec;
+                let v = serde_json::to_value(&*st).unwrap();
+                drop(st);
+                me.platform.emit("scan", v);
+            });
+            match res {
+                Ok(s) => {
+                    let p = &s.progress;
+                    self.scan_log(format!(
+                        "{root}: {} files in {} folders · {} new · {} changed · {} missing · {} issues · {:.0} s ({:.0} files/s) · {}",
+                        p.files, p.dirs, p.new, p.changed, p.missing, p.issues, p.elapsed_s, p.files_per_sec, s.status
+                    ));
+                    total.files += p.files;
+                    total.dirs += p.dirs;
+                    total.new += p.new;
+                    total.changed += p.changed;
+                    total.missing += p.missing;
+                    total.issues += p.issues;
+                    if s.status == "interrupted" {
+                        drop(c);
+                        let _ = self.guard.remove_own_file(&work);
+                        let mut st = self.scan.lock().unwrap();
+                        st.running = false;
+                        st.phase = "stopped".into();
+                        st.finished = Some(auth::now());
+                        st.error = Some("Stopped — the index was not changed".into());
+                        let v = serde_json::to_value(&*st).unwrap();
+                        drop(st);
+                        self.platform.emit("scan", v);
+                        self.audit("rescan_stopped", &roots.join(", "));
+                        return;
+                    }
+                }
+                Err(e) => {
+                    drop(c);
+                    let _ = self.guard.remove_own_file(&work);
+                    return self.scan_fail(&e);
+                }
+            }
+        }
+        drop(c);
+        // Swap in locally, then publish to the team folder for everyone else.
+        self.scan_log("Saving the new index…");
+        let local = dir.join("thor_knowledge.db");
+        if let Err(e) = self.guard.publish(&work, &local) {
+            return self.scan_fail(&format!("Could not save the new index: {e}"));
+        }
+        let _ = self.guard.remove_own_file(&work);
+        let team = self.config.read().unwrap().team_folder.clone();
+        if let Some(t) = team {
+            self.scan_log(format!("Publishing to the team folder {t}…"));
+            if let Err(e) = self.guard.publish(&local, &PathBuf::from(&t).join("index").join("thor_knowledge.db")) {
+                self.scan_log(format!("Could not publish to the team folder ({e}); this PC uses the new index anyway."));
+            }
+        }
+        {
+            let mut st = self.scan.lock().unwrap();
+            st.running = false;
+            st.phase = "done".into();
+            st.finished = Some(auth::now());
+            st.files = total.files;
+            st.dirs = total.dirs;
+            st.new = total.new;
+            st.changed = total.changed;
+            st.missing = total.missing;
+            st.errors = total.issues;
+        }
+        self.audit("rescan_finished", &format!("{} files · {} new · {} changed · {} missing", total.files, total.new, total.changed, total.missing));
+        self.scan_log("Loading the new index into search…");
+        self.load_index();
+        self.scan_log("Done. Search is using the new index.");
     }
 
     fn audit(&self, action: &str, detail: &str) {

@@ -203,6 +203,21 @@ impl Guard {
         Ok(())
     }
 
+    /// Copy into one of TracePoint's own folders and swap it in with a rename,
+    /// so readers never see a half-written file.
+    pub fn publish(&self, from: &Path, to: &Path) -> Result<u64, GuardError> {
+        self.check(to)?;
+        let tmp = to.with_extension("tp-publish");
+        self.check(&tmp)?;
+        if let Some(parent) = to.parent() {
+            self.create_dir_all(parent)?;
+        }
+        let n = fs::copy(from, &tmp)?;
+        fs::File::open(&tmp)?.sync_all()?;
+        fs::rename(&tmp, to)?;
+        Ok(n)
+    }
+
     pub fn copy_into(&self, from: &Path, to: &Path) -> Result<u64, GuardError> {
         self.check(to)?;
         if let Some(parent) = to.parent() {

@@ -15,7 +15,7 @@ interface Status {
   writable: string[];
   team_folder?: string | null;
 }
-interface ScanState { running: boolean; root?: string; phase?: string; files?: number; dirs?: number; errors?: number; started?: string; log?: string[]; finished?: string | null; error?: string | null }
+interface ScanState { running: boolean; root?: string; phase?: string; files?: number; dirs?: number; new?: number; changed?: number; missing?: number; errors?: number; files_per_sec?: number; started?: string; log?: string[]; finished?: string | null; error?: string | null }
 
 export function SourcesPage({ state, refresh }: { state: AppState; refresh: () => void }) {
   const [st, setSt] = useState<Status | null>(null);
@@ -38,7 +38,7 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
     } catch (e) { toast("error", (e as Error).message); }
   };
   const rescan = async (root: string) => {
-    try { setScan(await api<ScanState>("indexer.start", { root })); toast("info", `Rescanning ${root}`); } catch (e) { toast("error", (e as Error).message); }
+    try { setScan(await api<ScanState>("indexer.start", root ? { root } : {})); toast("info", root ? `Rescanning ${root}` : "Rescanning every THOR root"); } catch (e) { toast("error", (e as Error).message); }
   };
   const addRoot = async () => {
     try { const r = await api<ScanState & { cancelled?: boolean }>("indexer.start", { pick: true }); if (!r.cancelled) setScan(r); } catch (e) { toast("error", (e as Error).message); }
@@ -55,7 +55,8 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
             <div className="flex gap-2">
               <Button icon={<Import className="size-4" />} onClick={importDb}>Import database…</Button>
               <Button icon={<RefreshCw className="size-4" />} onClick={reload}>Reload</Button>
-              <Button variant="primary" icon={<ScanLine className="size-4" />} onClick={addRoot}>Index a new root…</Button>
+              <Button icon={<ScanLine className="size-4" />} onClick={addRoot} disabled={scan?.running}>Add a THOR folder…</Button>
+              <Button variant="primary" icon={<RefreshCw className="size-4" />} onClick={() => rescan("")} disabled={scan?.running}>Rescan all</Button>
             </div>
           )}
         </div>
@@ -138,8 +139,13 @@ function ScanPanel({ scan, onStop }: { scan: ScanState; onStop: () => void }) {
       <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-5 py-3.5">
         {scan.running ? <span className="relative flex size-2.5"><span className="absolute inline-flex size-full animate-ping rounded-full bg-[var(--color-accent)] opacity-60" /><span className="relative inline-flex size-2.5 rounded-full bg-[var(--color-accent)]" /></span> : scan.error ? <TriangleAlert className="size-4 text-[var(--color-bad)]" /> : <CheckCircle2 className="size-4 text-[var(--color-ok)]" />}
         <div className="flex-1">
-          <div className="text-[14px] font-semibold">{scan.running ? `Scanning ${scan.root}` : scan.error ? "Scan stopped" : "Scan finished"}</div>
-          <div className="text-[12.5px] text-[var(--color-text-muted)]">{scan.phase} · {n(scan.files ?? 0)} files · {n(scan.dirs ?? 0)} folders{scan.errors ? ` · ${scan.errors} unreadable` : ""}{scan.started ? ` · started ${when(scan.started)}` : ""}</div>
+          <div className="text-[16px] font-bold">{scan.running ? `Scanning ${scan.root}` : scan.error ? "Scan stopped" : "Scan finished — index updated"}</div>
+          <div className="mt-0.5 text-[14px] text-[var(--color-text)]">
+            <b className="tabular-nums">{n(scan.files ?? 0)}</b> files · <b className="tabular-nums">{n(scan.dirs ?? 0)}</b> folders
+            {" · "}<b className="tabular-nums text-[var(--color-ok)]">{n(scan.new ?? 0)}</b> new · <b className="tabular-nums text-[var(--color-info)]">{n(scan.changed ?? 0)}</b> changed · <b className="tabular-nums text-[var(--color-warn)]">{n(scan.missing ?? 0)}</b> missing
+            {scan.errors ? <> · <b className="tabular-nums text-[var(--color-bad)]">{scan.errors}</b> issues</> : null}
+          </div>
+          <div className="text-[12.5px] text-[var(--color-text-muted)]">{scan.phase}{scan.running && scan.files_per_sec ? ` · ${n(Math.round(scan.files_per_sec))} files/s` : ""}{scan.started ? ` · started ${when(scan.started)}` : ""} · THOR is only read, never changed</div>
         </div>
         {scan.running ? <Button size="sm" icon={<Square className="size-3.5" />} onClick={onStop}>Stop</Button> : <Pill color={scan.error ? "var(--color-bad)" : "var(--color-ok)"}>{scan.error ?? "Index updated"}</Pill>}
       </div>
