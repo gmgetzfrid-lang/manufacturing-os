@@ -181,7 +181,15 @@ fn route(svc: &Arc<Service>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
         // Events are pushed by script in the app; nothing to stream here.
         return respond(204, "text/plain", Vec::new());
     }
-    respond(200, "text/html; charset=utf-8", UI_HTML.as_bytes().to_vec())
+    // Defence in depth: the window may only load TracePoint's own content.
+    let mut r = respond(200, "text/html; charset=utf-8", UI_HTML.as_bytes().to_vec());
+    r.headers_mut().insert(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+            .parse()
+            .unwrap(),
+    );
+    r
 }
 
 #[cfg(windows)]

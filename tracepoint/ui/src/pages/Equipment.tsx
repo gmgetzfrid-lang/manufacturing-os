@@ -16,6 +16,8 @@ export function EquipmentPage({ nav }: { nav: Nav }) {
   const [q, setQ] = useState("");
   const [unit, setUnit] = useState<string>("");
   const [sel, setSel] = useState<number | null>(nav.params.id ? Number(nav.params.id) : null);
+  useEffect(() => { if (nav.params.id) setSel(Number(nav.params.id)); }, [nav.params.id]);
+  const [showPiping, setShowPiping] = useState(false);
   useEffect(() => {
     api<{ equipment: Row[]; units: Unit[] }>("equipment.list", {}).then((r) => { setRows(r.equipment); setUnits(r.units); });
   }, []);
@@ -32,7 +34,16 @@ export function EquipmentPage({ nav }: { nav: Nav }) {
   const kinds = useMemo(() => {
     const m = new Map<string, Row[]>();
     filtered.forEach((r) => { const k = r.kind || "Other"; m.set(k, [...(m.get(k) ?? []), r]); });
-    return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+    // What people look for first; piping circuits (hundreds, mostly
+    // unnamed) last.
+    const rank = (k: string) => {
+      const u = k.toUpperCase();
+      const order = ["VESSEL", "TOWER", "EXCHANGER", "HEATER", "TANK", "RELIEF", "PSV", "PUMP", "COMPRESSOR", "BOILER", "REACTOR"];
+      const i = order.findIndex((o) => u.includes(o));
+      if (u.includes("PIPING")) return 1000;
+      return i >= 0 ? i : 100;
+    };
+    return [...m.entries()].sort((a, b) => rank(a[0]) - rank(b[0]) || b[1].length - a[1].length);
   }, [filtered]);
   return (
     <div className="flex h-full">
@@ -56,24 +67,30 @@ export function EquipmentPage({ nav }: { nav: Nav }) {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {!rows ? <div className="flex justify-center p-10"><Spinner /></div> : filtered.length === 0 ? <Empty icon={<Boxes className="size-5" />} title="No equipment matches" /> : (
-            kinds.map(([kind, list]) => (
-              <div key={kind} className="mb-5">
-                <div className="mb-2 flex items-center gap-2 px-1 text-[12px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">{kind}<span className="font-normal">{list.length}</span></div>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-2">
-                  {list.slice(0, 400).map((r) => (
-                    <button key={r.id} onClick={() => setSel(r.id)} className={cx("card hover-lift p-3 text-left cursor-pointer", sel === r.id && "ring-2 ring-[var(--color-accent)]")}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[14px] font-semibold">{r.number}</span>
-                        {r.tags[0] && <Pill color="var(--color-accent)">{r.tags[0]}</Pill>}
-                        <span className="ml-auto text-[11.5px] tabular-nums text-[var(--color-text-faint)]">{n(r.files)}</span>
-                      </div>
-                      <div className="mt-1 truncate text-[12.5px] text-[var(--color-text-muted)]">{r.description || "—"}</div>
-                      <div className="mt-0.5 truncate text-[11.5px] text-[var(--color-text-faint)]">{r.unit}{r.historical.length ? ` · ${r.historical.join(", ")}` : ""}</div>
-                    </button>
-                  ))}
+            kinds.map(([kind, list]) => {
+              const piping = kind.toUpperCase().includes("PIPING");
+              const shown = piping && !showPiping && !q ? [] : list;
+              return (
+                <div key={kind} className="mb-6">
+                  <div className="mb-2 flex items-baseline gap-2 px-1">
+                    <span className="text-[16px] font-bold">{kind.charAt(0) + kind.slice(1).toLowerCase()}</span>
+                    <span className="text-[13px] text-[var(--color-text-faint)]">{n(list.length)}</span>
+                    {piping && !q && <button onClick={() => setShowPiping(!showPiping)} className="ml-2 text-[13px] font-medium text-[var(--color-accent)] hover:underline cursor-pointer">{showPiping ? "Hide" : "Show all"}</button>}
+                  </div>
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(420px,1fr))] gap-x-4">
+                    {shown.slice(0, 600).map((r) => (
+                      <button key={r.id} onClick={() => setSel(r.id)} className={cx("flex items-baseline gap-2.5 border-b border-[var(--color-border)] px-2 py-2 text-left transition cursor-pointer", sel === r.id ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface)]")}>
+                        <span className="shrink-0 text-[15px] font-bold tabular-nums">{r.number}</span>
+                        {r.tags[0] && <span className="shrink-0 text-[14px] font-semibold text-[var(--color-accent)]">{r.tags[0]}</span>}
+                        <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--color-text)]">{r.description}</span>
+                        {r.historical.length > 0 && <span className="shrink-0 text-[12px] text-[var(--color-warn)]" title={`Formerly ${r.historical.join(", ")}`}>was {r.historical[0]}</span>}
+                        <span className="shrink-0 text-[12.5px] tabular-nums text-[var(--color-text-faint)]">{n(r.files)} docs</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
