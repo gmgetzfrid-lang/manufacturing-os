@@ -170,3 +170,15 @@ fn ambiguous_tag_asks_which() {
     assert!(pinned.ambiguity.is_empty());
     assert!(pinned.card.is_some());
 }
+
+#[test]
+fn shorthand_typos_and_date_order() {
+    let e = fixture();
+    // "botle" is a typo for bottle; "newest first" orders by date.
+    let r = talk(&e, "suction botle inspection reports newest first");
+    assert!(r.chips.iter().any(|c| c.kind == "fuzzy" && c.text == "bottl" || c.text == "bottle"), "{:?}", r.chips.iter().map(|c| (&c.kind, &c.text)).collect::<Vec<_>>());
+    assert!(r.chips.iter().any(|c| c.text == "sorted newest first"));
+    assert!(r.total > 0);
+    assert_eq!(tp_core::nl::canonical_word("frac"), tp_core::text::stem("fractionator"));
+    assert!(tp_core::nl::word_variants(&tp_core::text::stem("fractionator")).contains(&"frac".to_string()));
+}

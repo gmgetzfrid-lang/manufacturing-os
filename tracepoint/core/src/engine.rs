@@ -269,6 +269,7 @@ impl Engine {
             let mut t: Vec<String> = text::word_tokens(&format!("{} {}", e.description, e.kind))
                 .into_iter()
                 .filter(|w| w.len() >= 2 && !w.chars().all(|c| c.is_ascii_digit()) && !text::STOPS.contains(w.as_str()))
+                .map(|w| crate::nl::canonical_word(&w))
                 .collect();
             t.sort();
             t.dedup();

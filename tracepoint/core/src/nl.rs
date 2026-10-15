@@ -93,6 +93,70 @@ static KIND_SYNONYMS: &[(&str, &[&str])] = &[
     ("filter", &["filter", "strainer"]),
 ];
 
+/// Plant shorthand. Each group means one thing; the first entry is the form
+/// used for matching equipment descriptions ("FRAC OVHD ACCUM" reads as
+/// fractionator overhead accumulator). File names are matched on every form.
+pub static SHORTHAND: &[&[&str]] = &[
+    &["fractionator", "frac", "fract"],
+    &["prefractionator", "prefrac"],
+    &["overhead", "ovhd", "ohd"],
+    &["accumulator", "accum"],
+    &["receiver", "rcvr", "recv", "reciever"],
+    &["exchanger", "exch", "exchgr", "xchgr", "hx"],
+    &["heater", "htr"],
+    &["compressor", "comp", "cmp"],
+    &["debutanizer", "debut", "debutaniser"],
+    &["stabilizer", "stab", "stabiliser"],
+    &["separator", "sep"],
+    &["knockout", "ko"],
+    &["bottoms", "btms", "btm"],
+    &["regenerator", "regen"],
+    &["condenser", "cond"],
+    &["reboiler", "reb"],
+    &["vacuum", "vac"],
+    &["atmospheric", "atm"],
+    &["header", "hdr"],
+    &["transfer", "xfer"],
+    &["discharge", "disch"],
+    &["suction", "suct"],
+    &["tower", "twr"],
+    &["column", "col"],
+];
+
+fn shorthand_group(w: &str) -> Option<&'static [&'static str]> {
+    SHORTHAND.iter().copied().find(|g| g.iter().any(|v| *v == w || text::stem(v) == w))
+}
+
+/// The matching form of a (stemmed) word: "frac" → "fractionator".
+pub fn canonical_word(w: &str) -> String {
+    shorthand_group(w).map(|g| text::stem(g[0])).unwrap_or_else(|| w.to_string())
+}
+
+/// Every form of a (stemmed) word, itself included.
+pub fn word_variants(w: &str) -> Vec<String> {
+    let mut v: Vec<String> = shorthand_group(w).map(|g| g.iter().map(|x| text::stem(x)).collect()).unwrap_or_default();
+    if !v.iter().any(|x| x == w) {
+        v.push(w.to_string());
+    }
+    v.dedup();
+    v
+}
+
+/// Relief devices and piping circuits often carry the name of the equipment
+/// they protect or connect ("PSV-001 FRACTIONATOR TOWER RELIEF"). They only
+/// fit a description when the person asked for that kind of thing.
+fn is_relief(eq: &crate::index::Equip) -> bool {
+    let k = eq.kind.to_lowercase();
+    k.contains("relief") || k.contains("psv") || eq.tags.iter().any(|t| {
+        let t = t.to_uppercase();
+        t.starts_with("PSV") || t.starts_with("PRV") || t.starts_with("RV-") || t.starts_with("TSV")
+    })
+}
+fn is_piping(eq: &crate::index::Equip) -> bool {
+    let k = eq.kind.to_lowercase();
+    k.contains("piping") || k.contains("circuit")
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct Understood {
     pub concepts: Vec<&'static Concept>,
@@ -104,6 +168,11 @@ pub struct Understood {
     pub year_label: Option<String>,
     pub prefer_recent: bool,
     pub prefer_oldest: bool,
+    /// "newest first", "by date": order the good matches by date.
+    pub sort_newest: bool,
+    pub sort_oldest: bool,
+    /// Misspellings that were corrected: (typed, meant).
+    pub corrections: Vec<(String, String)>,
     pub words: Vec<String>,
     pub ignored: Vec<String>,
     pub ids: Vec<text::IdTok>,
@@ -242,6 +311,23 @@ impl Engine {
                 }
             }
         }
+        for (pat, newest) in [
+            ("newest first", true), ("latest first", true), ("most recent first", true), ("recent first", true), ("newest to oldest", true),
+            ("newest on top", true), ("latest on top", true), ("sorted by date", true), ("sort by date", true), ("by date", true), ("in date order", true),
+            ("newest at the top", true), ("oldest first", false), ("oldest to newest", false), ("earliest first", false), ("chronological", false),
+            ("chronologically", false), ("in order", false),
+        ] {
+            let pat = format!(" {pat} ");
+            if q.contains(&pat) {
+                if newest {
+                    u.sort_newest = true;
+                    u.prefer_recent = true;
+                } else {
+                    u.sort_oldest = true;
+                }
+                q = q.replace(&pat, " ");
+            }
+        }
         for w in ["most recent", "latest", "newest", "recent", "recently", "current", "last time", "last one", "lately"] {
             let pat = format!(" {w} ");
             if q.contains(&pat) {
@@ -360,7 +446,30 @@ impl Engine {
         // ── Equipment from its description ─────────────────────────────
         // Score each equipment by the description/kind words it shares with
         // the request (rare words count more; typos allowed), plus unit fit.
-        let words: Vec<String> = remaining.iter().map(|w| text::stem(w)).collect();
+        let mut words: Vec<String> = remaining.iter().map(|w| canonical_word(&text::stem(w))).collect();
+        // Misspellings: a word nobody uses, close to an equipment word.
+        for w in words.iter_mut() {
+            let known = self.eq_df.contains_key(w.as_str()) || self.idx.term_ids.get(w.as_str()).map(|&t| !self.postings[t as usize].is_empty()).unwrap_or(false);
+            if known || w.len() < 5 || KIND_SYNONYMS.iter().any(|(k, _)| *k == w.as_str()) {
+                continue;
+            }
+            let budget = text::typo_budget(w.len());
+            let best = self
+                .eq_df
+                .iter()
+                .filter(|(t, _)| t.len() >= 4 && (t.len() as i32 - w.len() as i32).abs() <= budget as i32)
+                .filter_map(|(t, df)| {
+                    let d = text::edit_distance(w, t, budget);
+                    (d <= budget).then_some((d, std::cmp::Reverse(*df), t.clone()))
+                })
+                .min();
+            if let Some((_, _, t)) = best {
+                u.corrections.push((w.clone(), t.clone()));
+                *w = t;
+            }
+        }
+        let asked_relief = words.iter().any(|w| ["psv", "prv", "relief", "safety", "rv", "valve", "tsv"].contains(&w.as_str())) || u.concepts.iter().any(|c| c.id == "psv");
+        let asked_piping = words.iter().any(|w| ["pipe", "piping", "line", "circuit", "loop"].contains(&w.as_str()));
         if !words.is_empty() && u.ids.is_empty() {
             let mut best: Vec<(u32, f32, Vec<String>)> = Vec::new();
             let n_eq = self.eq_tokens.len().max(1) as f32;
@@ -370,10 +479,14 @@ impl Engine {
                 }
                 let mut score = 0f32;
                 let mut hit: Vec<String> = Vec::new();
+                // Each description word answers one request word only.
                 for w in &words {
                     let expansions: Vec<&str> = KIND_SYNONYMS.iter().find(|(k, _)| *k == w.as_str()).map(|(_, v)| v.to_vec()).unwrap_or_else(|| vec![w.as_str()]);
                     let mut found: Option<(f32, String)> = None;
                     for t in toks {
+                        if hit.contains(t) {
+                            continue;
+                        }
                         let exact = expansions.iter().any(|e| *e == t.as_str());
                         let budget = text::typo_budget(w.len().min(t.len()));
                         let typo = !exact && t.len() >= 5 && w.len() >= 5 && text::edit_distance(w, t, budget) <= budget;
@@ -395,6 +508,9 @@ impl Engine {
                     continue;
                 }
                 let eq = &self.idx.equipment[ei];
+                if (asked_relief != is_relief(eq)) || (!asked_piping && is_piping(eq)) {
+                    score *= 0.55;
+                }
                 if !u.units.is_empty() {
                     if eq.unit.map(|x| u.units.contains(&x)).unwrap_or(false) {
                         score += 1.5;
@@ -485,10 +601,16 @@ impl Engine {
         if let Some(l) = &u.year_label {
             resp.chips.push(Chip { kind: "year", text: l.clone(), detail: "Time".into() });
         }
-        if u.prefer_recent {
-            resp.chips.push(Chip { kind: "recent", text: "newest first".into(), detail: String::new() });
+        for (typed, meant) in &u.corrections {
+            resp.chips.push(Chip { kind: "fuzzy", text: meant.clone(), detail: format!("you typed “{typed}”") });
         }
-        if u.prefer_oldest {
+        if u.sort_newest {
+            resp.chips.push(Chip { kind: "recent", text: "sorted newest first".into(), detail: String::new() });
+        } else if u.sort_oldest {
+            resp.chips.push(Chip { kind: "recent", text: "sorted oldest first".into(), detail: String::new() });
+        } else if u.prefer_recent {
+            resp.chips.push(Chip { kind: "recent", text: "newest first".into(), detail: String::new() });
+        } else if u.prefer_oldest {
             resp.chips.push(Chip { kind: "recent", text: "oldest first".into(), detail: String::new() });
         }
         for w in &u.words {
@@ -507,7 +629,11 @@ impl Engine {
             .words
             .iter()
             .map(|w| {
-                let mut ids: Vec<u32> = self.idx.term_ids.get(w.as_str()).copied().into_iter().filter(|&t| !self.postings[t as usize].is_empty()).collect();
+                let mut ids: Vec<u32> = word_variants(w)
+                    .iter()
+                    .filter_map(|v| self.idx.term_ids.get(v.as_str()).copied())
+                    .filter(|&t| !self.postings[t as usize].is_empty())
+                    .collect();
                 if ids.is_empty() {
                     ids = self.fuzzy_terms_pub(w);
                 }
@@ -576,6 +702,9 @@ impl Engine {
             fi: u32,
             score: f32,
             reasons: Vec<String>,
+            /// Is what was asked for (right kind of document, words present),
+            /// not just near it. Date ordering only reorders these.
+            fits: bool,
         }
         let mut scored: Vec<S> = Vec::with_capacity(pool.len());
         let mut facet_cat: HashMap<Category, u32> = HashMap::new();
@@ -725,7 +854,12 @@ impl Engine {
             if f.family.is_some() && f.flags & F_LATEST != 0 {
                 score += 8.0;
             }
-            scored.push(S { fi, score, reasons });
+            let fits = (u.concepts.is_empty() || concept_hits >= 1)
+                && (!wants_inspection || f.cat == Category::Inspection)
+                && (word_ids.is_empty() || coverage >= 0.5 || !equip_set.is_empty())
+                && (photo_intent || f.cat != Category::Photos)
+                && (template_intent || f.flags & F_BLANK == 0);
+            scored.push(S { fi, score, reasons, fits });
         }
         // A named unit is a boundary: keep results inside it when there are any.
         if !u.units.is_empty() {
@@ -755,7 +889,36 @@ impl Engine {
                 && (unit_filter.is_empty() || unit.map(|x| unit_filter.contains(&x)).unwrap_or(false))
                 && (ext_filter.is_empty() || ext_filter.contains(&f.ext))
         });
-        match req.sort.as_str() {
+        let date_sort = if req.sort.is_empty() && (u.sort_newest || u.sort_oldest) { if u.sort_newest { "newest" } else { "oldest" } } else { "" };
+        if !date_sort.is_empty() && !scored.is_empty() {
+            // The good matches in date order, then the weaker ones by fit.
+            let top = scored.iter().filter(|s| s.fits).map(|s| s.score).fold(f32::MIN, f32::max);
+            let bar = top - (top.abs() * 0.45).max(60.0);
+            let year = |s: &S| {
+                let f = &self.idx.files[s.fi as usize];
+                (f.year, f.mtime)
+            };
+            scored.sort_by(|a, b| {
+                let (ga, gb) = (a.fits && a.score >= bar, b.fits && b.score >= bar);
+                gb.cmp(&ga)
+                    .then_with(|| {
+                        if ga && gb {
+                            if date_sort == "newest" {
+                                year(b).cmp(&year(a))
+                            } else {
+                                let (ya, yb) = (year(a), year(b));
+                                (ya.0.unwrap_or(9999), ya.1).cmp(&(yb.0.unwrap_or(9999), yb.1))
+                            }
+                        } else {
+                            std::cmp::Ordering::Equal
+                        }
+                    })
+                    .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+                    .then(a.fi.cmp(&b.fi))
+            });
+        }
+        match if date_sort.is_empty() { req.sort.as_str() } else { "kept" } {
+            "kept" => {}
             "newest" => scored.sort_by(|a, b| self.idx.files[b.fi as usize].year.cmp(&self.idx.files[a.fi as usize].year)),
             "oldest" => scored.sort_by(|a, b| self.idx.files[a.fi as usize].year.unwrap_or(9999).cmp(&self.idx.files[b.fi as usize].year.unwrap_or(9999))),
             "name" => scored.sort_by(|a, b| self.idx.files[a.fi as usize].name.to_lowercase().cmp(&self.idx.files[b.fi as usize].name.to_lowercase())),
