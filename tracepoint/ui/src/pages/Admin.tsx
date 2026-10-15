@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Copy, FolderCog, KeyRound, MoreHorizontal, Plus, RefreshCw, ScrollText, Search, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import { Bot, Copy, FolderCog, KeyRound, MoreHorizontal, Plus, RefreshCw, ScrollText, Search, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
 import { api } from "../lib/api";
 import type { AppState, Role, User } from "../lib/types";
-import { Avatar, Button, Empty, Field, IconButton, Input, Modal, Pill, Section, Segmented, Select, cx, useToast } from "../components/ui";
+import { Avatar, Button, Empty, Field, IconButton, Input, Modal, Pill, Section, Segmented, Select, Toggle, cx, useToast } from "../components/ui";
 import { initials, when } from "../lib/format";
 
 const ROLE: Record<Role, { label: string; color: string; desc: string }> = {
-  admin: { label: "Administrator", color: "var(--color-accent)", desc: "Manages profiles, roles and the index" },
-  indexer: { label: "Indexer", color: "var(--color-info)", desc: "Can rescan THOR and publish the index" },
-  user: { label: "User", color: "var(--color-text-muted)", desc: "Search, equipment and graph" },
+  admin: { label: "Administrator", color: "var(--color-accent)", desc: "Manages profiles, roles and the index. The only role with AI features." },
+  indexer: { label: "Indexer", color: "var(--color-info)", desc: "Can rescan THOR and publish the index. No AI." },
+  user: { label: "User", color: "var(--color-text-muted)", desc: "Search, equipment and graph. No AI." },
 };
 
 function tempPassword(): string {
@@ -20,8 +20,8 @@ function tempPassword(): string {
 
 interface Audit { at: string; actor?: string; action: string; detail?: string; machine?: string }
 
-export function AdminPage({ state }: { state: AppState }) {
-  const [tab, setTab] = useState<"people" | "audit" | "deploy">("people");
+export function AdminPage({ state, setState }: { state: AppState; setState: (s: AppState) => void }) {
+  const [tab, setTab] = useState<"people" | "ai" | "audit" | "deploy">("people");
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-[1180px] px-8 py-7">
@@ -32,12 +32,14 @@ export function AdminPage({ state }: { state: AppState }) {
           </div>
           <Segmented value={tab} onChange={setTab} options={[
             { value: "people", label: <><Users className="size-3.5" />Profiles</> },
+            { value: "ai", label: <><Bot className="size-3.5" />AI policy</> },
             { value: "deploy", label: <><FolderCog className="size-3.5" />Team folder</> },
             { value: "audit", label: <><ScrollText className="size-3.5" />Audit log</> },
           ]} />
         </div>
         <div className="mt-6">
           {tab === "people" && <People state={state} />}
+          {tab === "ai" && <AiPolicy state={state} setState={setState} />}
           {tab === "deploy" && <TeamFolder state={state} />}
           {tab === "audit" && <AuditLog />}
         </div>
@@ -55,19 +57,19 @@ function People({ state }: { state: AppState }) {
   const toast = useToast();
   const load = useCallback(() => api<User[]>("admin.users").then(setUsers).catch((e) => toast("error", e.message)), [toast]);
   useEffect(() => { load(); }, [load]);
-  const update = async (u: User, patch: Partial<{ role: Role; disabled: boolean; name: string }>) => {
+  const update = async (u: User, patch: Partial<{ role: Role; disabled: boolean; can_ai: boolean; name: string }>) => {
     try { await api("admin.user.update", { id: u.id, ...patch }); toast("ok", "Profile updated"); load(); } catch (e) { toast("error", (e as Error).message); }
   };
   const remove = async (u: User) => {
-    if (!confirm(`Delete the profile ${u.email}?`)) return;
+    if (!confirm(`Delete the profile ${u.email}? Their saved AI key is deleted with it.`)) return;
     try { await api("admin.user.delete", { id: u.id }); toast("ok", "Profile deleted"); load(); } catch (e) { toast("error", (e as Error).message); }
   };
   const list = useMemo(() => (users ?? []).filter((u) => !q || u.email.toLowerCase().includes(q.toLowerCase()) || u.name.toLowerCase().includes(q.toLowerCase())), [users, q]);
-  const counts = useMemo(() => ({ total: users?.length ?? 0, admins: users?.filter((u) => u.role === "admin").length ?? 0, pending: users?.filter((u) => u.must_change).length ?? 0, disabled: users?.filter((u) => u.disabled).length ?? 0 }), [users]);
+  const counts = useMemo(() => ({ total: users?.length ?? 0, admins: users?.filter((u) => u.role === "admin").length ?? 0, pending: users?.filter((u) => u.must_change).length ?? 0, ai: users?.filter((u) => u.has_ai_key).length ?? 0 }), [users]);
   return (
     <>
       <div className="mb-4 grid grid-cols-4 gap-3">
-        {[["Profiles", counts.total], ["Administrators", counts.admins], ["Awaiting first sign-in", counts.pending], ["Disabled", counts.disabled]].map(([l, v]) => (
+        {[["Profiles", counts.total], ["Administrators", counts.admins], ["Awaiting first sign-in", counts.pending], ["With their own AI key", counts.ai]].map(([l, v]) => (
           <div key={l as string} className="card px-4 py-3"><div className="text-[12px] text-[var(--color-text-muted)]">{l}</div><div className="mt-1 text-[22px] font-semibold tabular-nums">{v}</div></div>
         ))}
       </div>
@@ -80,7 +82,7 @@ function People({ state }: { state: AppState }) {
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left text-[11.5px] uppercase tracking-wide text-[var(--color-text-faint)]">
-                <th className="px-4 py-2.5 font-semibold">Person</th><th className="px-4 py-2.5 font-semibold">Role</th><th className="px-4 py-2.5 font-semibold">Status</th><th className="px-4 py-2.5 font-semibold">Created</th><th className="px-4 py-2.5 font-semibold">Last sign-in</th><th />
+                <th className="px-4 py-2.5 font-semibold">Person</th><th className="px-4 py-2.5 font-semibold">Role</th><th className="px-4 py-2.5 font-semibold">Status</th><th className="px-4 py-2.5 font-semibold">AI</th><th className="px-4 py-2.5 font-semibold">Last sign-in</th><th />
               </tr>
             </thead>
             <tbody>
@@ -98,7 +100,12 @@ function People({ state }: { state: AppState }) {
                   <td className="px-4 py-3">
                     {u.disabled ? <Pill color="var(--color-bad)">Disabled</Pill> : u.must_change ? <Pill color="var(--color-warn)">Must set password</Pill> : <Pill color="var(--color-ok)">Active</Pill>}
                   </td>
-                  <td className="px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">{when(u.created_at)}{u.created_by && u.created_by !== "seed" ? <div className="text-[11.5px] text-[var(--color-text-faint)]">by {u.created_by}</div> : null}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-10">{u.role === "admin" ? <Toggle checked={u.can_ai} onChange={(v) => update(u, { can_ai: v })} /> : <span className="text-[12px] text-[var(--color-text-faint)]">—</span>}</div>
+                      {u.has_ai_key && <Pill color="var(--color-info)" title="Encrypted with the user's own password">Own key</Pill>}
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">{when(u.last_login_at)}</td>
                   <td className="relative px-2 py-3 text-right">
                     <IconButton label="More" onClick={() => setMenu(menu === u.id ? null : u.id)}><MoreHorizontal className="size-4" /></IconButton>
@@ -202,11 +209,54 @@ function ResetPassword({ user, onClose, onDone }: { user: User | null; onClose: 
     <Modal open={!!user} onClose={onClose} title={`Reset password · ${user?.email ?? ""}`} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="danger" loading={busy} onClick={submit}>Reset password</Button></>}>
       <div className="space-y-4 text-[13.5px]">
         <div className="rounded-xl border border-[color-mix(in_srgb,var(--color-warn)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-warn)_8%,transparent)] p-3.5">
-          They'll sign in with this temporary password and must choose a new one straight away. Give it to them in person or by phone.
+          Their saved AI key will be <b>erased</b>. It was locked with their old password, and nobody — including you — can unlock it. They'll need to paste it again after signing in.
         </div>
         <Field label="New temporary password"><div className="flex gap-2"><Input value={temp} onChange={(e) => setTemp(e.target.value)} className="font-mono" /><IconButton label="Generate another" onClick={() => setTemp(tempPassword())}><RefreshCw className="size-4" /></IconButton></div></Field>
       </div>
     </Modal>
+  );
+}
+
+function AiPolicy({ state, setState }: { state: AppState; setState: (s: AppState) => void }) {
+  const toast = useToast();
+  const set = async (key: string, value: string) => {
+    try { setState(await api<AppState>("admin.policy.set", { key, value })); toast("ok", "Policy saved"); } catch (e) { toast("error", (e as Error).message); }
+  };
+  const providers = [
+    { id: "anthropic", name: "Anthropic Claude", host: "api.anthropic.com" },
+    { id: "openai", name: "OpenAI", host: "api.openai.com" },
+    { id: "gemini", name: "Google Gemini", host: "generativelanguage.googleapis.com" },
+  ];
+  const allowed = state.policy.ai_providers;
+  return (
+    <div className="grid grid-cols-2 gap-6">
+      <Section title="AI features" subtitle="TracePoint works fully without AI. AI features are only ever available to administrator profiles; these switches control them.">
+        <div className="space-y-5">
+          <Toggle checked={state.policy.ai_enabled} onChange={(v) => set("ai_enabled", String(v))} label="Allow AI for this team" hint="Off: no profile can use AI and no requests go to AI providers." />
+          <div>
+            <div className="mb-2 text-[12.5px] font-medium text-[var(--color-text-muted)]">Allowed providers</div>
+            <div className="space-y-2">
+              {providers.map((p) => (
+                <div key={p.id} className="rounded-xl border border-[var(--color-border)] p-3">
+                  <Toggle checked={allowed.includes(p.id)} onChange={(v) => set("ai_providers", (v ? [...allowed, p.id] : allowed.filter((x) => x !== p.id)).join(","))} label={p.name} hint={<span className="font-mono text-[11.5px]">{p.host}</span>} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Section>
+      <Section title="How AI keys are protected" subtitle="So nobody can use someone else's key">
+        <ul className="space-y-3 text-[13px] leading-relaxed">
+          {[
+            "Each person pastes their own API key. It is encrypted (XChaCha20-Poly1305) with a key derived from their password (Argon2id).",
+            "There is no master key. Administrators can't read or use anyone's key — not even with a copy of the profile database.",
+            "Keys are only decrypted in memory while their owner is signed in, and only sent to that provider over HTTPS.",
+            "Resetting someone's password erases their saved key. Disabling a profile or turning AI off blocks all use immediately.",
+            "Requests go straight from the person's PC to the provider they chose — never through any other server.",
+          ].map((t) => <li key={t} className="flex gap-2.5"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--color-ok)]" />{t}</li>)}
+        </ul>
+      </Section>
+    </div>
   );
 }
 
@@ -251,7 +301,7 @@ function AuditLog() {
     <div className="card overflow-hidden">
       <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-4 py-3">
         <div className="w-80"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter the log…" icon={<Search className="size-4" />} /></div>
-        <div className="ml-auto text-[12.5px] text-[var(--color-text-faint)]">Last 500 events · sign-ins, failures, profile changes, index imports</div>
+        <div className="ml-auto text-[12.5px] text-[var(--color-text-faint)]">Last 500 events · sign-ins, profile and policy changes, key saves (never key contents)</div>
       </div>
       <div className="max-h-[62vh] overflow-y-auto">
         {list.map((r, i) => (

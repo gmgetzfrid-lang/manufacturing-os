@@ -93,7 +93,7 @@ export function ChangePassword({ state, onDone }: { state: AppState; onDone: (s:
         <Button type="submit" variant="primary" size="lg" loading={busy} disabled={!ready} className="mt-6 w-full">Save password and continue</Button>
         <div className="mt-5 flex items-start gap-2 rounded-xl bg-[var(--color-surface-2)] p-3 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
           <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--color-ok)]" />
-          Stored only as an Argon2id hash. Nobody — including administrators — can see it. Five wrong attempts lock the profile for five minutes.
+          Stored only as an Argon2id hash. For administrators it also locks their personal AI key, which nobody else can read or use.
         </div>
       </form>
     </div>

@@ -1,17 +1,25 @@
-//! Profiles and sign-in.
+//! Profiles, sign-in and per-user secrets.
 //!
 //! * One account ships: ggetzfrid@kernenergy.com (Admin), temporary password
 //!   "password", which must be changed before anything else is usable.
 //! * Only Admins create profiles and assign roles. Every new profile gets a
 //!   temporary password and must change it at first sign-in.
 //! * Passwords are stored as Argon2id hashes (PHC strings) only.
-//! * Five wrong passwords lock the profile for five minutes.
+//! * Each user's secrets (AI API keys) are encrypted with XChaCha20-Poly1305
+//!   under a random data key. That data key is itself encrypted with a key
+//!   derived (Argon2id) from the user's own password. No master key exists:
+//!   not the admin, not another user, not someone with a copy of the database
+//!   can decrypt them. Each ciphertext is bound to its owner and name.
+//! * An admin password reset therefore erases that user's saved secrets.
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Algorithm, Argon2, Params, Version};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::path::Path;
+use zeroize::Zeroizing;
 
 pub const SEED_ADMIN_EMAIL: &str = "ggetzfrid@kernenergy.com";
 pub const SEED_ADMIN_PASSWORD: &str = "password";
@@ -55,19 +63,26 @@ pub struct UserInfo {
     pub role: Role,
     pub must_change: bool,
     pub disabled: bool,
+    pub can_ai: bool,
     pub created_at: String,
     pub created_by: Option<String>,
     pub pw_changed_at: Option<String>,
     pub last_login_at: Option<String>,
+    pub has_ai_key: bool,
 }
 
 pub struct Session {
     pub user: UserInfo,
+    /// Present only while signed in; derived from the user's password.
+    dek: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl Session {
     pub fn is_admin(&self) -> bool {
         self.user.role == Role::Admin
+    }
+    pub fn unlocked(&self) -> bool {
+        self.dek.is_some()
     }
 }
 
@@ -137,6 +152,28 @@ fn verify_password(pw: &str, phc: &str) -> bool {
     PasswordHash::new(phc).map(|h| argon().verify_password(pw.as_bytes(), &h).is_ok()).unwrap_or(false)
 }
 
+fn derive_kek(pw: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>, AuthError> {
+    let mut k = Zeroizing::new([0u8; 32]);
+    argon().hash_password_into(pw.as_bytes(), salt, k.as_mut()).map_err(|e| AuthError(e.to_string()))?;
+    Ok(k)
+}
+
+fn seal(key: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Vec<u8> {
+    let cipher = XChaCha20Poly1305::new(key.into());
+    let nonce = random::<24>();
+    let mut out = nonce.to_vec();
+    out.extend(cipher.encrypt(XNonce::from_slice(&nonce), Payload { msg: plaintext, aad }).expect("encrypt"));
+    out
+}
+
+fn open(key: &[u8; 32], sealed: &[u8], aad: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+    if sealed.len() < 24 + 16 {
+        return None;
+    }
+    let cipher = XChaCha20Poly1305::new(key.into());
+    cipher.decrypt(XNonce::from_slice(&sealed[..24]), Payload { msg: &sealed[24..], aad }).ok().map(Zeroizing::new)
+}
+
 /// Rules for a new password. Returns a human sentence on failure.
 pub fn password_problem(email: &str, pw: &str) -> Option<String> {
     let lower = pw.to_lowercase();
@@ -174,12 +211,22 @@ create table if not exists users(
   pw_hash text not null,
   must_change integer not null default 1,
   disabled integer not null default 0,
+  can_ai integer not null default 1,
   failed_logins integer not null default 0,
   locked_until integer,
   created_at text not null,
   created_by text,
   pw_changed_at text,
-  last_login_at text
+  last_login_at text,
+  vault_salt blob,
+  vault_wrapped blob
+);
+create table if not exists secrets(
+  user_id integer not null references users(id) on delete cascade,
+  name text not null,
+  sealed blob not null,
+  updated_at text not null,
+  primary key(user_id, name)
 );
 create table if not exists user_prefs(
   user_id integer not null references users(id) on delete cascade,
@@ -209,7 +256,6 @@ impl UserStore {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         let s = UserStore { conn };
-        s.remove_ai_data()?;
         s.seed()?;
         Ok(s)
     }
@@ -223,23 +269,6 @@ impl UserStore {
             )?;
             self.audit(None, "seed_admin", &format!("Created the built-in admin profile {SEED_ADMIN_EMAIL}"))?;
         }
-        Ok(())
-    }
-
-    /// TracePoint has no AI features. Profiles made by earlier previews may
-    /// still hold encrypted AI keys and AI settings; erase them.
-    fn remove_ai_data(&self) -> Result<(), AuthError> {
-        let had: i64 = self.conn.query_row("select count(*) from sqlite_master where type='table' and name='secrets'", [], |r| r.get(0))?;
-        if had > 0 {
-            self.conn.execute_batch("drop table secrets;")?;
-            self.audit(None, "ai_removed", "Erased saved AI keys from an earlier preview")?;
-        }
-        let cols: Vec<String> = self.conn.prepare("select name from pragma_table_info('users')")?.query_map([], |r| r.get(0))?.filter_map(|r| r.ok()).collect();
-        if cols.iter().any(|c| c == "vault_wrapped") {
-            self.conn.execute("update users set vault_salt=null, vault_wrapped=null where vault_wrapped is not null", [])?;
-        }
-        self.conn.execute("delete from user_prefs where key like 'ai\\_%' escape '\\'", [])?;
-        self.conn.execute("delete from policy where key like 'ai\\_%' escape '\\'", [])?;
         Ok(())
     }
 
@@ -263,14 +292,16 @@ impl UserStore {
             role: Role::parse(&r.get::<_, String>("role")?).unwrap_or(Role::User),
             must_change: r.get::<_, i64>("must_change")? != 0,
             disabled: r.get::<_, i64>("disabled")? != 0,
+            can_ai: r.get::<_, i64>("can_ai")? != 0,
             created_at: r.get("created_at")?,
             created_by: r.get("created_by")?,
             pw_changed_at: r.get("pw_changed_at")?,
             last_login_at: r.get("last_login_at")?,
+            has_ai_key: r.get::<_, i64>("has_key")? != 0,
         })
     }
 
-    const USER_SELECT: &'static str = "select u.* from users u";
+    const USER_SELECT: &'static str = "select u.*, exists(select 1 from secrets s where s.user_id=u.id) as has_key from users u";
 
     pub fn get(&self, id: i64) -> Result<UserInfo, AuthError> {
         self.conn
@@ -287,15 +318,15 @@ impl UserStore {
 
     pub fn login(&self, email: &str, password: &str) -> Result<Session, AuthError> {
         let email = email.trim();
-        let row: Option<(i64, String, i64, Option<i64>, i64)> = self
+        let row: Option<(i64, String, i64, Option<i64>, Option<Vec<u8>>, Option<Vec<u8>>, i64)> = self
             .conn
             .query_row(
-                "select id,pw_hash,failed_logins,locked_until,disabled from users where email=?1 collate nocase",
+                "select id,pw_hash,failed_logins,locked_until,vault_salt,vault_wrapped,disabled from users where email=?1 collate nocase",
                 [email],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
             )
             .optional()?;
-        let Some((id, hash, failed, locked_until, disabled)) = row else {
+        let Some((id, hash, failed, locked_until, salt, wrapped, disabled)) = row else {
             // Same work and message as a wrong password: no user enumeration.
             let _ = verify_password(password, "$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHRzb21lc2FsdA$Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFy");
             return err("Email or password is incorrect.");
@@ -317,14 +348,26 @@ impl UserStore {
             return err("Email or password is incorrect.");
         }
         self.conn.execute("update users set failed_logins=0, locked_until=null, last_login_at=?1 where id=?2", params![now(), id])?;
+        let dek = match (salt, wrapped) {
+            (Some(s), Some(w)) => {
+                let kek = derive_kek(password, &s)?;
+                open(&kek, &w, format!("tp-dek:{id}").as_bytes()).map(|v| {
+                    let mut k = Zeroizing::new([0u8; 32]);
+                    k.copy_from_slice(&v[..32]);
+                    k
+                })
+            }
+            _ => None,
+        };
         let user = self.get(id)?;
         self.audit(Some(&user.email), "login", if user.must_change { "Signed in; password change required" } else { "Signed in" })?;
-        Ok(Session { user })
+        Ok(Session { user, dek })
     }
 
-    /// Change your own password.
+    /// Change your own password. Re-wraps (or creates) your secret key.
     pub fn change_password(&self, s: &mut Session, current: &str, new: &str) -> Result<(), AuthError> {
-        let hash: String = self.conn.query_row("select pw_hash from users where id=?1", [s.user.id], |r| r.get(0))?;
+        let (hash, salt, wrapped): (String, Option<Vec<u8>>, Option<Vec<u8>>) =
+            self.conn.query_row("select pw_hash,vault_salt,vault_wrapped from users where id=?1", [s.user.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         if !verify_password(current, &hash) {
             return err("Your current password is not correct.");
         }
@@ -334,8 +377,30 @@ impl UserStore {
         if let Some(p) = password_problem(&s.user.email, new) {
             return err(p);
         }
-        self.conn.execute("update users set pw_hash=?1, must_change=0, pw_changed_at=?2 where id=?3", params![hash_password(new)?, now(), s.user.id])?;
+        // Keep the existing data key if it can be unwrapped, else start fresh.
+        let dek: Zeroizing<[u8; 32]> = match (&salt, &wrapped) {
+            (Some(sa), Some(w)) => {
+                let kek = derive_kek(current, sa)?;
+                match open(&kek, w, format!("tp-dek:{}", s.user.id).as_bytes()) {
+                    Some(v) => {
+                        let mut k = Zeroizing::new([0u8; 32]);
+                        k.copy_from_slice(&v[..32]);
+                        k
+                    }
+                    None => Zeroizing::new(random::<32>()),
+                }
+            }
+            _ => Zeroizing::new(random::<32>()),
+        };
+        let new_salt = random::<16>();
+        let kek = derive_kek(new, &new_salt)?;
+        let new_wrapped = seal(&kek, dek.as_ref(), format!("tp-dek:{}", s.user.id).as_bytes());
+        self.conn.execute(
+            "update users set pw_hash=?1, must_change=0, pw_changed_at=?2, vault_salt=?3, vault_wrapped=?4 where id=?5",
+            params![hash_password(new)?, now(), new_salt.to_vec(), new_wrapped, s.user.id],
+        )?;
         self.audit(Some(&s.user.email), "password_changed", "Changed own password")?;
+        s.dek = Some(dek);
         s.user = self.get(s.user.id)?;
         Ok(())
     }
@@ -373,7 +438,7 @@ impl UserStore {
         Ok(self.conn.query_row("select count(*) from users where role='admin' and disabled=0", [], |r| r.get(0))?)
     }
 
-    pub fn update_user(&self, admin: &Session, id: i64, name: Option<&str>, role: Option<Role>, disabled: Option<bool>) -> Result<UserInfo, AuthError> {
+    pub fn update_user(&self, admin: &Session, id: i64, name: Option<&str>, role: Option<Role>, disabled: Option<bool>, can_ai: Option<bool>) -> Result<UserInfo, AuthError> {
         Self::require_admin(admin)?;
         let before = self.get(id)?;
         let demoting = before.role == Role::Admin && (role.map(|r| r != Role::Admin).unwrap_or(false) || disabled == Some(true));
@@ -392,27 +457,32 @@ impl UserStore {
         if let Some(d) = disabled {
             self.conn.execute("update users set disabled=?1 where id=?2", params![d as i64, id])?;
         }
+        if let Some(a) = can_ai {
+            self.conn.execute("update users set can_ai=?1 where id=?2", params![a as i64, id])?;
+        }
         let after = self.get(id)?;
         self.audit(
             Some(&admin.user.email),
             "user_updated",
-            &format!("{}: role {}→{}, disabled {}→{}", after.email, before.role.as_str(), after.role.as_str(), before.disabled, after.disabled),
+            &format!("{}: role {}→{}, disabled {}→{}, AI {}→{}", after.email, before.role.as_str(), after.role.as_str(), before.disabled, after.disabled, before.can_ai, after.can_ai),
         )?;
         Ok(after)
     }
 
-    /// Admin reset: new temporary password, change forced at next sign-in.
+    /// Admin reset: new temporary password, forced change, saved secrets erased
+    /// (they were locked with the old password and cannot be recovered).
     pub fn reset_password(&self, admin: &Session, id: i64, temp_password: &str) -> Result<UserInfo, AuthError> {
         Self::require_admin(admin)?;
         if temp_password.chars().count() < 8 {
             return err("Temporary passwords need at least 8 characters.");
         }
         self.conn.execute(
-            "update users set pw_hash=?1, must_change=1, failed_logins=0, locked_until=null where id=?2",
+            "update users set pw_hash=?1, must_change=1, failed_logins=0, locked_until=null, vault_salt=null, vault_wrapped=null where id=?2",
             params![hash_password(temp_password)?, id],
         )?;
+        let removed = self.conn.execute("delete from secrets where user_id=?1", [id])?;
         let u = self.get(id)?;
-        self.audit(Some(&admin.user.email), "password_reset", &format!("{} reset", u.email))?;
+        self.audit(Some(&admin.user.email), "password_reset", &format!("{} reset; {} saved key(s) erased", u.email, removed))?;
         Ok(u)
     }
 
@@ -427,6 +497,32 @@ impl UserStore {
         }
         self.conn.execute("delete from users where id=?1", [id])?;
         self.audit(Some(&admin.user.email), "user_deleted", &u.email)?;
+        Ok(())
+    }
+
+    // ── Secrets (AI keys) ────────────────────────────────────────────
+    pub fn put_secret(&self, s: &Session, name: &str, value: &str) -> Result<(), AuthError> {
+        let Some(dek) = &s.dek else {
+            return err("Sign in again to unlock your saved keys.");
+        };
+        let sealed = seal(dek, value.as_bytes(), format!("tp-secret:{}:{name}", s.user.id).as_bytes());
+        self.conn.execute(
+            "insert into secrets(user_id,name,sealed,updated_at) values(?1,?2,?3,?4) on conflict(user_id,name) do update set sealed=excluded.sealed, updated_at=excluded.updated_at",
+            params![s.user.id, name, sealed, now()],
+        )?;
+        self.audit(Some(&s.user.email), "secret_saved", name)?;
+        Ok(())
+    }
+
+    pub fn get_secret(&self, s: &Session, name: &str) -> Result<Option<Zeroizing<String>>, AuthError> {
+        let Some(dek) = &s.dek else { return Ok(None) };
+        let sealed: Option<Vec<u8>> = self.conn.query_row("select sealed from secrets where user_id=?1 and name=?2", params![s.user.id, name], |r| r.get(0)).optional()?;
+        Ok(sealed.and_then(|b| open(dek, &b, format!("tp-secret:{}:{name}", s.user.id).as_bytes())).map(|v| Zeroizing::new(String::from_utf8_lossy(&v).into_owned())))
+    }
+
+    pub fn delete_secret(&self, s: &Session, name: &str) -> Result<(), AuthError> {
+        self.conn.execute("delete from secrets where user_id=?1 and name=?2", params![s.user.id, name])?;
+        self.audit(Some(&s.user.email), "secret_deleted", name)?;
         Ok(())
     }
 
@@ -465,7 +561,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seeded_admin_must_change_and_only_admins_manage() {
+    fn seeded_admin_must_change_and_secrets_are_private() {
         let st = UserStore::open_in_memory().unwrap();
         let mut admin = st.login("GGetzfrid@kernenergy.com", "password").unwrap();
         assert!(admin.user.must_change);
@@ -480,37 +576,30 @@ mod tests {
         assert!(u.must_change);
         let mut tech = st.login("tech@kernenergy.com", "Temp-pass-77").unwrap();
         st.change_password(&mut tech, "Temp-pass-77", "Tank#Farm-7272").unwrap();
-        assert!(st.login("tech@kernenergy.com", "Temp-pass-77").is_err(), "old password no longer works");
+        st.put_secret(&tech, "ai_key", "sk-ant-secret-123").unwrap();
+        assert_eq!(st.get_secret(&tech, "ai_key").unwrap().unwrap().as_str(), "sk-ant-secret-123");
+        // The admin cannot read the tech's key, even by name.
+        assert!(st.get_secret(&admin, "ai_key").unwrap().is_none());
+        // Copying the ciphertext into the admin's row does not decrypt either.
+        st.conn.execute("insert into secrets(user_id,name,sealed,updated_at) select ?1,name,sealed,updated_at from secrets where user_id=?2", params![admin.user.id, tech.user.id]).unwrap();
+        assert!(st.get_secret(&admin, "ai_key").unwrap().is_none());
+        // A fresh login re-derives the key from the password.
         let tech2 = st.login("tech@kernenergy.com", "Tank#Farm-7272").unwrap();
-        assert!(!tech2.user.must_change);
-        // Admin reset forces a change.
+        assert_eq!(st.get_secret(&tech2, "ai_key").unwrap().unwrap().as_str(), "sk-ant-secret-123");
+        // Changing the password keeps the key.
+        let mut tech3 = st.login("tech@kernenergy.com", "Tank#Farm-7272").unwrap();
+        st.change_password(&mut tech3, "Tank#Farm-7272", "Crude-Unit#2000x").unwrap();
+        let tech4 = st.login("tech@kernenergy.com", "Crude-Unit#2000x").unwrap();
+        assert_eq!(st.get_secret(&tech4, "ai_key").unwrap().unwrap().as_str(), "sk-ant-secret-123");
+        // Admin reset erases it and forces a change.
         st.reset_password(&admin, tech.user.id, "New-temp-99").unwrap();
         let t5 = st.login("tech@kernenergy.com", "New-temp-99").unwrap();
         assert!(t5.user.must_change);
+        assert!(st.get_secret(&t5, "ai_key").unwrap().is_none());
         // Non-admins cannot manage profiles.
         assert!(st.create_user(&t5, "x@y.com", "X", Role::Admin, "Temp-pass-77").is_err());
         // Last admin cannot be demoted.
-        assert!(st.update_user(&admin, admin.user.id, None, Some(Role::User), None).is_err());
-    }
-
-    #[test]
-    fn ai_data_from_earlier_previews_is_erased() {
-        let c = Connection::open_in_memory().unwrap();
-        c.execute_batch(
-            "create table users(id integer primary key, email text not null unique collate nocase, name text not null default '', role text not null, pw_hash text not null,
-               must_change integer not null default 1, disabled integer not null default 0, can_ai integer not null default 1, failed_logins integer not null default 0,
-               locked_until integer, created_at text not null, created_by text, pw_changed_at text, last_login_at text, vault_salt blob, vault_wrapped blob);
-             create table secrets(user_id integer, name text, sealed blob, updated_at text);
-             insert into users(email,role,pw_hash,created_at,vault_salt,vault_wrapped) values('a@b.com','admin','x','2026',x'01',x'02');
-             insert into secrets values(1,'ai_key',x'0102','2026');",
-        )
-        .unwrap();
-        let st = UserStore::init(c).unwrap();
-        let n: i64 = st.conn.query_row("select count(*) from sqlite_master where name='secrets'", [], |r| r.get(0)).unwrap();
-        assert_eq!(n, 0);
-        let w: Option<Vec<u8>> = st.conn.query_row("select vault_wrapped from users", [], |r| r.get(0)).unwrap();
-        assert!(w.is_none());
-        assert_eq!(st.list().unwrap().len(), 1);
+        assert!(st.update_user(&admin, admin.user.id, None, Some(Role::User), None, None).is_err());
     }
 
     #[test]

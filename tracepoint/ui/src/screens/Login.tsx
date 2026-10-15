@@ -41,7 +41,7 @@ export function Login({ state, onDone }: { state: AppState; onDone: (s: AppState
               Every THOR document,<br /><span className="brand-text">one search away.</span>
             </h1>
             <p className="mt-4 text-[15px] leading-relaxed text-[var(--color-text-muted)]">
-              Search 200,000+ files by equipment number, tag, circuit, document type or plain words. Describe what you need in plain English, and see how equipment, drawings and inspections connect.
+              Search 200,000+ files by equipment number, tag, circuit, document type or plain words. See how equipment, drawings and inspections connect — and ask your documents questions.
             </p>
             <div className="mt-8 grid gap-3">
               {[

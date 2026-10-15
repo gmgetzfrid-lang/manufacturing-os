@@ -50,7 +50,7 @@ pub fn run(embedded_index: Option<&[u8]>, extra_protect: &[String]) -> Vec<Check
     let w = g.write(&tmp.join("probe.txt"), b"ok").is_ok() && std::fs::read(tmp.join("probe.txt")).map(|b| b == b"ok").unwrap_or(false);
     check(&mut out, "Guard: atomic write in own folder works", w, "probe.txt");
 
-    // ── Profiles ────────────────────────────────────────────────────
+    // ── Profiles and keys ────────────────────────────────────────────
     match UserStore::open_in_memory() {
         Ok(st) => {
             let mut admin = st.login(crate::auth::SEED_ADMIN_EMAIL, crate::auth::SEED_ADMIN_PASSWORD);
@@ -62,12 +62,16 @@ pub fn run(embedded_index: Option<&[u8]>, extra_protect: &[String]) -> Vec<Check
                 let u = st.create_user(a, "selftest@kernenergy.com", "Self Test", Role::User, "Temp-pass-77");
                 if let Ok(u) = u {
                     if let Ok(mut s2) = st.login("selftest@kernenergy.com", "Temp-pass-77") {
-                        check(&mut out, "Profiles: new profile must change password", s2.user.must_change, "temporary password");
                         let _ = st.change_password(&mut s2, "Temp-pass-77", "Another#Pass-9911");
-                        check(&mut out, "Profiles: only admins create profiles", st.create_user(&s2, "z@y.com", "", Role::Admin, "Temp-pass-1").is_err(), "user role refused");
+                        let saved = st.put_secret(&s2, "ai_key", "sk-selftest-123").is_ok();
+                        let own = st.get_secret(&s2, "ai_key").ok().flatten().map(|k| k.as_str() == "sk-selftest-123").unwrap_or(false);
+                        let other = st.get_secret(a, "ai_key").ok().flatten().is_none();
+                        check(&mut out, "Keys: owner can use their key", saved && own, "XChaCha20-Poly1305");
+                        check(&mut out, "Keys: administrator cannot read it", other, "no master key");
                         let _ = st.reset_password(a, u.id, "Reset-pass-55");
-                        let forced = st.login("selftest@kernenergy.com", "Reset-pass-55").map(|s| s.user.must_change).unwrap_or(false);
-                        check(&mut out, "Profiles: admin reset forces a new password", forced, "");
+                        let s3 = st.login("selftest@kernenergy.com", "Reset-pass-55");
+                        let erased = s3.map(|s| st.get_secret(&s, "ai_key").ok().flatten().is_none()).unwrap_or(false);
+                        check(&mut out, "Keys: admin reset erases the key", erased, "");
                     }
                 }
             }

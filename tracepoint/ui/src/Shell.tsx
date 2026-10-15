@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Boxes, ChevronDown, Command, Database, FileSearch, Info, LogOut, Moon, Network, Palette as PaletteIcon, Search, Shield, Sun, UserRound } from "lucide-react";
+import { Bot, Boxes, ChevronDown, Command, Database, FileSearch, Info, LogOut, Moon, Network, Palette as PaletteIcon, Search, Settings2, Shield, Sun, UserRound } from "lucide-react";
 import { api } from "./lib/api";
 import type { AppState } from "./lib/types";
 import { PALETTES, useTheme } from "./lib/theme";
@@ -12,8 +12,9 @@ import { SourcesPage } from "./pages/Sources";
 import { AdminPage } from "./pages/Admin";
 import { ProfilePage } from "./pages/Profile";
 import { AboutPage } from "./pages/About";
+import { AskPage } from "./pages/Ask";
 
-export type Page = "search" | "equipment" | "graph" | "sources" | "admin" | "profile" | "about";
+export type Page = "search" | "equipment" | "graph" | "ask" | "sources" | "admin" | "profile" | "about";
 
 export interface Nav {
   go: (p: Page, params?: Record<string, string | number | null | undefined>) => void;
@@ -25,7 +26,7 @@ function readHash(): { page: Page; params: Record<string, string> } {
   const [p, q] = h.split("?");
   const params: Record<string, string> = {};
   new URLSearchParams(q ?? "").forEach((v, k) => (params[k] = v));
-  const pages: Page[] = ["search", "equipment", "graph", "sources", "admin", "profile", "about"];
+  const pages: Page[] = ["search", "equipment", "graph", "ask", "sources", "admin", "profile", "about"];
   return { page: (pages.includes(p as Page) ? p : "search") as Page, params };
 }
 
@@ -65,6 +66,7 @@ export function Shell({ state, setState, refresh }: { state: AppState; setState:
     { page: "search", label: "Search", icon: <FileSearch className="size-[18px]" />, show: true },
     { page: "equipment", label: "Equipment", icon: <Boxes className="size-[18px]" />, show: true },
     { page: "graph", label: "Graph", icon: <Network className="size-[18px]" />, show: true },
+    { page: "ask", label: "Ask THOR", icon: <Bot className="size-[18px]" />, show: isAdmin },
     { page: "sources", label: "Sources", icon: <Database className="size-[18px]" />, show: true },
     { page: "admin", label: "Admin", icon: <Shield className="size-[18px]" />, show: isAdmin },
   ];
@@ -120,9 +122,10 @@ export function Shell({ state, setState, refresh }: { state: AppState; setState:
           {route.page === "search" && <SearchPage state={state} nav={nav} />}
           {route.page === "equipment" && <EquipmentPage nav={nav} />}
           {route.page === "graph" && <GraphPage nav={nav} />}
+          {route.page === "ask" && isAdmin && <AskPage state={state} nav={nav} />}
           {route.page === "sources" && <SourcesPage state={state} refresh={refresh} />}
-          {route.page === "admin" && isAdmin && <AdminPage state={state} />}
-          {route.page === "profile" && <ProfilePage state={state} setState={setState} />}
+          {route.page === "admin" && isAdmin && <AdminPage state={state} setState={setState} />}
+          {route.page === "profile" && <ProfilePage state={state} setState={setState} refresh={refresh} />}
           {route.page === "about" && <AboutPage state={state} />}
         </div>
       </main>
@@ -190,6 +193,7 @@ function UserMenu({ state, setState, nav }: { state: AppState; setState: (s: App
           <div className="absolute bottom-[62px] left-2 right-2 z-20 card p-1.5 shadow-xl animate-[var(--animate-pop)]">
             <div className="px-2.5 py-2 text-[12px] text-[var(--color-text-faint)] truncate">{u.email}</div>
             <MenuItem icon={<UserRound className="size-4" />} onClick={() => { setOpen(false); nav.go("profile"); }}>Profile & password</MenuItem>
+            {u.role === "admin" && <MenuItem icon={<Settings2 className="size-4" />} onClick={() => { setOpen(false); nav.go("profile", { tab: "ai" }); }}>AI assistant setup</MenuItem>}
             <div className="my-1 h-px bg-[var(--color-border)]" />
             <MenuItem icon={<LogOut className="size-4" />} onClick={() => api<AppState>("auth.logout").then(setState)}>Sign out</MenuItem>
           </div>
@@ -228,7 +232,11 @@ function CommandPalette({ onClose, nav, isAdmin }: { onClose: () => void; nav: N
     { label: "Browse equipment", hint: "Page", run: () => nav.go("equipment") },
     { label: "Knowledge graph", hint: "Page", run: () => nav.go("graph") },
     { label: "Sources & index", hint: "Page", run: () => nav.go("sources") },
-    ...(isAdmin ? [{ label: "Admin: profiles & roles", hint: "Page", run: () => nav.go("admin") }] : []),
+    ...(isAdmin ? [
+      { label: "Ask THOR (AI)", hint: "Page", run: () => nav.go("ask") },
+      { label: "Admin: profiles & policy", hint: "Page", run: () => nav.go("admin") },
+      { label: "AI assistant setup", hint: "Page", run: () => nav.go("profile", { tab: "ai" }) },
+    ] : []),
     { label: "About · For IT", hint: "Page", run: () => nav.go("about") },
   ].filter((p) => !q || p.label.toLowerCase().includes(q.toLowerCase()));
   const rows = [
