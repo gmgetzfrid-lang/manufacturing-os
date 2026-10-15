@@ -13,12 +13,18 @@ const UNITS = [
 const NOW = new Date("2026-10-15T12:00:00Z");
 
 describe("parseThorQuery", () => {
-  it("the newest prefrac drawings", () => {
+  it("the newest prefrac drawings — kinds rank as words", () => {
     const q = parseThorQuery("The newest prefrac drawings", UNITS, NOW);
     expect(q.sort).toBe("newest");
-    expect(q.terms).toEqual(["prefrac"]);
-    expect(q.kinds).toEqual(["drawings"]);
+    expect(q.terms).toEqual(["prefrac", "drawing"]);
+    expect(q.kinds).toEqual([]);
     expect(q.tags).toEqual([]);
+  });
+
+  it("only <kind> requires it", () => {
+    expect(parseThorQuery("only drawings of the prefrac", UNITS, NOW)).toMatchObject({ kinds: ["drawings"], terms: ["prefrac"] });
+    expect(parseThorQuery("just the inspections for v-3", UNITS, NOW)).toMatchObject({ kinds: ["inspections"], tags: ["v3"] });
+    expect(parseThorQuery("P&IDs for the platformer", UNITS, NOW).kinds).toEqual(["pid"]);
   });
 
   it("all the files on v-3 in the crude unit, latest to newest", () => {
@@ -36,7 +42,7 @@ describe("parseThorQuery", () => {
 
   it("dates and sizes become filters, bare years stay words", () => {
     const q = parseThorQuery("inspection pdfs after 2020 before 2024-06 over 5 MB", UNITS, NOW);
-    expect(q.kinds).toEqual(["inspections"]);
+    expect(q.terms).toEqual(["inspection"]);
     expect(q.types).toEqual(["pdf"]);
     expect(q.after).toBe("2021-01-01");
     expect(q.before).toBe("2024-06-01");
@@ -62,6 +68,10 @@ describe("parseThorQuery", () => {
     expect(parseThorQuery("rev3 sht04", UNITS, NOW).tags).toEqual([]);
   });
 
+  it("keeps the words that describe the document", () => {
+    expect(parseThorQuery("prefrac tower inspection report", UNITS, NOW).terms).toEqual(["prefrac", "tower", "inspection", "report"]);
+  });
+
   it("strips plurals so prefix matching covers both", () => {
     expect(parseThorQuery("vessels nozzles", UNITS, NOW).terms).toEqual(["vessel", "nozzle"]);
   });
@@ -85,7 +95,7 @@ describe("units", () => {
 
 describe("buildArgs", () => {
   it("merges query and hand-set filters; kinds are either-or", () => {
-    const q = parseThorQuery("newest prefrac drawings", UNITS, NOW);
+    const q = parseThorQuery("newest prefrac only drawings", UNITS, NOW);
     const a = buildArgs("org", q, { ...EMPTY_FILTERS, types: ["pdf"], units: ["2000"] }, { limit: 50, offset: 0 });
     expect(a.p_terms).toEqual(["prefrac"]);
     expect(a.p_kind_exts).toEqual(["dwg", "dxf", "dgn"]);

@@ -16,9 +16,12 @@ const PAGE = 100;
 
 export interface ThorSearchState {
   rows: ThorFile[];
-  /** Matches, counted up to 10,000 — `capped` when there are more. */
+  /** Matches, counted up to 1,000 — `capped` when there are more. */
   total: number;
   capped: boolean;
+  /** How many hit every word — rows past this index match only some. */
+  full: number;
+  fullCapped: boolean;
   loading: boolean;
   /** True while the first page of a new search is on its way. */
   searching: boolean;
@@ -35,6 +38,8 @@ interface Result {
   rows: ThorFile[];
   total: number;
   capped: boolean;
+  full: number;
+  fullCapped: boolean;
   first: boolean; // first page arrived
   loadingMore: boolean;
   error: string | null;
@@ -85,11 +90,11 @@ export function useThorSearch(orgId: string | null, q: ThorQuery | null, filters
     thorSearch(args(0, firstPage), ctrl.signal).then((p) => {
       if (live.current !== cur) return;
       cur.next = p.rows.length; cur.total = p.capped ? Number.MAX_SAFE_INTEGER : p.total;
-      setRes({ key, rows: p.rows, total: p.total, capped: p.capped, first: true, loadingMore: false, error: null, resolvedEquipment: p.resolvedEquipment, tookMs: Math.round(performance.now() - t0) });
+      setRes({ key, rows: p.rows, total: p.total, capped: p.capped, full: p.full, fullCapped: p.fullCapped, first: true, loadingMore: false, error: null, resolvedEquipment: p.resolvedEquipment, tookMs: Math.round(performance.now() - t0) });
       if (p.rows.length < cur.total && p.rows.length === firstPage) prefetchFrom(cur, p.rows.length);
     }).catch((e) => {
       if (live.current !== cur || ctrl.signal.aborted) return;
-      setRes({ key, rows: [], total: 0, capped: false, first: true, loadingMore: false, error: (e as Error).message, resolvedEquipment: null, tookMs: null });
+      setRes({ key, rows: [], total: 0, capped: false, full: 0, fullCapped: false, first: true, loadingMore: false, error: (e as Error).message, resolvedEquipment: null, tookMs: null });
     });
     return () => ctrl.abort();
   }, [key, active, firstPage, orgId, q, filters]);
@@ -121,6 +126,8 @@ export function useThorSearch(orgId: string | null, q: ThorQuery | null, filters
     rows: mine?.rows ?? [],
     total: mine?.total ?? 0,
     capped: !!mine?.capped,
+    full: mine?.full ?? 0,
+    fullCapped: !!mine?.fullCapped,
     loading: searching || !!mine?.loadingMore,
     searching,
     error: mine?.error ?? null,

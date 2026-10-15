@@ -26,7 +26,9 @@ import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
 import { fileTypeOf } from "@/lib/fileFinder/fileTypes";
 import { parseThorQuery, formatBytes, unitName, countLabel } from "@/lib/thor/query";
-import { buildArgs, thorOverview, thorSearch, EMPTY_FILTERS, type ThorFile, type ThorOverview } from "@/lib/thor/client";
+import { buildArgs, thorOverview, thorSearch, thorVocabulary, EMPTY_FILTERS, type ThorFile, type ThorOverview, type ThorVocabulary } from "@/lib/thor/client";
+import { ghostCompletion, exampleSearches } from "@/lib/thor/suggest";
+import GhostField from "@/components/thor/GhostField";
 
 const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string }>> = {
   document: FileText,
@@ -64,13 +66,18 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<GlobalHitKind | "all" | "thor">("all");
   const [thorInfo, setThorInfo] = useState<ThorOverview | null>(null);
+  const [thorVocab, setThorVocab] = useState<ThorVocabulary | null>(null);
   const [thor, setThor] = useState<{ q: string; rows: ThorFile[]; total: number; capped: boolean } | null>(null);
   const thorSeq = useRef(0);
 
   useEffect(() => {
     if (!activeOrgId) return;
     let live = true;
-    thorOverview(activeOrgId).then((o) => { if (live) setThorInfo(o); }).catch(() => undefined);
+    thorOverview(activeOrgId).then((o) => {
+      if (!live) return;
+      setThorInfo(o);
+      if (o) thorVocabulary(activeOrgId).then((v) => { if (live) setThorVocab(v); }).catch(() => undefined);
+    }).catch(() => undefined);
     return () => { live = false; };
   }, [activeOrgId]);
 
@@ -111,6 +118,7 @@ export default function SearchPage() {
   };
   for (const h of hits) (grouped[h.kind] ??= []).push(h);
 
+  const thorExamples = exampleSearches(thorVocab);
   const visible = kindFilter === "all" ? hits : kindFilter === "thor" ? [] : hits.filter((h) => h.kind === kindFilter);
   const thorTotal = thor?.total ?? 0;
   const thorHref = `/documents/graph?src=thor&q=${encodeURIComponent(thor?.q ?? query)}`;
@@ -129,16 +137,20 @@ export default function SearchPage() {
         <div className="mb-6">
           <PageHeaderBar icon={Search} title="Search" />
           <form onSubmit={submit} className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
-            <input
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)] z-10 pointer-events-none" />
+            <GhostField
               autoFocus
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={setQuery}
+              onSubmit={() => { router.replace(`/search?q=${encodeURIComponent(query)}`); void run(query); }}
+              ghost={thorInfo ? ghostCompletion(query, thorVocab) : ""}
+              examples={thorExamples}
+              hintClassName="right-10 top-1/2 -translate-y-1/2"
               placeholder="Search across documents, drafting requests, projects, assets, notes…"
-              className="w-full pl-11 pr-10 py-3 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] shadow-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-[var(--color-accent-ring)] outline-none transition-colors"
+              className="w-full pl-11 pr-24 py-3 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] shadow-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-[var(--color-accent-ring)] outline-none transition-colors"
             />
             {query && (
-              <button type="button" onClick={() => { setQuery(""); setHits([]); router.replace("/search"); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] rounded transition-colors">
+              <button type="button" onClick={() => { setQuery(""); setHits([]); router.replace("/search"); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] rounded transition-colors z-10">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}

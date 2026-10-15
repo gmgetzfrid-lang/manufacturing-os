@@ -66,6 +66,22 @@ def tokens(text):
     return out
 
 
+def weighted_vector(name_tok, eq_tok, path_tok):
+    """tsvector text with positions: name tokens weight A, equipment names B,
+    folder chain C. Weights only survive on positioned lexemes, and the search
+    scores a word by the best weight it hits (3 / 2 / 1). Tokens are already
+    [a-z0-9.], so quoting them is safe."""
+    pos = {}
+    n = 0
+    for toks, w in ((name_tok, "A"), (eq_tok, "B"), (path_tok, "C")):
+        for t in toks:
+            n += 1
+            if n > 16383:  # tsvector's position limit
+                break
+            pos.setdefault(t, []).append(f"{n}{w}")
+    return " ".join(f"'{t}':{','.join(ps)}" for t, ps in pos.items())
+
+
 def match_key(value):
     """Compact alias key: 'V-3' → 'v3', '2010.03' → '2010.03'."""
     return re.sub(r"[^a-z0-9.]", "", (value or "").lower())
@@ -213,6 +229,8 @@ def main():
     ap.add_argument("--only", help="comma-separated subset of: " + ",".join(TABLE_ORDER))
     ap.add_argument("--resume-from", help="skip tables before this one")
     ap.add_argument("--batch", type=int, default=2000)
+    ap.add_argument("--vectors-only", action="store_true",
+                    help="rewrite only thor_files.search_tsv (after a change to the token rules)")
     args = ap.parse_args()
 
     token = os.environ.get("SUPABASE_ACCESS_TOKEN")
@@ -222,6 +240,8 @@ def main():
         sys.exit("--org must be a uuid")
 
     tables = TABLE_ORDER
+    if args.vectors_only:
+        tables = ["files"]
     if args.only:
         tables = [t for t in TABLE_ORDER if t in args.only.split(",")]
     if args.resume_from:
@@ -340,9 +360,8 @@ def main():
             "hash_alg": f["hash_alg"], "inspection_value": f["inspection_value"],
             "information_value": f["information_value"], "parsed_at": f["parsed_at"],
             "content_excerpt": f["content_excerpt"], "content_method": f["content_method"],
-            "name_tok": tokens(f["filename"]),
-            "eq_tok": list(dict.fromkeys(eq_tokens)),
-            "path_tok": tokens(folder.replace("/", " ")),
+            "tsv": weighted_vector(tokens(f["filename"]), list(dict.fromkeys(eq_tokens)),
+                                   tokens(folder.replace("/", " "))),
         })
         # roll up into every ancestor folder
         segs = folder.split("/") if folder else []
@@ -420,6 +439,19 @@ def main():
             ("evidence_count", "int"), ("independent_sources", "int"), ("scope", "text"),
         ], ["org_id", "alias_id", "entity_id"], batch=args.batch)
 
+    if args.vectors_only:
+        rows_v = [{"org_id": r["org_id"], "file_id": r["file_id"], "tsv": r["tsv"]} for r in file_rows]
+        done = 0
+        for chunk in chunks(rows_v, args.batch * 2):
+            payload = json.dumps(chunk, separators=(",", ":"))
+            tgt.sql("UPDATE thor_files f SET search_tsv = x.tsv::tsvector "
+                    f"FROM jsonb_to_recordset({dollar(payload)}::jsonb) AS x(org_id uuid, file_id text, tsv text) "
+                    "WHERE f.org_id = x.org_id AND f.file_id = x.file_id")
+            done += len(chunk)
+            print(f"\r  search vectors: {done:,}/{len(rows_v):,}", end="", file=sys.stderr, flush=True)
+        print(file=sys.stderr)
+        tables = []
+
     if "files" in tables:
         cols = [
             ("org_id", "uuid"), ("file_id", "text"), ("root_id", "text"), ("unc_path", "text"),
@@ -436,10 +468,9 @@ def main():
             ("content_method", "text"),
         ]
         plain = [c for c, _ in cols]
-        tsv = ("setweight(array_to_tsvector(x.name_tok), 'A') || setweight(array_to_tsvector(x.eq_tok), 'B')"
-               " || setweight(array_to_tsvector(x.path_tok), 'C')")
+        tsv = "x.tsv::tsvector"
         upsert(tgt, "thor_files", file_rows,
-               cols + [("name_tok", "text[]"), ("eq_tok", "text[]"), ("path_tok", "text[]")],
+               cols + [("tsv", "text")],
                ["org_id", "file_id"],
                select=(plain + ["search_tsv"], ", ".join("x." + c for c in plain) + ", " + tsv),
                batch=args.batch)

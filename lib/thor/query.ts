@@ -45,6 +45,12 @@ export const THOR_TYPES: Array<{ key: string; label: string; exts: string[] }> =
   { key: "video", label: "Video", exts: ["mp4", "mov", "avi", "wmv"] },
 ];
 
+// A kind is a ranked word unless asked for with "only" ("only drawings"):
+// the folder roles behind kinds are the indexer's reading of folder names,
+// so a drawing filed outside a DRAWINGS folder must still be findable.
+const KIND_STEM: Record<string, string> = {
+  drawings: "drawing", pid: "", inspections: "inspection", datasheets: "datasheet", calculations: "calc", codes: "code",
+};
 const KIND_WORDS: Array<[RegExp, string]> = [
   [/^(p&ids?|pids?|p&id's)$/, "pid"],
   [/^(drawings?|dwgs?|autocad|cad|blueprints?|prints?)$/, "drawings"],
@@ -68,7 +74,8 @@ const STOP = new Set([
   "sort", "by", "show", "find", "with", "and", "or", "list", "give", "get", "please", "about", "related",
   "at", "what", "where", "are", "is", "that", "this", "those", "these", "there", "first", "last", "unit",
   "units", "area", "equipment", "can", "you", "it", "its", "have", "has", "do", "does", "thor", "nas",
-  "report", "reports", "records", "record", "folder", "folders", "which",
+  "folder", "folders", "which", "need", "only", "just", "everything",
+  "looking", "look", "like", "would", "pls", "thanks", "them", "they", "be", "was", "were", "any", "some",
 ]);
 const NEWEST = new Set(["newest", "latest", "recent", "newer", "current"]);
 const OLDEST = new Set(["oldest", "earliest", "older", "original"]);
@@ -102,7 +109,7 @@ export interface ThorQuery {
 const SIZE_UNITS: Record<string, number> = { b: 1, kb: 1024, k: 1024, mb: 1024 ** 2, m: 1024 ** 2, gb: 1024 ** 3, g: 1024 ** 3 };
 const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
 
-/** "1,586", or "10,000+" when the server stopped counting. */
+/** "586", or "1,000+" when the server stopped counting. */
 export function countLabel(total: number, capped?: boolean): string {
   return `${total.toLocaleString()}${capped ? "+" : ""}`;
 }
@@ -199,13 +206,22 @@ export function parseThorQuery(raw: string, units: ThorUnit[], now: Date = new D
   take(/\bunit\s+(\d{4})\b|\b(\d{4})\s+unit\b/g, (m) => { const c = m[1] ?? m[2]; if (!q.units.includes(c)) q.units.push(c); });
 
   // ── Word by word: order words, kinds, types, tags, the rest.
+  let only = false;
   for (const w0 of text.split(/\s+/).filter(Boolean)) {
     const w = w0.replace(/^[^a-z0-9&]+|[^a-z0-9&]+$/g, "");
     if (!w) continue;
+    const wasOnly = only;
+    only = w === "only" || w === "just" || (only && ["the", "of", "a", "all"].includes(w));
+    if (only) continue;
     if (NEWEST.has(w)) { q.sort ??= "newest"; continue; }
     if (OLDEST.has(w)) { q.sort ??= "oldest"; continue; }
     const kind = KIND_WORDS.find(([re]) => re.test(w))?.[1];
-    if (kind) { if (!q.kinds.includes(kind)) q.kinds.push(kind); continue; }
+    if (kind) {
+      const stem = KIND_STEM[kind];
+      if (wasOnly || !stem) { if (!q.kinds.includes(kind)) q.kinds.push(kind); }
+      else if (!q.terms.includes(stem)) q.terms.push(stem);
+      continue;
+    }
     const type = TYPE_WORDS.find(([re]) => re.test(w))?.[1];
     if (type) { if (!q.types.includes(type)) q.types.push(type); continue; }
     if (STOP.has(w)) continue;

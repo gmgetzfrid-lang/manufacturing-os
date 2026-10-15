@@ -63,7 +63,9 @@ import { findEstate } from "@/lib/find/client";
 import type { FindResponse, FindRelation } from "@/lib/find/types";
 import { EntityStrip, EquipmentCards, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
 import { parseThorQuery, withoutChip, type ThorQuery, type ThorSort } from "@/lib/thor/query";
-import { thorOverview, EMPTY_FILTERS, type ThorFile, type ThorFilters as ThorFilterState, type ThorOverview } from "@/lib/thor/client";
+import { thorOverview, thorVocabulary, EMPTY_FILTERS, type ThorFile, type ThorFilters as ThorFilterState, type ThorOverview, type ThorVocabulary } from "@/lib/thor/client";
+import { ghostCompletion, exampleSearches, resolveTags, categoryChips, describe as describeEquipment } from "@/lib/thor/suggest";
+import GhostField from "@/components/thor/GhostField";
 import { useThorSearch } from "@/hooks/useThorSearch";
 import ThorFilters from "@/components/thor/ThorFilters";
 import ThorIndexPanel from "@/components/thor/ThorIndexPanel";
@@ -143,6 +145,8 @@ function GraphPageInner() {
   // ── THOR: the NAS index as a second source ─────────────────────────────
   const [source, setSource] = useState<FindSource>(() => { const s = params.get("src"); return s === "thor" || s === "system" ? s : "all"; });
   const [thorInfo, setThorInfo] = useState<ThorOverview | null>(null);
+  /** Units, equipment-type folders and equipment, for ghost text and chips. */
+  const [thorVocab, setThorVocab] = useState<ThorVocabulary | null>(null);
   /** The words searched, and any THOR chips the person removed since. */
   const [thorRaw, setThorRaw] = useState<string | null>(null);
   const [thorDropped, setThorDropped] = useState<string[]>([]);
@@ -161,9 +165,17 @@ function GraphPageInner() {
   useEffect(() => {
     if (!activeOrgId) return;
     let live = true;
-    thorOverview(activeOrgId).then((o) => { if (live) setThorInfo(o); }).catch((e) => console.warn("[finder] thor:", e));
+    thorOverview(activeOrgId).then((o) => {
+      if (!live) return;
+      setThorInfo(o);
+      if (o) thorVocabulary(activeOrgId).then((v) => { if (live) setThorVocab(v); }).catch((e) => console.warn("[finder] thor vocabulary:", e));
+    }).catch((e) => console.warn("[finder] thor:", e));
     return () => { live = false; };
   }, [activeOrgId]);
+  const thorTags = useMemo(() => resolveTags(thorQuery, thorVocab), [thorQuery, thorVocab]);
+  const thorCats = useMemo(() => categoryChips(thorQuery, thorVocab), [thorQuery, thorVocab]);
+  const thorExamples = useMemo(() => exampleSearches(thorVocab), [thorVocab]);
+  const ghost = useMemo(() => (thorInfo ? ghostCompletion(query, thorVocab) : ""), [query, thorVocab, thorInfo]);
   /** Narrow THOR to a folder and show it. */
   const thorFolder = useCallback((rel: string) => { setThorFilters((f) => ({ ...f, folder: rel || undefined })); setSource("thor"); setPanel("search"); }, []);
 
@@ -656,12 +668,9 @@ function GraphPageInner() {
               <>
                 <form onSubmit={(e) => { e.preventDefault(); runSearch(query); }} className="space-y-2">
                   <label className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Say what you&apos;re after</label>
-                  <textarea
-                    value={query} onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runSearch(query); } }}
-                    rows={3} placeholder="U1-A for the born heater pilot valve in 2018"
-                    className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
-                  />
+                  <GhostField value={query} onChange={setQuery} onSubmit={() => runSearch(query)} rows={3}
+                    ghost={ghost} examples={thorExamples} placeholder="U1-A for the born heater pilot valve in 2018"
+                    className="w-full text-sm leading-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]" />
                   <div className="flex gap-2">
                     <button type="submit" disabled={loading} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold px-3 py-2 disabled:opacity-50">
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Find
@@ -687,7 +696,13 @@ function GraphPageInner() {
                   <div className="space-y-1">
                     <div className="text-[11px] font-bold uppercase tracking-wide text-teal-800 flex items-center gap-1"><HardDrive className="w-3 h-3" /> On THOR, searching for</div>
                     <div className="flex flex-wrap gap-1">
-                      {thorQuery.chips.map((c) => (
+                      {thorCats.map((c) => (
+                        <span key={c.name} title="An equipment-type folder on THOR — files in it rank higher" className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold bg-sky-50 text-sky-800 border-sky-200">
+                          <span className="opacity-60">category</span> {c.name}
+                          <button onClick={() => setThorDropped((d) => [...d, ...c.terms.map((t) => `word:${t}`)])} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
+                        </span>
+                      ))}
+                      {thorQuery.chips.filter((c) => !(c.kind === "word" && thorCats.some((k) => k.terms.includes(c.label)))).map((c) => (
                         <span key={c.key} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${c.kind === "tag" ? "bg-emerald-50 text-emerald-800 border-emerald-200" : c.kind === "unit" ? "bg-purple-50 text-purple-800 border-purple-200" : c.kind === "kind" || c.kind === "type" ? "bg-orange-50 text-orange-800 border-orange-200" : c.kind === "word" ? "bg-slate-50 text-slate-700 border-slate-200" : "bg-amber-50 text-amber-800 border-amber-200"}`}>
                           <span className="opacity-60">{c.kind === "tag" ? "tag" : c.kind === "unit" ? "unit" : c.kind === "kind" || c.kind === "type" ? "type" : c.kind === "date" ? "date" : c.kind === "size" ? "size" : c.kind === "sort" ? "order" : ""}</span>
                           {c.label}
@@ -695,6 +710,27 @@ function GraphPageInner() {
                         </span>
                       ))}
                     </div>
+                    {thorTags.map((t) => t.inScope.length ? (
+                      <div key={t.key} className="text-[11px] text-emerald-800">
+                        <b>{t.label}</b> → {t.inScope.slice(0, 3).map((e) => `${e.number}${describeEquipment(e) ? ` ${describeEquipment(e)}` : ""}`).join(" · ")}{t.inScope.length > 3 ? ` +${t.inScope.length - 3} more` : ""}
+                      </div>
+                    ) : (
+                      <div key={t.key} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900">
+                        {t.elsewhere.length ? (
+                          <>
+                            <b>{t.label}</b> isn&apos;t in {thorQuery.units.length === 1 ? (thorUnits.find((u) => u.code === thorQuery.units[0])?.folder.replace(/^\d{4}\s*-\s*/, "") ?? "that unit") : "those units"} on THOR. It is in:
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {t.elsewhere.slice(0, 8).map((e) => (
+                                <button key={e.number} onClick={() => { setThorDropped((d) => [...d, ...thorQuery.units.map((u) => `unit:${u}`)]); setThorFilters((f) => ({ ...f, units: e.unit ? [e.unit] : [] })); }}
+                                  className="rounded-full border border-amber-300 bg-white px-1.5 py-px font-semibold hover:bg-amber-100" title={`Search ${t.label} in this unit instead`}>
+                                  {thorUnits.find((u) => u.code === e.unit)?.folder.replace(/^\d{4}\s*-\s*/, "") ?? e.unit} · {e.number}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        ) : <><b>{t.label}</b> isn&apos;t a tag the THOR index knows — it is searched as a word in names and folders.</>}
+                      </div>
+                    ))}
                   </div>
                 )}
                 {thorOn && (
@@ -879,7 +915,7 @@ function GraphPageInner() {
           <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · ← → step results · Esc goes up</div>
           {source === "thor" && (
             <div className="absolute inset-0 z-20">
-              <ThorResultsTable search={thor} sort={thorSort} onSort={(s) => setThorFilters((f) => ({ ...f, sort: s }))}
+              <ThorResultsTable search={thor} sort={thorSort} words={thorQuery?.terms ?? []} onSort={(s) => setThorFilters((f) => ({ ...f, sort: s }))}
                 selectedId={thorSel?.file_id ?? null} onSelect={setThorSel} onOpen={(f) => { setThorSel(f); void thorOpener.open(f); }} opener={thorOpener}
                 header={!thorQuery && !thorFilters.folder && thor.total === 0 && !thor.searching ? (
                   <div className="text-sm text-[var(--color-text-muted)]">Type what you are after, or pick a quick filter, to search {thorInfo?.files.toLocaleString()} files on THOR. Drives › THOR shows every indexed folder.</div>

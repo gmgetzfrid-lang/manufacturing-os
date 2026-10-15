@@ -69,8 +69,8 @@ const COLS: Array<{ key: string; label: string; sort?: [ThorSort, ThorSort]; cls
   { key: "modified", label: "Modified", sort: ["newest", "oldest"], cls: "w-28 text-right" },
 ];
 
-export function ThorResultsTable({ search, sort, onSort, selectedId, onSelect, onOpen, opener, header }: {
-  search: ThorSearchState; sort: ThorSort; onSort: (s: ThorSort) => void;
+export function ThorResultsTable({ search, sort, words = [], onSort, selectedId, onSelect, onOpen, opener, header }: {
+  search: ThorSearchState; sort: ThorSort; words?: string[]; onSort: (s: ThorSort) => void;
   selectedId: string | null; onSelect: (f: ThorFile) => void; onOpen: (f: ThorFile) => void;
   opener: ThorOpener; header?: React.ReactNode;
 }) {
@@ -93,6 +93,13 @@ export function ThorResultsTable({ search, sort, onSort, selectedId, onSelect, o
           <HardDrive className="w-3.5 h-3.5 text-teal-700" />
           {search.searching ? <span className="inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Searching THOR…</span>
             : search.error ? <span className="text-red-700">{search.error}</span>
+            : words.length > 0 ? (
+              <span>
+                <b className="text-[var(--color-text)]">{countLabel(search.full, search.fullCapped)}</b> match {words.length === 1 ? "the word" : `all ${words.length} words`}
+                {search.total > search.full && <> · {countLabel(search.total - search.full, search.capped)} more rank below by how many they match</>}
+                {search.tookMs != null ? ` · ${search.tookMs} ms` : ""}
+              </span>
+            )
             : <span><b className="text-[var(--color-text)]">{countLabel(search.total, search.capped)}</b> file{search.total === 1 ? "" : "s"} on THOR{search.tookMs != null ? ` · ${search.tookMs} ms` : ""}{search.rows.length < search.total || search.capped ? ` · showing ${search.rows.length.toLocaleString()}` : ""}</span>}
           {search.resolvedEquipment && search.resolvedEquipment.length > 0 && (
             <span className="ml-1 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 px-1.5" title="Equipment numbers the tag resolved to inside the unit asked about">
@@ -117,8 +124,14 @@ export function ThorResultsTable({ search, sort, onSort, selectedId, onSelect, o
         })}
       </div>
       <div className="flex-1 overflow-y-auto">
-        {search.rows.map((f) => (
-          <div key={f.file_id} role="button" tabIndex={0}
+        {search.rows.map((f, i) => (
+          <React.Fragment key={f.file_id}>
+          {words.length > 1 && i > 0 && f.matched_terms.length < words.length && search.rows[i - 1].matched_terms.length > f.matched_terms.length && (
+            <div className="px-4 py-1 text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] bg-[var(--color-canvas)] border-b border-[var(--color-border)]">
+              Matching {f.matched_terms.length} of {words.length} words
+            </div>
+          )}
+          <div role="button" tabIndex={0}
             onClick={() => onSelect(f)} onDoubleClick={() => onOpen(f)}
             onKeyDown={(e) => { if (e.key === "Enter") onOpen(f); }}
             style={{ contentVisibility: "auto", containIntrinsicSize: "0 46px" }}
@@ -129,13 +142,17 @@ export function ThorResultsTable({ search, sort, onSort, selectedId, onSelect, o
                 <span className="font-semibold truncate" title={f.filename}>{f.filename}</span>
                 {opener.opening === f.file_id && <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />}
               </div>
-              <ThorLocation f={f} oneLine />
+              <div className="flex items-center gap-1.5 min-w-0">
+                {words.length > 0 && <MatchedWords words={words} matched={f.matched_terms} />}
+                <div className="min-w-0 flex-1"><ThorLocation f={f} oneLine /></div>
+              </div>
             </div>
             <div className="w-24 hidden lg:block text-xs truncate font-mono" title={f.equipment_numbers.join(", ")}>{f.equipment_numbers.slice(0, 2).join(", ") || <span className="text-[var(--color-text-muted)] font-sans">—</span>}</div>
             <div className="w-24 hidden md:block text-xs truncate">{fileTypeOf(f.filename).label}</div>
             <div className="w-20 text-right text-xs tabular-nums">{formatBytes(f.size_bytes)}</div>
             <div className="w-28 text-right text-xs tabular-nums" title="Filesystem modified date">{fmtDate(f.modified_at)}</div>
           </div>
+          </React.Fragment>
         ))}
         <div ref={sentinel} className="h-10 grid place-items-center text-[11px] text-[var(--color-text-muted)]">
           {search.loading && !search.searching ? <span className="inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Loading more…</span>
@@ -148,6 +165,18 @@ export function ThorResultsTable({ search, sort, onSort, selectedId, onSelect, o
         )}
       </div>
     </div>
+  );
+}
+
+/** Which of the search words a file hit — green — and which it didn't. */
+function MatchedWords({ words, matched }: { words: string[]; matched: string[] }) {
+  const hit = new Set(matched);
+  return (
+    <span className="shrink-0 inline-flex gap-0.5" title={`Matches ${matched.length} of ${words.length}: ${matched.join(", ") || "none"}`}>
+      {words.map((w) => (
+        <span key={w} className={`rounded px-1 text-[10px] font-semibold ${hit.has(w) ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "text-[var(--color-text-muted)] line-through opacity-60 border border-transparent"}`}>{w}</span>
+      ))}
+    </span>
   );
 }
 

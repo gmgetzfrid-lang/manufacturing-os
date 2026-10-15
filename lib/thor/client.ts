@@ -24,7 +24,10 @@ export interface ThorFile {
   folder_role: string | null;
   equipment_numbers: string[];
   observation_state: string;
+  /** Words matched × 10 + where they hit (name 3, equipment 2, folder 1 each). */
   rank: number;
+  /** The search words this file hit. */
+  matched_terms: string[];
 }
 
 /** What the person set by hand: quick filters and the advanced panel. */
@@ -112,10 +115,13 @@ export function buildArgs(orgId: string, q: ThorQuery | null, f: ThorFilters, pa
 
 export interface ThorPage {
   rows: ThorFile[];
-  /** Matches, counted up to 10,000. */
+  /** Matches, counted up to 1,000. */
   total: number;
   /** More than `total` match. */
   capped: boolean;
+  /** Of those, how many hit every word (the rest rank below). */
+  full: number;
+  fullCapped: boolean;
   /** Equipment numbers the query's tags resolved to (null: no tags). */
   resolvedEquipment: string[] | null;
 }
@@ -125,11 +131,13 @@ export async function thorSearch(args: ThorSearchArgs, signal?: AbortSignal): Pr
   if (signal) req = req.abortSignal(signal);
   const { data, error } = await req;
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as Array<ThorFile & { total_count: number; total_capped: boolean; resolved_equipment: string[] | null }>;
+  const rows = (data ?? []) as Array<ThorFile & { total_count: number; total_capped: boolean; full_count: number; full_capped: boolean; resolved_equipment: string[] | null }>;
   return {
     rows,
     total: rows.length ? Number(rows[0].total_count) : (args.p_offset > 0 ? args.p_offset : 0),
     capped: !!rows[0]?.total_capped,
+    full: rows.length ? Number(rows[0].full_count) : 0,
+    fullCapped: !!rows[0]?.full_capped,
     resolvedEquipment: rows[0]?.resolved_equipment ?? null,
   };
 }
@@ -152,6 +160,25 @@ export async function thorOverview(orgId: string): Promise<ThorOverview | null> 
   }
   const o = data as ThorOverview;
   return o && o.files > 0 ? o : null;
+}
+
+export interface ThorVocabulary {
+  units: Array<{ code: string; folder: string; files: number }>;
+  /** Equipment-type folders under the units, number prefix dropped: "VESSELS", "RELIEF VALVES". */
+  categories: Array<{ name: string; files: number }>;
+  /** Every piece of equipment the indexer found, most-documented first. */
+  /** `tags` are every tag the indexer saw for it (V-3 and NDE-02 for 2010.03). */
+  equipment: Array<{ number: string; unit: string | null; tags: string[]; description: string | null; files: number }>;
+}
+
+/** What the search box can suggest — read once per visit. Null when THOR isn't set up. */
+export async function thorVocabulary(orgId: string): Promise<ThorVocabulary | null> {
+  const { data, error } = await supabase.rpc("thor_vocabulary", { p_org: orgId });
+  if (error) {
+    if (/function .*thor_vocabulary|does not exist|schema cache/i.test(error.message)) return null;
+    throw new Error(error.message);
+  }
+  return (data as ThorVocabulary) ?? null;
 }
 
 export interface ThorDirectory {
