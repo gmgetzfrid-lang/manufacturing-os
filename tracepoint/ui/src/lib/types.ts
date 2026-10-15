@@ -78,6 +78,7 @@ export interface EquipCard {
 
 export interface SearchResponse {
   query: string;
+  mode?: string;
   total: number;
   suppressed_photos: number;
   took_ms: number;
@@ -92,6 +93,7 @@ export interface SearchResponse {
 
 export interface SearchRequest {
   query: string;
+  mode?: string;
   limit?: number;
   offset?: number;
   categories?: string[];

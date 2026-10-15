@@ -725,22 +725,6 @@ impl Engine {
             if f.family.is_some() && f.flags & F_LATEST != 0 {
                 score += 8.0;
             }
-            *facet_cat.entry(f.cat).or_default() += 1;
-            if let Some(un) = dir.unit {
-                *facet_unit.entry(un).or_default() += 1;
-            }
-            if let Some(y) = f.year {
-                *facet_year.entry(y).or_default() += 1;
-            }
-            if !cat_filter.is_empty() && !cat_filter.contains(&f.cat) {
-                continue;
-            }
-            if !unit_filter.is_empty() && !dir.unit.map(|x| unit_filter.contains(&x)).unwrap_or(false) {
-                continue;
-            }
-            if !ext_filter.is_empty() && !ext_filter.contains(&f.ext) {
-                continue;
-            }
             scored.push(S { fi, score, reasons });
         }
         // A named unit is a boundary: keep results inside it when there are any.
@@ -752,6 +736,25 @@ impl Engine {
                 resp.notice = Some("Nothing like that inside the unit you named — showing the closest matches from other units.".into());
             }
         }
+        // Facets describe everything that matched (inside the boundary), before
+        // the person's own filters, so other options stay visible.
+        for s in &scored {
+            let f = &self.idx.files[s.fi as usize];
+            *facet_cat.entry(f.cat).or_default() += 1;
+            if let Some(un) = self.idx.dirs[f.dir as usize].unit {
+                *facet_unit.entry(un).or_default() += 1;
+            }
+            if let Some(y) = f.year {
+                *facet_year.entry(y).or_default() += 1;
+            }
+        }
+        scored.retain(|s| {
+            let f = &self.idx.files[s.fi as usize];
+            let unit = self.idx.dirs[f.dir as usize].unit;
+            (cat_filter.is_empty() || cat_filter.contains(&f.cat))
+                && (unit_filter.is_empty() || unit.map(|x| unit_filter.contains(&x)).unwrap_or(false))
+                && (ext_filter.is_empty() || ext_filter.contains(&f.ext))
+        });
         match req.sort.as_str() {
             "newest" => scored.sort_by(|a, b| self.idx.files[b.fi as usize].year.cmp(&self.idx.files[a.fi as usize].year)),
             "oldest" => scored.sort_by(|a, b| self.idx.files[a.fi as usize].year.unwrap_or(9999).cmp(&self.idx.files[b.fi as usize].year.unwrap_or(9999))),

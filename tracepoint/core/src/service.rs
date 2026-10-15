@@ -617,6 +617,19 @@ impl Service {
                 users.delete_secret(sess, "ai_key")?;
                 Ok(json!({"ok": true}))
             }),
+            "search.ai" => {
+                let (choice, key) = self.current_ai()?;
+                let e = self.engine()?;
+                let history: Vec<ai::Msg> = a.get("history").and_then(|h| serde_json::from_value(h.clone()).ok()).unwrap_or_default();
+                let q = s(a, "query");
+                if q.trim().is_empty() {
+                    return Err(ApiError::new(400, "Describe what you're looking for."));
+                }
+                let plat = &self.platform;
+                let r = crate::aifind::find(&e, &choice, &key, &q, &history, &|m| plat.emit("aifind", json!({"status": m})))?;
+                self.audit("ai_find", &format!("{} / {}", choice.provider.as_str(), choice.model));
+                Ok(r.value)
+            }
             "ai.cancel" => {
                 self.chat_cancel.store(true, Ordering::SeqCst);
                 Ok(json!({"ok": true}))
