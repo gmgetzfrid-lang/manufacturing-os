@@ -50,7 +50,7 @@ export function AboutPage({ state }: { state: AppState }) {
 
         <Block icon={<Globe className="size-4" />} title="Network connections">
           <Row k="THOR" v="SMB to the indexed shares, as the signed-in Windows user." />
-          <Row k="AI (optional)" v={a ? a.ai_hosts.join(" · ") : "…"} mono note="HTTPS 443 only, only when an administrator uses an AI feature or tests their key, only to the provider they selected. Respects HTTPS_PROXY and the Windows certificate store." />
+          <Row k="AI (optional)" v={a ? a.ai_hosts.join(" · ") : "…"} mono note="HTTPS 443 only, only when an administrator uses an AI feature (Ask THOR, Find with AI, approved AI reading of scanned pages) or tests their key, only to the provider they selected. Each administrator has a monthly spending cap enforced before every request; page images are sent only after the administrator approves a cost estimate. Respects HTTPS_PROXY and the Windows certificate store." />
           <Row k="Nothing else" v="No analytics, update checks, licence calls, fonts or scripts from the internet. The interface is bundled inside the exe." />
         </Block>
 
