@@ -1,0 +1,45 @@
+TracePoint GUI V1.0.11 Beta 1
+
+Unblock ZIP BEFORE extracting into a NEW folder, then double-click
+Start_TracePoint.cmd. Keep the complete Support folder beside the launcher.
+For validation, run Support\Test_TracePoint.cmd.
+
+NEW: FILE PREVIEW
+- Single-click a result: preview appears in the right pane.
+- Drag the divider to resize. Uncheck Preview at the top to collapse it.
+- Double-click still opens the original file.
+- PDFs use the embedded Edge PDF viewer: scrolling, zoom and document search.
+- Photos display fitted to the pane. TIFF previews show the first frame/page.
+- Text, logs, CSV, JSON, XML and similar files display as read-only text;
+  scripts are displayed, not executed. Text is limited to 128,000 characters.
+- Office files, DWG and unsupported types show an Open original button.
+- Only selected files are read. Preview does not rebuild or change the index.
+- PDF files are loaded directly from their saved paths, including THOR.
+- PDF hyperlinks and automatic downloads are blocked inside the preview.
+
+EDGE PDF REQUIREMENT
+Microsoft Edge WebView2 Runtime must be installed. This is a separate Windows
+component from the Edge browser. If missing, PDF preview shows a message and
+Open original remains available. Search, photo and text preview still work.
+The app does not install software or change computer settings.
+Microsoft runtime information/download:
+https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+
+Bundled Microsoft WebView2 .NET Framework SDK: 1.0.4022.49, x64 loader.
+License is included as WebView2_LICENSE.txt.
+WebView2 stores its profile/cache under:
+%LOCALAPPDATA%\TracePoint\WebView2
+
+Unchanged: shared index access, wildcard searches, filename refinement,
+sorting, pages, photo toggle, Excel exports, logo, author credit and cat.
+No index rebuild needed.
+
+VALIDATE ON WINDOWS
+1. Support\Test_TracePoint.cmd: confirm existing and preview checks.
+2. Start_TracePoint.cmd: confirm loading cat and hidden console.
+3. Search for a PDF, select it, test scroll/zoom, then select another PDF.
+4. Select a photo, text file, Office file and unavailable/moved path.
+5. Rapidly switch rows and pages; confirm preview follows the latest selection.
+6. Resize/collapse/reopen preview; export results and open originals.
+Windows compilation, installed-runtime detection, THOR PDF rendering and
+live GUI validation remain required.
