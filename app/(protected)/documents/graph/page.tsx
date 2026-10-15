@@ -62,6 +62,17 @@ import { triageListing } from "@/lib/fileFinder/triage";
 import { findEstate } from "@/lib/find/client";
 import type { FindResponse, FindRelation } from "@/lib/find/types";
 import { EntityStrip, EquipmentCards, RelationChips, PageHits, ActivityPanel, CoverageLine } from "@/components/find/FindPanels";
+import { parseThorQuery, withoutChip, type ThorQuery, type ThorSort } from "@/lib/thor/query";
+import { thorOverview, EMPTY_FILTERS, type ThorFile, type ThorFilters as ThorFilterState, type ThorOverview } from "@/lib/thor/client";
+import { useThorSearch } from "@/hooks/useThorSearch";
+import ThorFilters from "@/components/thor/ThorFilters";
+import ThorIndexPanel from "@/components/thor/ThorIndexPanel";
+import { ThorResultsTable, ThorHitList, ThorFileCard, ThorViewerLayer } from "@/components/thor/ThorResults";
+import { useThorOpener } from "@/components/thor/useThorOpener";
+
+/** Which sources a search covers: everything, the system's own documents, or THOR (the NAS index). */
+type FindSource = "all" | "system" | "thor";
+const SOURCE_LABEL: Record<FindSource, string> = { all: "All sources", system: "This system", thor: "THOR" };
 
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-green-100 text-green-800 border-green-200",
@@ -128,6 +139,33 @@ function GraphPageInner() {
   const [readAsk, setReadAsk] = useState<{ folder: FindCoverage["unreadFolders"][number]; libs: KnowledgeLibrary[]; pick: string; busy: boolean; note: string | null } | null>(null);
   const [finding, setFinding] = useState(false);
   const findSeq = useRef(0);
+
+  // ── THOR: the NAS index as a second source ─────────────────────────────
+  const [source, setSource] = useState<FindSource>(() => { const s = params.get("src"); return s === "thor" || s === "system" ? s : "all"; });
+  const [thorInfo, setThorInfo] = useState<ThorOverview | null>(null);
+  /** The words searched, and any THOR chips the person removed since. */
+  const [thorRaw, setThorRaw] = useState<string | null>(null);
+  const [thorDropped, setThorDropped] = useState<string[]>([]);
+  const [thorFilters, setThorFilters] = useState<ThorFilterState>(() => { const f = params.get("thorFolder"); return f ? { ...EMPTY_FILTERS, folder: f } : EMPTY_FILTERS; });
+  const [thorSel, setThorSel] = useState<ThorFile | null>(null);
+  const thorUnits = useMemo(() => (thorInfo?.units ?? []).filter((u) => u.code).map((u) => ({ code: u.code!, folder: u.folder })), [thorInfo]);
+  // Parsed against the units THOR knows — re-read if they arrive after the words.
+  const thorQuery = useMemo<ThorQuery | null>(
+    () => (thorRaw ? thorDropped.reduce(withoutChip, parseThorQuery(thorRaw, thorUnits)) : null),
+    [thorRaw, thorDropped, thorUnits],
+  );
+  const thorOn = !!thorInfo && source !== "system";
+  const thor = useThorSearch(activeOrgId, thorQuery, thorFilters, thorOn, source === "thor" ? 100 : 8);
+  const thorOpener = useThorOpener(activeOrgId, thorInfo?.roots[0]?.unc_path ?? null);
+  const thorSort: ThorSort = thorFilters.sort ?? thorQuery?.sort ?? (thorQuery?.terms.length || thorQuery?.tags.length ? "relevance" : "newest");
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let live = true;
+    thorOverview(activeOrgId).then((o) => { if (live) setThorInfo(o); }).catch((e) => console.warn("[finder] thor:", e));
+    return () => { live = false; };
+  }, [activeOrgId]);
+  /** Narrow THOR to a folder and show it. */
+  const thorFolder = useCallback((rel: string) => { setThorFilters((f) => ({ ...f, folder: rel || undefined })); setSource("thor"); setPanel("search"); }, []);
 
   const connect = useConnectEverything(activeOrgId, () => { void refresh(); });
   const [showConnect, setShowConnect] = useState(true);
@@ -251,7 +289,9 @@ function GraphPageInner() {
   // ── Search ────────────────────────────────────────────────────────────
   const runSearch = useCallback((q: string) => {
     const trimmed = q.trim();
-    if (!trimmed) { setParsed(null); setServerFind(null); return; }
+    if (!trimmed) { setParsed(null); setServerFind(null); setThorRaw(null); return; }
+    setThorRaw(trimmed); setThorDropped([]);
+    setThorSel(null);
     setParsed(parseQuery(trimmed, { units: data?.units ?? [], aliases }));
     if (!activeOrgId) return;
     const seq = ++findSeq.current;
@@ -417,9 +457,11 @@ function GraphPageInner() {
     const sp = new URLSearchParams(window.location.search);
     if (parsed?.raw) sp.set("q", parsed.raw); else sp.delete("q");
     if (focusId) sp.set("focus", focusId); else sp.delete("focus");
+    if (source !== "all") sp.set("src", source); else sp.delete("src");
+    if (thorFilters.folder) sp.set("thorFolder", thorFilters.folder); else sp.delete("thorFolder");
     const next = `${window.location.pathname}${sp.toString() ? `?${sp}` : ""}`;
     if (next !== `${window.location.pathname}${window.location.search}`) window.history.replaceState(window.history.state, "", next);
-  }, [parsed, focusId]);
+  }, [parsed, focusId, source, thorFilters.folder]);
 
   const crumbs = useMemo(() => {
     if (!focusId) return [];
@@ -567,6 +609,8 @@ function GraphPageInner() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      // The THOR list has its own keys (Enter opens the row in focus).
+      if (source === "thor") { if (e.key === "Escape" && thorSel) setThorSel(null); return; }
       if (e.key === "ArrowRight" || e.key === "n") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx + 1); } return; }
       if (e.key === "ArrowLeft" || e.key === "p") { if (hits.length) { e.preventDefault(); jumpTo(activeIdx - 1); } return; }
       if (e.key === "Enter") { const id = selectedId ?? hits[activeIdx]?.entry.id; if (id) { e.preventDefault(); openEntry(id); } return; }
@@ -623,12 +667,43 @@ function GraphPageInner() {
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Find
                     </button>
                     {parsed && (
-                      <button type="button" onClick={() => { setParsed(null); setServerFind(null); setQuery(""); }} className="rounded-lg border border-[var(--color-border)] px-3 text-sm"><X className="w-4 h-4" /></button>
+                      <button type="button" onClick={() => { setParsed(null); setServerFind(null); setThorRaw(null); setThorSel(null); setQuery(""); }} className="rounded-lg border border-[var(--color-border)] px-3 text-sm"><X className="w-4 h-4" /></button>
                     )}
                   </div>
                 </form>
 
-                {parsed && (
+                {thorInfo && (
+                  <div className="flex rounded-lg border border-[var(--color-border)] p-0.5 text-[11px] font-bold" role="radiogroup" aria-label="Search in">
+                    {(["all", "system", "thor"] as const).map((k) => (
+                      <button key={k} role="radio" aria-checked={source === k} onClick={() => { setSource(k); setThorSel(null); }}
+                        className={`flex-1 rounded-md px-1.5 py-1 inline-flex items-center justify-center gap-1 ${source === k ? (k === "thor" ? "bg-teal-700 text-white" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]") : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                        {k === "thor" && <HardDrive className="w-3 h-3" />} {SOURCE_LABEL[k]}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {thorOn && thorQuery && thorQuery.chips.length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-teal-800 flex items-center gap-1"><HardDrive className="w-3 h-3" /> On THOR, searching for</div>
+                    <div className="flex flex-wrap gap-1">
+                      {thorQuery.chips.map((c) => (
+                        <span key={c.key} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${c.kind === "tag" ? "bg-emerald-50 text-emerald-800 border-emerald-200" : c.kind === "unit" ? "bg-purple-50 text-purple-800 border-purple-200" : c.kind === "kind" || c.kind === "type" ? "bg-orange-50 text-orange-800 border-orange-200" : c.kind === "word" ? "bg-slate-50 text-slate-700 border-slate-200" : "bg-amber-50 text-amber-800 border-amber-200"}`}>
+                          <span className="opacity-60">{c.kind === "tag" ? "tag" : c.kind === "unit" ? "unit" : c.kind === "kind" || c.kind === "type" ? "type" : c.kind === "date" ? "date" : c.kind === "size" ? "size" : c.kind === "sort" ? "order" : ""}</span>
+                          {c.label}
+                          <button onClick={() => setThorDropped((d) => [...d, c.key])} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {thorOn && (
+                  <div className="pt-2 border-t border-[var(--color-border)]">
+                    <ThorFilters filters={thorFilters} onChange={setThorFilters} overview={thorInfo} />
+                  </div>
+                )}
+
+                {parsed && source !== "thor" && (
                   <div className="space-y-1.5">
                     <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)] flex items-center gap-1">
                       What I understood <Info className="w-3 h-3" />
@@ -653,12 +728,20 @@ function GraphPageInner() {
                   </div>
                 )}
 
-                <div className="text-xs text-[var(--color-text-muted)] space-y-1 pt-2 border-t border-[var(--color-border)]">
+                {source !== "thor" && <div className="text-xs text-[var(--color-text-muted)] space-y-1 pt-2 border-t border-[var(--color-border)]">
                   <div className="font-bold text-[var(--color-text)]">How it ranks</div>
                   <div>Codes, words and phrases in the name count most; the folder chain counts less.</div>
                   <div>Exact beats contained beats close: &ldquo;10-1-15&rdquo; still finds EP10-1-15 and says the EP was missing; a typo finds the real one and says how far off it was.</div>
                   <div>A folder naming a <em>different</em> codebook unit is ranked down. A year off is a nudge, not a wall. Empty files and OS junk are ditched.</div>
-                </div>
+                </div>}
+                {source === "thor" && (
+                  <div className="text-xs text-[var(--color-text-muted)] space-y-1 pt-2 border-t border-[var(--color-border)]">
+                    <div className="font-bold text-[var(--color-text)]">Searching THOR</div>
+                    <div>Every word must appear in the file&apos;s name, its folders or its linked equipment — the start of a word is enough (&ldquo;prefrac&rdquo; finds PREFRACTIONATOR).</div>
+                    <div>Say the order and the type: &ldquo;newest prefrac drawings&rdquo;, &ldquo;V-3 in the crude unit oldest first&rdquo;, &ldquo;inspection PDFs after 2020 over 5 MB&rdquo;.</div>
+                    <div>A tag with a unit means that unit&apos;s piece of equipment: V-3 exists in six units.</div>
+                  </div>
+                )}
                 {data?.truncations.map((t, i) => <div key={i} className="text-[11px] text-amber-700">{t}</div>)}
               </>
             )}
@@ -667,8 +750,12 @@ function GraphPageInner() {
               <LinksPanel orgId={activeOrgId} edges={data.edges} units={data.units} estateMissing={data.estateMissing} onConnect={controller ? () => { setShowConnect(true); void connect.openPreview(); } : undefined} connecting={connect.running} readinessKey={connect.status ? JSON.stringify(connect.status.readiness) : ""} onReveal={(id) => { const n = nodeById.get(id); if (!n) return; if (n.kind === "file" || n.kind === "extfile") reveal(id); else drill(id); }} />
             )}
             {panel === "drives" && (
+              <>
+              <ThorIndexPanel orgId={activeOrgId} overview={thorInfo} opener={thorOpener} onSearchFolder={thorFolder} />
+              <div className="pt-2 border-t border-[var(--color-border)]" />
               <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail} systemHashes={systemHashes}
                 onChange={setListings} onReveal={(id) => drill(id)} />
+              </>
             )}
             {panel === "aliases" && (
               <AliasesPanel orgId={activeOrgId} controller={controller} aliases={aliases} uid={uid} userEmail={userEmail} units={data?.units ?? []} onChange={setAliases} />
@@ -790,10 +877,32 @@ function GraphPageInner() {
             </div>
           )}
           <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · ← → step results · Esc goes up</div>
+          {source === "thor" && (
+            <div className="absolute inset-0 z-20">
+              <ThorResultsTable search={thor} sort={thorSort} onSort={(s) => setThorFilters((f) => ({ ...f, sort: s }))}
+                selectedId={thorSel?.file_id ?? null} onSelect={setThorSel} onOpen={(f) => { setThorSel(f); void thorOpener.open(f); }} opener={thorOpener}
+                header={!thorQuery && !thorFilters.folder && thor.total === 0 && !thor.searching ? (
+                  <div className="text-sm text-[var(--color-text-muted)]">Type what you are after, or pick a quick filter, to search {thorInfo?.files.toLocaleString()} files on THOR. Drives › THOR shows every indexed folder.</div>
+                ) : undefined} />
+            </div>
+          )}
         </main>
 
         {/* ── Right: results / selection ──────────────────────────────── */}
         <aside className="border-l border-[var(--color-border)] bg-[var(--color-surface)] min-h-0 overflow-y-auto">
+          {thorSel && activeOrgId && (
+            <ThorFileCard orgId={activeOrgId} f={thorSel} opener={thorOpener} onClose={() => setThorSel(null)} root={thorOpener.rootName}
+              onFolder={thorFolder} onEquipment={(n) => { setThorFilters((f) => ({ ...f, equipment: [n] })); setSource("thor"); }} />
+          )}
+          {source === "thor" ? (
+            <div className="p-3 text-sm text-[var(--color-text-muted)] space-y-2">
+              {!thorSel && <>
+                <div className="font-bold text-[var(--color-text)]">THOR · {SOURCE_LABEL.thor}</div>
+                <div>Click a file for where it is and what it&apos;s linked to; double-click to open the original. Click a column to sort.</div>
+                <div>Originals open read-only from THOR in this browser — nothing is uploaded. When the browser can&apos;t reach THOR, copy the path and open it in File Explorer.</div>
+              </>}
+            </div>
+          ) : (<>
           {selSat && data && (
             <EntityPanel orgId={activeOrgId!} sat={selSat} data={data} entryById={entryById} nodeById={nodeById} serverFind={serverFind}
               onClose={() => setSelSat(null)} onOpen={(id) => void openEntry(id)} onOpenAtPage={openAtPage} onReveal={reveal}
@@ -833,10 +942,13 @@ function GraphPageInner() {
                     {serverFind.hidden.count} hidden because you asked for a different type: {Object.entries(serverFind.hidden.byType).map(([t, n]) => `${n} ${t}`).join(", ")}.
                   </div>
                 )}
-                {hits.length === 0 && hiddenHits === 0 && !finding && (
+                {hits.length === 0 && hiddenHits === 0 && !finding && !(thorOn && (thor.searching || thor.total > 0)) && (
                   <div className="text-sm text-[var(--color-text-muted)]">
-                    Nothing in the system or on any pasted drive listing matched. Try fewer words, or teach an alias if people call this something else.
+                    Nothing in the system{thorOn ? ", on THOR" : ""} or on any pasted drive listing matched. Try fewer words, or teach an alias if people call this something else.
                   </div>
+                )}
+                {thorOn && hits.length === 0 && !finding && (
+                  <div className="mb-2"><ThorHitList search={thor} systemEmpty selectedId={thorSel?.file_id ?? null} onSelect={setThorSel} onShowAll={() => setSource("thor")} /></div>
                 )}
                 <div className="space-y-2">
                   {(() => {
@@ -863,6 +975,9 @@ function GraphPageInner() {
                   })()}
                   {hits.length > 80 && !(serverFind && serverFind.groups.length > 1) && <div className="text-[11px] text-[var(--color-text-muted)]">…and {hits.length - 80} weaker candidates.</div>}
                 </div>
+                {thorOn && hits.length > 0 && (
+                  <div className="mt-3"><ThorHitList search={thor} systemEmpty={false} selectedId={thorSel?.file_id ?? null} onSelect={setThorSel} onShowAll={() => setSource("thor")} /></div>
+                )}
                 {serverFind && (
                   <div className="mt-4 space-y-3 border-t border-[var(--color-border)] pt-3">
                     <div>
@@ -883,6 +998,7 @@ function GraphPageInner() {
               </div>
             )}
           </div>
+          </>)}
         </aside>
       </div>
       {viewerError && (
@@ -949,6 +1065,7 @@ function GraphPageInner() {
           />
         </Suspense>
       )}
+      {activeOrgId && <ThorViewerLayer opener={thorOpener} orgId={activeOrgId} userRole={activeRole} uid={uid} userEmail={userEmail} />}
     </div>
   );
 }

@@ -192,4 +192,13 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "cached AI line traces over drawing sheets — regenerated on demand from the drawings themselves; no authored data lives here",
   signup_attempts:
     "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
+  // THOR — a metadata index of the refinery NAS, copied in from the THOR
+  // Indexer's own database by scripts/thor_import.py. Nothing in it is
+  // authored here; restore by re-running the import against that database.
+  ...Object.fromEntries(
+    ["thor_roots", "thor_crawls", "thor_directories", "thor_files", "thor_entities", "thor_aliases",
+      "thor_alias_entities", "thor_file_entities", "thor_relationships", "thor_doc_families",
+      "thor_doc_members", "thor_identifiers", "thor_evidence", "thor_issues"].map((t) => [t,
+      "THOR NAS index (paths, sizes, dates, indexer inferences) — copied from the THOR Indexer's database, never authored here; restore by re-running scripts/thor_import.py"]),
+  ),
 };
