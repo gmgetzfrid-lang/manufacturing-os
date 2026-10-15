@@ -83,6 +83,13 @@ pub fn word_tokens(s: &str) -> Vec<String> {
     let mut out: Vec<String> = raw_words(s).iter().map(|w| stem(w)).collect();
     let compact: String = lower.chars().filter(|c| !c.is_whitespace()).collect();
     if compact.contains("p&id") {
+        // "P&ID" is one word, not "p" + "id".
+        if let Some(i) = out.iter().position(|w| w == "p") {
+            out.remove(i);
+        }
+        if let Some(i) = out.iter().position(|w| w == "id") {
+            out.remove(i);
+        }
         out.push("pid".into());
     }
     if lower.contains("on stream") || lower.contains("on-stream") || lower.contains("onstream") || out.iter().any(|w| w == "osi") {

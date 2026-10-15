@@ -213,6 +213,11 @@ static PAREN_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\([^)]*\)").unw
 
 fn unit_keys(code: &str, name: &str) -> Vec<String> {
     const GENERIC: &[&str] = &["unit", "no", "the", "and", "utilities", "oos", "general", "plant"];
+    // Only numbered process units ("2000 - CRUDE UNIT") name a unit in queries;
+    // top folders like "INSPECTION REPORTS WITH NO EQUIP ID" must not.
+    if code.is_empty() {
+        return vec![];
+    }
     let mut keys = vec![code.to_string()];
     for w in text::raw_words(name) {
         if w.len() >= 2 && !GENERIC.contains(&w.as_str()) && !w.chars().all(|c| c.is_ascii_digit()) {
@@ -725,6 +730,90 @@ impl Index {
             }
         }
 
+        // A folder named only by a tag ("TK-1100") whose files carry one
+        // equipment number ("7272.1100 ...") teaches that tag for that number,
+        // and everything below the folder belongs to that equipment.
+        {
+            let mut by_dir: HashMap<u32, HashMap<String, u32>> = HashMap::new();
+            let mut dir_total: HashMap<u32, u32> = HashMap::new();
+            let tag_dir = |c: u32| -> bool {
+                let dir = &dirs[c as usize];
+                let ids = text::scan_ids(&dir.name);
+                dir.depth >= 2 && ids.len() == 1 && ids[0].kind == IdKind::Tag && ids[0].start == 0 && ids[0].end + 2 >= dir.name.len()
+            };
+            for (fi, f) in raw.iter().enumerate() {
+                let d = file_dir[fi];
+                if d == u32::MAX {
+                    continue;
+                }
+                let mut cur = Some(d);
+                let mut hops = 0;
+                while let Some(c) = cur {
+                    if dirs[c as usize].equip.is_some() {
+                        break;
+                    }
+                    if tag_dir(c) {
+                        if let Some(t) = text::scan_ids(&f.name).into_iter().find(|t| t.kind == IdKind::Equip) {
+                            *dir_total.entry(c).or_default() += 1;
+                            *by_dir.entry(c).or_default().entry(t.parent.unwrap_or(t.key)).or_default() += 1;
+                        }
+                        break;
+                    }
+                    cur = dirs[c as usize].parent;
+                    hops += 1;
+                    if hops > 3 {
+                        break;
+                    }
+                }
+            }
+            for (d, counts) in by_dir {
+                let total = dir_total[&d];
+                let Some((num, &n)) = counts.iter().max_by_key(|x| x.1) else { continue };
+                // The dominant number among files that carry any number.
+                if n < 2 || n * 10 < total * 6 {
+                    continue;
+                }
+                let tagname = dirs[d as usize].name.to_uppercase();
+                let unit = dirs[d as usize].unit;
+                let kind = dirs[d as usize].parent.map(|p| NUMBERED_PREFIX_RE.replace(&dirs[p as usize].name, "").to_string()).unwrap_or_default();
+                let ei = *equip_by_number.entry(num.clone()).or_insert_with(|| {
+                    equipment.push(Equip {
+                        number: num.to_uppercase(),
+                        tags: vec![],
+                        description: String::new(),
+                        unit,
+                        kind,
+                        folder: None,
+                        folder_path: None,
+                        historical: vec![],
+                        hint_numbers: vec![],
+                        entity_id: None,
+                        source: "folder",
+                        file_count: 0,
+                        keys: vec![num.clone()],
+                    });
+                    (equipment.len() - 1) as u32
+                });
+                let eq = &mut equipment[ei as usize];
+                if !eq.tags.contains(&tagname) {
+                    eq.tags.push(tagname);
+                }
+                if eq.folder.is_none() {
+                    eq.folder = Some(d);
+                    eq.folder_path = Some(dirs[d as usize].path.clone());
+                }
+                dirs[d as usize].equip = Some(ei);
+            }
+            // Parents come before children, so one pass propagates down.
+            for i in 0..dirs.len() {
+                if dirs[i].equip.is_none() {
+                    if let Some(p) = dirs[i].parent {
+                        dirs[i].equip = dirs[p as usize].equip;
+                    }
+                }
+            }
+        }
+
         // ── File records ───────────────────────────────────────────────
         let mut files: Vec<FileRec> = Vec::with_capacity(raw.len());
         for (fi, f) in raw.iter().enumerate() {
@@ -762,6 +851,22 @@ impl Index {
                     equip[pos].1 = LinkSrc::Filename;
                 } else {
                     equip.push((target, src));
+                }
+            }
+            // Equipment numbers in the filename that the indexer's pattern
+            // missed (e.g. four-digit suffixes like 7272.1100).
+            for t in text::scan_ids(stem) {
+                if t.kind != IdKind::Equip {
+                    continue;
+                }
+                let key = if equip_by_number.contains_key(&t.key) { Some(t.key.clone()) } else { t.parent.clone().filter(|p| equip_by_number.contains_key(p)) };
+                if let Some(k) = key {
+                    let ei = equip_by_number[&k];
+                    if let Some(pos) = equip.iter().position(|(x, _)| *x == ei) {
+                        equip[pos].1 = LinkSrc::Filename;
+                    } else {
+                        equip.push((ei, LinkSrc::Filename));
+                    }
                 }
             }
             let fam = file_family.get(&(fi as u32));
