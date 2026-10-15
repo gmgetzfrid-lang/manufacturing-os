@@ -89,6 +89,7 @@ export interface SearchResponse {
   card?: EquipCard | null;
   suggestions: string[];
   notice?: string | null;
+  best?: string | null;
 }
 
 export interface SearchRequest {

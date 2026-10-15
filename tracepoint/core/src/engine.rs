@@ -158,6 +158,9 @@ pub struct SearchResponse {
     pub notice: Option<String>,
     /// "exact" or "natural": which engine produced these results.
     pub mode: String,
+    /// Set when the first hit is confidently what was asked for: a plain
+    /// sentence saying why ("Latest UT survey for 2010.04 V-4 …, 2025").
+    pub best: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -406,6 +409,33 @@ impl Engine {
             }
         }
         Group { raw: raw.to_string(), members, equipment: list.to_vec() }
+    }
+
+    /// A one-line reason the top hit is the answer.
+    pub(crate) fn best_why(&self, h: &Hit, newest: bool) -> String {
+        let mut s = String::new();
+        if h.latest {
+            s.push_str("Latest revision of ");
+        } else if newest {
+            s.push_str("Most recent ");
+        }
+        s.push_str(h.doctype);
+        if let Some(e) = h.equipment.first() {
+            s.push_str(" for ");
+            s.push_str(&e.number);
+            if let Some(t) = &e.tag {
+                s.push(' ');
+                s.push_str(t);
+            }
+            if !e.description.is_empty() {
+                s.push_str(" · ");
+                s.push_str(&e.description);
+            }
+        }
+        if let Some(y) = h.year {
+            s.push_str(&format!(" · {y}"));
+        }
+        s
     }
 
     pub fn search(&self, req: &SearchRequest) -> SearchResponse {
@@ -1031,6 +1061,16 @@ impl Engine {
         resp.total = visible.len();
         for (rank, s) in visible.into_iter().enumerate().skip(req.offset).take(limit) {
             resp.hits.push(self.hit(s.fi, rank + 1, s.score, s.reasons));
+        }
+        if req.offset == 0 && resp.ambiguity.is_empty() {
+            if let Some(h) = resp.hits.first() {
+                let photo_ok = h.category != "Photos" || req.query.to_lowercase().contains("photo") || req.query.to_lowercase().contains("picture");
+                let clear_lead = resp.hits.get(1).map(|b| h.score >= b.score + 5 || h.latest).unwrap_or(true);
+                let specific = resp.card.is_some() || resp.chips.iter().any(|c| c.kind == "tag" || c.kind == "equipment");
+                if specific && !h.blank && !h.junk && photo_ok && (clear_lead || resp.total <= 3) {
+                    resp.best = Some(self.best_why(h, false));
+                }
+            }
         }
 
         // ── Facets ───────────────────────────────────────────────────

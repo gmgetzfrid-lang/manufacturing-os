@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowRight, Boxes, Camera, ChevronDown, ChevronRight, Clipboard, Download, ExternalLink, File, FileImage, FileSpreadsheet, FileText, FolderOpen,
+  ArrowRight, Boxes, Camera, CheckCircle2, Copy, ChevronDown, ChevronRight, Clipboard, Download, ExternalLink, File, FileImage, FileSpreadsheet, FileText, FolderOpen,
   History, Info, Layers, Mail, MapPin, Network, PanelRightClose, PanelRightOpen, PenTool, Search, Sparkles, X, Zap, FileArchive, FileCode2,
 } from "lucide-react";
 import { api, fileUrl } from "../lib/api";
@@ -129,8 +129,30 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
 
   useEffect(() => { run(request); }, [request, run]);
 
+  // Results as you type: a short pause runs the search (not saved to recent).
+  useEffect(() => {
+    const t = query.trim();
+    if (t.length < 3 || t === submitted) return;
+    const h = setTimeout(() => {
+      setSubmitted(t);
+      setLimit(PAGE);
+      setSelected(0);
+      setPinned(null);
+      setFilters((f) => ({ ...f, categories: [], units: [], exts: [] }));
+    }, 350);
+    return () => clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
+  // Enter on a search that's already showing a best match opens that file.
+  const lastEnter = useRef("");
   const submit = (q: string) => {
     const t = q.trim();
+    if (t && t === lastEnter.current && t === submitted && resp?.best && resp.hits[0] && !aiOpen) {
+      openFile(resp.hits[0]);
+      return;
+    }
+    lastEnter.current = t;
     setAiOpen(false);
     setSubmitted(t);
     setLimit(PAGE);
@@ -231,7 +253,8 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
             </div>
             <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
               {aiOpen && <AiFindPanel turns={aiTurns} busy={aiBusy} onAsk={(q) => askAi(q, false)} onClose={() => setAiOpen(false)} onRunSearch={(q) => { setQuery(q); submit(q); }} />}
-              {!aiOpen && resp.notice && resp.total > 0 && <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_6%,transparent)] px-3.5 py-2.5 text-[13px]"><Info className="mt-0.5 size-4 shrink-0 text-[var(--color-info)]" />{resp.notice}</div>}
+              {!aiOpen && resp.notice && resp.total > 0 && !resp.best && <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_6%,transparent)] px-3.5 py-2.5 text-[13px]"><Info className="mt-0.5 size-4 shrink-0 text-[var(--color-info)]" />{resp.notice}</div>}
+              {!aiOpen && resp.best && hits[0] && <BestMatch hit={hits[0]} why={resp.best} onOpen={() => openFile(hits[0])} onReveal={() => openFile(hits[0], "reveal")} onSelect={() => setSelected(0)} armed={lastEnter.current === submitted} />}
               {!aiOpen && resp.card && <EquipmentCardView card={resp.card} nav={nav} onFilter={(c) => setFilters({ ...filters, categories: [c] })} />}
               {!aiOpen && resp.total === 0 ? (
                 <NoResults resp={resp} onTry={(q) => { setQuery(q); submit(q); }} />
@@ -570,6 +593,33 @@ function ResultRow({ hit, i, active, words, onSelect, onOpen, onReveal, onEquip 
         <IconButton label="Open" onClick={(e) => { e.stopPropagation(); onOpen(); }} className="size-8"><ExternalLink className="size-4" /></IconButton>
         <IconButton label="Show in folder" onClick={(e) => { e.stopPropagation(); onReveal(); }} className="size-8"><FolderOpen className="size-4" /></IconButton>
       </div>
+    </div>
+  );
+}
+
+/** The answer, when TracePoint is confident: big, with why and one-click open. */
+function BestMatch({ hit, why, onOpen, onReveal, onSelect, armed }: { hit: Hit; why: string; onOpen: () => void; onReveal: () => void; onSelect: () => void; armed: boolean }) {
+  const toast = useToast();
+  const color = catColor(hit.category);
+  return (
+    <div onClick={onSelect} className="mx-4 mt-4 overflow-hidden rounded-2xl border-2 border-[color-mix(in_srgb,var(--color-ok)_45%,transparent)] bg-[var(--color-surface)] shadow-md animate-[var(--animate-rise)]">
+      <div className="flex items-start gap-4 px-5 py-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl" style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}>{extIcon(hit.ext, hit.category)}</div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[12.5px] font-bold uppercase tracking-wide text-[var(--color-ok)]"><CheckCircle2 className="size-4" />Best match</div>
+          <div className="mt-0.5 break-words text-[19px] font-[750] leading-snug tracking-tight">{hit.name}</div>
+          <div className="mt-1 text-[14.5px] font-medium text-[var(--color-text)]">{why}</div>
+          <div className="mt-0.5 truncate text-[12.5px] text-[var(--color-text-faint)]" title={hit.folder}>{hit.folder}</div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <Button variant="primary" icon={<ExternalLink className="size-4" />} onClick={(e) => { e.stopPropagation(); onOpen(); }}>Open</Button>
+          <div className="flex gap-1">
+            <IconButton label="Show in folder" onClick={(e) => { e.stopPropagation(); onReveal(); }}><FolderOpen className="size-4" /></IconButton>
+            <IconButton label="Copy path" onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(hit.path).then(() => toast("ok", "Path copied")); }}><Copy className="size-4" /></IconButton>
+          </div>
+        </div>
+      </div>
+      {armed && <div className="border-t border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-ok)_6%,transparent)] px-5 py-1.5 text-[12.5px] text-[var(--color-text-muted)]">Press <Kbd>Enter</Kbd> again to open it · <Kbd>↓</Kbd> for the other results</div>}
     </div>
   );
 }

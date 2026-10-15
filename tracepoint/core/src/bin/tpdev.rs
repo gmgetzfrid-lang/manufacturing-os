@@ -14,6 +14,7 @@ fn main() {
         for a in &r.ambiguity { println!("  WHICH {}: {}", a.token, a.options.iter().map(|o| format!("{} ({})", o.number, o.unit.clone().unwrap_or_default())).collect::<Vec<_>>().join(", ")); }
         if let Some(c) = &r.card { println!("  CARD {} {:?} {} | {:?} | files {} | last insp {:?} | hist {:?}", c.number, c.tags, c.description, c.unit, c.files, c.latest_inspection, c.historical); }
         if let Some(n) = &r.notice { println!("  NOTICE {n} {:?}", r.suggestions); }
+        if let Some(b) = &r.best { println!("  BEST {b}"); }
         for h in &r.hits { println!("  {:>3} {:>4} [{}] {} | {} | {}", h.rank, h.score, h.category, h.name, h.folder, h.reasons.join("; ")); }
     }
 }

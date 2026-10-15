@@ -849,6 +849,17 @@ impl Engine {
             }
             if wants_inspection && f.cat == Category::Inspection && !blank {
                 score += 20.0;
+                // Within one inspection the report/survey is the answer; the
+                // technique, calibration and reader sheets support it.
+                let ln = f.name.to_lowercase();
+                if ["report", "survey", "summary"].iter().any(|w| ln.contains(w)) {
+                    score += 6.0;
+                } else if ["technique", "cal sheet", "calibration", "reader sheet", "cal cert"].iter().any(|w| ln.contains(w)) {
+                    score -= 5.0;
+                }
+                if f.ext == ".pdf" {
+                    score += 2.0;
+                }
             }
             if f.flags & F_ARCHIVE != 0 {
                 score -= 15.0;
@@ -897,9 +908,17 @@ impl Engine {
             // The good matches in date order, then the weaker ones by fit.
             let top = scored.iter().filter(|s| s.fits).map(|s| s.score).fold(f32::MIN, f32::max);
             let bar = top - (top.abs() * 0.45).max(60.0);
+            // An inspection folder's date is its newest file; files in one
+            // folder stay together, best fit first.
+            let mut dir_date: HashMap<u32, i64> = HashMap::new();
+            for s in scored.iter() {
+                let f = &self.idx.files[s.fi as usize];
+                let e = dir_date.entry(f.dir).or_insert(f.mtime);
+                *e = (*e).max(f.mtime);
+            }
             let year = |s: &S| {
                 let f = &self.idx.files[s.fi as usize];
-                (f.year, f.mtime)
+                (f.year, dir_date.get(&f.dir).copied().unwrap_or(f.mtime), f.dir)
             };
             scored.sort_by(|a, b| {
                 let (ga, gb) = (a.fits && a.score >= bar, b.fits && b.score >= bar);
@@ -910,7 +929,7 @@ impl Engine {
                                 year(b).cmp(&year(a))
                             } else {
                                 let (ya, yb) = (year(a), year(b));
-                                (ya.0.unwrap_or(9999), ya.1).cmp(&(yb.0.unwrap_or(9999), yb.1))
+                                (ya.0.unwrap_or(9999), ya.1, ya.2).cmp(&(yb.0.unwrap_or(9999), yb.1, yb.2))
                             }
                         } else {
                             std::cmp::Ordering::Equal
@@ -925,7 +944,11 @@ impl Engine {
             "newest" => scored.sort_by(|a, b| self.idx.files[b.fi as usize].year.cmp(&self.idx.files[a.fi as usize].year)),
             "oldest" => scored.sort_by(|a, b| self.idx.files[a.fi as usize].year.unwrap_or(9999).cmp(&self.idx.files[b.fi as usize].year.unwrap_or(9999))),
             "name" => scored.sort_by(|a, b| self.idx.files[a.fi as usize].name.to_lowercase().cmp(&self.idx.files[b.fi as usize].name.to_lowercase())),
-            _ => scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then(a.fi.cmp(&b.fi))),
+            // Equal fit: newer first (people usually want the current record).
+            _ => scored.sort_by(|a, b| {
+                let (fa, fb) = (&self.idx.files[a.fi as usize], &self.idx.files[b.fi as usize]);
+                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal).then(fb.year.cmp(&fa.year)).then(fb.mtime.cmp(&fa.mtime)).then(a.fi.cmp(&b.fi))
+            }),
         }
         // Two photos per folder unless photos were asked for.
         let mut per_folder: HashMap<u32, u32> = HashMap::new();
@@ -943,8 +966,17 @@ impl Engine {
             visible.push(s);
         }
         resp.total = visible.len();
+        let top_fits = visible.first().map(|s| s.fits).unwrap_or(false);
         for (rank, s) in visible.into_iter().enumerate().skip(req.offset).take(limit) {
             resp.hits.push(self.hit(s.fi, rank + 1, s.score.round() as i32, s.reasons));
+        }
+        // Confident when the top file is the kind of thing asked for, about the
+        // equipment described (or matching every described word), with no
+        // open "which one?" question.
+        if req.offset == 0 && top_fits && resp.ambiguity.is_empty() && resp.notice.is_none() && (!equip_set.is_empty() || !u.concepts.is_empty()) {
+            if let Some(h) = resp.hits.first() {
+                resp.best = Some(self.best_why(h, u.sort_newest || u.prefer_recent));
+            }
         }
         let mut cats: Vec<Facet> = facet_cat.into_iter().map(|(c, n)| Facet { key: c.label().into(), label: c.label().into(), count: n }).collect();
         cats.sort_by(|a, b| b.count.cmp(&a.count));
