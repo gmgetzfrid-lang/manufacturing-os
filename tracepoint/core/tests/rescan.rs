@@ -41,6 +41,8 @@ fn admin_rescan_builds_and_loads_index() {
     let v2 = thor.join("5600 - LRU/10 - VESSELS/5610.15 V-2 Suction Bottle/INSPECTIONS/2023 EXT");
     std::fs::create_dir_all(&v2).unwrap();
     std::fs::write(v2.join("Bottle EXT INSPECTION REPORT.pdf"), b"%PDF").unwrap();
+    // A "scan": a PDF page with no text layer (and no OCR on this host).
+    std::fs::write(v2.join("5610.15 U-1A scan.pdf"), tp_core::content::minimal_pdf("")).unwrap();
     std::fs::write(v2.join("Field Notes.pdf"), tp_core::content::minimal_pdf("Minimum thickness readings at nozzle N3 were 0.312 inch, below t-min")).unwrap();
     let before = snapshot(&thor);
 
@@ -59,7 +61,7 @@ fn admin_rescan_builds_and_loads_index() {
         let st = svc.handle("indexer.status", &json!({})).unwrap();
         if !st["running"].as_bool().unwrap() && st["log"].as_array().map(|l| l.iter().any(|x| x.as_str().unwrap_or("").starts_with("Done"))).unwrap_or(false) {
             assert!(st["error"].is_null(), "{st}");
-            assert_eq!(st["files"], 2, "{st}");
+            assert_eq!(st["files"], 3, "{st}");
             break;
         }
         assert!(st["error"].is_null(), "{st}");
@@ -81,6 +83,11 @@ fn admin_rescan_builds_and_loads_index() {
             assert!(t0.elapsed().as_secs() < 30, "content timed out: {st}");
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+        // The text-less scan is staged for (optional, approved) AI reading.
+        let sum = svc.handle("airead.summary", &json!({})).unwrap();
+        assert_eq!(sum["staged"], 1, "{sum}");
+        assert!(sum["model"].is_null(), "no AI configured yet");
+        assert_eq!(svc.handle("airead.start", &json!({"count": 1})).unwrap_err().code, 400, "needs AI setup first");
         let r = svc.handle("search", &json!({"query": "t-min nozzle N3 thickness 0.312", "limit": 10})).unwrap();
         let inside = r["inside"].as_array().cloned().unwrap_or_default();
         let listed = r["hits"].as_array().unwrap().iter().any(|h| h["snippet"].is_string());

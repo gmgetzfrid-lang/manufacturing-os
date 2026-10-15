@@ -216,6 +216,29 @@ impl Extractor {
         self
     }
 
+    /// One page as a PNG for AI reading, longest side `long_side` px.
+    pub fn page_png(&self, bytes: Vec<u8>, ext: &str, page: u32, long_side: u32) -> Result<Vec<u8>, String> {
+        use pdfium_render::prelude::*;
+        let img = if ext == ".pdf" {
+            let pdfium = self.pdfium.as_ref().ok_or("PDF engine not available")?;
+            let doc = pdfium.load_pdf_from_byte_vec(bytes, None).map_err(|e| format!("Can't open PDF: {e}"))?;
+            let pg = doc.pages().get((page.max(1) - 1) as i32).map_err(|e| format!("No page {page}: {e}"))?;
+            let w = pg.width().value.max(1.0);
+            let h = pg.height().value.max(1.0);
+            let scale = long_side as f32 / w.max(h);
+            let cfg = PdfRenderConfig::new().set_target_width((w * scale) as i32).set_maximum_height((h * scale) as i32);
+            let bmp = pg.render_with_config(&cfg).map_err(|e| e.to_string())?;
+            let img = bmp.as_image().map_err(|e| e.to_string())?;
+            img
+        } else {
+            image::load_from_memory(&bytes).map_err(|e| e.to_string())?
+        };
+        let img = if img.width().max(img.height()) > long_side { img.thumbnail(long_side, long_side) } else { img };
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.to_luma8().write_to(&mut out, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+        Ok(out.into_inner())
+    }
+
     pub fn has_pdf(&self) -> bool {
         self.pdfium.is_some()
     }
@@ -415,6 +438,45 @@ fn tidy(s: &str) -> String {
         out.push('\n');
     }
     out.trim().to_string()
+}
+
+// ── AI reading (approved, paid) ───────────────────────────────────────────
+
+/// Instructions for reading one page image (from Manufacturing OS's vision
+/// indexing, tuned for THOR documents).
+pub const AI_READ_PROMPT: &str = "You transcribe one page of a refinery mechanical-integrity document (inspection report, U-1A / data report, datasheet, drawing, calculation) so it can be searched. Output plain text only, no commentary.
+- Transcribe all legible text in reading order.
+- Tables: one row per line, cells separated by \" | \"; put the table's caption on the line above it.
+- Drawings: first write the title block as lines \"DRAWING NO:\", \"SHEET:\", \"REV:\", \"TITLE:\", \"DATE:\"; then every equipment number, tag (V-2, E-814, PSV-601B, TK-1100), nozzle schedule, dimension callout and note you can read.
+- Keep numbers, units and designations exactly as written (e.g. 0.312\", t-min, SA-516-70, ASME VIII Div 1).
+- Mark unreadable parts as [illegible]. Never guess.
+- If the page has no text at all (blank, or a photo without writing), reply exactly: EMPTY";
+
+/// The cheapest model with vision for each provider, used for AI reading.
+pub fn vision_model(provider: crate::ai::Provider) -> &'static str {
+    match provider {
+        crate::ai::Provider::Anthropic => "claude-haiku-5-5",
+        crate::ai::Provider::Openai => "gpt-5-mini",
+        crate::ai::Provider::Gemini => "gemini-2.5-flash-lite",
+    }
+}
+
+/// Typical tokens per page read by AI: (input incl. the image, output).
+pub const AI_PAGE_TOKENS: (u64, u64) = (1900, 600);
+pub const AI_PAGE_MAX_OUTPUT: u32 = 1500;
+
+pub fn save_ai_page(c: &rusqlite::Connection, file_id: &str, page: u32, text: &str, cost: f64, now: &str) -> rusqlite::Result<()> {
+    use rusqlite::params;
+    let t = text.trim();
+    if !t.is_empty() && t != "EMPTY" {
+        c.execute("DELETE FROM content_fts WHERE file_id=?1 AND page=?2", params![file_id, page])?;
+        c.execute("INSERT INTO content_fts(text, file_id, page, method) VALUES(?1,?2,?3,'ai')", params![tidy(t), file_id, page])?;
+    }
+    c.execute(
+        "UPDATE ai_stage SET status=?3, done_at=?4, cost_usd=?5 WHERE file_id=?1 AND page=?2",
+        params![file_id, page, if t == "EMPTY" { "empty" } else { "done" }, now, cost],
+    )?;
+    Ok(())
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────

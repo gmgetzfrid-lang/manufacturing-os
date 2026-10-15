@@ -67,7 +67,7 @@ pub fn find(e: &Engine, choice: &AiChoice, call: Call, query: &str, history: &[M
     // 1. Plan.
     status("Understanding your request…");
     let mut msgs: Vec<Msg> = history.to_vec();
-    msgs.push(Msg { role: "user".into(), content: query.to_string() });
+    msgs.push(Msg { role: "user".into(), content: query.to_string(), images: vec![] });
     let plan = call(&fast, &plan_prompt(e), &msgs, 1500)?;
     tokens_in += plan.input_tokens;
     tokens_out += plan.output_tokens;
@@ -123,7 +123,7 @@ pub fn find(e: &Engine, choice: &AiChoice, call: Call, query: &str, history: &[M
         .collect::<Vec<_>>()
         .join("\n");
     let mut pick_msgs = history.to_vec();
-    pick_msgs.push(Msg { role: "user".into(), content: format!("Request: {query}\n\nCandidates:\n{listing}") });
+    pick_msgs.push(Msg { role: "user".into(), content: format!("Request: {query}\n\nCandidates:\n{listing}"), images: vec![] });
     let pick = call(&fast, PICK_PROMPT, &pick_msgs, 1500)?;
     tokens_in += pick.input_tokens;
     tokens_out += pick.output_tokens;

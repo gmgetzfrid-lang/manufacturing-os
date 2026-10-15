@@ -58,6 +58,90 @@ function ContentPanel({ canIndex }: { canIndex: boolean }) {
   );
 }
 
+interface AiReadSummary {
+  staged: number; by_category: Record<string, number>; top: { id: number; name: string; page: number; value: number; doctype: string; year?: number; folder: string }[];
+  provider?: string | null; model?: string | null; per_page: number; per_page_worst: number; price_basis: string; cap_index_usd: number; left_index_usd: number;
+  running: AiRead;
+}
+interface AiRead { running: boolean; approved: number; done: number; empty: number; failed: number; spent_usd: number; model?: string | null; current?: string | null; finished?: string | null; stopped_reason?: string | null }
+
+/** Pages the free OCR couldn't read, offered for AI reading: you choose how
+ *  many (most valuable first) with a live cost estimate; nothing is sent
+ *  until you approve. */
+function AiReadPanel() {
+  const [sum, setSum] = useState<AiReadSummary | null>(null);
+  const [run, setRun] = useState<AiRead | null>(null);
+  const [count, setCount] = useState(0);
+  const toast = useToast();
+  const load = useCallback(() => api<AiReadSummary>("airead.summary").then((x) => {
+    setSum(x); setRun(x.running);
+    const affordable = x.per_page_worst > 0 ? Math.floor(x.left_index_usd / x.per_page_worst) : 0;
+    setCount(Math.min(x.staged, Math.max(0, affordable), 500));
+  }).catch(() => setSum(null)), []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => onEvent("airead", (p: AiRead) => { setRun(p); if (!p.running) load(); }), [load]);
+  useEffect(() => onEvent("content", (p: { running: boolean }) => { if (!p.running) load(); }), [load]);
+  if (!sum || (sum.staged === 0 && !run?.running && !run?.finished)) return null;
+  const est = count * sum.per_page, worst = count * sum.per_page_worst;
+  const over = worst > sum.left_index_usd;
+  const money = (x: number) => (x < 1 ? `${(x * 100).toFixed(x < 0.1 ? 2 : 1)}¢` : `$${x.toFixed(2)}`);
+  const start = async () => {
+    if (!confirm(`Send ${count} page images to ${sum.model} for reading?\n\nEstimated ${money(est)} (at most ${money(worst)}), charged to your own API key. You can stop at any time.`)) return;
+    try { await api("airead.start", { count }); toast("info", "AI reading started"); } catch (e) { toast("error", (e as Error).message); }
+  };
+  return (
+    <Section className="mt-6" title="AI reading of unreadable pages" subtitle="Valuable pages where the free OCR found no readable text. Only what you approve is sent, to your own AI provider, within your document-reading budget.">
+      {run?.running ? (
+        <div className="rounded-xl border border-[var(--color-border)] p-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <div className="text-[16px] font-bold">Reading pages with {run.model} — {run.done + run.empty + run.failed} of {run.approved}</div>
+            <Button icon={<Square className="size-4" />} onClick={() => api("airead.stop")}>Stop</Button>
+          </div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--color-surface-3)]"><div className="h-full rounded-full bg-[var(--color-violet)] transition-all" style={{ width: `${((run.done + run.empty + run.failed) / Math.max(1, run.approved)) * 100}%` }} /></div>
+          <div className="mt-2 text-[14px]"><b>{run.done}</b> read · {run.empty} blank · {run.failed} failed · spent <b>{money(run.spent_usd)}</b></div>
+          {run.current && <div className="mt-1 truncate text-[12.5px] text-[var(--color-text-faint)]">Now: {run.current}</div>}
+        </div>
+      ) : (
+        <div className="grid grid-cols-[1.1fr_1fr] gap-6">
+          <div>
+            <div className="text-[15px]"><b className="text-[22px] tabular-nums">{n(sum.staged)}</b> valuable pages couldn't be read for free.</div>
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">{Object.entries(sum.by_category).sort((a, b) => b[1] - a[1]).map(([k, v]) => <span key={k}>{k} <b className="text-[var(--color-text)]">{n(v)}</b></span>)}</div>
+            {sum.model ? (
+              <>
+                <div className="mt-4 flex items-center gap-3">
+                  <input type="range" min={0} max={sum.staged} step={1} value={count} onChange={(e) => setCount(Number(e.target.value))} className="flex-1 accent-[var(--color-violet)]" />
+                  <span className="w-20 text-right text-[15px] font-bold tabular-nums">{n(count)}</span>
+                </div>
+                <div className="mt-2 text-[14.5px]">
+                  Read the <b>{n(count)}</b> most valuable pages with <b className="font-mono text-[13px]">{sum.model}</b>: about <b>{money(est)}</b> <span className="text-[var(--color-text-muted)]">(at most {money(worst)})</span>
+                </div>
+                <div className={cx("mt-1 text-[13px]", over ? "text-[var(--color-bad)]" : "text-[var(--color-text-muted)]")}>{money(sum.left_index_usd)} left of {money(sum.cap_index_usd)} for document reading this month{over ? " — the job will stop when the budget runs out" : ""}.</div>
+                {sum.price_basis === "unlisted" && <div className="mt-1 text-[13px] text-[var(--color-warn)]">No published price on file for this model; estimated at the provider's highest price.</div>}
+                <div className="mt-3"><Button variant="primary" disabled={count === 0} onClick={start}>Approve & read {n(count)} pages</Button></div>
+              </>
+            ) : (
+              <div className="mt-3 text-[13.5px] text-[var(--color-text-muted)]">Set up your AI key in Profile › AI to read these pages.</div>
+            )}
+            {run?.finished && <div className="mt-3 text-[13px] text-[var(--color-text-muted)]">Last run: {run.done} read, {run.empty} blank, {run.failed} failed, {money(run.spent_usd)}{run.stopped_reason ? ` — ${run.stopped_reason}` : ""}.</div>}
+          </div>
+          <div className="rounded-xl border border-[var(--color-border)] p-3">
+            <div className="mb-1.5 text-[13px] font-bold">Read first (highest value)</div>
+            <div className="max-h-[220px] space-y-1 overflow-y-auto text-[12.5px]">
+              {sum.top.slice(0, 40).map((t, i) => (
+                <div key={`${t.id}-${t.page}`} className={cx("flex gap-2", i >= count && "opacity-40")}>
+                  <span className="w-5 shrink-0 text-right tabular-nums text-[var(--color-text-faint)]">{i + 1}</span>
+                  <span className="min-w-0 flex-1 truncate" title={t.folder}><b>{t.name}</b> · p.{t.page}</span>
+                  <span className="shrink-0 text-[var(--color-text-faint)]">{t.doctype}{t.year ? ` · ${t.year}` : ""}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 export function SourcesPage({ state, refresh }: { state: AppState; refresh: () => void }) {
   const [st, setSt] = useState<Status | null>(null);
   const [scan, setScan] = useState<ScanState | null>(null);
@@ -112,6 +196,7 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
 
         {scan?.running || scan?.finished || scan?.error ? <ScanPanel scan={scan} onStop={() => api("indexer.stop").then(load)} /> : null}
         <ContentPanel canIndex={canIndex} />
+        {state.user?.role === "admin" && <AiReadPanel />}
 
         <Section className="mt-6" title="Indexed THOR roots" subtitle="Each root is scanned read-only. Only names, folders, sizes and dates are read; nothing on THOR is changed.">
           <div className="space-y-3">

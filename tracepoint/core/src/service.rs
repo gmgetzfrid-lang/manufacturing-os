@@ -70,8 +70,26 @@ pub struct Service {
     scan_cancel: Arc<AtomicBool>,
     content: Mutex<ContentState>,
     content_cancel: Arc<AtomicBool>,
+    airead: Mutex<AiReadState>,
+    airead_cancel: Arc<AtomicBool>,
     /// pdfium.dll (unpacked from the exe by the app) or libpdfium.so (dev).
     pdfium_lib: RwLock<Option<PathBuf>>,
+}
+
+/// Progress of the approved AI reading of pages free OCR couldn't read.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct AiReadState {
+    pub running: bool,
+    pub approved: usize,
+    pub done: usize,
+    pub empty: usize,
+    pub failed: usize,
+    pub spent_usd: f64,
+    pub model: Option<String>,
+    pub current: Option<String>,
+    pub started: Option<String>,
+    pub finished: Option<String>,
+    pub stopped_reason: Option<String>,
 }
 
 /// Progress of reading document contents.
@@ -189,6 +207,8 @@ impl Service {
             content: Mutex::new(ContentState::default()),
             content_cancel: Arc::new(AtomicBool::new(false)),
             pdfium_lib: RwLock::new(None),
+            airead: Mutex::new(AiReadState::default()),
+            airead_cancel: Arc::new(AtomicBool::new(false)),
         }))
     }
 
@@ -492,6 +512,121 @@ impl Service {
         self.content_emit();
         let st = self.content.lock().unwrap().clone();
         self.audit("content_finished", &format!("{} of {} documents read · {} pages · {} OCR pages · {} pages staged for AI{}", st.done, st.total, st.pages, st.ocr_pages, st.staged_for_ai, if stopped { " (stopped)" } else { "" }));
+    }
+
+    /// Staged pages, most valuable first: (file index, file_id, page, value).
+    fn staged_pages(&self, e: &Engine, limit: usize) -> Vec<(u32, String, u32, f64)> {
+        let path = self.content_db();
+        let Ok(c) = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return vec![] };
+        let by_id: std::collections::HashMap<&str, u32> = e.idx.files.iter().enumerate().map(|(i, f)| (f.file_id.as_str(), i as u32)).collect();
+        let Ok(mut st) = c.prepare("select file_id, page, value from ai_stage where status='staged' order by value desc, file_id, page") else { return vec![] };
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?)));
+        let mut out = Vec::new();
+        if let Ok(rows) = rows {
+            for (fid, page, v) in rows.flatten() {
+                if let Some(&fi) = by_id.get(fid.as_str()) {
+                    out.push((fi, fid, page as u32, v));
+                    if out.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn airead_emit(&self) {
+        let v = serde_json::to_value(&*self.airead.lock().unwrap()).unwrap();
+        self.platform.emit("airead", v);
+    }
+
+    /// Read the `count` most valuable staged pages with the admin's cheapest
+    /// vision model, each call within the indexing budget.
+    fn run_airead(self: Arc<Self>, count: usize, choice: AiChoice, key: zeroize::Zeroizing<String>) {
+        use base64::Engine as _;
+        let Ok(e) = self.engine() else { return };
+        let pages = self.staged_pages(&e, count);
+        {
+            let mut st = self.airead.lock().unwrap();
+            *st = AiReadState { running: true, approved: pages.len(), model: Some(choice.model.clone()), started: Some(auth::now()), ..Default::default() };
+        }
+        self.airead_cancel.store(false, Ordering::SeqCst);
+        self.airead_emit();
+        self.audit("ai_read_started", &format!("{} pages with {}", pages.len(), choice.model));
+        let stop = |me: &Self, reason: Option<String>| {
+            let mut st = me.airead.lock().unwrap();
+            st.running = false;
+            st.finished = Some(auth::now());
+            st.current = None;
+            st.stopped_reason = reason;
+            drop(st);
+            me.airead_emit();
+        };
+        let dir = self.paths.local.join("index");
+        let active = self.content_db();
+        let work = dir.join("airead_work.db");
+        let _ = self.guard.remove_own_file(&work);
+        if self.guard.copy_into(&active, &work).is_err() {
+            return stop(&self, Some("Could not copy the content database.".into()));
+        }
+        let Ok(c) = rusqlite::Connection::open(&work) else { return stop(&self, Some("Could not open the content database.".into())) };
+        let _ = c.pragma_update(None, "journal_mode", "MEMORY");
+        let ex = crate::content::Extractor::new(self.pdfium_lib.read().unwrap().as_deref(), false);
+        let mut reason: Option<String> = None;
+        for (fi, fid, page, _v) in pages {
+            if self.airead_cancel.load(Ordering::Relaxed) {
+                reason = Some("Stopped by you".into());
+                break;
+            }
+            let f = &e.idx.files[fi as usize];
+            self.airead.lock().unwrap().current = Some(format!("{} · page {page}", f.name));
+            self.airead_emit();
+            let png = std::fs::read(crate::crawl::os_path(&e.idx.full_path(fi))).map_err(|x| x.to_string()).and_then(|b| ex.page_png(b, &f.ext, page, 1568));
+            let png = match png {
+                Ok(p) => p,
+                Err(_) => {
+                    let _ = c.execute("update ai_stage set status='failed' where file_id=?1 and page=?2", rusqlite::params![fid, page]);
+                    self.airead.lock().unwrap().failed += 1;
+                    continue;
+                }
+            };
+            let msg = ai::Msg { role: "user".into(), content: format!("Page {page} of \"{}\" (folder: {}).", f.name, e.idx.relative_folder(f.dir)), images: vec![base64::engine::general_purpose::STANDARD.encode(&png)] };
+            match self.ai_call("index", &choice, &key, crate::content::AI_READ_PROMPT, &[msg], crate::content::AI_PAGE_MAX_OUTPUT, &|| false, &mut |_| {}) {
+                Ok((r, cost)) => {
+                    let _ = crate::content::save_ai_page(&c, &fid, page, &r.text, cost, &auth::now());
+                    let mut st = self.airead.lock().unwrap();
+                    st.spent_usd += cost;
+                    if r.text.trim() == "EMPTY" {
+                        st.empty += 1;
+                    } else {
+                        st.done += 1;
+                    }
+                }
+                Err(err) if err.status == Some(402) || err.status == Some(401) || err.status == Some(403) => {
+                    reason = Some(err.message);
+                    break;
+                }
+                Err(_) => {
+                    let _ = c.execute("update ai_stage set status='failed' where file_id=?1 and page=?2", rusqlite::params![fid, page]);
+                    self.airead.lock().unwrap().failed += 1;
+                }
+            }
+        }
+        drop(c);
+        // Swap in the content database with the new text and publish it.
+        *e.content.write().unwrap() = None;
+        let local = dir.join("thor_content.db");
+        let ok = self.guard.publish(&work, &local).is_ok();
+        let _ = self.guard.remove_own_file(&work);
+        if ok {
+            if let Some(t) = self.config.read().unwrap().team_folder.clone() {
+                let _ = self.guard.publish(&local, &PathBuf::from(t).join("index").join("thor_content.db"));
+            }
+        }
+        self.attach_content(&e);
+        let st = self.airead.lock().unwrap().clone();
+        self.audit("ai_read_finished", &format!("{} pages read, {} empty, {} failed, ${:.4}{}", st.done, st.empty, st.failed, st.spent_usd, reason.as_deref().map(|r| format!(" — {r}")).unwrap_or_default()));
+        stop(&self, reason.or(if ok { None } else { Some("Could not save the results.".into()) }));
     }
 
     fn fail_index(&self, e: &str) {
@@ -885,7 +1020,7 @@ impl Service {
                 let (provider, key) = self.ai_key_for(a)?;
                 let choice = AiChoice { provider, model: s(a, "model"), reasoning: a.get("reasoning").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string()) };
                 let t0 = std::time::Instant::now();
-                let msgs = vec![ai::Msg { role: "user".into(), content: "Reply with exactly: TracePoint connected".into() }];
+                let msgs = vec![ai::Msg { role: "user".into(), content: "Reply with exactly: TracePoint connected".into(), images: vec![] }];
                 let (r, cost) = self.ai_call("test", &choice, &key, "You are a connection test. Reply with the exact words requested.", &msgs, 2000, &|| false, &mut |_| {})?;
                 Ok(json!({"ok": true, "reply": r.text, "model": r.model, "reasoning_used": r.reasoning_used, "ms": t0.elapsed().as_millis(), "cost_usd": cost}))
             }
@@ -1032,6 +1167,65 @@ impl Service {
                 let me = self.clone();
                 std::thread::spawn(move || me.run_content());
                 Ok(json!({"started": true}))
+            }
+            "airead.summary" => {
+                self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
+                let e = self.engine()?;
+                let pages = self.staged_pages(&e, 100_000);
+                let (provider, budget) = self.with_session(|sess| {
+                    let prefs: std::collections::HashMap<String, String> = self.users.lock().unwrap().prefs(sess)?.into_iter().collect();
+                    Ok((prefs.get("ai_provider").and_then(|p| Provider::parse(p)), self.ai_limits(sess)))
+                })?;
+                let mut by_cat: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+                for (fi, ..) in &pages {
+                    *by_cat.entry(e.idx.files[*fi as usize].cat.label()).or_default() += 1;
+                }
+                let top: Vec<Value> = pages.iter().take(300).map(|(fi, _, page, v)| {
+                    let f = &e.idx.files[*fi as usize];
+                    json!({"id": fi, "name": f.name, "page": page, "value": v, "doctype": f.doctype, "year": f.year, "folder": e.idx.relative_folder(f.dir)})
+                }).collect();
+                let model = provider.map(crate::content::vision_model);
+                let (per_page, per_page_worst, basis) = match (provider, model) {
+                    (Some(p), Some(m)) => {
+                        let q = self.price_for(p, m, crate::content::AI_PAGE_TOKENS.0);
+                        (crate::pricing::cost(&q.price, crate::content::AI_PAGE_TOKENS.0, crate::content::AI_PAGE_TOKENS.1, 0, 0), crate::pricing::worst_case(&q.price, crate::content::AI_PAGE_TOKENS.0, crate::content::AI_PAGE_MAX_OUTPUT as u64), q.basis)
+                    }
+                    _ => (0.0, 0.0, "none"),
+                };
+                let month = auth::now()[..7].to_string();
+                let uid = self.with_session(|s| Ok(s.user.id))?;
+                let (_, spent_i, held, _) = self.users.lock().unwrap().ai_month(uid, &month)?;
+                let cap_index = budget.0 * budget.1;
+                Ok(json!({
+                    "staged": pages.len(), "by_category": by_cat, "top": top, "provider": provider.map(|p| p.as_str()), "model": model,
+                    "per_page": per_page, "per_page_worst": per_page_worst, "price_basis": basis,
+                    "cap_index_usd": cap_index, "left_index_usd": (cap_index - spent_i - held).max(0.0),
+                    "running": self.airead.lock().unwrap().clone(),
+                }))
+            }
+            "airead.start" => {
+                self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
+                if self.airead.lock().unwrap().running || self.content.lock().unwrap().running {
+                    return Err(ApiError::new(409, "Document reading is already running."));
+                }
+                let count = a.get("count").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+                if count == 0 {
+                    return Err(ApiError::new(400, "Choose how many pages to read."));
+                }
+                let (cur, key) = self.current_ai()?;
+                let choice = AiChoice { provider: cur.provider, model: crate::content::vision_model(cur.provider).to_string(), reasoning: None };
+                let me = self.clone();
+                std::thread::spawn(move || me.run_airead(count, choice, key));
+                Ok(json!({"started": true}))
+            }
+            "airead.status" => {
+                self.with_session(|_| Ok(()))?;
+                Ok(serde_json::to_value(&*self.airead.lock().unwrap()).unwrap())
+            }
+            "airead.stop" => {
+                self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
+                self.airead_cancel.store(true, Ordering::SeqCst);
+                Ok(json!({"stopping": true}))
             }
             "content.stop" => {
                 self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can stop this.")?;

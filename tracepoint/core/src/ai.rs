@@ -336,6 +336,34 @@ fn gemini_models(key: &str) -> Result<Vec<ModelInfo>, AiError> {
 pub struct Msg {
     pub role: String,
     pub content: String,
+    /// PNG images (base64) shown to the model before the text (page images
+    /// for AI reading of scanned documents).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
+}
+
+fn anthropic_content(m: &Msg) -> Value {
+    if m.images.is_empty() {
+        return json!(m.content);
+    }
+    let mut parts: Vec<Value> = m.images.iter().map(|b| json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b}})).collect();
+    parts.push(json!({"type": "text", "text": m.content}));
+    Value::Array(parts)
+}
+
+fn openai_content(m: &Msg) -> Value {
+    if m.images.is_empty() {
+        return json!(m.content);
+    }
+    let mut parts: Vec<Value> = m.images.iter().map(|b| json!({"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{b}"), "detail": "high"}})).collect();
+    parts.push(json!({"type": "text", "text": m.content}));
+    Value::Array(parts)
+}
+
+fn gemini_parts(m: &Msg) -> Value {
+    let mut parts: Vec<Value> = m.images.iter().map(|b| json!({"inline_data": {"mime_type": "image/png", "data": b}})).collect();
+    parts.push(json!({"text": m.content}));
+    Value::Array(parts)
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -407,7 +435,7 @@ fn chat_anthropic(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], 
         "max_tokens": max_tokens,
         "stream": true,
         "system": system,
-        "messages": messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
+        "messages": messages.iter().map(|m| json!({"role": m.role, "content": anthropic_content(m)})).collect::<Vec<_>>(),
     });
     // Long, repeated instructions (Ask THOR, AI find) are cached for 5 minutes:
     // later calls read them at a tenth of the input price.
@@ -491,7 +519,7 @@ fn chat_anthropic(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], 
 #[allow(clippy::too_many_arguments)]
 fn chat_openai(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], max_tokens: u32, cancel: &dyn Fn() -> bool, on_delta: &mut dyn FnMut(&str), with_reasoning: bool) -> Result<ChatResult, AiError> {
     let mut msgs = vec![json!({"role": "system", "content": system})];
-    msgs.extend(messages.iter().map(|m| json!({"role": m.role, "content": m.content})));
+    msgs.extend(messages.iter().map(|m| json!({"role": m.role, "content": openai_content(m)})));
     let mut body = json!({
         "model": choice.model,
         "messages": msgs,
@@ -547,7 +575,7 @@ fn chat_openai(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], max
 fn chat_gemini(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], max_tokens: u32, cancel: &dyn Fn() -> bool, on_delta: &mut dyn FnMut(&str), with_reasoning: bool) -> Result<ChatResult, AiError> {
     let contents: Vec<Value> = messages
         .iter()
-        .map(|m| json!({"role": if m.role == "assistant" { "model" } else { "user" }, "parts": [{"text": m.content}]}))
+        .map(|m| json!({"role": if m.role == "assistant" { "model" } else { "user" }, "parts": gemini_parts(m)}))
         .collect();
     let mut body = json!({
         "systemInstruction": {"parts": [{"text": system}]},
@@ -607,7 +635,7 @@ fn chat_gemini(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], max
 
 /// One short call to prove the key, model and reasoning setting all work.
 pub fn test(choice: &AiChoice, key: &str) -> Result<ChatResult, AiError> {
-    let msgs = vec![Msg { role: "user".into(), content: "Reply with exactly: TracePoint connected".into() }];
+    let msgs = vec![Msg { role: "user".into(), content: "Reply with exactly: TracePoint connected".into(), images: vec![] }];
     chat(choice, key, "You are a connection test. Reply with the exact words requested.", &msgs, 2000, &|| false, &mut |_| {})
 }
 
