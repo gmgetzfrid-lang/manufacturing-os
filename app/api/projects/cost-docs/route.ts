@@ -19,6 +19,9 @@ import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { validateParsedQuote } from "@/lib/bidTab";
+import { fetchBytes } from "@/lib/r2Bytes";
+import { matchParty } from "@/lib/budgetDoc";
+import type { AiCallImage } from "@/lib/ai/providerCall";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -39,10 +42,11 @@ const QUOTE_SYSTEM =
 const INVOICE_SYSTEM =
   "You read vendor invoices for industrial work, extracting what is PRINTED — never inventing.\n" +
   "Rules:\n" +
-  "- total: the amount due as a plain number. docNumber: the invoice number. docDate: invoice date as YYYY-MM-DD.\n" +
-  "- lineItems: each billed line with its amount when printed.\n" +
+  "- total: the amount due as a plain number. docNumber: the invoice number. docDate: invoice date as YYYY-MM-DD. dueDate likewise.\n" +
+  "- poNumber: the customer PO / work order / AFE reference the invoice bills against, verbatim, if printed. subtotal and tax when printed.\n" +
+  "- lineItems: each billed line — description, qty, unit, unitRate, total — leaving fields null when not printed.\n" +
   "- Numbers must be numbers, not strings.\n" +
-  'Return STRICT JSON: {"vendorName":"…","docNumber":"INV-1042","docDate":"2026-08-01","total":41250,"currency":"USD","lineItems":[{"description":"…","total":41250}]}';
+  'Return STRICT JSON: {"vendorName":"…","docNumber":"INV-1042","docDate":"2026-08-01","dueDate":null,"poNumber":null,"subtotal":null,"tax":null,"total":41250,"currency":"USD","lineItems":[{"description":"…","qty":null,"unit":null,"unitRate":null,"total":41250}]}';
 
 export async function POST(req: NextRequest) {
   let body: { orgId?: string; projectId?: string; costDocId?: string };
@@ -77,7 +81,7 @@ export async function POST(req: NextRequest) {
   const doc = docRow as {
     id: string; kind: string; status: string;
     file_url: string | null; file_name: string | null; mime_type: string | null;
-    vendor_name: string | null;
+    vendor_name: string | null; party_id: string | null;
   } | null;
   if (!doc) return bad("Cost document not found.", 404);
   if (!doc.file_url) return bad("This row has no stored file to read.", 404);
@@ -92,9 +96,23 @@ export async function POST(req: NextRequest) {
       409);
   }
   const looksPdf = (doc.mime_type ?? "").includes("pdf") || /\.pdf$/i.test(doc.file_name ?? "");
-  if (!looksPdf) return bad("Only PDF quotes and invoices can be read for now — ask the vendor for a PDF.", 415);
+  // Photos and scans of paper invoices read as a single page image.
+  const imageType = /^image\/(png|jpe?g|webp)$/i.test(doc.mime_type ?? "") ? doc.mime_type!
+    : /\.png$/i.test(doc.file_name ?? "") ? "image/png"
+    : /\.jpe?g$/i.test(doc.file_name ?? "") ? "image/jpeg"
+    : /\.webp$/i.test(doc.file_name ?? "") ? "image/webp" : null;
+  if (!looksPdf && !imageType) return bad("Send the quote or invoice as a PDF or a photo (PNG/JPG).", 415);
 
-  const images = await renderKnowledgePages(doc.file_url, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
+  let images: Array<AiCallImage & { page: number }>;
+  if (looksPdf) {
+    images = await renderKnowledgePages(doc.file_url, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES);
+  } else {
+    try {
+      const bytes = await fetchBytes(doc.file_url);
+      images = bytes.length > 0 && bytes.length <= 20 * 1024 * 1024
+        ? [{ page: 1, mediaType: imageType!, base64: bytes.toString("base64") }] : [];
+    } catch { images = []; }
+  }
   if (images.length === 0) return bad("The pages could not be rendered for reading — the file may be corrupt or password-protected.", 502);
 
   const isQuote = doc.kind === "quote";
@@ -141,6 +159,16 @@ export async function POST(req: NextRequest) {
     if (!doc.vendor_name && typeof r.vendorName === "string" && r.vendorName.trim()) {
       patch.vendor_name = r.vendorName.trim().slice(0, 200);
     }
+  }
+
+  // Link the paper to the project company it came from, so the invoice
+  // routes to that company's budget line and counts on its record.
+  const vendor = (patch.vendor_name as string | undefined) ?? doc.vendor_name;
+  if (!doc.party_id && vendor) {
+    const { data: parties } = await supabaseAdmin.from("project_parties")
+      .select("id, name").eq("project_id", projectId).eq("org_id", orgId);
+    const hit = matchParty(vendor, ((parties ?? []) as Array<{ id: string; name: string }>));
+    if (hit) patch.party_id = hit.id;
   }
 
   const { error: updErr } = await supabaseAdmin.from("cost_documents").update(patch).eq("id", costDocId);

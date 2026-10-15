@@ -17,7 +17,9 @@ import { uploadToPath } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
 import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
 
-export type CostDocKind = "quote" | "invoice" | "po";
+/** budget = the authorization paper (AFE / estimate) a project is built
+ *  from — kept for the record, never awarded or posted as spend. */
+export type CostDocKind = "quote" | "invoice" | "po" | "budget";
 export type CostDocStatus = "draft" | "parsed" | "awarded" | "declined" | "posted" | "void";
 
 export const COST_DOC_STATUS_LABEL: Record<CostDocStatus, string> = {
@@ -272,6 +274,7 @@ export async function postInvoice(input: {
 }): Promise<{ ok: boolean; error?: string }> {
   const { doc } = input;
   if (doc.kind === "quote") return { ok: false, error: "Quotes are awarded, not posted — use Award." };
+  if (doc.kind === "budget") return { ok: false, error: "A budget document sets the plan — it isn't spend to post." };
 
   const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "posted", input.actor.uid);
   if (!claim.ok) return { ok: false, error: claim.error };

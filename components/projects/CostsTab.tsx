@@ -6,7 +6,9 @@
 // committed vs spent tiles (jargon translated in place), the S-curve and a
 // forecast sentence, inbound quotes read by AI and tabulated side by side,
 // change orders with reason codes, and the account/entry machinery
-// underneath. Before the project has any numbers, the charts render with
+// underneath. Split into sub-tabs (Overview · Budget · Quotes · Invoices ·
+// Change orders) so each job is one screen, and a project with no budget
+// opens on Budget, where dropping the AFE / estimate builds the model. Before the project has any numbers, the charts render with
 // watermarked EXAMPLE data — you see what you're building toward, not a
 // blank pane. Writes: org controllers and the PROJECT OWNER (RLS,
 // 20261013); everyone on the project reads the same picture.
@@ -15,6 +17,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CircleDollarSign, Plus, X, Loader2, Check, ChevronDown, ChevronRight,
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
+  LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -26,9 +29,16 @@ import { listCostDocs, parsedQuoteFrom, type CostDocument } from "@/lib/costDocs
 import CostCharts, { CostGlossary } from "@/components/projects/cost/CostCharts";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
+import { BudgetDocDrop, BudgetImportSheet } from "@/components/projects/cost/BudgetImport";
+import type { BudgetReadResult } from "@/lib/budgetImport";
+import { resolveFileUrl } from "@/lib/storage";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
+type CostView = "overview" | "budget" | "quotes" | "invoices" | "changes";
+
+interface BudgetBasis { afeNumber: string | null; chargeAccount: string | null; authorized: number | null; docId: string | null }
+
 const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
   { v: "commitment", label: "Commitment", hint: "PO / contract value awarded — money promised" },
   { v: "actual", label: "Actual", hint: "Invoice / timesheet — money really spent" },
@@ -52,6 +62,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [busy, setBusy] = useState<string | null>(null);
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [showParties, setShowParties] = useState(false);
+  const [view, setView] = useState<CostView | null>(null);
+  const [basis, setBasis] = useState<BudgetBasis | null>(null);
+  const [importing, setImporting] = useState<BudgetReadResult | null>(null);
+  const [showDrop, setShowDrop] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
 
@@ -67,6 +82,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           .eq("project_id", projectId).order("planned_at"),
       ]);
       setAccounts(a);
+      // First open: a project with no budget lands where the budget gets built.
+      setView((v) => v ?? (a.length === 0 ? "budget" : "overview"));
       setEntries(e);
       setParties(p);
       setDocs(d);
@@ -77,6 +94,15 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       setSchedSpan(dates.length >= 2
         ? { start: dates[0].slice(0, 10), end: dates[dates.length - 1].slice(0, 10) }
         : { start: null, end: null });
+      // Budget basis (20261020) — absent columns just mean no header line.
+      const { data: pb, error: pbErr } = await supabase.from("projects")
+        .select("afe_number, charge_account, authorized_amount, budget_doc_id").eq("id", projectId).maybeSingle();
+      setBasis(!pbErr && pb ? {
+        afeNumber: (pb.afe_number as string | null) ?? null,
+        chargeAccount: (pb.charge_account as string | null) ?? null,
+        authorized: pb.authorized_amount == null ? null : Number(pb.authorized_amount),
+        docId: (pb.budget_doc_id as string | null) ?? null,
+      } : null);
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
@@ -112,6 +138,15 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
     return m;
   }, [entries]);
 
+  const quoteCount = docs.filter((d) => d.kind === "quote" && d.status !== "void").length;
+  const invoiceOpen = docs.filter((d) => (d.kind === "invoice" || d.kind === "po") && (d.status === "draft" || d.status === "parsed")).length;
+  const basisDoc = basis?.docId ? docs.find((d) => d.id === basis.docId) ?? null : null;
+  const openBasisDoc = async () => {
+    if (!basisDoc?.fileUrl) return;
+    const url = await resolveFileUrl(basisDoc.fileUrl).catch(() => null);
+    if (url) window.open(url, "_blank", "noopener"); else setErr("Couldn't open the document.");
+  };
+
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
   return (
@@ -123,6 +158,23 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         </div>
       )}
 
+      {notice && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] px-3 py-2.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+          <Check className="w-4 h-4 shrink-0" /> {notice}
+          <button onClick={() => setNotice(null)} className="ml-auto text-emerald-500 hover:text-emerald-700"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+
+      {/* ── Sub-tabs: one job per screen ── */}
+      <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
+        <SubTab active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard className="w-3.5 h-3.5" />} label="Overview" />
+        <SubTab active={view === "budget"} onClick={() => setView("budget")} icon={<Landmark className="w-3.5 h-3.5" />} label="Budget" count={accounts.length} />
+        <SubTab active={view === "quotes"} onClick={() => setView("quotes")} icon={<ScanSearch className="w-3.5 h-3.5" />} label="Quotes" count={quoteCount} />
+        <SubTab active={view === "invoices"} onClick={() => setView("invoices")} icon={<Receipt className="w-3.5 h-3.5" />} label="Invoices" count={invoiceOpen} attention={invoiceOpen > 0} />
+        <SubTab active={view === "changes"} onClick={() => setView("changes")} icon={<GitPullRequestArrow className="w-3.5 h-3.5" />} label="Change orders" />
+      </div>
+
+      {view === "overview" && (<>
       {/* ── Stat strip ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard icon={<Landmark className="w-4 h-4" />} label="Budget" value={fmtMoney(rollup.budget, cur)} tone="accent" />
@@ -141,6 +193,10 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
             : undefined}
         />
       </div>
+
+      {basis && (basis.afeNumber || basis.authorized != null) && (
+        <BasisLine basis={basis} budget={rollup.budget} spent={rollup.spent} cur={cur} onOpen={basisDoc?.fileUrl ? () => void openBasisDoc() : undefined} />
+      )}
 
       {/* ── Burn bar: spent (solid) + committed (hatched ghost) vs budget ── */}
       {rollup.budget > 0 && (
@@ -169,13 +225,58 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         scheduleStart={schedSpan.start} scheduleEnd={schedSpan.end}
         awardedLaborHours={awardedLaborHours} />
 
+      {/* ── Plain-language glossary — visible, not a hover Easter egg ── */}
+      <CostGlossary />
+      </>)}
+
       {/* ── Inbound quotes → AI read → bid tabulation → award ── */}
-      <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} docs={docs} onChanged={() => void refresh()} setErr={setErr} />
+      {(view === "quotes" || view === "invoices") && (
+        <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+          section={view} parties={parties}
+          accounts={accounts} docs={docs} onChanged={() => void refresh()} setErr={setErr} />
+      )}
 
       {/* ── Change orders — never a silent budget edit ── */}
-      <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} />
+      {view === "changes" && (
+        <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+          accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} />
+      )}
+
+      {view === "budget" && (<>
+      {/* ── Budget basis + build-from-document ── */}
+      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+          <FileCheck2 className="w-4 h-4 text-[var(--color-accent)]" />
+          <span className="text-sm font-bold text-[var(--color-text)]">Budget basis</span>
+          {basis?.afeNumber && <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{basis.afeNumber}</span>}
+          {basis?.chargeAccount && <span className="text-[11px] text-[var(--color-text-muted)]">· A/C <span className="font-mono">{basis.chargeAccount}</span></span>}
+          {basis?.authorized != null && <span className="text-[11px] text-[var(--color-text-muted)]">· authorized <span className="font-black text-[var(--color-text)] tabular-nums">{fmtMoney(basis.authorized, cur)}</span></span>}
+          {basisDoc?.fileUrl && (
+            <button onClick={() => void openBasisDoc()} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">view document</button>
+          )}
+          {canManage && !importing && accounts.length > 0 && (
+            <button onClick={() => setShowDrop((v) => !v)}
+              className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+              <FileUp className="w-3 h-3" /> Add from a document
+            </button>
+          )}
+        </div>
+        {importing ? (
+          <BudgetImportSheet orgId={orgId} projectId={projectId} actor={actor} result={importing}
+            accounts={accounts} parties={parties}
+            onApplied={(summary) => { setImporting(null); setShowDrop(false); setNotice(summary); void refresh(); }}
+            onClose={() => setImporting(null)} />
+        ) : canManage && (accounts.length === 0 || showDrop) ? (
+          <div className="p-4">
+            <BudgetDocDrop orgId={orgId} projectId={projectId} onRead={setImporting}
+              label={accounts.length === 0 ? "Drop the AFE, estimate, or budget sheet — the cost model builds itself" : undefined} />
+          </div>
+        ) : !basis?.afeNumber && basis?.authorized == null ? (
+          <div className="px-4 py-3 text-[11px] text-[var(--color-text-muted)]">
+            No authorization document on file. {canManage ? "Use \u201cAdd from a document\u201d to attach the AFE / estimate this project is approved under." : ""}
+          </div>
+        ) : null}
+      </div>
 
       {/* ── Accounts ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
@@ -273,8 +374,50 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         )}
       </div>
 
-      {/* ── Plain-language glossary — visible, not a hover Easter egg ── */}
-      <CostGlossary />
+      </>)}
+    </div>
+  );
+}
+
+function SubTab({ active, onClick, icon, label, count, attention }: {
+  active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count?: number; attention?: boolean;
+}) {
+  return (
+    <button onClick={onClick}
+      className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+        active ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+      {icon} {label}
+      {count != null && count > 0 && (
+        <span className={`text-[10px] font-black tabular-nums px-1.5 rounded-full ${
+          active ? "bg-white/20" : attention ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-[var(--color-surface-2)]"}`}>{count}</span>
+      )}
+    </button>
+  );
+}
+
+/** "AFE 25008 · $1,250,000 authorized" with how the plan and the spend
+ *  sit against it. */
+function BasisLine({ basis, budget, spent, cur, onOpen }: {
+  basis: BudgetBasis; budget: number; spent: number; cur: string; onOpen?: () => void;
+}) {
+  const auth = basis.authorized;
+  const gap = auth != null ? auth - budget : null;
+  return (
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+      <FileCheck2 className="w-4 h-4 text-[var(--color-accent)]" />
+      {basis.afeNumber && <span className="font-black text-[var(--color-text)]">{basis.afeNumber}</span>}
+      {auth != null && <span><span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
+      {auth != null && gap != null && Math.abs(gap) >= 1 && (
+        <span className={gap < 0 ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
+          budget lines {gap < 0 ? "exceed" : "leave"} {fmtMoney(Math.abs(gap), cur)} {gap < 0 ? "over the authorization" : "unallocated"}
+        </span>
+      )}
+      {auth != null && auth > 0 && (
+        <span className={spent > auth ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
+          {Math.round((spent / auth) * 100)}% of authorization spent
+        </span>
+      )}
+      {onOpen && <button onClick={onOpen} className="ml-auto font-bold text-[var(--color-accent)] hover:underline">view document</button>}
     </div>
   );
 }

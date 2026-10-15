@@ -10,17 +10,20 @@
 // hours, $/hour, and the EXCLUSIONS that explain why the low bid is low —
 // with a weighted best-value score whose math is always shown. Awarding
 // posts the commitment to a budget line in the same click. Invoices follow
-// the same read-review-post path as actuals.
+// the same read-review-post path as actuals — dropped in a stack, read on
+// arrival, routed to their vendor's budget line, checked for duplicates,
+// and the confident matches posted together after one confirmation.
 
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
-  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight,
+  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, Wand2, Copy as CopyIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { listCompanies, type Company } from "@/lib/companies";
-import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
+import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
+import { suggestAccountForInvoice, findDuplicateInvoice, type AccountSuggestion } from "@/lib/budgetDoc";
 import {
   type CostDocument, COST_DOC_STATUS_LABEL,
   uploadCostDoc, awardQuote, postInvoice, voidCostDoc, setManualTotal,
@@ -35,9 +38,26 @@ async function authHeader(): Promise<Record<string, string>> {
   return data.session?.access_token ? { Authorization: `Bearer ${data.session.access_token}` } : {};
 }
 
-export default function QuotesPanel({ orgId, projectId, canManage, actor, accounts, docs, onChanged, setErr }: {
+/** Have the AI read one stored quote/invoice. Throws the route's message. */
+async function readCostDoc(orgId: string, projectId: string, costDocId: string): Promise<void> {
+  const res = await fetch("/api/projects/cost-docs", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ orgId, projectId, costDocId }),
+  });
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+}
+
+const INVOICE_ACCEPT = ".pdf,application/pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp";
+
+export default function QuotesPanel({ orgId, projectId, canManage, actor, accounts, docs, onChanged, setErr, section, parties = [] }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
   accounts: CostAccount[];
+  /** Render only one half (the Costs sub-tabs); omitted = both. */
+  section?: "quotes" | "invoices";
+  /** Project companies — invoices route to their vendor's budget line. */
+  parties?: CostParty[];
   docs: CostDocument[];
   onChanged: () => void;
   setErr: (m: string | null) => void;
@@ -51,20 +71,14 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     listCompanies(orgId).then(setCompanies).catch(() => setCompanies([]));
   }, [orgId]);
   const groups = useMemo(() => quoteGroups(docs), [docs]);
-  const invoices = useMemo(() => docs.filter((d) => d.kind !== "quote" && d.status !== "void"), [docs]);
+  const invoices = useMemo(() => docs.filter((d) => (d.kind === "invoice" || d.kind === "po") && d.status !== "void"), [docs]);
   const existingGroups = useMemo(
     () => [...new Set(docs.map((d) => d.rfqGroup).filter((g): g is string => !!g))], [docs]);
 
   const readDoc = async (doc: CostDocument) => {
     setBusy(doc.id); setErr(null);
     try {
-      const res = await fetch("/api/projects/cost-docs", {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(await authHeader()) },
-        body: JSON.stringify({ orgId, projectId, costDocId: doc.id }),
-      });
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+      await readCostDoc(orgId, projectId, doc.id);
       onChanged();
     } catch (e) {
       setErr((e as Error).message);
@@ -88,6 +102,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+      {section !== "invoices" && (<>
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ScanSearch className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quotes &amp; bid tabulation</span>
@@ -131,51 +146,218 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         </div>
       )}
 
+      </>)}
+
       {/* ── Invoices ── */}
-      <div className="border-t border-[var(--color-border)]">
-        <div className="px-4 py-2.5 flex items-center gap-2">
-          <Receipt className="w-4 h-4 text-[var(--color-accent)]" />
-          <span className="text-sm font-bold text-[var(--color-text)]">Invoices</span>
-          <span className="text-[10px] text-[var(--color-text-muted)]">Read → review → post as actual spend.</span>
-        </div>
-        {canManage && (
-          <UploadRow orgId={orgId} projectId={projectId} actor={actor} kind="invoice"
-            existingGroups={[]} onDone={onChanged} setErr={setErr} />
+      {section !== "quotes" && (
+        <InvoicesSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+          accounts={accounts} parties={parties} docs={docs} invoices={invoices}
+          framed={section !== "invoices"} busy={busy} setBusy={setBusy}
+          readDoc={readDoc} typeTotal={typeTotal} onChanged={onChanged} setErr={setErr} />
+      )}
+    </div>
+  );
+}
+
+// ── Invoices: drop a stack, they read and route themselves ──────────────
+
+function invoiceLines(doc: CostDocument): Array<{ description: string; total: number | null }> {
+  const items = (doc.parsed as { lineItems?: unknown } | null)?.lineItems;
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((x) => (x && typeof x === "object" ? x as Record<string, unknown> : null))
+    .filter((x): x is Record<string, unknown> => !!x && typeof x.description === "string")
+    .map((x) => ({ description: String(x.description), total: typeof x.total === "number" ? x.total : null }));
+}
+
+function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties, docs, invoices, framed, busy, setBusy, readDoc, typeTotal, onChanged, setErr }: {
+  orgId: string; projectId: string; canManage: boolean; actor: Actor;
+  accounts: CostAccount[]; parties: CostParty[]; docs: CostDocument[]; invoices: CostDocument[];
+  framed: boolean; busy: string | null; setBusy: (v: string | null) => void;
+  readDoc: (d: CostDocument) => Promise<void>;
+  typeTotal: (d: CostDocument) => Promise<void>;
+  onChanged: () => void; setErr: (m: string | null) => void;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  const [batch, setBatch] = useState<string | null>(null);
+
+  const rows = useMemo(() => invoices.map((doc) => ({
+    doc,
+    lines: invoiceLines(doc),
+    suggestion: doc.status === "parsed" ? suggestAccountForInvoice({
+      vendorName: doc.vendorName, partyId: doc.partyId,
+      lineDescriptions: invoiceLines(doc).map((l) => l.description),
+    }, accounts, parties) : null,
+    duplicate: findDuplicateInvoice(doc, docs),
+  })), [invoices, accounts, parties, docs]);
+
+  const ready = rows.filter((r) => r.doc.status === "parsed" && r.suggestion?.confidence === "high"
+    && !r.duplicate && (r.doc.totalAmount ?? 0) > 0);
+  const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "budget line";
+
+  const postReady = async () => {
+    if (!(await appConfirm({
+      title: `Post ${ready.length} invoice${ready.length === 1 ? "" : "s"} as actual spend?`,
+      message: (
+        <ul className="mt-1 space-y-0.5 text-xs">
+          {ready.map((r) => (
+            <li key={r.doc.id}>
+              <span className="font-bold text-[var(--color-text)]">{r.doc.vendorName ?? "Vendor"}</span>
+              {r.doc.docNumber ? ` ${r.doc.docNumber}` : ""} — {fmtMoney(r.doc.totalAmount ?? 0)} → {accountName(r.suggestion!.accountId)}
+            </li>
+          ))}
+        </ul>
+      ),
+    }))) return;
+    let failed = 0;
+    for (const [i, r] of ready.entries()) {
+      setBatch(`Posting ${i + 1} of ${ready.length}…`);
+      const res = await postInvoice({ doc: r.doc, costAccountId: r.suggestion!.accountId, actor });
+      if (!res.ok) failed++;
+    }
+    setBatch(null);
+    if (failed) setErr(`${failed} invoice${failed === 1 ? "" : "s"} couldn't post — someone may have acted on them already. Refreshed.`);
+    onChanged();
+  };
+
+  return (
+    <div className={framed ? "border-t border-[var(--color-border)]" : undefined}>
+      <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+        <Receipt className="w-4 h-4 text-[var(--color-accent)]" />
+        <span className="text-sm font-bold text-[var(--color-text)]">Invoices</span>
+        <span className="text-[10px] text-[var(--color-text-muted)]">Drop them in — each is read, matched to its vendor&apos;s budget line, and checked for duplicates. You confirm before money posts.</span>
+        {canManage && ready.length > 0 && (
+          <button onClick={() => void postReady()} disabled={!!batch}
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
+            title="Invoices whose vendor maps to exactly one budget line, with a readable total and no duplicate on file.">
+            {batch ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+            {batch ?? `Post ${ready.length} matched`}
+          </button>
         )}
-        {invoices.length === 0 ? (
-          <div className="px-4 pb-4 text-[11px] italic text-[var(--color-text-faint)]">No invoices uploaded yet.</div>
-        ) : (
-          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-            {invoices.map((doc) => (
-              <li key={doc.id} className="px-4 py-2.5 flex items-center gap-2 flex-wrap text-xs">
-                <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                <span className="font-bold text-[var(--color-text)] truncate">{doc.vendorName ?? doc.fileName ?? "Invoice"}</span>
-                {doc.docNumber && <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{doc.docNumber}</span>}
-                {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
-                <StatusChip status={doc.status} />
-                {canManage && doc.status === "draft" && (
-                  <>
-                    <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
-                    <button onClick={() => void typeTotal(doc)}
-                      className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>
-                  </>
-                )}
-                {canManage && doc.status === "parsed" && (
-                  <PostControls accounts={accounts} busy={busy === doc.id}
-                    onPost={async (accountId) => {
-                      setBusy(doc.id);
-                      const res = await postInvoice({ doc, costAccountId: accountId, actor });
-                      setBusy(null);
-                      if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
-                    }} label="Post as actual" />
-                )}
-                {canManage && (doc.status === "draft" || doc.status === "parsed") && (
-                  <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
+      </div>
+      {canManage && (
+        <InvoiceDrop orgId={orgId} projectId={projectId} actor={actor} onDone={onChanged} setErr={setErr} />
+      )}
+      {rows.length === 0 ? (
+        <div className="px-4 pb-4 text-[11px] italic text-[var(--color-text-faint)]">No invoices uploaded yet.</div>
+      ) : (
+        <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+          {rows.map(({ doc, lines, suggestion, duplicate }) => {
+            const isOpen = open === doc.id;
+            const p = (doc.parsed ?? {}) as { poNumber?: unknown; dueDate?: unknown; subtotal?: unknown; tax?: unknown };
+            return (
+              <li key={doc.id} className="px-4 py-2.5 text-xs">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button onClick={() => setOpen(isOpen ? null : doc.id)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="What the AI read">
+                    {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  </button>
+                  <span className="font-bold text-[var(--color-text)] truncate">{doc.vendorName ?? doc.fileName ?? "Invoice"}</span>
+                  {doc.docNumber && <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{doc.docNumber}</span>}
+                  {doc.docDate && <span className="text-[10px] text-[var(--color-text-muted)]">{doc.docDate}</span>}
+                  {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
+                  <StatusChip status={doc.status} />
+                  {duplicate && (doc.status === "draft" || doc.status === "parsed") && (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                      title={`Same vendor and ${duplicate.docNumber ? "invoice number" : "amount and date"} as ${duplicate.fileName ?? "another invoice"} (${COST_DOC_STATUS_LABEL[duplicate.status as CostDocument["status"]]?.toLowerCase() ?? duplicate.status}).`}>
+                      <CopyIcon className="w-2.5 h-2.5" /> possible duplicate
+                    </span>
+                  )}
+                  {canManage && doc.status === "draft" && (
+                    <>
+                      <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
+                      <button onClick={() => void typeTotal(doc)}
+                        className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>
+                    </>
+                  )}
+                  {canManage && doc.status === "parsed" && (
+                    <PostControls accounts={accounts} busy={busy === doc.id} suggested={suggestion}
+                      onPost={async (accountId) => {
+                        if (duplicate && !(await appConfirm({ message: `This looks like a duplicate of ${duplicate.fileName ?? "another invoice"} from the same vendor. Post it anyway?`, tone: "danger" }))) return;
+                        setBusy(doc.id);
+                        const res = await postInvoice({ doc, costAccountId: accountId, actor });
+                        setBusy(null);
+                        if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
+                      }} label="Post as actual" />
+                  )}
+                  {canManage && (doc.status === "draft" || doc.status === "parsed") && (
+                    <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
+                  )}
+                </div>
+                {isOpen && (
+                  <div className="mt-2 ml-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 space-y-1">
+                    <div className="text-[10px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
+                      <span>File: {doc.fileName ?? "—"}</span>
+                      {typeof p.poNumber === "string" && p.poNumber && <span>PO {p.poNumber}</span>}
+                      {typeof p.dueDate === "string" && p.dueDate && <span>Due {p.dueDate}</span>}
+                      {typeof p.subtotal === "number" && <span>Subtotal {fmtMoney(p.subtotal)}</span>}
+                      {typeof p.tax === "number" && <span>Tax {fmtMoney(p.tax)}</span>}
+                    </div>
+                    {lines.length > 0 ? (
+                      <ul className="text-[11px]">
+                        {lines.map((l, i) => (
+                          <li key={i} className="flex gap-2">
+                            <span className="flex-1 text-[var(--color-text)]">{l.description}</span>
+                            {l.total != null && <span className="tabular-nums font-bold">{fmtMoney(l.total)}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-[11px] italic text-[var(--color-text-faint)]">{doc.status === "draft" ? "Not read yet." : "No line detail was printed (or readable)."}</div>
+                    )}
+                  </div>
                 )}
               </li>
-            ))}
-          </ul>
-        )}
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Many invoices at once: upload each, then read it straight away. */
+function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
+  orgId: string; projectId: string; actor: Actor;
+  onDone: () => void; setErr: (m: string | null) => void;
+}) {
+  const [progress, setProgress] = useState<string | null>(null);
+  const [over, setOver] = useState(false);
+  const input = React.useRef<HTMLInputElement>(null);
+
+  const run = async (files: File[]) => {
+    if (files.length === 0) return;
+    setErr(null);
+    const problems: string[] = [];
+    for (const [i, file] of files.entries()) {
+      setProgress(`${files.length > 1 ? `${i + 1} of ${files.length}: ` : ""}uploading ${file.name}…`);
+      const up = await uploadCostDoc({ orgId, projectId, kind: "invoice", file, actor });
+      if (!up.ok || !up.doc) { problems.push(`${file.name}: ${up.error ?? "upload failed"}`); continue; }
+      setProgress(`${files.length > 1 ? `${i + 1} of ${files.length}: ` : ""}reading ${file.name}…`);
+      try { await readCostDoc(orgId, projectId, up.doc.id); }
+      catch (e) { problems.push(`${file.name}: uploaded, but not read — ${(e as Error).message}`); }
+    }
+    setProgress(null);
+    if (problems.length) setErr(problems.join(" · "));
+    onDone();
+  };
+
+  return (
+    <div className="px-4 pb-2.5">
+      <div
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); setOver(false); if (!progress) void run([...(e.dataTransfer.files ?? [])]); }}
+        onClick={() => !progress && input.current?.click()}
+        role="button" tabIndex={0}
+        onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !progress) input.current?.click(); }}
+        className={`rounded-lg border border-dashed px-3 py-2 flex items-center gap-2 text-xs cursor-pointer transition-colors ${
+          over ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60" : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}>
+        {progress ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-accent)]" /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-accent)]" />}
+        <span className="text-[var(--color-text-muted)] truncate">
+          {progress ?? "Drop invoices here (PDF or photo — several at once is fine), or click to choose"}
+        </span>
+        <input ref={input} type="file" multiple accept={INVOICE_ACCEPT} className="hidden"
+          onChange={(e) => { void run([...(e.target.files ?? [])]); e.target.value = ""; }} />
       </div>
     </div>
   );
@@ -401,11 +583,13 @@ function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   );
 }
 
-function PostControls({ accounts, busy, onPost, label }: {
+function PostControls({ accounts, busy, onPost, label, suggested }: {
   accounts: CostAccount[]; busy: boolean;
   onPost: (accountId: string) => void | Promise<void>; label: string;
+  /** Pre-picked budget line (invoices) — shown with why. */
+  suggested?: AccountSuggestion | null;
 }) {
-  const [accountId, setAccountId] = useState(accounts.length === 1 ? accounts[0].id : "");
+  const [accountId, setAccountId] = useState(suggested?.accountId ?? (accounts.length === 1 ? accounts[0].id : ""));
   if (accounts.length === 0) {
     return <span className="text-[10px] text-[var(--color-text-muted)]" title="Create a budget line first — money always posts somewhere.">needs a budget line</span>;
   }
@@ -420,6 +604,12 @@ function PostControls({ accounts, busy, onPost, label }: {
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
+      {suggested && accountId === suggested.accountId && (
+        <span className={`text-[9px] font-bold ${suggested.confidence === "high" ? "text-emerald-600" : "text-[var(--color-text-muted)]"}`}
+          title={`Suggested: ${suggested.reason}`}>
+          <Sparkles className="w-2.5 h-2.5 inline -mt-0.5" /> {suggested.confidence === "high" ? "matched" : "suggested"}
+        </span>
+      )}
     </span>
   );
 }
