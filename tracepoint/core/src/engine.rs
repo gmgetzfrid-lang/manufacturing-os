@@ -24,6 +24,8 @@ pub struct Engine {
     /// Stemmed description + kind words per equipment (natural-language search).
     pub(crate) eq_tokens: Vec<Vec<String>>,
     pub(crate) eq_df: HashMap<String, u32>,
+    /// Files per folder, built the first time the graph needs it.
+    pub(crate) dir_files: std::sync::OnceLock<Vec<Vec<u32>>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -278,7 +280,7 @@ impl Engine {
             }
             eq_tokens.push(t);
         }
-        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df }
+        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df, dir_files: std::sync::OnceLock::new() }
     }
 
     fn term_posting(&self, word: &str) -> Option<&Vec<u32>> {

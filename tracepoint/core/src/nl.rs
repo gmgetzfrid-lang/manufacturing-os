@@ -152,6 +152,9 @@ fn is_relief(eq: &crate::index::Equip) -> bool {
         t.starts_with("PSV") || t.starts_with("PRV") || t.starts_with("RV-") || t.starts_with("TSV")
     })
 }
+pub fn is_relief_pub(eq: &crate::index::Equip) -> bool {
+    is_relief(eq)
+}
 fn is_piping(eq: &crate::index::Equip) -> bool {
     let k = eq.kind.to_lowercase();
     k.contains("piping") || k.contains("circuit")

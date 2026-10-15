@@ -371,6 +371,17 @@ impl Service {
                 let units: Vec<Value> = e.idx.units.iter().map(|u| json!({"label": u.label, "code": u.code, "name": u.name})).collect();
                 Ok(json!({"equipment": list, "units": units}))
             }
+            "graph.walk" => {
+                self.with_session(|_| Ok(()))?;
+                let e = self.engine()?;
+                let id = a.get("id").and_then(|x| x.as_str()).unwrap_or("root");
+                let depth = a.get("depth").and_then(|x| x.as_u64()).unwrap_or(1) as usize;
+                let v = crate::graph::walk(&e, id, depth);
+                if v.get("error").is_some() {
+                    return Err(ApiError::new(404, "That item is no longer in the index."));
+                }
+                Ok(v)
+            }
             "graph.equipment" => {
                 self.with_session(|_| Ok(()))?;
                 let e = self.engine()?;
