@@ -8,7 +8,9 @@ import { initials, when } from "../lib/format";
 
 interface ProviderInfo { id: string; name: string; company: string; key_prefix: string; key_url: string; key_help: string; host: string; recommended_model: string }
 interface Level { id: string; label: string; hint: string }
-interface ModelInfo { id: string; name: string; context?: number | null; max_output?: number | null; reasoning: Level[]; default_reasoning?: string | null; recommended: boolean; vision: boolean }
+interface ModelInfo { id: string; name: string; context?: number | null; max_output?: number | null; reasoning: Level[]; default_reasoning?: string | null; recommended: boolean; vision: boolean; price?: { input: number; output: number; basis: string; note?: string | null; per_question: number } }
+
+const money = (x: number) => (x < 0.01 && x > 0 ? `${(x * 100).toFixed(2)}¢` : x < 1 ? `${(x * 100).toFixed(1)}¢` : `$${x.toFixed(2)}`);
 interface AiConfig { provider?: string | null; model?: string | null; reasoning?: string | null; key_mask?: string | null; has_key: boolean; can_ai: boolean }
 
 export function ProfilePage({ state, setState, refresh }: { state: AppState; setState: (s: AppState) => void; refresh: () => void }) {
@@ -148,6 +150,7 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
           </div>
         </Section>
         <KeySafety />
+        <div className="col-span-2"><Spending /></div>
       </div>
     );
   }
@@ -217,6 +220,7 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
                     {m.recommended && <Pill color="var(--color-ok)">Recommended</Pill>}
                     {m.reasoning.length > 0 && <Pill color="var(--color-violet)"><Brain className="size-3" />Reasoning</Pill>}
                     {m.context && <span className="text-[11.5px] text-[var(--color-text-faint)]">{m.context >= 1e6 ? `${m.context / 1e6}M` : `${Math.round(m.context / 1000)}K`} context</span>}
+                    {m.price && <span className="w-[120px] shrink-0 text-right" title={`$${m.price.input} in / $${m.price.output} out per million tokens${m.price.note ? " — " + m.price.note : ""}`}><span className={cx("block text-[13px] font-semibold", m.price.basis === "unlisted" && "text-[var(--color-warn)]")}>≈ {money(m.price.per_question)} / question</span><span className="block text-[11px] text-[var(--color-text-faint)]">${m.price.input} / ${m.price.output} per M</span></span>}
                   </button>
                 ))}
               </div>
@@ -273,6 +277,102 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
       </div>
       <KeySafety />
     </div>
+  );
+}
+
+interface BudgetInfo {
+  budget_usd: number; index_share_pct: number; max_request_usd: number; month: string;
+  spent_questions_usd: number; spent_index_usd: number; held_usd: number; calls: number; cap_questions_usd: number; cap_index_usd: number;
+  current?: { provider: string; model: string; price: { input: number; output: number }; basis: string; note?: string | null; per_question: number } | null;
+  upcoming: { provider: string; model: string; from: string; input: number; output: number }[];
+  prices_checked: string; sources: string[];
+  rows: { at: string; feature: string; model?: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; reserved_usd: number; cost_usd: number; status: string; note?: string | null }[];
+}
+
+/** Monthly AI budget, how it's enforced, and every call's cost. */
+function Spending() {
+  const [b, setB] = useState<BudgetInfo | null>(null);
+  const [edit, setEdit] = useState<{ budget: string; share: number; max: string } | null>(null);
+  const toast = useToast();
+  const load = () => api<BudgetInfo>("ai.budget").then((x) => { setB(x); setEdit({ budget: String(x.budget_usd), share: x.index_share_pct, max: String(x.max_request_usd) }); }).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!b || !edit) return null;
+  const save = async () => {
+    try {
+      await api("ai.budget.set", { ai_budget_usd: Number(edit.budget), ai_index_share_pct: edit.share, ai_max_request_usd: Number(edit.max) });
+      toast("ok", "Spending limits saved"); load();
+    } catch (e) { toast("error", (e as Error).message); }
+  };
+  const monthName = new Date(`${b.month}-01T12:00:00`).toLocaleString(undefined, { month: "long", year: "numeric" });
+  const Bar = ({ label, spent, cap }: { label: string; spent: number; cap: number }) => {
+    const pct = cap > 0 ? Math.min(100, (spent / cap) * 100) : 100;
+    return (
+      <div>
+        <div className="flex items-baseline justify-between"><span className="text-[14px] font-semibold">{label}</span><span className="text-[14px]"><b className="tabular-nums">${spent.toFixed(2)}</b> <span className="text-[var(--color-text-muted)]">of ${cap.toFixed(2)}</span></span></div>
+        <div className="mt-1.5 h-2.5 overflow-hidden rounded-full bg-[var(--color-surface-3)]"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct > 90 ? "var(--color-bad)" : pct > 70 ? "var(--color-warn)" : "var(--color-ok)" }} /></div>
+        <div className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">${Math.max(0, cap - spent).toFixed(2)} left this month</div>
+      </div>
+    );
+  };
+  return (
+    <Section title={`AI spending · ${monthName}`} subtitle="Your own key, your own budget. Resets on the 1st of each month.">
+      <div className="grid grid-cols-[1.2fr_1fr] gap-8">
+        <div className="space-y-5">
+          <Bar label="Questions (Ask THOR, Find with AI)" spent={b.spent_questions_usd} cap={b.cap_questions_usd} />
+          <Bar label="AI reading of documents (indexing)" spent={b.spent_index_usd} cap={b.cap_index_usd} />
+          {b.held_usd > 0 && <div className="text-[13px] text-[var(--color-text-muted)]">${b.held_usd.toFixed(2)} on hold for requests in progress.</div>}
+          <div className="grid grid-cols-3 gap-3 rounded-xl bg-[var(--color-surface-2)] p-4">
+            <Field label="Monthly budget ($)"><Input type="number" min={0} step={1} value={edit.budget} onChange={(e) => setEdit({ ...edit, budget: e.target.value })} /></Field>
+            <Field label={`Indexing share: ${Math.round(edit.share)}%`}><input type="range" min={0} max={100} step={5} value={edit.share} onChange={(e) => setEdit({ ...edit, share: Number(e.target.value) })} className="mt-3 w-full accent-[var(--color-accent)]" /></Field>
+            <Field label="Most per request ($)"><Input type="number" min={0.01} step={0.05} value={edit.max} onChange={(e) => setEdit({ ...edit, max: e.target.value })} /></Field>
+            <div className="col-span-3 flex justify-end"><Button variant="primary" size="sm" onClick={save}>Save limits</Button></div>
+          </div>
+          {b.current && (
+            <div className="text-[13.5px]">
+              <b>{b.current.model}</b>: ${b.current.price.input} per million tokens in, ${b.current.price.output} out — a typical question costs about <b>{money(b.current.per_question)}</b>.
+              {b.current.note && <div className="mt-1 text-[var(--color-warn)]">{b.current.note}</div>}
+            </div>
+          )}
+          {b.upcoming.length > 0 && <div className="text-[12.5px] text-[var(--color-text-muted)]">Announced price changes: {b.upcoming.map((u) => `${u.model} → $${u.input}/$${u.output} from ${u.from}`).join(" · ")} (applied automatically).</div>}
+        </div>
+        <div className="rounded-xl border border-[var(--color-border)] p-4">
+          <div className="text-[14.5px] font-bold">How your cap works</div>
+          <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+            <li><b className="text-[var(--color-text)]">Before every AI request</b>, TracePoint works out the most it could cost: the size of what it sends plus the longest answer allowed, at the model's published price.</li>
+            <li>If that worst case is more than <b className="text-[var(--color-text)]">what's left this month</b> (for questions, or for document reading) or more than your <b className="text-[var(--color-text)]">per-request limit</b>, the request is not sent and you're told why.</li>
+            <li>Otherwise that amount is <b className="text-[var(--color-text)]">held</b> while the request runs, then replaced by the <b className="text-[var(--color-text)]">real cost</b> from the provider's usage report.</li>
+            <li>A model with no published price is counted at its provider's highest price, so the cap is never under-estimated.</li>
+          </ol>
+          <div className="mt-3 rounded-lg bg-[color-mix(in_srgb,var(--color-warn)_10%,transparent)] p-2.5 text-[12.5px] text-[var(--color-text)]">Also set a monthly spending limit in your provider's billing settings — it protects you even outside TracePoint.</div>
+          <div className="mt-2 text-[11.5px] text-[var(--color-text-faint)]">Prices checked {b.prices_checked} from the providers' pricing pages.</div>
+        </div>
+      </div>
+      {b.rows.length > 0 && (
+        <div className="mt-6">
+          <div className="mb-2 text-[14px] font-bold">Recent AI requests · {b.calls} this month</div>
+          <div className="max-h-[320px] overflow-y-auto rounded-xl border border-[var(--color-border)]">
+            <table className="w-full text-[12.5px]">
+              <thead className="sticky top-0 bg-[var(--color-surface-2)] text-left text-[11.5px] uppercase tracking-wide text-[var(--color-text-faint)]">
+                <tr><th className="px-3 py-2">When</th><th className="px-3 py-2">For</th><th className="px-3 py-2">Model</th><th className="px-3 py-2 text-right">Tokens in / out</th><th className="px-3 py-2 text-right">Held</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2">Status</th></tr>
+              </thead>
+              <tbody>
+                {b.rows.map((r, i) => (
+                  <tr key={i} className="border-t border-[var(--color-border)]" title={r.note ?? ""}>
+                    <td className="px-3 py-1.5 whitespace-nowrap">{when(r.at)}</td>
+                    <td className="px-3 py-1.5">{({ ask: "Ask THOR", find: "Find with AI", index: "Document reading", test: "Key test" } as Record<string, string>)[r.feature] ?? r.feature}</td>
+                    <td className="px-3 py-1.5 font-mono text-[11.5px]">{r.model}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{r.input_tokens.toLocaleString()}{r.cache_read_tokens ? ` (+${r.cache_read_tokens.toLocaleString()} cached)` : ""} / {r.output_tokens.toLocaleString()}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-[var(--color-text-faint)]">${r.reserved_usd.toFixed(4)}</td>
+                    <td className="px-3 py-1.5 text-right font-semibold tabular-nums">${r.cost_usd.toFixed(4)}</td>
+                    <td className="px-3 py-1.5">{r.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </Section>
   );
 }
 

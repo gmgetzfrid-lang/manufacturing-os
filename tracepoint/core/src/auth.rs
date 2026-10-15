@@ -235,6 +235,24 @@ create table if not exists user_prefs(
   primary key(user_id, key)
 );
 create table if not exists policy(key text primary key, value text not null, updated_by text, updated_at text);
+create table if not exists ai_usage(
+  id integer primary key,
+  user_id integer not null,
+  at text not null,
+  month text not null,
+  feature text not null,
+  provider text,
+  model text,
+  input_tokens integer not null default 0,
+  output_tokens integer not null default 0,
+  cache_read_tokens integer not null default 0,
+  cache_write_tokens integer not null default 0,
+  reserved_usd real not null default 0,
+  cost_usd real not null default 0,
+  status text not null,
+  note text
+);
+create index if not exists ix_ai_usage_user_month on ai_usage(user_id, month);
 create table if not exists audit(id integer primary key, at text not null, actor text, action text not null, detail text, machine text);
 ";
 
@@ -524,6 +542,53 @@ impl UserStore {
         self.conn.execute("delete from secrets where user_id=?1 and name=?2", params![s.user.id, name])?;
         self.audit(Some(&s.user.email), "secret_deleted", name)?;
         Ok(())
+    }
+
+    // ── AI spending ledger ──────────────────────────────────────────
+    /// Spend this month: (questions $, indexing $, $ still on hold, calls).
+    /// A hold that was never settled (e.g. the PC lost power mid-call) keeps
+    /// counting at its full amount: the cap errs on the safe side.
+    pub fn ai_month(&self, user_id: i64, month: &str) -> Result<(f64, f64, f64, i64), AuthError> {
+        Ok(self.conn.query_row(
+            "select coalesce(sum(case when feature<>'index' and status<>'reserved' then cost_usd end),0),
+                    coalesce(sum(case when feature='index' and status<>'reserved' then cost_usd end),0),
+                    coalesce(sum(case when status='reserved' then reserved_usd end),0),
+                    count(*)
+             from ai_usage where user_id=?1 and month=?2",
+            params![user_id, month],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?)
+    }
+
+    pub fn ai_reserve(&self, user_id: i64, month: &str, feature: &str, provider: &str, model: &str, reserved: f64, note: &str) -> Result<i64, AuthError> {
+        self.conn.execute(
+            "insert into ai_usage(user_id,at,month,feature,provider,model,reserved_usd,status,note) values(?1,?2,?3,?4,?5,?6,?7,'reserved',?8)",
+            params![user_id, now(), month, feature, provider, model, reserved, note],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ai_settle(&self, id: i64, model: &str, input: u64, output: u64, cache_read: u64, cache_write: u64, cost: f64, status: &str, note: Option<&str>) -> Result<(), AuthError> {
+        self.conn.execute(
+            "update ai_usage set model=?2,input_tokens=?3,output_tokens=?4,cache_read_tokens=?5,cache_write_tokens=?6,cost_usd=?7,status=?8,note=coalesce(?9,note) where id=?1",
+            params![id, model, input as i64, output as i64, cache_read as i64, cache_write as i64, cost, status, note],
+        )?;
+        Ok(())
+    }
+
+    pub fn ai_usage_rows(&self, user_id: i64, limit: i64) -> Result<Vec<serde_json::Value>, AuthError> {
+        let mut st = self.conn.prepare(
+            "select at,feature,provider,model,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reserved_usd,cost_usd,status,note from ai_usage where user_id=?1 order by id desc limit ?2",
+        )?;
+        let rows = st.query_map(params![user_id, limit], |r| {
+            Ok(serde_json::json!({
+                "at": r.get::<_, String>(0)?, "feature": r.get::<_, String>(1)?, "provider": r.get::<_, Option<String>>(2)?, "model": r.get::<_, Option<String>>(3)?,
+                "input_tokens": r.get::<_, i64>(4)?, "output_tokens": r.get::<_, i64>(5)?, "cache_read_tokens": r.get::<_, i64>(6)?, "cache_write_tokens": r.get::<_, i64>(7)?,
+                "reserved_usd": r.get::<_, f64>(8)?, "cost_usd": r.get::<_, f64>(9)?, "status": r.get::<_, String>(10)?, "note": r.get::<_, Option<String>>(11)?,
+            }))
+        })?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     // ── Preferences and policy ──────────────────────────────────────

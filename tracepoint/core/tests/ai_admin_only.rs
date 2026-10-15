@@ -48,3 +48,30 @@ fn normal_users_cannot_use_ai() {
     assert_eq!(cfg["can_ai"], false);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn spending_caps_refuse_before_any_request() {
+    let dir = std::env::temp_dir().join(format!("tp-ai-cap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let svc = Service::new(Box::new(Quiet), dir.clone(), None).unwrap();
+    svc.handle("auth.login", &json!({"email": "ggetzfrid@kernenergy.com", "password": "password"})).unwrap();
+    svc.handle("auth.change_password", &json!({"current": "password", "new": "Refinery#Search2026"})).unwrap();
+    // Defaults: $25 / month, 40% for indexing, $0.50 per request.
+    let b = svc.handle("ai.budget", &json!({})).unwrap();
+    assert_eq!(b["budget_usd"], 25.0);
+    assert_eq!(b["max_request_usd"], 0.5);
+    assert!(b["prices"].as_array().unwrap().len() > 20);
+    // A zero budget: refused with a plain explanation, no network call.
+    svc.handle("ai.budget.set", &json!({"ai_budget_usd": 0.0})).unwrap();
+    let e = svc.handle("ai.test", &json!({"provider": "anthropic", "key": "sk-ant-not-real", "model": "claude-sonnet-5-5"})).unwrap_err();
+    assert_eq!(e.code, 402, "{}", e.message);
+    assert!(e.message.contains("over your AI budget"), "{}", e.message);
+    // A per-request limit below the worst case.
+    svc.handle("ai.budget.set", &json!({"ai_budget_usd": 25.0, "ai_max_request_usd": 0.01})).unwrap();
+    let e = svc.handle("ai.test", &json!({"provider": "anthropic", "key": "sk-ant-not-real", "model": "claude-opus-5-5"})).unwrap_err();
+    assert_eq!(e.code, 402);
+    assert!(e.message.contains("per-request limit"), "{}", e.message);
+    // Out-of-range settings are rejected.
+    assert_eq!(svc.handle("ai.budget.set", &json!({"ai_index_share_pct": 150.0})).unwrap_err().code, 400);
+    let _ = std::fs::remove_dir_all(&dir);
+}

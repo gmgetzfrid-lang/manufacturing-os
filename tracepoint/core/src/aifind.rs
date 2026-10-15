@@ -54,7 +54,10 @@ pub struct FindResult {
     pub value: Value,
 }
 
-pub fn find(e: &Engine, choice: &AiChoice, key: &str, query: &str, history: &[Msg], status: &dyn Fn(&str)) -> Result<FindResult, AiError> {
+/// One AI call, with the caller's spending cap applied: (choice, system, messages, max_tokens).
+pub type Call<'a> = &'a dyn Fn(&AiChoice, &str, &[Msg], u32) -> Result<ai::ChatResult, AiError>;
+
+pub fn find(e: &Engine, choice: &AiChoice, call: Call, query: &str, history: &[Msg], status: &dyn Fn(&str)) -> Result<FindResult, AiError> {
     let t0 = std::time::Instant::now();
     // Quick, inexpensive calls: lowest reasoning level when the model has levels.
     let fast = AiChoice { provider: choice.provider, model: choice.model.clone(), reasoning: choice.reasoning.as_ref().map(|_| "low".to_string()) };
@@ -65,7 +68,7 @@ pub fn find(e: &Engine, choice: &AiChoice, key: &str, query: &str, history: &[Ms
     status("Understanding your request…");
     let mut msgs: Vec<Msg> = history.to_vec();
     msgs.push(Msg { role: "user".into(), content: query.to_string() });
-    let plan = ai::chat(&fast, key, &plan_prompt(e), &msgs, 1500, &|| false, &mut |_| {})?;
+    let plan = call(&fast, &plan_prompt(e), &msgs, 1500)?;
     tokens_in += plan.input_tokens;
     tokens_out += plan.output_tokens;
     let pv = extract_json(&plan.text).unwrap_or_else(|| json!({"understanding": query, "searches": [{"query": query, "why": "as written"}]}));
@@ -121,7 +124,7 @@ pub fn find(e: &Engine, choice: &AiChoice, key: &str, query: &str, history: &[Ms
         .join("\n");
     let mut pick_msgs = history.to_vec();
     pick_msgs.push(Msg { role: "user".into(), content: format!("Request: {query}\n\nCandidates:\n{listing}") });
-    let pick = ai::chat(&fast, key, PICK_PROMPT, &pick_msgs, 1500, &|| false, &mut |_| {})?;
+    let pick = call(&fast, PICK_PROMPT, &pick_msgs, 1500)?;
     tokens_in += pick.input_tokens;
     tokens_out += pick.output_tokens;
     let kv = extract_json(&pick.text).unwrap_or_else(|| json!({"picks": [], "message": pick.text}));

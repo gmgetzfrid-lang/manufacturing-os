@@ -10,6 +10,7 @@ pub mod graph;
 pub mod guard;
 pub mod index;
 pub mod nl;
+pub mod pricing;
 pub mod selftest;
 pub mod service;
 pub mod snapshot;

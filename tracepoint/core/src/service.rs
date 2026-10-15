@@ -868,14 +868,26 @@ impl Service {
             }),
             "ai.models" => {
                 let (provider, key) = self.ai_key_for(a)?;
-                Ok(serde_json::to_value(ai::list_models(provider, &key)?).unwrap())
+                let models = ai::list_models(provider, &key)?;
+                // Each model with its published price and what a typical question costs.
+                let out: Vec<Value> = models
+                    .into_iter()
+                    .map(|m| {
+                        let q = self.price_for(provider, &m.id, 6000);
+                        let mut v = serde_json::to_value(&m).unwrap();
+                        v["price"] = json!({"input": q.price.input, "output": q.price.output, "basis": q.basis, "note": q.note, "per_question": crate::pricing::cost(&q.price, 6000, 1000, 0, 0)});
+                        v
+                    })
+                    .collect();
+                Ok(Value::Array(out))
             }
             "ai.test" => {
                 let (provider, key) = self.ai_key_for(a)?;
                 let choice = AiChoice { provider, model: s(a, "model"), reasoning: a.get("reasoning").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string()) };
                 let t0 = std::time::Instant::now();
-                let r = ai::test(&choice, &key)?;
-                Ok(json!({"ok": true, "reply": r.text, "model": r.model, "reasoning_used": r.reasoning_used, "ms": t0.elapsed().as_millis()}))
+                let msgs = vec![ai::Msg { role: "user".into(), content: "Reply with exactly: TracePoint connected".into() }];
+                let (r, cost) = self.ai_call("test", &choice, &key, "You are a connection test. Reply with the exact words requested.", &msgs, 2000, &|| false, &mut |_| {})?;
+                Ok(json!({"ok": true, "reply": r.text, "model": r.model, "reasoning_used": r.reasoning_used, "ms": t0.elapsed().as_millis(), "cost_usd": cost}))
             }
             "ai.save" => {
                 // ai_key_for enforces: administrators only, AI allowed, provider allowed.
@@ -897,6 +909,47 @@ impl Service {
                 users.delete_secret(sess, "ai_key")?;
                 Ok(json!({"ok": true}))
             }),
+            "ai.budget" => self.with_session(|sess| {
+                if !sess.is_admin() {
+                    return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
+                }
+                let (budget, share, max_request) = self.ai_limits(sess);
+                let month = auth::now()[..7].to_string();
+                let users = self.users.lock().unwrap();
+                let (q, i, held, calls) = users.ai_month(sess.user.id, &month)?;
+                let rows = users.ai_usage_rows(sess.user.id, 300)?;
+                let prefs: std::collections::HashMap<String, String> = users.prefs(sess)?.into_iter().collect();
+                drop(users);
+                let day = auth::now()[..10].to_string();
+                let current = prefs.get("ai_provider").and_then(|p| Provider::parse(p)).map(|p| {
+                    let m = prefs.get("ai_model").cloned().unwrap_or_default();
+                    let qt = self.price_for(p, &m, 6000);
+                    json!({"provider": p.as_str(), "model": m, "price": qt.price, "basis": qt.basis, "note": qt.note, "per_question": crate::pricing::cost(&qt.price, 6000, 1000, 0, 0)})
+                });
+                Ok(json!({
+                    "budget_usd": budget, "index_share_pct": share * 100.0, "max_request_usd": max_request, "month": month,
+                    "spent_questions_usd": q, "spent_index_usd": i, "held_usd": held, "calls": calls,
+                    "cap_questions_usd": budget * (1.0 - share), "cap_index_usd": budget * share,
+                    "current": current, "prices": crate::pricing::table(&day), "upcoming": crate::pricing::upcoming(&day),
+                    "prices_checked": crate::pricing::PRICES_CHECKED, "sources": crate::pricing::SOURCES, "rows": rows,
+                }))
+            }),
+            "ai.budget.set" => self.with_session(|sess| {
+                if !sess.is_admin() {
+                    return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
+                }
+                let users = self.users.lock().unwrap();
+                for (k, lo, hi) in [("ai_budget_usd", 0.0, 10_000.0), ("ai_index_share_pct", 0.0, 100.0), ("ai_max_request_usd", 0.01, 100.0)] {
+                    if let Some(v) = a.get(k).and_then(|x| x.as_f64()) {
+                        if !(lo..=hi).contains(&v) {
+                            return Err(ApiError::new(400, format!("{k} must be between {lo} and {hi}.")));
+                        }
+                        users.set_pref(sess, k, &v.to_string())?;
+                    }
+                }
+                users.audit(Some(&sess.user.email), "ai_budget_set", &a.to_string())?;
+                Ok(json!({"ok": true}))
+            }),
             "search.ai" => {
                 let (choice, key) = self.current_ai()?;
                 let e = self.engine()?;
@@ -906,8 +959,15 @@ impl Service {
                     return Err(ApiError::new(400, "Describe what you're looking for."));
                 }
                 let plat = &self.platform;
-                let r = crate::aifind::find(&e, &choice, &key, &q, &history, &|m| plat.emit("aifind", json!({"status": m})))?;
-                self.audit("ai_find", &format!("{} / {}", choice.provider.as_str(), choice.model));
+                let spent = std::cell::Cell::new(0.0f64);
+                let call = |c: &AiChoice, sys: &str, msgs: &[ai::Msg], max: u32| {
+                    let (r, cost) = self.ai_call("find", c, &key, sys, msgs, max, &|| false, &mut |_| {})?;
+                    spent.set(spent.get() + cost);
+                    Ok(r)
+                };
+                let mut r = crate::aifind::find(&e, &choice, &call, &q, &history, &|m| plat.emit("aifind", json!({"status": m})))?;
+                r.value["cost_usd"] = json!(spent.get());
+                self.audit("ai_find", &format!("{} / {} · ${:.4}", choice.provider.as_str(), choice.model, spent.get()));
                 Ok(r.value)
             }
             "ai.cancel" => {
@@ -984,6 +1044,80 @@ impl Service {
                 Ok(json!({"stopping": true}))
             }
             _ => Err(ApiError::new(404, format!("Unknown command {cmd}"))),
+        }
+    }
+
+    // ── AI spending caps ───────────────────────────────────────────────
+
+    /// The signed-in admin's limits: monthly budget, share for indexing,
+    /// most one request may cost. Defaults: $25 / 40% / $0.50.
+    fn ai_limits(&self, sess: &Session) -> (f64, f64, f64) {
+        let prefs: std::collections::HashMap<String, String> = self.users.lock().unwrap().prefs(sess).unwrap_or_default().into_iter().collect();
+        let f = |k: &str, d: f64| prefs.get(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(d);
+        (f("ai_budget_usd", 25.0), f("ai_index_share_pct", 40.0).min(100.0) / 100.0, f("ai_max_request_usd", 0.50))
+    }
+
+    fn price_for(&self, provider: Provider, model: &str, prompt_tokens: u64) -> crate::pricing::Quote {
+        let day = &auth::now()[..10];
+        let ov = self.users.lock().unwrap().policy(&format!("price:{model}")).ok().flatten().and_then(|v| {
+            let (i, o) = v.split_once(',')?;
+            Some((i.trim().parse().ok()?, o.trim().parse().ok()?))
+        });
+        crate::pricing::quote(provider, model, day, prompt_tokens, ov)
+    }
+
+    /// Every AI call goes through here. Before: the worst case (estimated
+    /// input + the longest answer allowed, at the model's price) must fit the
+    /// per-request limit and what's left of this month's budget for that kind
+    /// of use, and is held. After: the real cost from the provider's usage
+    /// report is recorded and the hold released.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ai_call(&self, feature: &'static str, choice: &AiChoice, key: &str, system: &str, msgs: &[ai::Msg], max_tokens: u32, cancel: &dyn Fn() -> bool, on_delta: &mut dyn FnMut(&str)) -> Result<(ai::ChatResult, f64), ai::AiError> {
+        let deny = |m: String| ai::AiError { message: m, status: Some(402) };
+        let (uid, (budget, index_share, max_request)) = self
+            .with_session(|s| Ok((s.user.id, self.ai_limits(s))))
+            .map_err(|e| ai::AiError { message: e.message, status: Some(e.code) })?;
+        let chars = system.len() + msgs.iter().map(|m| m.content.len()).sum::<usize>();
+        let est_in = crate::pricing::estimate_tokens(chars);
+        let max_out = ai::effective_max_tokens(choice, max_tokens) as u64;
+        let q = self.price_for(choice.provider, &choice.model, est_in);
+        let worst = crate::pricing::worst_case(&q.price, est_in, max_out);
+        if worst > max_request {
+            return Err(deny(format!(
+                "This request could cost up to ${worst:.2}, over your per-request limit of ${max_request:.2}. Use a cheaper model or raise the limit in Profile › AI › Spending."
+            )));
+        }
+        let month = auth::now()[..7].to_string();
+        let (spent_q, spent_i, held, _) = self.users.lock().unwrap().ai_month(uid, &month).map_err(|e| deny(e.0))?;
+        let (cap, spent, label) = if feature == "index" { (budget * index_share, spent_i, "AI reading of documents") } else { (budget * (1.0 - index_share), spent_q, "questions") };
+        let left = cap - spent - held;
+        if worst > left {
+            return Err(deny(format!(
+                "This would go over your AI budget: it could cost up to ${worst:.2}, and ${:.2} is left of ${cap:.2} for {label} this month (resets on the 1st). Raise the budget in Profile › AI › Spending.",
+                left.max(0.0)
+            )));
+        }
+        let note = q.note.clone().unwrap_or_default();
+        let id = self.users.lock().unwrap().ai_reserve(uid, &month, feature, choice.provider.as_str(), &choice.model, worst, &note).map_err(|e| deny(e.0))?;
+        match ai::chat(choice, key, system, msgs, max_tokens, cancel, on_delta) {
+            Ok(r) => {
+                let qa = self.price_for(choice.provider, &r.model, r.input_tokens + r.cache_read_tokens + r.cache_write_tokens);
+                let cost = crate::pricing::cost(&qa.price, r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_write_tokens);
+                let _ = self.users.lock().unwrap().ai_settle(id, &r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_write_tokens, cost, "charged", None);
+                self.platform.emit("ai_spend", json!({"feature": feature, "cost_usd": cost}));
+                Ok((r, cost))
+            }
+            Err(e) => {
+                // The provider refused it (HTTP error): nothing billed. The
+                // connection dropped mid-answer: charge the input estimate.
+                let (status, cost, note) = if e.status.is_some() {
+                    ("released", 0.0, "Provider returned an error; not billed")
+                } else {
+                    ("uncertain", est_in as f64 * q.price.input / 1_000_000.0, "Connection dropped; charged the estimated input cost")
+                };
+                let _ = self.users.lock().unwrap().ai_settle(id, &choice.model, 0, 0, 0, 0, cost, status, Some(note));
+                Err(e)
+            }
         }
     }
 

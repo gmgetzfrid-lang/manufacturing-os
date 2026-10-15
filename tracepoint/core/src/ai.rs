@@ -342,10 +342,31 @@ pub struct Msg {
 pub struct ChatResult {
     pub text: String,
     pub model: String,
+    /// Input tokens billed at the normal rate (cache reads/writes excluded).
     pub input_tokens: u64,
+    /// Output tokens, including any thinking/reasoning tokens (billed as output).
     pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
     pub stop_reason: String,
     pub reasoning_used: Option<String>,
+}
+
+/// The output-token ceiling actually sent (older Claude models raise it to
+/// fit a thinking budget). Spending caps reserve against this.
+pub fn effective_max_tokens(choice: &AiChoice, max_tokens: u32) -> u32 {
+    let legacy_budget = choice.model.starts_with("claude-haiku-4") || choice.model.starts_with("claude-sonnet-4-5") || choice.model.starts_with("claude-opus-4-5") || choice.model.starts_with("claude-3");
+    match (&choice.reasoning, choice.provider) {
+        (Some(r), Provider::Anthropic) if legacy_budget => {
+            let budget = match r.as_str() {
+                "low" => 2048,
+                "medium" => 6000,
+                _ => 12000,
+            };
+            max_tokens.max(budget + 4000)
+        }
+        _ => max_tokens,
+    }
 }
 
 /// Models where Anthropic's refusal fallback (server-side, "default" routing)
@@ -388,6 +409,11 @@ fn chat_anthropic(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], 
         "system": system,
         "messages": messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect::<Vec<_>>(),
     });
+    // Long, repeated instructions (Ask THOR, AI find) are cached for 5 minutes:
+    // later calls read them at a tenth of the input price.
+    if system.len() > 4000 {
+        body["system"] = json!([{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]);
+    }
     let legacy_budget = choice.model.starts_with("claude-haiku-4") || choice.model.starts_with("claude-sonnet-4-5") || choice.model.starts_with("claude-opus-4-5") || choice.model.starts_with("claude-3");
     if let Some(r) = &choice.reasoning {
         if legacy_budget {
@@ -426,7 +452,10 @@ fn chat_anthropic(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], 
         let Ok(v) = serde_json::from_str::<Value>(d) else { return true };
         match v["type"].as_str().unwrap_or("") {
             "message_start" => {
-                res.input_tokens = v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(0);
+                let u = &v["message"]["usage"];
+                res.input_tokens = u["input_tokens"].as_u64().unwrap_or(0);
+                res.cache_read_tokens = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                res.cache_write_tokens = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                 if let Some(m) = v["message"]["model"].as_str() {
                     res.model = m.to_string();
                 }
@@ -503,7 +532,10 @@ fn chat_openai(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], max
             res.stop_reason = r.to_string();
         }
         if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
-            res.input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0);
+            // prompt_tokens includes cached tokens; completion_tokens includes reasoning.
+            let cached = u.pointer("/prompt_tokens_details/cached_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            res.input_tokens = u["prompt_tokens"].as_u64().unwrap_or(0).saturating_sub(cached);
+            res.cache_read_tokens = cached;
             res.output_tokens = u["completion_tokens"].as_u64().unwrap_or(0);
         }
         true
@@ -562,8 +594,11 @@ fn chat_gemini(choice: &AiChoice, key: &str, system: &str, messages: &[Msg], max
             res.stop_reason = r.to_string();
         }
         if let Some(u) = v.get("usageMetadata") {
-            res.input_tokens = u["promptTokenCount"].as_u64().unwrap_or(res.input_tokens);
-            res.output_tokens = u["candidatesTokenCount"].as_u64().unwrap_or(res.output_tokens);
+            // Thinking tokens are billed as output but reported separately.
+            let cached = u["cachedContentTokenCount"].as_u64().unwrap_or(0);
+            res.input_tokens = u["promptTokenCount"].as_u64().unwrap_or(res.input_tokens + res.cache_read_tokens).saturating_sub(cached);
+            res.cache_read_tokens = cached;
+            res.output_tokens = u["candidatesTokenCount"].as_u64().unwrap_or(0) + u["thoughtsTokenCount"].as_u64().unwrap_or(0);
         }
         true
     })?;
