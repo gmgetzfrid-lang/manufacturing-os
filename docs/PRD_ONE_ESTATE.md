@@ -331,6 +331,18 @@ only, not in production as of 2026-10-14). "Done when" is what to test.
   position is fixed; pressing anywhere turns the view, scrolling zooms
   toward the pointer, "Whole site" frames everything, and nothing drifts.
   Labels follow how close each node is. "Web" (free physics) is a switch.
+- On the globe documents are folded into counts ("V-14 · 12 docs") and
+  open on click; more than 14 at once split into named series ("EP-10
+  (36)") with one-offs as ranges. Opening never moves anything else.
+  Nodes are crisp discs coloured by kind (legend with counts), capped in
+  screen size; labels are placed on screen without overlapping, most
+  important first. Selecting fades everything outside its family.
+- Every link carries a one-sentence reason (registry, equipment column,
+  folder, resolver summary, project list, flow, mention). Pointing at a
+  line shows it; clicking keeps it with both ends one click away; the side
+  panel lists each connection with its reason.
+- The globe shows gaps: equipment with no documents, documents placed
+  nowhere (under "Not placed yet", by library, openable).
 - The drawing reader cuts a sheet into tiles of about a letter page each
   (an E-size sheet is 4 × 4), splits callouts for several items (P-101A/B),
   keeps whatever was complete when an answer is cut off, and treats an

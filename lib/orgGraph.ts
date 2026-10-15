@@ -49,6 +49,9 @@ export interface GraphEdge {
   a: string;             // node id
   b: string;             // node id
   type: GraphEdgeType;
+  /** Why the two are linked, in one sentence — shown when a line is
+   *  hovered or clicked and in the node's connections list. */
+  why?: string;
 }
 
 export interface OrgGraph {
@@ -180,12 +183,13 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   const edges: GraphEdge[] = [];
   const edgeSeen = new Set<string>();
 
-  const addEdge = (a: string, b: string, type: GraphEdgeType) => {
+  const L = (id: string) => nodes.get(id)?.label ?? id;
+  const addEdge = (a: string, b: string, type: GraphEdgeType, why?: string) => {
     if (a === b || !nodes.has(a) || !nodes.has(b)) return;
     const key = a < b ? `${a}|${b}|${type}` : `${b}|${a}|${type}`;
     if (edgeSeen.has(key)) return;
     edgeSeen.add(key);
-    edges.push({ a, b, type });
+    edges.push(why ? { a, b, type, why } : { a, b, type });
     nodes.get(a)!.degree += 1;
     nodes.get(b)!.degree += 1;
   };
@@ -261,17 +265,17 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   }
 
   // ── Edges ──────────────────────────────────────────────────────────────
-  for (const u of units) addEdge(`unit:${u.id}`, `plant:${u.plant_id}`, "unit");
+  for (const u of units) addEdge(`unit:${u.id}`, `plant:${u.plant_id}`, "unit", `${u.name} is part of ${L(`plant:${u.plant_id}`)}`);
   for (const a of assets) {
-    if (a.unit_code) addEdge(`asset:${a.id}`, `cbunit:${a.unit_code}`, "unit");
-    if (a.unit_id) addEdge(`asset:${a.id}`, `unit:${a.unit_id}`, "unit");
+    if (a.unit_code) addEdge(`asset:${a.id}`, `cbunit:${a.unit_code}`, "unit", `The equipment registry files ${a.tag} under ${L(`cbunit:${a.unit_code}`)} (unit ${a.unit_code})`);
+    if (a.unit_id) addEdge(`asset:${a.id}`, `unit:${a.unit_id}`, "unit", `The equipment registry files ${a.tag} under ${L(`unit:${a.unit_id}`)}`);
   }
   for (const d of docs) {
-    if (d.unit_id) addEdge(`doc:${d.id}`, `unit:${d.unit_id}`, "unit");
-    addEdge(`doc:${d.id}`, `lib:${d.library_id}`, "library");
+    if (d.unit_id) addEdge(`doc:${d.id}`, `unit:${d.unit_id}`, "unit", `The document's unit field says ${L(`unit:${d.unit_id}`)}`);
+    addEdge(`doc:${d.id}`, `lib:${d.library_id}`, "library", `Filed in the ${L(`lib:${d.library_id}`)} library`);
   }
-  for (const r of docAssets.rows) addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag");
-  for (const r of projectDocs.rows) addEdge(`proj:${r.project_id}`, `doc:${r.document_id}`, "project");
+  for (const r of docAssets.rows) addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag", `${L(`asset:${r.asset_id}`)} is tagged on ${L(`doc:${r.document_id}`)}`);
+  for (const r of projectDocs.rows) addEdge(`proj:${r.project_id}`, `doc:${r.document_id}`, "project", `${L(`doc:${r.document_id}`)} is listed in project ${L(`proj:${r.project_id}`)}`);
 
   // ── One Estate edges ──────────────────────────────────────────────────
   // Declared and resolved relationships with provenance (estate_edges):
@@ -282,12 +286,12 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   // A pre-20261020 org contributes nothing.
   try {
     const [edgesRes, foldersRes, docFoldersRes] = await Promise.all([
-      supabase.from("estate_edges").select("a, b, type").eq("org_id", orgId).eq("status", "applied")
+      supabase.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied")
         .in("type", ["project_scope", "in_project", "belongs_to_unit", "about_asset", "tagged_to"]).limit(8000),
       supabase.from("collections").select("id, parent_id").eq("org_id", orgId).limit(20000),
       supabase.from("documents").select("id, collection_id").eq("org_id", orgId).not("collection_id", "is", null).limit(DOC_CAP),
     ]);
-    const estate = ((edgesRes.data as Array<{ a: string; b: string; type: string }> | null) ?? []);
+    const estate = ((edgesRes.data as Array<{ a: string; b: string; type: string; summary?: string | null }> | null) ?? []);
     const parentOf = new Map<string, string | null>();
     for (const c of (foldersRes.data as Array<{ id: string; parent_id: string | null }> | null) ?? []) parentOf.set(c.id, c.parent_id);
     const folderUnit = new Map<string, string>();
@@ -302,9 +306,10 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
         continue;
       }
       if (!nodes.has(e.a) || !nodes.has(e.b)) continue;
-      if (e.type === "project_scope" || e.type === "in_project") addEdge(e.a.startsWith("proj:") ? e.a : e.b, e.a.startsWith("proj:") ? e.b : e.a, "project");
-      else if (e.type === "belongs_to_unit") addEdge(e.a, e.b, "unit");
-      else if (e.type === "tagged_to") addEdge(e.a, e.b, "tag");
+      const why = e.summary ?? undefined;
+      if (e.type === "project_scope" || e.type === "in_project") addEdge(e.a.startsWith("proj:") ? e.a : e.b, e.a.startsWith("proj:") ? e.b : e.a, "project", why);
+      else if (e.type === "belongs_to_unit") addEdge(e.a, e.b, "unit", why);
+      else if (e.type === "tagged_to") addEdge(e.a, e.b, "tag", why);
     }
     if (folderUnit.size || folderProject.size || folderAsset.size) {
       const nearest = (fid: string | null, map: Map<string, string>): string | null => {
@@ -316,19 +321,19 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       for (const d of (docFoldersRes.data as Array<{ id: string; collection_id: string | null }> | null) ?? []) {
         const id = `doc:${d.id}`;
         if (!nodes.has(id)) continue;
-        const u = nearest(d.collection_id, folderUnit); if (u && nodes.has(u)) addEdge(id, u, "unit");
-        const p = nearest(d.collection_id, folderProject); if (p && nodes.has(p)) addEdge(p, id, "project");
-        const a = nearest(d.collection_id, folderAsset); if (a && nodes.has(a)) addEdge(id, a, "tag");
+        const u = nearest(d.collection_id, folderUnit); if (u && nodes.has(u)) addEdge(id, u, "unit", `${L(id)} is filed under a folder linked to ${L(u)}`);
+        const p = nearest(d.collection_id, folderProject); if (p && nodes.has(p)) addEdge(p, id, "project", `${L(id)} is filed under a folder linked to project ${L(p)}`);
+        const a = nearest(d.collection_id, folderAsset); if (a && nodes.has(a)) addEdge(id, a, "tag", `${L(id)} is filed in ${L(a)}'s folder`);
       }
     }
   } catch { /* estate edges are optional */ }
   for (const r of related.rows) {
     if (r.kind === "document" && r.target_document_id) {
-      addEdge(`doc:${r.document_id}`, `doc:${r.target_document_id}`, "related");
+      addEdge(`doc:${r.document_id}`, `doc:${r.target_document_id}`, "related", `Someone pinned ${L(`doc:${r.target_document_id}`)} as related to ${L(`doc:${r.document_id}`)}`);
     }
   }
   for (const r of supersessions.rows) {
-    addEdge(`doc:${r.superseded_doc_id}`, `doc:${r.replacement_doc_id}`, "supersession");
+    addEdge(`doc:${r.superseded_doc_id}`, `doc:${r.replacement_doc_id}`, "supersession", `${L(`doc:${r.superseded_doc_id}`)} is superseded by ${L(`doc:${r.replacement_doc_id}`)}`);
   }
 
   // Plot-plan markers: the spatial layer joins the web — an asset pinned on
@@ -336,7 +341,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   for (const pp of optional<{ id: string; name: string; markers: unknown }>(plotPlansRes)) {
     const markers = Array.isArray(pp.markers) ? pp.markers : [];
     for (const mk of markers as Array<{ assetId?: string }>) {
-      if (mk?.assetId) addEdge(`plot:${pp.id}`, `asset:${mk.assetId}`, "plot");
+      if (mk?.assetId) addEdge(`plot:${pp.id}`, `asset:${mk.assetId}`, "plot", `${L(`asset:${mk.assetId}`)} is pinned on plot plan ${pp.name}`);
     }
   }
 
@@ -346,7 +351,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     kind === "asset" ? `asset:${ref}` : `cbunit:${ref}`;
   for (const f of flows.rows) {
     if (f.status !== "confirmed") continue;
-    addEdge(flowNodeId(f.from_kind, f.from_ref), flowNodeId(f.to_kind, f.to_ref), "flow");
+    addEdge(flowNodeId(f.from_kind, f.from_ref), flowNodeId(f.to_kind, f.to_ref), "flow", `${L(flowNodeId(f.from_kind, f.from_ref))} feeds ${L(flowNodeId(f.to_kind, f.to_ref))} (a confirmed process flow)`);
   }
 
   // Mentions. Drawn as their own edge type rather than folded into "tag",
@@ -362,7 +367,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     const docId = m.document_id
       ?? (m.knowledge_document_id ? mirrorOf.get(m.knowledge_document_id) : undefined);
     if (!docId) { unmappedMentions += 1; continue; }
-    addEdge(`doc:${docId}`, `asset:${m.asset_id}`, "mention");
+    addEdge(`doc:${docId}`, `asset:${m.asset_id}`, "mention", `${L(`doc:${docId}`)} mentions ${L(`asset:${m.asset_id}`)} in its text`);
   }
   if (mentions.capped) truncations.push("Mention links capped — densest web shown.");
   if (unmappedMentions > 0) {

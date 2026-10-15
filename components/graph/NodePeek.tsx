@@ -28,6 +28,8 @@ export interface NodePeekProps {
   orgId: string;
   /** Nodes one hop away, for walking the web without leaving. */
   connections: GraphNode[];
+  /** Why each connection exists, by the other node's id. */
+  reasons?: Map<string, string>;
   /** True when the map is currently collapsed to a neighbourhood. */
   focused: boolean;
   /** How many steps back the peek can go. */
@@ -47,7 +49,7 @@ export interface NodePeekProps {
 }
 
 export default function NodePeek({
-  node, orgId, connections, focused, historyDepth,
+  node, orgId, connections, reasons, focused, historyDepth,
   colorFor, labelFor, onSelect, onBack, onGoIn, onGoOut, onOpen, onPath, onConnect, onClose,
 }: NodePeekProps) {
   const [evidence, setEvidence] = React.useState<MentionEvidence[] | null>(null);
@@ -150,10 +152,13 @@ export default function NodePeek({
             <div className="space-y-0.5">
               {connections.map((c) => (
                 <button key={c.id} onClick={() => onSelect(c)}
-                  className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left group">
-                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorFor(c.type) }} />
-                  <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
-                  <CornerDownLeft className="w-3 h-3 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
+                  className="w-full flex items-start gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left group">
+                  <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorFor(c.type) }} />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-[11px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
+                    {reasons?.get(c.id) && <span className="block text-[10px] text-[var(--color-text-muted)] leading-snug">{reasons.get(c.id)}</span>}
+                  </span>
+                  <CornerDownLeft className="mt-0.5 w-3 h-3 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
                 </button>
               ))}
             </div>
