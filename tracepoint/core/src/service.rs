@@ -4,7 +4,6 @@
 //! Platform-neutral. The Windows app plugs in a `Platform` that opens files,
 //! shows dialogs and pushes events; the dev server plugs in a stub.
 
-use crate::ai::{self, AiChoice, Provider};
 use crate::auth::{self, Role, Session, UserStore};
 use crate::engine::{Engine, SearchRequest};
 use crate::guard::{DriveResolver, Guard};
@@ -12,7 +11,6 @@ use crate::index::Index;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -63,7 +61,6 @@ pub struct Service {
     profiles_path: PathBuf,
     session: Mutex<Option<Session>>,
     config: RwLock<LocalConfig>,
-    chat_cancel: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -81,11 +78,6 @@ impl ApiError {
 impl From<auth::AuthError> for ApiError {
     fn from(e: auth::AuthError) -> Self {
         ApiError::new(400, e.0)
-    }
-}
-impl From<ai::AiError> for ApiError {
-    fn from(e: ai::AiError) -> Self {
-        ApiError::new(e.status.unwrap_or(502), e.message)
     }
 }
 impl From<crate::guard::GuardError> for ApiError {
@@ -132,7 +124,6 @@ impl Service {
             profiles_path,
             session: Mutex::new(None),
             config: RwLock::new(config),
-            chat_cancel: AtomicBool::new(false),
         }))
     }
 
@@ -263,17 +254,13 @@ impl Service {
             Some(_) => "ready",
         };
         let users = self.users.lock().unwrap();
-        let ai_enabled = users.policy("ai_enabled").ok().flatten().map(|v| v == "true").unwrap_or(true);
-        let allowed = users.policy("ai_providers").ok().flatten().unwrap_or_else(|| "anthropic,openai,gemini".into());
         let prefs: Vec<(String, String)> = sess.as_ref().and_then(|s| users.prefs(s).ok()).unwrap_or_default();
         let idx = self.index_state.read().unwrap().clone();
         json!({
             "stage": stage,
             "version": VERSION,
             "user": sess.as_ref().map(|s| &s.user),
-            "keys_unlocked": sess.as_ref().map(|s| s.unlocked()).unwrap_or(false),
             "index": idx,
-            "policy": {"ai_enabled": ai_enabled, "ai_providers": allowed.split(',').collect::<Vec<_>>()},
             "prefs": prefs.into_iter().collect::<std::collections::HashMap<_, _>>(),
             "profiles_location": self.profiles_path.display().to_string(),
         })
@@ -526,7 +513,6 @@ impl Service {
                     a.get("name").and_then(|x| x.as_str()),
                     role,
                     a.get("disabled").and_then(|x| x.as_bool()),
-                    a.get("can_ai").and_then(|x| x.as_bool()),
                 )?;
                 Ok(serde_json::to_value(u).unwrap())
             }),
@@ -537,14 +523,6 @@ impl Service {
             "admin.user.delete" => self.with_session(|sess| {
                 self.users.lock().unwrap().delete_user(sess, a["id"].as_i64().unwrap_or(0))?;
                 Ok(json!({"ok": true}))
-            }),
-            "admin.policy.set" => self.with_session(|sess| {
-                let k = s(a, "key");
-                if !["ai_enabled", "ai_providers", "ai_send_documents"].contains(&k.as_str()) {
-                    return Err(ApiError::new(400, "Unknown policy."));
-                }
-                self.users.lock().unwrap().set_policy(sess, &k, &s(a, "value"))?;
-                Ok(self.state())
             }),
             "admin.audit" => self.with_session(|sess| {
                 if !sess.is_admin() {
@@ -576,71 +554,8 @@ impl Service {
                 Ok(json!({"team_folder": folder, "restart_required": true}))
             }),
 
-            // ── AI ───────────────────────────────────────────────────
-            "ai.providers" => Ok(serde_json::to_value(ai::providers()).unwrap()),
-            "ai.get" => self.with_session(|sess| {
-                let users = self.users.lock().unwrap();
-                let prefs: std::collections::HashMap<String, String> = users.prefs(sess)?.into_iter().collect();
-                let key = users.get_secret(sess, "ai_key")?;
-                Ok(json!({
-                    "provider": prefs.get("ai_provider"), "model": prefs.get("ai_model"), "reasoning": prefs.get("ai_reasoning"),
-                    "key_mask": key.as_ref().map(|k| ai::mask_key(k)), "has_key": key.is_some(), "can_ai": sess.user.can_ai,
-                }))
-            }),
-            "ai.models" => {
-                let (provider, key) = self.ai_key_for(a)?;
-                Ok(serde_json::to_value(ai::list_models(provider, &key)?).unwrap())
-            }
-            "ai.test" => {
-                let (provider, key) = self.ai_key_for(a)?;
-                let choice = AiChoice { provider, model: s(a, "model"), reasoning: a.get("reasoning").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string()) };
-                let t0 = std::time::Instant::now();
-                let r = ai::test(&choice, &key)?;
-                Ok(json!({"ok": true, "reply": r.text, "model": r.model, "reasoning_used": r.reasoning_used, "ms": t0.elapsed().as_millis()}))
-            }
-            "ai.save" => {
-                let (provider, key) = self.ai_key_for(a)?;
-                self.with_session(|sess| {
-                    let users = self.users.lock().unwrap();
-                    if a.get("key").and_then(|k| k.as_str()).map(|k| !k.trim().is_empty()).unwrap_or(false) {
-                        users.put_secret(sess, "ai_key", key.trim())?;
-                    }
-                    users.set_pref(sess, "ai_provider", provider.as_str())?;
-                    users.set_pref(sess, "ai_model", &s(a, "model"))?;
-                    users.set_pref(sess, "ai_reasoning", &s(a, "reasoning"))?;
-                    users.audit(Some(&sess.user.email), "ai_configured", &format!("{} / {} / {}", provider.as_str(), s(a, "model"), s(a, "reasoning")))?;
-                    Ok(json!({"ok": true}))
-                })
-            }
-            "ai.delete" => self.with_session(|sess| {
-                let users = self.users.lock().unwrap();
-                users.delete_secret(sess, "ai_key")?;
-                Ok(json!({"ok": true}))
-            }),
-            "search.ai" => {
-                let (choice, key) = self.current_ai()?;
-                let e = self.engine()?;
-                let history: Vec<ai::Msg> = a.get("history").and_then(|h| serde_json::from_value(h.clone()).ok()).unwrap_or_default();
-                let q = s(a, "query");
-                if q.trim().is_empty() {
-                    return Err(ApiError::new(400, "Describe what you're looking for."));
-                }
-                let plat = &self.platform;
-                let r = crate::aifind::find(&e, &choice, &key, &q, &history, &|m| plat.emit("aifind", json!({"status": m})))?;
-                self.audit("ai_find", &format!("{} / {}", choice.provider.as_str(), choice.model));
-                Ok(r.value)
-            }
-            "ai.cancel" => {
-                self.chat_cancel.store(true, Ordering::SeqCst);
-                Ok(json!({"ok": true}))
-            }
-
             // ── About / for IT ───────────────────────────────────────
             "about" => Ok(self.about()),
-            "chat.threads" | "library.list" => {
-                self.with_session(|_| Ok(()))?;
-                Ok(json!([]))
-            }
             "indexer.status" => {
                 self.with_session(|_| Ok(()))?;
                 Ok(json!({"running": false}))
@@ -652,48 +567,6 @@ impl Service {
     fn audit(&self, action: &str, detail: &str) {
         let who = self.session.lock().unwrap().as_ref().map(|s| s.user.email.clone());
         let _ = self.users.lock().unwrap().audit(who.as_deref(), action, detail);
-    }
-
-    /// The key for an AI call: one typed in the wizard (not yet saved), or the
-    /// user's own saved key. Enforces admin AI policy.
-    fn ai_key_for(&self, a: &Value) -> Result<(Provider, zeroize::Zeroizing<String>), ApiError> {
-        let provider = Provider::parse(&s(a, "provider")).ok_or_else(|| ApiError::new(400, "Choose a provider."))?;
-        self.with_session(|sess| {
-            let users = self.users.lock().unwrap();
-            if users.policy("ai_enabled")?.map(|v| v == "false").unwrap_or(false) {
-                return Err(ApiError::new(403, "AI features are turned off by your administrator."));
-            }
-            if !sess.user.can_ai {
-                return Err(ApiError::new(403, "AI is not enabled for your profile. Ask an administrator."));
-            }
-            let allowed = users.policy("ai_providers")?.unwrap_or_else(|| "anthropic,openai,gemini".into());
-            if !allowed.split(',').any(|p| p == provider.as_str()) {
-                return Err(ApiError::new(403, "Your administrator has not allowed this provider."));
-            }
-            if let Some(k) = a.get("key").and_then(|k| k.as_str()).filter(|k| !k.trim().is_empty()) {
-                return Ok((provider, zeroize::Zeroizing::new(k.trim().to_string())));
-            }
-            match users.get_secret(sess, "ai_key")? {
-                Some(k) => Ok((provider, k)),
-                None => Err(ApiError::new(400, "Paste your API key first.")),
-            }
-        })
-    }
-
-    pub fn current_ai(&self) -> Result<(AiChoice, zeroize::Zeroizing<String>), ApiError> {
-        self.with_session(|sess| {
-            let users = self.users.lock().unwrap();
-            let prefs: std::collections::HashMap<String, String> = users.prefs(sess)?.into_iter().collect();
-            let provider = prefs.get("ai_provider").and_then(|p| Provider::parse(p)).ok_or_else(|| ApiError::new(400, "Set up AI first (Profile › AI)."))?;
-            let model = prefs.get("ai_model").cloned().unwrap_or_default();
-            let reasoning = prefs.get("ai_reasoning").cloned().filter(|r| !r.is_empty());
-            drop(users);
-            Ok((provider, model, reasoning))
-        })
-        .and_then(|(provider, model, reasoning)| {
-            let (_, key) = self.ai_key_for(&json!({"provider": provider.as_str()}))?;
-            Ok((AiChoice { provider, model, reasoning }, key))
-        })
     }
 
     /// Bytes for the preview pane: the file itself, a PNG of a TIFF's first
@@ -746,10 +619,6 @@ impl Service {
         }
     }
 
-    pub fn cancel_flag(&self) -> &AtomicBool {
-        &self.chat_cancel
-    }
-
     pub fn about(&self) -> Value {
         json!({
             "version": VERSION,
@@ -760,7 +629,7 @@ impl Service {
             "protected_roots": self.guard.protected_roots(),
             "writable": self.guard.writable_dirs(),
             "index": self.index_state.read().unwrap().clone(),
-            "ai_hosts": ai::providers().iter().map(|p| p.host).collect::<Vec<_>>(),
+            "network": "none",
             "exe": std::env::current_exe().ok().map(|p| p.display().to_string()),
             "machine": self.platform.machine(),
         })

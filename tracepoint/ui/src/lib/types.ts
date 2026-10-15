@@ -7,12 +7,10 @@ export interface User {
   role: Role;
   must_change: boolean;
   disabled: boolean;
-  can_ai: boolean;
   created_at: string;
   created_by?: string | null;
   pw_changed_at?: string | null;
   last_login_at?: string | null;
-  has_ai_key: boolean;
 }
 
 export interface IndexState { ready: boolean; message: string; source: string; source_kind: string; error?: string | null }
@@ -21,9 +19,7 @@ export interface AppState {
   stage: "login" | "change_password" | "ready";
   version: string;
   user: User | null;
-  keys_unlocked: boolean;
   index: IndexState;
-  policy: { ai_enabled: boolean; ai_providers: string[] };
   prefs: Record<string, string>;
   profiles_location: string;
 }
