@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeCostRollup, milestonePctIndex, type CostAccount, type CostEntry } from "@/lib/costs";
+import { computeCostRollup, milestonePctIndex, computeCostOutlook, type CostAccount, type CostEntry } from "@/lib/costs";
 
 const acct = (over: Partial<CostAccount>): CostAccount => ({
   id: "a1", projectId: "p1", code: "01", name: "Piping", costType: "subcontract",
@@ -84,5 +84,50 @@ describe("milestonePctIndex", () => {
     expect(idx.get("m1")).toBe(42);
     expect(idx.get("m2")).toBe(100);
     expect(idx.get("m3")).toBe(0);
+  });
+});
+
+describe("computeCostOutlook", () => {
+  const outlook = computeCostOutlook;
+
+  it("estimates cost to date from the awarded quote × the pinned task's progress", () => {
+    const accounts = [
+      acct({ id: "a1", budget: 884_000, wbsMilestoneId: "m1" }),
+      acct({ id: "a2", budget: 100_000 }),
+    ];
+    const entries = [
+      entry({ id: "c1", costAccountId: "a1", entryType: "commitment", amount: 920_000 }),
+    ];
+    const rollup = computeCostRollup(accounts, entries, new Map([["m1", 50]]));
+    const o = outlook(rollup, new Map([["m1", 50]]), 30);
+    const a1 = o.accounts.find((a) => a.accountId === "a1")!;
+    expect(a1).toMatchObject({ basis: "quote", pct: 50, pctSource: "task", estimatedToDate: 460_000, forecast: 920_000 });
+    const a2 = o.accounts.find((a) => a.accountId === "a2")!;
+    // No quote, unpinned → budget × the whole project's schedule %.
+    expect(a2).toMatchObject({ basis: "budget", pct: 30, pctSource: "project", estimatedToDate: 30_000, forecast: 100_000 });
+    expect(o.invoiced).toBe(0);
+    expect(o.unbilled).toBe(490_000);
+    expect(o.forecast).toBe(1_020_000);
+    expect(o.variance).toBe(36_000);
+    expect(o.quotedCoverage).toBeCloseTo(884_000 / 984_000);
+  });
+
+  it("invoices win when they exceed the estimate or the quote", () => {
+    const rollup = computeCostRollup(
+      [acct({ id: "a1", budget: 1000 })],
+      [entry({ id: "c", entryType: "commitment", amount: 800 }), entry({ id: "i", entryType: "actual", amount: 900 })],
+      new Map(),
+    );
+    const o = outlook(rollup, new Map(), 10);
+    expect(o.accounts[0].estimatedToDate).toBe(900);
+    expect(o.accounts[0].forecast).toBe(900);
+    expect(o.unbilled).toBe(0);
+  });
+
+  it("without any schedule, cost to date is just what's invoiced", () => {
+    const rollup = computeCostRollup([acct({ budget: 1000 })], [], new Map());
+    const o = outlook(rollup, new Map(), null);
+    expect(o.accounts[0]).toMatchObject({ pct: null, pctSource: null, estimatedToDate: 0, forecast: 1000 });
+    expect(o.variance).toBe(0);
   });
 });

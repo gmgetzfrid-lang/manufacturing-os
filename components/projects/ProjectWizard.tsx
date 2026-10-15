@@ -8,13 +8,19 @@
 // project coach re-surfaces skipped steps with the payoff stated. The
 // wizard is how a project starts; the coach is the wizard for the rest of
 // its life.
+//
+// Start from a document: drop the AFE / estimate / budget sheet on Basics
+// and every later step arrives prefilled — name, purpose, goals, budget
+// lines with the company each is budgeted for, those companies, and any
+// dated milestones. The user still walks the steps and edits; the paper is
+// kept on the project as its budget basis.
 
 import React, { useEffect, useMemo, useState } from "react";
 import TimeZoneSelect from "@/components/projects/TimeZoneSelect";
 import { browserTimeZone, fromDateInput } from "@/lib/scheduleTz";
 import {
   Briefcase, Loader2, Plus, X, ChevronLeft, ChevronRight, Check,
-  Target, FileText, CircleDollarSign, Flag, HardHat, Search, AlertTriangle,
+  Target, FileText, CircleDollarSign, Flag, HardHat, Search, AlertTriangle, Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -22,6 +28,10 @@ import { createProject } from "@/lib/projects";
 import { seedTurnoverItems } from "@/lib/turnover";
 import { listCompanies, type Company } from "@/lib/companies";
 import type { ProjectVisibility } from "@/types/schema";
+import { BudgetDocDrop } from "@/components/projects/cost/BudgetImport";
+import { recordBudgetBasis, suppliersOf, partyKindFor, type BudgetReadResult } from "@/lib/budgetImport";
+import { projectPrefillFrom, reconcileBudget, matchParty, sameCompany, COST_TYPES, type CostType } from "@/lib/budgetDoc";
+import { fmtMoney } from "@/lib/costs";
 
 const STEPS = [
   { key: "basics", label: "Basics", icon: Briefcase },
@@ -73,9 +83,11 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   const [sowResults, setSowResults] = useState<Array<{ id: string; label: string }>>([]);
   const [sowDoc, setSowDoc] = useState<{ id: string; label: string } | null>(null);
   // Budget
-  const [budgetRows, setBudgetRows] = useState<Array<{ name: string; budget: string; type: string }>>([
-    { name: "", budget: "", type: "subcontract" },
+  const [budgetRows, setBudgetRows] = useState<Array<{ name: string; budget: string; type: string; supplier: string }>>([
+    { name: "", budget: "", type: "subcontract", supplier: "" },
   ]);
+  // The document the project was started from (its budget basis).
+  const [fromDoc, setFromDoc] = useState<BudgetReadResult | null>(null);
   // Schedule
   const [milestoneRows, setMilestoneRows] = useState<Array<{ name: string; date: string }>>([
     { name: "", date: "" },
@@ -89,6 +101,37 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   useEffect(() => {
     listCompanies(orgId).then(setCompanies).catch(() => setCompanies([]));
   }, [orgId]);
+
+  const prefillFromDoc = (r: BudgetReadResult) => {
+    const doc = r.parsed;
+    const f = projectPrefillFrom(doc);
+    // Fill what's empty; never overwrite what the user already typed.
+    if (!name.trim() && f.name) setName(f.name);
+    if (!description.trim() && f.description) setDescription(f.description);
+    if (!moc.trim() && f.mocReference) setMoc(f.mocReference);
+    if (!targetDate && f.targetDate) setTargetDate(f.targetDate);
+    if (!purpose.trim() && f.purpose) setPurpose(f.purpose);
+    if (goals.length === 0 && f.goals.length) setGoals(f.goals);
+    if (!successCriteria.trim() && f.successCriteria) setSuccessCriteria(f.successCriteria);
+    if (doc.lines.length && !budgetRows.some((b) => b.name.trim())) {
+      setBudgetRows(doc.lines.map((l) => ({
+        name: l.name, budget: l.amount != null ? String(l.amount) : "", type: l.costType, supplier: l.supplier ?? "",
+      })));
+    }
+    if (doc.milestones.length && !milestoneRows.some((m) => m.name.trim())) {
+      setMilestoneRows(doc.milestones.map((m) => ({ name: m.name, date: m.date })));
+    }
+    const sups = suppliersOf(doc.lines);
+    if (sups.length && !partyRows.some((p) => p.name.trim())) {
+      setPartyRows(sups.map((sp) => ({
+        // Prefer the registry's spelling so the company record links.
+        name: companies.find((c) => sameCompany(c.name, sp.name))?.name ?? sp.name,
+        kind: partyKindFor(sp.types), trade: "",
+      })));
+    }
+    if (doc.docType && /capital/i.test(doc.docType)) setJobKind("capital");
+    setFromDoc(r);
+  };
 
   // SOW search — org documents by number/title, debounced.
   useEffect(() => {
@@ -155,16 +198,52 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         console.warn("[wizard] extended fields not saved:", extErr.message);
       }
 
+      // Contractors/vendors — linked to the Known Companies registry when
+      // the name matches, so performance rolls up to the permanent record.
+      // Saved BEFORE budget lines so each line can point at its company.
+      let savedParties: Array<{ id: string; name: string }> = [];
+      const parties = partyRows.filter((r) => r.name.trim());
+      if (parties.length > 0) {
+        const rows = parties.map((r) => ({
+          org_id: orgId, project_id: projectId,
+          name: r.name.trim(), kind: r.kind, trade: r.trade.trim() || null,
+          company_id: companies.find((c) => sameCompany(c.name, r.name))?.id ?? null,
+          created_by: actorUserId,
+        }));
+        const { data: pData, error: pErr } = await supabase.from("project_parties").insert(rows).select("id, name");
+        if (pErr && (pErr.code === "PGRST204" || pErr.code === "42703")) {
+          // Pre-migration: company_id doesn't exist yet — save without the link.
+          const { data: retry, error: retryErr } = await supabase.from("project_parties")
+            .insert(rows.map(({ company_id: _c, ...rest }) => rest)).select("id, name");
+          if (retryErr) console.warn("[wizard] contractors not saved:", retryErr.message);
+          savedParties = (retry ?? []) as Array<{ id: string; name: string }>;
+        } else if (pErr) {
+          console.warn("[wizard] contractors not saved:", pErr.message);
+        } else {
+          savedParties = (pData ?? []) as Array<{ id: string; name: string }>;
+        }
+      }
+
       // Budget lines. A named row with a blank amount still saves (budget 0)
       // — typed input is never silently discarded.
       const accounts = budgetRows.filter((r) => r.name.trim() && Number(r.budget || 0) >= 0);
       if (accounts.length > 0) {
         const { error: accErr } = await supabase.from("cost_accounts").insert(accounts.map((r) => ({
           org_id: orgId, project_id: projectId,
-          name: r.name.trim(), budget: Number(r.budget || 0), cost_type: r.type, currency: "USD",
+          name: r.name.trim(), budget: Number(r.budget || 0), cost_type: r.type,
+          currency: fromDoc?.parsed.currency ?? "USD",
+          party_id: matchParty(r.supplier.trim() || null, savedParties)?.id ?? null,
           created_by: actorUserId,
         })));
         if (accErr) console.warn("[wizard] budget lines not saved:", accErr.message);
+      }
+
+      // The paper this project was started from — kept as its budget basis.
+      if (fromDoc) {
+        await recordBudgetBasis({
+          orgId, projectId, parsed: fromDoc.parsed, source: fromDoc.source,
+          actor: { uid: actorUserId, email: actorEmail ?? null },
+        }).catch(() => undefined);
       }
 
       // First milestones.
@@ -175,28 +254,6 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           name: r.name.trim(), planned_at: fromDateInput(r.date, timezone, 12) ?? new Date(`${r.date}T12:00:00`).toISOString(),
           status: "planned", created_by: actorUserId,
         }))).then(() => undefined, () => undefined);
-      }
-
-      // Contractors/vendors — linked to the Known Companies registry when
-      // the name matches, so performance rolls up to the permanent record.
-      const parties = partyRows.filter((r) => r.name.trim());
-      if (parties.length > 0) {
-        const byName = new Map(companies.map((c) => [c.name.toLowerCase(), c.id]));
-        const rows = parties.map((r) => ({
-          org_id: orgId, project_id: projectId,
-          name: r.name.trim(), kind: r.kind, trade: r.trade.trim() || null,
-          company_id: byName.get(r.name.trim().toLowerCase()) ?? null,
-          created_by: actorUserId,
-        }));
-        const { error: pErr } = await supabase.from("project_parties").insert(rows);
-        if (pErr && (pErr.code === "PGRST204" || pErr.code === "42703")) {
-          // Pre-migration: company_id doesn't exist yet — save without the link.
-          const { error: retryErr } = await supabase.from("project_parties")
-            .insert(rows.map(({ company_id: _c, ...rest }) => rest));
-          if (retryErr) console.warn("[wizard] contractors not saved:", retryErr.message);
-        } else if (pErr) {
-          console.warn("[wizard] contractors not saved:", pErr.message);
-        }
       }
 
       // Turnover package seeds, sized to the job. Failure is non-fatal —
@@ -241,6 +298,12 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
           {step === 0 && (
             <>
+              {fromDoc ? (
+                <FromDocSummary result={fromDoc} onClear={() => setFromDoc(null)} />
+              ) : (
+                <BudgetDocDrop orgId={orgId} onRead={prefillFromDoc} compact
+                  label="Start from a document — AFE, estimate, or budget sheet fills in every step" />
+              )}
               <Field label="Name *">
                 <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround — Unit 300" autoFocus
                   className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
@@ -355,24 +418,36 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 3 && (
             <>
-              <StepIntro text="Budget lines are where money lives — 'Piping subcontract', 'Scaffolding', 'Engineering hours'. Even one line unlocks the burn bar, the S-curve, and the finish-cost forecast." />
+              <StepIntro text={fromDoc
+                ? `Read from ${fromDoc.source.fileName} — check each line. The company on a line is who it was budgeted for; their invoices will route to it on their own.`
+                : "Budget lines are where money lives — 'Piping subcontract', 'Scaffolding', 'Engineering hours'. Even one line unlocks the burn bar, the S-curve, and the finish-cost forecast."} />
               <div className="space-y-2">
                 {budgetRows.map((r, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <input value={r.name} onChange={(e) => setBudgetRows(rows(budgetRows, i, { name: e.target.value }))}
                       placeholder="Budget line name" className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-                    <select value={r.type} onChange={(e) => setBudgetRows(rows(budgetRows, i, { type: e.target.value }))}
+                    <select value={r.type} onChange={(e) => setBudgetRows(rows(budgetRows, i, { type: e.target.value as CostType }))}
                       className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
-                      {["subcontract", "labor", "material", "equipment", "other"].map((t) => <option key={t} value={t}>{t}</option>)}
+                      {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
+                    <input value={r.supplier} onChange={(e) => setBudgetRows(rows(budgetRows, i, { supplier: e.target.value }))}
+                      list="wizard-line-companies" placeholder="Company"
+                      title="Who this line is budgeted for — their invoices route here"
+                      className="w-28 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]" />
                     <input value={r.budget} onChange={(e) => setBudgetRows(rows(budgetRows, i, { budget: e.target.value }))}
                       placeholder="Budget (USD)" inputMode="decimal"
                       className="w-32 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono tabular-nums bg-[var(--color-surface)]" />
                     <button onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
-                <button onClick={() => setBudgetRows([...budgetRows, { name: "", budget: "", type: "subcontract" }])}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add line</button>
+                <datalist id="wizard-line-companies">
+                  {[...new Set([...partyRows.map((p) => p.name.trim()).filter(Boolean), ...companies.map((c) => c.name)])].map((n) => <option key={n} value={n} />)}
+                </datalist>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setBudgetRows([...budgetRows, { name: "", budget: "", type: "subcontract", supplier: "" }])}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add line</button>
+                  <BudgetTotal rows={budgetRows} authorized={fromDoc?.parsed.authorizedAmount ?? null} currency={fromDoc?.parsed.currency ?? "USD"} />
+                </div>
               </div>
             </>
           )}
@@ -473,4 +548,61 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function StepIntro({ text }: { text: string }) {
   return <p className="text-xs text-[var(--color-text-muted)]">{text}</p>;
+}
+
+function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear: () => void }) {
+  const d = result.parsed;
+  const recon = reconcileBudget(d);
+  const cur = d.currency ?? "USD";
+  const bits = [
+    d.lines.length ? `${d.lines.length} budget line${d.lines.length === 1 ? "" : "s"}` : null,
+    suppliersOf(d.lines).length ? `${suppliersOf(d.lines).length} companies` : null,
+    d.milestones.length ? `${d.milestones.length} milestone${d.milestones.length === 1 ? "" : "s"}` : null,
+    d.goals.length ? `${d.goals.length} goal${d.goals.length === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+  return (
+    <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2.5 text-xs">
+      <div className="flex items-start gap-2">
+        <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <div className="font-black text-[var(--color-text)]">
+            Prefilled from {[d.docType, d.docNumber].filter(Boolean).join(" ") || result.source.fileName}
+            {d.authorizedAmount != null ? ` · ${fmtMoney(d.authorizedAmount, cur)} authorized` : ""}
+          </div>
+          <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+            {bits.length ? `${bits.join(", ")} — ` : ""}walk the steps to check each one. Fields you had already typed were kept.
+          </div>
+          {!recon.balanced && recon.unallocated != null && (
+            <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+              Lines total {fmtMoney(recon.linesTotal, cur)} — {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
+            </div>
+          )}
+          {result.blankPages.length > 0 && (
+            <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+              Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression) — anything only there wasn&apos;t read.
+            </div>
+          )}
+          {recon.overBudgetBy != null && recon.overBudgetBy > 0 && (
+            <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
+              {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? ` — ${d.varianceNote}` : "."}
+            </div>
+          )}
+        </div>
+        <button onClick={onClear} className="text-[var(--color-text-faint)] hover:text-rose-600" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
+      </div>
+    </div>
+  );
+}
+
+function BudgetTotal({ rows, authorized, currency }: {
+  rows: Array<{ budget: string }>; authorized: number | null; currency: string;
+}) {
+  const total = rows.reduce((t, r) => t + (Number(r.budget) || 0), 0);
+  if (total <= 0) return null;
+  const off = authorized != null && Math.abs(authorized - total) > Math.max(1, authorized * 0.005);
+  return (
+    <span className={`ml-auto text-[11px] font-bold tabular-nums ${off ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>
+      Total {fmtMoney(total, currency)}{authorized != null ? ` of ${fmtMoney(authorized, currency)} authorized` : ""}
+    </span>
+  );
 }

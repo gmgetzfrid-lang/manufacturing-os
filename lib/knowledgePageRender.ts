@@ -27,12 +27,27 @@ export async function renderKnowledgePages(
   pages: number[],
   maxPages = MAX_DEEP_READ_PAGES,
 ): Promise<Array<AiCallImage & { page: number }>> {
+  if ([...new Set(pages)].slice(0, maxPages).length === 0) return [];
+  try {
+    const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: fileKey }));
+    const bytes = new Uint8Array(await new Response(obj.Body as ReadableStream).arrayBuffer());
+    return await renderPdfPages(bytes, pages, maxPages);
+  } catch {
+    return [];
+  }
+}
+
+/** Same render from bytes already in hand (an upload being read before it
+ *  belongs to anything). Same silent-fewer-pages contract. */
+export async function renderPdfPages(
+  bytes: Uint8Array,
+  pages: number[],
+  maxPages = MAX_DEEP_READ_PAGES,
+): Promise<Array<AiCallImage & { page: number }>> {
   const wanted = [...new Set(pages)].slice(0, maxPages);
   if (wanted.length === 0) return [];
   try {
     ensurePdfPolyfills();
-    const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: fileKey }));
-    const bytes = new Uint8Array(await new Response(obj.Body as ReadableStream).arrayBuffer());
     const { getDocumentProxy, renderPageAsImage } = await import("unpdf");
     const pdf = await getDocumentProxy(bytes);
     const out: Array<AiCallImage & { page: number }> = [];

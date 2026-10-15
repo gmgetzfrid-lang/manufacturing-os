@@ -6,7 +6,9 @@
 // committed vs spent tiles (jargon translated in place), the S-curve and a
 // forecast sentence, inbound quotes read by AI and tabulated side by side,
 // change orders with reason codes, and the account/entry machinery
-// underneath. Before the project has any numbers, the charts render with
+// underneath. Split into sub-tabs (Overview · Budget · Quotes · Invoices ·
+// Change orders) so each job is one screen, and a project with no budget
+// opens on Budget, where dropping the AFE / estimate builds the model. Before the project has any numbers, the charts render with
 // watermarked EXAMPLE data — you see what you're building toward, not a
 // blank pane. Writes: org controllers and the PROJECT OWNER (RLS,
 // 20261013); everyone on the project reads the same picture.
@@ -15,22 +17,33 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CircleDollarSign, Plus, X, Loader2, Check, ChevronDown, ChevronRight,
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
+  LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp, Gauge, Hourglass,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
   CostAccount, CostEntry, CostParty, CostEntryType,
   listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty,
-  computeCostRollup, milestonePctIndex, fmtMoney,
+  computeCostRollup, computeCostOutlook, milestonePctIndex, fmtMoney,
+  type CostOutlook,
 } from "@/lib/costs";
+import { overallPercent } from "@/lib/scheduleProgress";
+import type { MilestoneStatus } from "@/types/schema";
 import { listCostDocs, parsedQuoteFrom, type CostDocument } from "@/lib/costDocs";
 import CostCharts, { CostGlossary } from "@/components/projects/cost/CostCharts";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
+import { BudgetDocDrop, BudgetImportSheet } from "@/components/projects/cost/BudgetImport";
+import type { BudgetReadResult } from "@/lib/budgetImport";
+import { resolveFileUrl } from "@/lib/storage";
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
+type CostView = "overview" | "budget" | "quotes" | "invoices" | "changes";
+
+interface BudgetBasis { afeNumber: string | null; chargeAccount: string | null; authorized: number | null; docId: string | null }
+
 const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
-  { v: "commitment", label: "Commitment", hint: "PO / contract value awarded — money promised" },
+  { v: "commitment", label: "Quote / PO", hint: "Awarded quote, PO or contract value — money promised. Type it here when the quote was a phone call or email." },
   { v: "actual", label: "Actual", hint: "Invoice / timesheet — money really spent" },
   { v: "adjustment", label: "Adjustment", hint: "Signed correction (can be negative to credit back)" },
 ];
@@ -45,6 +58,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [parties, setParties] = useState<CostParty[]>([]);
   const [docs, setDocs] = useState<CostDocument[]>([]);
   const [milestones, setMilestones] = useState<Array<{ id: string; name: string; pct: number }>>([]);
+  // Whole-schedule % complete — the progress an unpinned budget line uses.
+  const [projectPct, setProjectPct] = useState<number | null>(null);
   const [schedSpan, setSchedSpan] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -52,6 +67,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [busy, setBusy] = useState<string | null>(null);
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [showParties, setShowParties] = useState(false);
+  const [view, setView] = useState<CostView | null>(null);
+  const [basis, setBasis] = useState<BudgetBasis | null>(null);
+  const [importing, setImporting] = useState<BudgetReadResult | null>(null);
+  const [showDrop, setShowDrop] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
 
@@ -63,20 +83,38 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         listEntries(orgId, projectId),
         listParties(orgId, projectId),
         listCostDocs(orgId, projectId).catch(() => [] as CostDocument[]), // pre-migration tolerance
-        supabase.from("milestones").select("id, name, percent_complete, status, planned_at")
+        supabase.from("milestones").select("id, name, percent_complete, status, planned_at, parent_id, weight, duration_hours")
           .eq("project_id", projectId).order("planned_at"),
       ]);
       setAccounts(a);
+      // First open: a project with no budget lands where the budget gets built.
+      setView((v) => v ?? (a.length === 0 ? "budget" : "overview"));
       setEntries(e);
       setParties(p);
       setDocs(d);
-      const rows = ((ms ?? []) as Array<{ id: string; name: string; percent_complete: number | null; status: string; planned_at: string | null }>);
+      const rows = ((ms ?? []) as Array<{
+        id: string; name: string; percent_complete: number | null; status: string; planned_at: string | null;
+        parent_id: string | null; weight: number | null; duration_hours: number | null;
+      }>);
+      setProjectPct(rows.length > 0 ? overallPercent(rows.map((m) => ({
+        id: m.id, parentId: m.parent_id, status: m.status as MilestoneStatus,
+        percentComplete: m.percent_complete, weight: m.weight, durationHours: m.duration_hours,
+      }))) : null);
       const idx = milestonePctIndex(rows.map((m) => ({ id: m.id, percentComplete: m.percent_complete, status: m.status })));
       setMilestones(rows.map((m) => ({ id: m.id, name: m.name, pct: idx.get(m.id) ?? 0 })));
       const dates = rows.map((m) => m.planned_at).filter((v): v is string => !!v).sort();
       setSchedSpan(dates.length >= 2
         ? { start: dates[0].slice(0, 10), end: dates[dates.length - 1].slice(0, 10) }
         : { start: null, end: null });
+      // Budget basis (20261020) — absent columns just mean no header line.
+      const { data: pb, error: pbErr } = await supabase.from("projects")
+        .select("afe_number, charge_account, authorized_amount, budget_doc_id").eq("id", projectId).maybeSingle();
+      setBasis(!pbErr && pb ? {
+        afeNumber: (pb.afe_number as string | null) ?? null,
+        chargeAccount: (pb.charge_account as string | null) ?? null,
+        authorized: pb.authorized_amount == null ? null : Number(pb.authorized_amount),
+        docId: (pb.budget_doc_id as string | null) ?? null,
+      } : null);
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
@@ -98,7 +136,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const rollup = useMemo(() => computeCostRollup(accounts, entries, pctIndex), [accounts, entries, pctIndex]);
   const cur = rollup.currencies[0] ?? "USD";
   const mixedCurrency = rollup.currencies.length > 1;
-  const burnPct = rollup.budget > 0 ? Math.min(100, (rollup.spent / rollup.budget) * 100) : 0;
+  const outlook = useMemo(() => computeCostOutlook(rollup, pctIndex, projectPct), [rollup, pctIndex, projectPct]);
+  const outlookById = useMemo(() => new Map(outlook.accounts.map((a) => [a.accountId, a])), [outlook]);
+  // The bar shows ESTIMATED cost to date (quotes × progress) — invoices lag
+  // the work by weeks, so "spent" alone would read near-zero all job.
+  const burnPct = rollup.budget > 0 ? Math.min(100, (outlook.estimatedToDate / rollup.budget) * 100) : 0;
   const commitPct = rollup.budget > 0 ? Math.min(100, (rollup.committed / rollup.budget) * 100) : 0;
   const partyName = useMemo(() => new Map(parties.map((p) => [p.id, p.name])), [parties]);
   const entriesByAccount = useMemo(() => {
@@ -112,6 +154,15 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
     return m;
   }, [entries]);
 
+  const quoteCount = docs.filter((d) => d.kind === "quote" && d.status !== "void").length;
+  const invoiceOpen = docs.filter((d) => (d.kind === "invoice" || d.kind === "po") && (d.status === "draft" || d.status === "parsed")).length;
+  const basisDoc = basis?.docId ? docs.find((d) => d.id === basis.docId) ?? null : null;
+  const openBasisDoc = async () => {
+    if (!basisDoc?.fileUrl) return;
+    const url = await resolveFileUrl(basisDoc.fileUrl).catch(() => null);
+    if (url) window.open(url, "_blank", "noopener"); else setErr("Couldn't open the document.");
+  };
+
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
   return (
@@ -123,37 +174,62 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         </div>
       )}
 
+      {notice && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] px-3 py-2.5 text-xs font-bold text-emerald-800 dark:text-emerald-300">
+          <Check className="w-4 h-4 shrink-0" /> {notice}
+          <button onClick={() => setNotice(null)} className="ml-auto text-emerald-500 hover:text-emerald-700"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+
+      {/* ── Sub-tabs: one job per screen ── */}
+      <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
+        <SubTab active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard className="w-3.5 h-3.5" />} label="Overview" />
+        <SubTab active={view === "budget"} onClick={() => setView("budget")} icon={<Landmark className="w-3.5 h-3.5" />} label="Budget" count={accounts.length} />
+        <SubTab active={view === "quotes"} onClick={() => setView("quotes")} icon={<ScanSearch className="w-3.5 h-3.5" />} label="Quotes" count={quoteCount} />
+        <SubTab active={view === "invoices"} onClick={() => setView("invoices")} icon={<Receipt className="w-3.5 h-3.5" />} label="Invoices" count={invoiceOpen} attention={invoiceOpen > 0} />
+        <SubTab active={view === "changes"} onClick={() => setView("changes")} icon={<GitPullRequestArrow className="w-3.5 h-3.5" />} label="Change orders" />
+      </div>
+
+      {view === "overview" && (<>
       {/* ── Stat strip ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard icon={<Landmark className="w-4 h-4" />} label="Budget" value={fmtMoney(rollup.budget, cur)} tone="accent" />
-        <StatCard icon={<Scale className="w-4 h-4" />} label="Committed" value={fmtMoney(rollup.committed, cur)}
-          sub={rollup.budget > 0 ? `${Math.round(commitPct)}% of budget` : undefined} tone="sky" />
-        <StatCard icon={<HardHat className="w-4 h-4" />} label="Spent" value={fmtMoney(rollup.spent, cur)}
-          sub={rollup.budget > 0 ? `${Math.round(burnPct)}% burned` : undefined} tone="violet" />
+        <StatCard icon={<Scale className="w-4 h-4" />} label="Quoted (awarded)" value={fmtMoney(rollup.committed, cur)}
+          sub={rollup.budget > 0 ? `${Math.round(outlook.quotedCoverage * 100)}% of the budget has a quote` : undefined} tone="sky" />
+        <StatCard icon={<HardHat className="w-4 h-4" />} label="Cost to date (est.)" value={fmtMoney(outlook.estimatedToDate, cur)}
+          sub={`${fmtMoney(outlook.invoiced, cur)} invoiced${outlook.unbilled >= 1 ? ` · ${fmtMoney(outlook.unbilled, cur)} not billed yet` : ""}`}
+          tone="violet" />
         <StatCard
-          icon={rollup.remaining < 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
-          label="Remaining" value={fmtMoney(rollup.remaining, cur)}
-          tone={rollup.remaining < 0 ? "rose" : "emerald"}
-          sub={rollup.cpi != null
-            ? `CPI ${rollup.cpi.toFixed(2)} — ${rollup.cpi >= 1
-              ? `getting $${rollup.cpi.toFixed(2)} of work per $1 spent`
-              : `only $${rollup.cpi.toFixed(2)} of work per $1 spent`}`
-            : undefined}
+          icon={outlook.variance > 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
+          label="Forecast at finish" value={fmtMoney(outlook.forecast, cur)}
+          tone={outlook.variance > 0 ? "rose" : "emerald"}
+          sub={rollup.budget <= 0 ? undefined
+            : Math.abs(outlook.variance) < 1 ? "on budget"
+            : `${fmtMoney(Math.abs(outlook.variance), cur)} ${outlook.variance > 0 ? "over" : "under"} budget`}
         />
       </div>
+
+      {basis && (basis.afeNumber || basis.authorized != null) && (
+        <BasisLine basis={basis} budget={rollup.budget} spent={outlook.estimatedToDate} cur={cur} onOpen={basisDoc?.fileUrl ? () => void openBasisDoc() : undefined} />
+      )}
 
       {/* ── Burn bar: spent (solid) + committed (hatched ghost) vs budget ── */}
       {rollup.budget > 0 && (
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
           <div className="flex items-center justify-between text-[10px] font-bold text-[var(--color-text-muted)] mb-1.5">
-            <span>Budget burn</span>
-            <span className="tabular-nums">{fmtMoney(rollup.spent, cur)} spent · {fmtMoney(rollup.committed, cur)} committed · {fmtMoney(rollup.budget, cur)} budget</span>
+            <span>Budget burn (estimated from quotes × schedule progress)</span>
+            <span className="tabular-nums">{fmtMoney(outlook.estimatedToDate, cur)} est. to date · {fmtMoney(rollup.committed, cur)} quoted · {fmtMoney(rollup.budget, cur)} budget</span>
           </div>
           <div className="relative h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
             <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-accent)]/25 transition-all duration-700" style={{ width: `${commitPct}%` }} />
             <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-700 ${burnPct >= 100 ? "bg-rose-500" : "bg-[image:var(--brand-gradient)]"}`} style={{ width: `${burnPct}%` }} />
           </div>
         </div>
+      )}
+
+      {rollup.budget > 0 && (
+        <OutlookCard outlook={outlook} rollup={rollup} cur={cur} authorized={basis?.authorized ?? null}
+          onQuotes={() => setView("quotes")} />
       )}
 
       {mixedCurrency && (
@@ -169,13 +245,58 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         scheduleStart={schedSpan.start} scheduleEnd={schedSpan.end}
         awardedLaborHours={awardedLaborHours} />
 
+      {/* ── Plain-language glossary — visible, not a hover Easter egg ── */}
+      <CostGlossary />
+      </>)}
+
       {/* ── Inbound quotes → AI read → bid tabulation → award ── */}
-      <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} docs={docs} onChanged={() => void refresh()} setErr={setErr} />
+      {(view === "quotes" || view === "invoices") && (
+        <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+          section={view} parties={parties}
+          accounts={accounts} docs={docs} onChanged={() => void refresh()} setErr={setErr} />
+      )}
 
       {/* ── Change orders — never a silent budget edit ── */}
-      <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} />
+      {view === "changes" && (
+        <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
+          accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} />
+      )}
+
+      {view === "budget" && (<>
+      {/* ── Budget basis + build-from-document ── */}
+      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
+          <FileCheck2 className="w-4 h-4 text-[var(--color-accent)]" />
+          <span className="text-sm font-bold text-[var(--color-text)]">Budget basis</span>
+          {basis?.afeNumber && <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{basis.afeNumber}</span>}
+          {basis?.chargeAccount && <span className="text-[11px] text-[var(--color-text-muted)]">· A/C <span className="font-mono">{basis.chargeAccount}</span></span>}
+          {basis?.authorized != null && <span className="text-[11px] text-[var(--color-text-muted)]">· authorized <span className="font-black text-[var(--color-text)] tabular-nums">{fmtMoney(basis.authorized, cur)}</span></span>}
+          {basisDoc?.fileUrl && (
+            <button onClick={() => void openBasisDoc()} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">view document</button>
+          )}
+          {canManage && !importing && accounts.length > 0 && (
+            <button onClick={() => setShowDrop((v) => !v)}
+              className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+              <FileUp className="w-3 h-3" /> Add from a document
+            </button>
+          )}
+        </div>
+        {importing ? (
+          <BudgetImportSheet orgId={orgId} projectId={projectId} actor={actor} result={importing}
+            accounts={accounts} parties={parties}
+            onApplied={(summary) => { setImporting(null); setShowDrop(false); setNotice(summary); void refresh(); }}
+            onClose={() => setImporting(null)} />
+        ) : canManage && (accounts.length === 0 || showDrop) ? (
+          <div className="p-4">
+            <BudgetDocDrop orgId={orgId} projectId={projectId} onRead={setImporting}
+              label={accounts.length === 0 ? "Drop the AFE, estimate, or budget sheet — the cost model builds itself" : undefined} />
+          </div>
+        ) : !basis?.afeNumber && basis?.authorized == null ? (
+          <div className="px-4 py-3 text-[11px] text-[var(--color-text-muted)]">
+            No authorization document on file. {canManage ? "Use \u201cAdd from a document\u201d to attach the AFE / estimate this project is approved under." : ""}
+          </div>
+        ) : null}
+      </div>
 
       {/* ── Accounts ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
@@ -212,7 +333,10 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <div className="divide-y divide-[var(--color-border)]">
             {rollup.accounts.map((r) => {
               const isOpen = openAccount === r.account.id;
-              const rowPct = r.account.budget > 0 ? Math.min(100, (r.spent / r.account.budget) * 100) : 0;
+              const ol = outlookById.get(r.account.id);
+              const est = ol?.estimatedToDate ?? r.spent;
+              const rowPct = r.account.budget > 0 ? Math.min(100, (est / r.account.budget) * 100) : 0;
+              const lineOver = !!ol && r.account.budget > 0 && ol.forecast > r.account.budget + 0.5;
               const accEntries = entriesByAccount.get(r.account.id) ?? [];
               return (
                 <div key={r.account.id} className={r.overBudget ? "bg-rose-500/[0.04]" : undefined}>
@@ -226,9 +350,10 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                         {r.account.partyId && partyName.get(r.account.partyId) && (
                           <span className="text-[10px] text-[var(--color-text-muted)]">· {partyName.get(r.account.partyId)}</span>
                         )}
-                        {r.overBudget && (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-300 bg-rose-500/10 border border-rose-500/40 px-1.5 py-0.5 rounded">
-                            <AlertTriangle className="w-2.5 h-2.5" /> over budget
+                        {(r.overBudget || lineOver) && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-300 bg-rose-500/10 border border-rose-500/40 px-1.5 py-0.5 rounded"
+                            title={r.overBudget ? "Invoiced more than the budget" : "The awarded quote is more than the budget"}>
+                            <AlertTriangle className="w-2.5 h-2.5" /> {r.overBudget ? "over budget" : `quoted ${fmtMoney(ol!.forecast - r.account.budget, r.account.currency ?? cur)} over`}
                           </span>
                         )}
                         {r.earnedValue !== null && (
@@ -240,8 +365,16 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm font-black tabular-nums text-[var(--color-text)]">{fmtMoney(r.spent, r.account.currency ?? cur)}</div>
-                      <div className="text-[10px] tabular-nums text-[var(--color-text-muted)]">of {fmtMoney(r.account.budget, r.account.currency ?? cur)}</div>
+                      <div className="text-sm font-black tabular-nums text-[var(--color-text)]"
+                        title={ol?.pct != null ? `Estimated: ${ol.basis === "quote" ? "awarded quote" : "budget"} × ${ol.pct}% complete (${ol.pctSource === "task" ? "pinned schedule task" : "whole schedule"}). Invoiced: ${fmtMoney(r.spent, r.account.currency ?? cur)}.` : "Invoiced to date"}>
+                        {fmtMoney(est, r.account.currency ?? cur)}
+                      </div>
+                      <div className="text-[10px] tabular-nums text-[var(--color-text-muted)]">
+                        {ol?.pct != null ? `est. at ${ol.pct}% · ` : ""}of {fmtMoney(r.account.budget, r.account.currency ?? cur)}
+                      </div>
+                      {r.committed > 0 && (
+                        <div className="text-[10px] tabular-nums text-[var(--color-text-faint)]">quoted {fmtMoney(r.committed, r.account.currency ?? cur)}</div>
+                      )}
                     </div>
                   </button>
 
@@ -273,8 +406,106 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         )}
       </div>
 
-      {/* ── Plain-language glossary — visible, not a hover Easter egg ── */}
-      <CostGlossary />
+      </>)}
+    </div>
+  );
+}
+
+/** The plain-language "where you'll land" read — works from day one of the
+ *  job, before a single invoice exists. */
+export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
+  outlook: CostOutlook; rollup: import("@/lib/costs").ProjectCostRollup; cur: string;
+  authorized: number | null; onQuotes: () => void;
+}) {
+  const over = rollup.accounts
+    .map((r) => ({ r, ol: o.accounts.find((a) => a.accountId === r.account.id) }))
+    .filter((x) => x.ol && x.ol.basis === "quote" && x.ol.forecast > x.r.account.budget + 0.5)
+    .sort((a, b) => (b.ol!.forecast - b.r.account.budget) - (a.ol!.forecast - a.r.account.budget))
+    .slice(0, 3);
+  const unquoted = o.accounts.filter((a) => a.basis === "budget").length;
+  const vsAuth = authorized != null ? o.forecast - authorized : null;
+  return (
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <Gauge className="w-4 h-4 text-[var(--color-accent)]" />
+        <span className="text-sm font-bold text-[var(--color-text)]">Where this job lands</span>
+        <span className="text-[10px] text-[var(--color-text-muted)]">from awarded quotes and schedule progress — no invoices needed</span>
+      </div>
+      <ul className="text-xs text-[var(--color-text)] space-y-1">
+        <li>
+          {o.quoted > 0
+            ? <>Awarded quotes plus the budget for unquoted lines put the finish at <b className="tabular-nums">{fmtMoney(o.forecast, cur)}</b>
+                {Math.abs(o.variance) >= 1
+                  ? <> — <b className={o.variance > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
+                  : " — on budget"}
+                {vsAuth != null && vsAuth > 0.5 && <>, <b className="text-rose-700 dark:text-rose-300">{fmtMoney(vsAuth, cur)} over the authorization</b> (a supplement may be needed)</>}.</>
+            : <>No quotes awarded yet, so the forecast is just the budget. <button onClick={onQuotes} className="font-bold text-[var(--color-accent)] hover:underline">Award quotes</button> and this becomes a real forecast.</>}
+        </li>
+        {over.map(({ r, ol }) => (
+          <li key={r.account.id} className="text-[var(--color-text-muted)]">
+            <AlertTriangle className="w-3 h-3 inline -mt-0.5 text-rose-500" /> {r.account.name}: quoted {fmtMoney(ol!.forecast, cur)} against {fmtMoney(r.account.budget, cur)} budgeted.
+          </li>
+        ))}
+        {o.projectPct != null ? (
+          <li>
+            The schedule is <b>{o.projectPct}% complete</b>, so about <b className="tabular-nums">{fmtMoney(o.estimatedToDate, cur)}</b> of work has been done.
+            {" "}{fmtMoney(o.invoiced, cur)} has been invoiced
+            {o.unbilled >= 1 ? <> — about <b className="tabular-nums">{fmtMoney(o.unbilled, cur)}</b> is done but not billed yet (your accrual).</> : "."}
+          </li>
+        ) : (
+          <li className="text-[var(--color-text-muted)]">
+            <Hourglass className="w-3 h-3 inline -mt-0.5" /> Add the schedule (or update task % complete) and this also estimates cost to date and the not-yet-billed accrual.
+          </li>
+        )}
+        {o.quoted > 0 && unquoted > 0 && (
+          <li className="text-[10px] text-[var(--color-text-muted)]">
+            {unquoted} budget line{unquoted === 1 ? " has" : "s have"} no awarded quote — {unquoted === 1 ? "it's" : "they're"} forecast at budget.
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function SubTab({ active, onClick, icon, label, count, attention }: {
+  active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count?: number; attention?: boolean;
+}) {
+  return (
+    <button onClick={onClick}
+      className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+        active ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+      {icon} {label}
+      {count != null && count > 0 && (
+        <span className={`text-[10px] font-black tabular-nums px-1.5 rounded-full ${
+          active ? "bg-white/20" : attention ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-[var(--color-surface-2)]"}`}>{count}</span>
+      )}
+    </button>
+  );
+}
+
+/** "AFE 25008 · $1,250,000 authorized" with how the plan and the spend
+ *  sit against it. */
+function BasisLine({ basis, budget, spent, cur, onOpen }: {
+  basis: BudgetBasis; budget: number; spent: number; cur: string; onOpen?: () => void;
+}) {
+  const auth = basis.authorized;
+  const gap = auth != null ? auth - budget : null;
+  return (
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+      <FileCheck2 className="w-4 h-4 text-[var(--color-accent)]" />
+      {basis.afeNumber && <span className="font-black text-[var(--color-text)]">{basis.afeNumber}</span>}
+      {auth != null && <span><span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(auth, cur)}</span> authorized</span>}
+      {auth != null && gap != null && Math.abs(gap) >= 1 && (
+        <span className={gap < 0 ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
+          budget lines {gap < 0 ? "exceed" : "leave"} {fmtMoney(Math.abs(gap), cur)} {gap < 0 ? "over the authorization" : "unallocated"}
+        </span>
+      )}
+      {auth != null && auth > 0 && (
+        <span className={spent > auth ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
+          {Math.round((spent / auth) * 100)}% of authorization spent
+        </span>
+      )}
+      {onOpen && <button onClick={onOpen} className="ml-auto font-bold text-[var(--color-accent)] hover:underline">view document</button>}
     </div>
   );
 }
@@ -361,7 +592,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
       {canManage && <EntryForm orgId={orgId} projectId={projectId} accountId={a.id} parties={parties} actor={actor} onDone={onChanged} setErr={setErr} />}
 
       {entries.length === 0 ? (
-        <div className="text-[11px] italic text-[var(--color-text-faint)]">No entries yet — post the PO as a commitment, then invoices as actuals.</div>
+        <div className="text-[11px] italic text-[var(--color-text-faint)]">No entries yet — enter the awarded quote or PO (Quote / PO), then invoices as actuals.</div>
       ) : (
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (

@@ -118,6 +118,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
 ];
 
 export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
+  { table: "projects", column: "authorized_amount", migration: "20261020_project_budget_basis.sql", feature: "Project budget basis (AFE number, charge account, authorized amount)" },
   { table: "transmittals", column: "portal_token", migration: "20260910_transmittal_portal.sql", feature: "Transmittal recipient portal + issue emails" },
   { table: "ai_connections", column: "embedding_api_key", migration: "20260930_semantic_layer.sql", feature: "Meaning-based (semantic) search" },
   { table: "knowledge_chunks", column: "embedding", migration: "20260930_semantic_layer.sql", feature: "pgvector semantic index" },

@@ -334,6 +334,87 @@ export function computeCostRollup(
   };
 }
 
+// ── outlook: cost to date + finish forecast WITHOUT waiting on invoices ──
+//
+// Invoices land weeks after the work, so "spent" is near zero for most of
+// a turnaround — exactly when the PM needs the number. The outlook
+// estimates it from what IS known during the job: the awarded quote (the
+// price of the work) times how far along that work is (the pinned schedule
+// task, else the whole project's schedule %). Where no quote is awarded
+// yet, the budget stands in. Invoices, when they arrive, win whenever they
+// exceed the estimate. The gap between estimated and invoiced is the
+// accrual — work done but not yet billed.
+
+export type OutlookBasis = "quote" | "budget";
+
+export interface AccountOutlook {
+  accountId: string;
+  /** What the line's cost is measured against: an awarded quote or the budget. */
+  basis: OutlookBasis;
+  quoted: number;
+  /** % complete used (0..100), or null with no schedule to read. */
+  pct: number | null;
+  pctSource: "task" | "project" | null;
+  /** max(invoiced, basis × % complete). */
+  estimatedToDate: number;
+  /** Where the line lands: max(invoiced, quote or budget). */
+  forecast: number;
+}
+
+export interface CostOutlook {
+  accounts: AccountOutlook[];
+  budget: number;
+  quoted: number;
+  invoiced: number;
+  estimatedToDate: number;
+  /** Work done but not billed yet: estimatedToDate − invoiced (≥ 0). */
+  unbilled: number;
+  forecast: number;
+  /** forecast − budget: + means over. */
+  variance: number;
+  /** Share of the budget (by dollars) whose lines have an awarded quote. */
+  quotedCoverage: number;
+  projectPct: number | null;
+}
+
+export function computeCostOutlook(
+  rollup: ProjectCostRollup,
+  milestonePct: Map<string, number>,
+  projectPct: number | null,
+): CostOutlook {
+  const accounts: AccountOutlook[] = rollup.accounts.map((r) => {
+    const quoted = Math.max(0, r.committed);
+    const basis: OutlookBasis = quoted > 0 ? "quote" : "budget";
+    const base = basis === "quote" ? quoted : r.account.budget;
+    const taskPct = r.account.wbsMilestoneId ? milestonePct.get(r.account.wbsMilestoneId) : undefined;
+    const pct = taskPct !== undefined ? Math.max(0, Math.min(100, taskPct)) : projectPct;
+    const pctSource = taskPct !== undefined ? "task" as const : projectPct != null ? "project" as const : null;
+    const invoiced = Math.max(0, r.spent);
+    return {
+      accountId: r.account.id, basis, quoted, pct, pctSource,
+      estimatedToDate: Math.max(invoiced, pct != null ? base * (pct / 100) : 0),
+      forecast: Math.max(invoiced, base),
+    };
+  });
+  const sum = (f: (a: AccountOutlook) => number) => accounts.reduce((t, a) => t + f(a), 0);
+  const invoiced = rollup.accounts.reduce((t, r) => t + Math.max(0, r.spent), 0);
+  const estimatedToDate = sum((a) => a.estimatedToDate);
+  const forecast = sum((a) => a.forecast);
+  const quotedBudget = rollup.accounts.reduce((t, r) => t + (r.committed > 0 ? r.account.budget : 0), 0);
+  return {
+    accounts,
+    budget: rollup.budget,
+    quoted: sum((a) => a.quoted),
+    invoiced,
+    estimatedToDate,
+    unbilled: Math.max(0, estimatedToDate - invoiced),
+    forecast,
+    variance: forecast - rollup.budget,
+    quotedCoverage: rollup.budget > 0 ? quotedBudget / rollup.budget : 0,
+    projectPct,
+  };
+}
+
 /** % complete per milestone id for EV: explicit percent, else status. */
 export function milestonePctIndex(
   milestones: Array<{ id?: string; percentComplete?: number | null; status?: string }>,
