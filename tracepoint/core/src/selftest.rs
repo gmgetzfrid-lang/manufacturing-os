@@ -121,3 +121,17 @@ pub fn run(embedded_index: Option<&[u8]>, extra_protect: &[String]) -> Vec<Check
     let _ = std::fs::remove_dir_all(&tmp);
     out
 }
+
+/// Document reading: the embedded PDF engine opens and reads a test PDF, and
+/// Windows OCR is reported (not required: scanned pages are then skipped).
+pub fn run_content(pdfium: Option<&std::path::Path>) -> Vec<Check> {
+    let mut out = Vec::new();
+    let ex = crate::content::Extractor::new(pdfium, true);
+    check(&mut out, "Contents: PDF engine loads", ex.has_pdf(), ex.pdfium_error.clone().unwrap_or_else(|| "PDFium 157.0.8100".into()));
+    if ex.has_pdf() {
+        let x = ex.extract(crate::content::minimal_pdf("Minimum thickness 0.312 at nozzle N3"), ".pdf", 0);
+        check(&mut out, "Contents: reads PDF text", x.pages.first().map(|p| p.text.contains("thickness")).unwrap_or(false), "in memory; no file written");
+    }
+    check(&mut out, "Contents: Windows OCR available", true, if ex.has_ocr() { "yes — scanned pages are read locally" } else { "no — scanned pages will be listed as unreadable" });
+    out
+}

@@ -41,10 +41,14 @@ fn admin_rescan_builds_and_loads_index() {
     let v2 = thor.join("5600 - LRU/10 - VESSELS/5610.15 V-2 Suction Bottle/INSPECTIONS/2023 EXT");
     std::fs::create_dir_all(&v2).unwrap();
     std::fs::write(v2.join("Bottle EXT INSPECTION REPORT.pdf"), b"%PDF").unwrap();
-    std::fs::write(v2.join("Field Notes.pdf"), b"%PDF").unwrap();
+    std::fs::write(v2.join("Field Notes.pdf"), tp_core::content::minimal_pdf("Minimum thickness readings at nozzle N3 were 0.312 inch, below t-min")).unwrap();
     let before = snapshot(&thor);
 
     let svc = Service::new(Box::new(Quiet), base.join("local"), None).unwrap();
+    let pdfium = std::env::var("TP_PDFIUM").ok();
+    if let Some(p) = &pdfium {
+        svc.set_pdfium(PathBuf::from(p));
+    }
     svc.handle("auth.login", &json!({"email": "ggetzfrid@kernenergy.com", "password": "password"})).unwrap();
     svc.handle("auth.change_password", &json!({"current": "password", "new": "Refinery#Search2026"})).unwrap();
     // Windows-style path, as on THOR (the dev scanner maps \\ back to /).
@@ -65,6 +69,25 @@ fn admin_rescan_builds_and_loads_index() {
     // Search sees the new files.
     let r = svc.handle("search", &json!({"query": "suction bottle inspection report", "limit": 10})).unwrap();
     assert!(r["total"].as_u64().unwrap() >= 1, "{r}");
+    // After the scan, document contents are read in the background.
+    if pdfium.is_some() {
+        let t0 = std::time::Instant::now();
+        loop {
+            let st = svc.handle("content.status", &json!({})).unwrap();
+            if st["phase"] == "done" {
+                assert!(st["done"].as_u64().unwrap() >= 1, "{st}");
+                break;
+            }
+            assert!(t0.elapsed().as_secs() < 30, "content timed out: {st}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let r = svc.handle("search", &json!({"query": "t-min nozzle N3 thickness 0.312", "limit": 10})).unwrap();
+        let inside = r["inside"].as_array().cloned().unwrap_or_default();
+        let listed = r["hits"].as_array().unwrap().iter().any(|h| h["snippet"].is_string());
+        assert!(!inside.is_empty() || listed, "{r}");
+        let snip = inside.first().map(|h| h["snippet"].as_str().unwrap().to_string()).unwrap_or_default();
+        assert!(snip.is_empty() || snip.contains('«'), "{snip}");
+    }
     // The scanned folder is untouched.
     assert_eq!(before, snapshot(&thor));
     // A normal user can't rescan.

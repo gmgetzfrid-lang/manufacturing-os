@@ -21,6 +21,9 @@ use wry::{NewWindowResponse, WebContext, WebViewBuilder};
 static UI_HTML: &str = include_str!("../../ui/dist/index.html");
 static INDEX_SNAPSHOT: &[u8] = include_bytes!("../../assets/index.tpz");
 static ICON_PNG: &[u8] = include_bytes!("../../assets/mark512.png");
+/// PDFium 157.0.8100 (BSD-3, from github.com/bblanchon/pdfium-binaries):
+/// reads PDF text and renders scanned pages for OCR.
+static PDFIUM_DLL: &[u8] = include_bytes!("../../assets/pdfium.dll");
 
 const ORIGIN: &str = "http://tp.localhost";
 
@@ -197,7 +200,12 @@ fn selftest() -> i32 {
     println!("TracePoint {} self-test", tp_core::service::VERSION);
     println!("Executable: {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default());
     println!();
-    let checks = tp_core::selftest::run(Some(INDEX_SNAPSHOT), &[]);
+    let mut checks = tp_core::selftest::run(Some(INDEX_SNAPSHOT), &[]);
+    // The PDF engine is checked from a temporary copy, removed afterwards.
+    let dll = std::env::temp_dir().join(format!("TracePoint-selftest-pdfium-{}.dll", std::process::id()));
+    if std::fs::write(&dll, PDFIUM_DLL).is_ok() {
+        checks.extend(tp_core::selftest::run_content(Some(&dll)));
+    }
     let mut failed = 0;
     for c in &checks {
         println!("{}  {:<48} {}", if c.ok { "PASS" } else { "FAIL" }, c.name, c.detail);
@@ -206,6 +214,7 @@ fn selftest() -> i32 {
         }
     }
     println!();
+    let _ = std::fs::remove_file(&dll);
     println!("{} checks, {} failed. Nothing was written to THOR.", checks.len(), failed);
     if failed == 0 { 0 } else { 1 }
 }
@@ -232,6 +241,17 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // Unpack the PDF engine next to TracePoint's data, and make sure the copy
+    // on disk is byte-for-byte the one inside this exe before every use.
+    {
+        use sha2::{Digest, Sha256};
+        let dll = local.join("bin").join("pdfium-157.0.8100.dll");
+        let want = Sha256::digest(PDFIUM_DLL);
+        let ok = std::fs::read(&dll).map(|b| Sha256::digest(&b) == want).unwrap_or(false);
+        if ok || svc.guard.write(&dll, PDFIUM_DLL).is_ok() {
+            svc.set_pdfium(dll);
+        }
+    }
     {
         let s = svc.clone();
         std::thread::spawn(move || s.load_index());

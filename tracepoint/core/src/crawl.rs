@@ -29,6 +29,23 @@ pub fn norm_path(p: &str) -> String {
     p.replace('/', "\\").to_lowercase()
 }
 
+/// A THOR path as the OS should open it. On Windows, paths of 240+
+/// characters get the \\?\ long-path form (deep THOR folders exceed the old
+/// 260 limit). Dev hosts map backslashes to slashes.
+pub fn os_path(p: &str) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        if p.len() >= 240 && !p.starts_with("\\\\?\\") {
+            return if let Some(rest) = p.strip_prefix("\\\\") { format!("\\\\?\\UNC\\{rest}").into() } else { format!("\\\\?\\{p}").into() };
+        }
+        std::path::PathBuf::from(p)
+    }
+    #[cfg(not(windows))]
+    {
+        std::path::PathBuf::from(p.replace('\\', "/"))
+    }
+}
+
 /// Python `stable_id(prefix, *parts)`.
 pub fn stable_id(prefix: &str, parts: &[&str]) -> String {
     let raw = parts.join("\u{1f}");

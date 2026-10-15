@@ -26,6 +26,56 @@ pub struct Engine {
     pub(crate) eq_df: HashMap<String, u32>,
     /// Files per folder, built the first time the graph needs it.
     pub(crate) dir_files: std::sync::OnceLock<Vec<Vec<u32>>>,
+    /// Full text of documents (thor_content.db), when it has been built.
+    pub content: std::sync::RwLock<Option<ContentIndex>>,
+}
+
+/// Read-only handle on the document text database.
+pub struct ContentIndex {
+    conn: std::sync::Mutex<rusqlite::Connection>,
+    by_file_id: HashMap<String, u32>,
+    pub files_read: usize,
+}
+
+impl ContentIndex {
+    pub fn open(path: &std::path::Path, idx: &Index) -> Option<ContentIndex> {
+        let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX).ok()?;
+        let files_read: i64 = conn.query_row("select count(*) from content_files where chars > 0", [], |r| r.get(0)).ok()?;
+        let by_file_id = idx.files.iter().enumerate().map(|(i, f)| (f.file_id.clone(), i as u32)).collect();
+        Some(ContentIndex { conn: std::sync::Mutex::new(conn), by_file_id, files_read: files_read as usize })
+    }
+
+    /// Files whose text has every term; best first. `scope` limits to files.
+    pub fn search(&self, terms: &[String], scope: Option<&std::collections::HashSet<u32>>, limit: usize) -> Vec<(u32, u32, String)> {
+        if terms.is_empty() {
+            return vec![];
+        }
+        // Each term quoted, so punctuation can't change the query.
+        let q = terms.iter().map(|t| format!("\"{}\"", t.replace('"', ""))).collect::<Vec<_>>().join(" AND ");
+        let conn = self.conn.lock().unwrap();
+        let Ok(mut st) = conn.prepare_cached(
+            "select file_id, page, snippet(content_fts, 0, '«', '»', '…', 16) from content_fts where content_fts match ?1 order by bm25(content_fts) limit ?2",
+        ) else {
+            return vec![];
+        };
+        let fetch = if scope.is_some() { 2000 } else { (limit * 4).max(50) } as i64;
+        let rows = st.query_map(rusqlite::params![q, fetch], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)));
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        if let Ok(rows) = rows {
+            for (fid, page, snip) in rows.flatten() {
+                let Some(&fi) = self.by_file_id.get(&fid) else { continue };
+                if scope.map(|s| !s.contains(&fi)).unwrap_or(false) || !seen.insert(fi) {
+                    continue;
+                }
+                out.push((fi, page as u32, snip.replace('\n', " ")));
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        out
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -83,6 +133,12 @@ pub struct Hit {
     pub archived: bool,
     pub blank: bool,
     pub junk: bool,
+    /// For matches found inside a document: the page and a short excerpt
+    /// with the matched words between « ».
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -161,6 +217,8 @@ pub struct SearchResponse {
     /// Set when the first hit is confidently what was asked for: a plain
     /// sentence saying why ("Latest UT survey for 2010.04 V-4 …, 2025").
     pub best: Option<String>,
+    /// Files whose text contains the words (read by the content stage).
+    pub inside: Vec<Hit>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -283,7 +341,7 @@ impl Engine {
             }
             eq_tokens.push(t);
         }
-        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df, dir_files: std::sync::OnceLock::new() }
+        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df, dir_files: std::sync::OnceLock::new(), content: std::sync::RwLock::new(None) }
     }
 
     fn term_posting(&self, word: &str) -> Option<&Vec<u32>> {
@@ -439,6 +497,76 @@ impl Engine {
     }
 
     pub fn search(&self, req: &SearchRequest) -> SearchResponse {
+        let mut r = self.search_names(req);
+        if req.offset == 0 {
+            self.attach_inside(req, &mut r);
+        }
+        r
+    }
+
+    /// Words worth looking for inside documents: what the person typed,
+    /// minus filler and the parts already understood as equipment, unit,
+    /// document type or time.
+    fn content_terms(&self, req: &SearchRequest, r: &SearchResponse) -> Vec<String> {
+        let understood: HashSet<String> = r
+            .chips
+            .iter()
+            .filter(|c| matches!(c.kind, "equipment" | "tag" | "unit" | "year" | "recent" | "ignored" | "concept"))
+            .flat_map(|c| {
+                let mut v: Vec<String> = text::raw_words(&c.text);
+                if c.kind == "concept" || c.kind == "ignored" {
+                    v.extend(text::raw_words(c.detail.trim_start_matches("from ")));
+                }
+                if c.kind == "ignored" {
+                    v.extend(text::raw_words(&c.text));
+                }
+                v
+            })
+            .collect();
+        let ids: Vec<String> = text::scan_ids(&req.query).into_iter().map(|t| t.raw.to_lowercase()).collect();
+        text::raw_words(&req.query)
+            .into_iter()
+            .filter(|w| (w.len() >= 3 || w.chars().all(|c| c.is_ascii_digit())) && !text::STOPS.contains(w.as_str()) && !crate::nl::is_filler(w))
+            .filter(|w| !understood.contains(w) && !ids.iter().any(|i| i.contains(w.as_str())))
+            .collect()
+    }
+
+    fn attach_inside(&self, req: &SearchRequest, r: &mut SearchResponse) {
+        let guard = self.content.read().unwrap();
+        let Some(ci) = guard.as_ref() else { return };
+        let mut terms = self.content_terms(req, r);
+        if terms.is_empty() && r.total == 0 {
+            terms = text::raw_words(&req.query).into_iter().filter(|w| w.len() >= 3 && !text::STOPS.contains(w.as_str())).collect();
+        }
+        if terms.is_empty() {
+            return;
+        }
+        // Within the equipment asked about, if any; otherwise everywhere.
+        let scope: Option<HashSet<u32>> = req.equipment.or_else(|| r.card.as_ref().map(|c| c.id)).map(|e| self.idx.equip_files[e as usize].iter().copied().collect());
+        let mut found = ci.search(&terms, scope.as_ref(), 12);
+        if found.is_empty() && scope.is_some() {
+            found = ci.search(&terms, None, 12);
+        }
+        let shown: HashSet<u32> = r.hits.iter().take(20).map(|h| h.id).collect();
+        for (fi, page, snip) in found {
+            let mut h = self.hit(fi, 0, 0, vec![format!("Found inside, page {page}")]);
+            h.page = Some(page);
+            h.snippet = Some(snip.clone());
+            if shown.contains(&fi) {
+                // Already listed: add the excerpt to that row instead.
+                if let Some(x) = r.hits.iter_mut().find(|x| x.id == fi) {
+                    x.page = Some(page);
+                    x.snippet = Some(snip);
+                    x.reasons.insert(0, format!("Found inside, page {page}"));
+                }
+                continue;
+            }
+            h.rank = r.inside.len() + 1;
+            r.inside.push(h);
+        }
+    }
+
+    fn search_names(&self, req: &SearchRequest) -> SearchResponse {
         let mode = req.mode.as_str();
         if mode == "natural" || ((mode.is_empty() || mode == "auto") && crate::nl::is_natural(&req.query)) {
             return self.search_natural(req);
@@ -1177,6 +1305,8 @@ impl Engine {
             archived: f.flags & F_ARCHIVE != 0,
             blank: f.flags & F_BLANK != 0,
             junk: f.flags & (F_JUNK | F_ZERO) != 0,
+            page: None,
+            snippet: None,
         }
     }
 

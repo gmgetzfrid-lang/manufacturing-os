@@ -35,13 +35,13 @@ export function AboutPage({ state }: { state: AppState }) {
         </div>
 
         <Block icon={<Eye className="size-4" />} title="What it reads">
-          <Row k="THOR files" v="Only when a person previews or opens a file, or when an administrator/indexer runs a scan. Scans read folder listings and file metadata (name, size, dates); they do not read file contents." />
+          <Row k="THOR files" v="Read-only, with the signed-in user's own permissions: when a person previews or opens a file; when an administrator/indexer rescans (folder listings, names, sizes, dates); and when TracePoint reads document contents (each file is read into memory to extract its text, then released)." note="Never opened for writing. Rescans and content reading run at below-normal priority with a bounded number of parallel reads." />
           <Row k="Index" v={a?.index.source ?? "…"} />
           <Row k="Protected sources" v={a ? a.protected_roots.join(" · ") || "—" : "…"} mono />
         </Block>
 
         <Block icon={<FolderLock className="size-4" />} title="What it writes — and the only places it can">
-          <Row k="Local data" v={a?.local_data ?? "…"} mono note="Settings, unpacked index, PDF engine, caches. Per Windows user." />
+          <Row k="Local data" v={a?.local_data ?? "…"} mono note="Settings, the index (thor_knowledge.db), document text (thor_content.db), the PDF engine (bin\\pdfium-157.0.8100.dll), caches. Per Windows user." />
           <Row k="Profiles" v={a?.profiles ?? "…"} mono note="Profile list, password hashes, encrypted AI keys, audit log." />
           <Row k="Team folder" v={a?.team_folder ?? "Not configured"} mono note="Optional shared folder chosen by an administrator. Must be outside THOR's indexed roots." />
           <Row k="Temporary" v={a?.temp ?? "…"} mono note="Read-only copies of files opened for viewing." />
@@ -57,7 +57,7 @@ export function AboutPage({ state }: { state: AppState }) {
         <Block icon={<Cpu className="size-4" />} title="Processes and components">
           <Row k="Processes" v="TracePoint.exe plus the Microsoft Edge WebView2 processes Windows uses to draw the window (msedgewebview2.exe). The THOR indexer runs inside TracePoint.exe — no Python, no scripts, no child processes." />
           <Row k="Opening files" v="Uses the Windows default program for the file type (like double-clicking it in Explorer). By default it opens a read-only temporary copy." />
-          <Row k="Built with" v="Rust · SQLite · PDFium (BSD) · Microsoft WebView2 · React · Inter font (OFL). All embedded in the exe." />
+          <Row k="Built with" v="Rust · SQLite (with FTS5 full-text search) · PDFium 157.0.8100 (BSD-3, the PDF engine in Google Chrome) · Microsoft WebView2 · React · Inter font (OFL). Scanned pages are read with Windows' own OCR engine (Windows.Media.Ocr) when it is available — nothing is installed." note="PDFium is embedded in the exe and unpacked to the local data folder; its SHA-256 is checked against the embedded copy every time TracePoint starts, and replaced if it differs." />
         </Block>
 
         <Block icon={<KeyRound className="size-4" />} title="Accounts and security">
@@ -69,7 +69,7 @@ export function AboutPage({ state }: { state: AppState }) {
 
         <Block icon={<ListChecks className="size-4" />} title="How IT can verify this">
           <ol className="list-decimal space-y-2 pl-5 text-[13px] leading-relaxed">
-            <li><b>Self-test:</b> run <Code>TracePoint.exe --selftest</Code> in a command prompt. It checks the search engine, the THOR write guard (attempts writes into protected paths and confirms they're refused), password hashing and key encryption, and prints PASS/FAIL.</li>
+            <li><b>Self-test:</b> run <Code>TracePoint.exe --selftest</Code> in a command prompt. It checks the search engine, the THOR write guard (attempts writes into protected paths and confirms they're refused), password hashing and key encryption, the PDF engine (reads a built-in test PDF in memory) and whether Windows OCR is available, and prints PASS/FAIL.</li>
             <li><b>File activity:</b> Sysinternals Process Monitor with filters <Code>Process Name is TracePoint.exe</Code> and <Code>Operation is WriteFile</Code> / <Code>SetDispositionInformationFile</Code> / <Code>SetRenameInformationFile</Code>. Use the app normally: no write, delete or rename appears on a THOR path.</li>
             <li><b>Network:</b> Resource Monitor › Network, or <Code>netstat -b</Code>. Normal users: only SMB to THOR. Administrators using AI: also 443 to the AI host listed above.</li>
             <li><b>Integrity:</b> record the SHA-256 of the exe (<Code>certutil -hashfile TracePoint.exe SHA256</Code>) for an AppLocker/WDAC hash rule if needed.</li>

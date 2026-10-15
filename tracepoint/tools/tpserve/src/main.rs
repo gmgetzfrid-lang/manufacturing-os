@@ -42,6 +42,9 @@ fn main() {
     let snapshot: Option<&'static [u8]> = get("--snapshot").map(|p| &*Box::leak(std::fs::read(p).unwrap().into_boxed_slice()));
     let subs = Arc::new(Mutex::new(Vec::new()));
     let svc = Service::new(Box::new(DevPlatform { subscribers: subs.clone() }), data, snapshot).unwrap();
+    if let Ok(p) = std::env::var("TP_PDFIUM") {
+        svc.set_pdfium(std::path::PathBuf::from(p));
+    }
     {
         let s = svc.clone();
         std::thread::spawn(move || s.load_index());

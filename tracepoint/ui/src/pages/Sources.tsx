@@ -17,6 +17,47 @@ interface Status {
 }
 interface ScanState { running: boolean; root?: string; phase?: string; files?: number; dirs?: number; new?: number; changed?: number; missing?: number; errors?: number; files_per_sec?: number; started?: string; log?: string[]; finished?: string | null; error?: string | null }
 
+interface ContentState { running: boolean; phase: string; total: number; done: number; pages: number; ocr_pages: number; unreadable_pages: number; staged_for_ai: number; errors: number; files_per_min: number; eta_min?: number | null; current?: string | null; started?: string | null; finished?: string | null; error?: string | null; pdf_engine: boolean; ocr_engine: boolean; files_read_total: number }
+
+function ContentPanel({ canIndex }: { canIndex: boolean }) {
+  const [c, setC] = useState<ContentState | null>(null);
+  const toast = useToast();
+  useEffect(() => { api<ContentState>("content.status").then(setC).catch(() => {}); }, []);
+  useEffect(() => onEvent("content", (p: ContentState) => setC(p)), []);
+  if (!c) return null;
+  const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
+  const start = async () => { try { await api("content.start"); toast("info", "Reading document contents in the background"); } catch (e) { toast("error", (e as Error).message); } };
+  const fmtEta = (m?: number | null) => (m == null ? "" : m < 1 ? "under a minute left" : m < 90 ? `about ${Math.round(m)} min left` : `about ${(m / 60).toFixed(1)} h left`);
+  return (
+    <Section className="mt-6" title="Document contents" subtitle="Reads the text inside PDFs, Word and Excel files — and scanned pages with the OCR built into Windows — so search finds words inside documents. Free and local; THOR is only read.">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[14px]">
+        <div><span className="text-[22px] font-bold tabular-nums">{n(c.files_read_total)}</span> <span className="text-[var(--color-text-muted)]">documents searchable by content</span></div>
+        <Pill color={c.pdf_engine || !c.started ? "var(--color-ok)" : "var(--color-bad)"}>PDF engine {c.pdf_engine || !c.started ? "ready" : "unavailable"}</Pill>
+        {c.started && <Pill color={c.ocr_engine ? "var(--color-ok)" : "var(--color-warn)"}>{c.ocr_engine ? "Windows OCR ready" : "OCR unavailable on this PC"}</Pill>}
+        <div className="ml-auto flex gap-2">
+          {canIndex && (c.running ? <Button icon={<Square className="size-4" />} onClick={() => api("content.stop")}>Stop (keeps what's read)</Button> : <Button variant="primary" icon={<ScanLine className="size-4" />} onClick={start}>Read new & changed documents</Button>)}
+        </div>
+      </div>
+      {(c.running || c.finished) && (
+        <div className="mt-4 rounded-xl border border-[var(--color-border)] p-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <div className="text-[16px] font-bold">{c.running ? (c.phase === "reading" ? `Reading documents — ${pct}%` : c.phase) : c.phase === "stopped" ? "Stopped — what was read is saved" : "Finished"}</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">{c.running ? `${n(Math.round(c.files_per_min))} documents/min · ${fmtEta(c.eta_min)}` : c.finished ? `finished ${when(c.finished)}` : ""}</div>
+          </div>
+          {c.running && <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--color-surface-3)]"><div className="h-full rounded-full bg-[var(--color-accent)] transition-all" style={{ width: `${pct}%` }} /></div>}
+          <div className="mt-2.5 text-[14px]">
+            <b className="tabular-nums">{n(c.done)}</b> of {n(c.total)} documents · <b className="tabular-nums">{n(c.pages)}</b> pages with text · <b className="tabular-nums">{n(c.ocr_pages)}</b> read by OCR
+            {c.errors ? <> · <b className="tabular-nums text-[var(--color-bad)]">{n(c.errors)}</b> couldn't be opened</> : null}
+          </div>
+          {c.staged_for_ai > 0 && <div className="mt-1.5 text-[13.5px] text-[var(--color-text-muted)]"><b className="text-[var(--color-violet)]">{n(c.staged_for_ai)}</b> valuable pages had no readable text even after OCR — they're waiting for your decision on AI reading (nothing is sent anywhere until an administrator approves a cost).</div>}
+          {c.running && c.current && <div className="mt-1.5 truncate text-[12.5px] text-[var(--color-text-faint)]">Now: {c.current}</div>}
+          {c.error && <div className="mt-1.5 text-[13px] text-[var(--color-bad)]">{c.error}</div>}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 export function SourcesPage({ state, refresh }: { state: AppState; refresh: () => void }) {
   const [st, setSt] = useState<Status | null>(null);
   const [scan, setScan] = useState<ScanState | null>(null);
@@ -70,6 +111,7 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
         </div>
 
         {scan?.running || scan?.finished || scan?.error ? <ScanPanel scan={scan} onStop={() => api("indexer.stop").then(load)} /> : null}
+        <ContentPanel canIndex={canIndex} />
 
         <Section className="mt-6" title="Indexed THOR roots" subtitle="Each root is scanned read-only. Only names, folders, sizes and dates are read; nothing on THOR is changed.">
           <div className="space-y-3">

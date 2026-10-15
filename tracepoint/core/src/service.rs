@@ -68,6 +68,33 @@ pub struct Service {
     active_db: RwLock<Option<PathBuf>>,
     scan: Mutex<ScanState>,
     scan_cancel: Arc<AtomicBool>,
+    content: Mutex<ContentState>,
+    content_cancel: Arc<AtomicBool>,
+    /// pdfium.dll (unpacked from the exe by the app) or libpdfium.so (dev).
+    pdfium_lib: RwLock<Option<PathBuf>>,
+}
+
+/// Progress of reading document contents.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ContentState {
+    pub running: bool,
+    pub phase: String,
+    pub total: usize,
+    pub done: usize,
+    pub pages: usize,
+    pub ocr_pages: usize,
+    pub unreadable_pages: usize,
+    pub staged_for_ai: usize,
+    pub errors: usize,
+    pub files_per_min: f64,
+    pub eta_min: Option<f64>,
+    pub current: Option<String>,
+    pub started: Option<String>,
+    pub finished: Option<String>,
+    pub error: Option<String>,
+    pub pdf_engine: bool,
+    pub ocr_engine: bool,
+    pub files_read_total: usize,
 }
 
 /// What the Sources page shows while THOR is being rescanned.
@@ -159,6 +186,9 @@ impl Service {
             active_db: RwLock::new(None),
             scan: Mutex::new(ScanState::default()),
             scan_cancel: Arc::new(AtomicBool::new(false)),
+            content: Mutex::new(ContentState::default()),
+            content_cancel: Arc::new(AtomicBool::new(false)),
+            pdfium_lib: RwLock::new(None),
         }))
     }
 
@@ -240,6 +270,7 @@ impl Service {
                 }
                 self.set_index_msg("Building the search engine…");
                 let engine = Engine::new(idx);
+                self.attach_content(&engine);
                 let files = engine.idx.files.len();
                 *self.engine.write().unwrap() = Some(Arc::new(engine));
                 let kind = if source.starts_with("Team") { "team" } else if source.starts_with("Local") { "local" } else { "builtin" };
@@ -254,6 +285,213 @@ impl Service {
             }
             Err(e) => self.fail_index(&e),
         }
+    }
+
+    /// Where this PC reads document text from: the team copy when newer,
+    /// else the local one.
+    fn content_db(&self) -> PathBuf {
+        let dir = self.paths.local.join("index");
+        if let Some(t) = &self.config.read().unwrap().team_folder {
+            let team = PathBuf::from(t).join("index").join("thor_content.db");
+            let local = dir.join("thor_content.db");
+            let newer = match (std::fs::metadata(&team), std::fs::metadata(&local)) {
+                (Ok(a), Ok(b)) => a.modified().ok() > b.modified().ok(),
+                (Ok(_), Err(_)) => true,
+                _ => false,
+            };
+            if newer {
+                let _ = self.guard.copy_into(&team, &local);
+            }
+        }
+        dir.join("thor_content.db")
+    }
+
+    fn attach_content(&self, engine: &Engine) {
+        let p = self.content_db();
+        *engine.content.write().unwrap() = if p.is_file() { crate::engine::ContentIndex::open(&p, &engine.idx) } else { None };
+        let n = engine.content.read().unwrap().as_ref().map(|c| c.files_read).unwrap_or(0);
+        self.content.lock().unwrap().files_read_total = n;
+    }
+
+    pub fn set_pdfium(&self, lib: PathBuf) {
+        *self.pdfium_lib.write().unwrap() = Some(lib);
+    }
+
+    fn content_emit(&self) {
+        let v = serde_json::to_value(&*self.content.lock().unwrap()).unwrap();
+        self.platform.emit("content", v);
+    }
+
+    /// Read the text of new/changed documents, most valuable first, into a
+    /// working copy of thor_content.db; publish it when done or stopped.
+    pub fn run_content(self: Arc<Self>) {
+        use crate::content::{self, Extractor};
+        let Ok(e) = self.engine() else { return };
+        {
+            let mut st = self.content.lock().unwrap();
+            if st.running {
+                return;
+            }
+            let total_read = st.files_read_total;
+            *st = ContentState { running: true, phase: "preparing".into(), started: Some(auth::now()), files_read_total: total_read, ..Default::default() };
+        }
+        self.content_cancel.store(false, Ordering::SeqCst);
+        self.content_emit();
+        let fail = |me: &Self, m: String| {
+            let mut st = me.content.lock().unwrap();
+            st.running = false;
+            st.error = Some(m.clone());
+            st.finished = Some(auth::now());
+            drop(st);
+            me.content_emit();
+            me.audit("content_failed", &m);
+        };
+        let dir = self.paths.local.join("index");
+        let active = self.content_db();
+        let work = dir.join("content_work.db");
+        if self.guard.create_dir_all(&dir).is_err() || self.guard.check(&work).is_err() {
+            return fail(&self, "Can't write the content database.".into());
+        }
+        let _ = self.guard.remove_own_file(&work);
+        if active.is_file() {
+            if let Err(x) = self.guard.copy_into(&active, &work) {
+                return fail(&self, format!("Could not copy the content database: {x}"));
+            }
+        }
+        let c = match rusqlite::Connection::open(&work) {
+            Ok(c) => c,
+            Err(x) => return fail(&self, format!("Could not open the content database: {x}")),
+        };
+        let _ = c.pragma_update(None, "journal_mode", "MEMORY");
+        let _ = c.pragma_update(None, "synchronous", "OFF");
+        if let Err(x) = content::ensure_schema(&c) {
+            return fail(&self, format!("Content database: {x}"));
+        }
+        // What's already been read, and is unchanged since.
+        let mut known: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
+        if let Ok(mut st) = c.prepare("select file_id, size, mtime_ns from content_files") {
+            if let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))) {
+                known.extend(rows.flatten());
+            }
+        }
+        let mut todo: Vec<(u32, f32)> = e
+            .idx
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.flags & crate::index::F_GONE == 0 && content::readable_ext(&f.ext) && f.size > 0 && (f.size as u64) <= content::MAX_FILE_BYTES)
+            .filter(|(_, f)| known.get(&f.file_id).map(|k| *k != (f.size, f.mtime)).unwrap_or(true))
+            .map(|(i, f)| (i as u32, content::value(f)))
+            .filter(|x| x.1 > 0.0)
+            .collect();
+        todo.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(e.idx.files[b.0 as usize].year.cmp(&e.idx.files[a.0 as usize].year)));
+        let ex = Extractor::new(self.pdfium_lib.read().unwrap().as_deref(), true);
+        {
+            let mut st = self.content.lock().unwrap();
+            st.total = todo.len();
+            st.phase = "reading".into();
+            st.pdf_engine = ex.has_pdf();
+            st.ocr_engine = ex.has_ocr();
+            if !ex.has_pdf() {
+                st.error = ex.pdfium_error.clone();
+            }
+        }
+        self.content_emit();
+        self.audit("content_started", &format!("{} documents to read", todo.len()));
+
+        // Readers fetch file bytes in parallel (read-only); one thread parses.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, f32, Result<Vec<u8>, String>)>(24);
+        let cancel = self.content_cancel.clone();
+        let paths: Vec<(u32, f32, String)> = todo.iter().map(|&(fi, v)| (fi, v, e.idx.full_path(fi))).collect();
+        let reader = std::thread::spawn(move || {
+            use rayon::prelude::*;
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(6).build().expect("pool");
+            pool.install(|| {
+                for chunk in paths.chunks(48) {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let got: Vec<_> = chunk.par_iter().map(|(fi, v, p)| (*fi, *v, std::fs::read(crate::crawl::os_path(p)).map_err(|x| x.to_string()))).collect();
+                    for g in got {
+                        if tx.send(g).is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+        });
+        let t0 = std::time::Instant::now();
+        let mut last_emit = std::time::Instant::now();
+        let mut last_commit = std::time::Instant::now();
+        let now = auth::now();
+        let _ = c.execute_batch("BEGIN");
+        for (fi, value, bytes) in rx.iter() {
+            if self.content_cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            let f = &e.idx.files[fi as usize];
+            let x = match bytes {
+                Ok(b) => ex.extract(b, &f.ext, if value >= 0.3 { 30 } else { 0 }),
+                Err(err) => content::Extracted { error: Some(format!("Could not read: {err}")), ..Default::default() },
+            };
+            let _ = content::save(&c, &f.file_id, &e.idx.full_path(fi), f.size, f.mtime, value, &x, &now);
+            {
+                let mut st = self.content.lock().unwrap();
+                st.done += 1;
+                st.pages += x.pages.len();
+                st.ocr_pages += x.ocr_pages as usize;
+                st.unreadable_pages += x.unreadable.len();
+                if x.error.is_some() {
+                    st.errors += 1;
+                }
+                if value >= 0.55 && x.error.is_none() {
+                    st.staged_for_ai += x.unreadable.len().min(20);
+                }
+                st.current = Some(f.name.clone());
+                let mins = t0.elapsed().as_secs_f64() / 60.0;
+                st.files_per_min = st.done as f64 / mins.max(0.01);
+                st.eta_min = Some((st.total - st.done) as f64 / st.files_per_min.max(0.1));
+            }
+            if last_commit.elapsed().as_secs() >= 20 {
+                let _ = c.execute_batch("COMMIT; BEGIN");
+                last_commit = std::time::Instant::now();
+            }
+            if last_emit.elapsed().as_millis() >= 500 {
+                self.content_emit();
+                last_emit = std::time::Instant::now();
+            }
+        }
+        let stopped = self.content_cancel.load(Ordering::Relaxed);
+        drop(rx);
+        let _ = reader.join();
+        let _ = c.execute_batch("COMMIT");
+        drop(c);
+        // Publish what was read (also when stopped: each file is complete).
+        self.content.lock().unwrap().phase = "saving".into();
+        self.content_emit();
+        *e.content.write().unwrap() = None; // release the file before replacing it
+        let local = dir.join("thor_content.db");
+        let res = self.guard.publish(&work, &local);
+        let _ = self.guard.remove_own_file(&work);
+        if let Err(x) = res {
+            self.attach_content(&e);
+            return fail(&self, format!("Could not save the content database: {x}"));
+        }
+        if let Some(t) = self.config.read().unwrap().team_folder.clone() {
+            let _ = self.guard.publish(&local, &PathBuf::from(t).join("index").join("thor_content.db"));
+        }
+        self.attach_content(&e);
+        {
+            let mut st = self.content.lock().unwrap();
+            st.running = false;
+            st.phase = if stopped { "stopped".into() } else { "done".into() };
+            st.finished = Some(auth::now());
+            st.current = None;
+            st.eta_min = None;
+        }
+        self.content_emit();
+        let st = self.content.lock().unwrap().clone();
+        self.audit("content_finished", &format!("{} of {} documents read · {} pages · {} OCR pages · {} pages staged for AI{}", st.done, st.total, st.pages, st.ocr_pages, st.staged_for_ai, if stopped { " (stopped)" } else { "" }));
     }
 
     fn fail_index(&self, e: &str) {
@@ -311,7 +549,7 @@ impl Service {
         if id as usize >= e.idx.files.len() {
             return Err(ApiError::new(404, "No such file."));
         }
-        Ok(PathBuf::from(e.idx.full_path(id)))
+        Ok(crate::crawl::os_path(&e.idx.full_path(id)))
     }
 
     /// Handle one command. `cmd` is a dotted name, `a` its JSON arguments.
@@ -721,6 +959,25 @@ impl Service {
                 std::thread::spawn(move || me.run_scan(roots, workers));
                 Ok(serde_json::to_value(&*self.scan.lock().unwrap()).unwrap())
             }
+            "content.status" => {
+                self.with_session(|_| Ok(()))?;
+                Ok(serde_json::to_value(&*self.content.lock().unwrap()).unwrap())
+            }
+            "content.start" => {
+                self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can read document contents.")?;
+                if self.content.lock().unwrap().running {
+                    return Err(ApiError::new(409, "Already reading documents."));
+                }
+                self.engine()?;
+                let me = self.clone();
+                std::thread::spawn(move || me.run_content());
+                Ok(json!({"started": true}))
+            }
+            "content.stop" => {
+                self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can stop this.")?;
+                self.content_cancel.store(true, Ordering::SeqCst);
+                Ok(json!({"stopping": true}))
+            }
             "indexer.stop" => {
                 self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can stop a scan.")?;
                 self.scan_cancel.store(true, Ordering::SeqCst);
@@ -865,6 +1122,10 @@ impl Service {
         self.scan_log("Loading the new index into search…");
         self.load_index();
         self.scan_log("Done. Search is using the new index.");
+        // Then read what's new or changed inside documents (free, local).
+        self.scan_log("Reading the contents of new and changed documents in the background…");
+        let me = self.clone();
+        std::thread::spawn(move || me.run_content());
     }
 
     fn audit(&self, action: &str, detail: &str) {

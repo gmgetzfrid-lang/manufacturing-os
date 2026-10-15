@@ -167,7 +167,9 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
 
   const aiHits = aiOpen ? aiTurns[aiTurns.length - 1]?.result?.hits : undefined;
   const hits = aiHits ?? resp?.hits ?? [];
-  const sel = selected >= 0 ? hits[selected] : undefined;
+  const [insideSel, setInsideSel] = useState<Hit | null>(null);
+  useEffect(() => setInsideSel(null), [resp]);
+  const sel = insideSel ?? (selected >= 0 ? hits[selected] : undefined);
   const words = useMemo(() => (resp?.chips ?? []).filter((c) => c.kind === "word" || c.kind === "tag" || c.kind === "equipment").map((c) => c.text.replace(/[-_]/g, "")), [resp]);
 
   // Keyboard: ↑/↓ move, Enter opens, Ctrl+Enter shows in folder.
@@ -255,13 +257,14 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
               {aiOpen && <AiFindPanel turns={aiTurns} busy={aiBusy} onAsk={(q) => askAi(q, false)} onClose={() => setAiOpen(false)} onRunSearch={(q) => { setQuery(q); submit(q); }} />}
               {!aiOpen && resp.notice && resp.total > 0 && !resp.best && <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_6%,transparent)] px-3.5 py-2.5 text-[13px]"><Info className="mt-0.5 size-4 shrink-0 text-[var(--color-info)]" />{resp.notice}</div>}
               {!aiOpen && resp.best && hits[0] && <BestMatch hit={hits[0]} why={resp.best} onOpen={() => openFile(hits[0])} onReveal={() => openFile(hits[0], "reveal")} onSelect={() => setSelected(0)} armed={lastEnter.current === submitted} />}
+              {!aiOpen && (resp.inside?.length ?? 0) > 0 && <InsideDocs hits={resp.inside!} selected={insideSel?.id} first={resp.total === 0} onSelect={(h) => setInsideSel(h)} onOpen={(h) => openFile(h)} />}
               {!aiOpen && resp.card && <EquipmentCardView card={resp.card} nav={nav} onFilter={(c) => setFilters({ ...filters, categories: [c] })} />}
               {!aiOpen && resp.total === 0 ? (
                 <NoResults resp={resp} onTry={(q) => { setQuery(q); submit(q); }} />
               ) : (
                 <div>
                   {hits.map((h, i) => (
-                    <ResultRow key={h.id} hit={h} i={i} active={i === selected} words={words} topScore={hits[0]?.score ?? 1} onSelect={() => setSelected(i)} onOpen={() => openFile(h)} onReveal={() => openFile(h, "reveal")} onEquip={(id) => { setPinned(id); setSubmitted(""); setQuery(""); }} />
+                    <ResultRow key={h.id} hit={h} i={i} active={i === selected} words={words} topScore={hits[0]?.score ?? 1} onSelect={() => { setInsideSel(null); setSelected(i); }} onOpen={() => openFile(h)} onReveal={() => openFile(h, "reveal")} onEquip={(id) => { setPinned(id); setSubmitted(""); setQuery(""); }} />
                   ))}
                   {hits.length < resp.total && (
                     <div className="py-4 text-center"><Button onClick={() => setLimit((l) => l + PAGE * 2)} loading={loading}>Show more ({n(resp.total - hits.length)} left)</Button></div>
@@ -587,12 +590,47 @@ function ResultRow({ hit, i, active, words, onSelect, onOpen, onReveal, onEquip 
           ))}
           {flags.map((f) => <span key={f} className="shrink-0 rounded bg-[var(--color-surface-3)] px-1.5 text-[11.5px] font-medium text-[var(--color-text-muted)]">{f}</span>)}
         </div>
+        {hit.snippet && <div className="mt-1 line-clamp-2 text-[13px] text-[var(--color-text-muted)]"><span className="mr-1.5 font-semibold text-[var(--color-text)]">p.{hit.page}</span>{snippetNodes(hit.snippet)}</div>}
         <div className="mt-0.5 truncate text-[12px] text-[var(--color-text-faint)]" title={hit.folder}>{crumbs.length > 3 ? "… › " : ""}{tail.join(" › ")}</div>
       </div>
       <div className="flex shrink-0 items-start gap-0.5 opacity-0 transition group-hover:opacity-100">
         <IconButton label="Open" onClick={(e) => { e.stopPropagation(); onOpen(); }} className="size-8"><ExternalLink className="size-4" /></IconButton>
         <IconButton label="Show in folder" onClick={(e) => { e.stopPropagation(); onReveal(); }} className="size-8"><FolderOpen className="size-4" /></IconButton>
       </div>
+    </div>
+  );
+}
+
+/** «word» → bold. */
+function snippetNodes(s: string): ReactNode {
+  return s.split(/(«[^»]*»)/).map((p, i) => (p.startsWith("«") ? <b key={i} className="font-bold text-[var(--color-text)]">{p.slice(1, -1)}</b> : p));
+}
+
+/** Matches found in the text of documents (PDF text, Word/Excel, OCR). */
+function InsideDocs({ hits, selected, first, onSelect, onOpen }: { hits: Hit[]; selected?: number; first: boolean; onSelect: (h: Hit) => void; onOpen: (h: Hit) => void }) {
+  const [all, setAll] = useState(false);
+  const shown = all || first ? hits : hits.slice(0, 3);
+  return (
+    <div className="mx-4 mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+      <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-5 py-2.5">
+        <FileText className="size-4 text-[var(--color-info)]" />
+        <span className="text-[14.5px] font-bold">Found inside documents</span>
+        <span className="text-[13px] text-[var(--color-text-faint)]">{hits.length} · words in the text, not just the name</span>
+      </div>
+      {shown.map((h) => (
+        <div key={`${h.id}-${h.page}`} onClick={() => onSelect(h)} onDoubleClick={() => onOpen(h)} className={cx("group flex cursor-default gap-3 border-b border-[var(--color-border)] px-5 py-2.5 last:border-0", selected === h.id ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]")}>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <span className="truncate text-[14.5px] font-semibold">{h.name}</span>
+              <span className="shrink-0 rounded bg-[var(--color-surface-3)] px-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]">page {h.page}</span>
+            </div>
+            <div className="mt-0.5 line-clamp-2 text-[13.5px] leading-snug text-[var(--color-text-muted)]">{snippetNodes(h.snippet ?? "")}</div>
+            <div className="mt-0.5 truncate text-[12px] text-[var(--color-text-faint)]">{h.doctype}{h.year ? ` · ${h.year}` : ""}{h.equipment[0] ? ` · ${h.equipment[0].number}${h.equipment[0].tag ? " " + h.equipment[0].tag : ""}` : ""}</div>
+          </div>
+          <IconButton label="Open" onClick={(e) => { e.stopPropagation(); onOpen(h); }} className="size-8 opacity-0 group-hover:opacity-100"><ExternalLink className="size-4" /></IconButton>
+        </div>
+      ))}
+      {!first && hits.length > 3 && <button onClick={() => setAll(!all)} className="w-full py-2 text-[13px] font-medium text-[var(--color-accent)] hover:underline cursor-pointer">{all ? "Show fewer" : `Show ${hits.length - 3} more`}</button>}
     </div>
   );
 }
@@ -795,7 +833,7 @@ function FilePreview({ hit }: { hit: Hit }) {
   }, [hit.id, e]);
   if (reachable === false) return <Unavailable hit={hit} />;
   if (reachable === null) return <div className="p-4"><div className="skeleton h-64" /></div>;
-  if (e === ".pdf") return <iframe key={hit.id} src={`${fileUrl(hit.id)}#view=FitH`} className="h-full min-h-[600px] w-full border-0 bg-[var(--color-surface-2)]" title={hit.name} />;
+  if (e === ".pdf") return <iframe key={`${hit.id}-${hit.page ?? 0}`} src={`${fileUrl(hit.id)}#${hit.page ? `page=${hit.page}&` : ""}view=FitH`} className="h-full min-h-[600px] w-full border-0 bg-[var(--color-surface-2)]" title={hit.name} />;
   if (IMG.includes(e) || TIFF.includes(e))
     return failed ? <Unavailable hit={hit} /> : (
       <div className="flex min-h-full items-center justify-center bg-[repeating-conic-gradient(var(--color-surface-2)_0%_25%,var(--color-surface)_0%_50%)] bg-[length:20px_20px] p-4">

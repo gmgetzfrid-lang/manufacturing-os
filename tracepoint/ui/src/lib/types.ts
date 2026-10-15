@@ -52,6 +52,8 @@ export interface Hit {
   archived: boolean;
   blank: boolean;
   junk: boolean;
+  page?: number;
+  snippet?: string;
 }
 
 export interface Facet { key: string; label: string; count: number }
@@ -90,6 +92,7 @@ export interface SearchResponse {
   suggestions: string[];
   notice?: string | null;
   best?: string | null;
+  inside?: Hit[];
 }
 
 export interface SearchRequest {

@@ -96,6 +96,10 @@ static KIND_SYNONYMS: &[(&str, &[&str])] = &[
 /// Plant shorthand. Each group means one thing; the first entry is the form
 /// used for matching equipment descriptions ("FRAC OVHD ACCUM" reads as
 /// fractionator overhead accumulator). File names are matched on every form.
+pub fn is_filler(w: &str) -> bool {
+    FILLER.contains(w)
+}
+
 pub static SHORTHAND: &[&[&str]] = &[
     &["fractionator", "frac", "fract"],
     &["prefractionator", "prefrac"],
