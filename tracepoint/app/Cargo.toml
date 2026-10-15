@@ -1,0 +1,11 @@
+[package]
+name = "tracepoint"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "TracePoint"
+path = "src/main.rs"
+
+[dependencies]
+tp-core = { path = "../core" }

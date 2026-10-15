@@ -170,7 +170,7 @@ fn trim_zeros(d: &str) -> String {
 }
 
 /// Plumbing words that look like tags but are not: REV 2, SHT 3, PG 4, NO 5.
-const NOT_TAGS: &[&str] = &["rev", "r", "sht", "sh", "sheet", "pg", "page", "no", "of", "dwg", "doc", "v", "ver", "version", "api", "asme", "afe", "moc", "con", "sn", "icn", "sds", "tr", "q"];
+const NOT_TAGS: &[&str] = &["rev", "r", "sht", "sh", "sheet", "pg", "page", "no", "of", "dwg", "doc", "ver", "version", "api", "asme", "afe", "moc", "con", "sn", "icn", "sds", "tr", "q"];
 
 /// Find equipment numbers, tags and unit-prefixed numbers in free text.
 pub fn scan_ids(s: &str) -> Vec<IdTok> {
