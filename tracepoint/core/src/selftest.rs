@@ -2,7 +2,6 @@
 //! what the About page says. Prints PASS/FAIL lines; exit code 0 only if all
 //! pass. Writes only inside the system temp folder, then removes it.
 
-use crate::auth::{Role, UserStore};
 use crate::engine::{Engine, SearchRequest};
 use crate::guard::{Guard, GuardError};
 use crate::index::Index;
@@ -18,7 +17,7 @@ fn check(out: &mut Vec<Check>, name: &str, ok: bool, detail: impl Into<String>) 
     out.push(Check { name: name.into(), ok, detail: detail.into() });
 }
 
-pub fn run(embedded_index: Option<&[u8]>, extra_protect: &[String]) -> Vec<Check> {
+pub fn run(extra_protect: &[String]) -> Vec<Check> {
     let mut out = Vec::new();
     let tmp = std::env::temp_dir().join(format!("TracePoint-selftest-{}", std::process::id()));
 
@@ -32,7 +31,7 @@ pub fn run(embedded_index: Option<&[u8]>, extra_protect: &[String]) -> Vec<Check
     check(&mut out, "Guard: temp folder is writable", allowed, tmp.display().to_string());
     let attempts = [
         r"\\thor\Equipment Files\selftest.txt",
-        r"\\THOR\equipment files\5600 - LRU\..\selftest.txt",
+        r"\\THOR\equipment files\any folder\..\selftest.txt",
         r"\\?\UNC\thor\Equipment Files\selftest.txt",
         r"//thor/Equipment Files/x/y.pdf",
     ];
@@ -50,72 +49,53 @@ pub fn run(embedded_index: Option<&[u8]>, extra_protect: &[String]) -> Vec<Check
     let w = g.write(&tmp.join("probe.txt"), b"ok").is_ok() && std::fs::read(tmp.join("probe.txt")).map(|b| b == b"ok").unwrap_or(false);
     check(&mut out, "Guard: atomic write in own folder works", w, "probe.txt");
 
-    // ── Profiles and keys ────────────────────────────────────────────
-    match UserStore::open_in_memory() {
-        Ok(st) => {
-            let mut admin = st.login(crate::auth::SEED_ADMIN_EMAIL, crate::auth::SEED_ADMIN_PASSWORD);
-            check(&mut out, "Auth: built-in admin must change password", admin.as_ref().map(|s| s.user.must_change && s.user.role == Role::Admin).unwrap_or(false), crate::auth::SEED_ADMIN_EMAIL);
-            if let Ok(a) = admin.as_mut() {
-                check(&mut out, "Auth: nothing administrative before the change", st.create_user(a, "x@y.com", "", Role::User, "Temp-pass-1").is_err(), "create_user refused");
-                let changed = st.change_password(a, "password", "Self-Test#Pass-2026").is_ok();
-                check(&mut out, "Auth: password change", changed, "Argon2id");
-                let u = st.create_user(a, "selftest@kernenergy.com", "Self Test", Role::User, "Temp-pass-77");
-                if let Ok(u) = u {
-                    if let Ok(mut s2) = st.login("selftest@kernenergy.com", "Temp-pass-77") {
-                        let _ = st.change_password(&mut s2, "Temp-pass-77", "Another#Pass-9911");
-                        let saved = st.put_secret(&s2, "ai_key", "sk-selftest-123").is_ok();
-                        let own = st.get_secret(&s2, "ai_key").ok().flatten().map(|k| k.as_str() == "sk-selftest-123").unwrap_or(false);
-                        let other = st.get_secret(a, "ai_key").ok().flatten().is_none();
-                        check(&mut out, "Keys: owner can use their key", saved && own, "XChaCha20-Poly1305");
-                        check(&mut out, "Keys: administrator cannot read it", other, "no master key");
-                        let _ = st.reset_password(a, u.id, "Reset-pass-55");
-                        let s3 = st.login("selftest@kernenergy.com", "Reset-pass-55");
-                        let erased = s3.map(|s| st.get_secret(&s, "ai_key").ok().flatten().is_none()).unwrap_or(false);
-                        check(&mut out, "Keys: admin reset erases the key", erased, "");
-                    }
-                }
-            }
-            let mut locked = false;
-            for _ in 0..6 {
-                if let Err(e) = st.login("nobody@x.com", "wrong") {
-                    locked |= e.0.contains("incorrect");
-                }
-            }
-            check(&mut out, "Auth: unknown users get the same message", locked, "no user enumeration");
-        }
-        Err(e) => check(&mut out, "Auth: open profile store", false, e.0),
-    }
+    // ── Who you are, and permissions ─────────────────────────────────
+    let me = crate::acl::current_user();
+    check(&mut out, "Identity: Windows account (no TracePoint passwords)", !me.sid.is_empty(), format!("{} ({})", me.account, me.sid));
+    let sealed = crate::acl::protect_secret(b"sk-selftest-123", &tmp);
+    let opened = sealed.as_ref().ok().and_then(|b| crate::acl::unprotect_secret(b, &tmp).ok()).map(|v| v.as_slice() == b"sk-selftest-123").unwrap_or(false);
+    let not_plain = sealed.as_ref().map(|b| !String::from_utf8_lossy(b).contains("sk-selftest")).unwrap_or(false);
+    check(&mut out, "Keys: encrypted by Windows for this account (DPAPI)", opened && not_plain, "never stored on the shared folder");
+    // A real lock on a real folder: set it, read it back from a file inside.
+    let lockdir = tmp.join("lock-test");
+    let _ = g.create_dir_all(&lockdir);
+    let want = crate::acl::ReadAccess::parse_fingerprint(&format!("A:{}", me.sid));
+    let locked = crate::acl::lock_folder(&lockdir.to_string_lossy(), &want.index_folder_sddl(&me.sid));
+    check(&mut out, "Permissions: TracePoint can lock a folder it created", locked.is_ok(), locked.err().unwrap_or_else(|| "protected, inheritance off".into()));
+    let f = lockdir.join("index.db");
+    let _ = std::fs::write(&f, b"x");
+    let cache = std::sync::Mutex::new(std::collections::HashMap::new());
+    let back = crate::acl::read_access(&f.to_string_lossy(), &cache).and_then(|got| crate::acl::same_readers(&want, &got, &me.sid));
+    check(&mut out, "Permissions: a file in it carries exactly that lock", back.is_ok(), back.err().unwrap_or_else(|| "read back from Windows".into()));
+    check(&mut out, "Permissions: Windows says you may open it", crate::acl::can_open(&f) == crate::acl::Access::Allowed, "");
+    check(&mut out, "Policy: AI switched off by IT on this PC", true, if crate::service::ai_blocked_by_it() { "yes (DisableAI=1)" } else { "no" });
 
-    // ── Search engine on the built-in index ─────────────────────────
-    if let Some(bytes) = embedded_index {
-        match crate::snapshot::decompress(bytes) {
-            Ok(raw) => {
-                let p = tmp.join("index.db");
-                if g.write(&p, &raw).is_ok() {
-                    match Index::load(&p) {
-                        Ok(idx) => {
-                            let files = idx.files.len();
-                            let e = Engine::new(idx);
-                            check(&mut out, "Index: built-in snapshot loads", files > 100_000, format!("{files} files"));
-                            let q = |s: &str| e.search(&SearchRequest { query: s.into(), limit: 20, ..Default::default() });
-                            let r = q("5610.15 inspection");
-                            check(&mut out, "Search: equipment + topic", r.total > 0 && r.hits[0].category == "Inspection / MI", format!("{} results, first {:?}", r.total, r.hits.first().map(|h| &h.name)));
-                            let r = q("5510.06");
-                            check(&mut out, "Search: renumbered equipment", r.card.as_ref().map(|c| c.number == "5610.15").unwrap_or(false), "5510.06 → 5610.15");
-                            let r = q("V-2 inspection");
-                            check(&mut out, "Search: ambiguous tag asks which", !r.ambiguity.is_empty(), format!("{} options", r.ambiguity.first().map(|a| a.options.len()).unwrap_or(0)));
-                            let r = q("tk-1100");
-                            check(&mut out, "Search: tag folder resolves", r.card.as_ref().map(|c| c.number == "7272.1100").unwrap_or(false), "TK-1100 → 7272.1100");
-                            let r = q("inspction report lru");
-                            check(&mut out, "Search: typo tolerance", r.total > 0, format!("{} results", r.total));
-                            let r = q("5610.150 inspection");
-                            check(&mut out, "Search: partial number rejected", r.total == 0, "TracePoint rule");
-                        }
-                        Err(err) => check(&mut out, "Index: built-in snapshot loads", false, err),
-                    }
+    // ── Scan → split by permissions → merge → search ────────────────
+    let thor = tmp.join("thor");
+    let inspections = thor.join("1000 - TEST UNIT").join("10 - VESSELS").join("1234.56 V-1 Test Receiver").join("INSPECTIONS");
+    if g.create_dir_all(&inspections).is_ok() && g.write(&inspections.join("1234.56 UT Survey 2022.pdf"), b"%PDF-1.4").is_ok() {
+        let root = thor.to_string_lossy().replace('/', "\\");
+        let master = tmp.join("master.db");
+        let scanned = rusqlite::Connection::open(&master).map_err(|e| e.to_string()).and_then(|mut c| {
+            let opts = crate::crawl::Options { workers: 2, cancel: Default::default(), permissions: true };
+            crate::crawl::scan(&mut c, &root, &opts, &|_| {})
+        });
+        check(&mut out, "Scan: reads files and their permissions (read-only)", scanned.as_ref().map(|s| s.progress.files == 1).unwrap_or(false), scanned.as_ref().map(|s| s.status.clone()).unwrap_or_else(|e| e.clone()));
+        let classes = rusqlite::Connection::open(&master).map(|c| crate::partition::classes(&c)).unwrap_or_default();
+        check(&mut out, "Scan: file grouped by who may read it", classes.len() == 1, format!("{} group(s)", classes.len()));
+        if let Some((class, ..)) = classes.first() {
+            let part = tmp.join("group.db");
+            let split = crate::partition::split_index(&master, class, &part);
+            let mem = rusqlite::Connection::open_in_memory().unwrap();
+            let merged = split.and_then(|_| crate::partition::merge(&[part], &mem)).and_then(|_| Index::load_conn(&mem));
+            match merged {
+                Ok(idx) => {
+                    let e = Engine::new(idx);
+                    let r = e.search(&SearchRequest { query: "1234.56 inspection".into(), limit: 5, ..Default::default() });
+                    check(&mut out, "Search: finds it through the shared-index path", r.total == 1, format!("{} result(s)", r.total));
                 }
+                Err(err) => check(&mut out, "Search: finds it through the shared-index path", false, err),
             }
-            Err(err) => check(&mut out, "Index: decompress built-in snapshot", false, err),
         }
     }
     let _ = std::fs::remove_dir_all(&tmp);

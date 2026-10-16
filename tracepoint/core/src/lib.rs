@@ -1,6 +1,5 @@
+pub mod acl;
 pub mod ai;
-pub mod aifind;
-pub mod ask;
 pub mod auth;
 pub mod classify;
 pub mod content;
@@ -11,8 +10,9 @@ pub mod graph;
 pub mod guard;
 pub mod index;
 pub mod nl;
+pub mod partition;
 pub mod pricing;
 pub mod selftest;
 pub mod service;
-pub mod snapshot;
+pub mod team;
 pub mod text;

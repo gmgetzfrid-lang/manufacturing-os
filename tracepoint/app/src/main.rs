@@ -1,7 +1,7 @@
 //! TracePoint for Windows: one portable exe.
 //!
 //! A native window hosts Windows' built-in WebView2 to draw the interface,
-//! which is embedded in this file, as is the THOR index snapshot. The
+//! which is embedded in this file. No THOR data is inside the exe. The
 //! interface talks to the Rust service through a private `tp` URL scheme that
 //! exists only inside this window. Nothing is installed; per-user data goes to
 //! %LOCALAPPDATA%\TracePoint.
@@ -19,7 +19,6 @@ use wry::http::{header::CONTENT_TYPE, Request, Response};
 use wry::{NewWindowResponse, WebContext, WebViewBuilder};
 
 static UI_HTML: &str = include_str!("../../ui/dist/index.html");
-static INDEX_SNAPSHOT: &[u8] = include_bytes!("../../assets/index.tpz");
 static ICON_PNG: &[u8] = include_bytes!("../../assets/mark512.png");
 /// PDFium 157.0.8100 (BSD-3, from github.com/bblanchon/pdfium-binaries):
 /// reads PDF text and renders scanned pages for OCR.
@@ -127,6 +126,10 @@ impl Platform for WinPlatform {
         let _ = self.proxy.lock().unwrap().send_event(UserEvent::Script(js));
     }
 
+    fn exe_dir(&self) -> Option<PathBuf> {
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    }
+
     fn drive_resolver(&self) -> Option<tp_core::guard::DriveResolver> {
         #[cfg(windows)]
         {
@@ -208,7 +211,7 @@ fn selftest() -> i32 {
     println!("TracePoint {} self-test", tp_core::service::VERSION);
     println!("Executable: {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default());
     println!();
-    let mut checks = tp_core::selftest::run(Some(INDEX_SNAPSHOT), &[]);
+    let mut checks = tp_core::selftest::run(&[]);
     // The PDF engine is checked from a temporary copy, removed afterwards.
     let dll = std::env::temp_dir().join(format!("TracePoint-selftest-pdfium-{}.dll", std::process::id()));
     if std::fs::write(&dll, PDFIUM_DLL).is_ok() {
@@ -242,7 +245,7 @@ fn main() {
     let proxy = event_loop.create_proxy();
     let local = local_data_dir();
 
-    let svc = match Service::new(Box::new(WinPlatform { proxy: Mutex::new(proxy) }), local.clone(), Some(INDEX_SNAPSHOT)) {
+    let svc = match Service::new(Box::new(WinPlatform { proxy: Mutex::new(proxy) }), local.clone()) {
         Ok(s) => s,
         Err(e) => {
             message_box("TracePoint could not start", &format!("{e}\n\nTracePoint keeps its data in {}.", local.display()));
@@ -264,6 +267,7 @@ fn main() {
         let s = svc.clone();
         std::thread::spawn(move || s.load_index());
     }
+    svc.watch_team();
 
     let icon = image::load_from_memory(ICON_PNG).ok().map(|i| i.to_rgba8()).and_then(|i| {
         let (w, h) = i.dimensions();

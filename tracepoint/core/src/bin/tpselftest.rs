@@ -1,6 +1,5 @@
 fn main() {
-    let bytes = std::env::args().nth(1).map(|p| std::fs::read(p).unwrap());
-    let checks = tp_core::selftest::run(bytes.as_deref(), &[]);
+    let checks = tp_core::selftest::run(&[]);
     let mut fail = 0;
     for c in &checks {
         println!("{} {:<48} {}", if c.ok { "PASS" } else { "FAIL" }, c.name, c.detail);

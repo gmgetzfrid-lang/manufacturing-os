@@ -203,6 +203,15 @@ impl Guard {
         Ok(())
     }
 
+    /// Remove a folder TracePoint itself created (an old shared index group).
+    pub fn remove_own_dir(&self, path: &Path) -> Result<(), GuardError> {
+        self.check(path)?;
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        }
+        Ok(())
+    }
+
     /// Copy into one of TracePoint's own folders and swap it in with a rename,
     /// so readers never see a half-written file.
     pub fn publish(&self, from: &Path, to: &Path) -> Result<u64, GuardError> {

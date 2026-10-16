@@ -39,9 +39,16 @@ fn main() {
     let data = PathBuf::from(get("--data").expect("--data <dir>"));
     let ui = get("--ui").map(PathBuf::from);
     let port = get("--port").unwrap_or_else(|| "7878".into());
-    let snapshot: Option<&'static [u8]> = get("--snapshot").map(|p| &*Box::leak(std::fs::read(p).unwrap().into_boxed_slice()));
+    // Dev: --db <thor_knowledge.db> seeds this PC's own index.
+    if let Some(db) = get("--db") {
+        let dest = data.join("index").join("thor_knowledge.db");
+        if !dest.exists() {
+            std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+            std::fs::copy(db, &dest).unwrap();
+        }
+    }
     let subs = Arc::new(Mutex::new(Vec::new()));
-    let svc = Service::new(Box::new(DevPlatform { subscribers: subs.clone() }), data, snapshot).unwrap();
+    let svc = Service::new(Box::new(DevPlatform { subscribers: subs.clone() }), data).unwrap();
     if let Ok(p) = std::env::var("TP_PDFIUM") {
         svc.set_pdfium(std::path::PathBuf::from(p));
     }

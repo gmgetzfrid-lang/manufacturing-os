@@ -1,32 +1,23 @@
-//! Profiles, sign-in and per-user secrets.
+//! Who you are and what TracePoint lets you do.
 //!
-//! * One account ships: ggetzfrid@kernenergy.com (Admin), temporary password
-//!   "password", which must be changed before anything else is usable.
-//! * Only Admins create profiles and assign roles. Every new profile gets a
-//!   temporary password and must change it at first sign-in.
-//! * Passwords are stored as Argon2id hashes (PHC strings) only.
-//! * Each user's secrets (AI API keys) are encrypted with XChaCha20-Poly1305
-//!   under a random data key. That data key is itself encrypted with a key
-//!   derived (Argon2id) from the user's own password. No master key exists:
-//!   not the admin, not another user, not someone with a copy of the database
-//!   can decrypt them. Each ciphertext is bound to its owner and name.
-//! * An admin password reset therefore erases that user's saved secrets.
+//! * No TracePoint passwords. You are the Windows account that started the
+//!   program; Windows already checked who you are when you signed in.
+//! * Roles (Admin, Indexer; everyone else is a User) are a list of Windows
+//!   accounts in `roles.json` in the shared TracePoint folder. Only accounts
+//!   Windows lets write there (administrators and indexers, set by TracePoint
+//!   with the folder's permissions) can change it.
+//! * AI API keys are encrypted with Windows (DPAPI) for your account on your
+//!   PC and kept in your own profile folder — never on the shared folder.
+//! * The activity log and the AI spending ledger live in `admin\` in the
+//!   shared folder, which only administrators and indexers can open.
 
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use argon2::{Algorithm, Argon2, Params, Version};
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
-use std::path::Path;
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
-pub const SEED_ADMIN_EMAIL: &str = "ggetzfrid@kernenergy.com";
-pub const SEED_ADMIN_PASSWORD: &str = "password";
-const MAX_FAILED: i64 = 5;
-const LOCK_SECONDS: i64 = 300;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Admin,
@@ -55,34 +46,26 @@ impl Role {
     }
 }
 
+/// The signed-in person, as the interface sees them.
 #[derive(Clone, Debug, Serialize)]
 pub struct UserInfo {
-    pub id: i64,
-    pub email: String,
+    /// Windows SID.
+    pub id: String,
+    /// DOMAIN\user
+    pub account: String,
     pub name: String,
     pub role: Role,
-    pub must_change: bool,
-    pub disabled: bool,
     pub can_ai: bool,
-    pub created_at: String,
-    pub created_by: Option<String>,
-    pub pw_changed_at: Option<String>,
-    pub last_login_at: Option<String>,
     pub has_ai_key: bool,
 }
 
 pub struct Session {
     pub user: UserInfo,
-    /// Present only while signed in; derived from the user's password.
-    dek: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl Session {
     pub fn is_admin(&self) -> bool {
         self.user.role == Role::Admin
-    }
-    pub fn unlocked(&self) -> bool {
-        self.dek.is_some()
     }
 }
 
@@ -97,7 +80,7 @@ impl std::fmt::Display for AuthError {
 
 impl From<rusqlite::Error> for AuthError {
     fn from(e: rusqlite::Error) -> Self {
-        AuthError(format!("User database error: {e}"))
+        AuthError(format!("Activity log error: {e}"))
     }
 }
 
@@ -132,112 +115,68 @@ pub fn format_utc(secs: i64) -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60)
 }
 
-fn random<const N: usize>() -> [u8; N] {
-    let mut b = [0u8; N];
-    getrandom::fill(&mut b).expect("OS random source");
-    b
+// ── Roles ─────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Member {
+    pub sid: String,
+    pub account: String,
+    pub role: Role,
+    #[serde(default = "yes")]
+    pub can_ai: bool,
+    #[serde(default)]
+    pub added_by: String,
+    #[serde(default)]
+    pub added_at: String,
 }
 
-fn argon() -> Argon2<'static> {
-    // 64 MiB, 3 passes: ~0.3-0.6 s on a workstation. Deliberately slow.
-    Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::new(64 * 1024, 3, 1, Some(32)).unwrap())
+fn yes() -> bool {
+    true
 }
 
-fn hash_password(pw: &str) -> Result<String, AuthError> {
-    let salt = SaltString::encode_b64(&random::<16>()).map_err(|e| AuthError(e.to_string()))?;
-    argon().hash_password(pw.as_bytes(), &salt).map(|h| h.to_string()).map_err(|e| AuthError(e.to_string()))
+/// roles.json: who administers TracePoint, and team-wide settings.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Roster {
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub members: Vec<Member>,
+    #[serde(default)]
+    pub policy: BTreeMap<String, String>,
 }
 
-fn verify_password(pw: &str, phc: &str) -> bool {
-    PasswordHash::new(phc).map(|h| argon().verify_password(pw.as_bytes(), &h).is_ok()).unwrap_or(false)
-}
-
-fn derive_kek(pw: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>, AuthError> {
-    let mut k = Zeroizing::new([0u8; 32]);
-    argon().hash_password_into(pw.as_bytes(), salt, k.as_mut()).map_err(|e| AuthError(e.to_string()))?;
-    Ok(k)
-}
-
-fn seal(key: &[u8; 32], plaintext: &[u8], aad: &[u8]) -> Vec<u8> {
-    let cipher = XChaCha20Poly1305::new(key.into());
-    let nonce = random::<24>();
-    let mut out = nonce.to_vec();
-    out.extend(cipher.encrypt(XNonce::from_slice(&nonce), Payload { msg: plaintext, aad }).expect("encrypt"));
-    out
-}
-
-fn open(key: &[u8; 32], sealed: &[u8], aad: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
-    if sealed.len() < 24 + 16 {
-        return None;
+impl Roster {
+    pub fn load(path: &Path) -> Result<Option<Roster>, String> {
+        match std::fs::read(path) {
+            Ok(b) => serde_json::from_slice(&b).map(Some).map_err(|e| format!("{} is damaged: {e}", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("Can't read {}: {e}", path.display())),
+        }
     }
-    let cipher = XChaCha20Poly1305::new(key.into());
-    cipher.decrypt(XNonce::from_slice(&sealed[..24]), Payload { msg: &sealed[24..], aad }).ok().map(Zeroizing::new)
+    pub fn role_of(&self, sid: &str) -> Role {
+        self.members.iter().find(|m| m.sid == sid).map(|m| m.role).unwrap_or(Role::User)
+    }
+    pub fn sids(&self, role: Role) -> Vec<String> {
+        self.members.iter().filter(|m| m.role == role).map(|m| m.sid.clone()).collect()
+    }
 }
 
-/// Rules for a new password. Returns a human sentence on failure.
-pub fn password_problem(email: &str, pw: &str) -> Option<String> {
-    let lower = pw.to_lowercase();
-    if pw.chars().count() < 10 {
-        return Some("Use at least 10 characters.".into());
-    }
-    if ["password", "password1", "password123", "tracepoint", "kernenergy", "changeme", "welcome1", "letmein"].iter().any(|b| lower.contains(b)) {
-        return Some("That password is too easy to guess.".into());
-    }
-    let local = email.split('@').next().unwrap_or("").to_lowercase();
-    if local.len() >= 3 && lower.contains(&local) {
-        return Some("Don't include your email name in the password.".into());
-    }
-    let classes = [pw.chars().any(|c| c.is_lowercase()), pw.chars().any(|c| c.is_uppercase()), pw.chars().any(|c| c.is_ascii_digit()), pw.chars().any(|c| !c.is_alphanumeric())]
-        .iter()
-        .filter(|x| **x)
-        .count();
-    if classes < 3 {
-        return Some("Mix at least three of: lowercase, uppercase, numbers, symbols.".into());
-    }
-    None
-}
+// ── Per-person settings on this PC ───────────────────────────────────────
 
-pub struct UserStore {
-    conn: Connection,
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct LocalPrefs {
+    #[serde(default)]
+    prefs: BTreeMap<String, String>,
+    /// name → DPAPI-encrypted value, base64.
+    #[serde(default)]
+    secrets: BTreeMap<String, String>,
 }
 
 const SCHEMA: &str = "
-create table if not exists meta(key text primary key, value text not null);
-create table if not exists users(
-  id integer primary key,
-  email text not null unique collate nocase,
-  name text not null default '',
-  role text not null check(role in ('admin','indexer','user')),
-  pw_hash text not null,
-  must_change integer not null default 1,
-  disabled integer not null default 0,
-  can_ai integer not null default 1,
-  failed_logins integer not null default 0,
-  locked_until integer,
-  created_at text not null,
-  created_by text,
-  pw_changed_at text,
-  last_login_at text,
-  vault_salt blob,
-  vault_wrapped blob
-);
-create table if not exists secrets(
-  user_id integer not null references users(id) on delete cascade,
-  name text not null,
-  sealed blob not null,
-  updated_at text not null,
-  primary key(user_id, name)
-);
-create table if not exists user_prefs(
-  user_id integer not null references users(id) on delete cascade,
-  key text not null,
-  value text not null,
-  primary key(user_id, key)
-);
-create table if not exists policy(key text primary key, value text not null, updated_by text, updated_at text);
 create table if not exists ai_usage(
   id integer primary key,
-  user_id integer not null,
+  user_id text not null,
+  account text,
   at text not null,
   month text not null,
   feature text not null,
@@ -252,507 +191,341 @@ create table if not exists ai_usage(
   status text not null,
   note text
 );
-create index if not exists ix_ai_usage_user_month on ai_usage(user_id, month);
-create table if not exists ask_threads(id integer primary key, user_id integer not null, title text not null, scope text not null, created_at text not null, updated_at text not null);
-create table if not exists ask_turns(id integer primary key, thread_id integer not null references ask_threads(id) on delete cascade, question text not null,
-  answer text not null, sources text not null, meta text not null, rating integer, created_at text not null);
-create table if not exists libraries(id integer primary key, name text not null, query text not null, created_by text, created_at text not null);
+create index if not exists ix_ai_usage_month on ai_usage(month);
 create table if not exists audit(id integer primary key, at text not null, actor text, action text not null, detail text, machine text);
 ";
 
+/// Roles, this person's settings and keys, and (for administrators and
+/// indexers) the shared activity log.
+pub struct UserStore {
+    me: crate::acl::Identity,
+    /// roles.json — in the team folder, or on this PC when there is none.
+    roster_path: PathBuf,
+    roster: Roster,
+    local: PathBuf,
+    prefs: LocalPrefs,
+    activity_path: PathBuf,
+    activity: Option<Connection>,
+    /// No team folder: this PC only, and whoever runs it administers it.
+    standalone: bool,
+}
+
 impl UserStore {
-    /// Opens (or creates) the profile database. Uses a rollback journal, not
-    /// WAL, so it is safe on a network share.
-    pub fn open(path: &Path) -> Result<UserStore, AuthError> {
-        let conn = Connection::open(path)?;
-        Self::init(conn)
-    }
-
-    pub fn open_in_memory() -> Result<UserStore, AuthError> {
-        Self::init(Connection::open_in_memory()?)
-    }
-
-    fn init(conn: Connection) -> Result<UserStore, AuthError> {
-        conn.busy_timeout(std::time::Duration::from_secs(8))?;
-        conn.pragma_update(None, "journal_mode", "DELETE")?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(SCHEMA)?;
-        let s = UserStore { conn };
-        s.seed()?;
+    /// `team`: the shared TracePoint folder, when there is one.
+    pub fn open(me: crate::acl::Identity, local: &Path, team: Option<&Path>) -> Result<UserStore, AuthError> {
+        let (roster_path, activity_path, standalone) = match team {
+            Some(t) => (t.join("roles.json"), t.join("admin").join("activity.db"), false),
+            None => (local.join("roles.json"), local.join("activity.db"), true),
+        };
+        let roster = Roster::load(&roster_path).map_err(AuthError)?.unwrap_or_default();
+        let prefs: LocalPrefs = std::fs::read(local.join("prefs.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let mut s = UserStore { me, roster_path, roster, local: local.to_path_buf(), prefs, activity_path, activity: None, standalone };
+        if standalone && s.roster.members.is_empty() {
+            // This PC only: the person running it administers it.
+            s.roster.members.push(Member { sid: s.me.sid.clone(), account: s.me.account.clone(), role: Role::Admin, can_ai: true, added_by: "first run".into(), added_at: now() });
+            let _ = s.save_roster();
+        }
         Ok(s)
     }
 
-    fn seed(&self) -> Result<(), AuthError> {
-        let n: i64 = self.conn.query_row("select count(*) from users", [], |r| r.get(0))?;
-        if n == 0 {
-            self.conn.execute(
-                "insert into users(email,name,role,pw_hash,must_change,created_at,created_by) values(?1,'Admin','admin',?2,1,?3,'seed')",
-                params![SEED_ADMIN_EMAIL, hash_password(SEED_ADMIN_PASSWORD)?, now()],
-            )?;
-            self.audit(None, "seed_admin", &format!("Created the built-in admin profile {SEED_ADMIN_EMAIL}"))?;
+    pub fn open_in_memory(me: crate::acl::Identity, role: Role) -> UserStore {
+        let roster = Roster { version: 1, members: vec![Member { sid: me.sid.clone(), account: me.account.clone(), role, can_ai: true, added_by: "test".into(), added_at: now() }], policy: BTreeMap::new() };
+        UserStore {
+            me,
+            roster_path: PathBuf::new(),
+            roster,
+            local: PathBuf::new(),
+            prefs: LocalPrefs::default(),
+            activity_path: PathBuf::new(),
+            activity: Connection::open_in_memory().ok().and_then(|c| c.execute_batch(SCHEMA).ok().map(|_| c)),
+            standalone: true,
+        }
+    }
+
+    pub fn me(&self) -> &crate::acl::Identity {
+        &self.me
+    }
+    pub fn roster(&self) -> &Roster {
+        &self.roster
+    }
+    pub fn roster_path(&self) -> &Path {
+        &self.roster_path
+    }
+
+    /// Re-read roles.json (someone else may have changed it).
+    pub fn refresh(&mut self) {
+        if let Ok(Some(r)) = Roster::load(&self.roster_path) {
+            self.roster = r;
+        }
+    }
+
+    pub fn session(&self) -> Session {
+        let role = self.roster.role_of(&self.me.sid);
+        let can_ai = self.roster.members.iter().find(|m| m.sid == self.me.sid).map(|m| m.can_ai).unwrap_or(false);
+        Session {
+            user: UserInfo { id: self.me.sid.clone(), account: self.me.account.clone(), name: self.me.display.clone(), role, can_ai, has_ai_key: self.prefs.secrets.contains_key("ai_key") },
+        }
+    }
+
+    fn save_roster(&self) -> Result<(), AuthError> {
+        if self.roster_path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let body = serde_json::to_vec_pretty(&self.roster).unwrap();
+        let tmp = self.roster_path.with_extension("json.tp-tmp");
+        std::fs::write(&tmp, &body).and_then(|_| std::fs::rename(&tmp, &self.roster_path)).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            AuthError(format!("Windows didn't let you change the TracePoint roles ({e}). Only TracePoint administrators can."))
+        })
+    }
+
+    fn require_admin(&self) -> Result<(), AuthError> {
+        if self.roster.role_of(&self.me.sid) != Role::Admin {
+            return err("Only a TracePoint administrator can do that.");
         }
         Ok(())
     }
 
-    pub fn audit(&self, actor: Option<&str>, action: &str, detail: &str) -> Result<(), AuthError> {
-        let machine = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
-        self.conn.execute("insert into audit(at,actor,action,detail,machine) values(?1,?2,?3,?4,?5)", params![now(), actor, action, detail, machine])?;
+    /// Start a new shared setup with this person as its first administrator.
+    pub fn found_team(&mut self, roster_path: PathBuf, activity_path: PathBuf) -> Result<(), AuthError> {
+        self.roster = Roster { version: 1, members: vec![Member { sid: self.me.sid.clone(), account: self.me.account.clone(), role: Role::Admin, can_ai: true, added_by: "set up the shared folder".into(), added_at: now() }], policy: BTreeMap::new() };
+        self.roster_path = roster_path;
+        self.activity_path = activity_path;
+        self.activity = None;
+        self.standalone = false;
+        self.save_roster()
+    }
+
+    /// Give a Windows account a role ("user" removes it from the list).
+    pub fn set_member(&mut self, who: &crate::acl::Identity, role: Role, can_ai: Option<bool>) -> Result<(), AuthError> {
+        self.require_admin()?;
+        self.refresh();
+        let before = self.roster.clone();
+        if who.sid == self.me.sid && role != Role::Admin {
+            return err("You can't remove your own administrator role. Ask another administrator.");
+        }
+        self.roster.members.retain(|m| m.sid != who.sid);
+        if role != Role::User {
+            let prev_ai = before.members.iter().find(|m| m.sid == who.sid).map(|m| m.can_ai).unwrap_or(true);
+            self.roster.members.push(Member { sid: who.sid.clone(), account: who.account.clone(), role, can_ai: can_ai.unwrap_or(prev_ai), added_by: self.me.account.clone(), added_at: now() });
+        }
+        if self.roster.sids(Role::Admin).is_empty() {
+            self.roster = before;
+            return err("At least one administrator must remain.");
+        }
+        if let Err(e) = self.save_roster() {
+            self.roster = before;
+            return Err(e);
+        }
+        self.audit("role_changed", &format!("{} → {}", who.account, role.as_str()))?;
         Ok(())
     }
 
-    pub fn audit_log(&self, limit: i64) -> Result<Vec<(String, Option<String>, String, Option<String>, Option<String>)>, AuthError> {
-        let mut st = self.conn.prepare("select at,actor,action,detail,machine from audit order by id desc limit ?1")?;
+    pub fn list(&self) -> Vec<Member> {
+        self.roster.members.clone()
+    }
+
+    // ── Secrets (AI keys), encrypted by Windows for this account ────────
+    fn save_prefs(&self) -> Result<(), AuthError> {
+        if self.local.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let p = self.local.join("prefs.json");
+        std::fs::write(&p, serde_json::to_vec_pretty(&self.prefs).unwrap()).map_err(|e| AuthError(format!("Can't save your settings: {e}")))
+    }
+
+    pub fn put_secret(&mut self, name: &str, value: &str) -> Result<(), AuthError> {
+        use base64::Engine as _;
+        let sealed = crate::acl::protect_secret(value.as_bytes(), &self.local).map_err(AuthError)?;
+        self.prefs.secrets.insert(name.to_string(), base64::engine::general_purpose::STANDARD.encode(sealed));
+        self.save_prefs()?;
+        let _ = self.audit("secret_saved", name);
+        Ok(())
+    }
+
+    pub fn get_secret(&self, name: &str) -> Result<Option<Zeroizing<String>>, AuthError> {
+        use base64::Engine as _;
+        let Some(b) = self.prefs.secrets.get(name) else { return Ok(None) };
+        let raw = base64::engine::general_purpose::STANDARD.decode(b).map_err(|_| AuthError("Saved key is damaged; paste it again.".into()))?;
+        let v = crate::acl::unprotect_secret(&raw, &self.local).map_err(|e| AuthError(format!("{e}. Paste your key again.")))?;
+        Ok(Some(Zeroizing::new(String::from_utf8_lossy(&v).into_owned())))
+    }
+
+    pub fn delete_secret(&mut self, name: &str) -> Result<(), AuthError> {
+        self.prefs.secrets.remove(name);
+        self.save_prefs()?;
+        let _ = self.audit("secret_deleted", name);
+        Ok(())
+    }
+
+    pub fn set_pref(&mut self, key: &str, value: &str) -> Result<(), AuthError> {
+        self.prefs.prefs.insert(key.to_string(), value.to_string());
+        self.save_prefs()
+    }
+
+    pub fn prefs(&self) -> Vec<(String, String)> {
+        self.prefs.prefs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+
+    // ── Team policy (in roles.json) ─────────────────────────────────────
+    pub fn policy(&self, key: &str) -> Option<String> {
+        self.roster.policy.get(key).cloned()
+    }
+
+    pub fn set_policy(&mut self, key: &str, value: &str) -> Result<(), AuthError> {
+        self.require_admin()?;
+        self.refresh();
+        let before = self.roster.clone();
+        self.roster.policy.insert(key.to_string(), value.to_string());
+        if let Err(e) = self.save_roster() {
+            self.roster = before;
+            return Err(e);
+        }
+        let _ = self.audit("policy_changed", &format!("{key} = {value}"));
+        Ok(())
+    }
+
+    // ── Activity log and AI ledger (administrators and indexers) ───────
+    fn activity(&mut self) -> Result<&Connection, AuthError> {
+        if self.activity.is_none() {
+            if !self.roster.role_of(&self.me.sid).can_rescan() {
+                return err("The activity log is for administrators and indexers.");
+            }
+            if let Some(d) = self.activity_path.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let c = Connection::open(&self.activity_path).map_err(|e| AuthError(format!("Can't open the activity log: {e}")))?;
+            c.busy_timeout(std::time::Duration::from_secs(8))?;
+            // Rollback journal, not WAL: safe on a network share.
+            c.pragma_update(None, "journal_mode", "DELETE")?;
+            c.execute_batch(SCHEMA)?;
+            self.activity = Some(c);
+        }
+        Ok(self.activity.as_ref().unwrap())
+    }
+
+    pub fn audit(&mut self, action: &str, detail: &str) -> Result<(), AuthError> {
+        let actor = self.me.account.clone();
+        let machine = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
+        let c = self.activity()?;
+        c.execute("insert into audit(at,actor,action,detail,machine) values(?1,?2,?3,?4,?5)", params![now(), actor, action, detail, machine])?;
+        Ok(())
+    }
+
+    pub fn audit_log(&mut self, limit: i64) -> Result<Vec<(String, Option<String>, String, Option<String>, Option<String>)>, AuthError> {
+        let c = self.activity()?;
+        let mut st = c.prepare("select at,actor,action,detail,machine from audit order by id desc limit ?1")?;
         let rows = st.query_map([limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    fn row_user(r: &rusqlite::Row) -> rusqlite::Result<UserInfo> {
-        Ok(UserInfo {
-            id: r.get("id")?,
-            email: r.get("email")?,
-            name: r.get("name")?,
-            role: Role::parse(&r.get::<_, String>("role")?).unwrap_or(Role::User),
-            must_change: r.get::<_, i64>("must_change")? != 0,
-            disabled: r.get::<_, i64>("disabled")? != 0,
-            can_ai: r.get::<_, i64>("can_ai")? != 0,
-            created_at: r.get("created_at")?,
-            created_by: r.get("created_by")?,
-            pw_changed_at: r.get("pw_changed_at")?,
-            last_login_at: r.get("last_login_at")?,
-            has_ai_key: r.get::<_, i64>("has_key")? != 0,
-        })
-    }
-
-    const USER_SELECT: &'static str = "select u.*, exists(select 1 from secrets s where s.user_id=u.id) as has_key from users u";
-
-    pub fn get(&self, id: i64) -> Result<UserInfo, AuthError> {
-        self.conn
-            .query_row(&format!("{} where u.id=?1", Self::USER_SELECT), [id], Self::row_user)
-            .optional()?
-            .ok_or_else(|| AuthError("No such profile.".into()))
-    }
-
-    pub fn list(&self) -> Result<Vec<UserInfo>, AuthError> {
-        let mut st = self.conn.prepare(&format!("{} order by u.role, u.email", Self::USER_SELECT))?;
-        let rows = st.query_map([], Self::row_user)?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
-    }
-
-    pub fn login(&self, email: &str, password: &str) -> Result<Session, AuthError> {
-        let email = email.trim();
-        let row: Option<(i64, String, i64, Option<i64>, Option<Vec<u8>>, Option<Vec<u8>>, i64)> = self
-            .conn
-            .query_row(
-                "select id,pw_hash,failed_logins,locked_until,vault_salt,vault_wrapped,disabled from users where email=?1 collate nocase",
-                [email],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
-            )
-            .optional()?;
-        let Some((id, hash, failed, locked_until, salt, wrapped, disabled)) = row else {
-            // Same work and message as a wrong password: no user enumeration.
-            let _ = verify_password(password, "$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHRzb21lc2FsdA$Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFy");
-            return err("Email or password is incorrect.");
-        };
-        if disabled != 0 {
-            self.audit(Some(email), "login_denied", "Profile is disabled")?;
-            return err("This profile is disabled. Ask an administrator.");
-        }
-        if let Some(until) = locked_until {
-            if until > now_secs() {
-                return err(format!("Too many attempts. Try again in {} minute(s).", (until - now_secs()) / 60 + 1));
-            }
-        }
-        if !verify_password(password, &hash) {
-            let failed = failed + 1;
-            let lock = (failed >= MAX_FAILED).then(|| now_secs() + LOCK_SECONDS);
-            self.conn.execute("update users set failed_logins=?1, locked_until=?2 where id=?3", params![if lock.is_some() { 0 } else { failed }, lock, id])?;
-            self.audit(Some(email), "login_failed", if lock.is_some() { "Locked for 5 minutes after 5 failures" } else { "Wrong password" })?;
-            return err("Email or password is incorrect.");
-        }
-        self.conn.execute("update users set failed_logins=0, locked_until=null, last_login_at=?1 where id=?2", params![now(), id])?;
-        let dek = match (salt, wrapped) {
-            (Some(s), Some(w)) => {
-                let kek = derive_kek(password, &s)?;
-                open(&kek, &w, format!("tp-dek:{id}").as_bytes()).map(|v| {
-                    let mut k = Zeroizing::new([0u8; 32]);
-                    k.copy_from_slice(&v[..32]);
-                    k
-                })
-            }
-            _ => None,
-        };
-        let user = self.get(id)?;
-        self.audit(Some(&user.email), "login", if user.must_change { "Signed in; password change required" } else { "Signed in" })?;
-        Ok(Session { user, dek })
-    }
-
-    /// Change your own password. Re-wraps (or creates) your secret key.
-    pub fn change_password(&self, s: &mut Session, current: &str, new: &str) -> Result<(), AuthError> {
-        let (hash, salt, wrapped): (String, Option<Vec<u8>>, Option<Vec<u8>>) =
-            self.conn.query_row("select pw_hash,vault_salt,vault_wrapped from users where id=?1", [s.user.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-        if !verify_password(current, &hash) {
-            return err("Your current password is not correct.");
-        }
-        if current == new {
-            return err("Choose a password different from the current one.");
-        }
-        if let Some(p) = password_problem(&s.user.email, new) {
-            return err(p);
-        }
-        // Keep the existing data key if it can be unwrapped, else start fresh.
-        let dek: Zeroizing<[u8; 32]> = match (&salt, &wrapped) {
-            (Some(sa), Some(w)) => {
-                let kek = derive_kek(current, sa)?;
-                match open(&kek, w, format!("tp-dek:{}", s.user.id).as_bytes()) {
-                    Some(v) => {
-                        let mut k = Zeroizing::new([0u8; 32]);
-                        k.copy_from_slice(&v[..32]);
-                        k
-                    }
-                    None => Zeroizing::new(random::<32>()),
-                }
-            }
-            _ => Zeroizing::new(random::<32>()),
-        };
-        let new_salt = random::<16>();
-        let kek = derive_kek(new, &new_salt)?;
-        let new_wrapped = seal(&kek, dek.as_ref(), format!("tp-dek:{}", s.user.id).as_bytes());
-        self.conn.execute(
-            "update users set pw_hash=?1, must_change=0, pw_changed_at=?2, vault_salt=?3, vault_wrapped=?4 where id=?5",
-            params![hash_password(new)?, now(), new_salt.to_vec(), new_wrapped, s.user.id],
-        )?;
-        self.audit(Some(&s.user.email), "password_changed", "Changed own password")?;
-        s.dek = Some(dek);
-        s.user = self.get(s.user.id)?;
-        Ok(())
-    }
-
-    fn require_admin(s: &Session) -> Result<(), AuthError> {
-        if s.user.role != Role::Admin || s.user.must_change {
-            return err("Only an administrator can do that.");
-        }
-        Ok(())
-    }
-
-    pub fn create_user(&self, admin: &Session, email: &str, name: &str, role: Role, temp_password: &str) -> Result<UserInfo, AuthError> {
-        Self::require_admin(admin)?;
-        let email = email.trim();
-        if !email.contains('@') || email.len() < 5 {
-            return err("Enter a valid email address.");
-        }
-        if temp_password.chars().count() < 8 {
-            return err("Temporary passwords need at least 8 characters.");
-        }
-        let exists: i64 = self.conn.query_row("select count(*) from users where email=?1 collate nocase", [email], |r| r.get(0))?;
-        if exists > 0 {
-            return err("A profile with that email already exists.");
-        }
-        self.conn.execute(
-            "insert into users(email,name,role,pw_hash,must_change,created_at,created_by) values(?1,?2,?3,?4,1,?5,?6)",
-            params![email, name.trim(), role.as_str(), hash_password(temp_password)?, now(), admin.user.email],
-        )?;
-        let id = self.conn.last_insert_rowid();
-        self.audit(Some(&admin.user.email), "user_created", &format!("{email} as {}", role.as_str()))?;
-        self.get(id)
-    }
-
-    fn admins_active(&self) -> Result<i64, AuthError> {
-        Ok(self.conn.query_row("select count(*) from users where role='admin' and disabled=0", [], |r| r.get(0))?)
-    }
-
-    pub fn update_user(&self, admin: &Session, id: i64, name: Option<&str>, role: Option<Role>, disabled: Option<bool>, can_ai: Option<bool>) -> Result<UserInfo, AuthError> {
-        Self::require_admin(admin)?;
-        let before = self.get(id)?;
-        let demoting = before.role == Role::Admin && (role.map(|r| r != Role::Admin).unwrap_or(false) || disabled == Some(true));
-        if demoting && self.admins_active()? <= 1 {
-            return err("At least one active administrator must remain.");
-        }
-        if id == admin.user.id && disabled == Some(true) {
-            return err("You can't disable your own profile.");
-        }
-        if let Some(n) = name {
-            self.conn.execute("update users set name=?1 where id=?2", params![n.trim(), id])?;
-        }
-        if let Some(r) = role {
-            self.conn.execute("update users set role=?1 where id=?2", params![r.as_str(), id])?;
-        }
-        if let Some(d) = disabled {
-            self.conn.execute("update users set disabled=?1 where id=?2", params![d as i64, id])?;
-        }
-        if let Some(a) = can_ai {
-            self.conn.execute("update users set can_ai=?1 where id=?2", params![a as i64, id])?;
-        }
-        let after = self.get(id)?;
-        self.audit(
-            Some(&admin.user.email),
-            "user_updated",
-            &format!("{}: role {}→{}, disabled {}→{}, AI {}→{}", after.email, before.role.as_str(), after.role.as_str(), before.disabled, after.disabled, before.can_ai, after.can_ai),
-        )?;
-        Ok(after)
-    }
-
-    /// Admin reset: new temporary password, forced change, saved secrets erased
-    /// (they were locked with the old password and cannot be recovered).
-    pub fn reset_password(&self, admin: &Session, id: i64, temp_password: &str) -> Result<UserInfo, AuthError> {
-        Self::require_admin(admin)?;
-        if temp_password.chars().count() < 8 {
-            return err("Temporary passwords need at least 8 characters.");
-        }
-        self.conn.execute(
-            "update users set pw_hash=?1, must_change=1, failed_logins=0, locked_until=null, vault_salt=null, vault_wrapped=null where id=?2",
-            params![hash_password(temp_password)?, id],
-        )?;
-        let removed = self.conn.execute("delete from secrets where user_id=?1", [id])?;
-        let u = self.get(id)?;
-        self.audit(Some(&admin.user.email), "password_reset", &format!("{} reset; {} saved key(s) erased", u.email, removed))?;
-        Ok(u)
-    }
-
-    pub fn delete_user(&self, admin: &Session, id: i64) -> Result<(), AuthError> {
-        Self::require_admin(admin)?;
-        let u = self.get(id)?;
-        if u.id == admin.user.id {
-            return err("You can't delete your own profile.");
-        }
-        if u.role == Role::Admin && self.admins_active()? <= 1 {
-            return err("At least one active administrator must remain.");
-        }
-        self.conn.execute("delete from users where id=?1", [id])?;
-        self.audit(Some(&admin.user.email), "user_deleted", &u.email)?;
-        Ok(())
-    }
-
-    // ── Secrets (AI keys) ────────────────────────────────────────────
-    pub fn put_secret(&self, s: &Session, name: &str, value: &str) -> Result<(), AuthError> {
-        let Some(dek) = &s.dek else {
-            return err("Sign in again to unlock your saved keys.");
-        };
-        let sealed = seal(dek, value.as_bytes(), format!("tp-secret:{}:{name}", s.user.id).as_bytes());
-        self.conn.execute(
-            "insert into secrets(user_id,name,sealed,updated_at) values(?1,?2,?3,?4) on conflict(user_id,name) do update set sealed=excluded.sealed, updated_at=excluded.updated_at",
-            params![s.user.id, name, sealed, now()],
-        )?;
-        self.audit(Some(&s.user.email), "secret_saved", name)?;
-        Ok(())
-    }
-
-    pub fn get_secret(&self, s: &Session, name: &str) -> Result<Option<Zeroizing<String>>, AuthError> {
-        let Some(dek) = &s.dek else { return Ok(None) };
-        let sealed: Option<Vec<u8>> = self.conn.query_row("select sealed from secrets where user_id=?1 and name=?2", params![s.user.id, name], |r| r.get(0)).optional()?;
-        Ok(sealed.and_then(|b| open(dek, &b, format!("tp-secret:{}:{name}", s.user.id).as_bytes())).map(|v| Zeroizing::new(String::from_utf8_lossy(&v).into_owned())))
-    }
-
-    pub fn delete_secret(&self, s: &Session, name: &str) -> Result<(), AuthError> {
-        self.conn.execute("delete from secrets where user_id=?1 and name=?2", params![s.user.id, name])?;
-        self.audit(Some(&s.user.email), "secret_deleted", name)?;
-        Ok(())
-    }
-
-    // ── AI spending ledger ──────────────────────────────────────────
-    /// Spend this month: (questions $, indexing $, $ still on hold, calls).
-    /// A hold that was never settled (e.g. the PC lost power mid-call) keeps
-    /// counting at its full amount: the cap errs on the safe side.
-    pub fn ai_month(&self, user_id: i64, month: &str) -> Result<(f64, f64, f64, i64), AuthError> {
-        Ok(self.conn.query_row(
-            "select coalesce(sum(case when feature<>'index' and status<>'reserved' then cost_usd end),0),
-                    coalesce(sum(case when feature='index' and status<>'reserved' then cost_usd end),0),
-                    coalesce(sum(case when status='reserved' then reserved_usd end),0),
-                    count(*)
-             from ai_usage where user_id=?1 and month=?2",
-            params![user_id, month],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    /// Team spend this month: ($ charged, $ still on hold, calls). A hold
+    /// never settled (the PC lost power mid-call) keeps counting in full.
+    pub fn ai_month(&mut self, month: &str) -> Result<(f64, f64, i64), AuthError> {
+        let c = self.activity()?;
+        Ok(c.query_row(
+            "select coalesce(sum(case when status<>'reserved' then cost_usd end),0), coalesce(sum(case when status='reserved' then reserved_usd end),0), count(*) from ai_usage where month=?1",
+            params![month],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?)
     }
 
-    pub fn ai_reserve(&self, user_id: i64, month: &str, feature: &str, provider: &str, model: &str, reserved: f64, note: &str) -> Result<i64, AuthError> {
-        self.conn.execute(
-            "insert into ai_usage(user_id,at,month,feature,provider,model,reserved_usd,status,note) values(?1,?2,?3,?4,?5,?6,?7,'reserved',?8)",
-            params![user_id, now(), month, feature, provider, model, reserved, note],
+    pub fn ai_reserve(&mut self, month: &str, feature: &str, provider: &str, model: &str, reserved: f64, note: &str) -> Result<i64, AuthError> {
+        let (sid, acct) = (self.me.sid.clone(), self.me.account.clone());
+        let c = self.activity()?;
+        c.execute(
+            "insert into ai_usage(user_id,account,at,month,feature,provider,model,reserved_usd,status,note) values(?1,?2,?3,?4,?5,?6,?7,?8,'reserved',?9)",
+            params![sid, acct, now(), month, feature, provider, model, reserved, note],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(c.last_insert_rowid())
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn ai_settle(&self, id: i64, model: &str, input: u64, output: u64, cache_read: u64, cache_write: u64, cost: f64, status: &str, note: Option<&str>) -> Result<(), AuthError> {
-        self.conn.execute(
+    pub fn ai_settle(&mut self, id: i64, model: &str, input: u64, output: u64, cache_read: u64, cache_write: u64, cost: f64, status: &str, note: Option<&str>) -> Result<(), AuthError> {
+        let c = self.activity()?;
+        c.execute(
             "update ai_usage set model=?2,input_tokens=?3,output_tokens=?4,cache_read_tokens=?5,cache_write_tokens=?6,cost_usd=?7,status=?8,note=coalesce(?9,note) where id=?1",
             params![id, model, input as i64, output as i64, cache_read as i64, cache_write as i64, cost, status, note],
         )?;
         Ok(())
     }
 
-    pub fn ai_usage_rows(&self, user_id: i64, limit: i64) -> Result<Vec<serde_json::Value>, AuthError> {
-        let mut st = self.conn.prepare(
-            "select at,feature,provider,model,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reserved_usd,cost_usd,status,note from ai_usage where user_id=?1 order by id desc limit ?2",
+    pub fn ai_usage_rows(&mut self, limit: i64) -> Result<Vec<serde_json::Value>, AuthError> {
+        let c = self.activity()?;
+        let mut st = c.prepare(
+            "select at,feature,provider,model,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reserved_usd,cost_usd,status,note,account from ai_usage order by id desc limit ?1",
         )?;
-        let rows = st.query_map(params![user_id, limit], |r| {
+        let rows = st.query_map(params![limit], |r| {
             Ok(serde_json::json!({
                 "at": r.get::<_, String>(0)?, "feature": r.get::<_, String>(1)?, "provider": r.get::<_, Option<String>>(2)?, "model": r.get::<_, Option<String>>(3)?,
                 "input_tokens": r.get::<_, i64>(4)?, "output_tokens": r.get::<_, i64>(5)?, "cache_read_tokens": r.get::<_, i64>(6)?, "cache_write_tokens": r.get::<_, i64>(7)?,
                 "reserved_usd": r.get::<_, f64>(8)?, "cost_usd": r.get::<_, f64>(9)?, "status": r.get::<_, String>(10)?, "note": r.get::<_, Option<String>>(11)?,
+                "account": r.get::<_, Option<String>>(12)?,
             }))
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
-    // ── Ask THOR conversations (private to their owner) ─────────────
-    pub fn thread_create(&self, user_id: i64, title: &str, scope: &str) -> Result<i64, AuthError> {
-        self.conn.execute("insert into ask_threads(user_id,title,scope,created_at,updated_at) values(?1,?2,?3,?4,?4)", params![user_id, title, scope, now()])?;
-        Ok(self.conn.last_insert_rowid())
-    }
-
-    pub fn thread_owned(&self, user_id: i64, id: i64) -> Result<Option<String>, AuthError> {
-        Ok(self.conn.query_row("select scope from ask_threads where id=?1 and user_id=?2", params![id, user_id], |r| r.get(0)).optional()?)
-    }
-
-    pub fn turn_add(&self, thread_id: i64, q: &str, answer: &str, sources: &str, meta: &str) -> Result<i64, AuthError> {
-        self.conn.execute("insert into ask_turns(thread_id,question,answer,sources,meta,created_at) values(?1,?2,?3,?4,?5,?6)", params![thread_id, q, answer, sources, meta, now()])?;
-        let id = self.conn.last_insert_rowid();
-        self.conn.execute("update ask_threads set updated_at=?2 where id=?1", params![thread_id, now()])?;
-        Ok(id)
-    }
-
-    pub fn threads(&self, user_id: i64) -> Result<Vec<(i64, String, String, String)>, AuthError> {
-        let mut st = self.conn.prepare("select id,title,scope,updated_at from ask_threads where user_id=?1 order by updated_at desc limit 200")?;
-        let rows = st.query_map([user_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
-    }
-
-    /// (turn id, question, answer, sources json, meta json, rating, created)
-    pub fn turns(&self, thread_id: i64) -> Result<Vec<(i64, String, String, String, String, Option<i64>, String)>, AuthError> {
-        let mut st = self.conn.prepare("select id,question,answer,sources,meta,rating,created_at from ask_turns where thread_id=?1 order by id")?;
-        let rows = st.query_map([thread_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
-    }
-
-    /// The user's recent questions (for reusing an earlier answer for free).
-    pub fn recent_turns(&self, user_id: i64, limit: i64) -> Result<Vec<(i64, String, String, String, String, String)>, AuthError> {
-        let mut st = self.conn.prepare(
-            "select t.id,t.question,t.answer,t.sources,h.scope,t.created_at from ask_turns t join ask_threads h on h.id=t.thread_id where h.user_id=?1 and coalesce(t.rating,0)>=0 order by t.id desc limit ?2",
-        )?;
-        let rows = st.query_map(params![user_id, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
-    }
-
-    pub fn thread_delete(&self, user_id: i64, id: i64) -> Result<(), AuthError> {
-        self.conn.execute("delete from ask_turns where thread_id in (select id from ask_threads where id=?1 and user_id=?2)", params![id, user_id])?;
-        self.conn.execute("delete from ask_threads where id=?1 and user_id=?2", params![id, user_id])?;
-        Ok(())
-    }
-
-    pub fn turn_rate(&self, user_id: i64, turn_id: i64, rating: i64) -> Result<(), AuthError> {
-        self.conn.execute(
-            "update ask_turns set rating=?3 where id=?1 and thread_id in (select id from ask_threads where user_id=?2)",
-            params![turn_id, user_id, rating.clamp(-1, 1)],
-        )?;
-        Ok(())
-    }
-
-    pub fn libraries(&self) -> Result<Vec<(i64, String, String, String)>, AuthError> {
-        let mut st = self.conn.prepare("select id,name,query,created_at from libraries order by name")?;
-        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
-    }
-
-    pub fn library_create(&self, s: &Session, name: &str, query: &str) -> Result<i64, AuthError> {
-        if name.trim().is_empty() || query.trim().is_empty() {
-            return err("Give the library a name and a search that defines it.");
-        }
-        self.conn.execute("insert into libraries(name,query,created_by,created_at) values(?1,?2,?3,?4)", params![name.trim(), query.trim(), s.user.email, now()])?;
-        self.audit(Some(&s.user.email), "library_created", &format!("{name}: {query}"))?;
-        Ok(self.conn.last_insert_rowid())
-    }
-
-    pub fn library_delete(&self, s: &Session, id: i64) -> Result<(), AuthError> {
-        self.conn.execute("delete from libraries where id=?1", [id])?;
-        self.audit(Some(&s.user.email), "library_deleted", &id.to_string())?;
-        Ok(())
-    }
-
-    // ── Preferences and policy ──────────────────────────────────────
-    pub fn set_pref(&self, s: &Session, key: &str, value: &str) -> Result<(), AuthError> {
-        self.conn.execute(
-            "insert into user_prefs(user_id,key,value) values(?1,?2,?3) on conflict(user_id,key) do update set value=excluded.value",
-            params![s.user.id, key, value],
-        )?;
-        Ok(())
-    }
-
-    pub fn prefs(&self, s: &Session) -> Result<Vec<(String, String)>, AuthError> {
-        let mut st = self.conn.prepare("select key,value from user_prefs where user_id=?1")?;
-        let rows = st.query_map([s.user.id], |r| Ok((r.get(0)?, r.get(1)?)))?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
-    }
-
-    pub fn policy(&self, key: &str) -> Result<Option<String>, AuthError> {
-        Ok(self.conn.query_row("select value from policy where key=?1", [key], |r| r.get(0)).optional()?)
-    }
-
-    pub fn set_policy(&self, admin: &Session, key: &str, value: &str) -> Result<(), AuthError> {
-        Self::require_admin(admin)?;
-        self.conn.execute(
-            "insert into policy(key,value,updated_by,updated_at) values(?1,?2,?3,?4) on conflict(key) do update set value=excluded.value, updated_by=excluded.updated_by, updated_at=excluded.updated_at",
-            params![key, value, admin.user.email, now()],
-        )?;
-        self.audit(Some(&admin.user.email), "policy_changed", &format!("{key} = {value}"))?;
-        Ok(())
+    pub fn standalone(&self) -> bool {
+        self.standalone
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::acl::Identity;
 
-    #[test]
-    fn seeded_admin_must_change_and_secrets_are_private() {
-        let st = UserStore::open_in_memory().unwrap();
-        let mut admin = st.login("GGetzfrid@kernenergy.com", "password").unwrap();
-        assert!(admin.user.must_change);
-        assert_eq!(admin.user.role, Role::Admin);
-        // Nothing administrative works before the forced change.
-        assert!(st.create_user(&admin, "a@b.com", "A", Role::User, "temp-pass-1").is_err());
-        assert!(st.change_password(&mut admin, "password", "password123!").is_err(), "weak");
-        st.change_password(&mut admin, "password", "Refinery#Search2026").unwrap();
-        assert!(!admin.user.must_change);
-
-        let u = st.create_user(&admin, "tech@kernenergy.com", "Tech", Role::User, "Temp-pass-77").unwrap();
-        assert!(u.must_change);
-        let mut tech = st.login("tech@kernenergy.com", "Temp-pass-77").unwrap();
-        st.change_password(&mut tech, "Temp-pass-77", "Tank#Farm-7272").unwrap();
-        st.put_secret(&tech, "ai_key", "sk-ant-secret-123").unwrap();
-        assert_eq!(st.get_secret(&tech, "ai_key").unwrap().unwrap().as_str(), "sk-ant-secret-123");
-        // The admin cannot read the tech's key, even by name.
-        assert!(st.get_secret(&admin, "ai_key").unwrap().is_none());
-        // Copying the ciphertext into the admin's row does not decrypt either.
-        st.conn.execute("insert into secrets(user_id,name,sealed,updated_at) select ?1,name,sealed,updated_at from secrets where user_id=?2", params![admin.user.id, tech.user.id]).unwrap();
-        assert!(st.get_secret(&admin, "ai_key").unwrap().is_none());
-        // A fresh login re-derives the key from the password.
-        let tech2 = st.login("tech@kernenergy.com", "Tank#Farm-7272").unwrap();
-        assert_eq!(st.get_secret(&tech2, "ai_key").unwrap().unwrap().as_str(), "sk-ant-secret-123");
-        // Changing the password keeps the key.
-        let mut tech3 = st.login("tech@kernenergy.com", "Tank#Farm-7272").unwrap();
-        st.change_password(&mut tech3, "Tank#Farm-7272", "Crude-Unit#2000x").unwrap();
-        let tech4 = st.login("tech@kernenergy.com", "Crude-Unit#2000x").unwrap();
-        assert_eq!(st.get_secret(&tech4, "ai_key").unwrap().unwrap().as_str(), "sk-ant-secret-123");
-        // Admin reset erases it and forces a change.
-        st.reset_password(&admin, tech.user.id, "New-temp-99").unwrap();
-        let t5 = st.login("tech@kernenergy.com", "New-temp-99").unwrap();
-        assert!(t5.user.must_change);
-        assert!(st.get_secret(&t5, "ai_key").unwrap().is_none());
-        // Non-admins cannot manage profiles.
-        assert!(st.create_user(&t5, "x@y.com", "X", Role::Admin, "Temp-pass-77").is_err());
-        // Last admin cannot be demoted.
-        assert!(st.update_user(&admin, admin.user.id, None, Some(Role::User), None, None).is_err());
+    fn id(n: &str, sid: &str) -> Identity {
+        Identity { sid: sid.into(), account: format!("KERN\\{n}"), display: n.into() }
     }
 
     #[test]
-    fn lockout_after_failures() {
-        let st = UserStore::open_in_memory().unwrap();
-        for _ in 0..5 {
-            assert!(st.login(SEED_ADMIN_EMAIL, "nope").is_err());
-        }
-        let e = st.login(SEED_ADMIN_EMAIL, "password").err().unwrap();
-        assert!(e.0.contains("Too many attempts"));
+    fn roles_by_windows_account() {
+        let dir = std::env::temp_dir().join(format!("tp-auth-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (local, team) = (dir.join("local"), dir.join("team"));
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(team.join("admin")).unwrap();
+        // First person sets up the shared folder: administrator.
+        let mut a = UserStore::open(id("ggetzfrid", "S-1-5-21-1-1"), &local, Some(&team)).unwrap();
+        assert_eq!(a.session().user.role, Role::User, "nobody is admin of a folder they didn't set up");
+        a.found_team(team.join("roles.json"), team.join("admin").join("activity.db")).unwrap();
+        assert_eq!(a.session().user.role, Role::Admin);
+        a.set_member(&id("tech", "S-1-5-21-1-2"), Role::Indexer, None).unwrap();
+        // Another person on another PC: roles from the same file.
+        let mut b = UserStore::open(id("tech", "S-1-5-21-1-2"), &dir.join("local2"), Some(&team)).unwrap();
+        assert_eq!(b.session().user.role, Role::Indexer);
+        assert!(b.set_member(&id("x", "S-1-5-21-1-3"), Role::Admin, None).is_err(), "indexers can't hand out roles");
+        let c = UserStore::open(id("operator", "S-1-5-21-1-9"), &dir.join("local3"), Some(&team)).unwrap();
+        assert_eq!(c.session().user.role, Role::User);
+        // Can't remove the last admin or yourself.
+        assert!(a.set_member(&id("ggetzfrid", "S-1-5-21-1-1"), Role::User, None).is_err());
+        // Keys: encrypted on this PC only.
+        std::fs::create_dir_all(dir.join("local2")).unwrap();
+        b.put_secret("ai_key", "sk-ant-123").unwrap();
+        assert_eq!(b.get_secret("ai_key").unwrap().unwrap().as_str(), "sk-ant-123");
+        let raw = std::fs::read_to_string(dir.join("local2").join("prefs.json")).unwrap();
+        assert!(!raw.contains("sk-ant-123"));
+        assert!(!std::fs::read_to_string(team.join("roles.json")).unwrap().contains("sk-ant"));
+        // Spending ledger is team-wide.
+        let m = &now()[..7];
+        let r = a.ai_reserve(m, "index", "anthropic", "claude-haiku-5-5", 0.05, "").unwrap();
+        a.ai_settle(r, "claude-haiku-5-5", 1, 1, 0, 0, 0.01, "charged", None).unwrap();
+        b.ai_reserve(m, "index", "anthropic", "claude-haiku-5-5", 0.02, "").unwrap();
+        let (spent, held, calls) = a.ai_month(m).unwrap();
+        assert!((spent - 0.01).abs() < 1e-9 && (held - 0.02).abs() < 1e-9 && calls == 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn standalone_runner_is_admin() {
+        let dir = std::env::temp_dir().join(format!("tp-auth-sa-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = UserStore::open(id("solo", "S-1-5-21-7"), &dir, None).unwrap();
+        assert_eq!(s.session().user.role, Role::Admin);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

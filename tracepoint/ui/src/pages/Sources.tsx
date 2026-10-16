@@ -13,8 +13,11 @@ interface Status {
   generated_at?: string | null;
   protected: string[];
   writable: string[];
-  team_folder?: string | null;
+  team: AppState["team"];
+  groups: { open: number; locked: number; hidden: number; unavailable: number };
+  published?: Published | null;
 }
+interface Published { at: string; groups: number; files: number; open_to_everyone: number; refused: { group: string; files: number; reason: string }[]; unreadable: number }
 interface ScanState { running: boolean; root?: string; phase?: string; files?: number; dirs?: number; new?: number; changed?: number; missing?: number; errors?: number; files_per_sec?: number; started?: string; log?: string[]; finished?: string | null; error?: string | null }
 
 interface ContentState { running: boolean; phase: string; total: number; done: number; pages: number; ocr_pages: number; unreadable_pages: number; staged_for_ai: number; errors: number; files_per_min: number; eta_min?: number | null; current?: string | null; started?: string | null; finished?: string | null; error?: string | null; pdf_engine: boolean; ocr_engine: boolean; files_read_total: number }
@@ -154,12 +157,15 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
   if (!st) return <div className="flex h-full items-center justify-center"><Spinner /></div>;
   const cats = Object.entries(st.stats.categories ?? {}).sort((a, b) => b[1] - a[1]);
   const total = st.stats.files || 1;
+  const share = async () => {
+    try { const r = await api<{ message: string }>("index.share"); toast("ok", r.message); load(); } catch (e) { toast("error", (e as Error).message); }
+  };
 
   const reload = async () => { await api("index.reload"); toast("info", "Reloading the index…"); setTimeout(refresh, 400); };
   const importDb = async () => {
     try {
-      const r = await api<{ imported?: string; cancelled?: boolean }>("index.import");
-      if (r.imported) { toast("ok", "Imported. Loading the new index…"); setTimeout(refresh, 400); }
+      const r = await api<{ imported?: string; cancelled?: boolean; message?: string }>("index.import");
+      if (r.imported) { toast("ok", r.message ?? "Imported."); setTimeout(refresh, 400); }
     } catch (e) { toast("error", (e as Error).message); }
   };
   const rescan = async (root: string) => {
@@ -187,18 +193,20 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
         </div>
 
         <div className="mt-6 grid grid-cols-5 gap-3">
-          <Stat label="Files indexed" value={n(st.stats.files)} icon={<FileStack className="size-4" />} sub={`${Math.round((st.stats.with_equipment / total) * 100)}% tied to equipment`} />
-          <Stat label="Folders" value={n(st.stats.folders)} icon={<FolderTree className="size-4" />} />
-          <Stat label="Equipment & circuits" value={n(st.stats.equipment)} icon={<Layers className="size-4" />} sub={`${st.stats.units} units / areas`} />
-          <Stat label="Drawing families" value={n(st.stats.families)} icon={<Database className="size-4" />} />
-          <Stat label="Load time" value={`${(st.stats.load_ms / 1000).toFixed(1)} s`} icon={<Timer className="size-4" />} sub={st.state.source_kind === "builtin" ? "Built-in snapshot" : st.state.source_kind === "team" ? "Team index" : "Local index"} />
+          <Stat label="Files indexed" value={n(st.stats.files ?? 0)} icon={<FileStack className="size-4" />} sub={`${Math.round(((st.stats.with_equipment ?? 0) / total) * 100)}% tied to equipment`} />
+          <Stat label="Folders" value={n(st.stats.folders ?? 0)} icon={<FolderTree className="size-4" />} />
+          <Stat label="Equipment & circuits" value={n(st.stats.equipment ?? 0)} icon={<Layers className="size-4" />} sub={`${st.stats.units} units / areas`} />
+          <Stat label="Drawing families" value={n(st.stats.families ?? 0)} icon={<Database className="size-4" />} />
+          <Stat label="Load time" value={`${((st.stats.load_ms ?? 0) / 1000).toFixed(1)} s`} icon={<Timer className="size-4" />} sub={st.state.source_kind === "team" ? "Shared index" : "This PC only"} />
         </div>
+
+        <Permissions st={st} canIndex={canIndex} onShare={share} running={!!scan?.running} />
 
         {scan?.running || scan?.finished || scan?.error ? <ScanPanel scan={scan} onStop={() => api("indexer.stop").then(load)} /> : null}
         <ContentPanel canIndex={canIndex} />
         {state.user?.role === "admin" && <AiReadPanel />}
 
-        <Section className="mt-6" title="Indexed THOR roots" subtitle="Each root is scanned read-only. Only names, folders, sizes and dates are read; nothing on THOR is changed.">
+        <Section className="mt-6" title="Indexed THOR roots" subtitle="Each root is scanned read-only: names, folders, sizes, dates and each file's Windows permissions. Nothing on THOR is changed.">
           <div className="space-y-3">
             {st.roots.map((r) => {
               const ok = r.last_crawl_status === "inventory_complete" || r.last_crawl_status === "complete";
@@ -255,6 +263,44 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
         </div>
       </div>
     </div>
+  );
+}
+
+/** Who sees what: the shared index is split by Windows permissions. */
+function Permissions({ st, canIndex, onShare, running }: { st: Status; canIndex: boolean; onShare: () => void; running: boolean }) {
+  const g = st.groups;
+  const p = st.published;
+  const shared = st.team?.mode === "team";
+  return (
+    <Section className="mt-6" title="Who sees what" subtitle="TracePoint shows each person only the THOR files their own Windows account can open — the same rule as opening them in Explorer.">
+      <div className="flex items-start gap-3 rounded-xl bg-[color-mix(in_srgb,var(--color-ok)_8%,transparent)] p-3.5 text-[13.5px]">
+        <Lock className="mt-0.5 size-5 shrink-0 text-[var(--color-ok)]" />
+        <div>
+          {shared ? <>You're seeing only folders your Windows account can open. Files in locked folders aren't on this PC at all — not their names, not their text.</> : <>This PC's own index: built from what your Windows account could read when you scanned.</>}
+          {canIndex && shared && <div className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">This PC loaded {g.open} permission group{g.open === 1 ? "" : "s"}{g.locked ? ` · ${g.locked} locked to this account` : ""}{g.hidden ? ` · ${g.hidden} hidden (Windows refused on this PC — share permissions or changed since the last scan)` : ""}{g.unavailable ? ` · ${g.unavailable} couldn't be checked` : ""}.</div>}
+        </div>
+      </div>
+      {canIndex && shared && (
+        <div className="mt-4 flex items-start gap-4">
+          <div className="flex-1 text-[13px]">
+            {p ? (
+              <>
+                <div><b>Last shared {when(p.at)}:</b> {n(p.files)} files in {p.groups} groups, each locked with its THOR folder's own Windows permissions.</div>
+                {p.open_to_everyone > 0 && <div className="mt-1 text-[var(--color-text-muted)]">{p.open_to_everyone} group{p.open_to_everyone === 1 ? " is" : "s are"} readable by all staff on THOR, so {p.open_to_everyone === 1 ? "it is" : "they are"} here too. If a THOR share is restricted only by <i>share</i> permissions, ask IT to set the same on the folder.</div>}
+                {p.unreadable > 0 && <div className="mt-1 text-[var(--color-warn)]">{n(p.unreadable)} files were left out: their permissions couldn't be read.</div>}
+                {p.refused.length > 0 && (
+                  <div className="mt-2 rounded-lg border border-[color-mix(in_srgb,var(--color-warn)_40%,transparent)] p-2.5">
+                    <div className="font-semibold text-[var(--color-warn)]">Held back — not shared with anyone</div>
+                    {p.refused.map((r, i) => <div key={i} className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">{n(r.files)} files (group {r.group}): {r.reason}</div>)}
+                  </div>
+                )}
+              </>
+            ) : <span className="text-[var(--color-text-muted)]">Each scan shares automatically when it finishes.</span>}
+          </div>
+          <Button onClick={onShare} disabled={running}>Share again</Button>
+        </div>
+      )}
+    </Section>
   );
 }
 

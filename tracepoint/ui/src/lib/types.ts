@@ -1,31 +1,30 @@
 export type Role = "admin" | "indexer" | "user";
 
 export interface User {
-  id: number;
-  email: string;
+  /** Windows SID */
+  id: string;
+  /** DOMAIN\user */
+  account: string;
   name: string;
   role: Role;
-  must_change: boolean;
-  disabled: boolean;
   can_ai: boolean;
-  created_at: string;
-  created_by?: string | null;
-  pw_changed_at?: string | null;
-  last_login_at?: string | null;
   has_ai_key: boolean;
 }
 
+export interface Member { sid: string; account: string; role: Role; can_ai: boolean; added_by: string; added_at: string }
+
 export interface IndexState { ready: boolean; message: string; source: string; source_kind: string; error?: string | null }
 
+export interface TeamState { mode: "team" | "offline" | "standalone"; folder?: string | null; found_by: string; available?: string | null; forced: boolean }
+
 export interface AppState {
-  stage: "login" | "change_password" | "ready";
+  stage: "ready";
   version: string;
   user: User | null;
-  keys_unlocked: boolean;
   index: IndexState;
-  policy: { ai_enabled: boolean; ai_providers: string[] };
+  team: TeamState;
+  policy: { ai_enabled: boolean; ai_blocked_by_it: boolean; ai_providers: string[] };
   prefs: Record<string, string>;
-  profiles_location: string;
 }
 
 export interface EquipRef { id: number; number: string; tag?: string | null; description: string; unit?: string | null; via: string }

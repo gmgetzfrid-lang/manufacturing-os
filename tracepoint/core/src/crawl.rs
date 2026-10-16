@@ -198,6 +198,8 @@ pub struct Entry {
     pub mtime_ns: i64,
     pub ctime_ns: i64,
     pub readonly: bool,
+    /// Who may read it (fingerprint), or why that couldn't be read.
+    pub access: Option<Result<String, String>>,
 }
 
 #[cfg(windows)]
@@ -242,6 +244,7 @@ fn list_dir(path: &str) -> Result<Vec<Entry>, String> {
                     mtime_ns: ft(d.ftLastWriteTime.dwLowDateTime, d.ftLastWriteTime.dwHighDateTime),
                     ctime_ns: ft(d.ftCreationTime.dwLowDateTime, d.ftCreationTime.dwHighDateTime),
                     readonly: attrs & 0x1 != 0,
+                    access: None,
                 });
             }
             if FindNextFileW(h, &mut d) == 0 {
@@ -275,6 +278,7 @@ fn list_dir(path: &str) -> Result<Vec<Entry>, String> {
             mtime_ns: ns(md.modified()),
             ctime_ns: ns(md.created()),
             readonly: md.permissions().readonly(),
+            access: None,
         });
     }
     Ok(out)
@@ -321,6 +325,9 @@ pub struct Summary {
 pub struct Options {
     pub workers: usize,
     pub cancel: Arc<AtomicBool>,
+    /// Read each file's Windows permissions (who may open it). Needed before
+    /// an index can be shared; read-only, one request per file.
+    pub permissions: bool,
 }
 
 enum Msg {
@@ -351,7 +358,11 @@ pub fn ensure_schema(c: &Connection) -> rusqlite::Result<()> {
          CREATE TABLE IF NOT EXISTS issues(issue_id TEXT PRIMARY KEY,crawl_id TEXT,root_id TEXT,path TEXT,reason_code TEXT NOT NULL,
            message TEXT,created_at TEXT NOT NULL,details_json TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS patterns(root_id TEXT NOT NULL,pattern_type TEXT NOT NULL,value TEXT NOT NULL,count INTEGER NOT NULL,
-           example TEXT,last_updated TEXT NOT NULL,PRIMARY KEY(root_id,pattern_type,value));",
+           example TEXT,last_updated TEXT NOT NULL,PRIMARY KEY(root_id,pattern_type,value));
+         CREATE TABLE IF NOT EXISTS tp_access(class TEXT PRIMARY KEY,root_id TEXT NOT NULL,readers TEXT NOT NULL,broad INTEGER NOT NULL,
+           files INTEGER NOT NULL DEFAULT 0,updated TEXT);
+         CREATE TABLE IF NOT EXISTS tp_file_access(file_id TEXT PRIMARY KEY,class TEXT,problem TEXT);
+         CREATE INDEX IF NOT EXISTS ix_file_access_class ON tp_file_access(class);",
     )
 }
 
@@ -393,6 +404,7 @@ pub fn scan(c: &mut Connection, root: &str, opts: &Options, progress: &dyn Fn(&P
     let (tx, rx) = mpsc::sync_channel::<Msg>(4096);
     let cancel = opts.cancel.clone();
     let pending = Arc::new(AtomicUsize::new(0));
+    let perms = opts.permissions;
     let reader = {
         let root = root.clone();
         let cancel = cancel.clone();
@@ -403,22 +415,30 @@ pub fn scan(c: &mut Connection, root: &str, opts: &Options, progress: &dyn Fn(&P
                 .start_handler(|_| lower_thread_priority())
                 .build()
                 .expect("thread pool");
-            fn visit<'s>(s: &rayon::Scope<'s>, path: String, depth: usize, tx: mpsc::SyncSender<Msg>, cancel: Arc<AtomicBool>, pending: Arc<AtomicUsize>) {
+            type Sids = Arc<std::sync::Mutex<HashMap<String, String>>>;
+            #[allow(clippy::too_many_arguments)]
+            fn visit<'s>(s: &rayon::Scope<'s>, path: String, depth: usize, tx: mpsc::SyncSender<Msg>, cancel: Arc<AtomicBool>, pending: Arc<AtomicUsize>, perms: bool, sids: Sids) {
                 if cancel.load(Ordering::Relaxed) {
                     return;
                 }
                 match list_dir(&path) {
-                    Ok(entries) => {
+                    Ok(mut entries) => {
+                        if perms {
+                            for en in entries.iter_mut().filter(|x| !x.is_dir && !x.reparse) {
+                                let full = format!("{}\\{}", path.trim_end_matches('\\'), en.name);
+                                en.access = Some(crate::acl::read_access(&full, &sids).map(|r| r.fingerprint()));
+                            }
+                        }
                         for en in entries.iter().filter(|x| x.is_dir) {
                             let child = format!("{}\\{}", path.trim_end_matches('\\'), en.name);
                             if en.reparse {
                                 let _ = tx.send(Msg::Skipped { path: child });
                                 continue;
                             }
-                            let (tx, cancel, pending) = (tx.clone(), cancel.clone(), pending.clone());
+                            let (tx, cancel, pending, sids) = (tx.clone(), cancel.clone(), pending.clone(), sids.clone());
                             pending.fetch_add(1, Ordering::Relaxed);
                             s.spawn(move |s| {
-                                visit(s, child, depth + 1, tx, cancel, pending.clone());
+                                visit(s, child, depth + 1, tx, cancel, pending.clone(), perms, sids);
                                 pending.fetch_sub(1, Ordering::Relaxed);
                             });
                         }
@@ -429,7 +449,7 @@ pub fn scan(c: &mut Connection, root: &str, opts: &Options, progress: &dyn Fn(&P
                     }
                 }
             }
-            pool.scope(|s| visit(s, root, 0, tx, cancel, pending));
+            pool.scope(|s| visit(s, root, 0, tx, cancel, pending, perms, Arc::new(std::sync::Mutex::new(HashMap::new()))));
         })
     };
 
@@ -462,6 +482,26 @@ pub fn scan(c: &mut Connection, root: &str, opts: &Options, progress: &dyn Fn(&P
         let mut del_ident = tx_db.prepare("DELETE FROM identifiers WHERE file_id=?1 AND source='path_or_filename'").map_err(e)?;
         let mut ins_ident = tx_db.prepare("INSERT OR REPLACE INTO identifiers VALUES(?1,?2,?3,?4,?5,?6,'path_or_filename',1.0,?7,?8)").map_err(e)?;
         let mut ins_issue = tx_db.prepare("INSERT OR REPLACE INTO issues VALUES(?1,?2,?3,?4,?5,?6,?7,'{}')").map_err(e)?;
+        let mut ins_acc = tx_db.prepare("INSERT OR REPLACE INTO tp_file_access(file_id,class,problem) VALUES(?1,?2,?3)").map_err(e)?;
+        let mut ins_class = tx_db.prepare("INSERT INTO tp_access(class,root_id,readers,broad,updated) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(class) DO UPDATE SET updated=excluded.updated").map_err(e)?;
+        let mut classes: HashSet<String> = HashSet::new();
+        let mut record_access = |fid: &str, acc: &Option<Result<String, String>>| -> Result<(), String> {
+            match acc {
+                None => {}
+                Some(Ok(fp)) => {
+                    let class = stable_id("access", &[&rid, fp]);
+                    if classes.insert(class.clone()) {
+                        let broad = crate::acl::ReadAccess::parse_fingerprint(fp).broad();
+                        ins_class.execute(params![class, rid, fp, broad as i64, now]).map_err(e)?;
+                    }
+                    ins_acc.execute(params![fid, class, Option::<String>::None]).map_err(e)?;
+                }
+                Some(Err(why)) => {
+                    ins_acc.execute(params![fid, Option::<String>::None, why]).map_err(e)?;
+                }
+            }
+            Ok(())
+        };
         let mut issue = |path: &str, code: &str, msg: &str, p: &mut Progress| {
             let id = stable_id("issue", &[&cid, path, code]);
             let _ = ins_issue.execute(params![id, cid, rid, path, code, msg, now]);
@@ -509,6 +549,7 @@ pub fn scan(c: &mut Connection, root: &str, opts: &Options, progress: &dyn Fn(&P
                         let fid;
                         match known.get(&n) {
                             Some((id, size, mtime)) if *size == en.size && *mtime == en.mtime_ns => {
+                                record_access(id, &en.access)?;
                                 seen.insert(n);
                                 unchanged.push(id.clone());
                                 continue;
@@ -524,6 +565,7 @@ pub fn scan(c: &mut Connection, root: &str, opts: &Options, progress: &dyn Fn(&P
                                 p.new += 1;
                             }
                         }
+                        record_access(&fid, &en.access)?;
                         seen.insert(n);
                         touched.push(fid.clone());
                         del_ident.execute([&fid]).map_err(e)?;
@@ -581,6 +623,17 @@ pub fn scan(c: &mut Connection, root: &str, opts: &Options, progress: &dyn Fn(&P
                 p.missing += st.execute([id]).map_err(e)?;
             }
         }
+        if opts.permissions {
+            // Files no longer present don't hold a lock group open.
+            tx_db
+                .execute(
+                    "UPDATE tp_access SET files=(SELECT count(*) FROM tp_file_access a JOIN files f USING(file_id)
+                       WHERE a.class=tp_access.class AND f.observation_state='current') WHERE root_id=?1",
+                    [&rid],
+                )
+                .map_err(e)?;
+            tx_db.execute("DELETE FROM tp_access WHERE root_id=?1 AND files=0", [&rid]).map_err(e)?;
+        }
         tx_db.execute("DELETE FROM patterns WHERE root_id=?1", [&rid]).map_err(e)?;
         let mut st = tx_db.prepare("INSERT OR REPLACE INTO patterns VALUES(?1,?2,?3,?4,?5,?6)").map_err(e)?;
         for ((typ, val), (count, example)) in &patterns {
@@ -636,7 +689,7 @@ mod tests {
         std::fs::write(dir.join("5600 - LRU/readme.txt"), b"hello").unwrap();
         let root = dir.to_string_lossy().replace('/', "\\");
         let mut c = Connection::open_in_memory().unwrap();
-        let opts = Options { workers: 4, cancel: Arc::new(AtomicBool::new(false)) };
+        let opts = Options { workers: 4, cancel: Arc::new(AtomicBool::new(false)), permissions: true };
         let s1 = scan(&mut c, &root, &opts, &|_| {}).unwrap();
         assert_eq!(s1.progress.files, 2);
         assert_eq!(s1.progress.new, 2);
@@ -652,6 +705,9 @@ mod tests {
         assert_eq!(eq, 1);
         let gone: String = c.query_row("select observation_state from files where filename='readme.txt'", [], |r| r.get(0)).unwrap();
         assert_eq!(gone, "not_currently_observed");
+        let classes: i64 = c.query_row("select count(*) from tp_access", [], |r| r.get(0)).unwrap();
+        let recorded: i64 = c.query_row("select count(*) from tp_file_access where class is not null", [], |r| r.get(0)).unwrap();
+        assert_eq!((classes, recorded), (1, 2), "every file's readers recorded");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

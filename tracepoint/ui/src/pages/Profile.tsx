@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowRight, Bot, Brain, Check, CheckCircle2, Eye, EyeOff, Ke
 import { api } from "../lib/api";
 import type { AppState } from "../lib/types";
 import { Avatar, Button, Field, Input, Pill, Section, Segmented, cx, useToast } from "../components/ui";
-import { PasswordMeter } from "../screens/ChangePassword";
 import { initials, when } from "../lib/format";
 
 interface ProviderInfo { id: string; name: string; company: string; key_prefix: string; key_url: string; key_help: string; host: string; recommended_model: string }
@@ -23,10 +22,10 @@ export function ProfilePage({ state, setState, refresh }: { state: AppState; set
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-[980px] px-8 py-7">
         <div className="flex items-center gap-4">
-          <Avatar text={initials(u.name, u.email)} size={56} />
+          <Avatar text={initials(u.name, "")} size={56} />
           <div className="flex-1">
-            <h1 className="text-[22px] font-[700] tracking-tight">{u.name || u.email}</h1>
-            <div className="text-[13px] text-[var(--color-text-muted)]">{u.email} · <span className="capitalize">{u.role}</span> · last sign-in {when(u.last_login_at)}</div>
+            <h1 className="text-[22px] font-[700] tracking-tight">{u.name}</h1>
+            <div className="text-[13px] text-[var(--color-text-muted)]">{u.account} · <span className="capitalize">{u.role}</span> · signed in with Windows</div>
           </div>
           {isAdmin && <Segmented value={tab} onChange={go} options={[{ value: "account", label: <><UserRound className="size-3.5" />Account</> }, { value: "ai", label: <><Bot className="size-3.5" />AI assistant</> }]} />}
         </div>
@@ -36,26 +35,17 @@ export function ProfilePage({ state, setState, refresh }: { state: AppState; set
   );
 }
 
-function Account({ state, setState }: { state: AppState; setState: (s: AppState) => void }) {
-  const [cur, setCur] = useState("");
-  const [next, setNext] = useState("");
-  const [conf, setConf] = useState("");
-  const [busy, setBusy] = useState(false);
+function Account({ state }: { state: AppState; setState: (s: AppState) => void }) {
   const toast = useToast();
   const [openMode, setOpenMode] = useState(state.prefs.open_mode ?? "copy");
-  const save = async () => {
-    setBusy(true);
-    try { setState(await api<AppState>("auth.change_password", { current: cur, new: next })); setCur(""); setNext(""); setConf(""); toast("ok", "Password changed. Your AI key stays protected under the new one."); } catch (e) { toast("error", (e as Error).message); } finally { setBusy(false); }
-  };
   const setMode = async (m: string) => { setOpenMode(m); await api("auth.set_pref", { key: "open_mode", value: m }); toast("ok", "Saved"); };
+  const u = state.user!;
   return (
     <div className="grid grid-cols-2 gap-6">
-      <Section title="Change password" subtitle="Also re-locks your saved AI key under the new password">
-        <div className="space-y-3.5">
-          <Field label="Current password"><Input type="password" value={cur} onChange={(e) => setCur(e.target.value)} /></Field>
-          <Field label="New password"><Input type="password" value={next} onChange={(e) => setNext(e.target.value)} />{next && <PasswordMeter pw={next} />}</Field>
-          <Field label="Confirm" error={conf && conf !== next ? "Passwords don't match." : null}><Input type="password" value={conf} onChange={(e) => setConf(e.target.value)} /></Field>
-          <Button variant="primary" loading={busy} disabled={!cur || !next || conf !== next} onClick={save}>Change password</Button>
+      <Section title="Your account" subtitle="TracePoint has no passwords of its own">
+        <div className="space-y-3 text-[13px] leading-relaxed">
+          <div className="rounded-xl bg-[var(--color-surface-2)] p-3"><div className="font-mono text-[13px]">{u.account}</div><div className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">You're signed in as the Windows account that started TracePoint.</div></div>
+          <p className="flex gap-2.5"><Lock className="mt-0.5 size-4 shrink-0 text-[var(--color-ok)]" />You only ever see THOR files and folders your Windows account can open. If something is missing that you should see, ask IT for access to that folder.</p>
         </div>
       </Section>
       <Section title="Opening files" subtitle="How Open behaves for files on THOR">
@@ -118,7 +108,7 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
   const save = async () => {
     if (!provider || !model) return;
     setBusy(true);
-    try { await api("ai.save", { provider: provider.id, model: model.id, reasoning, key: key || undefined }); toast("ok", "AI assistant ready. Your key is encrypted with your password."); setKey(""); setEditing(false); setStep(0); load(); refresh(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    try { await api("ai.save", { provider: provider.id, model: model.id, reasoning, key: key || undefined }); toast("ok", "AI ready. Windows encrypted your key for your account on this PC."); setKey(""); setEditing(false); setStep(0); load(); refresh(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
   const removeKey = async () => {
     if (!confirm("Remove your saved API key from TracePoint?")) return;
@@ -126,14 +116,15 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
   };
 
   if (!state.policy.ai_enabled) return <Notice title="AI is turned off for this team" text="Your administrator has turned off AI features. Search, graph, preview and export work without it." />;
-  if (cfg && !cfg.can_ai) return <Notice title="AI isn't enabled for your profile" text="Ask an administrator to enable AI for you under Admin › Profiles." />;
+  if (state.policy.ai_blocked_by_it) return <Notice title="AI is switched off on this PC" text="Your IT department turned AI off (DisableAI policy). Everything else in TracePoint works without it." />;
+  if (cfg && !cfg.can_ai) return <Notice title="AI isn't enabled for your account" text="Ask another administrator to turn AI on for you under Admin › Roles." />;
   if (!cfg) return <div className="skeleton h-40" />;
 
   if (!editing && cfg.provider) {
     const p = providers.find((x) => x.id === cfg.provider);
     return (
       <div className="grid grid-cols-[1fr_340px] gap-6">
-        <Section title="Your AI assistant" subtitle="Used by Ask THOR to read documents and answer questions with citations">
+        <Section title="AI for reading scanned pages" subtitle="Used only when you approve reading pages free OCR couldn't read (Sources › Document contents)">
           <div className="flex items-center gap-4 rounded-2xl bg-[var(--color-surface-2)] p-5">
             <div className="flex size-12 items-center justify-center rounded-2xl text-white shadow-md" style={{ background: "var(--brand-gradient)" }}><Sparkles className="size-6" /></div>
             <div className="flex-1">
@@ -197,7 +188,7 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
                 <Button onClick={() => setShow(!show)} icon={show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}>{show ? "Hide" : "Show"}</Button>
               </div>
               {key && !key.trim().startsWith(provider.key_prefix) && <div className="mt-2 text-[12.5px] text-[var(--color-warn)]">{provider.company} keys usually start with “{provider.key_prefix}”. Check you copied the whole key.</div>}
-              <div className="mt-4 flex items-start gap-2 rounded-xl bg-[var(--color-surface-2)] p-3 text-[12.5px] text-[var(--color-text-muted)]"><Lock className="mt-0.5 size-4 shrink-0 text-[var(--color-ok)]" />The key is checked with {provider.host} now, and only saved — encrypted with your password — when you finish.</div>
+              <div className="mt-4 flex items-start gap-2 rounded-xl bg-[var(--color-surface-2)] p-3 text-[12.5px] text-[var(--color-text-muted)]"><Lock className="mt-0.5 size-4 shrink-0 text-[var(--color-ok)]" />The key is checked with {provider.host} now, and only saved — encrypted by Windows for your account, on this PC — when you finish.</div>
             </div>
           )}
           {step === 2 && models && (
@@ -220,7 +211,7 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
                     {m.recommended && <Pill color="var(--color-ok)">Recommended</Pill>}
                     {m.reasoning.length > 0 && <Pill color="var(--color-violet)"><Brain className="size-3" />Reasoning</Pill>}
                     {m.context && <span className="text-[11.5px] text-[var(--color-text-faint)]">{m.context >= 1e6 ? `${m.context / 1e6}M` : `${Math.round(m.context / 1000)}K`} context</span>}
-                    {m.price && <span className="w-[120px] shrink-0 text-right" title={`$${m.price.input} in / $${m.price.output} out per million tokens${m.price.note ? " — " + m.price.note : ""}`}><span className={cx("block text-[13px] font-semibold", m.price.basis === "unlisted" && "text-[var(--color-warn)]")}>≈ {money(m.price.per_question)} / question</span><span className="block text-[11px] text-[var(--color-text-faint)]">${m.price.input} / ${m.price.output} per M</span></span>}
+                    {m.price && <span className="w-[120px] shrink-0 text-right" title={`$${m.price.input} in / $${m.price.output} out per million tokens${m.price.note ? " — " + m.price.note : ""}`}><span className={cx("block text-[13px] font-semibold", m.price.basis === "unlisted" && "text-[var(--color-warn)]")}>≈ {money(m.price.per_question)} / request</span><span className="block text-[11px] text-[var(--color-text-faint)]">${m.price.input} / ${m.price.output} per M</span></span>}
                   </button>
                 ))}
               </div>
@@ -233,7 +224,7 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
                 <p className="mt-2 text-[13.5px] text-[var(--color-text-muted)]">{model.name} doesn't offer adjustable reasoning. Continue to test it.</p>
               ) : (
                 <>
-                  <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Deeper reasoning gives more careful answers on hard engineering questions, but is slower and costs more.</p>
+                  <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Page reading uses each provider's cheapest vision model; this setting only affects the key test.</p>
                   <div className="mt-5 grid grid-cols-2 gap-2.5">
                     {model.reasoning.map((l) => (
                       <button key={l.id} onClick={() => setReasoning(l.id)} className={cx("rounded-xl border p-3.5 text-left transition cursor-pointer", reasoning === l.id ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]")}>
@@ -281,25 +272,25 @@ function AiSetup({ state, refresh }: { state: AppState; refresh: () => void }) {
 }
 
 interface BudgetInfo {
-  budget_usd: number; index_share_pct: number; max_request_usd: number; month: string;
-  spent_questions_usd: number; spent_index_usd: number; held_usd: number; calls: number; cap_questions_usd: number; cap_index_usd: number;
+  budget_usd: number; max_request_usd: number; month: string;
+  spent_usd: number; held_usd: number; calls: number;
   current?: { provider: string; model: string; price: { input: number; output: number }; basis: string; note?: string | null; per_question: number } | null;
   upcoming: { provider: string; model: string; from: string; input: number; output: number }[];
   prices_checked: string; sources: string[];
-  rows: { at: string; feature: string; model?: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; reserved_usd: number; cost_usd: number; status: string; note?: string | null }[];
+  rows: { at: string; account?: string | null; feature: string; model?: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; reserved_usd: number; cost_usd: number; status: string; note?: string | null }[];
 }
 
 /** Monthly AI budget, how it's enforced, and every call's cost. */
 function Spending() {
   const [b, setB] = useState<BudgetInfo | null>(null);
-  const [edit, setEdit] = useState<{ budget: string; share: number; max: string } | null>(null);
+  const [edit, setEdit] = useState<{ budget: string; max: string } | null>(null);
   const toast = useToast();
-  const load = () => api<BudgetInfo>("ai.budget").then((x) => { setB(x); setEdit({ budget: String(x.budget_usd), share: x.index_share_pct, max: String(x.max_request_usd) }); }).catch(() => {});
+  const load = () => api<BudgetInfo>("ai.budget").then((x) => { setB(x); setEdit({ budget: String(x.budget_usd), max: String(x.max_request_usd) }); }).catch(() => {});
   useEffect(() => { load(); }, []);
   if (!b || !edit) return null;
   const save = async () => {
     try {
-      await api("ai.budget.set", { ai_budget_usd: Number(edit.budget), ai_index_share_pct: edit.share, ai_max_request_usd: Number(edit.max) });
+      await api("ai.budget.set", { ai_budget_usd: Number(edit.budget), ai_max_request_usd: Number(edit.max) });
       toast("ok", "Spending limits saved"); load();
     } catch (e) { toast("error", (e as Error).message); }
   };
@@ -315,21 +306,19 @@ function Spending() {
     );
   };
   return (
-    <Section title={`AI spending · ${monthName}`} subtitle="Your own key, your own budget. Resets on the 1st of each month.">
+    <Section title={`AI spending · ${monthName}`} subtitle="One budget for the whole team, shared by all administrators. Resets on the 1st of each month.">
       <div className="grid grid-cols-[1.2fr_1fr] gap-8">
         <div className="space-y-5">
-          <Bar label="Questions (Ask THOR, Find with AI)" spent={b.spent_questions_usd} cap={b.cap_questions_usd} />
-          <Bar label="AI reading of documents (indexing)" spent={b.spent_index_usd} cap={b.cap_index_usd} />
+          <Bar label="AI reading of scanned pages" spent={b.spent_usd} cap={b.budget_usd} />
           {b.held_usd > 0 && <div className="text-[13px] text-[var(--color-text-muted)]">${b.held_usd.toFixed(2)} on hold for requests in progress.</div>}
-          <div className="grid grid-cols-3 gap-3 rounded-xl bg-[var(--color-surface-2)] p-4">
+          <div className="grid grid-cols-2 gap-3 rounded-xl bg-[var(--color-surface-2)] p-4">
             <Field label="Monthly budget ($)"><Input type="number" min={0} step={1} value={edit.budget} onChange={(e) => setEdit({ ...edit, budget: e.target.value })} /></Field>
-            <Field label={`Indexing share: ${Math.round(edit.share)}%`}><input type="range" min={0} max={100} step={5} value={edit.share} onChange={(e) => setEdit({ ...edit, share: Number(e.target.value) })} className="mt-3 w-full accent-[var(--color-accent)]" /></Field>
             <Field label="Most per request ($)"><Input type="number" min={0.01} step={0.05} value={edit.max} onChange={(e) => setEdit({ ...edit, max: e.target.value })} /></Field>
-            <div className="col-span-3 flex justify-end"><Button variant="primary" size="sm" onClick={save}>Save limits</Button></div>
+            <div className="col-span-2 flex justify-end"><Button variant="primary" size="sm" onClick={save}>Save limits</Button></div>
           </div>
           {b.current && (
             <div className="text-[13.5px]">
-              <b>{b.current.model}</b>: ${b.current.price.input} per million tokens in, ${b.current.price.output} out — a typical question costs about <b>{money(b.current.per_question)}</b>.
+              <b>{b.current.model}</b>: ${b.current.price.input} per million tokens in, ${b.current.price.output} out — about <b>{money(b.current.per_question)}</b> per 6,000-token request.
               {b.current.note && <div className="mt-1 text-[var(--color-warn)]">{b.current.note}</div>}
             </div>
           )}
@@ -339,7 +328,7 @@ function Spending() {
           <div className="text-[14.5px] font-bold">How your cap works</div>
           <ol className="mt-2 list-decimal space-y-2 pl-5 text-[13px] leading-relaxed text-[var(--color-text-muted)]">
             <li><b className="text-[var(--color-text)]">Before every AI request</b>, TracePoint works out the most it could cost: the size of what it sends plus the longest answer allowed, at the model's published price.</li>
-            <li>If that worst case is more than <b className="text-[var(--color-text)]">what's left this month</b> (for questions, or for document reading) or more than your <b className="text-[var(--color-text)]">per-request limit</b>, the request is not sent and you're told why.</li>
+            <li>If that worst case is more than <b className="text-[var(--color-text)]">what's left of the team's budget this month</b> or more than the <b className="text-[var(--color-text)]">per-request limit</b>, the request is not sent and you're told why.</li>
             <li>Otherwise that amount is <b className="text-[var(--color-text)]">held</b> while the request runs, then replaced by the <b className="text-[var(--color-text)]">real cost</b> from the provider's usage report.</li>
             <li>A model with no published price is counted at its provider's highest price, so the cap is never under-estimated.</li>
           </ol>
@@ -353,13 +342,14 @@ function Spending() {
           <div className="max-h-[320px] overflow-y-auto rounded-xl border border-[var(--color-border)]">
             <table className="w-full text-[12.5px]">
               <thead className="sticky top-0 bg-[var(--color-surface-2)] text-left text-[11.5px] uppercase tracking-wide text-[var(--color-text-faint)]">
-                <tr><th className="px-3 py-2">When</th><th className="px-3 py-2">For</th><th className="px-3 py-2">Model</th><th className="px-3 py-2 text-right">Tokens in / out</th><th className="px-3 py-2 text-right">Held</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2">Status</th></tr>
+                <tr><th className="px-3 py-2">When</th><th className="px-3 py-2">Who</th><th className="px-3 py-2">For</th><th className="px-3 py-2">Model</th><th className="px-3 py-2 text-right">Tokens in / out</th><th className="px-3 py-2 text-right">Held</th><th className="px-3 py-2 text-right">Cost</th><th className="px-3 py-2">Status</th></tr>
               </thead>
               <tbody>
                 {b.rows.map((r, i) => (
                   <tr key={i} className="border-t border-[var(--color-border)]" title={r.note ?? ""}>
                     <td className="px-3 py-1.5 whitespace-nowrap">{when(r.at)}</td>
-                    <td className="px-3 py-1.5">{({ ask: "Ask THOR", find: "Find with AI", index: "Document reading", test: "Key test" } as Record<string, string>)[r.feature] ?? r.feature}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">{r.account ?? ""}</td>
+                    <td className="px-3 py-1.5">{({ index: "Page reading", test: "Key test" } as Record<string, string>)[r.feature] ?? r.feature}</td>
                     <td className="px-3 py-1.5 font-mono text-[11.5px]">{r.model}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums">{r.input_tokens.toLocaleString()}{r.cache_read_tokens ? ` (+${r.cache_read_tokens.toLocaleString()} cached)` : ""} / {r.output_tokens.toLocaleString()}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums text-[var(--color-text-faint)]">${r.reserved_usd.toFixed(4)}</td>
@@ -382,9 +372,9 @@ function Summary({ label, value, mono }: { label: string; value: string; mono?: 
 
 function KeySafety() {
   const points = useMemo(() => [
-    "Only you can use your key. It's encrypted with your password — administrators can't read it.",
-    "It's sent only to the provider you chose, over HTTPS, straight from this PC.",
-    "Change your password and the key stays protected. If an administrator resets your password, the key is erased.",
+    "Windows encrypts your key for your account on this PC (DPAPI). Nobody else — and no other PC — can decrypt it.",
+    "It never goes to the shared folder. It's sent only to the provider you chose, over HTTPS, straight from this PC.",
+    "AI only reads pages you approve, within the team's monthly budget.",
     "TracePoint works fully without AI — search, graph and preview never need it.",
   ], []);
   return (

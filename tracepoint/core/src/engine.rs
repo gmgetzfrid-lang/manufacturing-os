@@ -30,9 +30,10 @@ pub struct Engine {
     pub content: std::sync::RwLock<Option<ContentIndex>>,
 }
 
-/// Read-only handle on the document text database.
+/// Read-only handles on the document text: one database per lock group this
+/// PC may open, read in place on the shared folder.
 pub struct ContentIndex {
-    conn: std::sync::Mutex<rusqlite::Connection>,
+    conns: Vec<std::sync::Mutex<rusqlite::Connection>>,
     by_file_id: HashMap<String, u32>,
     pub files_read: usize,
     /// Files with any readable text.
@@ -41,11 +42,18 @@ pub struct ContentIndex {
 
 impl ContentIndex {
     pub fn open(path: &std::path::Path, idx: &Index) -> Option<ContentIndex> {
-        let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX).ok()?;
-        let files_read: i64 = conn.query_row("select count(*) from content_files where chars > 0", [], |r| r.get(0)).ok()?;
+        Self::open_many(&[path.to_path_buf()], idx)
+    }
+
+    /// Only text of files in the loaded index counts: a group's text can't
+    /// surface a file this PC didn't load.
+    pub fn open_many(paths: &[std::path::PathBuf], idx: &Index) -> Option<ContentIndex> {
         let by_file_id: HashMap<String, u32> = idx.files.iter().enumerate().map(|(i, f)| (f.file_id.clone(), i as u32)).collect();
         let mut read = HashSet::new();
-        if let Ok(mut st) = conn.prepare("select file_id from content_files where chars > 0") {
+        let mut conns = Vec::new();
+        for p in paths {
+            let Ok(conn) = rusqlite::Connection::open_with_flags(p, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX) else { continue };
+            let Ok(mut st) = conn.prepare("select file_id from content_files where chars > 0") else { continue };
             if let Ok(rows) = st.query_map([], |r| r.get::<_, String>(0)) {
                 for id in rows.flatten() {
                     if let Some(&fi) = by_file_id.get(&id) {
@@ -53,35 +61,13 @@ impl ContentIndex {
                     }
                 }
             }
+            drop(st);
+            conns.push(std::sync::Mutex::new(conn));
         }
-        Some(ContentIndex { conn: std::sync::Mutex::new(conn), by_file_id, files_read: files_read as usize, read })
-    }
-
-    /// Pages with the terms (all of them, or `any`), best first, full text.
-    pub fn pages(&self, terms: &[String], any: bool, scope: Option<&std::collections::HashSet<u32>>, limit: usize) -> Vec<(u32, u32, String)> {
-        if terms.is_empty() {
-            return vec![];
+        if conns.is_empty() {
+            return None;
         }
-        let q = terms.iter().map(|t| format!("\"{}\"", t.replace('"', ""))).collect::<Vec<_>>().join(if any { " OR " } else { " AND " });
-        let conn = self.conn.lock().unwrap();
-        let Ok(mut st) = conn.prepare_cached("select file_id, page, text from content_fts where content_fts match ?1 order by bm25(content_fts) limit ?2") else {
-            return vec![];
-        };
-        let fetch = if scope.is_some() { 3000 } else { (limit * 3).max(40) } as i64;
-        let mut out = Vec::new();
-        if let Ok(rows) = st.query_map(rusqlite::params![q, fetch], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))) {
-            for (fid, page, text) in rows.flatten() {
-                let Some(&fi) = self.by_file_id.get(&fid) else { continue };
-                if scope.map(|s| !s.contains(&fi)).unwrap_or(false) {
-                    continue;
-                }
-                out.push((fi, page as u32, text));
-                if out.len() >= limit {
-                    break;
-                }
-            }
-        }
-        out
+        Some(ContentIndex { conns, by_file_id, files_read: read.len(), read })
     }
 
     /// Files whose text has every term; best first. `scope` limits to files.
@@ -91,23 +77,33 @@ impl ContentIndex {
         }
         // Each term quoted, so punctuation can't change the query.
         let q = terms.iter().map(|t| format!("\"{}\"", t.replace('"', ""))).collect::<Vec<_>>().join(" AND ");
-        let conn = self.conn.lock().unwrap();
-        let Ok(mut st) = conn.prepare_cached(
-            "select file_id, page, snippet(content_fts, 0, '«', '»', '…', 16) from content_fts where content_fts match ?1 order by bm25(content_fts) limit ?2",
-        ) else {
-            return vec![];
-        };
         let fetch = if scope.is_some() { 2000 } else { (limit * 4).max(50) } as i64;
-        let rows = st.query_map(rusqlite::params![q, fetch], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)));
+        let mut all: Vec<(f64, u32, u32, String)> = Vec::new();
+        for conn in &self.conns {
+            let conn = conn.lock().unwrap();
+            let Ok(mut st) = conn.prepare_cached(
+                "select file_id, page, snippet(content_fts, 0, '«', '»', '…', 16), bm25(content_fts) from content_fts where content_fts match ?1 order by bm25(content_fts) limit ?2",
+            ) else {
+                continue;
+            };
+            let rows = st.query_map(rusqlite::params![q, fetch], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, f64>(3)?)));
+            if let Ok(rows) = rows {
+                for (fid, page, snip, rank) in rows.flatten() {
+                    let Some(&fi) = self.by_file_id.get(&fid) else { continue };
+                    if scope.map(|s| !s.contains(&fi)).unwrap_or(false) {
+                        continue;
+                    }
+                    all.push((rank, fi, page as u32, snip.replace('\n', " ")));
+                }
+            }
+        }
+        // bm25: lower is better.
+        all.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         let mut out = Vec::new();
         let mut seen = HashSet::new();
-        if let Ok(rows) = rows {
-            for (fid, page, snip) in rows.flatten() {
-                let Some(&fi) = self.by_file_id.get(&fid) else { continue };
-                if scope.map(|s| !s.contains(&fi)).unwrap_or(false) || !seen.insert(fi) {
-                    continue;
-                }
-                out.push((fi, page as u32, snip.replace('\n', " ")));
+        for (_, fi, page, snip) in all {
+            if seen.insert(fi) {
+                out.push((fi, page, snip));
                 if out.len() >= limit {
                     break;
                 }

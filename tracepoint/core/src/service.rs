@@ -3,7 +3,11 @@
 //!
 //! Platform-neutral. The Windows app plugs in a `Platform` that opens files,
 //! shows dialogs and pushes events; the dev server plugs in a stub.
+//!
+//! Who you are is your Windows account; what you can find is what Windows
+//! lets you open (see `acl`, `partition`, `team`).
 
+use crate::acl;
 use crate::ai::{self, AiChoice, Provider};
 use crate::auth::{self, Role, Session, UserStore};
 use crate::engine::{Engine, SearchRequest};
@@ -30,11 +34,19 @@ pub trait Platform: Send + Sync {
     fn machine(&self) -> String {
         std::env::var("COMPUTERNAME").unwrap_or_default()
     }
+    /// The folder TracePoint.exe was started from (for shared setups).
+    fn exe_dir(&self) -> Option<PathBuf> {
+        None
+    }
 }
+
+/// The shared data folder people find automatically: next to the exe.
+pub const TEAM_DIR_NAME: &str = "TracePoint Data";
 
 #[derive(Clone, Debug, Default, serde::Serialize, Deserialize)]
 #[serde(default)]
 pub struct LocalConfig {
+    /// The shared folder this PC joined.
     pub team_folder: Option<String>,
 }
 
@@ -52,28 +64,47 @@ pub struct IndexState {
     pub error: Option<String>,
 }
 
+/// Where this PC's data comes from.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct TeamState {
+    /// "team" (joined a shared folder), "offline" (joined, can't reach it),
+    /// "standalone" (this PC only).
+    pub mode: String,
+    pub folder: Option<String>,
+    /// How the folder was found: "policy", "joined", "next_to_exe", "default".
+    pub found_by: String,
+    /// A shared setup exists that this PC could join (shown on first run).
+    pub available: Option<String>,
+    /// Set by IT policy: can't be changed in the app.
+    pub forced: bool,
+}
+
 pub struct Service {
     pub platform: Box<dyn Platform>,
     pub guard: Guard,
     pub paths: Paths,
-    pub embedded_index: Option<&'static [u8]>,
+    me: acl::Identity,
     engine: RwLock<Option<Arc<Engine>>>,
     index_state: RwLock<IndexState>,
+    team: RwLock<TeamState>,
     users: Mutex<UserStore>,
-    profiles_path: PathBuf,
     session: Mutex<Option<Session>>,
     config: RwLock<LocalConfig>,
-    chat_cancel: AtomicBool,
-    /// The database file the engine was loaded from (rescans start from it).
-    active_db: RwLock<Option<PathBuf>>,
+    exe_dir: Option<PathBuf>,
+    /// What this PC loaded from the shared index (counts only).
+    groups: RwLock<crate::team::Loaded>,
+    /// The last time this PC shared an index, and what was held back.
+    published: Mutex<Option<crate::team::Published>>,
     scan: Mutex<ScanState>,
     scan_cancel: Arc<AtomicBool>,
+    scan_lock: Mutex<Option<PathBuf>>,
     content: Mutex<ContentState>,
     content_cancel: Arc<AtomicBool>,
     airead: Mutex<AiReadState>,
     airead_cancel: Arc<AtomicBool>,
     /// pdfium.dll (unpacked from the exe by the app) or libpdfium.so (dev).
     pdfium_lib: RwLock<Option<PathBuf>>,
+    manifest_seen: Mutex<Option<String>>,
 }
 
 /// Progress of the approved AI reading of pages free OCR couldn't read.
@@ -172,44 +203,166 @@ fn s(v: &Value, k: &str) -> String {
     v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string()
 }
 
+fn sha2_hex(b: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(b).iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// IT switched AI off on this PC (registry / Group Policy).
+pub fn ai_blocked_by_it() -> bool {
+    acl::policy_dword("DisableAI").map(|v| v != 0).unwrap_or(false)
+}
+
 impl Service {
-    pub fn new(platform: Box<dyn Platform>, local: PathBuf, embedded_index: Option<&'static [u8]>) -> Result<Arc<Service>, String> {
+    pub fn new(platform: Box<dyn Platform>, local: PathBuf) -> Result<Arc<Service>, String> {
+        let me = acl::current_user();
+        Self::new_as(platform, local, me)
+    }
+
+    /// As a given Windows account (tests).
+    pub fn new_as(platform: Box<dyn Platform>, local: PathBuf, me: acl::Identity) -> Result<Arc<Service>, String> {
         let guard = Guard::new(platform.drive_resolver());
         let temp = std::env::temp_dir().join("TracePoint");
         std::fs::create_dir_all(&local).map_err(|e| format!("Cannot create {}: {e}", local.display()))?;
         guard.allow(&local).map_err(|e| e.to_string())?;
         guard.allow(&temp).map_err(|e| e.to_string())?;
-        let config: LocalConfig = std::fs::read(local.join("config.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-        // Profiles live in the team folder when one is set and reachable.
-        let mut profiles_path = local.join("profiles.db");
-        if let Some(t) = &config.team_folder {
-            let tp = PathBuf::from(t);
-            if tp.is_dir() && guard.allow(&tp).is_ok() {
-                profiles_path = tp.join("TracePoint_Profiles.db");
+        let mut config: LocalConfig = std::fs::read(local.join("config.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let exe_dir = platform.exe_dir();
+        let team = Self::find_team(&config, exe_dir.as_deref());
+        if let Some(f) = &team.folder {
+            guard.allow(Path::new(f)).map_err(|e| e.to_string())?;
+            if matches!(team.found_by.as_str(), "next_to_exe" | "default") {
+                // Found an existing setup: remember it, so a later outage
+                // shows "can't reach THOR" instead of an empty PC-only setup.
+                config.team_folder = Some(f.clone());
+                let _ = guard.write(&local.join("config.json"), serde_json::to_string_pretty(&config).unwrap().as_bytes());
             }
         }
-        let users = UserStore::open(&profiles_path).map_err(|e| e.0)?;
+        let users = match (&team.mode[..], &team.folder) {
+            ("team" | "offline", Some(f)) => UserStore::open(me.clone(), &local, Some(Path::new(f))),
+            _ => UserStore::open(me.clone(), &local, None),
+        }
+        .map_err(|e| e.0)?;
+        let session = users.session();
         Ok(Arc::new(Service {
             platform,
             guard,
             paths: Paths { local, temp },
-            embedded_index,
+            me,
             engine: RwLock::new(None),
             index_state: RwLock::new(IndexState { ready: false, message: "Starting…".into(), source: String::new(), source_kind: String::new(), error: None }),
+            team: RwLock::new(team),
             users: Mutex::new(users),
-            profiles_path,
-            session: Mutex::new(None),
+            session: Mutex::new(Some(session)),
             config: RwLock::new(config),
-            chat_cancel: AtomicBool::new(false),
-            active_db: RwLock::new(None),
+            exe_dir,
+            groups: RwLock::new(Default::default()),
+            published: Mutex::new(None),
             scan: Mutex::new(ScanState::default()),
             scan_cancel: Arc::new(AtomicBool::new(false)),
+            scan_lock: Mutex::new(None),
             content: Mutex::new(ContentState::default()),
             content_cancel: Arc::new(AtomicBool::new(false)),
             pdfium_lib: RwLock::new(None),
             airead: Mutex::new(AiReadState::default()),
             airead_cancel: Arc::new(AtomicBool::new(false)),
+            manifest_seen: Mutex::new(None),
         }))
+    }
+
+    /// Where the shared TracePoint folder is: set by IT policy; else the
+    /// one this PC joined; else found automatically (next to the exe, or the
+    /// standard \\thor\Public\TP location) — then this PC joins it.
+    fn find_team(config: &LocalConfig, exe_dir: Option<&Path>) -> TeamState {
+        if let Some(p) = acl::policy_string("TeamFolder") {
+            let ok = crate::team::is_setup(Path::new(&p));
+            return TeamState { mode: if ok { "team" } else { "offline" }.into(), folder: Some(p), found_by: "policy".into(), available: None, forced: true };
+        }
+        if let Some(p) = &config.team_folder {
+            let ok = crate::team::is_setup(Path::new(p));
+            return TeamState { mode: if ok { "team" } else { "offline" }.into(), folder: Some(p.clone()), found_by: "joined".into(), available: None, forced: false };
+        }
+        let mut candidates: Vec<(PathBuf, &str)> = Vec::new();
+        if let Some(d) = exe_dir {
+            candidates.push((d.join(TEAM_DIR_NAME), "next_to_exe"));
+        }
+        candidates.push((PathBuf::from(crate::team::DEFAULT_TEAM), "default"));
+        for (p, how) in candidates {
+            if crate::team::is_setup(&p) {
+                // An existing setup: join it (nothing is copied from this PC).
+                return TeamState { mode: "team".into(), folder: Some(p.display().to_string()), found_by: how.into(), available: None, forced: false };
+            }
+        }
+        TeamState { mode: "standalone".into(), ..Default::default() }
+    }
+
+    fn team_dir(&self) -> Option<PathBuf> {
+        let t = self.team.read().unwrap();
+        (t.mode == "team").then(|| t.folder.as_ref().map(PathBuf::from)).flatten()
+    }
+
+    fn save_config(&self) -> Result<(), ApiError> {
+        let cfg = self.config.read().unwrap().clone();
+        self.guard.write(&self.paths.local.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap().as_bytes())?;
+        Ok(())
+    }
+
+    /// Others' rescans reach this PC without a restart: every few minutes,
+    /// reload when the shared index list changed. Also re-reads roles.
+    pub fn watch_team(self: &Arc<Self>) {
+        let me = Arc::downgrade(self);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(300));
+            let Some(me) = me.upgrade() else { return };
+            // Offline at start: try again.
+            {
+                let t = me.team.read().unwrap().clone();
+                if t.mode == "offline" && t.folder.as_deref().map(|f| crate::team::is_setup(Path::new(f))).unwrap_or(false) {
+                    me.team.write().unwrap().mode = "team".into();
+                    me.reload_roles();
+                    me.load_index();
+                    me.platform.emit("notice", json!({"text": "Connected to THOR again."}));
+                    continue;
+                }
+            }
+            if me.scan.lock().unwrap().running || me.content.lock().unwrap().running || me.airead.lock().unwrap().running {
+                continue;
+            }
+            let Some(t) = me.team_dir() else { continue };
+            me.reload_roles();
+            let stamp = std::fs::read(t.join("index").join("manifest.json")).ok().map(|b| sha2_hex(&b));
+            if stamp.is_some() && *me.manifest_seen.lock().unwrap() != stamp {
+                me.load_index();
+                me.platform.emit("notice", json!({"text": "The shared index was updated — search now uses the latest scan."}));
+            }
+        });
+    }
+
+    fn reload_roles(&self) {
+        let mut u = self.users.lock().unwrap();
+        u.refresh();
+        *self.session.lock().unwrap() = Some(u.session());
+    }
+
+    /// One rescan or publish at a time across the team: a lock file.
+    fn take_scan_lock(&self) -> Result<Option<PathBuf>, String> {
+        let Some(t) = self.team_dir() else { return Ok(None) };
+        let lock = t.join("admin").join("scan.lock");
+        if let Ok(b) = std::fs::read(&lock) {
+            let v: Value = serde_json::from_slice(&b).unwrap_or(json!({}));
+            let age = std::fs::metadata(&lock).and_then(|m| m.modified()).ok().and_then(|m| m.elapsed().ok()).map(|d| d.as_secs()).unwrap_or(0);
+            if age < 6 * 3600 && v["machine"].as_str() != Some(self.platform.machine().as_str()) {
+                return Err(format!(
+                    "{} is already rescanning THOR from {} (started {}). Only one rescan runs at a time; everyone gets the result when it finishes.",
+                    v["user"].as_str().unwrap_or("Someone"),
+                    v["machine"].as_str().unwrap_or("another PC"),
+                    v["started"].as_str().unwrap_or("recently")
+                ));
+            }
+        }
+        let body = json!({"user": self.me.account, "machine": self.platform.machine(), "started": auth::now()});
+        self.guard.write(&lock, body.to_string().as_bytes()).map_err(|e| format!("Can't write to the shared folder: {e}"))?;
+        Ok(Some(lock))
     }
 
     fn set_index_msg(&self, m: &str) {
@@ -217,118 +370,182 @@ impl Service {
         self.platform.emit("index", json!({"message": m}));
     }
 
-    /// Find the best available index and load it. Runs on a background thread.
-    pub fn load_index(self: &Arc<Self>) {
-        let t0 = std::time::Instant::now();
-        let mut candidates: Vec<(PathBuf, &str)> = Vec::new();
-        if let Some(t) = &self.config.read().unwrap().team_folder {
-            candidates.push((PathBuf::from(t).join("index").join("thor_knowledge.db"), "team"));
-        }
-        candidates.push((self.paths.local.join("index").join("thor_knowledge.db"), "local"));
-        let mut chosen: Option<(PathBuf, String)> = None;
-        for (p, kind) in candidates {
-            if p.is_file() {
-                if kind == "team" {
-                    // Copy the published index locally when it is newer, then load the copy.
-                    let local_copy = self.paths.local.join("index").join("team_copy.db");
-                    let newer = match (std::fs::metadata(&p), std::fs::metadata(&local_copy)) {
-                        (Ok(a), Ok(b)) => a.modified().ok() > b.modified().ok() || a.len() != b.len(),
-                        (Ok(_), Err(_)) => true,
-                        _ => false,
-                    };
-                    if newer {
-                        self.set_index_msg("Copying the team index from the shared folder…");
-                        if self.guard.copy_into(&p, &local_copy).is_err() {
-                            continue;
-                        }
-                    }
-                    chosen = Some((local_copy, format!("Team index ({})", p.display())));
-                } else {
-                    chosen = Some((p.clone(), format!("Local index ({})", p.display())));
-                }
-                break;
-            }
-        }
-        if chosen.is_none() {
-            if let Some(bytes) = self.embedded_index {
-                let h = {
-                    let mut x: u64 = 1469598103934665603;
-                    for b in bytes.iter().step_by(4096) {
-                        x = (x ^ *b as u64).wrapping_mul(1099511628211);
-                    }
-                    x ^ bytes.len() as u64
-                };
-                let path = self.paths.local.join("index").join(format!("built-in-{h:016x}.db"));
-                if !path.is_file() {
-                    self.set_index_msg("Unpacking the built-in THOR index (first start only)…");
-                    match crate::snapshot::decompress(bytes) {
-                        Ok(raw) => {
-                            if let Err(e) = self.guard.write(&path, &raw) {
-                                self.fail_index(&format!("Could not unpack the built-in index: {e}"));
-                                return;
-                            }
-                        }
-                        Err(e) => {
-                            self.fail_index(&format!("Built-in index is damaged: {e}"));
-                            return;
-                        }
-                    }
-                }
-                chosen = Some((path, "Built-in index (shipped inside TracePoint.exe)".into()));
-            }
-        }
-        let Some((path, source)) = chosen else {
-            self.fail_index("No THOR index is available yet. An administrator can import one under Sources.");
-            return;
-        };
-        self.set_index_msg("Reading 200,000+ THOR file records…");
-        *self.active_db.write().unwrap() = Some(path.clone());
-        match Index::load(&path) {
-            Ok(idx) => {
-                for r in &idx.roots {
-                    self.guard.protect(&r.path);
-                }
-                self.set_index_msg("Building the search engine…");
-                let engine = Engine::new(idx);
-                self.attach_content(&engine);
-                let files = engine.idx.files.len();
-                *self.engine.write().unwrap() = Some(Arc::new(engine));
-                let kind = if source.starts_with("Team") { "team" } else if source.starts_with("Local") { "local" } else { "builtin" };
-                *self.index_state.write().unwrap() = IndexState {
-                    ready: true,
-                    message: format!("{files} files ready in {:.1} s", t0.elapsed().as_secs_f64()),
-                    source,
-                    source_kind: kind.into(),
-                    error: None,
-                };
-                self.platform.emit("index", json!({"ready": true}));
-            }
-            Err(e) => self.fail_index(&e),
-        }
+    /// This PC's own index (administrators and indexers): what rescans
+    /// start from. Never shared as-is.
+    fn master_path(&self) -> PathBuf {
+        self.paths.local.join("index").join("thor_knowledge.db")
     }
 
-    /// Where this PC reads document text from: the team copy when newer,
-    /// else the local one.
-    fn content_db(&self) -> PathBuf {
-        let dir = self.paths.local.join("index");
-        if let Some(t) = &self.config.read().unwrap().team_folder {
-            let team = PathBuf::from(t).join("index").join("thor_content.db");
-            let local = dir.join("thor_content.db");
-            let newer = match (std::fs::metadata(&team), std::fs::metadata(&local)) {
-                (Ok(a), Ok(b)) => a.modified().ok() > b.modified().ok(),
-                (Ok(_), Err(_)) => true,
-                _ => false,
-            };
-            if newer {
-                let _ = self.guard.copy_into(&team, &local);
+    fn content_master_path(&self) -> PathBuf {
+        self.paths.local.join("index").join("thor_content.db")
+    }
+
+    /// Load what this Windows account may see. Runs on a background thread.
+    pub fn load_index(self: &Arc<Self>) {
+        let t0 = std::time::Instant::now();
+        let team = self.team.read().unwrap().clone();
+        let (idx, content, source, kind) = match team.mode.as_str() {
+            "offline" => {
+                self.fail_index(&format!(
+                    "TracePoint can't reach THOR ({}). Check you're on the company network or VPN — it reconnects by itself, or restart TracePoint.",
+                    team.folder.as_deref().unwrap_or("the shared folder")
+                ));
+                return;
+            }
+            "team" => {
+                let t = PathBuf::from(team.folder.clone().unwrap_or_default());
+                self.set_index_msg("Checking which THOR folders your Windows account can open…");
+                *self.manifest_seen.lock().unwrap() = std::fs::read(t.join("index").join("manifest.json")).ok().map(|b| sha2_hex(&b));
+                let loaded = match crate::team::load_groups(&self.guard, &t, &self.paths.local.join("cache")) {
+                    Ok(l) => l,
+                    Err(e) => return self.fail_index(&e),
+                };
+                if loaded.parts.is_empty() {
+                    *self.groups.write().unwrap() = loaded.clone();
+                    let msg = if loaded.open + loaded.locked + loaded.hidden + loaded.unavailable == 0 {
+                        "No THOR index has been shared yet. An administrator or indexer can scan THOR under Sources."
+                    } else if loaded.unavailable > 0 && loaded.locked + loaded.hidden == 0 {
+                        "TracePoint can't reach THOR right now. Check you're on the company network or VPN."
+                    } else {
+                        "Your Windows account can't open any of the indexed THOR folders. If you should have access, ask IT."
+                    };
+                    return self.fail_index(msg);
+                }
+                self.set_index_msg("Reading the THOR file records you can open…");
+                let mem = match rusqlite::Connection::open_in_memory() {
+                    Ok(c) => c,
+                    Err(e) => return self.fail_index(&e.to_string()),
+                };
+                if let Err(e) = crate::partition::merge(&loaded.parts, &mem) {
+                    return self.fail_index(&e);
+                }
+                let idx = match Index::load_conn(&mem) {
+                    Ok(i) => i,
+                    Err(e) => return self.fail_index(&e),
+                };
+                let content = loaded.content.clone();
+                *self.groups.write().unwrap() = loaded;
+                (idx, content, format!("Shared index ({})", t.display()), "team")
+            }
+            _ => {
+                let p = self.master_path();
+                if !p.is_file() {
+                    return self.fail_index("No THOR index on this PC yet. Scan a THOR folder under Sources, or join your team's shared TracePoint folder.");
+                }
+                self.set_index_msg("Reading THOR file records…");
+                let idx = match Index::load(&p) {
+                    Ok(i) => i,
+                    Err(e) => return self.fail_index(&e),
+                };
+                let c = self.content_master_path();
+                (idx, if c.is_file() { vec![c] } else { vec![] }, format!("This PC ({})", p.display()), "local")
+            }
+        };
+        for r in &idx.roots {
+            self.guard.protect(&r.path);
+        }
+        self.set_index_msg("Building the search engine…");
+        let engine = Engine::new(idx);
+        *engine.content.write().unwrap() = crate::engine::ContentIndex::open_many(&content, &engine.idx);
+        let n = engine.content.read().unwrap().as_ref().map(|c| c.files_read).unwrap_or(0);
+        self.content.lock().unwrap().files_read_total = n;
+        let files = engine.idx.files.len();
+        *self.engine.write().unwrap() = Some(Arc::new(engine));
+        *self.index_state.write().unwrap() = IndexState { ready: true, message: format!("{files} files ready in {:.1} s", t0.elapsed().as_secs_f64()), source, source_kind: kind.into(), error: None };
+        self.platform.emit("index", json!({"ready": true}));
+    }
+
+    /// The working copy an administrator scans into: their own, or — first
+    /// time on this PC — built from the shared groups they can open.
+    fn ensure_master(&self) -> Result<Option<PathBuf>, String> {
+        let p = self.master_path();
+        if p.is_file() {
+            return Ok(Some(p));
+        }
+        let parts = self.groups.read().unwrap().parts.clone();
+        if parts.is_empty() {
+            return Ok(None);
+        }
+        self.guard.create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+        let c = rusqlite::Connection::open(&p).map_err(|e| e.to_string())?;
+        crate::partition::merge(&parts, &c)?;
+        Ok(Some(p))
+    }
+
+    /// Same for document text.
+    fn ensure_content_master(&self) -> PathBuf {
+        let p = self.content_master_path();
+        if !p.is_file() {
+            if let Some(t) = self.team_dir() {
+                let m = crate::team::read_manifest(&t).unwrap_or_default();
+                let parts: Vec<PathBuf> = m
+                    .groups
+                    .iter()
+                    .map(|g| t.join("index").join(&g.folder).join("content.db"))
+                    .filter(|p| acl::can_open(p) == acl::Access::Allowed)
+                    .collect();
+                if !parts.is_empty() {
+                    if let Ok(c) = rusqlite::Connection::open(&p) {
+                        if crate::content::ensure_schema(&c).is_err() || crate::partition::merge(&parts, &c).is_err() {
+                            drop(c);
+                            let _ = self.guard.remove_own_file(&p);
+                        }
+                    }
+                }
             }
         }
-        dir.join("thor_content.db")
+        p
+    }
+
+    /// Share this PC's index and document text with the team, split by who
+    /// may read each file. Returns a one-line summary for the log.
+    fn publish(&self) -> Result<String, String> {
+        let Some(t) = self.team_dir() else { return Ok("This PC only — nothing to share.".into()) };
+        let master = self.master_path();
+        if !master.is_file() {
+            return Err("Nothing to share yet.".into());
+        }
+        let held_lock = self.scan_lock.lock().unwrap().is_some();
+        let lock = if held_lock { None } else { self.take_scan_lock()? };
+        let content = self.content_master_path();
+        let scratch = self.paths.local.join("publish");
+        let log = |l: String| {
+            if self.scan.lock().unwrap().running {
+                self.scan_log(l);
+            }
+        };
+        let res = crate::team::publish(&self.guard, &t, &self.me, &master, Some(content.as_path()).filter(|p| p.is_file()), &scratch, &log);
+        if let Some(l) = lock {
+            let _ = self.guard.remove_own_file(&l);
+        }
+        let rep = res?;
+        let line = format!(
+            "Shared {} files in {} permission groups{}{}{}.",
+            rep.files,
+            rep.groups,
+            if rep.refused.is_empty() { String::new() } else { format!(" · {} groups held back (see Sources)", rep.refused.len()) },
+            if rep.unreadable > 0 { format!(" · {} files left out (their permissions couldn't be read)", rep.unreadable) } else { String::new() },
+            if rep.open_to_everyone > 0 { format!(" · {} groups are open to all staff", rep.open_to_everyone) } else { String::new() }
+        );
+        self.audit("index_shared", &line);
+        *self.published.lock().unwrap() = Some(rep);
+        Ok(line)
+    }
+
+    /// Publish, building this PC's working copy first if needed.
+    fn share(&self) -> Result<String, String> {
+        if self.ensure_master()?.is_none() {
+            return Err("Nothing to share yet.".into());
+        }
+        self.publish()
     }
 
     fn attach_content(&self, engine: &Engine) {
-        let p = self.content_db();
-        *engine.content.write().unwrap() = if p.is_file() { crate::engine::ContentIndex::open(&p, &engine.idx) } else { None };
+        let paths: Vec<PathBuf> = match self.team_dir() {
+            Some(_) => self.groups.read().unwrap().content.clone(),
+            None => Some(self.content_master_path()).filter(|p| p.is_file()).into_iter().collect(),
+        };
+        *engine.content.write().unwrap() = crate::engine::ContentIndex::open_many(&paths, &engine.idx);
         let n = engine.content.read().unwrap().as_ref().map(|c| c.files_read).unwrap_or(0);
         self.content.lock().unwrap().files_read_total = n;
     }
@@ -367,7 +584,7 @@ impl Service {
             me.audit("content_failed", &m);
         };
         let dir = self.paths.local.join("index");
-        let active = self.content_db();
+        let active = self.ensure_content_master();
         let work = dir.join("content_work.db");
         if self.guard.create_dir_all(&dir).is_err() || self.guard.check(&work).is_err() {
             return fail(&self, "Can't write the content database.".into());
@@ -497,10 +714,15 @@ impl Service {
             self.attach_content(&e);
             return fail(&self, format!("Could not save the content database: {x}"));
         }
-        if let Some(t) = self.config.read().unwrap().team_folder.clone() {
-            let _ = self.guard.publish(&local, &PathBuf::from(t).join("index").join("thor_content.db"));
+        if self.team_dir().is_some() {
+            match self.share() {
+                Ok(line) => self.audit("content_shared", &line),
+                Err(x) => self.content.lock().unwrap().error = Some(format!("Saved on this PC, but couldn't share it: {x}")),
+            }
+            self.clone().load_index();
+        } else {
+            self.attach_content(&e);
         }
-        self.attach_content(&e);
         {
             let mut st = self.content.lock().unwrap();
             st.running = false;
@@ -516,7 +738,7 @@ impl Service {
 
     /// Staged pages, most valuable first: (file index, file_id, page, value).
     fn staged_pages(&self, e: &Engine, limit: usize) -> Vec<(u32, String, u32, f64)> {
-        let path = self.content_db();
+        let path = self.ensure_content_master();
         let Ok(c) = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return vec![] };
         let by_id: std::collections::HashMap<&str, u32> = e.idx.files.iter().enumerate().map(|(i, f)| (f.file_id.as_str(), i as u32)).collect();
         let Ok(mut st) = c.prepare("select file_id, page, value from ai_stage where status='staged' order by value desc, file_id, page") else { return vec![] };
@@ -563,7 +785,7 @@ impl Service {
             me.airead_emit();
         };
         let dir = self.paths.local.join("index");
-        let active = self.content_db();
+        let active = self.ensure_content_master();
         let work = dir.join("airead_work.db");
         let _ = self.guard.remove_own_file(&work);
         if self.guard.copy_into(&active, &work).is_err() {
@@ -618,117 +840,17 @@ impl Service {
         let local = dir.join("thor_content.db");
         let ok = self.guard.publish(&work, &local).is_ok();
         let _ = self.guard.remove_own_file(&work);
-        if ok {
-            if let Some(t) = self.config.read().unwrap().team_folder.clone() {
-                let _ = self.guard.publish(&local, &PathBuf::from(t).join("index").join("thor_content.db"));
+        if ok && self.team_dir().is_some() {
+            if let Err(x) = self.share() {
+                self.audit("share_failed", &x);
             }
+            self.clone().load_index();
+        } else {
+            self.attach_content(&e);
         }
-        self.attach_content(&e);
         let st = self.airead.lock().unwrap().clone();
         self.audit("ai_read_finished", &format!("{} pages read, {} empty, {} failed, ${:.4}{}", st.done, st.empty, st.failed, st.spent_usd, reason.as_deref().map(|r| format!(" — {r}")).unwrap_or_default()));
         stop(&self, reason.or(if ok { None } else { Some("Could not save the results.".into()) }));
-    }
-
-    /// A library is a saved search: its files are whatever that search finds.
-    fn library_files(&self, e: &Engine, query: &str) -> std::collections::HashSet<u32> {
-        let r = e.search(&SearchRequest { query: query.to_string(), limit: 5000, include_photos: false, ..Default::default() });
-        r.hits.iter().map(|h| h.id).collect()
-    }
-
-    fn chat_emit(&self, thread_id: i64, v: Value) {
-        let mut v = v;
-        v["thread_id"] = json!(thread_id);
-        self.platform.emit("chat", v);
-    }
-
-    fn chat_ask(self: &Arc<Self>, a: &Value) -> R {
-        let question = s(a, "question");
-        if question.trim().is_empty() {
-            return Err(ApiError::new(400, "Ask a question."));
-        }
-        let (cur, key) = self.current_ai()?;
-        let e = self.engine()?;
-        if e.content.read().unwrap().is_none() {
-            return Err(ApiError::new(409, "No document contents have been read yet. An administrator can start that under Sources › Document contents."));
-        }
-        let scope_v = a.get("scope").cloned().unwrap_or(json!({"kind": "thor"}));
-        let scope_s = scope_v.to_string();
-        let uid = self.with_session(|s| Ok(s.user.id))?;
-        let thread_id = match a.get("thread_id").and_then(|x| x.as_i64()) {
-            Some(t) => {
-                if self.users.lock().unwrap().thread_owned(uid, t)?.is_none() {
-                    return Err(ApiError::new(404, "No such conversation."));
-                }
-                t
-            }
-            None => {
-                let title: String = question.chars().take(70).collect();
-                self.users.lock().unwrap().thread_create(uid, &title, &scope_s)?
-            }
-        };
-        let history: Vec<(String, String)> = self.users.lock().unwrap().turns(thread_id)?.into_iter().map(|t| (t.1, t.2)).collect();
-        // Asked before (same scope, no thumbs-down): reuse it for free.
-        if !a.get("force").and_then(|x| x.as_bool()).unwrap_or(false) && history.is_empty() {
-            let recent = self.users.lock().unwrap().recent_turns(uid, 300)?;
-            if let Some((tid, _, ans, src, _, at)) = recent.into_iter().find(|r| r.4 == scope_s && crate::ask::similar(&r.1, &question)) {
-                let meta = json!({"reused_from": tid, "reused_at": at, "cost_usd": 0.0, "ms": 0});
-                let turn = self.users.lock().unwrap().turn_add(thread_id, &question, &ans, &src, &meta.to_string())?;
-                let me = self.clone();
-                let ans2 = ans.clone();
-                std::thread::spawn(move || {
-                    me.chat_emit(thread_id, json!({"type": "sources", "sources": serde_json::from_str::<Value>(&src).unwrap_or(json!([]))}));
-                    me.chat_emit(thread_id, json!({"type": "done", "text": ans2, "meta": meta, "turn_id": turn}));
-                });
-                return Ok(json!({"thread_id": thread_id, "reused": true}));
-            }
-        }
-        let scope: Option<std::collections::HashSet<u32>> = match scope_v["kind"].as_str().unwrap_or("thor") {
-            "equipment" => scope_v["id"].as_u64().filter(|&i| (i as usize) < e.idx.equipment.len()).map(|i| e.idx.equip_files[i as usize].iter().copied().collect()),
-            "library" => {
-                let id = scope_v["id"].as_i64().unwrap_or(0);
-                let q = self.users.lock().unwrap().libraries()?.into_iter().find(|l| l.0 == id).map(|l| l.2);
-                q.map(|q| self.library_files(&e, &q))
-            }
-            _ => None,
-        };
-        let cheap = AiChoice { provider: cur.provider, model: crate::content::vision_model(cur.provider).to_string(), reasoning: None };
-        self.chat_cancel.store(false, Ordering::SeqCst);
-        let me = self.clone();
-        std::thread::spawn(move || {
-            let t0 = std::time::Instant::now();
-            let spent = std::cell::Cell::new(0.0f64);
-            let call = |c: &AiChoice, sys: &str, msgs: &[ai::Msg], max: u32, on: &mut dyn FnMut(&str)| {
-                let (r, cost) = me.ai_call("ask", c, &key, sys, msgs, max, &|| me.chat_cancel.load(Ordering::Relaxed), on)?;
-                spent.set(spent.get() + cost);
-                Ok(r)
-            };
-            let res = crate::ask::ask(
-                &e,
-                &cheap,
-                &cur,
-                &call,
-                &question,
-                &history,
-                scope.as_ref(),
-                &|st| me.chat_emit(thread_id, json!({"type": "status", "status": st})),
-                &|ps| me.chat_emit(thread_id, json!({"type": "sources", "sources": crate::ask::sources_json(ps, &[])})),
-                &mut |d| me.chat_emit(thread_id, json!({"type": "delta", "text": d})),
-            );
-            match res {
-                Ok(out) => {
-                    let files: std::collections::HashSet<u32> = out.passages.iter().map(|p| p.file_id).collect();
-                    let meta = json!({"model": out.model, "ms": t0.elapsed().as_millis(), "input_tokens": out.tokens_in, "output_tokens": out.tokens_out,
-                                      "read": files.len(), "searched": out.searched, "missing": out.missing, "cost_usd": spent.get()});
-                    let src = crate::ask::sources_json(&out.passages, &out.cited);
-                    let turn = me.users.lock().unwrap().turn_add(thread_id, &question, &out.answer, &src.to_string(), &meta.to_string()).unwrap_or(0);
-                    me.chat_emit(thread_id, json!({"type": "sources", "sources": src}));
-                    me.chat_emit(thread_id, json!({"type": "done", "text": out.answer, "meta": meta, "turn_id": turn}));
-                    me.audit("ask", &format!("{} · ${:.4}", question.chars().take(80).collect::<String>(), spent.get()));
-                }
-                Err(err) => me.chat_emit(thread_id, json!({"type": "error", "error": err.message})),
-            }
-        });
-        Ok(json!({"thread_id": thread_id}))
     }
 
     fn fail_index(&self, e: &str) {
@@ -752,9 +874,8 @@ impl Service {
     fn with_session<T>(&self, f: impl FnOnce(&Session) -> Result<T, ApiError>) -> Result<T, ApiError> {
         let g = self.session.lock().unwrap();
         match g.as_ref() {
-            Some(s) if !s.user.must_change => f(s),
-            Some(_) => Err(ApiError::new(403, "Change your temporary password first.")),
-            None => Err(ApiError::new(401, "Please sign in.")),
+            Some(s) => f(s),
+            None => Err(ApiError::new(401, "Windows didn't tell TracePoint who you are.")),
         }
     }
 
@@ -764,25 +885,21 @@ impl Service {
 
     fn state(&self) -> Value {
         let sess = self.session.lock().unwrap();
-        let stage = match sess.as_ref() {
-            None => "login",
-            Some(s) if s.user.must_change => "change_password",
-            Some(_) => "ready",
-        };
         let users = self.users.lock().unwrap();
-        let ai_enabled = users.policy("ai_enabled").ok().flatten().map(|v| v == "true").unwrap_or(true);
-        let allowed = users.policy("ai_providers").ok().flatten().unwrap_or_else(|| "anthropic,openai,gemini".into());
-        let prefs: Vec<(String, String)> = sess.as_ref().and_then(|s| users.prefs(s).ok()).unwrap_or_default();
+        let it_block = ai_blocked_by_it();
+        let ai_enabled = !it_block && users.policy("ai_enabled").map(|v| v != "false").unwrap_or(true);
+        let allowed = users.policy("ai_providers").unwrap_or_else(|| "anthropic,openai,gemini".into());
+        let prefs: std::collections::HashMap<String, String> = users.prefs().into_iter().collect();
+        drop(users);
         let idx = self.index_state.read().unwrap().clone();
         json!({
-            "stage": stage,
+            "stage": "ready",
             "version": VERSION,
             "user": sess.as_ref().map(|s| &s.user),
-            "keys_unlocked": sess.as_ref().map(|s| s.unlocked()).unwrap_or(false),
             "index": idx,
-            "policy": {"ai_enabled": ai_enabled, "ai_providers": allowed.split(',').collect::<Vec<_>>()},
-            "prefs": prefs.into_iter().collect::<std::collections::HashMap<_, _>>(),
-            "profiles_location": self.profiles_path.display().to_string(),
+            "team": *self.team.read().unwrap(),
+            "policy": {"ai_enabled": ai_enabled, "ai_blocked_by_it": it_block, "ai_providers": allowed.split(',').collect::<Vec<_>>()},
+            "prefs": prefs,
         })
     }
 
@@ -794,41 +911,89 @@ impl Service {
         Ok(crate::crawl::os_path(&e.idx.full_path(id)))
     }
 
+    /// Re-open roles and settings for the current shared folder.
+    fn reopen_users(&self) -> Result<(), ApiError> {
+        let t = self.team.read().unwrap().clone();
+        let team = match (&t.mode[..], &t.folder) {
+            ("team" | "offline", Some(f)) => Some(PathBuf::from(f)),
+            _ => None,
+        };
+        let u = UserStore::open(self.me.clone(), &self.paths.local, team.as_deref())?;
+        *self.session.lock().unwrap() = Some(u.session());
+        *self.users.lock().unwrap() = u;
+        Ok(())
+    }
+
+    /// Join an existing shared setup, or (administrators) set one up.
+    fn team_use(self: &Arc<Self>, path: PathBuf, create: bool) -> R {
+        if self.team.read().unwrap().forced {
+            return Err(ApiError::new(403, "Your IT department set the shared folder; it can't be changed here."));
+        }
+        self.guard.allow(&path)?;
+        if crate::team::is_setup(&path) {
+            // Join: nothing on this PC is copied there.
+        } else if !create {
+            return Err(ApiError::new(404, format!("There's no TracePoint setup in {}.", path.display())));
+        } else {
+            let is_admin = self.with_session(|s| Ok(s.is_admin()))?;
+            if !is_admin {
+                return Err(ApiError::new(403, "Only a TracePoint administrator can set up the shared folder."));
+            }
+            let me = self.me.clone();
+            let first = auth::Roster { version: 1, members: vec![auth::Member { sid: me.sid.clone(), account: me.account.clone(), role: Role::Admin, can_ai: true, added_by: String::new(), added_at: String::new() }], policy: Default::default() };
+            let mut users = self.users.lock().unwrap();
+            let mut found = || users.found_team(path.join("roles.json"), path.join("admin").join("activity.db")).map_err(|e| e.0);
+            crate::team::setup(&self.guard, &path, &me.account, &first, &mut found).map_err(|e| ApiError::new(400, e))?;
+            drop(users);
+        }
+        {
+            let mut cfg = self.config.write().unwrap();
+            cfg.team_folder = Some(path.display().to_string());
+        }
+        self.save_config()?;
+        *self.team.write().unwrap() = TeamState { mode: "team".into(), folder: Some(path.display().to_string()), found_by: "joined".into(), available: None, forced: false };
+        self.reopen_users()?;
+        let is_admin = self.with_session(|s| Ok(s.is_admin()))?;
+        let legacy = if is_admin { crate::team::remove_legacy(&self.guard, &path) } else { vec![] };
+        if !legacy.is_empty() {
+            self.audit("legacy_removed", &legacy.join(", "));
+        }
+        let mut shared = None;
+        if create && self.master_path().is_file() {
+            shared = Some(self.publish().unwrap_or_else(|e| format!("Not shared yet: {e}")));
+        }
+        self.audit("team_folder_joined", &path.display().to_string());
+        let me = self.clone();
+        std::thread::spawn(move || me.load_index());
+        Ok(json!({"team": *self.team.read().unwrap(), "shared": shared, "removed_legacy": legacy}))
+    }
+
     /// Handle one command. `cmd` is a dotted name, `a` its JSON arguments.
     pub fn handle(self: &Arc<Self>, cmd: &str, a: &Value) -> R {
         match cmd {
             // ── Session ──────────────────────────────────────────────
             "state" => Ok(self.state()),
-            "auth.login" => {
-                let sess = self.users.lock().unwrap().login(&s(a, "email"), &s(a, "password"))?;
-                *self.session.lock().unwrap() = Some(sess);
-                Ok(self.state())
-            }
-            "auth.change_password" => {
-                let mut g = self.session.lock().unwrap();
-                let sess = g.as_mut().ok_or_else(|| ApiError::new(401, "Please sign in."))?;
-                self.users.lock().unwrap().change_password(sess, &s(a, "current"), &s(a, "new"))?;
-                drop(g);
-                Ok(self.state())
-            }
-            "auth.check_password" => {
-                let email = self.session.lock().unwrap().as_ref().map(|s| s.user.email.clone()).unwrap_or_default();
-                Ok(json!({"problem": auth::password_problem(&email, &s(a, "password"))}))
-            }
-            "auth.logout" => {
-                if let Some(sess) = self.session.lock().unwrap().take() {
-                    let _ = self.users.lock().unwrap().audit(Some(&sess.user.email), "logout", "Signed out");
-                }
-                Ok(self.state())
-            }
-            "auth.set_pref" => self.with_session(|sess| {
+            "auth.set_pref" => {
                 let k = s(a, "key");
                 if !["open_mode", "density", "results_view", "home_hint"].contains(&k.as_str()) {
                     return Err(ApiError::new(400, "Unknown preference."));
                 }
-                self.users.lock().unwrap().set_pref(sess, &k, &s(a, "value"))?;
+                self.users.lock().unwrap().set_pref(&k, &s(a, "value"))?;
                 Ok(json!({"ok": true}))
-            }),
+            }
+            "connection.retry" => {
+                let cfg = self.config.read().unwrap().clone();
+                let t = Self::find_team(&cfg, self.exe_dir.as_deref());
+                if let Some(f) = &t.folder {
+                    self.guard.allow(Path::new(f))?;
+                }
+                let ok = t.mode != "offline";
+                *self.team.write().unwrap() = t;
+                self.reopen_users()?;
+                let me = self.clone();
+                std::thread::spawn(move || me.load_index());
+                Ok(json!({"connected": ok}))
+            }
 
             // ── Search ───────────────────────────────────────────────
             "search" => {
@@ -977,7 +1142,7 @@ impl Service {
 
             // ── Index and sources ────────────────────────────────────
             "index.status" => {
-                self.with_session(|_| Ok(()))?;
+                let can_rescan = self.with_session(|s| Ok(s.user.role.can_rescan()))?;
                 let st = self.index_state.read().unwrap().clone();
                 let e = self.engine.read().unwrap().clone();
                 let (roots, stats, generated) = match &e {
@@ -1000,13 +1165,21 @@ impl Service {
                     None => (json!([]), json!({}), None),
                 };
                 Ok(json!({"state": st, "roots": roots, "stats": stats, "generated_at": generated, "protected": self.guard.protected_roots(),
-                          "writable": self.guard.writable_dirs(), "team_folder": self.config.read().unwrap().team_folder}))
+                          "writable": self.guard.writable_dirs(), "team": *self.team.read().unwrap(), "groups": *self.groups.read().unwrap(),
+                          "published": if can_rescan { serde_json::to_value(&*self.published.lock().unwrap()).unwrap() } else { Value::Null },
+                          "exe_dir": self.exe_dir.as_ref().map(|d| d.display().to_string()), "default_team": crate::team::DEFAULT_TEAM}))
             }
             "index.reload" => {
-                self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can reload the index.")?;
                 let me = self.clone();
                 std::thread::spawn(move || me.load_index());
                 Ok(json!({"started": true}))
+            }
+            "index.share" => {
+                self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can share the index.")?;
+                let line = self.share().map_err(|e| ApiError::new(400, e))?;
+                let me = self.clone();
+                std::thread::spawn(move || me.load_index());
+                Ok(json!({"message": line, "report": *self.published.lock().unwrap()}))
             }
             "index.import" => {
                 self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can import an index.")?;
@@ -1015,84 +1188,101 @@ impl Service {
                 };
                 // Validate before copying.
                 Index::load(&src).map_err(|e| ApiError::new(400, format!("That file can't be used: {e}")))?;
-                let dest = self.paths.local.join("index").join("thor_knowledge.db");
+                let dest = self.master_path();
                 self.guard.copy_into(&src, &dest)?;
                 self.audit("index_imported", &src.display().to_string());
                 let me = self.clone();
                 std::thread::spawn(move || me.load_index());
-                Ok(json!({"imported": dest.display().to_string()}))
+                let note = if self.team_dir().is_some() {
+                    "Imported to this PC. Run a rescan next: TracePoint reads each file's Windows permissions during the scan, and only then shares it with the team."
+                } else {
+                    "Imported. Search is loading it now."
+                };
+                Ok(json!({"imported": dest.display().to_string(), "message": note}))
+            }
+
+            // ── Shared folder ────────────────────────────────────────
+            "team.status" => {
+                let t = self.team.read().unwrap().clone();
+                let found = [self.exe_dir.as_ref().map(|d| d.join(TEAM_DIR_NAME)), Some(PathBuf::from(crate::team::DEFAULT_TEAM))]
+                    .into_iter()
+                    .flatten()
+                    .find(|p| crate::team::is_setup(p))
+                    .map(|p| p.display().to_string());
+                Ok(json!({"team": t, "found": found, "default": crate::team::DEFAULT_TEAM,
+                          "next_to_exe": self.exe_dir.as_ref().map(|d| d.join(TEAM_DIR_NAME).display().to_string())}))
+            }
+            "team.join" | "team.setup" => {
+                let path = if a.get("pick").and_then(|x| x.as_bool()).unwrap_or(false) {
+                    match self.platform.pick_folder("Choose the shared TracePoint folder") {
+                        Some(p) => p,
+                        None => return Ok(json!({"cancelled": true})),
+                    }
+                } else if a.get("next_to_exe").and_then(|x| x.as_bool()).unwrap_or(false) {
+                    self.exe_dir.as_ref().map(|d| d.join(TEAM_DIR_NAME)).ok_or_else(|| ApiError::new(400, "Can't tell where TracePoint.exe is."))?
+                } else {
+                    let p = s(a, "path");
+                    PathBuf::from(if p.trim().is_empty() { crate::team::DEFAULT_TEAM.to_string() } else { p.trim().to_string() })
+                };
+                self.team_use(path, cmd == "team.setup")
+            }
+            "team.leave" => {
+                if self.team.read().unwrap().forced {
+                    return Err(ApiError::new(403, "Your IT department set the shared folder; it can't be changed here."));
+                }
+                self.config.write().unwrap().team_folder = None;
+                self.save_config()?;
+                *self.team.write().unwrap() = TeamState { mode: "standalone".into(), ..Default::default() };
+                self.reopen_users()?;
+                let me = self.clone();
+                std::thread::spawn(move || me.load_index());
+                Ok(json!({"ok": true}))
             }
 
             // ── Administration ───────────────────────────────────────
-            "admin.users" => self.with_session(|sess| {
-                if !sess.is_admin() {
-                    return Err(ApiError::new(403, "Administrators only."));
-                }
-                Ok(serde_json::to_value(self.users.lock().unwrap().list()?).unwrap())
-            }),
-            "admin.user.create" => self.with_session(|sess| {
+            "admin.members" => {
+                self.require(|s| s.is_admin(), "Administrators only.")?;
+                let mut u = self.users.lock().unwrap();
+                u.refresh();
+                Ok(json!({"members": u.list(), "roles_file": u.roster_path().display().to_string(), "me": self.me.sid}))
+            }
+            "admin.member.set" => {
+                self.require(|s| s.is_admin(), "Administrators only.")?;
                 let role = Role::parse(&s(a, "role")).ok_or_else(|| ApiError::new(400, "Choose a role."))?;
-                let u = self.users.lock().unwrap().create_user(sess, &s(a, "email"), &s(a, "name"), role, &s(a, "temp_password"))?;
-                Ok(serde_json::to_value(u).unwrap())
-            }),
-            "admin.user.update" => self.with_session(|sess| {
-                let id = a["id"].as_i64().unwrap_or(0);
-                let role = a.get("role").and_then(|r| r.as_str()).and_then(Role::parse);
-                let u = self.users.lock().unwrap().update_user(
-                    sess,
-                    id,
-                    a.get("name").and_then(|x| x.as_str()),
-                    role,
-                    a.get("disabled").and_then(|x| x.as_bool()),
-                    a.get("can_ai").and_then(|x| x.as_bool()),
-                )?;
-                Ok(serde_json::to_value(u).unwrap())
-            }),
-            "admin.user.reset" => self.with_session(|sess| {
-                let u = self.users.lock().unwrap().reset_password(sess, a["id"].as_i64().unwrap_or(0), &s(a, "temp_password"))?;
-                Ok(serde_json::to_value(u).unwrap())
-            }),
-            "admin.user.delete" => self.with_session(|sess| {
-                self.users.lock().unwrap().delete_user(sess, a["id"].as_i64().unwrap_or(0))?;
-                Ok(json!({"ok": true}))
-            }),
-            "admin.policy.set" => self.with_session(|sess| {
+                let who = if let Some(sid) = a.get("sid").and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
+                    let account = self.users.lock().unwrap().list().into_iter().find(|m| m.sid == sid).map(|m| m.account).unwrap_or_else(|| sid.to_string());
+                    acl::Identity { sid: sid.to_string(), display: account.clone(), account }
+                } else {
+                    acl::lookup_account(&s(a, "account")).map_err(|e| ApiError::new(400, e))?
+                };
+                let can_ai = a.get("can_ai").and_then(|x| x.as_bool());
+                let mut u = self.users.lock().unwrap();
+                u.set_member(&who, role, can_ai)?;
+                let roster = u.roster().clone();
+                drop(u);
+                // Windows enforces it: writers of the shared folder are exactly
+                // the administrators and indexers.
+                let warning = match self.team_dir() {
+                    Some(t) => crate::team::apply_locks(&t, &roster).err().map(|e| format!("Role saved, but the shared folder's Windows permissions couldn't be updated: {e}")),
+                    None => None,
+                };
+                self.reload_roles();
+                Ok(json!({"ok": true, "warning": warning, "account": who.account}))
+            }
+            "admin.policy.set" => {
+                self.require(|s| s.is_admin(), "Administrators only.")?;
                 let k = s(a, "key");
-                if !["ai_enabled", "ai_providers", "ai_send_documents"].contains(&k.as_str()) {
+                if !["ai_enabled", "ai_providers"].contains(&k.as_str()) {
                     return Err(ApiError::new(400, "Unknown policy."));
                 }
-                self.users.lock().unwrap().set_policy(sess, &k, &s(a, "value"))?;
+                self.users.lock().unwrap().set_policy(&k, &s(a, "value"))?;
                 Ok(self.state())
-            }),
-            "admin.audit" => self.with_session(|sess| {
-                if !sess.is_admin() {
-                    return Err(ApiError::new(403, "Administrators only."));
-                }
+            }
+            "admin.audit" => {
+                self.require(|s| s.is_admin(), "Administrators only.")?;
                 let rows = self.users.lock().unwrap().audit_log(500)?;
                 Ok(Value::Array(rows.into_iter().map(|r| json!({"at": r.0, "actor": r.1, "action": r.2, "detail": r.3, "machine": r.4})).collect()))
-            }),
-            "admin.team_folder" => self.with_session(|sess| {
-                if !sess.is_admin() {
-                    return Err(ApiError::new(403, "Administrators only."));
-                }
-                let folder = if a.get("pick").and_then(|x| x.as_bool()).unwrap_or(false) {
-                    match self.platform.pick_folder("Choose the shared TracePoint team folder") {
-                        Some(p) => Some(p.display().to_string()),
-                        None => return Ok(json!({"cancelled": true})),
-                    }
-                } else {
-                    a.get("path").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string())
-                };
-                if let Some(f) = &folder {
-                    self.guard.allow(Path::new(f))?;
-                }
-                let mut cfg = self.config.write().unwrap();
-                cfg.team_folder = folder.clone();
-                self.guard.write(&self.paths.local.join("config.json"), serde_json::to_string_pretty(&*cfg).unwrap().as_bytes())?;
-                drop(cfg);
-                self.audit("team_folder_set", folder.as_deref().unwrap_or("(none)"));
-                Ok(json!({"team_folder": folder, "restart_required": true}))
-            }),
+            }
 
             // ── AI ───────────────────────────────────────────────────
             "ai.providers" => {
@@ -1101,8 +1291,8 @@ impl Service {
             }
             "ai.get" => self.with_session(|sess| {
                 let users = self.users.lock().unwrap();
-                let prefs: std::collections::HashMap<String, String> = users.prefs(sess)?.into_iter().collect();
-                let key = users.get_secret(sess, "ai_key")?;
+                let prefs: std::collections::HashMap<String, String> = users.prefs().into_iter().collect();
+                let key = users.get_secret("ai_key").ok().flatten();
                 Ok(json!({
                     "provider": prefs.get("ai_provider"), "model": prefs.get("ai_model"), "reasoning": prefs.get("ai_reasoning"),
                     "key_mask": key.as_ref().map(|k| ai::mask_key(k)), "has_key": key.is_some(), "can_ai": sess.is_admin() && sess.user.can_ai,
@@ -1134,33 +1324,33 @@ impl Service {
             "ai.save" => {
                 // ai_key_for enforces: administrators only, AI allowed, provider allowed.
                 let (provider, key) = self.ai_key_for(a)?;
-                self.with_session(|sess| {
-                    let users = self.users.lock().unwrap();
-                    if a.get("key").and_then(|k| k.as_str()).map(|k| !k.trim().is_empty()).unwrap_or(false) {
-                        users.put_secret(sess, "ai_key", key.trim())?;
-                    }
-                    users.set_pref(sess, "ai_provider", provider.as_str())?;
-                    users.set_pref(sess, "ai_model", &s(a, "model"))?;
-                    users.set_pref(sess, "ai_reasoning", &s(a, "reasoning"))?;
-                    users.audit(Some(&sess.user.email), "ai_configured", &format!("{} / {} / {}", provider.as_str(), s(a, "model"), s(a, "reasoning")))?;
-                    Ok(json!({"ok": true}))
-                })
-            }
-            "ai.delete" => self.with_session(|sess| {
-                let users = self.users.lock().unwrap();
-                users.delete_secret(sess, "ai_key")?;
+                let mut users = self.users.lock().unwrap();
+                if a.get("key").and_then(|k| k.as_str()).map(|k| !k.trim().is_empty()).unwrap_or(false) {
+                    users.put_secret("ai_key", key.trim())?;
+                }
+                users.set_pref("ai_provider", provider.as_str())?;
+                users.set_pref("ai_model", &s(a, "model"))?;
+                users.set_pref("ai_reasoning", &s(a, "reasoning"))?;
+                let _ = users.audit("ai_configured", &format!("{} / {} / {}", provider.as_str(), s(a, "model"), s(a, "reasoning")));
+                drop(users);
+                self.reload_roles();
                 Ok(json!({"ok": true}))
-            }),
+            }
+            "ai.delete" => {
+                self.users.lock().unwrap().delete_secret("ai_key")?;
+                self.reload_roles();
+                Ok(json!({"ok": true}))
+            }
             "ai.budget" => self.with_session(|sess| {
                 if !sess.is_admin() {
                     return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
                 }
-                let (budget, share, max_request) = self.ai_limits(sess);
+                let (budget, max_request) = self.ai_limits();
                 let month = auth::now()[..7].to_string();
-                let users = self.users.lock().unwrap();
-                let (q, i, held, calls) = users.ai_month(sess.user.id, &month)?;
-                let rows = users.ai_usage_rows(sess.user.id, 300)?;
-                let prefs: std::collections::HashMap<String, String> = users.prefs(sess)?.into_iter().collect();
+                let mut users = self.users.lock().unwrap();
+                let (spent, held, calls) = users.ai_month(&month)?;
+                let rows = users.ai_usage_rows(300)?;
+                let prefs: std::collections::HashMap<String, String> = users.prefs().into_iter().collect();
                 drop(users);
                 let day = auth::now()[..10].to_string();
                 let current = prefs.get("ai_provider").and_then(|p| Provider::parse(p)).map(|p| {
@@ -1169,9 +1359,8 @@ impl Service {
                     json!({"provider": p.as_str(), "model": m, "price": qt.price, "basis": qt.basis, "note": qt.note, "per_question": crate::pricing::cost(&qt.price, 6000, 1000, 0, 0)})
                 });
                 Ok(json!({
-                    "budget_usd": budget, "index_share_pct": share * 100.0, "max_request_usd": max_request, "month": month,
-                    "spent_questions_usd": q, "spent_index_usd": i, "held_usd": held, "calls": calls,
-                    "cap_questions_usd": budget * (1.0 - share), "cap_index_usd": budget * share,
+                    "budget_usd": budget, "max_request_usd": max_request, "month": month,
+                    "spent_usd": spent, "held_usd": held, "calls": calls, "team_wide": true,
                     "current": current, "prices": crate::pricing::table(&day), "upcoming": crate::pricing::upcoming(&day),
                     "prices_checked": crate::pricing::PRICES_CHECKED, "sources": crate::pricing::SOURCES, "rows": rows,
                 }))
@@ -1180,104 +1369,20 @@ impl Service {
                 if !sess.is_admin() {
                     return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
                 }
-                let users = self.users.lock().unwrap();
-                for (k, lo, hi) in [("ai_budget_usd", 0.0, 10_000.0), ("ai_index_share_pct", 0.0, 100.0), ("ai_max_request_usd", 0.01, 100.0)] {
+                let mut users = self.users.lock().unwrap();
+                for (k, lo, hi) in [("ai_budget_usd", 0.0, 10_000.0), ("ai_max_request_usd", 0.01, 100.0)] {
                     if let Some(v) = a.get(k).and_then(|x| x.as_f64()) {
                         if !(lo..=hi).contains(&v) {
                             return Err(ApiError::new(400, format!("{k} must be between {lo} and {hi}.")));
                         }
-                        users.set_pref(sess, k, &v.to_string())?;
+                        users.set_policy(k, &v.to_string())?;
                     }
                 }
-                users.audit(Some(&sess.user.email), "ai_budget_set", &a.to_string())?;
                 Ok(json!({"ok": true}))
             }),
-            "search.ai" => {
-                let (choice, key) = self.current_ai()?;
-                let e = self.engine()?;
-                let history: Vec<ai::Msg> = a.get("history").and_then(|h| serde_json::from_value(h.clone()).ok()).unwrap_or_default();
-                let q = s(a, "query");
-                if q.trim().is_empty() {
-                    return Err(ApiError::new(400, "Describe what you're looking for."));
-                }
-                let plat = &self.platform;
-                let spent = std::cell::Cell::new(0.0f64);
-                let call = |c: &AiChoice, sys: &str, msgs: &[ai::Msg], max: u32| {
-                    let (r, cost) = self.ai_call("find", c, &key, sys, msgs, max, &|| false, &mut |_| {})?;
-                    spent.set(spent.get() + cost);
-                    Ok(r)
-                };
-                let mut r = crate::aifind::find(&e, &choice, &call, &q, &history, &|m| plat.emit("aifind", json!({"status": m})))?;
-                r.value["cost_usd"] = json!(spent.get());
-                self.audit("ai_find", &format!("{} / {} · ${:.4}", choice.provider.as_str(), choice.model, spent.get()));
-                Ok(r.value)
-            }
-            "ai.cancel" => {
-                self.chat_cancel.store(true, Ordering::SeqCst);
-                Ok(json!({"ok": true}))
-            }
 
             // ── About / for IT ───────────────────────────────────────
             "about" => Ok(self.about()),
-            // ── Ask THOR ─────────────────────────────────────────────
-            "chat.threads" => self.with_session(|sess| {
-                if !sess.is_admin() {
-                    return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
-                }
-                let rows = self.users.lock().unwrap().threads(sess.user.id)?;
-                Ok(Value::Array(rows.into_iter().map(|(id, title, scope, at)| json!({"id": id, "title": title, "updated_at": at, "scope": serde_json::from_str::<Value>(&scope).unwrap_or(json!({"kind": "thor"}))})).collect()))
-            }),
-            "chat.thread" => self.with_session(|sess| {
-                let id = a["id"].as_i64().unwrap_or(0);
-                let users = self.users.lock().unwrap();
-                let Some(scope) = users.thread_owned(sess.user.id, id)? else { return Err(ApiError::new(404, "No such conversation.")) };
-                let mut msgs = Vec::new();
-                for (tid, q, ans, src, meta, rating, _) in users.turns(id)? {
-                    msgs.push(json!({"id": tid, "role": "user", "content": q}));
-                    msgs.push(json!({"id": tid, "role": "assistant", "content": ans, "sources": serde_json::from_str::<Value>(&src).unwrap_or(json!([])), "meta": serde_json::from_str::<Value>(&meta).unwrap_or(json!({})), "rating": rating}));
-                }
-                Ok(json!({"id": id, "scope": serde_json::from_str::<Value>(&scope).unwrap_or(json!({"kind": "thor"})), "messages": msgs}))
-            }),
-            "chat.delete" => self.with_session(|sess| {
-                self.users.lock().unwrap().thread_delete(sess.user.id, a["id"].as_i64().unwrap_or(0))?;
-                Ok(json!({"ok": true}))
-            }),
-            "chat.rate" => self.with_session(|sess| {
-                self.users.lock().unwrap().turn_rate(sess.user.id, a["turn_id"].as_i64().unwrap_or(0), a["rating"].as_i64().unwrap_or(0))?;
-                Ok(json!({"ok": true}))
-            }),
-            "chat.ask" => self.chat_ask(a),
-            "library.list" => {
-                self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
-                let e = self.engine()?;
-                let libs = self.users.lock().unwrap().libraries()?;
-                let read = e.content.read().unwrap().as_ref().map(|c| c.read.clone()).unwrap_or_default();
-                Ok(Value::Array(
-                    libs.into_iter()
-                        .map(|(id, name, query, at)| {
-                            let files = self.library_files(&e, &query);
-                            let indexed = files.iter().filter(|f| read.contains(f)).count();
-                            json!({"id": id, "name": name, "query": query, "files": files.len(), "indexed": indexed, "created_at": at})
-                        })
-                        .collect(),
-                ))
-            }
-            "library.create" => self.with_session(|sess| {
-                if !sess.is_admin() {
-                    return Err(ApiError::new(403, "Administrators only."));
-                }
-                let id = self.users.lock().unwrap().library_create(sess, &s(a, "name"), &s(a, "query"))?;
-                let e = self.engine()?;
-                let files = self.library_files(&e, &s(a, "query"));
-                Ok(json!({"id": id, "name": s(a, "name"), "query": s(a, "query"), "files": files.len(), "indexed": 0, "created_at": auth::now()}))
-            }),
-            "library.delete" => self.with_session(|sess| {
-                if !sess.is_admin() {
-                    return Err(ApiError::new(403, "Administrators only."));
-                }
-                self.users.lock().unwrap().library_delete(sess, a["id"].as_i64().unwrap_or(0))?;
-                Ok(json!({"ok": true}))
-            }),
             "indexer.status" => {
                 self.with_session(|_| Ok(()))?;
                 Ok(serde_json::to_value(&*self.scan.lock().unwrap()).unwrap())
@@ -1309,6 +1414,8 @@ impl Service {
                     self.guard.protect(r);
                 }
                 let workers = a.get("workers").and_then(|x| x.as_u64()).unwrap_or(8) as usize;
+                let lock = self.take_scan_lock().map_err(|m| ApiError::new(409, m))?;
+                *self.scan_lock.lock().unwrap() = lock;
                 self.scan_cancel.store(false, Ordering::SeqCst);
                 *self.scan.lock().unwrap() = ScanState { running: true, root: Some(roots.join(", ")), phase: "starting".into(), started: Some(auth::now()), ..Default::default() };
                 self.audit("rescan_started", &roots.join(", "));
@@ -1334,10 +1441,8 @@ impl Service {
                 self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
                 let e = self.engine()?;
                 let pages = self.staged_pages(&e, 100_000);
-                let (provider, budget) = self.with_session(|sess| {
-                    let prefs: std::collections::HashMap<String, String> = self.users.lock().unwrap().prefs(sess)?.into_iter().collect();
-                    Ok((prefs.get("ai_provider").and_then(|p| Provider::parse(p)), self.ai_limits(sess)))
-                })?;
+                let prefs: std::collections::HashMap<String, String> = self.users.lock().unwrap().prefs().into_iter().collect();
+                let (provider, budget) = (prefs.get("ai_provider").and_then(|p| Provider::parse(p)), self.ai_limits());
                 let mut by_cat: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
                 for (fi, ..) in &pages {
                     *by_cat.entry(e.idx.files[*fi as usize].cat.label()).or_default() += 1;
@@ -1355,9 +1460,8 @@ impl Service {
                     _ => (0.0, 0.0, "none"),
                 };
                 let month = auth::now()[..7].to_string();
-                let uid = self.with_session(|s| Ok(s.user.id))?;
-                let (_, spent_i, held, _) = self.users.lock().unwrap().ai_month(uid, &month)?;
-                let cap_index = budget.0 * budget.1;
+                let (spent_i, held, _) = self.users.lock().unwrap().ai_month(&month)?;
+                let cap_index = budget.0;
                 Ok(json!({
                     "staged": pages.len(), "by_category": by_cat, "top": top, "provider": provider.map(|p| p.as_str()), "model": model,
                     "per_page": per_page, "per_page_worst": per_page_worst, "price_basis": basis,
@@ -1405,17 +1509,17 @@ impl Service {
 
     // ── AI spending caps ───────────────────────────────────────────────
 
-    /// The signed-in admin's limits: monthly budget, share for indexing,
-    /// most one request may cost. Defaults: $25 / 40% / $0.50.
-    fn ai_limits(&self, sess: &Session) -> (f64, f64, f64) {
-        let prefs: std::collections::HashMap<String, String> = self.users.lock().unwrap().prefs(sess).unwrap_or_default().into_iter().collect();
-        let f = |k: &str, d: f64| prefs.get(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(d);
-        (f("ai_budget_usd", 25.0), f("ai_index_share_pct", 40.0).min(100.0) / 100.0, f("ai_max_request_usd", 0.50))
+    /// The signed-in admin's limits: monthly budget and the most one request
+    /// may cost. Defaults: $25 / $0.50.
+    fn ai_limits(&self) -> (f64, f64) {
+        let users = self.users.lock().unwrap();
+        let f = |k: &str, d: f64| users.policy(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(d);
+        (f("ai_budget_usd", 25.0), f("ai_max_request_usd", 0.50))
     }
 
     fn price_for(&self, provider: Provider, model: &str, prompt_tokens: u64) -> crate::pricing::Quote {
         let day = &auth::now()[..10];
-        let ov = self.users.lock().unwrap().policy(&format!("price:{model}")).ok().flatten().and_then(|v| {
+        let ov = self.users.lock().unwrap().policy(&format!("price:{model}")).and_then(|v| {
             let (i, o) = v.split_once(',')?;
             Some((i.trim().parse().ok()?, o.trim().parse().ok()?))
         });
@@ -1430,9 +1534,9 @@ impl Service {
     #[allow(clippy::too_many_arguments)]
     pub fn ai_call(&self, feature: &'static str, choice: &AiChoice, key: &str, system: &str, msgs: &[ai::Msg], max_tokens: u32, cancel: &dyn Fn() -> bool, on_delta: &mut dyn FnMut(&str)) -> Result<(ai::ChatResult, f64), ai::AiError> {
         let deny = |m: String| ai::AiError { message: m, status: Some(402) };
-        let (uid, (budget, index_share, max_request)) = self
-            .with_session(|s| Ok((s.user.id, self.ai_limits(s))))
+        self.with_session(|s| if s.is_admin() && !ai_blocked_by_it() { Ok(()) } else { Err(ApiError::new(403, "AI is for TracePoint administrators only.")) })
             .map_err(|e| ai::AiError { message: e.message, status: Some(e.code) })?;
+        let (budget, max_request) = self.ai_limits();
         let chars = system.len() + msgs.iter().map(|m| m.content.len()).sum::<usize>();
         let est_in = crate::pricing::estimate_tokens(chars);
         let max_out = ai::effective_max_tokens(choice, max_tokens) as u64;
@@ -1444,17 +1548,18 @@ impl Service {
             )));
         }
         let month = auth::now()[..7].to_string();
-        let (spent_q, spent_i, held, _) = self.users.lock().unwrap().ai_month(uid, &month).map_err(|e| deny(e.0))?;
-        let (cap, spent, label) = if feature == "index" { (budget * index_share, spent_i, "AI reading of documents") } else { (budget * (1.0 - index_share), spent_q, "questions") };
+        let (spent, held, _) = self.users.lock().unwrap().ai_month(&month).map_err(|e| deny(e.0))?;
+        // One monthly budget for the whole team: AI only reads pages.
+        let (cap, label) = (budget, "AI reading of documents");
         let left = cap - spent - held;
         if worst > left {
             return Err(deny(format!(
-                "This would go over your AI budget: it could cost up to ${worst:.2}, and ${:.2} is left of ${cap:.2} for {label} this month (resets on the 1st). Raise the budget in Profile › AI › Spending.",
+                "This would go over the team's AI budget: it could cost up to ${worst:.2}, and ${:.2} is left of ${cap:.2} for {label} this month (resets on the 1st). An administrator can raise it in Profile › AI › Spending.",
                 left.max(0.0)
             )));
         }
         let note = q.note.clone().unwrap_or_default();
-        let id = self.users.lock().unwrap().ai_reserve(uid, &month, feature, choice.provider.as_str(), &choice.model, worst, &note).map_err(|e| deny(e.0))?;
+        let id = self.users.lock().unwrap().ai_reserve(&month, feature, choice.provider.as_str(), &choice.model, worst, &note).map_err(|e| deny(e.0))?;
         match ai::chat(choice, key, system, msgs, max_tokens, cancel, on_delta) {
             Ok(r) => {
                 let qa = self.price_for(choice.provider, &r.model, r.input_tokens + r.cache_read_tokens + r.cache_write_tokens);
@@ -1500,17 +1605,28 @@ impl Service {
     /// Rescan on a working copy, then swap the new index in and publish it.
     /// THOR is only read. Search keeps working on the old index meanwhile.
     fn run_scan(self: Arc<Self>, roots: Vec<String>, workers: usize) {
+        self.clone().run_scan_inner(roots, workers);
+        if let Some(l) = self.scan_lock.lock().unwrap().take() {
+            let _ = self.guard.remove_own_file(&l);
+        }
+    }
+
+    fn run_scan_inner(self: Arc<Self>, roots: Vec<String>, workers: usize) {
         let dir = self.paths.local.join("index");
         let work = dir.join("work.db");
         if let Err(e) = self.guard.create_dir_all(&dir) {
             return self.scan_fail(&format!("Could not create {}: {e}", dir.display()));
         }
         let _ = self.guard.remove_own_file(&work);
-        if let Some(src) = self.active_db.read().unwrap().clone() {
-            self.scan_log("Copying the current index to a working copy…");
-            if let Err(e) = self.guard.copy_into(&src, &work) {
-                return self.scan_fail(&format!("Could not copy the index: {e}"));
+        match self.ensure_master() {
+            Ok(Some(src)) => {
+                self.scan_log("Copying the current index to a working copy…");
+                if let Err(e) = self.guard.copy_into(&src, &work) {
+                    return self.scan_fail(&format!("Could not copy the index: {e}"));
+                }
             }
+            Ok(None) => {}
+            Err(e) => return self.scan_fail(&format!("Could not prepare the index: {e}")),
         }
         if let Err(e) = self.guard.check(&work) {
             return self.scan_fail(&e.to_string());
@@ -1522,10 +1638,10 @@ impl Service {
         // A scratch copy: speed over durability (it is discarded on failure).
         let _ = c.pragma_update(None, "journal_mode", "MEMORY");
         let _ = c.pragma_update(None, "synchronous", "OFF");
-        let opts = crate::crawl::Options { workers, cancel: self.scan_cancel.clone() };
+        let opts = crate::crawl::Options { workers, cancel: self.scan_cancel.clone(), permissions: true };
         let mut total = crate::crawl::Progress::default();
         for root in &roots {
-            self.scan_log(format!("Scanning {root} with {workers} parallel readers (read-only)…"));
+            self.scan_log(format!("Scanning {root} with {workers} parallel readers (read-only; names, dates, sizes and Windows permissions)…"));
             let me = self.clone();
             let last = std::cell::Cell::new(std::time::Instant::now());
             let res = crate::crawl::scan(&mut c, root, &opts, &|p| {
@@ -1589,11 +1705,11 @@ impl Service {
             return self.scan_fail(&format!("Could not save the new index: {e}"));
         }
         let _ = self.guard.remove_own_file(&work);
-        let team = self.config.read().unwrap().team_folder.clone();
-        if let Some(t) = team {
-            self.scan_log(format!("Publishing to the team folder {t}…"));
-            if let Err(e) = self.guard.publish(&local, &PathBuf::from(&t).join("index").join("thor_knowledge.db")) {
-                self.scan_log(format!("Could not publish to the team folder ({e}); this PC uses the new index anyway."));
+        if self.team_dir().is_some() {
+            self.scan_log("Sharing with the team: one locked index file per set of Windows permissions…");
+            match self.publish() {
+                Ok(line) => self.scan_log(line),
+                Err(e) => self.scan_log(format!("Not shared ({e}). This PC keeps the new index; nobody else sees it yet.")),
             }
         }
         {
@@ -1618,35 +1734,39 @@ impl Service {
         std::thread::spawn(move || me.run_content());
     }
 
+    /// Activity log (administrators' and indexers' actions only; searches
+    /// are never logged).
     fn audit(&self, action: &str, detail: &str) {
-        let who = self.session.lock().unwrap().as_ref().map(|s| s.user.email.clone());
-        let _ = self.users.lock().unwrap().audit(who.as_deref(), action, detail);
+        let _ = self.users.lock().unwrap().audit(action, detail);
     }
 
-    /// The key for an AI call: one typed in the wizard (not yet saved), or the
-    /// user's own saved key. AI is for administrator profiles only; also
-    /// enforces the team AI switch and allowed providers.
+    /// The key for an AI call: one typed in the wizard (not yet saved), or
+    /// your own saved key. AI is for administrators only; IT can switch it off
+    /// on any PC (registry / Group Policy), and administrators team-wide.
     fn ai_key_for(&self, a: &Value) -> Result<(Provider, zeroize::Zeroizing<String>), ApiError> {
         let provider = Provider::parse(&s(a, "provider")).ok_or_else(|| ApiError::new(400, "Choose a provider."))?;
+        if ai_blocked_by_it() {
+            return Err(ApiError::new(403, "AI is switched off on this PC by your IT department."));
+        }
         self.with_session(|sess| {
             let users = self.users.lock().unwrap();
-            if users.policy("ai_enabled")?.map(|v| v == "false").unwrap_or(false) {
+            if users.policy("ai_enabled").map(|v| v == "false").unwrap_or(false) {
                 return Err(ApiError::new(403, "AI features are turned off by your administrator."));
             }
             if !sess.is_admin() {
-                return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
+                return Err(ApiError::new(403, "AI features are available to TracePoint administrators only."));
             }
             if !sess.user.can_ai {
-                return Err(ApiError::new(403, "AI is turned off for your profile."));
+                return Err(ApiError::new(403, "AI is turned off for your account."));
             }
-            let allowed = users.policy("ai_providers")?.unwrap_or_else(|| "anthropic,openai,gemini".into());
+            let allowed = users.policy("ai_providers").unwrap_or_else(|| "anthropic,openai,gemini".into());
             if !allowed.split(',').any(|p| p == provider.as_str()) {
                 return Err(ApiError::new(403, "Your administrator has not allowed this provider."));
             }
             if let Some(k) = a.get("key").and_then(|k| k.as_str()).filter(|k| !k.trim().is_empty()) {
                 return Ok((provider, zeroize::Zeroizing::new(k.trim().to_string())));
             }
-            match users.get_secret(sess, "ai_key")? {
+            match users.get_secret("ai_key")? {
                 Some(k) => Ok((provider, k)),
                 None => Err(ApiError::new(400, "Paste your API key first.")),
             }
@@ -1654,22 +1774,13 @@ impl Service {
     }
 
     pub fn current_ai(&self) -> Result<(AiChoice, zeroize::Zeroizing<String>), ApiError> {
-        self.with_session(|sess| {
-            if !sess.is_admin() {
-                return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
-            }
-            let users = self.users.lock().unwrap();
-            let prefs: std::collections::HashMap<String, String> = users.prefs(sess)?.into_iter().collect();
-            let provider = prefs.get("ai_provider").and_then(|p| Provider::parse(p)).ok_or_else(|| ApiError::new(400, "Set up AI first (Profile › AI)."))?;
-            let model = prefs.get("ai_model").cloned().unwrap_or_default();
-            let reasoning = prefs.get("ai_reasoning").cloned().filter(|r| !r.is_empty());
-            drop(users);
-            Ok((provider, model, reasoning))
-        })
-        .and_then(|(provider, model, reasoning)| {
-            let (_, key) = self.ai_key_for(&json!({"provider": provider.as_str()}))?;
-            Ok((AiChoice { provider, model, reasoning }, key))
-        })
+        self.require(|s| s.is_admin(), "AI features are available to TracePoint administrators only.")?;
+        let prefs: std::collections::HashMap<String, String> = self.users.lock().unwrap().prefs().into_iter().collect();
+        let provider = prefs.get("ai_provider").and_then(|p| Provider::parse(p)).ok_or_else(|| ApiError::new(400, "Set up AI first (Profile › AI)."))?;
+        let model = prefs.get("ai_model").cloned().unwrap_or_default();
+        let reasoning = prefs.get("ai_reasoning").cloned().filter(|r| !r.is_empty());
+        let (_, key) = self.ai_key_for(&json!({"provider": provider.as_str()}))?;
+        Ok((AiChoice { provider, model, reasoning }, key))
     }
 
     /// Bytes for the preview pane: the file itself, a PNG of a TIFF's first
@@ -1722,22 +1833,24 @@ impl Service {
         }
     }
 
-    pub fn cancel_flag(&self) -> &AtomicBool {
-        &self.chat_cancel
-    }
-
     pub fn about(&self) -> Value {
+        let t = self.team.read().unwrap().clone();
         json!({
             "version": VERSION,
+            "me": self.me.account,
             "local_data": self.paths.local.display().to_string(),
             "temp": self.paths.temp.display().to_string(),
-            "profiles": self.profiles_path.display().to_string(),
-            "team_folder": self.config.read().unwrap().team_folder,
+            "team": t,
+            "default_team": crate::team::DEFAULT_TEAM,
+            "groups": *self.groups.read().unwrap(),
             "protected_roots": self.guard.protected_roots(),
             "writable": self.guard.writable_dirs(),
             "index": self.index_state.read().unwrap().clone(),
             "ai_hosts": ai::providers().iter().map(|p| p.host).collect::<Vec<_>>(),
+            "ai_blocked_by_it": ai_blocked_by_it(),
+            "policy_key": "HKLM\\SOFTWARE\\Policies\\TracePoint",
             "exe": std::env::current_exe().ok().map(|p| p.display().to_string()),
+            "exe_sha256": std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok()).map(|b| sha2_hex(&b)),
             "machine": self.platform.machine(),
         })
     }

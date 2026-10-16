@@ -8,9 +8,7 @@ rusqlite = { version = "0.40", features = ["bundled", "serialize"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-zstd = "0.14"
 rayon = "1"
-argon2 = "0.5"
 chacha20poly1305 = "0.10"
 getrandom = "0.3"
 sha2 = "0.10"
@@ -23,5 +21,5 @@ rust_xlsxwriter = "0.99"
 image = { version = "0.25", default-features = false, features = ["tiff", "png", "jpeg"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Registry"] }
 windows = { version = "0.62", features = ["Media_Ocr", "Graphics_Imaging", "Storage_Streams", "Security_Cryptography", "Foundation", "Foundation_Collections", "Globalization", "Win32_System_WinRT"] }

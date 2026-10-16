@@ -8,15 +8,14 @@ import type { AppState, EquipCard, Facet, Hit, SearchRequest, SearchResponse } f
 import { Button, Empty, IconButton, Kbd, Pill, Spinner, Toggle, cx, useToast } from "../components/ui";
 import { bytes, catColor, dateFromSecs, n } from "../lib/format";
 import type { Nav } from "../Shell";
-import { AiFindPanel, type AiTurn } from "./AiFind";
 
 const EXAMPLES = [
-  { q: "the thickness readings on the debutanizer receiver in the LRU from a couple years ago", d: "Just describe it — TracePoint works out the equipment, document type and dates" },
-  { q: "can you find the nameplate for the propane separator", d: "Plain English: “nameplate” means U-1A / code documents" },
-  { q: "pictures from when they patched the overhead line on the crude unit", d: "Photos + repairs, inside one unit" },
-  { q: "V-2 inspection", d: "A tag used in many units: TracePoint asks which V-2" },
-  { q: "5510.06", d: "Old number: found under its new number 5610.15" },
-  { q: "TK-1100 API 653", d: "Exact keyword search still works" },
+  { q: "the thickness readings on the receiver in the crude unit from a couple years ago", d: "Just describe it — TracePoint works out the equipment, document type and dates" },
+  { q: "can you find the nameplate for the separator", d: "Plain English: “nameplate” means U-1A / code documents" },
+  { q: "pictures from when they patched the overhead line", d: "Photos + repairs" },
+  { q: "V-2 inspection", d: "A tag used in several units: TracePoint asks which one" },
+  { q: "relief valve test reports newest first", d: "Say how to sort it" },
+  { q: "API 653 tank inspection", d: "Exact keyword search still works" },
 ];
 
 const PAGE = 100;
@@ -77,28 +76,6 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
   const listRef = useRef<HTMLDivElement>(null);
   const reqSeq = useRef(0);
   const [mode, setMode] = useState<"auto" | "exact">(() => (localStorage.getItem("tp.searchMode") === "exact" ? "exact" : "auto"));
-  const [aiTurns, setAiTurns] = useState<AiTurn[]>([]);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
-  const [aiReady, setAiReady] = useState(false);
-  useEffect(() => { api<{ provider?: string; has_key: boolean; can_ai: boolean }>("ai.get").then((c) => setAiReady(!!c.provider && c.has_key && c.can_ai && state.policy.ai_enabled)).catch(() => {}); }, [state.policy.ai_enabled]);
-  const askAi = async (q: string, fresh: boolean) => {
-    const history = fresh ? [] : aiTurns.flatMap((t) => [{ role: "user", content: t.q }, ...(t.result ? [{ role: "assistant", content: `${t.result.understanding ?? ""} ${t.result.message ?? ""}`.trim() }] : [])]);
-    const base = fresh ? [] : aiTurns;
-    setAiOpen(true);
-    setAiBusy(true);
-    setAiTurns([...base, { q }]);
-    try {
-      const r = await api<AiTurn["result"]>("search.ai", { query: q, history });
-      setAiTurns([...base, { q, result: r }]);
-      setSelected(0);
-    } catch (e) {
-      setAiTurns([...base, { q, error: (e as Error).message }]);
-    } finally {
-      setAiBusy(false);
-    }
-  };
-
   useEffect(() => {
     if (nav.params.q !== undefined && nav.params.q !== submitted) { setQuery(nav.params.q); setSubmitted(nav.params.q); setPinned(nav.params.eq ? Number(nav.params.eq) : null); }
     if (nav.params.eq && Number(nav.params.eq) !== pinned) { setPinned(Number(nav.params.eq)); if (!nav.params.q) { setQuery(""); setSubmitted(""); } }
@@ -148,12 +125,11 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
   const lastEnter = useRef("");
   const submit = (q: string) => {
     const t = q.trim();
-    if (t && t === lastEnter.current && t === submitted && resp?.best && resp.hits[0] && !aiOpen) {
+    if (t && t === lastEnter.current && t === submitted && resp?.best && resp.hits[0]) {
       openFile(resp.hits[0]);
       return;
     }
     lastEnter.current = t;
-    setAiOpen(false);
     setSubmitted(t);
     setLimit(PAGE);
     setSelected(0);
@@ -165,8 +141,7 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
     window.history.replaceState(null, "", `#/search${t ? `?q=${encodeURIComponent(t)}` : ""}`);
   };
 
-  const aiHits = aiOpen ? aiTurns[aiTurns.length - 1]?.result?.hits : undefined;
-  const hits = aiHits ?? resp?.hits ?? [];
+  const hits = resp?.hits ?? [];
   const [insideSel, setInsideSel] = useState<Hit | null>(null);
   useEffect(() => setInsideSel(null), [resp]);
   const sel = insideSel ?? (selected >= 0 ? hits[selected] : undefined);
@@ -221,7 +196,7 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
               <p className="mt-2 text-[14.5px] text-[var(--color-text-muted)]">Equipment numbers, tags, circuits, document types, years — or just describe it.</p>
             </div>
           )}
-          <SearchBox value={query} onChange={setQuery} onSubmit={submit} big={empty} loading={loading} onPickEquipment={(id) => { setPinned(id); setSubmitted(""); setQuery(""); }} onAi={aiReady ? (q) => { submit(q); askAi(q, true); } : undefined} />
+          <SearchBox value={query} onChange={setQuery} onSubmit={submit} big={empty} loading={loading} onPickEquipment={(id) => { setPinned(id); setSubmitted(""); setQuery(""); }} />
           {resp && <Interpretation resp={resp} pinned={pinned} onUnpin={() => setPinned(null)} onPick={(id) => setPinned(id)} />}
         </div>
         {empty && <Welcome state={state} onPick={(q) => { setQuery(q); submit(q); }} />}
@@ -234,7 +209,7 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
             {/* Results toolbar */}
             <div className="flex h-11 shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 text-[12.5px] text-[var(--color-text-muted)]">
               <div className="min-w-0 truncate whitespace-nowrap">
-                {aiHits ? <><span className="font-semibold text-[var(--color-violet)]">AI picks</span> · {aiTurns[aiTurns.length - 1]?.result?.picked ?? 0} best of {n(aiHits.length)} candidates</> : <><span className="font-semibold text-[var(--color-text)] tabular-nums">{n(resp.total)}</span> results</>}
+                <span className="font-semibold text-[var(--color-text)] tabular-nums">{n(resp.total)}</span> results
                 <span className="text-[var(--color-text-faint)]"> · {resp.took_ms < 1 ? "<1" : resp.took_ms.toFixed(0)} ms</span>
                 {resp.suppressed_photos > 0 && !filters.include_photos && (
                   <button onClick={() => setFilters({ ...filters, include_photos: true })} title="TracePoint shows two photos per folder unless you ask for photos" className="ml-2 text-[var(--color-accent)] hover:underline cursor-pointer">+{n(resp.suppressed_photos)} photos</button>
@@ -254,12 +229,11 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
               </div>
             </div>
             <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
-              {aiOpen && <AiFindPanel turns={aiTurns} busy={aiBusy} onAsk={(q) => askAi(q, false)} onClose={() => setAiOpen(false)} onRunSearch={(q) => { setQuery(q); submit(q); }} />}
-              {!aiOpen && resp.notice && resp.total > 0 && !resp.best && <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_6%,transparent)] px-3.5 py-2.5 text-[13px]"><Info className="mt-0.5 size-4 shrink-0 text-[var(--color-info)]" />{resp.notice}</div>}
-              {!aiOpen && resp.best && hits[0] && <BestMatch hit={hits[0]} why={resp.best} onOpen={() => openFile(hits[0])} onReveal={() => openFile(hits[0], "reveal")} onSelect={() => setSelected(0)} armed={lastEnter.current === submitted} />}
-              {!aiOpen && (resp.inside?.length ?? 0) > 0 && <InsideDocs hits={resp.inside!} selected={insideSel?.id} first={resp.total === 0} onSelect={(h) => setInsideSel(h)} onOpen={(h) => openFile(h)} />}
-              {!aiOpen && resp.card && <EquipmentCardView card={resp.card} nav={nav} onFilter={(c) => setFilters({ ...filters, categories: [c] })} />}
-              {!aiOpen && resp.total === 0 ? (
+              {resp.notice && resp.total > 0 && !resp.best && <div className="mx-3 mt-3 flex items-start gap-2 rounded-xl border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_6%,transparent)] px-3.5 py-2.5 text-[13px]"><Info className="mt-0.5 size-4 shrink-0 text-[var(--color-info)]" />{resp.notice}</div>}
+              {resp.best && hits[0] && <BestMatch hit={hits[0]} why={resp.best} onOpen={() => openFile(hits[0])} onReveal={() => openFile(hits[0], "reveal")} onSelect={() => setSelected(0)} armed={lastEnter.current === submitted} />}
+              {(resp.inside?.length ?? 0) > 0 && <InsideDocs hits={resp.inside!} selected={insideSel?.id} first={resp.total === 0} onSelect={(h) => setInsideSel(h)} onOpen={(h) => openFile(h)} />}
+              {resp.card && <EquipmentCardView card={resp.card} nav={nav} onFilter={(c) => setFilters({ ...filters, categories: [c] })} />}
+              {resp.total === 0 ? (
                 <NoResults resp={resp} onTry={(q) => { setQuery(q); submit(q); }} />
               ) : (
                 <div>
@@ -280,7 +254,7 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
   );
 }
 
-function SearchBox({ value, onChange, onSubmit, big, loading, onPickEquipment, onAi }: { value: string; onChange: (v: string) => void; onSubmit: (v: string) => void; big: boolean; loading: boolean; onPickEquipment: (id: number) => void; onAi?: (q: string) => void }) {
+function SearchBox({ value, onChange, onSubmit, big, loading, onPickEquipment }: { value: string; onChange: (v: string) => void; onSubmit: (v: string) => void; big: boolean; loading: boolean; onPickEquipment: (id: number) => void }) {
   const [sugg, setSugg] = useState<Facet[]>([]);
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState(-1);
@@ -331,7 +305,6 @@ function SearchBox({ value, onChange, onSubmit, big, loading, onPickEquipment, o
           spellCheck={false}
         />
         {value && <IconButton label="Clear" onClick={() => { onChange(""); onSubmit(""); input.current?.focus(); }} className="size-8"><X className="size-4" /></IconButton>}
-        {onAi && value.trim() && <Button size={big ? "md" : "sm"} onClick={() => onAi(value)} title="Let your AI assistant work out what you mean, run several searches and pick the best" className={cx(big ? "rounded-xl" : "", "border-[color-mix(in_srgb,var(--color-violet)_35%,transparent)] text-[var(--color-violet)]")} icon={<Sparkles className="size-3.5" />}>Find with AI</Button>}
         <Button variant="primary" size={big ? "md" : "sm"} onClick={() => onSubmit(value)} className={big ? "rounded-xl" : ""}>Search <ArrowRight className="size-3.5" /></Button>
       </div>
       {open && sugg.length > 0 && (

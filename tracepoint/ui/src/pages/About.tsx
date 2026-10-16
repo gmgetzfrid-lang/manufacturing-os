@@ -1,10 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Ban, Check, Cpu, Eye, FileLock2, FolderLock, Globe, HardDrive, KeyRound, ListChecks, Package, ShieldCheck, Terminal, Trash2 } from "lucide-react";
+import { Ban, Check, Cpu, Eye, FileLock2, FolderLock, Globe, KeyRound, ListChecks, Lock, Package, Settings2, ShieldCheck, Terminal, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { AppState } from "../lib/types";
 import { Mark, Pill } from "../components/ui";
 
-interface About { version: string; local_data: string; temp: string; profiles: string; team_folder?: string | null; protected_roots: string[]; writable: string[]; ai_hosts: string[]; exe?: string; machine: string; index: { source: string } }
+interface About {
+  version: string; me: string; local_data: string; temp: string; team: AppState["team"]; default_team: string;
+  groups: { open: number; locked: number; hidden: number; unavailable: number };
+  protected_roots: string[]; writable: string[]; ai_hosts: string[]; ai_blocked_by_it: boolean; policy_key: string;
+  exe?: string; exe_sha256?: string | null; machine: string; index: { source: string };
+}
 
 export function AboutPage({ state }: { state: AppState }) {
   const [a, setA] = useState<About | null>(null);
@@ -16,7 +21,7 @@ export function AboutPage({ state }: { state: AppState }) {
           <Mark size={60} />
           <div>
             <div className="text-[24px] font-[800] tracking-[0.18em]">TRACEPOINT</div>
-            <div className="text-[13px] text-[var(--color-text-muted)]">Version {state.version} · THOR document search, equipment graph and document Q&A</div>
+            <div className="text-[13px] text-[var(--color-text-muted)]">Version {state.version} · THOR document search and equipment graph</div>
           </div>
         </div>
 
@@ -24,65 +29,98 @@ export function AboutPage({ state }: { state: AppState }) {
           <div className="flex items-center gap-2 text-[15px] font-semibold"><ShieldCheck className="size-5 text-[var(--color-ok)]" /> For IT: the short version</div>
           <ul className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-[13px]">
             {[
-              "One portable .exe. No installer, no admin rights, no services, no drivers, no registry changes, no scheduled tasks.",
-              "Never writes, renames, moves or deletes anything on THOR. Enforced in code by a single write guard.",
-              "Reads THOR with the signed-in Windows user's own permissions, using normal shared read access.",
-              "No telemetry, no auto-update, no license server. Works with the network unplugged (except optional AI for administrators).",
-              "AI is available to administrator profiles only. Normal users' sessions never contact an AI provider.",
-              "Passwords: Argon2id. Admin AI keys: XChaCha20-Poly1305 under a password-derived key. No master key.",
+              "People only see THOR files their own Windows account can open. No exceptions, no override — see below.",
+              "Sign-in is the Windows account. TracePoint has no passwords and no user database.",
+              "Never writes, renames, moves or deletes anything on THOR, and never changes a THOR permission.",
+              "One portable .exe. No installer, admin rights, services, drivers or scheduled tasks. Contains no THOR data.",
+              "No telemetry, auto-update or licence server. Only network use: THOR (SMB), plus optional AI for administrators.",
+              "AI is off unless an administrator sets it up, capped at a monthly budget, and IT can block it per PC.",
             ].map((t) => <li key={t} className="flex gap-2"><Check className="mt-0.5 size-4 shrink-0 text-[var(--color-ok)]" />{t}</li>)}
           </ul>
         </div>
 
+        <section className="mt-6 card p-5">
+          <div className="flex items-center gap-2 text-[16px] font-bold"><span className="flex size-7 items-center justify-center rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]"><Lock className="size-4" /></span>Who sees what: Windows permissions decide</div>
+          <p className="mt-2 text-[14px] leading-relaxed">Someone who can't open <span className="font-mono text-[13px]">\\thor\Equipment Files</span> in Windows never sees a single file name, folder name, equipment number or word of document text from it in TracePoint — not in search, the equipment list, the graph, exports, or the files TracePoint keeps on their PC.</p>
+          <div className="mt-4 grid grid-cols-4 gap-3">
+            {[
+              ["1", "Scan", "An administrator's scan records, for every file, which Windows accounts and groups may open it. Read-only."],
+              ["2", "Split and lock", "Files with the same permissions form a group. Each group's names and text go in its own folder in the shared TracePoint folder, locked with those same permissions — read back and checked. If the file server doesn't keep them exactly, that group isn't shared with anyone."],
+              ["3", "Windows opens", "Each PC loads only the groups Windows lets that person open. The file server decides; TracePoint can't override it, and neither can another program."],
+              ["4", "Double-check", "Before showing a group, the PC asks Windows whether this person can open a few of its THOR files (open and close; nothing read). Any \"no\" hides the whole group."],
+            ].map(([n, t, d]) => (
+              <div key={n} className="rounded-xl bg-[var(--color-surface-2)] p-3.5">
+                <div className="flex items-center gap-2"><span className="flex size-6 items-center justify-center rounded-full bg-[var(--color-accent)] text-[12px] font-bold text-white">{n}</span><span className="text-[14px] font-semibold">{t}</span></div>
+                <div className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">{d}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 divide-y divide-[var(--color-border)]">
+            <Row k="The rule" v="A file is shown only if the person may open it — stricter than Explorer, which lists file names in any folder you can browse. Its folder names come with it; folders with nothing you may open never appear." />
+            <Row k="Group changes" v="Adding or removing someone from a Windows group applies straight away: the shared index files are locked with the same groups." />
+            <Row k="Permission edits" v="A permission changed directly on a THOR folder applies at the next rescan (administrators can rescan any time). Until then, step 4 hides a group as soon as Windows refuses one of the files it checks." />
+            <Row k="Share permissions" v="Folder (NTFS) permissions are copied. If a THOR share is restricted only by share-level permissions, step 4 still hides it on every PC; Sources flags groups open to all staff so IT can confirm, or set the same restriction on the folder." />
+            <Row k="Left out" v="Files whose permissions can't be read, or whose rules TracePoint can't reproduce exactly (for example a conditional deny), are not shared at all." />
+            <Row k="Security logs" v="Step 4's checks are ordinary read-only opens. If THOR audits failed access, a person's start-up can log a few denied opens (at most five per group) for folders they can't open." />
+            {a && a.team.mode === "team" && <Row k="On this PC" v={`${a.groups.open} group(s) loaded for ${a.me}${a.groups.locked ? `; ${a.groups.locked} locked to this account` : ""}${a.groups.hidden ? `; ${a.groups.hidden} hidden by step 4` : ""}.`} />}
+          </div>
+        </section>
+
+        <Block icon={<KeyRound className="size-4" />} title="Accounts and roles">
+          <Row k="Sign-in" v={`Windows account of whoever started TracePoint (now: ${a?.me ?? "…"}). No TracePoint passwords, no default password, no lockouts.`} />
+          <Row k="Roles" v="Administrator and Indexer are given to Windows accounts in roles.json in the shared folder; everyone else is a User. TracePoint sets the shared folder's permissions to match: administrators full control, indexers modify, all signed-in staff read only — so only they can change roles or publish an index." />
+          <Row k="AI keys" v="Administrators only. Each key is encrypted by Windows for that account on that PC (DPAPI) and kept in the local data folder — never on the shared folder." />
+          <Row k="Activity log" v="Scans, sharing, role and setting changes and AI use, with account and computer, in the shared folder's admin\ subfolder (administrators and indexers only). Searches are never logged." />
+        </Block>
+
+        <Block icon={<Settings2 className="size-4" />} title="IT policy (Group Policy or registry)">
+          <Row k="Key" v={a?.policy_key ?? "HKLM\\SOFTWARE\\Policies\\TracePoint"} mono note="Also read from HKCU. Nothing else in the registry is read or written." />
+          <Row k="DisableAI" v={`DWORD 1 = no AI requests from this PC, whoever is signed in.${a ? ` Now: ${a.ai_blocked_by_it ? "blocked" : "not set"}.` : ""}`} />
+          <Row k="TeamFolder" v={`String = the shared TracePoint folder for this PC; users can't change it. Without it, TracePoint looks next to the exe, then at ${a?.default_team ?? "\\\\thor\\Public\\TP\\TracePoint Data"}.`} />
+        </Block>
+
         <Block icon={<Eye className="size-4" />} title="What it reads">
-          <Row k="THOR files" v="Read-only, with the signed-in user's own permissions: when a person previews or opens a file; when an administrator/indexer rescans (folder listings, names, sizes, dates); and when TracePoint reads document contents (each file is read into memory to extract its text, then released)." note="Never opened for writing. Rescans and content reading run at below-normal priority with a bounded number of parallel reads." />
+          <Row k="THOR files" v="Read-only, as the signed-in Windows user: when someone previews or opens a file; when an administrator or indexer scans (folder listings, names, sizes, dates, permissions); when document contents are read for search (each file read into memory, text kept, file released)." note="Scans and content reading run at below-normal priority with a bounded number of parallel reads." />
           <Row k="Index" v={a?.index.source ?? "…"} />
           <Row k="Protected sources" v={a ? a.protected_roots.join(" · ") || "—" : "…"} mono />
         </Block>
 
         <Block icon={<FolderLock className="size-4" />} title="What it writes — and the only places it can">
-          <Row k="Local data" v={a?.local_data ?? "…"} mono note="Settings, the index (thor_knowledge.db), document text (thor_content.db), the PDF engine (bin\\pdfium-157.0.8100.dll), caches. Per Windows user." />
-          <Row k="Profiles" v={a?.profiles ?? "…"} mono note="Profile list, password hashes, encrypted AI keys, audit log." />
-          <Row k="Team folder" v={a?.team_folder ?? "Not configured"} mono note="Optional shared folder chosen by an administrator. Must be outside THOR's indexed roots." />
+          <Row k="Shared folder" v={a?.team.folder ?? "Not used on this PC"} mono note="tracepoint.json, roles.json, index\ (one locked folder per permission group), admin\ (activity log, AI ledger, scan lock). Must be outside THOR's indexed roots." />
+          <Row k="Local data" v={a?.local_data ?? "…"} mono note="Settings, encrypted AI key, cached copies of the groups this account may open (deleted when access is lost), an administrator's working index, the PDF engine (bin\pdfium-157.0.8100.dll), WebView2 data. Per Windows user." />
           <Row k="Temporary" v={a?.temp ?? "…"} mono note="Read-only copies of files opened for viewing." />
-          <Row k="Exports" v="Excel files are written only where the user chooses in the Save dialog (refused inside THOR)." />
+          <Row k="Exports" v="Excel files go only where the user chooses in the Save dialog (refused inside THOR)." />
         </Block>
 
         <Block icon={<Globe className="size-4" />} title="Network connections">
-          <Row k="THOR" v="SMB to the indexed shares, as the signed-in Windows user." />
-          <Row k="AI (optional)" v={a ? a.ai_hosts.join(" · ") : "…"} mono note="HTTPS 443 only, only when an administrator uses an AI feature (Ask THOR, Find with AI, approved AI reading of scanned pages) or tests their key, only to the provider they selected. Each administrator has a monthly spending cap enforced before every request; page images are sent only after the administrator approves a cost estimate. Respects HTTPS_PROXY and the Windows certificate store." />
-          <Row k="Nothing else" v="No analytics, update checks, licence calls, fonts or scripts from the internet. The interface is bundled inside the exe." />
+          <Row k="THOR" v="SMB, as the signed-in Windows user." />
+          <Row k="AI (optional)" v={a ? a.ai_hosts.join(" · ") : "…"} mono note="HTTPS 443, only when an administrator has set up AI and approves reading specific scanned pages (or tests their key), only to the provider they chose. A team-wide monthly budget is enforced before every request. Respects HTTPS_PROXY and the Windows certificate store. Block with DisableAI or your firewall." />
+          <Row k="Nothing else" v="No analytics, update checks, licence calls, fonts or scripts from the internet. The interface is inside the exe." />
         </Block>
 
         <Block icon={<Cpu className="size-4" />} title="Processes and components">
-          <Row k="Processes" v="TracePoint.exe plus the Microsoft Edge WebView2 processes Windows uses to draw the window (msedgewebview2.exe). The THOR indexer runs inside TracePoint.exe — no Python, no scripts, no child processes." />
-          <Row k="Opening files" v="Uses the Windows default program for the file type (like double-clicking it in Explorer). By default it opens a read-only temporary copy." />
-          <Row k="Built with" v="Rust · SQLite (with FTS5 full-text search) · PDFium 157.0.8100 (BSD-3, the PDF engine in Google Chrome) · Microsoft WebView2 · React · Inter font (OFL). Scanned pages are read with Windows' own OCR engine (Windows.Media.Ocr) when it is available — nothing is installed." note="PDFium is embedded in the exe and unpacked to the local data folder; its SHA-256 is checked against the embedded copy every time TracePoint starts, and replaced if it differs." />
-        </Block>
-
-        <Block icon={<KeyRound className="size-4" />} title="Accounts and security">
-          <Row k="Sign-in" v="One built-in administrator (temporary password, forced change at first sign-in). Only administrators create profiles and assign roles. Five wrong passwords lock a profile for 5 minutes." />
-          <Row k="Passwords" v="Argon2id (64 MiB, 3 passes). Never stored or logged in plain text." />
-          <Row k="AI keys" v="Only administrator profiles can save or use an AI key (enforced in the service, not just hidden in the interface). Each key is encrypted with XChaCha20-Poly1305 using a data key that is itself encrypted with a key derived from that user's password. Ciphertexts are bound to their owner. Admin reset erases the key." />
-          <Row k="Audit" v="Sign-ins, failures, profile changes, policy changes, index imports and key saves (never key contents) are logged with time, user and computer name." />
+          <Row k="Processes" v="TracePoint.exe and the Microsoft Edge WebView2 processes Windows uses to draw the window (msedgewebview2.exe). The scanner runs inside TracePoint.exe — no Python, scripts or child processes." />
+          <Row k="Opening files" v="With the Windows default program, by default as a read-only temporary copy." />
+          <Row k="Built with" v="Rust · SQLite (FTS5) · PDFium 157.0.8100 (BSD-3) · Microsoft WebView2 · React · Inter font (OFL). Scanned pages are read with Windows' own OCR (Windows.Media.Ocr) when available." note="PDFium is embedded and unpacked to the local data folder; its SHA-256 is checked against the embedded copy at every start." />
         </Block>
 
         <Block icon={<ListChecks className="size-4" />} title="How IT can verify this">
           <ol className="list-decimal space-y-2 pl-5 text-[13px] leading-relaxed">
-            <li><b>Self-test:</b> run <Code>TracePoint.exe --selftest</Code> in a command prompt. It checks the search engine, the THOR write guard (attempts writes into protected paths and confirms they're refused), password hashing and key encryption, the PDF engine (reads a built-in test PDF in memory) and whether Windows OCR is available, and prints PASS/FAIL.</li>
-            <li><b>File activity:</b> Sysinternals Process Monitor with filters <Code>Process Name is TracePoint.exe</Code> and <Code>Operation is WriteFile</Code> / <Code>SetDispositionInformationFile</Code> / <Code>SetRenameInformationFile</Code>. Use the app normally: no write, delete or rename appears on a THOR path.</li>
-            <li><b>Network:</b> Resource Monitor › Network, or <Code>netstat -b</Code>. Normal users: only SMB to THOR. Administrators using AI: also 443 to the AI host listed above.</li>
-            <li><b>Integrity:</b> record the SHA-256 of the exe (<Code>certutil -hashfile TracePoint.exe SHA256</Code>) for an AppLocker/WDAC hash rule if needed.</li>
-            <li><b>Remove completely:</b> delete <Code>TracePoint.exe</Code> and the folder <Code>{a?.local_data ?? "%LOCALAPPDATA%\\TracePoint"}</Code>. Nothing else is left behind.</li>
+            <li><b>Self-test:</b> <Code>TracePoint.exe --selftest</Code> in a command prompt. It locks a test folder with Windows permissions and reads the lock back, checks the Windows sign-in and DPAPI key encryption, attempts writes into THOR paths and confirms they're refused, scans, splits by permissions and searches a test folder, and checks the PDF engine and OCR. PASS/FAIL per line.</li>
+            <li><b>Permissions:</b> sign in as an account without access to a THOR folder and search for a file name you know is in it — nothing. Look in <Code>%LOCALAPPDATA%\TracePoint\cache</Code>: only groups that account can open. In the shared folder's <Code>index\</Code>, each <Code>g-…</Code> folder's Security tab matches its THOR folder.</li>
+            <li><b>File activity:</b> Process Monitor, <Code>Process Name is TracePoint.exe</Code>, operations WriteFile / SetDispositionInformationFile / SetRenameInformationFile / SetSecurityFile: none on a THOR path.</li>
+            <li><b>Network:</b> Resource Monitor › Network or <Code>netstat -b</Code>: SMB to THOR; 443 to the AI host only for administrators using AI.</li>
+            <li><b>Approve the exe by hash</b> (AppLocker/WDAC): <Code>certutil -hashfile TracePoint.exe SHA256</Code>{a?.exe_sha256 && <> — this copy: <span className="break-all font-mono text-[11.5px]">{a.exe_sha256}</span></>}. To sign it with your own code-signing certificate: <Code>signtool sign /fd SHA256 /a TracePoint.exe</Code>.</li>
+            <li><b>Remove completely:</b> delete <Code>TracePoint.exe</Code> and <Code>{a?.local_data ?? "%LOCALAPPDATA%\\TracePoint"}</Code>. The shared folder can be deleted by an administrator.</li>
           </ol>
         </Block>
 
         <div className="mt-6 grid grid-cols-3 gap-3 text-[12.5px]">
+          <Tag icon={<Lock className="size-4" />} t="Windows permissions decide" />
           <Tag icon={<Ban className="size-4" />} t="No admin rights" />
           <Tag icon={<Package className="size-4" />} t="No installer" />
-          <Tag icon={<Trash2 className="size-4" />} t="Delete to uninstall" />
           <Tag icon={<FileLock2 className="size-4" />} t="Read-only on THOR" />
-          <Tag icon={<HardDrive className="size-4" />} t="Works offline" />
+          <Tag icon={<Trash2 className="size-4" />} t="Delete to uninstall" />
           <Tag icon={<Terminal className="size-4" />} t="--selftest for IT" />
         </div>
         <div className="mt-6 text-[12px] text-[var(--color-text-faint)]">{a?.exe} · {a?.machine}</div>
