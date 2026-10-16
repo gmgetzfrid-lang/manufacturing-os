@@ -545,6 +545,11 @@ mod tests {
         assert_eq!(r.role_of(&cloud), Role::Admin);
         let other = Identity { sid: "S-1-12-1-9".into(), account: "KERNOIL\\someone".into(), display: "x".into(), also: vec![] };
         assert_eq!(r.role_of(&other), Role::User);
+        // Added by name only (the admin's PC couldn't look the account up).
+        let mut r2 = r.clone();
+        r2.members.push(Member { sid: "account:kernoil\\jsmith".into(), account: "KERNOIL\\jsmith".into(), role: Role::Indexer, also: vec![], can_ai: false, added_by: String::new(), added_at: String::new() });
+        let js = Identity { sid: "S-1-12-1-55".into(), account: "KERNOIL\\JSmith".into(), display: "JSmith".into(), also: vec![] };
+        assert_eq!(r2.role_of(&js), Role::Indexer);
     }
 
     #[test]

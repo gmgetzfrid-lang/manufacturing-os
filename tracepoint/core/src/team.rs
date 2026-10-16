@@ -84,8 +84,10 @@ pub fn remove_legacy(guard: &Guard, team: &Path) -> Vec<String> {
 /// The access list for the shared folder itself and for admin\.
 fn folder_locks(roster: &crate::auth::Roster) -> (String, String) {
     use crate::auth::Role;
-    let admins = roster.sids(Role::Admin);
-    let indexers = roster.sids(Role::Indexer);
+    // Only real SIDs go on a lock (a name-only entry is matched by name).
+    let real = |v: Vec<String>| v.into_iter().filter(|s| s.starts_with("S-1-")).collect::<Vec<_>>();
+    let admins = real(roster.sids(Role::Admin));
+    let indexers = real(roster.sids(Role::Indexer));
     (acl::team_folder_sddl(&admins, &indexers, &[acl::SID_AUTHENTICATED_USERS]), acl::team_folder_sddl(&admins, &indexers, &[]))
 }
 

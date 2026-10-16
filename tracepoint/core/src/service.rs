@@ -1252,7 +1252,16 @@ impl Service {
                     let account = self.users.lock().unwrap().list().into_iter().find(|m| m.sid == sid).map(|m| m.account).unwrap_or_else(|| sid.to_string());
                     acl::Identity::new(sid, &account, &account)
                 } else {
-                    acl::lookup_account(&s(a, "account")).map_err(|e| ApiError::new(400, e))?
+                    let name = s(a, "account").trim().to_string();
+                    match acl::lookup_account(&name) {
+                        Ok(id) => id,
+                        // Cloud-joined PCs often can't look up domain accounts:
+                        // keep the DOMAIN\user name; roles match on it.
+                        Err(_) if name.contains('\\') && !name.ends_with('\\') && !name.contains(' ') => {
+                            acl::Identity::new(&format!("account:{}", name.to_lowercase()), &name, name.rsplit('\\').next().unwrap_or(&name))
+                        }
+                        Err(e) => return Err(ApiError::new(400, e)),
+                    }
                 };
                 let can_ai = a.get("can_ai").and_then(|x| x.as_bool());
                 let mut u = self.users.lock().unwrap();
