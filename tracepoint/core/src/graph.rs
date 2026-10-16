@@ -373,6 +373,7 @@ fn neighbours(e: &Engine, id: &str) -> Vec<Nb> {
             for (eqi, src) in &f.equip {
                 let why = match src {
                     crate::index::LinkSrc::Filename => "Its number is in the file name",
+                    crate::index::LinkSrc::Content => "Its contents name this equipment",
                     _ => "Filed in this equipment's folder",
                 };
                 out.extend(nb(e, format!("e{eqi}"), "about", why, false));

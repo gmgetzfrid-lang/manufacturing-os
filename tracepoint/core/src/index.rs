@@ -32,6 +32,8 @@ pub enum LinkSrc {
     Folder,
     /// A drawing family links it (P&ID sheet that names the equipment).
     Family,
+    /// Its contents name the equipment (title block, nameplate number).
+    Content,
 }
 
 #[derive(Clone, Debug, Serialize)]

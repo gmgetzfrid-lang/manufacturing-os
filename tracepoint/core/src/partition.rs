@@ -171,8 +171,10 @@ pub fn split_content(content_master: &Path, index_master: &Path, class: &str, ou
     c.execute("insert into cf select file_id from ix.tp_file_access where class=?1", [class]).map_err(e)?;
     let n = copy_rows(&c, "m", "content_files", "where file_id in (select file_id from temp.cf)").map_err(e)?;
     c.execute("insert into content_fts(text,file_id,page,method) select text,file_id,page,method from m.content_fts where file_id in (select file_id from temp.cf)", []).map_err(e)?;
-    if has_table(&c, "m", "ai_stage") {
-        copy_rows(&c, "m", "ai_stage", "where file_id in (select file_id from temp.cf)").map_err(e)?;
+    for t in ["ai_stage", "cards"] {
+        if has_table(&c, "m", t) {
+            copy_rows(&c, "m", t, "where file_id in (select file_id from temp.cf)").map_err(e)?;
+        }
     }
     c.execute_batch("commit").map_err(e)?;
     c.execute_batch("detach database m; detach database ix;").map_err(e)?;
@@ -182,6 +184,16 @@ pub fn split_content(content_master: &Path, index_master: &Path, class: &str, ou
 /// Merge group files into `out` (usually in memory). Rows already present
 /// win; columns are matched by name, so files from older versions mix.
 pub fn merge(parts: &[std::path::PathBuf], out: &Connection) -> Result<(), String> {
+    merge_only(parts, out, None)
+}
+
+/// Merge only the tables search needs (fast load; skips the indexer's
+/// bookkeeping tables an old full database carries).
+pub fn merge_index(parts: &[std::path::PathBuf], out: &Connection) -> Result<(), String> {
+    merge_only(parts, out, Some(INDEX_TABLES))
+}
+
+pub fn merge_only(parts: &[std::path::PathBuf], out: &Connection, only: Option<&[&str]>) -> Result<(), String> {
     let e = |x: rusqlite::Error| format!("Merging the index: {x}");
     for (i, p) in parts.iter().enumerate() {
         let alias = format!("p{i}");
@@ -190,7 +202,7 @@ pub fn merge(parts: &[std::path::PathBuf], out: &Connection) -> Result<(), Strin
         let tables: Vec<String> = {
             let mut st = out.prepare(&format!("select name from {alias}.sqlite_master where type='table'")).map_err(e)?;
             let rows = st.query_map([], |r| r.get::<_, String>(0)).map_err(e)?;
-            rows.flatten().filter(|t| !t.starts_with("sqlite_") && !t.starts_with("content_fts_")).collect()
+            rows.flatten().filter(|t| !t.starts_with("sqlite_") && !t.starts_with("content_fts_") && only.map(|o| o.contains(&t.as_str())).unwrap_or(true)).collect()
         };
         out.execute_batch("begin").map_err(e)?;
         for t in &tables {

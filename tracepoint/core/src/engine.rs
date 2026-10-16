@@ -28,6 +28,8 @@ pub struct Engine {
     pub(crate) dir_files: std::sync::OnceLock<Vec<Vec<u32>>>,
     /// Full text of documents (thor_content.db), when it has been built.
     pub content: std::sync::RwLock<Option<ContentIndex>>,
+    /// Copies, revisions, content-found equipment, stranded documents.
+    pub links: crate::link::Links,
 }
 
 /// Read-only handles on the document text: one database per lock group this
@@ -68,6 +70,22 @@ impl ContentIndex {
             return None;
         }
         Some(ContentIndex { conns, by_file_id, files_read: read.len(), read })
+    }
+
+    /// Fingerprint cards of the loaded files.
+    pub fn cards(&self) -> HashMap<u32, crate::card::Card> {
+        let mut out = HashMap::new();
+        for conn in &self.conns {
+            let conn = conn.lock().unwrap();
+            let Ok(mut st) = conn.prepare("select file_id, card from cards") else { continue };
+            let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) else { continue };
+            for (id, js) in rows.flatten() {
+                if let (Some(&fi), Some(c)) = (self.by_file_id.get(&id), crate::card::from_json(&js)) {
+                    out.insert(fi, c);
+                }
+            }
+        }
+        out
     }
 
     /// Files whose text has every term; best first. `scope` limits to files.
@@ -174,6 +192,29 @@ pub struct Hit {
     pub page: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
+    /// A newer revision of this document: where, and why we think so.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub newer: Option<FileRef>,
+    /// The copy of this exact file in the best-kept place.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub home: Option<FileRef>,
+    pub copies: u32,
+    pub versions: u32,
+    /// Saved more recently than the newest revision, but older.
+    pub stale_copy: bool,
+    /// Equipment numbers this document is about but isn't filed with.
+    pub stranded_for: Vec<String>,
+    /// Only on this PC (one of your private folders).
+    pub private: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FileRef {
+    pub id: u32,
+    pub name: String,
+    pub folder: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -232,6 +273,10 @@ pub struct EquipCard {
     pub first_year: Option<i16>,
     pub drawing_families: Vec<String>,
     pub related: Vec<EquipOption>,
+    /// Documents about this equipment filed somewhere else (projects,
+    /// scans, department folders).
+    pub elsewhere: Vec<FileRef>,
+    pub elsewhere_total: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -376,7 +421,7 @@ impl Engine {
             }
             eq_tokens.push(t);
         }
-        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df, dir_files: std::sync::OnceLock::new(), content: std::sync::RwLock::new(None) }
+        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df, dir_files: std::sync::OnceLock::new(), content: std::sync::RwLock::new(None), links: Default::default() }
     }
 
     fn term_posting(&self, word: &str) -> Option<&Vec<u32>> {
@@ -473,6 +518,15 @@ impl Engine {
             first_year,
             drawing_families: fams.into_iter().map(|f| self.idx.families[f as usize].base.clone()).take(12).collect(),
             related: related.into_iter().take(8).map(|(_, b)| self.equip_option(b)).collect(),
+            elsewhere: self.links.stranded.get(&ei).map(|v| {
+                let mut v = v.clone();
+                v.sort_by_key(|&fi| std::cmp::Reverse(self.idx.files[fi as usize].mtime));
+                v.into_iter().take(40).map(|fi| {
+                    let why = self.links.get(fi).and_then(|l| l.content_equip.iter().find(|x| x.0 == ei).map(|x| x.1.clone())).unwrap_or_else(|| "Its number is in the file name".into());
+                    self.file_ref(fi, Some(why))
+                }).collect()
+            }).unwrap_or_default(),
+            elsewhere_total: self.links.stranded.get(&ei).map(|v| v.len() as u32).unwrap_or(0),
         }
     }
 
@@ -485,7 +539,7 @@ impl Engine {
                 let via = via_override.unwrap_or(match src {
                     LinkSrc::Filename => Via::Filename,
                     LinkSrc::Folder => Via::Folder,
-                    LinkSrc::Family => Via::Family,
+                    LinkSrc::Family | LinkSrc::Content => Via::Family,
                 });
                 let rank = |v: Via| match v {
                     Via::Filename => 0,
@@ -1172,6 +1226,10 @@ impl Engine {
                 score -= 40;
                 reasons.push("Not seen in the latest scan".into());
             }
+            if let Some((d, why)) = self.link_adjust(fi) {
+                score += d;
+                reasons.push(why);
+            }
             if f.flags & F_JUNK != 0 {
                 score -= 50;
                 reasons.push("System/shortcut file".into());
@@ -1300,6 +1358,7 @@ impl Engine {
 
     pub fn hit(&self, fi: u32, rank: usize, score: i32, reasons: Vec<String>) -> Hit {
         let f = &self.idx.files[fi as usize];
+        let l = self.links.get(fi);
         Hit {
             id: fi,
             rank,
@@ -1330,6 +1389,7 @@ impl Engine {
                             LinkSrc::Filename => "filename",
                             LinkSrc::Folder => "folder",
                             LinkSrc::Family => "family",
+                            LinkSrc::Content => "contents",
                         },
                     }
                 })
@@ -1342,7 +1402,35 @@ impl Engine {
             junk: f.flags & (F_JUNK | F_ZERO) != 0,
             page: None,
             snippet: None,
+            newer: l.and_then(|l| l.newer.map(|n| self.file_ref(n, l.newer_why.clone()))),
+            home: l.and_then(|l| l.home.map(|n| self.file_ref(n, None))),
+            copies: l.map(|l| l.copies).unwrap_or(0),
+            versions: l.map(|l| l.versions).unwrap_or(0),
+            stale_copy: l.map(|l| l.stale_copy).unwrap_or(false),
+            stranded_for: l.map(|l| l.stranded_for.iter().map(|&e| self.idx.equipment[e as usize].number.clone()).collect()).unwrap_or_default(),
+            private: f.flags & crate::link::F_PRIVATE != 0,
         }
+    }
+
+    fn file_ref(&self, fi: u32, why: Option<String>) -> FileRef {
+        let f = &self.idx.files[fi as usize];
+        FileRef { id: fi, name: f.name.clone(), folder: self.idx.relative_folder(f.dir), why }
+    }
+
+    /// Ranking effect of what the linker found: superseded revisions and
+    /// extra copies go below the newest / best-kept one.
+    pub(crate) fn link_adjust(&self, fi: u32) -> Option<(i32, String)> {
+        let l = self.links.get(fi)?;
+        if let Some(to) = l.moved_to {
+            return Some((-120, format!("Moved — now in {}", self.idx.relative_folder(self.idx.files[to as usize].dir))));
+        }
+        if l.newer.is_some() {
+            return Some((-25, format!("Superseded: {}", l.newer_why.clone().unwrap_or_else(|| "a newer revision exists".into()))));
+        }
+        if l.home.is_some() {
+            return Some((-6, "A copy — the best-kept copy ranks first".into()));
+        }
+        None
     }
 
     /// Type-ahead: equipment and words that start with what was typed.

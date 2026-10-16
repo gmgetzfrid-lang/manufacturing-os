@@ -100,3 +100,55 @@ mod tests {
         assert_eq!(file_uri(r"C:\Test\A%1.pdf"), "file:///C:/Test/A%251.pdf");
     }
 }
+
+/// One row of the cleanup report.
+pub struct CleanupRow {
+    pub file: String,
+    pub path: String,
+    pub what: String,
+    pub better: String,
+    pub better_path: String,
+    pub why: String,
+}
+
+/// Doc-control cleanup report: one sheet per kind of problem. Only files the
+/// person exporting can open are in it; THOR is never changed.
+pub fn write_cleanup(path: &std::path::Path, sheets: &[(&str, &str, Vec<CleanupRow>)], source: &str) -> Result<(), String> {
+    let mut wb = Workbook::new();
+    let title = Format::new().set_bold().set_font_size(14);
+    let header = Format::new().set_bold().set_font_color(Color::White).set_background_color(Color::RGB(0x1F2937)).set_border_bottom(FormatBorder::Thin);
+    let link = Format::new().set_font_color(Color::RGB(0x2563EB)).set_underline(rust_xlsxwriter::FormatUnderline::Single);
+    let muted = Format::new().set_font_color(Color::RGB(0x64748B));
+    let heads = ["File", "Open", "Folder", "What TracePoint found", "Better copy / where it belongs", "Open it", "Why", "Full path"];
+    let widths = [46.0, 8.0, 50.0, 30.0, 46.0, 9.0, 60.0, 80.0];
+    for (name, blurb, rows) in sheets {
+        let ws = wb.add_worksheet();
+        ws.set_name(*name).map_err(|e| e.to_string())?;
+        ws.write_string_with_format(0, 0, format!("TracePoint — {name}"), &title).map_err(|e| e.to_string())?;
+        ws.write_string_with_format(1, 0, format!("{blurb}  ·  {} rows  ·  {source}  ·  Nothing on THOR was changed.", rows.len()), &muted).map_err(|e| e.to_string())?;
+        for (c, h) in heads.iter().enumerate() {
+            ws.write_string_with_format(3, c as u16, *h, &header).map_err(|e| e.to_string())?;
+            ws.set_column_width(c as u16, widths[c]).map_err(|e| e.to_string())?;
+        }
+        ws.set_freeze_panes(4, 1).map_err(|e| e.to_string())?;
+        for (i, r) in rows.iter().take(ROWS_PER_SHEET).enumerate() {
+            let row = (i + 4) as u32;
+            ws.write_string(row, 0, &r.file).map_err(|e| e.to_string())?;
+            let fu = file_uri(&r.path);
+            if !fu.is_empty() {
+                ws.write_url_with_format(row, 1, Url::new(fu).set_text("Open"), &link).map_err(|e| e.to_string())?;
+            }
+            ws.write_string(row, 2, r.path.rsplit_once('\\').map(|x| x.0).unwrap_or("")).map_err(|e| e.to_string())?;
+            ws.write_string(row, 3, &r.what).map_err(|e| e.to_string())?;
+            ws.write_string(row, 4, &r.better).map_err(|e| e.to_string())?;
+            let bu = file_uri(&r.better_path);
+            if !bu.is_empty() {
+                ws.write_url_with_format(row, 5, Url::new(bu).set_text("Open"), &link).map_err(|e| e.to_string())?;
+            }
+            ws.write_string(row, 6, &r.why).map_err(|e| e.to_string())?;
+            ws.write_string(row, 7, &r.path).map_err(|e| e.to_string())?;
+        }
+        ws.autofilter(3, 0, (rows.len().min(ROWS_PER_SHEET) + 3) as u32, (heads.len() - 1) as u16).map_err(|e| e.to_string())?;
+    }
+    wb.save(path).map_err(|e| e.to_string())
+}

@@ -53,7 +53,16 @@ export interface Hit {
   junk: boolean;
   page?: number;
   snippet?: string;
+  newer?: FileRef | null;
+  home?: FileRef | null;
+  copies: number;
+  versions: number;
+  stale_copy: boolean;
+  stranded_for: string[];
+  private: boolean;
 }
+
+export interface FileRef { id: number; name: string; folder: string; why?: string | null }
 
 export interface Facet { key: string; label: string; count: number }
 export interface Chip { kind: string; text: string; detail: string }
@@ -75,6 +84,8 @@ export interface EquipCard {
   first_year?: number | null;
   drawing_families: string[];
   related: EquipOption[];
+  elsewhere: FileRef[];
+  elsewhere_total: number;
 }
 
 export interface SearchResponse {

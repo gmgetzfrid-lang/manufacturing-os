@@ -41,6 +41,8 @@ pub struct Extracted {
     pub unreadable: Vec<u32>,
     pub ocr_pages: u32,
     pub error: Option<String>,
+    /// Document properties (PDF info / Office core.xml).
+    pub meta: crate::card::DocMeta,
 }
 
 /// How much a file is worth reading (0..1). Drives order, OCR and AI staging.
@@ -73,6 +75,10 @@ pub fn value(f: &FileRec) -> f32 {
         if y >= 2018 {
             v += 0.05;
         }
+    }
+    // A scan named by the copier says nothing; only its contents can.
+    if crate::crawl::classify_filename(&f.name) == "MACHINE_GENERATED" && (f.ext == ".pdf" || is_image_ext(&f.ext)) {
+        v = v.max(0.75);
     }
     v.min(1.0)
 }
@@ -249,6 +255,7 @@ impl Extractor {
     /// Read one file's text. `ocr_budget`: most pages to OCR in this file.
     pub fn extract(&self, bytes: Vec<u8>, ext: &str, ocr_budget: u32) -> Extracted {
         let mut out = Extracted::default();
+        let office_meta = matches!(ext, ".docx" | ".docm" | ".xlsx" | ".xlsm" | ".pptx").then(|| zip_text(&bytes, "docProps/core.xml").map(|x| crate::card::office_meta(&x))).flatten();
         let r = match ext {
             ".pdf" => self.pdf(bytes, ocr_budget, &mut out),
             ".docx" | ".docm" => office(&bytes, &["word/document.xml"], "w:t", &["w:p", "w:tab", "w:br"], &mut out),
@@ -265,6 +272,9 @@ impl Extractor {
         };
         if let Err(e) = r {
             out.error = Some(e);
+        }
+        if let Some(m) = office_meta {
+            out.meta = m;
         }
         for p in out.pages.iter_mut() {
             p.text = tidy(&p.text);
@@ -300,6 +310,19 @@ impl Extractor {
             return Err(self.pdfium_error.clone().unwrap_or_else(|| "PDF engine not available".into()));
         };
         let doc = pdfium.load_pdf_from_byte_vec(bytes, None).map_err(|e| format!("Can't open PDF: {e}"))?;
+        {
+            let md = doc.metadata();
+            let get = |t: PdfDocumentMetadataTagType| md.get(t).map(|x| x.value().trim().to_string()).filter(|v| !v.is_empty());
+            out.meta = crate::card::DocMeta {
+                title: get(PdfDocumentMetadataTagType::Title),
+                author: get(PdfDocumentMetadataTagType::Author),
+                creator: get(PdfDocumentMetadataTagType::Creator),
+                producer: get(PdfDocumentMetadataTagType::Producer),
+                created: get(PdfDocumentMetadataTagType::CreationDate).and_then(|d| crate::card::pdf_date(&d)),
+                modified: get(PdfDocumentMetadataTagType::ModificationDate).and_then(|d| crate::card::pdf_date(&d)),
+                ..Default::default()
+            };
+        }
         let pages = doc.pages();
         out.page_count = pages.len() as u32;
         for (i, page) in pages.iter().enumerate().take(MAX_PAGES) {
@@ -488,14 +511,24 @@ pub fn ensure_schema(c: &rusqlite::Connection) -> rusqlite::Result<()> {
         "CREATE TABLE IF NOT EXISTS content_files(file_id TEXT PRIMARY KEY, path TEXT, size INTEGER, mtime_ns INTEGER, value REAL,
            pages INTEGER, text_pages INTEGER, ocr_pages INTEGER, unreadable INTEGER, chars INTEGER, status TEXT, error TEXT, extracted_at TEXT);
          CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(text, file_id UNINDEXED, page UNINDEXED, method UNINDEXED, tokenize='porter unicode61');
+         CREATE TABLE IF NOT EXISTS cards(file_id TEXT PRIMARY KEY, card TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS ai_stage(file_id TEXT NOT NULL, page INTEGER NOT NULL, value REAL NOT NULL, reason TEXT, status TEXT NOT NULL DEFAULT 'staged',
            staged_at TEXT, done_at TEXT, cost_usd REAL, PRIMARY KEY(file_id, page));",
     )
 }
 
 /// Saves one file's text, replacing what was there.
-pub fn save(c: &rusqlite::Connection, file_id: &str, path: &str, size: i64, mtime_ns: i64, value: f32, x: &Extracted, now: &str) -> rusqlite::Result<()> {
+#[allow(clippy::too_many_arguments)]
+pub fn save(c: &rusqlite::Connection, file_id: &str, path: &str, size: i64, mtime_ns: i64, value: f32, x: &Extracted, card: Option<&crate::card::Card>, allow_ai: bool, now: &str) -> rusqlite::Result<()> {
     use rusqlite::params;
+    match card {
+        Some(k) => {
+            c.execute("INSERT OR REPLACE INTO cards(file_id, card) VALUES(?1,?2)", params![file_id, crate::card::to_json(k)])?;
+        }
+        None => {
+            c.execute("DELETE FROM cards WHERE file_id=?1", [file_id])?;
+        }
+    }
     c.execute("DELETE FROM content_fts WHERE file_id=?1", [file_id])?;
     let mut chars = 0usize;
     let mut text_pages = 0;
@@ -517,7 +550,7 @@ pub fn save(c: &rusqlite::Connection, file_id: &str, path: &str, size: i64, mtim
     )?;
     // Valuable pages nobody can read locally are offered for AI reading.
     c.execute("DELETE FROM ai_stage WHERE file_id=?1 AND status='staged'", [file_id])?;
-    if value >= 0.55 && x.error.is_none() {
+    if allow_ai && value >= 0.55 && x.error.is_none() {
         let mut st = c.prepare_cached("INSERT OR IGNORE INTO ai_stage(file_id,page,value,reason,status,staged_at) VALUES(?1,?2,?3,?4,'staged',?5)")?;
         for &pg in x.unreadable.iter().take(20) {
             st.execute(params![file_id, pg, value, if x.ocr_pages > 0 { "OCR found no readable text" } else { "No text layer" }, now])?;

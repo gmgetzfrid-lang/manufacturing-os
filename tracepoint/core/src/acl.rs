@@ -804,6 +804,56 @@ pub fn server_identity(parent: &str, me: &Identity) -> String {
     who
 }
 
+/// A cloud placeholder (OneDrive "online-only"): reading it would download
+/// it, so content reading skips it.
+pub fn is_cloud_only(path: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let w: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let a = unsafe { windows_sys::Win32::Storage::FileSystem::GetFileAttributesW(w.as_ptr()) };
+        a != u32::MAX && a & (0x0040_0000 | 0x0004_0000 | 0x0000_1000) != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Ask Windows to encrypt a folder for this account (EFS); new files in it
+/// are encrypted too. Ok(false) where IT doesn't allow EFS.
+pub fn efs_encrypt(dir: &std::path::Path) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let w: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let ok = unsafe { windows_sys::Win32::Storage::FileSystem::EncryptFileW(w.as_ptr()) };
+        Ok(ok != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        Ok(false)
+    }
+}
+
+/// Is a folder encrypted by Windows (EFS)?
+pub fn is_encrypted(dir: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let w: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let a = unsafe { windows_sys::Win32::Storage::FileSystem::GetFileAttributesW(w.as_ptr()) };
+        a != u32::MAX && a & 0x4000 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        false
+    }
+}
+
 /// Who owns a file or folder.
 pub fn owner_sid(path: &str) -> Result<String, String> {
     #[cfg(windows)]

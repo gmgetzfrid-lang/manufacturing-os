@@ -208,6 +208,20 @@ fn sha2_hex(b: &[u8]) -> String {
     sha2::Sha256::digest(b).iter().map(|x| format!("{x:02x}")).collect()
 }
 
+/// Rows of one report sheet.
+pub struct Rows(pub Vec<crate::export::CleanupRow>);
+impl Rows {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    fn clone_rows(&self) -> Vec<crate::export::CleanupRow> {
+        self.0.iter().map(|r| crate::export::CleanupRow { file: r.file.clone(), path: r.path.clone(), what: r.what.clone(), better: r.better.clone(), better_path: r.better_path.clone(), why: r.why.clone() }).collect()
+    }
+}
+
 /// IT switched AI off on this PC (registry / Group Policy).
 pub fn ai_blocked_by_it() -> bool {
     acl::policy_dword("DisableAI").map(|v| v != 0).unwrap_or(false)
@@ -380,18 +394,37 @@ impl Service {
         self.paths.local.join("index").join("thor_content.db")
     }
 
-    /// Load what this Windows account may see. Runs on a background thread.
+    /// Your private folders' index and text: on this PC only, in your
+    /// Windows profile (encrypted by Windows where EFS is allowed).
+    fn private_dir(&self) -> PathBuf {
+        self.paths.local.join("private")
+    }
+
+    pub fn private_allowed() -> bool {
+        acl::policy_dword("DisablePrivateSources").map(|v| v == 0).unwrap_or(true)
+    }
+
+    fn private_index(&self) -> Option<PathBuf> {
+        Some(self.private_dir().join("index.db")).filter(|p| Self::private_allowed() && p.is_file())
+    }
+
+    /// Load what this Windows account may see, plus your private folders.
+    /// Runs on a background thread.
     pub fn load_index(self: &Arc<Self>) {
         let t0 = std::time::Instant::now();
         let team = self.team.read().unwrap().clone();
-        let (idx, content, source, kind) = match team.mode.as_str() {
-            "offline" => {
+        let private = self.private_index();
+        let mut parts: Vec<PathBuf> = Vec::new();
+        let mut content: Vec<PathBuf> = Vec::new();
+        let (source, kind) = match team.mode.as_str() {
+            "offline" if private.is_none() => {
                 self.fail_index(&format!(
                     "TracePoint can't reach THOR ({}). Check you're on the company network or VPN — it reconnects by itself, or restart TracePoint.",
                     team.folder.as_deref().unwrap_or("the shared folder")
                 ));
                 return;
             }
+            "offline" => ("Your private folders (THOR not reachable)".to_string(), "private"),
             "team" => {
                 let t = PathBuf::from(team.folder.clone().unwrap_or_default());
                 self.set_index_msg("Checking which THOR folders your Windows account can open…");
@@ -400,7 +433,7 @@ impl Service {
                     Ok(l) => l,
                     Err(e) => return self.fail_index(&e),
                 };
-                if loaded.parts.is_empty() {
+                if loaded.parts.is_empty() && private.is_none() {
                     *self.groups.write().unwrap() = loaded.clone();
                     let msg = if loaded.open + loaded.locked + loaded.hidden + loaded.unavailable == 0 {
                         "No THOR index has been shared yet. An administrator or indexer can scan THOR under Sources."
@@ -411,48 +444,138 @@ impl Service {
                     };
                     return self.fail_index(msg);
                 }
-                self.set_index_msg("Reading the THOR file records you can open…");
-                let mem = match rusqlite::Connection::open_in_memory() {
-                    Ok(c) => c,
-                    Err(e) => return self.fail_index(&e.to_string()),
-                };
-                if let Err(e) = crate::partition::merge(&loaded.parts, &mem) {
-                    return self.fail_index(&e);
-                }
-                let idx = match Index::load_conn(&mem) {
-                    Ok(i) => i,
-                    Err(e) => return self.fail_index(&e),
-                };
-                let content = loaded.content.clone();
+                parts.extend(loaded.parts.iter().cloned());
+                content.extend(loaded.content.iter().cloned());
                 *self.groups.write().unwrap() = loaded;
-                (idx, content, format!("Shared index ({})", t.display()), "team")
+                (format!("Shared index ({})", t.display()), "team")
             }
             _ => {
                 let p = self.master_path();
-                if !p.is_file() {
+                if p.is_file() {
+                    parts.push(p.clone());
+                    let c = self.content_master_path();
+                    if c.is_file() {
+                        content.push(c);
+                    }
+                } else if private.is_none() {
                     return self.fail_index("No THOR index on this PC yet. Scan a THOR folder under Sources, or join your team's shared TracePoint folder.");
                 }
-                self.set_index_msg("Reading THOR file records…");
-                let idx = match Index::load(&p) {
-                    Ok(i) => i,
-                    Err(e) => return self.fail_index(&e),
-                };
-                let c = self.content_master_path();
-                (idx, if c.is_file() { vec![c] } else { vec![] }, format!("This PC ({})", p.display()), "local")
+                (format!("This PC ({})", p.display()), "local")
             }
         };
+        if let Some(pv) = &private {
+            parts.push(pv.clone());
+            let pc = self.private_dir().join("content.db");
+            if pc.is_file() {
+                content.push(pc);
+            }
+        }
+        self.set_index_msg("Reading the file records you can open…");
+        let mem = match rusqlite::Connection::open_in_memory() {
+            Ok(c) => c,
+            Err(e) => return self.fail_index(&e.to_string()),
+        };
+        let _ = mem.pragma_update(None, "journal_mode", "OFF");
+        if let Err(e) = crate::partition::merge_index(&parts, &mem) {
+            return self.fail_index(&e);
+        }
+        let mut idx = match Index::load_conn(&mem) {
+            Ok(i) => i,
+            Err(e) => return self.fail_index(&e),
+        };
+        drop(mem);
+        // Mark private files (their roots live only in the private index).
+        if let Some(pv) = &private {
+            let ids: std::collections::HashSet<String> = rusqlite::Connection::open_with_flags(pv, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .ok()
+                .and_then(|c| c.prepare("select root_id from roots").ok().map(|mut st| st.query_map([], |r| r.get::<_, String>(0)).map(|r| r.flatten().collect()).unwrap_or_default()))
+                .unwrap_or_default();
+            let private_roots: std::collections::HashSet<u16> = idx.roots.iter().enumerate().filter(|(_, r)| ids.contains(&r.root_id)).map(|(i, _)| i as u16).collect();
+            for f in idx.files.iter_mut() {
+                if private_roots.contains(&idx.dirs[f.dir as usize].root) {
+                    f.flags |= crate::link::F_PRIVATE;
+                }
+            }
+        }
         for r in &idx.roots {
             self.guard.protect(&r.path);
         }
+        self.set_index_msg("Connecting copies, revisions and equipment…");
+        let text = crate::engine::ContentIndex::open_many(&content, &idx);
+        let cards = text.as_ref().map(|c| c.cards()).unwrap_or_default();
+        let links = crate::link::apply(&mut idx, &cards);
         self.set_index_msg("Building the search engine…");
-        let engine = Engine::new(idx);
-        *engine.content.write().unwrap() = crate::engine::ContentIndex::open_many(&content, &engine.idx);
+        let mut engine = Engine::new(idx);
+        engine.links = links;
+        *engine.content.write().unwrap() = text;
         let n = engine.content.read().unwrap().as_ref().map(|c| c.files_read).unwrap_or(0);
         self.content.lock().unwrap().files_read_total = n;
         let files = engine.idx.files.len();
         *self.engine.write().unwrap() = Some(Arc::new(engine));
         *self.index_state.write().unwrap() = IndexState { ready: true, message: format!("{files} files ready in {:.1} s", t0.elapsed().as_secs_f64()), source, source_kind: kind.into(), error: None };
         self.platform.emit("index", json!({"ready": true}));
+    }
+
+    /// Scan your private folders (read-only), then read their contents.
+    fn run_private_scan(self: Arc<Self>, roots: Vec<String>) {
+        let dir = self.private_dir();
+        if let Err(e) = self.guard.create_dir_all(&dir) {
+            return self.scan_fail(&format!("Could not create {}: {e}", dir.display()));
+        }
+        // Encrypted by Windows for this account where IT allows EFS.
+        let _ = acl::efs_encrypt(&dir);
+        let mut c = match rusqlite::Connection::open(dir.join("index.db")) {
+            Ok(c) => c,
+            Err(e) => return self.scan_fail(&format!("Could not open your private index: {e}")),
+        };
+        let opts = crate::crawl::Options { workers: 4, cancel: self.scan_cancel.clone(), permissions: false };
+        for root in &roots {
+            self.scan_log(format!("Scanning your private folder {root} (read-only; only on this PC)…"));
+            let me = self.clone();
+            match crate::crawl::scan(&mut c, root, &opts, &|p| {
+                let mut st = me.scan.lock().unwrap();
+                st.phase = p.phase.to_string();
+                st.files = p.files;
+                st.dirs = p.dirs;
+                st.new = p.new;
+                st.changed = p.changed;
+                st.missing = p.missing;
+                let v = serde_json::to_value(&*st).unwrap();
+                drop(st);
+                me.platform.emit("scan", v);
+            }) {
+                Ok(s) => self.scan_log(format!("{root}: {} files · {} new · {} changed · {} missing", s.progress.files, s.progress.new, s.progress.changed, s.progress.missing)),
+                Err(e) => {
+                    drop(c);
+                    return self.scan_fail(&e);
+                }
+            }
+        }
+        drop(c);
+        {
+            let mut st = self.scan.lock().unwrap();
+            st.running = false;
+            st.phase = "done".into();
+            st.finished = Some(auth::now());
+        }
+        self.scan_log("Loading your private files into search…");
+        self.load_index();
+        self.scan_log("Done. Reading the contents of new and changed private files in the background…");
+        let me = self.clone();
+        std::thread::spawn(move || me.run_content_for(true));
+    }
+
+    fn private_roots(&self) -> Vec<Value> {
+        let Some(p) = self.private_index() else { return vec![] };
+        let Ok(c) = rusqlite::Connection::open_with_flags(&p, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return vec![] };
+        let Ok(mut st) = c.prepare(
+            "select r.root_id, r.path, r.last_crawl_at, (select count(*) from files f where f.root_id=r.root_id and f.observation_state='current') from roots r order by r.path",
+        ) else {
+            return vec![];
+        };
+        st.query_map([], |r| Ok(json!({"root_id": r.get::<_, String>(0)?, "path": r.get::<_, String>(1)?, "last_scan": r.get::<_, Option<String>>(2)?, "files": r.get::<_, i64>(3)?})))
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default()
     }
 
     /// The working copy an administrator scans into: their own, or — first
@@ -562,6 +685,12 @@ impl Service {
     /// Read the text of new/changed documents, most valuable first, into a
     /// working copy of thor_content.db; publish it when done or stopped.
     pub fn run_content(self: Arc<Self>) {
+        self.run_content_for(false)
+    }
+
+    /// Read document text: the shared (or this PC's) index, or — `private`
+    /// — your private folders (kept apart, never shared, never sent to AI).
+    pub fn run_content_for(self: Arc<Self>, private: bool) {
         use crate::content::{self, Extractor};
         let Ok(e) = self.engine() else { return };
         {
@@ -583,8 +712,8 @@ impl Service {
             me.content_emit();
             me.audit("content_failed", &m);
         };
-        let dir = self.paths.local.join("index");
-        let active = self.ensure_content_master();
+        let dir = if private { self.private_dir() } else { self.paths.local.join("index") };
+        let active = if private { dir.join("content.db") } else { self.ensure_content_master() };
         let work = dir.join("content_work.db");
         if self.guard.create_dir_all(&dir).is_err() || self.guard.check(&work).is_err() {
             return fail(&self, "Can't write the content database.".into());
@@ -611,13 +740,22 @@ impl Service {
                 known.extend(rows.flatten());
             }
         }
+        let mut carded: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if let Ok(mut st) = c.prepare("select file_id from cards") {
+            if let Ok(rows) = st.query_map([], |r| r.get::<_, String>(0)) {
+                carded.extend(rows.flatten());
+            }
+        }
         let mut todo: Vec<(u32, f32)> = e
             .idx
             .files
             .iter()
             .enumerate()
+            // Private files and shared files never mix in one text database.
+            .filter(|(_, f)| (f.flags & crate::link::F_PRIVATE != 0) == private)
             .filter(|(_, f)| f.flags & crate::index::F_GONE == 0 && content::readable_ext(&f.ext) && f.size > 0 && (f.size as u64) <= content::MAX_FILE_BYTES)
-            .filter(|(_, f)| known.get(&f.file_id).map(|k| *k != (f.size, f.mtime)).unwrap_or(true))
+            // New or changed, or read before fingerprint cards existed.
+            .filter(|(_, f)| known.get(&f.file_id).map(|k| *k != (f.size, f.mtime)).unwrap_or(true) || !carded.contains(&f.file_id))
             .map(|(i, f)| (i as u32, content::value(f)))
             .filter(|x| x.1 > 0.0)
             .collect();
@@ -634,7 +772,9 @@ impl Service {
             }
         }
         self.content_emit();
-        self.audit("content_started", &format!("{} documents to read", todo.len()));
+        if !private {
+            self.audit("content_started", &format!("{} documents to read", todo.len()));
+        }
 
         // Readers fetch file bytes in parallel (read-only); one thread parses.
         let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, f32, Result<Vec<u8>, String>)>(24);
@@ -648,7 +788,17 @@ impl Service {
                     if cancel.load(Ordering::Relaxed) {
                         break;
                     }
-                    let got: Vec<_> = chunk.par_iter().map(|(fi, v, p)| (*fi, *v, std::fs::read(crate::crawl::os_path(p)).map_err(|x| x.to_string()))).collect();
+                    let got: Vec<_> = chunk
+                        .par_iter()
+                        .map(|(fi, v, p)| {
+                            let path = crate::crawl::os_path(p);
+                            // OneDrive "online-only" files: reading would download them.
+                            if crate::acl::is_cloud_only(&path) {
+                                return (*fi, *v, Err("online-only (not downloaded); skipped".to_string()));
+                            }
+                            (*fi, *v, std::fs::read(path).map_err(|x| x.to_string()))
+                        })
+                        .collect();
                     for g in got {
                         if tx.send(g).is_err() {
                             return;
@@ -667,11 +817,20 @@ impl Service {
                 break;
             }
             let f = &e.idx.files[fi as usize];
-            let x = match bytes {
-                Ok(b) => ex.extract(b, &f.ext, if value >= 0.3 { 30 } else { 0 }),
-                Err(err) => content::Extracted { error: Some(format!("Could not read: {err}")), ..Default::default() },
+            // Machine-named scans ("DOC123456.pdf") are exactly the files
+            // whose contents must identify them: always OCR those.
+            let machine_named = crate::crawl::classify_filename(&f.name) == "MACHINE_GENERATED";
+            let budget = if value >= 0.3 || machine_named { 30 } else { 0 };
+            let (x, card) = match bytes {
+                Ok(b) => {
+                    let sha = crate::card::sha256(&b);
+                    let x = ex.extract(b, &f.ext, budget);
+                    let card = crate::card::build(Some(sha), &x);
+                    (x, Some(card))
+                }
+                Err(err) => (content::Extracted { error: Some(format!("Could not read: {err}")), ..Default::default() }, None),
             };
-            let _ = content::save(&c, &f.file_id, &e.idx.full_path(fi), f.size, f.mtime, value, &x, &now);
+            let _ = content::save(&c, &f.file_id, &e.idx.full_path(fi), f.size, f.mtime, value, &x, card.as_ref(), !private, &now);
             {
                 let mut st = self.content.lock().unwrap();
                 st.done += 1;
@@ -707,21 +866,24 @@ impl Service {
         self.content.lock().unwrap().phase = "saving".into();
         self.content_emit();
         *e.content.write().unwrap() = None; // release the file before replacing it
-        let local = dir.join("thor_content.db");
+        let local = if private { dir.join("content.db") } else { dir.join("thor_content.db") };
         let res = self.guard.publish(&work, &local);
         let _ = self.guard.remove_own_file(&work);
         if let Err(x) = res {
             self.attach_content(&e);
             return fail(&self, format!("Could not save the content database: {x}"));
         }
-        if self.team_dir().is_some() {
+        if private {
+            self.clone().load_index();
+        } else if self.team_dir().is_some() {
             match self.share() {
                 Ok(line) => self.audit("content_shared", &line),
                 Err(x) => self.content.lock().unwrap().error = Some(format!("Saved on this PC, but couldn't share it: {x}")),
             }
             self.clone().load_index();
         } else {
-            self.attach_content(&e);
+            // Re-link with the new fingerprint cards.
+            self.clone().load_index();
         }
         {
             let mut st = self.content.lock().unwrap();
@@ -733,6 +895,9 @@ impl Service {
         }
         self.content_emit();
         let st = self.content.lock().unwrap().clone();
+        if private {
+            return;
+        }
         self.audit("content_finished", &format!("{} of {} documents read · {} pages · {} OCR pages · {} pages staged for AI{}", st.done, st.total, st.pages, st.ocr_pages, st.staged_for_ai, if stopped { " (stopped)" } else { "" }));
     }
 
@@ -1198,6 +1363,96 @@ impl Service {
                     "Imported. Search is loading it now."
                 };
                 Ok(json!({"imported": dest.display().to_string(), "message": note}))
+            }
+
+            // ── Connections and cleanup ──────────────────────────────
+            "links.status" => {
+                let e = self.engine()?;
+                Ok(serde_json::to_value(&e.links.stats).unwrap())
+            }
+            "report.cleanup" => {
+                self.require(|s| s.user.role.can_rescan(), "The cleanup report is for administrators and indexers.")?;
+                let e = self.engine()?;
+                let name = format!("TracePoint_Cleanup_{}.xlsx", auth::now()[..10].replace('-', ""));
+                let Some(dest) = self.platform.save_dialog("Save the cleanup report", &name, "xlsx") else {
+                    return Ok(json!({"cancelled": true}));
+                };
+                self.guard.check(&dest)?;
+                let rows = self.cleanup_rows(&e);
+                let source = self.index_state.read().unwrap().source.clone();
+                crate::export::write_cleanup(&dest, &rows.iter().map(|(a, b, r)| (*a, *b, r.clone_rows())).collect::<Vec<_>>(), &source).map_err(|x| ApiError::new(500, x))?;
+                self.audit("cleanup_report", &format!("{} rows", rows.iter().map(|x| x.2.len()).sum::<usize>()));
+                Ok(json!({"path": dest.display().to_string(), "rows": rows.iter().map(|x| x.2.len()).sum::<usize>()}))
+            }
+
+            // ── Private folders (this PC, this person only) ──────────
+            "private.status" => {
+                let dir = self.private_dir();
+                Ok(json!({"allowed": Self::private_allowed(), "roots": self.private_roots(), "encrypted": acl::is_encrypted(&dir),
+                          "files": self.engine.read().unwrap().as_ref().map(|e| e.idx.files.iter().filter(|f| f.flags & crate::link::F_PRIVATE != 0).count()).unwrap_or(0)}))
+            }
+            "private.add" | "private.rescan" => {
+                if !Self::private_allowed() {
+                    return Err(ApiError::new(403, "Private folders are switched off on this PC by your IT department."));
+                }
+                if self.scan.lock().unwrap().running {
+                    return Err(ApiError::new(409, "A scan is already running."));
+                }
+                let mut roots: Vec<String> = Vec::new();
+                if cmd == "private.add" {
+                    let p = match self.platform.pick_folder("Choose a folder to search privately (only you, on this PC)") {
+                        Some(p) => p,
+                        None => return Ok(json!({"cancelled": true})),
+                    };
+                    // Windows-style paths everywhere (dev hosts map them back).
+                    let ps = if cfg!(windows) { p.display().to_string() } else { p.display().to_string().replace('/', "\\") };
+                    let n = crate::guard::normalize(&ps);
+                    if self.team.read().unwrap().folder.as_deref().map(|t| n.starts_with(&crate::guard::normalize(t))).unwrap_or(false) || n.starts_with(&crate::guard::normalize(&self.paths.local.display().to_string())) {
+                        return Err(ApiError::new(400, "That's one of TracePoint's own folders."));
+                    }
+                    if n.starts_with("\\\\") {
+                        return Err(ApiError::new(400, "Private folders are for this PC (Documents, Downloads, a local or USB drive). Network shares belong in the shared index, where Windows permissions decide who sees them."));
+                    }
+                    roots.push(ps);
+                } else {
+                    roots.extend(self.private_roots().iter().filter_map(|r| r["path"].as_str().map(str::to_string)));
+                }
+                if roots.is_empty() {
+                    return Err(ApiError::new(400, "No private folders yet."));
+                }
+                for r in &roots {
+                    self.guard.protect(r);
+                }
+                self.scan_cancel.store(false, Ordering::SeqCst);
+                *self.scan.lock().unwrap() = ScanState { running: true, root: Some(roots.join(", ")), phase: "starting".into(), started: Some(auth::now()), ..Default::default() };
+                let me = self.clone();
+                std::thread::spawn(move || me.run_private_scan(roots));
+                Ok(serde_json::to_value(&*self.scan.lock().unwrap()).unwrap())
+            }
+            "private.remove" => {
+                let rid = s(a, "root_id");
+                let dir = self.private_dir();
+                let idxp = dir.join("index.db");
+                if let Ok(c) = rusqlite::Connection::open(&idxp) {
+                    let ids: Vec<String> = c.prepare("select file_id from files where root_id=?1").and_then(|mut st| st.query_map([&rid], |r| r.get::<_, String>(0)).map(|r| r.flatten().collect())).unwrap_or_default();
+                    let _ = c.execute_batch("begin");
+                    for t in ["files", "crawls", "roots", "identifiers", "issues", "patterns"] {
+                        let _ = c.execute(&format!("delete from {t} where root_id=?1"), [&rid]);
+                    }
+                    let _ = c.execute_batch("commit");
+                    if let Ok(cc) = rusqlite::Connection::open(dir.join("content.db")) {
+                        let _ = cc.execute_batch("begin");
+                        for id in &ids {
+                            for t in ["content_files", "content_fts", "cards", "ai_stage"] {
+                                let _ = cc.execute(&format!("delete from {t} where file_id=?1"), [id]);
+                            }
+                        }
+                        let _ = cc.execute_batch("commit");
+                    }
+                }
+                let me = self.clone();
+                std::thread::spawn(move || me.load_index());
+                Ok(json!({"ok": true}))
             }
 
             // ── Shared folder ────────────────────────────────────────
@@ -1839,6 +2094,59 @@ impl Service {
             "mark.png" => Some(("image/png", include_bytes!("../../assets/mark512.png"))),
             _ => None,
         }
+    }
+
+    /// The cleanup report's sheets, from the files this person can see.
+    fn cleanup_rows(&self, e: &Engine) -> Vec<(&'static str, &'static str, Rows)> {
+        use crate::export::CleanupRow;
+        let idx = &e.idx;
+        let row = |fi: u32, what: String, better: Option<u32>, why: String| {
+            let f = &idx.files[fi as usize];
+            CleanupRow {
+                file: f.name.clone(),
+                path: idx.full_path(fi),
+                what,
+                better: better.map(|b| format!("{} — {}", idx.files[b as usize].name, idx.relative_folder(idx.files[b as usize].dir))).unwrap_or_default(),
+                better_path: better.map(|b| idx.full_path(b)).unwrap_or_default(),
+                why,
+            }
+        };
+        let (mut sup, mut stale, mut copies, mut stranded, mut scans) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut ids: Vec<&u32> = e.links.files.keys().collect();
+        ids.sort();
+        for &fi in ids {
+            let l = &e.links.files[&fi];
+            let f = &idx.files[fi as usize];
+            if f.flags & crate::link::F_PRIVATE != 0 {
+                continue;
+            }
+            if let Some(n) = l.newer {
+                let r = row(fi, "Superseded revision".into(), Some(n), l.newer_why.clone().unwrap_or_default());
+                if l.stale_copy {
+                    stale.push(row(fi, "Old revision saved more recently".into(), Some(n), l.newer_why.clone().unwrap_or_default()));
+                }
+                sup.push(r);
+            }
+            if let Some(h) = l.home {
+                copies.push(row(fi, format!("Copy ({} copies in all)", l.copies + 1), Some(h), "Same file; the best-kept copy is shown".into()));
+            }
+            for &ei in &l.stranded_for {
+                let eq = &idx.equipment[ei as usize];
+                let why = l.content_equip.iter().find(|x| x.0 == ei).map(|x| x.1.clone()).unwrap_or_else(|| "Its number is in the file name".into());
+                stranded.push(CleanupRow { better: format!("{} {} — {}", eq.number, eq.description, eq.folder_path.clone().unwrap_or_default()), better_path: eq.folder_path.clone().unwrap_or_default(), ..row(fi, format!("About {} but not filed with it", eq.number), None, why) });
+            }
+            if crate::crawl::classify_filename(&f.name) == "MACHINE_GENERATED" && !l.content_equip.is_empty() {
+                let eq = &idx.equipment[l.content_equip[0].0 as usize];
+                scans.push(row(fi, format!("Scan identified as {}", eq.number), None, l.content_equip[0].1.clone()));
+            }
+        }
+        vec![
+            ("Superseded", "Older revisions — a newer one exists (by the revision stated in the documents first, then dates).", Rows(sup)),
+            ("Stale copies", "Old revisions saved more recently than the newest one — the copies people keep using by mistake.", Rows(stale)),
+            ("Stranded", "Documents about a piece of equipment that aren't filed in its folder (projects, scans, department folders).", Rows(stranded)),
+            ("Identified scans", "Scanner-named files tied to equipment by their contents.", Rows(scans)),
+            ("Duplicates", "Extra copies of the same file.", Rows(copies)),
+        ]
     }
 
     pub fn about(&self) -> Value {

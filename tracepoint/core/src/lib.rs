@@ -1,6 +1,7 @@
 pub mod acl;
 pub mod ai;
 pub mod auth;
+pub mod card;
 pub mod classify;
 pub mod content;
 pub mod crawl;
@@ -9,6 +10,7 @@ pub mod export;
 pub mod graph;
 pub mod guard;
 pub mod index;
+pub mod link;
 pub mod nl;
 pub mod partition;
 pub mod pricing;

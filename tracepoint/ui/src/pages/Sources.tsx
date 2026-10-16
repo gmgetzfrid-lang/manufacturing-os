@@ -201,6 +201,8 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
         </div>
 
         <Permissions st={st} canIndex={canIndex} onShare={share} running={!!scan?.running} />
+        <Connections canIndex={canIndex} />
+        <PrivateFolders running={!!scan?.running} onStarted={(x) => setScan(x)} />
 
         {scan?.running || scan?.finished || scan?.error ? <ScanPanel scan={scan} onStop={() => api("indexer.stop").then(load)} /> : null}
         <ContentPanel canIndex={canIndex} />
@@ -263,6 +265,86 @@ export function SourcesPage({ state, refresh }: { state: AppState; refresh: () =
         </div>
       </div>
     </div>
+  );
+}
+
+interface LinkStats { cards: number; copy_groups: number; extra_copies: number; version_groups: number; superseded: number; stale_copies: number; content_links: number; stranded: number; moved: number; nameplate_matches: number; ms: number }
+
+/** What TracePoint connected: copies, revisions, stranded documents. */
+function Connections({ canIndex }: { canIndex: boolean }) {
+  const [l, setL] = useState<LinkStats | null>(null);
+  const toast = useToast();
+  useEffect(() => { api<LinkStats>("links.status").then(setL).catch(() => {}); }, []);
+  if (!l) return null;
+  const report = async () => {
+    try { const r = await api<{ path?: string; rows?: number; cancelled?: boolean }>("report.cleanup"); if (r.path) toast("ok", `Saved ${n(r.rows ?? 0)} rows to ${r.path}`); } catch (e) { toast("error", (e as Error).message); }
+  };
+  const tiles: [string, number, string][] = [
+    ["Newer revision exists", l.superseded, "Older revisions people might grab by mistake"],
+    ["Old copies saved recently", l.stale_copies, "Superseded files that look new on disk"],
+    ["Filed away from their equipment", l.stranded, "Project, scan and department copies"],
+    ["Tied to equipment by contents", l.content_links, `Incl. ${n(l.nameplate_matches)} by nameplate number`],
+    ["Extra copies of the same file", l.extra_copies, `${n(l.copy_groups)} files exist more than once`],
+    ["Moved since last scan", l.moved, "Found at their new location"],
+  ];
+  return (
+    <Section className="mt-6" title="Connections found" subtitle={`From file names, folders, document contents and OCR — worked out on this PC in ${(l.ms / 1000).toFixed(1)} s, from only the files you can open.`}>
+      <div className="grid grid-cols-3 gap-3">
+        {tiles.map(([t, v, d]) => (
+          <div key={t} className="rounded-xl bg-[var(--color-surface-2)] p-3.5">
+            <div className="text-[22px] font-bold tabular-nums">{n(v)}</div>
+            <div className="text-[13px] font-semibold">{t}</div>
+            <div className="text-[12px] text-[var(--color-text-muted)]">{d}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-4 text-[12.5px] text-[var(--color-text-muted)]">
+        <span>{n(l.cards)} documents have a fingerprint card (read contents). More connections appear as more documents are read.</span>
+        {canIndex && <Button onClick={report}>Cleanup report (Excel)…</Button>}
+      </div>
+    </Section>
+  );
+}
+
+interface PrivateStatus { allowed: boolean; encrypted: boolean; files: number; roots: { root_id: string; path: string; last_scan?: string | null; files: number }[] }
+
+/** Folders on this PC searched for this person only. */
+function PrivateFolders({ running, onStarted }: { running: boolean; onStarted: (s: ScanState) => void }) {
+  const [p, setP] = useState<PrivateStatus | null>(null);
+  const toast = useToast();
+  const load = useCallback(() => { api<PrivateStatus>("private.status").then(setP).catch(() => {}); }, []);
+  useEffect(() => { load(); }, [load, running]);
+  if (!p) return null;
+  const go = async (cmd: string, body: Record<string, unknown> = {}) => {
+    try { const r = await api<ScanState & { cancelled?: boolean }>(cmd, body); if (!r.cancelled && r.running !== undefined) onStarted(r); load(); } catch (e) { toast("error", (e as Error).message); }
+  };
+  return (
+    <Section className="mt-6" title="Your private folders" subtitle="Search your own Documents, Downloads or a local drive alongside THOR. Only you see them — they stay on this PC, never go to the shared folder, and never go to AI.">
+      {!p.allowed ? (
+        <div className="text-[13px] text-[var(--color-text-muted)]">Switched off on this PC by your IT department.</div>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {p.roots.map((r) => (
+              <div key={r.root_id} className="flex items-center gap-3 rounded-xl border border-[var(--color-border)] p-3">
+                <Lock className="size-4 text-[var(--color-info)]" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-mono text-[13px] font-semibold">{r.path}</div>
+                  <div className="text-[12px] text-[var(--color-text-muted)]">{n(r.files)} files{r.last_scan ? ` · scanned ${when(r.last_scan)}` : ""}</div>
+                </div>
+                <Button size="sm" onClick={() => confirm("Stop searching this folder? Nothing in the folder is changed.") && go("private.remove", { root_id: r.root_id })}>Remove</Button>
+              </div>
+            ))}
+            {p.roots.length === 0 && <div className="text-[13px] text-[var(--color-text-faint)]">None yet.</div>}
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <Button variant="primary" icon={<Lock className="size-4" />} disabled={running} onClick={() => go("private.add")}>Add a private folder…</Button>
+            {p.roots.length > 0 && <Button icon={<RefreshCw className="size-4" />} disabled={running} onClick={() => go("private.rescan")}>Rescan mine</Button>}
+            <span className="ml-auto text-[12px] text-[var(--color-text-faint)]">{p.encrypted ? "Encrypted by Windows for your account" : "Protected by your Windows profile"} · OneDrive online-only files are never downloaded</span>
+          </div>
+        </>
+      )}
+    </Section>
   );
 }
 

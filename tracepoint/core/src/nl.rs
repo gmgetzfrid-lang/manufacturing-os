@@ -869,6 +869,10 @@ impl Engine {
                 score -= 15.0;
                 reasons.push("Archive folder".into());
             }
+            if let Some((d, why)) = self.link_adjust(fi) {
+                score += d as f32;
+                reasons.push(why);
+            }
             if f.family.is_some() && f.flags & F_LATEST != 0 {
                 score += 8.0;
             }

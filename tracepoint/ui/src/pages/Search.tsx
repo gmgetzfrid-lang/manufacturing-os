@@ -563,6 +563,7 @@ function ResultRow({ hit, i, active, words, onSelect, onOpen, onReveal, onEquip 
           ))}
           {flags.map((f) => <span key={f} className="shrink-0 rounded bg-[var(--color-surface-3)] px-1.5 text-[11.5px] font-medium text-[var(--color-text-muted)]">{f}</span>)}
         </div>
+        <LinkChips hit={hit} />
         {hit.snippet && <div className="mt-1 line-clamp-2 text-[13px] text-[var(--color-text-muted)]"><span className="mr-1.5 font-semibold text-[var(--color-text)]">p.{hit.page}</span>{snippetNodes(hit.snippet)}</div>}
         <div className="mt-0.5 truncate text-[12px] text-[var(--color-text-faint)]" title={hit.folder}>{crumbs.length > 3 ? "… › " : ""}{tail.join(" › ")}</div>
       </div>
@@ -572,6 +573,55 @@ function ResultRow({ hit, i, active, words, onSelect, onOpen, onReveal, onEquip 
       </div>
     </div>
   );
+}
+
+/** What the linker found about this file, at a glance. */
+function LinkChips({ hit }: { hit: Hit }) {
+  const chips: { t: string; c: string; title?: string }[] = [];
+  if (hit.stale_copy) chips.push({ t: "Old revision, saved recently", c: "var(--color-bad)", title: hit.newer?.why ?? "" });
+  else if (hit.newer) chips.push({ t: "Newer revision exists", c: "var(--color-warn)", title: hit.newer.why ?? "" });
+  if (hit.home) chips.push({ t: `Copy · ${hit.copies + 1} in all`, c: "var(--color-text-muted)", title: `Best-kept copy: ${hit.home.folder}` });
+  if (hit.stranded_for.length) chips.push({ t: `Belongs with ${hit.stranded_for.slice(0, 2).join(", ")}`, c: "var(--color-violet)", title: "About this equipment, but not filed in its folder" });
+  if (hit.private) chips.push({ t: "Private", c: "var(--color-info)", title: "One of your private folders — only you see it" });
+  if (!chips.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1.5">
+      {chips.map((x) => (
+        <span key={x.t} title={x.title} className="rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold" style={{ color: x.c, background: `color-mix(in srgb, ${x.c} 12%, transparent)` }}>{x.t}</span>
+      ))}
+    </div>
+  );
+}
+
+/** Newer revision / best-kept copy / where it belongs, with one click to the better file. */
+function Connections({ hit, state, nav }: { hit: Hit; state: AppState; nav: Nav }) {
+  const toast = useToast();
+  const open = (id: number) => api("file.open", { id, mode: state.prefs.open_mode ?? "copy" }).catch((e) => toast("error", (e as Error).message));
+  const rows: ReactNode[] = [];
+  if (hit.newer) rows.push(
+    <div key="n" className="rounded-xl border p-2.5" style={{ borderColor: "color-mix(in srgb, var(--color-warn) 45%, transparent)", background: "color-mix(in srgb, var(--color-warn) 7%, transparent)" }}>
+      <div className="text-[12.5px] font-semibold" style={{ color: "var(--color-warn)" }}>{hit.stale_copy ? "Old revision — saved more recently than the newest one" : "A newer revision exists"}</div>
+      <div className="mt-0.5 truncate text-[13px] font-medium" title={hit.newer.name}>{hit.newer.name}</div>
+      <div className="truncate text-[11.5px] text-[var(--color-text-faint)]" title={hit.newer.folder}>{hit.newer.folder}</div>
+      {hit.newer.why && <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)]">{hit.newer.why}</div>}
+      <Button size="sm" className="mt-1.5" icon={<ExternalLink className="size-3.5" />} onClick={() => open(hit.newer!.id)}>Open the newer one</Button>
+    </div>,
+  );
+  if (hit.home) rows.push(
+    <div key="h" className="rounded-xl border border-[var(--color-border)] p-2.5">
+      <div className="text-[12.5px] font-semibold text-[var(--color-text-muted)]">A copy — {hit.copies + 1} identical files. The best-kept one:</div>
+      <div className="mt-0.5 truncate text-[12px]" title={hit.home.folder}>{hit.home.folder}</div>
+      <Button size="sm" className="mt-1.5" icon={<ExternalLink className="size-3.5" />} onClick={() => open(hit.home!.id)}>Open that one</Button>
+    </div>,
+  );
+  if (hit.stranded_for.length) rows.push(
+    <div key="s" className="rounded-xl border p-2.5" style={{ borderColor: "color-mix(in srgb, var(--color-violet) 40%, transparent)" }}>
+      <div className="text-[12.5px] font-semibold" style={{ color: "var(--color-violet)" }}>About {hit.stranded_for.join(", ")} — but not filed in its folder</div>
+      <Button size="sm" className="mt-1.5" icon={<Search className="size-3.5" />} onClick={() => nav.go("search", { q: hit.stranded_for[0] })}>See all of {hit.stranded_for[0]}</Button>
+    </div>,
+  );
+  if (!rows.length) return null;
+  return <div className="space-y-2 border-b border-[var(--color-border)] p-3">{rows}</div>;
 }
 
 /** «word» → bold. */
@@ -671,6 +721,30 @@ function EquipmentCardView({ card, nav, onFilter }: { card: EquipCard; nav: Nav;
           </button>
         ))}
       </div>
+      {card.elsewhere_total > 0 && <Elsewhere card={card} />}
+    </div>
+  );
+}
+
+/** Documents about this equipment that live somewhere else on THOR. */
+function Elsewhere({ card }: { card: EquipCard }) {
+  const [open, setOpen] = useState(false);
+  const toast = useToast();
+  const list = open ? card.elsewhere : card.elsewhere.slice(0, 3);
+  return (
+    <div className="border-t border-[var(--color-border)] px-5 py-3">
+      <div className="flex items-center gap-2 text-[13.5px] font-semibold" style={{ color: "var(--color-violet)" }}>
+        <FolderOpen className="size-4" /> {card.elsewhere_total} more document{card.elsewhere_total === 1 ? "" : "s"} about {card.number} filed elsewhere
+      </div>
+      <div className="mt-1.5 space-y-1">
+        {list.map((f) => (
+          <div key={f.id} className="flex items-center gap-2 text-[12.5px]">
+            <button onClick={() => api("file.open", { id: f.id }).catch((e) => toast("error", (e as Error).message))} className="truncate font-medium hover:text-[var(--color-accent)] hover:underline cursor-pointer" title={f.why ?? ""}>{f.name}</button>
+            <span className="truncate text-[var(--color-text-faint)]" title={f.folder}>{f.folder.split("\\").slice(-2).join(" › ")}</span>
+          </div>
+        ))}
+      </div>
+      {card.elsewhere.length > 3 && <button onClick={() => setOpen(!open)} className="mt-1 text-[12.5px] font-medium text-[var(--color-accent)] hover:underline cursor-pointer">{open ? "Show fewer" : `Show ${card.elsewhere.length - 3} more`}</button>}
     </div>
   );
 }
@@ -734,6 +808,7 @@ function PreviewPane({ hit, state, onOpen, onEquip, nav }: { hit?: Hit; state: A
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
+        <Connections hit={hit} state={state} nav={nav} />
         {tab === "preview" && <FilePreview hit={hit} />}
         {tab === "why" && (
           <div className="space-y-4 p-4">
@@ -750,7 +825,7 @@ function PreviewPane({ hit, state, onOpen, onEquip, nav }: { hit?: Hit; state: A
                       <Boxes className="size-4 text-[var(--color-accent)]" />
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] font-semibold">{e.number}{e.tag ? ` · ${e.tag}` : ""}</div>
-                        <div className="truncate text-[12px] text-[var(--color-text-muted)]">{e.description} · {e.unit} · {e.via === "folder" ? "in its folder" : e.via === "filename" ? "named in the filename" : "drawing family"}</div>
+                        <div className="truncate text-[12px] text-[var(--color-text-muted)]">{e.description} · {e.unit} · {e.via === "folder" ? "in its folder" : e.via === "filename" ? "named in the filename" : e.via === "contents" ? "found in the document's contents" : "drawing family"}</div>
                       </div>
                       <IconButton label="Search this equipment" onClick={() => onEquip(e.id)} className="size-7"><Search className="size-3.5" /></IconButton>
                       <IconButton label="Graph" onClick={() => nav.go("graph", { eq: e.id })} className="size-7"><Network className="size-3.5" /></IconButton>
