@@ -940,10 +940,9 @@ impl Service {
                 return Err(ApiError::new(403, "Only a TracePoint administrator can set up the shared folder."));
             }
             let me = self.me.clone();
-            let first = auth::Roster { version: 1, members: vec![auth::Member { sid: me.sid.clone(), account: me.account.clone(), role: Role::Admin, can_ai: true, added_by: String::new(), added_at: String::new() }], policy: Default::default() };
             let mut users = self.users.lock().unwrap();
-            let mut found = || users.found_team(path.join("roles.json"), path.join("admin").join("activity.db")).map_err(|e| e.0);
-            crate::team::setup(&self.guard, &path, &me.account, &first, &mut found).map_err(|e| ApiError::new(400, e))?;
+            let mut found = |m: auth::Member| users.found_team(path.join("roles.json"), path.join("admin").join("activity.db"), m).map_err(|e| e.0);
+            crate::team::setup(&self.guard, &path, &me, &mut found).map_err(|e| ApiError::new(400, e))?;
             drop(users);
         }
         {
@@ -1251,7 +1250,7 @@ impl Service {
                 let role = Role::parse(&s(a, "role")).ok_or_else(|| ApiError::new(400, "Choose a role."))?;
                 let who = if let Some(sid) = a.get("sid").and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
                     let account = self.users.lock().unwrap().list().into_iter().find(|m| m.sid == sid).map(|m| m.account).unwrap_or_else(|| sid.to_string());
-                    acl::Identity { sid: sid.to_string(), display: account.clone(), account }
+                    acl::Identity::new(sid, &account, &account)
                 } else {
                     acl::lookup_account(&s(a, "account")).map_err(|e| ApiError::new(400, e))?
                 };

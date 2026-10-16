@@ -97,16 +97,23 @@ pub fn apply_locks(team: &Path, roster: &crate::auth::Roster) -> Result<(), Stri
     Ok(())
 }
 
-/// First-time setup of the shared folder. `found` writes roles.json (the
-/// caller's account becomes the first administrator).
-pub fn setup(guard: &Guard, team: &Path, by: &str, roster_for_locks: &crate::auth::Roster, found: &mut dyn FnMut() -> Result<(), String>) -> Result<(), String> {
+/// First-time setup of the shared folder. `found` writes roles.json with
+/// the person setting it up as first administrator — recorded under the SID
+/// the file server knows them by (a cloud-joined PC's sign-in SID means
+/// nothing to an on-premises server).
+pub fn setup(guard: &Guard, team: &Path, me: &acl::Identity, found: &mut dyn FnMut(crate::auth::Member) -> Result<(), String>) -> Result<(), String> {
+    use crate::auth::{Member, Role, Roster};
     guard.allow(team).map_err(|e| e.to_string())?;
     guard.create_dir_all(team).map_err(|e| format!("Can't create {} — you need write access there: {e}", team.display()))?;
     guard.create_dir_all(&team.join("index")).map_err(|e| e.to_string())?;
     guard.create_dir_all(&team.join("admin")).map_err(|e| e.to_string())?;
-    apply_locks(team, roster_for_locks)?;
-    found()?;
-    let marker = serde_json::json!({"product": "TracePoint", "created": crate::auth::now(), "by": by, "version": crate::service::VERSION});
+    let writer = acl::writer_sid(&team.to_string_lossy(), me);
+    let also: Vec<String> = me.all_sids().into_iter().filter(|s| *s != writer).collect();
+    let founder = Member { sid: writer, account: me.account.clone(), role: Role::Admin, also, can_ai: true, added_by: "set up the shared folder".into(), added_at: crate::auth::now() };
+    let roster = Roster { version: 1, members: vec![founder.clone()], policy: Default::default() };
+    apply_locks(team, &roster)?;
+    found(founder)?;
+    let marker = serde_json::json!({"product": "TracePoint", "created": crate::auth::now(), "by": me.account, "version": crate::service::VERSION});
     guard.write(&team.join(MARKER), marker.to_string().as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -204,7 +211,8 @@ pub fn publish(guard: &Guard, team: &Path, me: &acl::Identity, master: &Path, co
             refuse(e.to_string(), &mut report);
             continue;
         }
-        if let Err(e) = acl::lock_folder(&dir.to_string_lossy(), &ra.index_folder_sddl(&me.sid)) {
+        let writer = acl::writer_sid(&dir.to_string_lossy(), me);
+        if let Err(e) = acl::lock_folder(&dir.to_string_lossy(), &ra.index_folder_sddl(&writer)) {
             refuse(e, &mut report);
             continue;
         }
@@ -221,7 +229,7 @@ pub fn publish(guard: &Guard, team: &Path, me: &acl::Identity, master: &Path, co
             }
             // Read the lock back from the file itself.
             let cache = std::sync::Mutex::new(std::collections::HashMap::new());
-            match acl::read_access(&dest.to_string_lossy(), &cache).and_then(|got| acl::same_readers(&ra, &got, &me.sid)) {
+            match acl::read_access(&dest.to_string_lossy(), &cache).and_then(|got| acl::same_readers(&ra, &got, &writer)) {
                 Ok(()) => {}
                 Err(e) => {
                     refuse(format!("the permissions on the shared copy didn't come out right ({e})"), &mut report);
@@ -368,7 +376,6 @@ pub fn load_groups(guard: &Guard, team: &Path, cache: &Path) -> Result<Loaded, S
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
-    use crate::auth::{Member, Role, Roster};
 
     #[test]
     fn locked_groups_never_reach_other_accounts() {
@@ -395,10 +402,9 @@ mod tests {
         let team = dir.join("team");
         guard.allow(&team).unwrap();
         guard.allow(&dir.join("scratch")).unwrap();
-        let admin = acl::Identity { sid: "S-1-5-21-1-2-3-1001".into(), account: "KERN\\admin".into(), display: "admin".into() };
+        let admin = acl::Identity::new("S-1-5-21-1-2-3-1001", "KERN\\admin", "admin");
         acl::sim::set_me(&admin.sid, &["S-1-5-11", eng]);
-        let roster = Roster { version: 1, members: vec![Member { sid: admin.sid.clone(), account: admin.account.clone(), role: Role::Admin, can_ai: true, added_by: String::new(), added_at: String::new() }], policy: Default::default() };
-        setup(&guard, &team, "KERN\\admin", &roster, &mut || Ok(())).unwrap();
+        setup(&guard, &team, &admin, &mut |_| Ok(())).unwrap();
         let rep = publish(&guard, &team, &admin, &master, None, &dir.join("scratch"), &|_| {}).unwrap();
         assert_eq!((rep.groups, rep.files, rep.refused.len()), (2, 2, 0));
         // An operator (not in Engineering) on another PC.

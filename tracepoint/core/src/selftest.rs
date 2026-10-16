@@ -102,6 +102,45 @@ pub fn run(extra_protect: &[String]) -> Vec<Check> {
     out
 }
 
+/// The real thing on the file server: in `folder` (default \\thor\Public\TP),
+/// create a test folder, lock it, write a file, read the lock back from the
+/// server, then delete it all. Shows who the server thinks you are.
+pub fn run_share(folder: &Path) -> Vec<Check> {
+    let mut out = Vec::new();
+    let me = crate::acl::current_user();
+    check(&mut out, "Identity: the account file servers know", me.sid.starts_with("S-1-5-21-"), format!("{} {}{}", me.account, me.sid, if me.also.is_empty() { String::new() } else { format!(" (signed in to this PC as {})", me.also.join(", ")) }));
+    if !folder.is_dir() {
+        check(&mut out, "Shared folder: reachable", false, format!("{} — not reachable from this PC", folder.display()));
+        return out;
+    }
+    let g = Guard::new(None);
+    let dir = folder.join(format!("tp-selftest-{}", std::process::id()));
+    if g.allow(folder).is_err() || g.create_dir_all(&dir).is_err() {
+        check(&mut out, "Shared folder: can create a folder", false, folder.display().to_string());
+        return out;
+    }
+    let p = dir.to_string_lossy().to_string();
+    let owner = crate::acl::owner_sid(&p);
+    let writer = crate::acl::writer_sid(&p, &me);
+    check(&mut out, "Shared folder: server says you are", owner.is_ok(), match &owner {
+        Ok(o) if *o == me.sid => format!("{o} (matches)"),
+        Ok(o) => format!("{o} — TracePoint uses {writer}"),
+        Err(e) => e.clone(),
+    });
+    let want = crate::acl::ReadAccess::parse_fingerprint(&format!("A:{writer}"));
+    let locked = crate::acl::lock_folder(&p, &want.index_folder_sddl(&writer));
+    check(&mut out, "Shared folder: lock a folder on the server", locked.is_ok(), locked.clone().err().unwrap_or_else(|| "protected, inheritance off".into()));
+    let f = dir.join("index.db");
+    let wrote = std::fs::write(&f, b"x");
+    check(&mut out, "Shared folder: you can still write into it", wrote.is_ok(), wrote.err().map(|e| e.to_string()).unwrap_or_default());
+    let cache = std::sync::Mutex::new(std::collections::HashMap::new());
+    let back = crate::acl::read_access(&f.to_string_lossy(), &cache).and_then(|got| crate::acl::same_readers(&want, &got, &writer));
+    check(&mut out, "Shared folder: the server kept exactly that lock", back.is_ok(), back.err().unwrap_or_else(|| "read back from the server".into()));
+    let removed = std::fs::remove_dir_all(&dir);
+    check(&mut out, "Shared folder: test folder removed", removed.is_ok(), removed.err().map(|e| e.to_string()).unwrap_or_else(|| dir.display().to_string()));
+    out
+}
+
 /// Document reading: the embedded PDF engine opens and reads a test PDF, and
 /// Windows OCR is reported (not required: scanned pages are then skipped).
 pub fn run_content(pdfium: Option<&std::path::Path>) -> Vec<Check> {
@@ -114,4 +153,19 @@ pub fn run_content(pdfium: Option<&std::path::Path>) -> Vec<Check> {
     }
     check(&mut out, "Contents: Windows OCR available", true, if ex.has_ocr() { "yes — scanned pages are read locally" } else { "no — scanned pages will be listed as unreadable" });
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn share_check_runs_clean() {
+        let d = std::env::temp_dir().join(format!("tp-share-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let out = super::run_share(&d);
+        for c in &out {
+            assert!(c.ok, "{}: {}", c.name, c.detail);
+        }
+        assert!(std::fs::read_dir(&d).unwrap().next().is_none(), "test folder removed");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

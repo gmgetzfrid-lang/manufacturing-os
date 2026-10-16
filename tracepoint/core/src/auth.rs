@@ -122,6 +122,9 @@ pub struct Member {
     pub sid: String,
     pub account: String,
     pub role: Role,
+    /// Other SIDs for the same person (an Entra ID sign-in SID).
+    #[serde(default)]
+    pub also: Vec<String>,
     #[serde(default = "yes")]
     pub can_ai: bool,
     #[serde(default)]
@@ -153,8 +156,17 @@ impl Roster {
             Err(e) => Err(format!("Can't read {}: {e}", path.display())),
         }
     }
-    pub fn role_of(&self, sid: &str) -> Role {
-        self.members.iter().find(|m| m.sid == sid).map(|m| m.role).unwrap_or(Role::User)
+    /// This person's entry: by any of their SIDs, else by DOMAIN\user
+    /// (a cloud-joined PC whose domain SID couldn't be looked up).
+    pub fn find(&self, me: &crate::acl::Identity) -> Option<&Member> {
+        let mine = me.all_sids();
+        self.members
+            .iter()
+            .find(|m| mine.contains(&m.sid) || m.also.iter().any(|a| mine.contains(a)))
+            .or_else(|| self.members.iter().find(|m| m.account.contains('\\') && m.account.eq_ignore_ascii_case(&me.account)))
+    }
+    pub fn role_of(&self, me: &crate::acl::Identity) -> Role {
+        self.find(me).map(|m| m.role).unwrap_or(Role::User)
     }
     pub fn sids(&self, role: Role) -> Vec<String> {
         self.members.iter().filter(|m| m.role == role).map(|m| m.sid.clone()).collect()
@@ -222,14 +234,14 @@ impl UserStore {
         let mut s = UserStore { me, roster_path, roster, local: local.to_path_buf(), prefs, activity_path, activity: None, standalone };
         if standalone && s.roster.members.is_empty() {
             // This PC only: the person running it administers it.
-            s.roster.members.push(Member { sid: s.me.sid.clone(), account: s.me.account.clone(), role: Role::Admin, can_ai: true, added_by: "first run".into(), added_at: now() });
+            s.roster.members.push(Member { sid: s.me.sid.clone(), account: s.me.account.clone(), role: Role::Admin, also: s.me.also.clone(), can_ai: true, added_by: "first run".into(), added_at: now() });
             let _ = s.save_roster();
         }
         Ok(s)
     }
 
     pub fn open_in_memory(me: crate::acl::Identity, role: Role) -> UserStore {
-        let roster = Roster { version: 1, members: vec![Member { sid: me.sid.clone(), account: me.account.clone(), role, can_ai: true, added_by: "test".into(), added_at: now() }], policy: BTreeMap::new() };
+        let roster = Roster { version: 1, members: vec![Member { sid: me.sid.clone(), account: me.account.clone(), role, also: vec![], can_ai: true, added_by: "test".into(), added_at: now() }], policy: BTreeMap::new() };
         UserStore {
             me,
             roster_path: PathBuf::new(),
@@ -260,8 +272,8 @@ impl UserStore {
     }
 
     pub fn session(&self) -> Session {
-        let role = self.roster.role_of(&self.me.sid);
-        let can_ai = self.roster.members.iter().find(|m| m.sid == self.me.sid).map(|m| m.can_ai).unwrap_or(false);
+        let role = self.roster.role_of(&self.me);
+        let can_ai = self.roster.find(&self.me).map(|m| m.can_ai).unwrap_or(false);
         Session {
             user: UserInfo { id: self.me.sid.clone(), account: self.me.account.clone(), name: self.me.display.clone(), role, can_ai, has_ai_key: self.prefs.secrets.contains_key("ai_key") },
         }
@@ -280,15 +292,16 @@ impl UserStore {
     }
 
     fn require_admin(&self) -> Result<(), AuthError> {
-        if self.roster.role_of(&self.me.sid) != Role::Admin {
+        if self.roster.role_of(&self.me) != Role::Admin {
             return err("Only a TracePoint administrator can do that.");
         }
         Ok(())
     }
 
-    /// Start a new shared setup with this person as its first administrator.
-    pub fn found_team(&mut self, roster_path: PathBuf, activity_path: PathBuf) -> Result<(), AuthError> {
-        self.roster = Roster { version: 1, members: vec![Member { sid: self.me.sid.clone(), account: self.me.account.clone(), role: Role::Admin, can_ai: true, added_by: "set up the shared folder".into(), added_at: now() }], policy: BTreeMap::new() };
+    /// Start a new shared setup with `founder` (this person, as the file
+    /// server knows them) as its first administrator.
+    pub fn found_team(&mut self, roster_path: PathBuf, activity_path: PathBuf, founder: Member) -> Result<(), AuthError> {
+        self.roster = Roster { version: 1, members: vec![founder], policy: BTreeMap::new() };
         self.roster_path = roster_path;
         self.activity_path = activity_path;
         self.activity = None;
@@ -301,13 +314,15 @@ impl UserStore {
         self.require_admin()?;
         self.refresh();
         let before = self.roster.clone();
-        if who.sid == self.me.sid && role != Role::Admin {
+        let me_entry = self.roster.find(&self.me).map(|m| m.sid.clone());
+        if (who.sid == self.me.sid || Some(&who.sid) == me_entry.as_ref()) && role != Role::Admin {
             return err("You can't remove your own administrator role. Ask another administrator.");
         }
         self.roster.members.retain(|m| m.sid != who.sid);
         if role != Role::User {
             let prev_ai = before.members.iter().find(|m| m.sid == who.sid).map(|m| m.can_ai).unwrap_or(true);
-            self.roster.members.push(Member { sid: who.sid.clone(), account: who.account.clone(), role, can_ai: can_ai.unwrap_or(prev_ai), added_by: self.me.account.clone(), added_at: now() });
+            let also = before.members.iter().find(|m| m.sid == who.sid).map(|m| m.also.clone()).unwrap_or_else(|| who.also.clone());
+            self.roster.members.push(Member { sid: who.sid.clone(), account: who.account.clone(), role, also, can_ai: can_ai.unwrap_or(prev_ai), added_by: self.me.account.clone(), added_at: now() });
         }
         if self.roster.sids(Role::Admin).is_empty() {
             self.roster = before;
@@ -388,7 +403,7 @@ impl UserStore {
     // ── Activity log and AI ledger (administrators and indexers) ───────
     fn activity(&mut self) -> Result<&Connection, AuthError> {
         if self.activity.is_none() {
-            if !self.roster.role_of(&self.me.sid).can_rescan() {
+            if !self.roster.role_of(&self.me).can_rescan() {
                 return err("The activity log is for administrators and indexers.");
             }
             if let Some(d) = self.activity_path.parent() {
@@ -477,7 +492,7 @@ mod tests {
     use crate::acl::Identity;
 
     fn id(n: &str, sid: &str) -> Identity {
-        Identity { sid: sid.into(), account: format!("KERN\\{n}"), display: n.into() }
+        Identity { sid: sid.into(), account: format!("KERN\\{n}"), display: n.into(), also: vec![] }
     }
 
     #[test]
@@ -490,7 +505,8 @@ mod tests {
         // First person sets up the shared folder: administrator.
         let mut a = UserStore::open(id("ggetzfrid", "S-1-5-21-1-1"), &local, Some(&team)).unwrap();
         assert_eq!(a.session().user.role, Role::User, "nobody is admin of a folder they didn't set up");
-        a.found_team(team.join("roles.json"), team.join("admin").join("activity.db")).unwrap();
+        let founder = Member { sid: "S-1-5-21-1-1".into(), account: "KERN\\ggetzfrid".into(), role: Role::Admin, also: vec![], can_ai: true, added_by: String::new(), added_at: String::new() };
+        a.found_team(team.join("roles.json"), team.join("admin").join("activity.db"), founder).unwrap();
         assert_eq!(a.session().user.role, Role::Admin);
         a.set_member(&id("tech", "S-1-5-21-1-2"), Role::Indexer, None).unwrap();
         // Another person on another PC: roles from the same file.
@@ -516,6 +532,19 @@ mod tests {
         let (spent, held, calls) = a.ai_month(m).unwrap();
         assert!((spent - 0.01).abs() < 1e-9 && (held - 0.02).abs() < 1e-9 && calls == 2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cloud_signin_matches_domain_entry() {
+        let r = Roster { version: 1, members: vec![Member { sid: "S-1-5-21-7-7-7-1001".into(), account: "KERNOIL\\ggetzfrid".into(), role: Role::Admin, also: vec![], can_ai: true, added_by: String::new(), added_at: String::new() }], policy: BTreeMap::new() };
+        // Domain SID looked up on a cloud-joined PC.
+        let me = Identity { sid: "S-1-5-21-7-7-7-1001".into(), account: "KERNOIL\\ggetzfrid".into(), display: "ggetzfrid".into(), also: vec!["S-1-12-1-1-2-3-4".into()] };
+        assert_eq!(r.role_of(&me), Role::Admin);
+        // Lookup failed: only the cloud SID, same domain account name.
+        let cloud = Identity { sid: "S-1-12-1-1-2-3-4".into(), account: "KERNOIL\\ggetzfrid".into(), display: "ggetzfrid".into(), also: vec![] };
+        assert_eq!(r.role_of(&cloud), Role::Admin);
+        let other = Identity { sid: "S-1-12-1-9".into(), account: "KERNOIL\\someone".into(), display: "x".into(), also: vec![] };
+        assert_eq!(r.role_of(&other), Role::User);
     }
 
     #[test]

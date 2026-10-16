@@ -18,7 +18,7 @@ impl Platform for Quiet {
 }
 
 fn person(name: &str, sid: &str) -> Identity {
-    Identity { sid: sid.into(), account: format!("KERN\\{name}"), display: name.into() }
+    Identity { sid: sid.into(), account: format!("KERN\\{name}"), display: name.into(), also: vec![] }
 }
 
 #[test]

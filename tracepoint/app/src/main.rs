@@ -212,6 +212,10 @@ fn selftest() -> i32 {
     println!("Executable: {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default());
     println!();
     let mut checks = tp_core::selftest::run(&[]);
+    // The real file server: `--selftest \\server\share\folder`, default \\thor\Public\TP.
+    let share = std::env::args().skip_while(|a| a != "--selftest" && a != "/selftest").nth(1).unwrap_or_else(|| r"\\thor\Public\TP".into());
+    println!("Shared folder test: {share}");
+    checks.extend(tp_core::selftest::run_share(Path::new(&share)));
     // The PDF engine is checked from a temporary copy, removed afterwards.
     let dll = std::env::temp_dir().join(format!("TracePoint-selftest-pdfium-{}.dll", std::process::id()));
     if std::fs::write(&dll, PDFIUM_DLL).is_ok() {

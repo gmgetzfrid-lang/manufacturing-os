@@ -302,12 +302,32 @@ pub fn team_folder_sddl(full: &[String], modify: &[String], readers: &[&str]) ->
 }
 
 /// The signed-in Windows account.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Identity {
+    /// The SID file servers know this person by (on-premises domain).
     pub sid: String,
     /// DOMAIN\user
     pub account: String,
     pub display: String,
+    /// Other SIDs for the same person, e.g. the Microsoft Entra ID (Azure
+    /// AD) SID a cloud-joined PC signs in with (S-1-12-1-…).
+    #[serde(default)]
+    pub also: Vec<String>,
+}
+
+impl Identity {
+    pub fn new(sid: &str, account: &str, display: &str) -> Identity {
+        Identity { sid: sid.into(), account: account.into(), display: display.into(), also: vec![] }
+    }
+    pub fn all_sids(&self) -> Vec<String> {
+        std::iter::once(self.sid.clone()).chain(self.also.iter().cloned()).collect()
+    }
+}
+
+/// An account SID for a person (not a group or a built-in principal):
+/// on-premises domain, Entra ID, or a NAS's mapped Unix user.
+pub fn is_person_sid(s: &str) -> bool {
+    (s.starts_with("S-1-5-21-") && !s.ends_with("-513") && !s.ends_with("-512")) || s.starts_with("S-1-12-1-") || s.starts_with("S-1-22-1-")
 }
 
 // ── Platform layer ─────────────────────────────────────────────────────────
@@ -321,7 +341,7 @@ mod win {
         ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW, GetNamedSecurityInfoW, SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
     };
     use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
-    use windows_sys::Win32::Security::{GetSecurityDescriptorDacl, GetTokenInformation, LookupAccountNameW, LookupAccountSidW, TokenUser, ACL, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SID_NAME_USE, TOKEN_QUERY, TOKEN_USER};
+    use windows_sys::Win32::Security::{GetSecurityDescriptorDacl, GetTokenInformation, LookupAccountNameW, LookupAccountSidW, TokenUser, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SID_NAME_USE, TOKEN_QUERY, TOKEN_USER};
     use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
     use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -379,6 +399,23 @@ mod win {
             LocalFree(out as _);
             LocalFree(sd as _);
             res
+        }
+    }
+
+    /// Who owns a file or folder (on a file server: who the server thinks
+    /// created it).
+    pub fn owner_sid(path: &str) -> Result<String, String> {
+        unsafe {
+            let w = wide(&os(path));
+            let mut owner: PSID = std::ptr::null_mut();
+            let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+            let rc = GetNamedSecurityInfoW(w.as_ptr(), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, &mut owner, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), &mut sd);
+            if rc != 0 {
+                return Err(format!("owner unreadable: {}", std::io::Error::from_raw_os_error(rc as i32)));
+            }
+            let r = sid_to_string(owner);
+            LocalFree(sd as _);
+            if r.is_empty() { Err("owner unreadable".into()) } else { Ok(r) }
         }
     }
 
@@ -463,7 +500,16 @@ mod win {
             let sid = sid_to_string(tu.User.Sid);
             let account = sid_account(tu.User.Sid).unwrap_or_else(|| sid.clone());
             let display = account.rsplit('\\').next().unwrap_or(&account).to_string();
-            Some(Identity { sid, account, display })
+            // A cloud-joined PC (Entra ID) signs in with S-1-12-1-…, but file
+            // servers know the person by their domain account: use that.
+            if !sid.starts_with("S-1-5-21-") {
+                if let Ok(onprem) = lookup(&account) {
+                    if onprem.sid.starts_with("S-1-5-21-") && onprem.sid != sid {
+                        return Some(Identity { sid: onprem.sid, account: onprem.account, display, also: vec![sid] });
+                    }
+                }
+            }
+            Some(Identity { sid, account, display, also: vec![] })
         }
     }
 
@@ -482,7 +528,7 @@ mod win {
             let s = sid_to_string(p);
             let account = sid_account(p).unwrap_or_else(|| name.trim().to_string());
             let display = account.rsplit('\\').next().unwrap_or(&account).to_string();
-            Ok(Identity { sid: s, account, display })
+            Ok(Identity { sid: s, account, display, also: vec![] })
         }
     }
 
@@ -636,10 +682,13 @@ pub mod sim {
             Access::Missing
         }
     }
+    pub fn owner_sid(_path: &str) -> Result<String, String> {
+        Ok(ME.read().unwrap().0.clone())
+    }
     pub fn current_user() -> Option<Identity> {
         let sid = ME.read().unwrap().0.clone();
         let user = std::env::var("USER").unwrap_or_else(|_| "dev".into());
-        Some(Identity { sid, account: format!("DEV\\{user}"), display: user })
+        Some(Identity { sid, account: format!("DEV\\{user}"), display: user, also: vec![] })
     }
 }
 
@@ -701,6 +750,28 @@ pub fn lock_folder(path: &str, sddl: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Who owns a file or folder.
+pub fn owner_sid(path: &str) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        win::owner_sid(path)
+    }
+    #[cfg(not(windows))]
+    {
+        sim::owner_sid(path)
+    }
+}
+
+/// The SID to give write access on a folder this person just created on a
+/// file server: whoever the server says owns it (that is how the server
+/// knows them), else their domain SID.
+pub fn writer_sid(created_dir: &str, me: &Identity) -> String {
+    match owner_sid(created_dir) {
+        Ok(o) if is_person_sid(&o) => o,
+        _ => me.sid.clone(),
+    }
+}
+
 /// Read-only check: may the signed-in user open this (folder: list it)?
 pub fn probe(path: &str, dir: bool) -> Access {
     #[cfg(windows)]
@@ -738,7 +809,7 @@ pub fn current_user() -> Identity {
     let me = win::current_user();
     #[cfg(not(windows))]
     let me = sim::current_user();
-    me.unwrap_or_else(|| Identity { sid: String::new(), account: "unknown".into(), display: "unknown".into() })
+    me.unwrap_or_else(|| Identity::new("", "unknown", "unknown"))
 }
 
 /// A Windows account by name (DOMAIN\user, user@domain or user).
@@ -756,7 +827,7 @@ pub fn lookup_account(name: &str) -> Result<Identity, String> {
         let h = crate::crawl::stable_id("sid", &[&n.to_lowercase()]);
         let num = u32::from_str_radix(&h[4..12], 16).unwrap_or(1) % 90000 + 1000;
         let account = if n.contains('\\') { n.to_string() } else { format!("DEV\\{n}") };
-        Ok(Identity { sid: format!("S-1-5-21-9-9-9-{num}"), display: account.rsplit('\\').next().unwrap_or(n).to_string(), account })
+        Ok(Identity { sid: format!("S-1-5-21-9-9-9-{num}"), display: account.rsplit('\\').next().unwrap_or(n).to_string(), account, also: vec![] })
     }
 }
 
