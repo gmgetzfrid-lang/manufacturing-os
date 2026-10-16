@@ -402,6 +402,26 @@ mod win {
         }
     }
 
+    /// Create a folder with its access list set as part of the create — no
+    /// "change permissions" right needed (shares often don't grant it).
+    pub fn create_dir_with_sddl(path: &str, sddl: &str) -> Result<(), String> {
+        use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+        use windows_sys::Win32::Storage::FileSystem::CreateDirectoryW;
+        unsafe {
+            let ws = wide(sddl);
+            let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+            if ConvertStringSecurityDescriptorToSecurityDescriptorW(ws.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) == 0 {
+                return Err(last_error("bad access list"));
+            }
+            let sa = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: sd, bInheritHandle: 0 };
+            let wp = wide(&os(path));
+            let ok = CreateDirectoryW(wp.as_ptr(), &sa);
+            let res = if ok != 0 { Ok(()) } else { Err(last_error("couldn't create the locked folder")) };
+            LocalFree(sd as _);
+            res
+        }
+    }
+
     /// Who owns a file or folder (on a file server: who the server thinks
     /// created it).
     pub fn owner_sid(path: &str) -> Result<String, String> {
@@ -682,6 +702,12 @@ pub mod sim {
             Access::Missing
         }
     }
+    pub fn create_dir_with_sddl(path: &str, sddl: &str) -> Result<(), String> {
+        parse_dacl(sddl)?;
+        let p = std::path::PathBuf::from(path.replace('\\', "/"));
+        std::fs::create_dir(&p).map_err(|e| e.to_string())?;
+        std::fs::write(acl_file(&p), sddl).map_err(|e| e.to_string())
+    }
     pub fn owner_sid(_path: &str) -> Result<String, String> {
         Ok(ME.read().unwrap().0.clone())
     }
@@ -748,6 +774,34 @@ pub fn lock_folder(path: &str, sddl: &str) -> Result<(), String> {
         return Err("the file server did not keep the folder's own permissions (inheritance is still on)".into());
     }
     Ok(())
+}
+
+/// Create a new folder already locked (the lock is part of the create),
+/// then read it back. Works on shares that don't allow changing permissions.
+pub fn create_locked_dir(path: &str, sddl: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    win::create_dir_with_sddl(path, sddl)?;
+    #[cfg(not(windows))]
+    sim::create_dir_with_sddl(path, sddl)?;
+    let back = parse_dacl(&dacl_sddl(path)?)?;
+    if !back.protected {
+        return Err("the file server did not keep the folder's own permissions (inheritance is still on)".into());
+    }
+    Ok(())
+}
+
+/// Who the file server says this person is: create a scratch folder in
+/// `parent`, read its owner, remove it. Falls back to the domain SID.
+pub fn server_identity(parent: &str, me: &Identity) -> String {
+    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let probe = format!("{}\\.tp-whoami-{}-{n}", parent.trim_end_matches('\\'), std::process::id());
+    let p = crate::crawl::os_path(&probe);
+    if std::fs::create_dir(&p).is_err() {
+        return me.sid.clone();
+    }
+    let who = writer_sid(&probe, me);
+    let _ = std::fs::remove_dir(&p);
+    who
 }
 
 /// Who owns a file or folder.

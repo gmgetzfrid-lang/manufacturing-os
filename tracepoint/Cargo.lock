@@ -3148,7 +3148,7 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tp-core"
-version = "2.0.0"
+version = "2.0.2"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "tpserve"
-version = "2.0.0"
+version = "2.0.2"
 dependencies = [
  "serde_json",
  "tiny_http",
@@ -3180,7 +3180,7 @@ dependencies = [
 
 [[package]]
 name = "tracepoint"
-version = "2.0.0"
+version = "2.0.2"
 dependencies = [
  "embed-resource",
  "image",

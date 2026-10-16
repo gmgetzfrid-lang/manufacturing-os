@@ -89,12 +89,25 @@ fn folder_locks(roster: &crate::auth::Roster) -> (String, String) {
     (acl::team_folder_sddl(&admins, &indexers, &[acl::SID_AUTHENTICATED_USERS]), acl::team_folder_sddl(&admins, &indexers, &[]))
 }
 
-/// Re-apply the shared folder's locks for the current roles.
+/// Re-apply the shared folder's locks for the current roles (needs the
+/// "change permissions" right on the share).
 pub fn apply_locks(team: &Path, roster: &crate::auth::Roster) -> Result<(), String> {
     let (top, admin) = folder_locks(roster);
-    acl::lock_folder(&team.to_string_lossy(), &top).map_err(|e| format!("Couldn't set permissions on {}: {e}", team.display()))?;
-    acl::lock_folder(&team.join("admin").to_string_lossy(), &admin).map_err(|e| format!("Couldn't set permissions on {}\\admin: {e}", team.display()))?;
+    let hint = "THOR's share lets TracePoint create files but not change permissions. Ask IT to give the new person Modify (indexer) or Full control (administrator) on";
+    acl::lock_folder(&team.to_string_lossy(), &top).map_err(|e| format!("{hint} {} ({e}).", team.display()))?;
+    acl::lock_folder(&team.join("admin").to_string_lossy(), &admin).map_err(|e| format!("{hint} {}\\admin ({e}).", team.display()))?;
     Ok(())
+}
+
+/// A new folder, locked as part of creating it; an existing one is relocked.
+fn make_locked(guard: &Guard, dir: &Path, sddl: &str) -> Result<(), String> {
+    guard.check(dir).map_err(|e| e.to_string())?;
+    let p = dir.to_string_lossy();
+    if dir.exists() {
+        acl::lock_folder(&p, sddl)
+    } else {
+        acl::create_locked_dir(&p, sddl)
+    }
 }
 
 /// First-time setup of the shared folder. `found` writes roles.json with
@@ -104,14 +117,18 @@ pub fn apply_locks(team: &Path, roster: &crate::auth::Roster) -> Result<(), Stri
 pub fn setup(guard: &Guard, team: &Path, me: &acl::Identity, found: &mut dyn FnMut(crate::auth::Member) -> Result<(), String>) -> Result<(), String> {
     use crate::auth::{Member, Role, Roster};
     guard.allow(team).map_err(|e| e.to_string())?;
-    guard.create_dir_all(team).map_err(|e| format!("Can't create {} — you need write access there: {e}", team.display()))?;
-    guard.create_dir_all(&team.join("index")).map_err(|e| e.to_string())?;
-    guard.create_dir_all(&team.join("admin")).map_err(|e| e.to_string())?;
-    let writer = acl::writer_sid(&team.to_string_lossy(), me);
+    let parent = team.parent().ok_or("Choose a folder inside a share.")?;
+    if !parent.is_dir() {
+        return Err(format!("Can't reach {}.", parent.display()));
+    }
+    let writer = acl::server_identity(&parent.to_string_lossy(), me);
     let also: Vec<String> = me.all_sids().into_iter().filter(|s| *s != writer).collect();
     let founder = Member { sid: writer, account: me.account.clone(), role: Role::Admin, also, can_ai: true, added_by: "set up the shared folder".into(), added_at: crate::auth::now() };
     let roster = Roster { version: 1, members: vec![founder.clone()], policy: Default::default() };
-    apply_locks(team, &roster)?;
+    let (top, admin) = folder_locks(&roster);
+    make_locked(guard, team, &top).map_err(|e| format!("Couldn't lock {}: {e}", team.display()))?;
+    guard.create_dir_all(&team.join("index")).map_err(|e| e.to_string())?;
+    make_locked(guard, &team.join("admin"), &admin).map_err(|e| format!("Couldn't lock {}\\admin: {e}", team.display()))?;
     found(founder)?;
     let marker = serde_json::json!({"product": "TracePoint", "created": crate::auth::now(), "by": me.account, "version": crate::service::VERSION});
     guard.write(&team.join(MARKER), marker.to_string().as_bytes()).map_err(|e| e.to_string())?;
@@ -180,6 +197,7 @@ pub fn publish(guard: &Guard, team: &Path, me: &acl::Identity, master: &Path, co
     let index_dir = team.join("index");
     guard.create_dir_all(&index_dir).map_err(|e| e.to_string())?;
     guard.create_dir_all(scratch).map_err(|e| e.to_string())?;
+    let writer = acl::server_identity(&index_dir.to_string_lossy(), me);
     let mut fresh: Vec<GroupEntry> = Vec::new();
     for (class, root, readers, broad, files) in &classes {
         let ra = ReadAccess::parse_fingerprint(readers);
@@ -207,12 +225,7 @@ pub fn publish(guard: &Guard, team: &Path, me: &acl::Identity, master: &Path, co
             },
             None => false,
         };
-        if let Err(e) = guard.create_dir_all(&dir) {
-            refuse(e.to_string(), &mut report);
-            continue;
-        }
-        let writer = acl::writer_sid(&dir.to_string_lossy(), me);
-        if let Err(e) = acl::lock_folder(&dir.to_string_lossy(), &ra.index_folder_sddl(&writer)) {
+        if let Err(e) = make_locked(guard, &dir, &ra.index_folder_sddl(&writer)) {
             refuse(e, &mut report);
             continue;
         }
