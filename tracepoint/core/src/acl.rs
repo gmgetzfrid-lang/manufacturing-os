@@ -340,7 +340,6 @@ mod win {
     use windows_sys::Win32::Security::Authorization::{
         ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, ConvertStringSidToSidW, GetNamedSecurityInfoW, SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
     };
-    use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
     use windows_sys::Win32::Security::{GetSecurityDescriptorDacl, GetTokenInformation, LookupAccountNameW, LookupAccountSidW, TokenUser, ACL, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SID_NAME_USE, TOKEN_QUERY, TOKEN_USER};
     use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
     use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
@@ -567,34 +566,6 @@ mod win {
 
     const ENTROPY: &[u8] = b"TracePoint secret v1";
 
-    pub fn protect(data: &[u8]) -> Result<Vec<u8>, String> {
-        unsafe {
-            let inb = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
-            let ent = CRYPT_INTEGER_BLOB { cbData: ENTROPY.len() as u32, pbData: ENTROPY.as_ptr() as *mut u8 };
-            let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
-            if CryptProtectData(&inb, std::ptr::null(), &ent, std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out) == 0 {
-                return Err(last_error("Windows could not encrypt the key"));
-            }
-            let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
-            LocalFree(out.pbData as _);
-            Ok(v)
-        }
-    }
-
-    pub fn unprotect(data: &[u8]) -> Result<zeroize::Zeroizing<Vec<u8>>, String> {
-        unsafe {
-            let inb = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
-            let ent = CRYPT_INTEGER_BLOB { cbData: ENTROPY.len() as u32, pbData: ENTROPY.as_ptr() as *mut u8 };
-            let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
-            if CryptUnprotectData(&inb, std::ptr::null_mut(), &ent, std::ptr::null(), std::ptr::null(), CRYPTPROTECT_UI_FORBIDDEN, &mut out) == 0 {
-                return Err(last_error("Windows could not decrypt the key"));
-            }
-            let v = zeroize::Zeroizing::new(std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec());
-            std::ptr::write_bytes(out.pbData, 0, out.cbData as usize);
-            LocalFree(out.pbData as _);
-            Ok(v)
-        }
-    }
 
     unsafe fn reg(root: HKEY, value: &str, dword: bool) -> Option<String> {
         let key = wide("SOFTWARE\\Policies\\TracePoint");
@@ -946,60 +917,6 @@ pub fn account_name(sid: &str) -> Option<String> {
         let _ = sid;
         None
     }
-}
-
-/// Encrypt for this Windows user on this PC (DPAPI). Dev hosts: a local key.
-pub fn protect_secret(data: &[u8], local_dir: &std::path::Path) -> Result<Vec<u8>, String> {
-    #[cfg(windows)]
-    {
-        let _ = local_dir;
-        win::protect(data)
-    }
-    #[cfg(not(windows))]
-    {
-        use chacha20poly1305::aead::{Aead, KeyInit};
-        let key = dev_key(local_dir)?;
-        let mut nonce = [0u8; 24];
-        getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
-        let c = chacha20poly1305::XChaCha20Poly1305::new((&key).into());
-        let mut out = nonce.to_vec();
-        out.extend(c.encrypt((&nonce).into(), data).map_err(|_| "encrypt failed".to_string())?);
-        Ok(out)
-    }
-}
-
-pub fn unprotect_secret(data: &[u8], local_dir: &std::path::Path) -> Result<zeroize::Zeroizing<Vec<u8>>, String> {
-    #[cfg(windows)]
-    {
-        let _ = local_dir;
-        win::unprotect(data)
-    }
-    #[cfg(not(windows))]
-    {
-        use chacha20poly1305::aead::{Aead, KeyInit};
-        if data.len() < 40 {
-            return Err("damaged".into());
-        }
-        let key = dev_key(local_dir)?;
-        let c = chacha20poly1305::XChaCha20Poly1305::new((&key).into());
-        c.decrypt(data[..24].into(), &data[24..]).map(zeroize::Zeroizing::new).map_err(|_| "Could not decrypt the key".to_string())
-    }
-}
-
-#[cfg(not(windows))]
-fn dev_key(local_dir: &std::path::Path) -> Result<[u8; 32], String> {
-    let p = local_dir.join("dev-secret.key");
-    if let Ok(b) = std::fs::read(&p) {
-        if b.len() == 32 {
-            let mut k = [0u8; 32];
-            k.copy_from_slice(&b);
-            return Ok(k);
-        }
-    }
-    let mut k = [0u8; 32];
-    getrandom::fill(&mut k).map_err(|e| e.to_string())?;
-    std::fs::write(&p, k).map_err(|e| e.to_string())?;
-    Ok(k)
 }
 
 /// IT policy values (HKLM, then HKCU \SOFTWARE\Policies\TracePoint).

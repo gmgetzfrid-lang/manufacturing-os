@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
-import { Bot, FolderCog, ScrollText, Search, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
+import { FolderCog, ScrollText, Search, Trash2, UserPlus, Users } from "lucide-react";
 import { api } from "../lib/api";
 import type { AppState, Member, Role } from "../lib/types";
-import { Avatar, Button, Empty, Field, IconButton, Input, Pill, Section, Segmented, Select, Toggle, useToast } from "../components/ui";
+import { Avatar, Button, Empty, Field, IconButton, Input, Pill, Section, Segmented, Select, useToast } from "../components/ui";
 import { initials, when } from "../lib/format";
 
 const ROLE: Record<Role, { label: string; color: string; desc: string }> = {
-  admin: { label: "Administrator", color: "var(--color-accent)", desc: "Gives out roles, scans THOR, shares the index. The only role that can use AI (to read scanned pages)." },
-  indexer: { label: "Indexer", color: "var(--color-info)", desc: "Scans THOR and shares the index. No AI." },
+  admin: { label: "Administrator", color: "var(--color-accent)", desc: "Gives out roles, scans THOR, shares the index." },
+  indexer: { label: "Indexer", color: "var(--color-info)", desc: "Scans THOR and shares the index." },
   user: { label: "User", color: "var(--color-text-muted)", desc: "Everyone else, automatically. Search, equipment and graph — only what their Windows account can open." },
 };
 
 interface Audit { at: string; actor?: string; action: string; detail?: string; machine?: string }
 
-export function AdminPage({ state, setState }: { state: AppState; setState: (s: AppState) => void }) {
-  const [tab, setTab] = useState<"roles" | "folder" | "ai" | "audit">("roles");
+export function AdminPage({ state }: { state: AppState; setState?: (s: AppState) => void }) {
+  const [tab, setTab] = useState<"roles" | "folder" | "audit">("roles");
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-[1100px] px-8 py-7">
@@ -26,14 +26,12 @@ export function AdminPage({ state, setState }: { state: AppState; setState: (s: 
           <Segmented value={tab} onChange={setTab} options={[
             { value: "roles", label: <><Users className="size-3.5" />Roles</> },
             { value: "folder", label: <><FolderCog className="size-3.5" />Shared folder</> },
-            { value: "ai", label: <><Bot className="size-3.5" />AI</> },
             { value: "audit", label: <><ScrollText className="size-3.5" />Activity</> },
           ]} />
         </div>
         <div className="mt-6">
           {tab === "roles" && <Roles state={state} />}
           {tab === "folder" && <SharedFolder state={state} />}
-          {tab === "ai" && <AiPolicy state={state} setState={setState} />}
           {tab === "audit" && <AuditLog />}
         </div>
       </div>
@@ -71,7 +69,7 @@ function Roles({ state }: { state: AppState }) {
           <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left text-[11.5px] uppercase tracking-wide text-[var(--color-text-faint)]">
-                <th className="px-4 py-2.5 font-semibold">Windows account</th><th className="px-4 py-2.5 font-semibold">Role</th><th className="px-4 py-2.5 font-semibold">AI</th><th className="px-4 py-2.5 font-semibold">Added</th><th />
+                <th className="px-4 py-2.5 font-semibold">Windows account</th><th className="px-4 py-2.5 font-semibold">Role</th><th className="px-4 py-2.5 font-semibold">Added</th><th />
               </tr>
             </thead>
             <tbody>
@@ -84,7 +82,6 @@ function Roles({ state }: { state: AppState }) {
                     </div>
                   </td>
                   <td className="px-4 py-3"><Select value={m.role} onChange={(v) => set({ sid: m.sid, role: v }, "Role changed")} options={[{ value: "admin", label: "Administrator" }, { value: "indexer", label: "Indexer" }]} className="h-8 text-[12.5px]" /></td>
-                  <td className="px-4 py-3">{m.role === "admin" ? <Toggle checked={m.can_ai} onChange={(v) => set({ sid: m.sid, role: m.role, can_ai: v }, v ? "AI allowed" : "AI turned off")} /> : <span className="text-[12px] text-[var(--color-text-faint)]">—</span>}</td>
                   <td className="px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">{when(m.added_at)}{m.added_by ? ` · ${m.added_by}` : ""}</td>
                   <td className="px-2 py-3 text-right">{m.sid !== state.user?.id && <IconButton label="Remove role" onClick={() => confirm(`Remove ${m.account}'s role? They become a normal user.`) && set({ sid: m.sid, role: "user" }, "Role removed")}><Trash2 className="size-4" /></IconButton>}</td>
                 </tr>
@@ -150,50 +147,7 @@ function SharedFolder({ state }: { state: AppState }) {
         <ul className="space-y-2.5 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
           <li><b className="text-[var(--color-text)]">roles.json</b> — who is an administrator or indexer.</li>
           <li><b className="text-[var(--color-text)]">index\g-…\</b> — one folder per set of Windows permissions on THOR, locked with those same permissions. Each holds the names and document text of only those files.</li>
-          <li><b className="text-[var(--color-text)]">admin\</b> — activity log, AI spending, scan lock. Administrators and indexers only.</li>
-        </ul>
-      </Section>
-    </div>
-  );
-}
-
-function AiPolicy({ state, setState }: { state: AppState; setState: (s: AppState) => void }) {
-  const toast = useToast();
-  const set = async (key: string, value: string) => {
-    try { setState(await api<AppState>("admin.policy.set", { key, value })); toast("ok", "Saved"); } catch (e) { toast("error", (e as Error).message); }
-  };
-  const providers = [
-    { id: "anthropic", name: "Anthropic Claude", host: "api.anthropic.com" },
-    { id: "openai", name: "OpenAI", host: "api.openai.com" },
-    { id: "gemini", name: "Google Gemini", host: "generativelanguage.googleapis.com" },
-  ];
-  const allowed = state.policy.ai_providers;
-  return (
-    <div className="grid grid-cols-2 gap-6">
-      <Section title="AI reading of scanned pages" subtitle="Optional. TracePoint works fully without AI. Only administrators can use it, only to read pages free OCR couldn't, and only after approving the cost.">
-        <div className="space-y-5">
-          {state.policy.ai_blocked_by_it && <div className="rounded-xl bg-[var(--color-surface-2)] p-3 text-[13px]">Switched off on this PC by your IT department.</div>}
-          <Toggle checked={state.policy.ai_enabled} onChange={(v) => set("ai_enabled", String(v))} label="Allow AI for this team" hint="Off: no AI requests leave any PC." />
-          <div>
-            <div className="mb-2 text-[12.5px] font-medium text-[var(--color-text-muted)]">Allowed providers</div>
-            <div className="space-y-2">
-              {providers.map((p) => (
-                <div key={p.id} className="rounded-xl border border-[var(--color-border)] p-3">
-                  <Toggle checked={allowed.includes(p.id)} onChange={(v) => set("ai_providers", (v ? [...allowed, p.id] : allowed.filter((x) => x !== p.id)).join(","))} label={p.name} hint={<span className="font-mono text-[11.5px]">{p.host}</span>} />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </Section>
-      <Section title="How keys are protected">
-        <ul className="space-y-3 text-[13px] leading-relaxed">
-          {[
-            "Each administrator pastes their own API key. Windows encrypts it for their account on their PC (DPAPI).",
-            "Keys never go to the shared folder. Another person, or the same file on another PC, can't decrypt them.",
-            "Requests go straight from that PC to the chosen provider over HTTPS — no other server.",
-            "IT can switch AI off on any PC: HKLM\\SOFTWARE\\Policies\\TracePoint, DisableAI = 1.",
-          ].map((t) => <li key={t} className="flex gap-2.5"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--color-ok)]" />{t}</li>)}
+          <li><b className="text-[var(--color-text)]">admin\</b> — activity log and scan lock. Administrators and indexers only.</li>
         </ul>
       </Section>
     </div>
@@ -211,7 +165,7 @@ function AuditLog() {
     <div className="card overflow-hidden">
       <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-4 py-3">
         <div className="w-80"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter the log…" icon={<Search className="size-4" />} /></div>
-        <div className="ml-auto text-[12.5px] text-[var(--color-text-faint)]">Scans, sharing, roles, settings, AI use. Searches are never logged.</div>
+        <div className="ml-auto text-[12.5px] text-[var(--color-text-faint)]">Scans, sharing, roles, settings. Searches are never logged.</div>
       </div>
       <div className="max-h-[62vh] overflow-y-auto">
         {list.map((r, i) => (

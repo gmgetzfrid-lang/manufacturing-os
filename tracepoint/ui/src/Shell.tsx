@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Boxes, ChevronDown, Command, Database, FileSearch, Info, Lock, Moon, Network, Palette as PaletteIcon, Search, Settings2, Shield, Sun, UserRound } from "lucide-react";
+import { Boxes, ChevronDown, Command, Database, FileSearch, Info, Lock, Moon, Network, Palette as PaletteIcon, Search, Shield, Sun, UserRound } from "lucide-react";
 import { api } from "./lib/api";
 import type { AppState } from "./lib/types";
 import { PALETTES, useTheme } from "./lib/theme";
@@ -190,7 +190,6 @@ function UserMenu({ state, nav }: { state: AppState; nav: Nav }) {
           <div className="absolute bottom-[62px] left-2 right-2 z-20 card p-1.5 shadow-xl animate-[var(--animate-pop)]">
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-[12px] text-[var(--color-text-faint)]"><Lock className="size-3.5" /><span className="truncate">Windows: {u.account}</span></div>
             <MenuItem icon={<UserRound className="size-4" />} onClick={() => { setOpen(false); nav.go("profile"); }}>Settings</MenuItem>
-            {u.role === "admin" && <MenuItem icon={<Settings2 className="size-4" />} onClick={() => { setOpen(false); nav.go("profile", { tab: "ai" }); }}>AI for scanned pages</MenuItem>}
           </div>
         </>
       )}
@@ -229,7 +228,6 @@ function CommandPalette({ onClose, nav, isAdmin }: { onClose: () => void; nav: N
     { label: "Sources & index", hint: "Page", run: () => nav.go("sources") },
     ...(isAdmin ? [
       { label: "Admin: roles & shared folder", hint: "Page", run: () => nav.go("admin") },
-      { label: "AI for scanned pages", hint: "Page", run: () => nav.go("profile", { tab: "ai" }) },
     ] : []),
     { label: "About · For IT", hint: "Page", run: () => nav.go("about") },
   ].filter((p) => !q || p.label.toLowerCase().includes(q.toLowerCase()));

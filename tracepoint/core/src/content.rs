@@ -10,9 +10,8 @@
 //!
 //! Only files worth reading are read (`value`): photos, blank templates and
 //! zero-byte files are skipped; inspection records, U-1As, datasheets,
-//! drawings and calculations come first. Pages that still have no readable
-//! text after OCR, on valuable files, are staged for optional AI reading,
-//! which an administrator approves with a cost preview.
+//! drawings and calculations come first. Everything runs on this PC with
+//! Windows' own OCR; TracePoint contains no AI and sends nothing anywhere.
 //!
 //! THOR is only read: each file is read into memory and parsed from there.
 
@@ -45,7 +44,7 @@ pub struct Extracted {
     pub meta: crate::card::DocMeta,
 }
 
-/// How much a file is worth reading (0..1). Drives order, OCR and AI staging.
+/// How much a file is worth reading (0..1). Drives order and OCR.
 pub fn value(f: &FileRec) -> f32 {
     if f.flags & (F_JUNK | F_ZERO | F_BLANK) != 0 || f.cat == Category::Photos || f.cat == Category::Email {
         return 0.0;
@@ -220,29 +219,6 @@ impl Extractor {
     pub fn with_ocr(mut self, ocr: Box<dyn Ocr>) -> Extractor {
         self.ocr = Some(ocr);
         self
-    }
-
-    /// One page as a PNG for AI reading, longest side `long_side` px.
-    pub fn page_png(&self, bytes: Vec<u8>, ext: &str, page: u32, long_side: u32) -> Result<Vec<u8>, String> {
-        use pdfium_render::prelude::*;
-        let img = if ext == ".pdf" {
-            let pdfium = self.pdfium.as_ref().ok_or("PDF engine not available")?;
-            let doc = pdfium.load_pdf_from_byte_vec(bytes, None).map_err(|e| format!("Can't open PDF: {e}"))?;
-            let pg = doc.pages().get((page.max(1) - 1) as i32).map_err(|e| format!("No page {page}: {e}"))?;
-            let w = pg.width().value.max(1.0);
-            let h = pg.height().value.max(1.0);
-            let scale = long_side as f32 / w.max(h);
-            let cfg = PdfRenderConfig::new().set_target_width((w * scale) as i32).set_maximum_height((h * scale) as i32);
-            let bmp = pg.render_with_config(&cfg).map_err(|e| e.to_string())?;
-            let img = bmp.as_image().map_err(|e| e.to_string())?;
-            img
-        } else {
-            image::load_from_memory(&bytes).map_err(|e| e.to_string())?
-        };
-        let img = if img.width().max(img.height()) > long_side { img.thumbnail(long_side, long_side) } else { img };
-        let mut out = std::io::Cursor::new(Vec::new());
-        img.to_luma8().write_to(&mut out, image::ImageFormat::Png).map_err(|e| e.to_string())?;
-        Ok(out.into_inner())
     }
 
     pub fn has_pdf(&self) -> bool {
@@ -463,45 +439,6 @@ fn tidy(s: &str) -> String {
     out.trim().to_string()
 }
 
-// ── AI reading (approved, paid) ───────────────────────────────────────────
-
-/// Instructions for reading one page image (from Manufacturing OS's vision
-/// indexing, tuned for THOR documents).
-pub const AI_READ_PROMPT: &str = "You transcribe one page of a refinery mechanical-integrity document (inspection report, U-1A / data report, datasheet, drawing, calculation) so it can be searched. Output plain text only, no commentary.
-- Transcribe all legible text in reading order.
-- Tables: one row per line, cells separated by \" | \"; put the table's caption on the line above it.
-- Drawings: first write the title block as lines \"DRAWING NO:\", \"SHEET:\", \"REV:\", \"TITLE:\", \"DATE:\"; then every equipment number, tag (V-2, E-814, PSV-601B, TK-1100), nozzle schedule, dimension callout and note you can read.
-- Keep numbers, units and designations exactly as written (e.g. 0.312\", t-min, SA-516-70, ASME VIII Div 1).
-- Mark unreadable parts as [illegible]. Never guess.
-- If the page has no text at all (blank, or a photo without writing), reply exactly: EMPTY";
-
-/// The cheapest model with vision for each provider, used for AI reading.
-pub fn vision_model(provider: crate::ai::Provider) -> &'static str {
-    match provider {
-        crate::ai::Provider::Anthropic => "claude-haiku-5-5",
-        crate::ai::Provider::Openai => "gpt-5-mini",
-        crate::ai::Provider::Gemini => "gemini-2.5-flash-lite",
-    }
-}
-
-/// Typical tokens per page read by AI: (input incl. the image, output).
-pub const AI_PAGE_TOKENS: (u64, u64) = (1900, 600);
-pub const AI_PAGE_MAX_OUTPUT: u32 = 1500;
-
-pub fn save_ai_page(c: &rusqlite::Connection, file_id: &str, page: u32, text: &str, cost: f64, now: &str) -> rusqlite::Result<()> {
-    use rusqlite::params;
-    let t = text.trim();
-    if !t.is_empty() && t != "EMPTY" {
-        c.execute("DELETE FROM content_fts WHERE file_id=?1 AND page=?2", params![file_id, page])?;
-        c.execute("INSERT INTO content_fts(text, file_id, page, method) VALUES(?1,?2,?3,'ai')", params![tidy(t), file_id, page])?;
-    }
-    c.execute(
-        "UPDATE ai_stage SET status=?3, done_at=?4, cost_usd=?5 WHERE file_id=?1 AND page=?2",
-        params![file_id, page, if t == "EMPTY" { "empty" } else { "done" }, now, cost],
-    )?;
-    Ok(())
-}
-
 // ── Storage ───────────────────────────────────────────────────────────────
 
 /// The content database lives next to the index (thor_content.db), so the
@@ -511,15 +448,21 @@ pub fn ensure_schema(c: &rusqlite::Connection) -> rusqlite::Result<()> {
         "CREATE TABLE IF NOT EXISTS content_files(file_id TEXT PRIMARY KEY, path TEXT, size INTEGER, mtime_ns INTEGER, value REAL,
            pages INTEGER, text_pages INTEGER, ocr_pages INTEGER, unreadable INTEGER, chars INTEGER, status TEXT, error TEXT, extracted_at TEXT);
          CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(text, file_id UNINDEXED, page UNINDEXED, method UNINDEXED, tokenize='porter unicode61');
-         CREATE TABLE IF NOT EXISTS cards(file_id TEXT PRIMARY KEY, card TEXT NOT NULL);
-         CREATE TABLE IF NOT EXISTS ai_stage(file_id TEXT NOT NULL, page INTEGER NOT NULL, value REAL NOT NULL, reason TEXT, status TEXT NOT NULL DEFAULT 'staged',
-           staged_at TEXT, done_at TEXT, cost_usd REAL, PRIMARY KEY(file_id, page));",
-    )
+         CREATE TABLE IF NOT EXISTS cards(file_id TEXT PRIMARY KEY, card TEXT NOT NULL);",
+    )?;
+    // Older versions could read pages with AI: those transcriptions and the
+    // AI work list are removed. TracePoint contains no AI.
+    let had_ai: bool = c.query_row("SELECT count(*) FROM sqlite_master WHERE name='ai_stage'", [], |r| r.get::<_, i64>(0)).map(|n| n > 0).unwrap_or(false);
+    if had_ai {
+        c.execute("DELETE FROM content_fts WHERE method='ai'", [])?;
+        c.execute_batch("DROP TABLE ai_stage")?;
+    }
+    Ok(())
 }
 
 /// Saves one file's text, replacing what was there.
 #[allow(clippy::too_many_arguments)]
-pub fn save(c: &rusqlite::Connection, file_id: &str, path: &str, size: i64, mtime_ns: i64, value: f32, x: &Extracted, card: Option<&crate::card::Card>, allow_ai: bool, now: &str) -> rusqlite::Result<()> {
+pub fn save(c: &rusqlite::Connection, file_id: &str, path: &str, size: i64, mtime_ns: i64, value: f32, x: &Extracted, card: Option<&crate::card::Card>, now: &str) -> rusqlite::Result<()> {
     use rusqlite::params;
     match card {
         Some(k) => {
@@ -548,14 +491,6 @@ pub fn save(c: &rusqlite::Connection, file_id: &str, path: &str, size: i64, mtim
         "INSERT OR REPLACE INTO content_files VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
         params![file_id, path, size, mtime_ns, value, x.page_count, text_pages, x.ocr_pages, x.unreadable.len() as i64, chars as i64, status, x.error, now],
     )?;
-    // Valuable pages nobody can read locally are offered for AI reading.
-    c.execute("DELETE FROM ai_stage WHERE file_id=?1 AND status='staged'", [file_id])?;
-    if allow_ai && value >= 0.55 && x.error.is_none() {
-        let mut st = c.prepare_cached("INSERT OR IGNORE INTO ai_stage(file_id,page,value,reason,status,staged_at) VALUES(?1,?2,?3,?4,'staged',?5)")?;
-        for &pg in x.unreadable.iter().take(20) {
-            st.execute(params![file_id, pg, value, if x.ocr_pages > 0 { "OCR found no readable text" } else { "No text layer" }, now])?;
-        }
-    }
     Ok(())
 }
 

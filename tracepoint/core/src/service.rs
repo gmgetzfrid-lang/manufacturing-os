@@ -8,7 +8,6 @@
 //! lets you open (see `acl`, `partition`, `team`).
 
 use crate::acl;
-use crate::ai::{self, AiChoice, Provider};
 use crate::auth::{self, Role, Session, UserStore};
 use crate::engine::{Engine, SearchRequest};
 use crate::guard::{DriveResolver, Guard};
@@ -102,28 +101,11 @@ pub struct Service {
     scan_lock: Mutex<Option<PathBuf>>,
     content: Mutex<ContentState>,
     content_cancel: Arc<AtomicBool>,
-    airead: Mutex<AiReadState>,
-    airead_cancel: Arc<AtomicBool>,
     /// pdfium.dll (unpacked from the exe by the app) or libpdfium.so (dev).
     pdfium_lib: RwLock<Option<PathBuf>>,
     manifest_seen: Mutex<Option<String>>,
 }
 
-/// Progress of the approved AI reading of pages free OCR couldn't read.
-#[derive(Clone, Debug, Default, serde::Serialize)]
-pub struct AiReadState {
-    pub running: bool,
-    pub approved: usize,
-    pub done: usize,
-    pub empty: usize,
-    pub failed: usize,
-    pub spent_usd: f64,
-    pub model: Option<String>,
-    pub current: Option<String>,
-    pub started: Option<String>,
-    pub finished: Option<String>,
-    pub stopped_reason: Option<String>,
-}
 
 /// Progress of reading document contents.
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -135,7 +117,6 @@ pub struct ContentState {
     pub pages: usize,
     pub ocr_pages: usize,
     pub unreadable_pages: usize,
-    pub staged_for_ai: usize,
     pub errors: usize,
     pub files_per_min: f64,
     pub eta_min: Option<f64>,
@@ -184,11 +165,6 @@ impl From<auth::AuthError> for ApiError {
         ApiError::new(400, e.0)
     }
 }
-impl From<ai::AiError> for ApiError {
-    fn from(e: ai::AiError) -> Self {
-        ApiError::new(e.status.unwrap_or(502), e.message)
-    }
-}
 impl From<crate::guard::GuardError> for ApiError {
     fn from(e: crate::guard::GuardError) -> Self {
         ApiError::new(403, e.to_string())
@@ -224,10 +200,6 @@ impl Rows {
     }
 }
 
-/// IT switched AI off on this PC (registry / Group Policy).
-pub fn ai_blocked_by_it() -> bool {
-    acl::policy_dword("DisableAI").map(|v| v != 0).unwrap_or(false)
-}
 
 impl Service {
     pub fn new(platform: Box<dyn Platform>, local: PathBuf) -> Result<Arc<Service>, String> {
@@ -281,8 +253,6 @@ impl Service {
             content: Mutex::new(ContentState::default()),
             content_cancel: Arc::new(AtomicBool::new(false)),
             pdfium_lib: RwLock::new(None),
-            airead: Mutex::new(AiReadState::default()),
-            airead_cancel: Arc::new(AtomicBool::new(false)),
             manifest_seen: Mutex::new(None),
         }))
     }
@@ -342,7 +312,7 @@ impl Service {
                     continue;
                 }
             }
-            if me.scan.lock().unwrap().running || me.content.lock().unwrap().running || me.airead.lock().unwrap().running {
+            if me.scan.lock().unwrap().running || me.content.lock().unwrap().running {
                 continue;
             }
             let Some(t) = me.team_dir() else { continue };
@@ -711,7 +681,7 @@ impl Service {
     }
 
     /// Read document text: the shared (or this PC's) index, or — `private`
-    /// — your private folders (kept apart, never shared, never sent to AI).
+    /// — your private folders (kept apart, never shared).
     pub fn run_content_for(self: Arc<Self>, private: bool) {
         use crate::content::{self, Extractor};
         let Ok(e) = self.engine() else { return };
@@ -852,7 +822,7 @@ impl Service {
                 }
                 Err(err) => (content::Extracted { error: Some(format!("Could not read: {err}")), ..Default::default() }, None),
             };
-            let _ = content::save(&c, &f.file_id, &e.idx.full_path(fi), f.size, f.mtime, value, &x, card.as_ref(), !private, &now);
+            let _ = content::save(&c, &f.file_id, &e.idx.full_path(fi), f.size, f.mtime, value, &x, card.as_ref(), &now);
             {
                 let mut st = self.content.lock().unwrap();
                 st.done += 1;
@@ -863,7 +833,6 @@ impl Service {
                     st.errors += 1;
                 }
                 if value >= 0.55 && x.error.is_none() {
-                    st.staged_for_ai += x.unreadable.len().min(20);
                 }
                 st.current = Some(f.name.clone());
                 let mins = t0.elapsed().as_secs_f64() / 60.0;
@@ -920,124 +889,7 @@ impl Service {
         if private {
             return;
         }
-        self.audit("content_finished", &format!("{} of {} documents read · {} pages · {} OCR pages · {} pages staged for AI{}", st.done, st.total, st.pages, st.ocr_pages, st.staged_for_ai, if stopped { " (stopped)" } else { "" }));
-    }
-
-    /// Staged pages, most valuable first: (file index, file_id, page, value).
-    fn staged_pages(&self, e: &Engine, limit: usize) -> Vec<(u32, String, u32, f64)> {
-        let path = self.ensure_content_master();
-        let Ok(c) = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return vec![] };
-        let by_id: std::collections::HashMap<&str, u32> = e.idx.files.iter().enumerate().map(|(i, f)| (f.file_id.as_str(), i as u32)).collect();
-        let Ok(mut st) = c.prepare("select file_id, page, value from ai_stage where status='staged' order by value desc, file_id, page") else { return vec![] };
-        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?)));
-        let mut out = Vec::new();
-        if let Ok(rows) = rows {
-            for (fid, page, v) in rows.flatten() {
-                if let Some(&fi) = by_id.get(fid.as_str()) {
-                    out.push((fi, fid, page as u32, v));
-                    if out.len() >= limit {
-                        break;
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    fn airead_emit(&self) {
-        let v = serde_json::to_value(&*self.airead.lock().unwrap()).unwrap();
-        self.platform.emit("airead", v);
-    }
-
-    /// Read the `count` most valuable staged pages with the admin's cheapest
-    /// vision model, each call within the indexing budget.
-    fn run_airead(self: Arc<Self>, count: usize, choice: AiChoice, key: zeroize::Zeroizing<String>) {
-        use base64::Engine as _;
-        let Ok(e) = self.engine() else { return };
-        let pages = self.staged_pages(&e, count);
-        {
-            let mut st = self.airead.lock().unwrap();
-            *st = AiReadState { running: true, approved: pages.len(), model: Some(choice.model.clone()), started: Some(auth::now()), ..Default::default() };
-        }
-        self.airead_cancel.store(false, Ordering::SeqCst);
-        self.airead_emit();
-        self.audit("ai_read_started", &format!("{} pages with {}", pages.len(), choice.model));
-        let stop = |me: &Self, reason: Option<String>| {
-            let mut st = me.airead.lock().unwrap();
-            st.running = false;
-            st.finished = Some(auth::now());
-            st.current = None;
-            st.stopped_reason = reason;
-            drop(st);
-            me.airead_emit();
-        };
-        let dir = self.paths.local.join("index");
-        let active = self.ensure_content_master();
-        let work = dir.join("airead_work.db");
-        let _ = self.guard.remove_own_file(&work);
-        if self.guard.copy_into(&active, &work).is_err() {
-            return stop(&self, Some("Could not copy the content database.".into()));
-        }
-        let Ok(c) = rusqlite::Connection::open(&work) else { return stop(&self, Some("Could not open the content database.".into())) };
-        let _ = c.pragma_update(None, "journal_mode", "MEMORY");
-        let ex = crate::content::Extractor::new(self.pdfium_lib.read().unwrap().as_deref(), false);
-        let mut reason: Option<String> = None;
-        for (fi, fid, page, _v) in pages {
-            if self.airead_cancel.load(Ordering::Relaxed) {
-                reason = Some("Stopped by you".into());
-                break;
-            }
-            let f = &e.idx.files[fi as usize];
-            self.airead.lock().unwrap().current = Some(format!("{} · page {page}", f.name));
-            self.airead_emit();
-            let png = std::fs::read(crate::crawl::os_path(&e.idx.full_path(fi))).map_err(|x| x.to_string()).and_then(|b| ex.page_png(b, &f.ext, page, 1568));
-            let png = match png {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = c.execute("update ai_stage set status='failed' where file_id=?1 and page=?2", rusqlite::params![fid, page]);
-                    self.airead.lock().unwrap().failed += 1;
-                    continue;
-                }
-            };
-            let msg = ai::Msg { role: "user".into(), content: format!("Page {page} of \"{}\" (folder: {}).", f.name, e.idx.relative_folder(f.dir)), images: vec![base64::engine::general_purpose::STANDARD.encode(&png)] };
-            match self.ai_call("index", &choice, &key, crate::content::AI_READ_PROMPT, &[msg], crate::content::AI_PAGE_MAX_OUTPUT, &|| false, &mut |_| {}) {
-                Ok((r, cost)) => {
-                    let _ = crate::content::save_ai_page(&c, &fid, page, &r.text, cost, &auth::now());
-                    let mut st = self.airead.lock().unwrap();
-                    st.spent_usd += cost;
-                    if r.text.trim() == "EMPTY" {
-                        st.empty += 1;
-                    } else {
-                        st.done += 1;
-                    }
-                }
-                Err(err) if err.status == Some(402) || err.status == Some(401) || err.status == Some(403) => {
-                    reason = Some(err.message);
-                    break;
-                }
-                Err(_) => {
-                    let _ = c.execute("update ai_stage set status='failed' where file_id=?1 and page=?2", rusqlite::params![fid, page]);
-                    self.airead.lock().unwrap().failed += 1;
-                }
-            }
-        }
-        drop(c);
-        // Swap in the content database with the new text and publish it.
-        *e.content.write().unwrap() = None;
-        let local = dir.join("thor_content.db");
-        let ok = self.guard.publish(&work, &local).is_ok();
-        let _ = self.guard.remove_own_file(&work);
-        if ok && self.team_dir().is_some() {
-            if let Err(x) = self.share() {
-                self.audit("share_failed", &x);
-            }
-            self.clone().load_index();
-        } else {
-            self.attach_content(&e);
-        }
-        let st = self.airead.lock().unwrap().clone();
-        self.audit("ai_read_finished", &format!("{} pages read, {} empty, {} failed, ${:.4}{}", st.done, st.empty, st.failed, st.spent_usd, reason.as_deref().map(|r| format!(" — {r}")).unwrap_or_default()));
-        stop(&self, reason.or(if ok { None } else { Some("Could not save the results.".into()) }));
+        self.audit("content_finished", &format!("{} of {} documents read · {} pages · {} OCR pages{}", st.done, st.total, st.pages, st.ocr_pages, if stopped { " (stopped)" } else { "" }));
     }
 
     fn fail_index(&self, e: &str) {
@@ -1073,9 +925,6 @@ impl Service {
     fn state(&self) -> Value {
         let sess = self.session.lock().unwrap();
         let users = self.users.lock().unwrap();
-        let it_block = ai_blocked_by_it();
-        let ai_enabled = !it_block && users.policy("ai_enabled").map(|v| v != "false").unwrap_or(true);
-        let allowed = users.policy("ai_providers").unwrap_or_else(|| "anthropic,openai,gemini".into());
         let prefs: std::collections::HashMap<String, String> = users.prefs().into_iter().collect();
         drop(users);
         let idx = self.index_state.read().unwrap().clone();
@@ -1085,7 +934,6 @@ impl Service {
             "user": sess.as_ref().map(|s| &s.user),
             "index": idx,
             "team": *self.team.read().unwrap(),
-            "policy": {"ai_enabled": ai_enabled, "ai_blocked_by_it": it_block, "ai_providers": allowed.split(',').collect::<Vec<_>>()},
             "prefs": prefs,
         })
     }
@@ -1505,7 +1353,7 @@ impl Service {
                     if let Ok(cc) = rusqlite::Connection::open(dir.join("content.db")) {
                         let _ = cc.execute_batch("begin");
                         for id in &ids {
-                            for t in ["content_files", "content_fts", "cards", "ai_stage"] {
+                            for t in ["content_files", "content_fts", "cards"] {
                                 let _ = cc.execute(&format!("delete from {t} where file_id=?1"), [id]);
                             }
                         }
@@ -1580,9 +1428,8 @@ impl Service {
                         Err(e) => return Err(ApiError::new(400, e)),
                     }
                 };
-                let can_ai = a.get("can_ai").and_then(|x| x.as_bool());
                 let mut u = self.users.lock().unwrap();
-                u.set_member(&who, role, can_ai)?;
+                u.set_member(&who, role)?;
                 let roster = u.roster().clone();
                 drop(u);
                 // Windows enforces it: writers of the shared folder are exactly
@@ -1594,117 +1441,11 @@ impl Service {
                 self.reload_roles();
                 Ok(json!({"ok": true, "warning": warning, "account": who.account}))
             }
-            "admin.policy.set" => {
-                self.require(|s| s.is_admin(), "Administrators only.")?;
-                let k = s(a, "key");
-                if !["ai_enabled", "ai_providers"].contains(&k.as_str()) {
-                    return Err(ApiError::new(400, "Unknown policy."));
-                }
-                self.users.lock().unwrap().set_policy(&k, &s(a, "value"))?;
-                Ok(self.state())
-            }
             "admin.audit" => {
                 self.require(|s| s.is_admin(), "Administrators only.")?;
                 let rows = self.users.lock().unwrap().audit_log(500)?;
                 Ok(Value::Array(rows.into_iter().map(|r| json!({"at": r.0, "actor": r.1, "action": r.2, "detail": r.3, "machine": r.4})).collect()))
             }
-
-            // ── AI ───────────────────────────────────────────────────
-            "ai.providers" => {
-                self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
-                Ok(serde_json::to_value(ai::providers()).unwrap())
-            }
-            "ai.get" => self.with_session(|sess| {
-                let users = self.users.lock().unwrap();
-                let prefs: std::collections::HashMap<String, String> = users.prefs().into_iter().collect();
-                let key = users.get_secret("ai_key").ok().flatten();
-                Ok(json!({
-                    "provider": prefs.get("ai_provider"), "model": prefs.get("ai_model"), "reasoning": prefs.get("ai_reasoning"),
-                    "key_mask": key.as_ref().map(|k| ai::mask_key(k)), "has_key": key.is_some(), "can_ai": sess.is_admin() && sess.user.can_ai,
-                }))
-            }),
-            "ai.models" => {
-                let (provider, key) = self.ai_key_for(a)?;
-                let models = ai::list_models(provider, &key)?;
-                // Each model with its published price and what a typical question costs.
-                let out: Vec<Value> = models
-                    .into_iter()
-                    .map(|m| {
-                        let q = self.price_for(provider, &m.id, 6000);
-                        let mut v = serde_json::to_value(&m).unwrap();
-                        v["price"] = json!({"input": q.price.input, "output": q.price.output, "basis": q.basis, "note": q.note, "per_question": crate::pricing::cost(&q.price, 6000, 1000, 0, 0)});
-                        v
-                    })
-                    .collect();
-                Ok(Value::Array(out))
-            }
-            "ai.test" => {
-                let (provider, key) = self.ai_key_for(a)?;
-                let choice = AiChoice { provider, model: s(a, "model"), reasoning: a.get("reasoning").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(|x| x.to_string()) };
-                let t0 = std::time::Instant::now();
-                let msgs = vec![ai::Msg { role: "user".into(), content: "Reply with exactly: TracePoint connected".into(), images: vec![] }];
-                let (r, cost) = self.ai_call("test", &choice, &key, "You are a connection test. Reply with the exact words requested.", &msgs, 2000, &|| false, &mut |_| {})?;
-                Ok(json!({"ok": true, "reply": r.text, "model": r.model, "reasoning_used": r.reasoning_used, "ms": t0.elapsed().as_millis(), "cost_usd": cost}))
-            }
-            "ai.save" => {
-                // ai_key_for enforces: administrators only, AI allowed, provider allowed.
-                let (provider, key) = self.ai_key_for(a)?;
-                let mut users = self.users.lock().unwrap();
-                if a.get("key").and_then(|k| k.as_str()).map(|k| !k.trim().is_empty()).unwrap_or(false) {
-                    users.put_secret("ai_key", key.trim())?;
-                }
-                users.set_pref("ai_provider", provider.as_str())?;
-                users.set_pref("ai_model", &s(a, "model"))?;
-                users.set_pref("ai_reasoning", &s(a, "reasoning"))?;
-                let _ = users.audit("ai_configured", &format!("{} / {} / {}", provider.as_str(), s(a, "model"), s(a, "reasoning")));
-                drop(users);
-                self.reload_roles();
-                Ok(json!({"ok": true}))
-            }
-            "ai.delete" => {
-                self.users.lock().unwrap().delete_secret("ai_key")?;
-                self.reload_roles();
-                Ok(json!({"ok": true}))
-            }
-            "ai.budget" => self.with_session(|sess| {
-                if !sess.is_admin() {
-                    return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
-                }
-                let (budget, max_request) = self.ai_limits();
-                let month = auth::now()[..7].to_string();
-                let mut users = self.users.lock().unwrap();
-                let (spent, held, calls) = users.ai_month(&month)?;
-                let rows = users.ai_usage_rows(300)?;
-                let prefs: std::collections::HashMap<String, String> = users.prefs().into_iter().collect();
-                drop(users);
-                let day = auth::now()[..10].to_string();
-                let current = prefs.get("ai_provider").and_then(|p| Provider::parse(p)).map(|p| {
-                    let m = prefs.get("ai_model").cloned().unwrap_or_default();
-                    let qt = self.price_for(p, &m, 6000);
-                    json!({"provider": p.as_str(), "model": m, "price": qt.price, "basis": qt.basis, "note": qt.note, "per_question": crate::pricing::cost(&qt.price, 6000, 1000, 0, 0)})
-                });
-                Ok(json!({
-                    "budget_usd": budget, "max_request_usd": max_request, "month": month,
-                    "spent_usd": spent, "held_usd": held, "calls": calls, "team_wide": true,
-                    "current": current, "prices": crate::pricing::table(&day), "upcoming": crate::pricing::upcoming(&day),
-                    "prices_checked": crate::pricing::PRICES_CHECKED, "sources": crate::pricing::SOURCES, "rows": rows,
-                }))
-            }),
-            "ai.budget.set" => self.with_session(|sess| {
-                if !sess.is_admin() {
-                    return Err(ApiError::new(403, "AI features are available to administrator profiles only."));
-                }
-                let mut users = self.users.lock().unwrap();
-                for (k, lo, hi) in [("ai_budget_usd", 0.0, 10_000.0), ("ai_max_request_usd", 0.01, 100.0)] {
-                    if let Some(v) = a.get(k).and_then(|x| x.as_f64()) {
-                        if !(lo..=hi).contains(&v) {
-                            return Err(ApiError::new(400, format!("{k} must be between {lo} and {hi}.")));
-                        }
-                        users.set_policy(k, &v.to_string())?;
-                    }
-                }
-                Ok(json!({"ok": true}))
-            }),
 
             // ── About / for IT ───────────────────────────────────────
             "about" => Ok(self.about()),
@@ -1762,62 +1503,6 @@ impl Service {
                 std::thread::spawn(move || me.run_content());
                 Ok(json!({"started": true}))
             }
-            "airead.summary" => {
-                self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
-                let e = self.engine()?;
-                let pages = self.staged_pages(&e, 100_000);
-                let prefs: std::collections::HashMap<String, String> = self.users.lock().unwrap().prefs().into_iter().collect();
-                let (provider, budget) = (prefs.get("ai_provider").and_then(|p| Provider::parse(p)), self.ai_limits());
-                let mut by_cat: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
-                for (fi, ..) in &pages {
-                    *by_cat.entry(e.idx.files[*fi as usize].cat.label()).or_default() += 1;
-                }
-                let top: Vec<Value> = pages.iter().take(300).map(|(fi, _, page, v)| {
-                    let f = &e.idx.files[*fi as usize];
-                    json!({"id": fi, "name": f.name, "page": page, "value": v, "doctype": f.doctype, "year": f.year, "folder": e.idx.relative_folder(f.dir)})
-                }).collect();
-                let model = provider.map(crate::content::vision_model);
-                let (per_page, per_page_worst, basis) = match (provider, model) {
-                    (Some(p), Some(m)) => {
-                        let q = self.price_for(p, m, crate::content::AI_PAGE_TOKENS.0);
-                        (crate::pricing::cost(&q.price, crate::content::AI_PAGE_TOKENS.0, crate::content::AI_PAGE_TOKENS.1, 0, 0), crate::pricing::worst_case(&q.price, crate::content::AI_PAGE_TOKENS.0, crate::content::AI_PAGE_MAX_OUTPUT as u64), q.basis)
-                    }
-                    _ => (0.0, 0.0, "none"),
-                };
-                let month = auth::now()[..7].to_string();
-                let (spent_i, held, _) = self.users.lock().unwrap().ai_month(&month)?;
-                let cap_index = budget.0;
-                Ok(json!({
-                    "staged": pages.len(), "by_category": by_cat, "top": top, "provider": provider.map(|p| p.as_str()), "model": model,
-                    "per_page": per_page, "per_page_worst": per_page_worst, "price_basis": basis,
-                    "cap_index_usd": cap_index, "left_index_usd": (cap_index - spent_i - held).max(0.0),
-                    "running": self.airead.lock().unwrap().clone(),
-                }))
-            }
-            "airead.start" => {
-                self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
-                if self.airead.lock().unwrap().running || self.content.lock().unwrap().running {
-                    return Err(ApiError::new(409, "Document reading is already running."));
-                }
-                let count = a.get("count").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-                if count == 0 {
-                    return Err(ApiError::new(400, "Choose how many pages to read."));
-                }
-                let (cur, key) = self.current_ai()?;
-                let choice = AiChoice { provider: cur.provider, model: crate::content::vision_model(cur.provider).to_string(), reasoning: None };
-                let me = self.clone();
-                std::thread::spawn(move || me.run_airead(count, choice, key));
-                Ok(json!({"started": true}))
-            }
-            "airead.status" => {
-                self.with_session(|_| Ok(()))?;
-                Ok(serde_json::to_value(&*self.airead.lock().unwrap()).unwrap())
-            }
-            "airead.stop" => {
-                self.require(|s| s.is_admin(), "AI features are available to administrator profiles only.")?;
-                self.airead_cancel.store(true, Ordering::SeqCst);
-                Ok(json!({"stopping": true}))
-            }
             "content.stop" => {
                 self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can stop this.")?;
                 self.content_cancel.store(true, Ordering::SeqCst);
@@ -1829,81 +1514,6 @@ impl Service {
                 Ok(json!({"stopping": true}))
             }
             _ => Err(ApiError::new(404, format!("Unknown command {cmd}"))),
-        }
-    }
-
-    // ── AI spending caps ───────────────────────────────────────────────
-
-    /// The signed-in admin's limits: monthly budget and the most one request
-    /// may cost. Defaults: $25 / $0.50.
-    fn ai_limits(&self) -> (f64, f64) {
-        let users = self.users.lock().unwrap();
-        let f = |k: &str, d: f64| users.policy(k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(d);
-        (f("ai_budget_usd", 25.0), f("ai_max_request_usd", 0.50))
-    }
-
-    fn price_for(&self, provider: Provider, model: &str, prompt_tokens: u64) -> crate::pricing::Quote {
-        let day = &auth::now()[..10];
-        let ov = self.users.lock().unwrap().policy(&format!("price:{model}")).and_then(|v| {
-            let (i, o) = v.split_once(',')?;
-            Some((i.trim().parse().ok()?, o.trim().parse().ok()?))
-        });
-        crate::pricing::quote(provider, model, day, prompt_tokens, ov)
-    }
-
-    /// Every AI call goes through here. Before: the worst case (estimated
-    /// input + the longest answer allowed, at the model's price) must fit the
-    /// per-request limit and what's left of this month's budget for that kind
-    /// of use, and is held. After: the real cost from the provider's usage
-    /// report is recorded and the hold released.
-    #[allow(clippy::too_many_arguments)]
-    pub fn ai_call(&self, feature: &'static str, choice: &AiChoice, key: &str, system: &str, msgs: &[ai::Msg], max_tokens: u32, cancel: &dyn Fn() -> bool, on_delta: &mut dyn FnMut(&str)) -> Result<(ai::ChatResult, f64), ai::AiError> {
-        let deny = |m: String| ai::AiError { message: m, status: Some(402) };
-        self.with_session(|s| if s.is_admin() && !ai_blocked_by_it() { Ok(()) } else { Err(ApiError::new(403, "AI is for TracePoint administrators only.")) })
-            .map_err(|e| ai::AiError { message: e.message, status: Some(e.code) })?;
-        let (budget, max_request) = self.ai_limits();
-        let chars = system.len() + msgs.iter().map(|m| m.content.len()).sum::<usize>();
-        let est_in = crate::pricing::estimate_tokens(chars);
-        let max_out = ai::effective_max_tokens(choice, max_tokens) as u64;
-        let q = self.price_for(choice.provider, &choice.model, est_in);
-        let worst = crate::pricing::worst_case(&q.price, est_in, max_out);
-        if worst > max_request {
-            return Err(deny(format!(
-                "This request could cost up to ${worst:.2}, over your per-request limit of ${max_request:.2}. Use a cheaper model or raise the limit in Profile › AI › Spending."
-            )));
-        }
-        let month = auth::now()[..7].to_string();
-        let (spent, held, _) = self.users.lock().unwrap().ai_month(&month).map_err(|e| deny(e.0))?;
-        // One monthly budget for the whole team: AI only reads pages.
-        let (cap, label) = (budget, "AI reading of documents");
-        let left = cap - spent - held;
-        if worst > left {
-            return Err(deny(format!(
-                "This would go over the team's AI budget: it could cost up to ${worst:.2}, and ${:.2} is left of ${cap:.2} for {label} this month (resets on the 1st). An administrator can raise it in Profile › AI › Spending.",
-                left.max(0.0)
-            )));
-        }
-        let note = q.note.clone().unwrap_or_default();
-        let id = self.users.lock().unwrap().ai_reserve(&month, feature, choice.provider.as_str(), &choice.model, worst, &note).map_err(|e| deny(e.0))?;
-        match ai::chat(choice, key, system, msgs, max_tokens, cancel, on_delta) {
-            Ok(r) => {
-                let qa = self.price_for(choice.provider, &r.model, r.input_tokens + r.cache_read_tokens + r.cache_write_tokens);
-                let cost = crate::pricing::cost(&qa.price, r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_write_tokens);
-                let _ = self.users.lock().unwrap().ai_settle(id, &r.model, r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_write_tokens, cost, "charged", None);
-                self.platform.emit("ai_spend", json!({"feature": feature, "cost_usd": cost}));
-                Ok((r, cost))
-            }
-            Err(e) => {
-                // The provider refused it (HTTP error): nothing billed. The
-                // connection dropped mid-answer: charge the input estimate.
-                let (status, cost, note) = if e.status.is_some() {
-                    ("released", 0.0, "Provider returned an error; not billed")
-                } else {
-                    ("uncertain", est_in as f64 * q.price.input / 1_000_000.0, "Connection dropped; charged the estimated input cost")
-                };
-                let _ = self.users.lock().unwrap().ai_settle(id, &choice.model, 0, 0, 0, 0, cost, status, Some(note));
-                Err(e)
-            }
         }
     }
 
@@ -2065,49 +1675,6 @@ impl Service {
         let _ = self.users.lock().unwrap().audit(action, detail);
     }
 
-    /// The key for an AI call: one typed in the wizard (not yet saved), or
-    /// your own saved key. AI is for administrators only; IT can switch it off
-    /// on any PC (registry / Group Policy), and administrators team-wide.
-    fn ai_key_for(&self, a: &Value) -> Result<(Provider, zeroize::Zeroizing<String>), ApiError> {
-        let provider = Provider::parse(&s(a, "provider")).ok_or_else(|| ApiError::new(400, "Choose a provider."))?;
-        if ai_blocked_by_it() {
-            return Err(ApiError::new(403, "AI is switched off on this PC by your IT department."));
-        }
-        self.with_session(|sess| {
-            let users = self.users.lock().unwrap();
-            if users.policy("ai_enabled").map(|v| v == "false").unwrap_or(false) {
-                return Err(ApiError::new(403, "AI features are turned off by your administrator."));
-            }
-            if !sess.is_admin() {
-                return Err(ApiError::new(403, "AI features are available to TracePoint administrators only."));
-            }
-            if !sess.user.can_ai {
-                return Err(ApiError::new(403, "AI is turned off for your account."));
-            }
-            let allowed = users.policy("ai_providers").unwrap_or_else(|| "anthropic,openai,gemini".into());
-            if !allowed.split(',').any(|p| p == provider.as_str()) {
-                return Err(ApiError::new(403, "Your administrator has not allowed this provider."));
-            }
-            if let Some(k) = a.get("key").and_then(|k| k.as_str()).filter(|k| !k.trim().is_empty()) {
-                return Ok((provider, zeroize::Zeroizing::new(k.trim().to_string())));
-            }
-            match users.get_secret("ai_key")? {
-                Some(k) => Ok((provider, k)),
-                None => Err(ApiError::new(400, "Paste your API key first.")),
-            }
-        })
-    }
-
-    pub fn current_ai(&self) -> Result<(AiChoice, zeroize::Zeroizing<String>), ApiError> {
-        self.require(|s| s.is_admin(), "AI features are available to TracePoint administrators only.")?;
-        let prefs: std::collections::HashMap<String, String> = self.users.lock().unwrap().prefs().into_iter().collect();
-        let provider = prefs.get("ai_provider").and_then(|p| Provider::parse(p)).ok_or_else(|| ApiError::new(400, "Set up AI first (Profile › AI)."))?;
-        let model = prefs.get("ai_model").cloned().unwrap_or_default();
-        let reasoning = prefs.get("ai_reasoning").cloned().filter(|r| !r.is_empty());
-        let (_, key) = self.ai_key_for(&json!({"provider": provider.as_str()}))?;
-        Ok((AiChoice { provider, model, reasoning }, key))
-    }
-
     /// Bytes for the preview pane: the file itself, a PNG of a TIFF's first
     /// page, or the first 256 KB of a text file. Read-only.
     pub fn serve_file(&self, id: u32, as_: &str) -> Result<(String, Vec<u8>), ApiError> {
@@ -2224,8 +1791,6 @@ impl Service {
             "protected_roots": self.guard.protected_roots(),
             "writable": self.guard.writable_dirs(),
             "index": self.index_state.read().unwrap().clone(),
-            "ai_hosts": ai::providers().iter().map(|p| p.host).collect::<Vec<_>>(),
-            "ai_blocked_by_it": ai_blocked_by_it(),
             "policy_key": "HKLM\\SOFTWARE\\Policies\\TracePoint",
             "exe": std::env::current_exe().ok().map(|p| p.display().to_string()),
             "exe_sha256": std::env::current_exe().ok().and_then(|p| std::fs::read(p).ok()).map(|b| sha2_hex(&b)),

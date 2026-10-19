@@ -8,7 +8,7 @@
 //!   index\g-<id>-<time>\      one per lock group, locked like the THOR files it lists
 //!       index.db              those files' names and links
 //!       content.db            their document text
-//!   admin\                    administrators and indexers only: activity log, AI ledger, scan lock
+//!   admin\                    administrators and indexers only: activity log, scan lock
 //! ```
 //!
 //! Every folder lock is read back after it is set; if the file server didn't
@@ -125,7 +125,7 @@ pub fn setup(guard: &Guard, team: &Path, me: &acl::Identity, found: &mut dyn FnM
     }
     let writer = acl::server_identity(&parent.to_string_lossy(), me);
     let also: Vec<String> = me.all_sids().into_iter().filter(|s| *s != writer).collect();
-    let founder = Member { sid: writer, account: me.account.clone(), role: Role::Admin, also, can_ai: true, added_by: "set up the shared folder".into(), added_at: crate::auth::now() };
+    let founder = Member { sid: writer, account: me.account.clone(), role: Role::Admin, also, added_by: "set up the shared folder".into(), added_at: crate::auth::now() };
     let roster = Roster { version: 1, members: vec![founder.clone()], policy: Default::default() };
     let (top, admin) = folder_locks(&roster);
     make_locked(guard, team, &top).map_err(|e| format!("Couldn't lock {}: {e}", team.display()))?;

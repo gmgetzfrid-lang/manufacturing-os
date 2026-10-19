@@ -52,10 +52,6 @@ pub fn run(extra_protect: &[String]) -> Vec<Check> {
     // ── Who you are, and permissions ─────────────────────────────────
     let me = crate::acl::current_user();
     check(&mut out, "Identity: Windows account (no TracePoint passwords)", !me.sid.is_empty(), format!("{} ({})", me.account, me.sid));
-    let sealed = crate::acl::protect_secret(b"sk-selftest-123", &tmp);
-    let opened = sealed.as_ref().ok().and_then(|b| crate::acl::unprotect_secret(b, &tmp).ok()).map(|v| v.as_slice() == b"sk-selftest-123").unwrap_or(false);
-    let not_plain = sealed.as_ref().map(|b| !String::from_utf8_lossy(b).contains("sk-selftest")).unwrap_or(false);
-    check(&mut out, "Keys: encrypted by Windows for this account (DPAPI)", opened && not_plain, "never stored on the shared folder");
     // A real lock on a real folder: set it, read it back from a file inside.
     let lockdir = tmp.join("lock-test");
     let _ = g.create_dir_all(&lockdir);
@@ -68,7 +64,6 @@ pub fn run(extra_protect: &[String]) -> Vec<Check> {
     let back = crate::acl::read_access(&f.to_string_lossy(), &cache).and_then(|got| crate::acl::same_readers(&want, &got, &me.sid));
     check(&mut out, "Permissions: a file in it carries exactly that lock", back.is_ok(), back.err().unwrap_or_else(|| "read back from Windows".into()));
     check(&mut out, "Permissions: Windows says you may open it", crate::acl::can_open(&f) == crate::acl::Access::Allowed, "");
-    check(&mut out, "Policy: AI switched off by IT on this PC", true, if crate::service::ai_blocked_by_it() { "yes (DisableAI=1)" } else { "no" });
 
     // ── Scan → split by permissions → merge → search ────────────────
     let thor = tmp.join("thor");

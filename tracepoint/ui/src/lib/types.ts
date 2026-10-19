@@ -7,11 +7,9 @@ export interface User {
   account: string;
   name: string;
   role: Role;
-  can_ai: boolean;
-  has_ai_key: boolean;
 }
 
-export interface Member { sid: string; account: string; role: Role; can_ai: boolean; added_by: string; added_at: string }
+export interface Member { sid: string; account: string; role: Role; added_by: string; added_at: string }
 
 export interface IndexState { ready: boolean; message: string; source: string; source_kind: string; error?: string | null }
 
@@ -23,7 +21,6 @@ export interface AppState {
   user: User | null;
   index: IndexState;
   team: TeamState;
-  policy: { ai_enabled: boolean; ai_blocked_by_it: boolean; ai_providers: string[] };
   prefs: Record<string, string>;
 }
 

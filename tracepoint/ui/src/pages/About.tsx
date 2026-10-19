@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Bot, Cpu, Eye, FileSearch, FolderLock, Globe, KeyRound, Link2, ListChecks, Lock, ChevronDown, ScanText, Settings2, ShieldCheck, Sparkles, TrendingUp, UserRound } from "lucide-react";
+import { Ban, Cpu, Eye, FileSearch, FolderLock, Globe, KeyRound, Link2, ListChecks, Lock, ChevronDown, ScanText, Settings2, ShieldCheck, Sparkles, TrendingUp, UserRound } from "lucide-react";
 import { api } from "../lib/api";
 import type { AppState } from "../lib/types";
 import { Mark } from "../components/ui";
@@ -7,7 +7,7 @@ import { Mark } from "../components/ui";
 interface About {
   version: string; me: string; local_data: string; temp: string; team: AppState["team"]; default_team: string;
   groups: { open: number; locked: number; hidden: number; unavailable: number };
-  protected_roots: string[]; writable: string[]; ai_hosts: string[]; ai_blocked_by_it: boolean; policy_key: string;
+  protected_roots: string[]; writable: string[]; policy_key: string;
   exe?: string; exe_sha256?: string | null; machine: string; index: { source: string };
 }
 
@@ -20,7 +20,7 @@ const HIGHLIGHTS: { t: string; d: string; i: ReactNode; c: string }[] = [
   { t: "Your own files too", d: "Add Documents or Downloads privately. Only you see them; they never leave your PC.", i: <UserRound className="size-5" />, c: "#0891b2" },
   { t: "Never touches THOR", d: "Read-only, enforced in code and proven by the self-test. Nothing is moved, renamed or deleted.", i: <ShieldCheck className="size-5" />, c: "#16a34a" },
   { t: "Smarter every scan", d: "Each scan and every document read teaches it nicknames and links. Admin fixes are shared — the same search, the same answer for everyone.", i: <TrendingUp className="size-5" />, c: "#475569" },
-  { t: "AI optional, capped", d: "Off by default. Admins only, to read pages OCR can't — approved first, within a monthly budget.", i: <Bot className="size-5" />, c: "#db2777" },
+  { t: "No AI. Nothing leaves.", d: "No AI of any kind, no cloud, no keys. Everything — including OCR of scanned pages — runs on your PC.", i: <Ban className="size-5" />, c: "#db2777" },
 ];
 
 export function AboutPage({ state }: { state: AppState }) {
@@ -100,7 +100,6 @@ export function AboutPage({ state }: { state: AppState }) {
         <Block icon={<FolderLock className="size-4" />} title="Private folders" summary="Your own Documents or Downloads, searchable by you only.">
           <Row k="Who sees them" v="Only the person who added them, on that PC. Their index and text stay in that Windows profile (encrypted by Windows where IT allows EFS) and never go to the shared folder." />
           <Row k="Read-only" v="Your files are read, never changed — same guard as THOR." />
-          <Row k="No AI" v="Private files are never sent to an AI provider." />
           <Row k="OneDrive" v="Online-only files aren't read, so nothing gets downloaded." />
           <Row k="IT switch" v="DisablePrivateSources = 1 (DWORD) turns this off." />
         </Block>
@@ -108,13 +107,11 @@ export function AboutPage({ state }: { state: AppState }) {
         <Block icon={<KeyRound className="size-4" />} title="Accounts and roles" summary="Windows sign-in. No passwords. Roles enforced by folder permissions.">
           <Row k="Sign-in" v={`Windows account of whoever started TracePoint (now: ${a?.me ?? "…"}). No TracePoint passwords, no default password, no lockouts.`} />
           <Row k="Roles" v="Administrator and Indexer are given to Windows accounts in roles.json in the shared folder; everyone else is a User. TracePoint sets the shared folder's permissions to match: administrators full control, indexers modify, all signed-in staff read only — so only they can change roles or publish an index." />
-          <Row k="AI keys" v="Administrators only. Each key is encrypted by Windows for that account on that PC (DPAPI) and kept in the local data folder — never on the shared folder." />
-          <Row k="Activity log" v="Scans, sharing, role and setting changes and AI use, with account and computer, in the shared folder's admin\ subfolder (administrators and indexers only). Searches are never logged." />
+          <Row k="Activity log" v="Scans, sharing, role and setting changes, with account and computer, in the shared folder's admin\ subfolder (administrators and indexers only). Searches are never logged." />
         </Block>
 
-        <Block icon={<Settings2 className="size-4" />} title="IT policy (Group Policy or registry)" summary="Switch off AI or private folders; pin the shared folder.">
+        <Block icon={<Settings2 className="size-4" />} title="IT policy (Group Policy or registry)" summary="Switch off private folders; pin the shared folder.">
           <Row k="Key" v={a?.policy_key ?? "HKLM\\SOFTWARE\\Policies\\TracePoint"} mono note="Also read from HKCU. Nothing else in the registry is read or written." />
-          <Row k="DisableAI" v={`DWORD 1 = no AI requests from this PC, whoever is signed in.${a ? ` Now: ${a.ai_blocked_by_it ? "blocked" : "not set"}.` : ""}`} />
           <Row k="TeamFolder" v={`String = the shared TracePoint folder for this PC; users can't change it. Without it, TracePoint looks next to the exe, then at ${a?.default_team ?? "\\\\thor\\Public\\TP\\TracePoint Data"}.`} />
         </Block>
 
@@ -125,16 +122,15 @@ export function AboutPage({ state }: { state: AppState }) {
         </Block>
 
         <Block icon={<FolderLock className="size-4" />} title="What it writes — and the only places it can" summary="Its own folders only. Never THOR.">
-          <Row k="Shared folder" v={a?.team.folder ?? "Not used on this PC"} mono note="tracepoint.json, roles.json, index\ (one locked folder per permission group), admin\ (activity log, AI ledger, scan lock). Must be outside THOR's indexed roots." />
-          <Row k="Local data" v={a?.local_data ?? "…"} mono note="Settings, encrypted AI key, cached copies of the groups this account may open (deleted when access is lost), an administrator's working index, the PDF engine (bin\pdfium-157.0.8100.dll), WebView2 data. Per Windows user." />
+          <Row k="Shared folder" v={a?.team.folder ?? "Not used on this PC"} mono note="tracepoint.json, roles.json, index\ (one locked folder per permission group), admin\ (activity log, scan lock). Must be outside THOR's indexed roots." />
+          <Row k="Local data" v={a?.local_data ?? "…"} mono note="Settings, cached copies of the groups this account may open (deleted when access is lost), an administrator's working index, the PDF engine (bin\pdfium-157.0.8100.dll), WebView2 data. Per Windows user." />
           <Row k="Temporary" v={a?.temp ?? "…"} mono note="Read-only copies of files opened for viewing." />
           <Row k="Exports" v="Excel files go only where the user chooses in the Save dialog (refused inside THOR)." />
         </Block>
 
-        <Block icon={<Globe className="size-4" />} title="Network connections" summary="SMB to THOR. HTTPS to an AI provider only if an admin uses AI.">
+        <Block icon={<Globe className="size-4" />} title="Network connections" summary="SMB to THOR. Nothing else — no internet at all.">
           <Row k="THOR" v="SMB, as the signed-in Windows user." />
-          <Row k="AI (optional)" v={a ? a.ai_hosts.join(" · ") : "…"} mono note="HTTPS 443, only when an administrator has set up AI and approves reading specific scanned pages (or tests their key), only to the provider they chose. A team-wide monthly budget is enforced before every request. Respects HTTPS_PROXY and the Windows certificate store. Block with DisableAI or your firewall." />
-          <Row k="Nothing else" v="No analytics, update checks, licence calls, fonts or scripts from the internet. The interface is inside the exe." />
+          <Row k="No AI, no internet" v="TracePoint contains no AI code and makes no internet connections: no AI providers, analytics, update checks, licence calls, fonts or scripts. The interface is inside the exe." />
         </Block>
 
         <Block icon={<Cpu className="size-4" />} title="Processes and components" summary="One exe + Windows WebView2. No services, no installer.">
@@ -145,10 +141,10 @@ export function AboutPage({ state }: { state: AppState }) {
 
         <Block icon={<ListChecks className="size-4" />} title="How IT can verify this" summary="--selftest, Process Monitor, netstat, approve by hash.">
           <ol className="list-decimal space-y-2 pl-5 text-[13px] leading-relaxed">
-            <li><b>Self-test:</b> <Code>TracePoint.exe --selftest</Code> in a command prompt. It locks a test folder with Windows permissions and reads the lock back, checks the Windows sign-in and DPAPI key encryption, attempts writes into THOR paths and confirms they're refused, scans, splits by permissions and searches a test folder, and checks the PDF engine and OCR. PASS/FAIL per line.</li>
+            <li><b>Self-test:</b> <Code>TracePoint.exe --selftest</Code> in a command prompt. It locks a test folder with Windows permissions and reads the lock back, checks the Windows sign-in, attempts writes into THOR paths and confirms they're refused, scans, splits by permissions and searches a test folder, and checks the PDF engine and OCR. PASS/FAIL per line.</li>
             <li><b>Permissions:</b> sign in as an account without access to a THOR folder and search for a file name you know is in it — nothing. Look in <Code>%LOCALAPPDATA%\TracePoint\cache</Code>: only groups that account can open. In the shared folder's <Code>index\</Code>, each <Code>g-…</Code> folder's Security tab matches its THOR folder.</li>
             <li><b>File activity:</b> Process Monitor, <Code>Process Name is TracePoint.exe</Code>, operations WriteFile / SetDispositionInformationFile / SetRenameInformationFile / SetSecurityFile: none on a THOR path.</li>
-            <li><b>Network:</b> Resource Monitor › Network or <Code>netstat -b</Code>: SMB to THOR; 443 to the AI host only for administrators using AI.</li>
+            <li><b>Network:</b> Resource Monitor › Network or <Code>netstat -b</Code>: SMB to THOR, and nothing else.</li>
             <li><b>Approve the exe by hash</b> (AppLocker/WDAC): <Code>certutil -hashfile TracePoint.exe SHA256</Code>{a?.exe_sha256 && <> — this copy: <span className="break-all font-mono text-[11.5px]">{a.exe_sha256}</span></>}. To sign it with your own code-signing certificate: <Code>signtool sign /fd SHA256 /a TracePoint.exe</Code>.</li>
             <li><b>Remove completely:</b> delete <Code>TracePoint.exe</Code> and <Code>{a?.local_data ?? "%LOCALAPPDATA%\\TracePoint"}</Code>. The shared folder can be deleted by an administrator.</li>
           </ol>

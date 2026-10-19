@@ -124,9 +124,6 @@ fn shared_index_respects_windows_permissions() {
     assert!(shared, "{st}");
     if pdfium.is_some() {
         wait(&a, "content.status", |s| s["phase"] == "done");
-        let sum = a.handle("airead.summary", &json!({})).unwrap();
-        assert_eq!(sum["staged"], 1, "{sum}");
-        assert_eq!(a.handle("airead.start", &json!({"count": 1})).unwrap_err().code, 400, "needs AI setup first");
     }
     wait_index(&a);
     if pdfium.is_some() {
@@ -185,7 +182,10 @@ fn shared_index_respects_windows_permissions() {
     // Normal users: no rescans, no roles, no AI.
     assert_eq!(o.handle("indexer.start", &json!({"root": root})).unwrap_err().code, 403);
     assert_eq!(o.handle("admin.member.set", &json!({"account": "KERN\\operator", "role": "admin"})).unwrap_err().code, 403);
-    assert_eq!(o.handle("ai.test", &json!({"provider": "anthropic", "key": "sk-ant-x", "model": "x"})).unwrap_err().code, 403);
+    // TracePoint contains no AI: not for anyone.
+    for cmd in ["ai.test", "ai.save", "airead.start", "airead.summary"] {
+        assert_eq!(a.handle(cmd, &json!({})).unwrap_err().code, 404, "{cmd}");
+    }
 
     // ── The indexer can rescan; THOR is never written ────────────────
     let tech = acl::lookup_account("KERN\\tech").unwrap();
