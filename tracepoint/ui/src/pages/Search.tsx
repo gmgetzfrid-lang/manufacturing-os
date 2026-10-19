@@ -72,6 +72,8 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
   const [loading, setLoading] = useState(false);
   const [limit, setLimit] = useState(PAGE);
   const [selected, setSelected] = useState<number>(-1);
+  // The rest of the results, below the clear best group, stay folded until asked for.
+  const [restOpen, setRestOpen] = useState(false);
   const [preview, setPreview] = useState(() => localStorage.getItem("tp.preview") !== "off");
   const listRef = useRef<HTMLDivElement>(null);
   const reqSeq = useRef(0);
@@ -124,6 +126,7 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
   // Enter on a search that's already showing a best match opens that file.
   const lastEnter = useRef("");
   const submit = (q: string) => {
+    setRestOpen(false);
     const t = q.trim();
     if (t && t === lastEnter.current && t === submitted && resp?.best && resp.hits[0]) {
       openFile(resp.hits[0]);
@@ -142,6 +145,11 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
   };
 
   const hits = resp?.hits ?? [];
+  // A clear top group, the rest folded beneath it.
+  const top = resp?.top ?? 0;
+  const grouped = (filters.sort === "relevance" || filters.sort === "newest") && top > 0 && top < (resp?.total ?? 0) && top <= hits.length;
+  const folded = grouped && !restOpen;
+  useEffect(() => { if (folded && selected >= top) setRestOpen(true); }, [folded, selected, top]);
   const [insideSel, setInsideSel] = useState<Hit | null>(null);
   useEffect(() => setInsideSel(null), [resp]);
   const sel = insideSel ?? (selected >= 0 ? hits[selected] : undefined);
@@ -237,11 +245,21 @@ export function SearchPage({ state, nav }: { state: AppState; nav: Nav }) {
                 <NoResults resp={resp} onTry={(q) => { setQuery(q); submit(q); }} />
               ) : (
                 <div>
-                  {hits.map((h, i) => (
-                    <ResultRow key={h.id} hit={h} i={i} active={i === selected} words={words} topScore={hits[0]?.score ?? 1} onSelect={() => { setInsideSel(null); setSelected(i); }} onOpen={() => openFile(h)} onReveal={() => openFile(h, "reveal")} onEquip={(id) => { setPinned(id); setSubmitted(""); setQuery(""); }} />
+                  {grouped && <div className="px-4 pt-3 pb-1 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Best matches</div>}
+                  {(folded ? hits.slice(0, top) : hits).map((h, i) => (
+                    <div key={h.id}>
+                      {grouped && !folded && i === top && <div className="border-t border-[var(--color-border)] px-4 pt-3 pb-1 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">More results</div>}
+                      <ResultRow hit={h} i={i} active={i === selected} words={words} topScore={hits[0]?.score ?? 1} onSelect={() => { setInsideSel(null); setSelected(i); }} onOpen={() => openFile(h)} onReveal={() => openFile(h, "reveal")} onEquip={(id) => { setPinned(id); setSubmitted(""); setQuery(""); }} />
+                    </div>
                   ))}
-                  {hits.length < resp.total && (
-                    <div className="py-4 text-center"><Button onClick={() => setLimit((l) => l + PAGE * 2)} loading={loading}>Show more ({n(resp.total - hits.length)} left)</Button></div>
+                  {folded ? (
+                    <div className="border-t border-[var(--color-border)] py-4 text-center">
+                      <Button onClick={() => setRestOpen(true)} icon={<ChevronDown className="size-3.5" />}>Show {n(resp.total - top)} more result{resp.total - top === 1 ? "" : "s"}</Button>
+                    </div>
+                  ) : (
+                    hits.length < resp.total && (
+                      <div className="py-4 text-center"><Button onClick={() => setLimit((l) => l + PAGE * 2)} loading={loading}>Show more ({n(resp.total - hits.length)} left)</Button></div>
+                    )
                   )}
                 </div>
               )}
@@ -624,6 +642,69 @@ function Connections({ hit, state, nav }: { hit: Hit; state: AppState; nav: Nav 
   return <div className="space-y-2 border-b border-[var(--color-border)] p-3">{rows}</div>;
 }
 
+const CORRECTED: Record<string, (v: string) => string> = {
+  equip: (v) => `Belongs with ${v}`,
+  not_equip: (v) => `Not about ${v}`,
+  current: () => "The current revision",
+  superseded: () => "Superseded",
+};
+
+/** Administrators and indexers fix what TracePoint got wrong — once, for
+ *  everyone: the correction travels with the shared index, so the same
+ *  search gives everyone the same, better answer. */
+function Corrections({ hit, state }: { hit: Hit; state: AppState }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [belongs, setBelongs] = useState("");
+  const [done, setDone] = useState<string[]>([]);
+  useEffect(() => { setBelongs(""); setDone([]); }, [hit.id]);
+  const can = (state.user?.role === "admin" || state.user?.role === "indexer") && !hit.private;
+  const list = hit.corrected ?? [];
+  if (!can && !list.length) return null;
+  const send = async (kind: string, value = "", label = "") => {
+    setBusy(true);
+    try {
+      const r = await api<{ message: string }>("file.correct", { id: hit.id, name: hit.name, kind, value });
+      toast("ok", r.message);
+      setDone((d) => [...d, label || CORRECTED[kind]?.(value) || "Corrections cleared"]);
+      setBelongs("");
+    } catch (e) {
+      toast("error", (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const marked = (k: string) => list.some((c) => c.kind === k);
+  return (
+    <div>
+      <div className="mb-2 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Corrections</div>
+      {list.length > 0 && (
+        <ul className="mb-2 space-y-1">
+          {list.map((c, i) => <li key={i} className="flex items-start gap-2 text-[12.5px]"><CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-[var(--color-ok)]" /><span>{CORRECTED[c.kind]?.(c.value) ?? c.kind} <span className="text-[var(--color-text-faint)]">· {c.by}</span></span></li>)}
+        </ul>
+      )}
+      {done.length > 0 && <div className="mb-2 text-[12px] text-[var(--color-text-muted)]">Saved: {done.join(", ")}. Everyone sees it after the shared index refreshes.</div>}
+      {can && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            {hit.equipment.map((e) => (
+              <Button key={e.id} size="sm" disabled={busy} onClick={() => send("not_equip", e.number)} title={`This file isn't about ${e.number}: take it off that equipment's list`}>Not about {e.number}</Button>
+            ))}
+            {(hit.newer || hit.versions > 0) && !marked("current") && <Button size="sm" disabled={busy} onClick={() => send("current")} title="This is the revision people should use">Mark as current revision</Button>}
+            {hit.versions > 0 && !hit.newer && !marked("superseded") && <Button size="sm" disabled={busy} onClick={() => send("superseded")} title="A newer revision exists elsewhere">Mark as superseded</Button>}
+            {list.length > 0 && <Button size="sm" variant="ghost" disabled={busy} onClick={() => send("clear")}>Clear corrections</Button>}
+          </div>
+          <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (belongs.trim()) send("equip", belongs.trim()); }}>
+            <input value={belongs} onChange={(e) => setBelongs(e.target.value)} placeholder="Belongs with… (equipment number, e.g. 2010.03)" className="h-8 min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[12.5px] outline-none focus:border-[var(--color-accent)]" />
+            <Button size="sm" type="submit" disabled={busy || !belongs.trim()}>Link</Button>
+          </form>
+          <div className="text-[11.5px] text-[var(--color-text-faint)]">Shared with everyone through the index — nothing on THOR changes.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** «word» → bold. */
 function snippetNodes(s: string): ReactNode {
   return s.split(/(«[^»]*»)/).map((p, i) => (p.startsWith("«") ? <b key={i} className="font-bold text-[var(--color-text)]">{p.slice(1, -1)}</b> : p));
@@ -834,6 +915,7 @@ function PreviewPane({ hit, state, onOpen, onEquip, nav }: { hit?: Hit; state: A
                 </div>
               </div>
             )}
+            <Corrections hit={hit} state={state} />
             <div>
               <div className="mb-2 text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Location</div>
               <div className="break-all rounded-lg bg-[var(--color-surface-2)] p-3 font-mono text-[11.5px] leading-relaxed text-[var(--color-text-muted)]">{hit.path}</div>

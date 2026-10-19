@@ -60,6 +60,8 @@ export interface Hit {
   stale_copy: boolean;
   stranded_for: string[];
   private: boolean;
+  /** What administrators or indexers have said about this file (shared with everyone). */
+  corrected?: { kind: "equip" | "not_equip" | "current" | "superseded"; value: string; by: string }[];
 }
 
 export interface FileRef { id: number; name: string; folder: string; why?: string | null }
@@ -103,6 +105,8 @@ export interface SearchResponse {
   notice?: string | null;
   best?: string | null;
   inside?: Hit[];
+  /** How many leading hits form the clear best group (at most 10). */
+  top?: number;
 }
 
 export interface SearchRequest {

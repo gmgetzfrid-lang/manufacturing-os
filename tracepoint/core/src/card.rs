@@ -70,6 +70,10 @@ pub struct Card {
     /// Made by a scanner / copier (or every page needed OCR).
     pub scanned: bool,
     pub chars: u32,
+    /// What the document says it is: its title property and the first lines
+    /// of page 1 (title block / heading), lower case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading: Option<String>,
 }
 
 static RE_NB: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(?:national\s+board|nat'?l\.?\s*b(?:oar)?d\.?|n\.?\s?b\.?)\s*(?:no\.?|number|#|reg(?:istration)?\.?(?:\s*no\.?)?)?\s*[:#]?\s*(\d{3,8})\b").unwrap());
@@ -236,6 +240,16 @@ pub fn build(sha: Option<String>, x: &crate::content::Extracted) -> Card {
         }
     }
     c.chars = all.len().min(u32::MAX as usize) as u32;
+    // Heading: title property + the first meaningful lines of page 1.
+    let mut head = c.meta.title.clone().unwrap_or_default();
+    if let Some(p1) = x.pages.iter().find(|p| p.page == 1) {
+        for line in p1.text.lines().map(str::trim).filter(|l| l.chars().filter(|c| c.is_alphabetic()).count() >= 4).take(4) {
+            head.push_str(" | ");
+            head.push_str(line);
+        }
+    }
+    let head: String = head.chars().take(300).collect::<String>().to_lowercase();
+    c.heading = (!head.trim().is_empty()).then_some(head);
     c.simhash = simhash(&all);
     // The revision stated where it counts: the highest one in the title
     // block / revision table area if any, else anywhere on page 1-3.

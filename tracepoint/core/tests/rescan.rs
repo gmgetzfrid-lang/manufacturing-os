@@ -137,6 +137,21 @@ fn shared_index_respects_windows_permissions() {
     assert!(hits(&a, "suction bottle inspection report")["total"].as_u64().unwrap() >= 1);
     // Give a colleague the Indexer role.
     a.handle("admin.member.set", &json!({"account": "KERN\\tech", "role": "indexer"})).unwrap();
+    // The administrator corrects the index: the field notes aren't about
+    // 5610.15. Everyone gets the same corrected answer.
+    let count = |svc: &Arc<Service>| -> u64 {
+        let l = svc.handle("equipment.list", &json!({"q": "5610.15"})).unwrap();
+        l["equipment"].as_array().unwrap().iter().find(|x| x["number"] == "5610.15").map(|x| x["files"].as_u64().unwrap()).unwrap_or(0)
+    };
+    let n0 = count(&a);
+    let notes = hits(&a, "field notes")["hits"].as_array().unwrap().iter().find(|h| h["name"] == "Field Notes.pdf").unwrap()["id"].clone();
+    let r = a.handle("file.correct", &json!({"id": notes, "kind": "not_equip", "value": "5610.15"})).unwrap();
+    assert!(r["message"].as_str().unwrap().contains("Sharing"), "{r}");
+    let t0 = std::time::Instant::now();
+    while count(&a) != n0 - 1 {
+        assert!(t0.elapsed().as_secs() < 30, "the correction takes effect: {} of {n0}, {}", count(&a), a.handle("index.status", &json!({})).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 
     // ── An operator on another PC (not in Engineering) ───────────────
     let op = person("operator", "S-1-5-21-1-2-3-2002");
@@ -149,6 +164,7 @@ fn shared_index_respects_windows_permissions() {
     assert_eq!(st["index"]["ready"], true, "{st}");
     assert_eq!(st["user"]["role"], "user");
     assert!(hits(&o, "suction bottle inspection report")["total"].as_u64().unwrap() >= 1, "open folders work");
+    assert_eq!(count(&o), n0 - 1, "the operator sees the administrator's correction");
     for q in ["zeolite", "MOC-2291", "7777.01", "Engineering Only", "revamp basis", "catalyst loading"] {
         let r = hits(&o, q);
         assert_eq!(r["total"], 0, "{q}: {r}");
@@ -178,6 +194,24 @@ fn shared_index_respects_windows_permissions() {
     std::fs::write(base.join("pc-tech/config.json"), json!({"team_folder": team.display().to_string()}).to_string()).unwrap();
     let t = Service::new_as(Box::new(Quiet), base.join("pc-tech"), tech).unwrap();
     assert_eq!(t.handle("state", &json!({})).unwrap()["user"]["role"], "indexer");
+    assert_eq!(o.handle("file.correct", &json!({"id": notes, "kind": "equip", "value": "5610.15"})).unwrap_err().code, 403, "users can't correct");
+    // The indexer rescans from their own PC and publishes: the
+    // administrator's correction stays.
+    t.handle("indexer.start", &json!({"root": root, "workers": 2})).unwrap();
+    let st = wait(&t, "indexer.status", |s| !s["running"].as_bool().unwrap() && (s["error"].is_string() || s["log"].as_array().unwrap().iter().any(|x| x.as_str().unwrap_or("").starts_with("Done"))));
+    assert!(st["error"].is_null(), "{st}");
+    assert!(st["log"].as_array().unwrap().iter().any(|l| l.as_str().unwrap().starts_with("Shared")), "{st}");
+    acl::sim::set_me("S-1-5-21-1-2-3-2002", &["S-1-5-11"]);
+    o.load_index();
+    wait_index(&o);
+    assert_eq!(count(&o), n0 - 1, "corrections survive anyone's rescan");
+    let z = hits(&o, "zeolite");
+    assert!(z["total"] == 0, "and the locked group is still locked: {}", z["hits"]);
+    acl::sim::set_me(&admin.sid, &["S-1-5-11", ENG]);
+    a.load_index();
+    wait_index(&a);
+    assert!(hits(&a, "zeolite revamp")["total"].as_u64().unwrap() >= 1, "the engineer still finds the project");
+    assert_eq!(count(&a), n0 - 1);
     assert_eq!(listing(&thor), before, "the scanned folder is untouched");
     acl::sim::reset();
     let _ = std::fs::remove_dir_all(&base);

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Bot, Cpu, Eye, FileSearch, FolderLock, Globe, KeyRound, Link2, ListChecks, Lock, ChevronDown, ScanText, Settings2, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { Bot, Cpu, Eye, FileSearch, FolderLock, Globe, KeyRound, Link2, ListChecks, Lock, ChevronDown, ScanText, Settings2, ShieldCheck, Sparkles, TrendingUp, UserRound } from "lucide-react";
 import { api } from "../lib/api";
 import type { AppState } from "../lib/types";
 import { Mark } from "../components/ui";
@@ -12,14 +12,14 @@ interface About {
 }
 
 const HIGHLIGHTS: { t: string; d: string; i: ReactNode; c: string }[] = [
-  { t: "Talk to it", d: "“crude tower inspection reports newest first” — typos, shorthand and all. The right file comes first.", i: <FileSearch className="size-5" />, c: "var(--color-accent)" },
+  { t: "Gets what you mean", d: "“crude unit V-3 trays” — the crude unit's V-3, the one in service, tray documents first. Typos and shorthand too. A clear top 10.", i: <FileSearch className="size-5" />, c: "var(--color-accent)" },
   { t: "Reads inside documents", d: "PDFs, Word, Excel — and scanned pages with Windows' own OCR. Search finds words on page 14.", i: <ScanText className="size-5" />, c: "#2563eb" },
   { t: "Finds the newest revision", d: "Trusts the revision written in the document, not file dates. Old copies get flagged.", i: <Sparkles className="size-5" />, c: "#d97706" },
   { t: "Connects the mess", d: "Copies, project files never moved to the equipment folder, scans named DOC123456 — tied back to their equipment.", i: <Link2 className="size-5" />, c: "#7c3aed" },
-  { t: "Only what you can open", d: "Windows permissions decide. Locked folders don't exist for you — not even their names.", i: <Lock className="size-5" />, c: "#059669" },
+  { t: "Only what you can open", d: "Your Windows sign-in, no passwords. Windows permissions decide: locked folders don't exist for you — not even their names.", i: <Lock className="size-5" />, c: "#059669" },
   { t: "Your own files too", d: "Add Documents or Downloads privately. Only you see them; they never leave your PC.", i: <UserRound className="size-5" />, c: "#0891b2" },
   { t: "Never touches THOR", d: "Read-only, enforced in code and proven by the self-test. Nothing is moved, renamed or deleted.", i: <ShieldCheck className="size-5" />, c: "#16a34a" },
-  { t: "No passwords", d: "Signs in with your Windows account. Nothing to install, nothing to remember.", i: <KeyRound className="size-5" />, c: "#475569" },
+  { t: "Smarter every scan", d: "Each scan and every document read teaches it nicknames and links. Admin fixes are shared — the same search, the same answer for everyone.", i: <TrendingUp className="size-5" />, c: "#475569" },
   { t: "AI optional, capped", d: "Off by default. Admins only, to read pages OCR can't — approved first, within a monthly budget.", i: <Bot className="size-5" />, c: "#db2777" },
 ];
 
@@ -92,6 +92,8 @@ export function AboutPage({ state }: { state: AppState }) {
           <Row k="Newest revision" v="The revision the document states beats the one in its name, which beats dates written in it, which beat file dates. A superseded copy saved last week is still flagged as old. Unsure? It only says so — it never claims." />
           <Row k="Equipment from contents" v="A scanner-named file whose page 1 or nameplate names a piece of equipment is tied to it — so searching the equipment finds it." />
           <Row k="Stranded" v="Documents about a piece of equipment that live in project, contractor or department folders are listed on its card, and in the cleanup report." />
+          <Row k="Corrections" v="Administrators and indexers can mark a file as not about a piece of equipment, belonging with one, or the current revision. Each correction (a file id hash, an equipment number, who and when) is stored inside that file's own permission group, so it's locked exactly like the file — and every PC applies it, so the same search gives the same answer to everyone." />
+          <Row k="Learning" v="Nicknames (“crude tower”) are learned from how files and document title blocks are named; whether equipment is out of service, from its folder. Nothing is learned from what any one person clicks." />
           <Row k="Never changes THOR" v="TracePoint only points things out. Moving or deleting is for people, in Explorer." />
         </Block>
 

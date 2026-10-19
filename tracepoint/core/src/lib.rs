@@ -15,6 +15,7 @@ pub mod nl;
 pub mod partition;
 pub mod pricing;
 pub mod selftest;
+pub mod sense;
 pub mod service;
 pub mod team;
 pub mod text;

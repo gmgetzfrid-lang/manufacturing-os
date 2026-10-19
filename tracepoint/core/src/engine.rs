@@ -30,6 +30,8 @@ pub struct Engine {
     pub content: std::sync::RwLock<Option<ContentIndex>>,
     /// Copies, revisions, content-found equipment, stranded documents.
     pub links: crate::link::Links,
+    /// Equipment nicknames learned from file names ("crude tower" → 2010.04).
+    pub(crate) nicknames: std::sync::OnceLock<HashMap<String, (u32, u32)>>,
 }
 
 /// Read-only handles on the document text: one database per lock group this
@@ -206,6 +208,16 @@ pub struct Hit {
     pub stranded_for: Vec<String>,
     /// Only on this PC (one of your private folders).
     pub private: bool,
+    /// What administrators or indexers have said about this file.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub corrected: Vec<Corrected>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Corrected {
+    pub kind: String,
+    pub value: String,
+    pub by: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -299,6 +311,9 @@ pub struct SearchResponse {
     pub best: Option<String>,
     /// Files whose text contains the words (read by the content stage).
     pub inside: Vec<Hit>,
+    /// How many leading results are the clear best matches (the rest can be
+    /// folded away).
+    pub top: usize,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -421,7 +436,7 @@ impl Engine {
             }
             eq_tokens.push(t);
         }
-        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df, dir_files: std::sync::OnceLock::new(), content: std::sync::RwLock::new(None), links: Default::default() }
+        Engine { idx, postings, tag_postings, vocab_by_len, eq_tokens, eq_df, dir_files: std::sync::OnceLock::new(), content: std::sync::RwLock::new(None), links: Default::default(), nicknames: std::sync::OnceLock::new() }
     }
 
     fn term_posting(&self, word: &str) -> Option<&Vec<u32>> {
@@ -657,10 +672,18 @@ impl Engine {
 
     fn search_names(&self, req: &SearchRequest) -> SearchResponse {
         let mode = req.mode.as_str();
-        if mode == "natural" || ((mode.is_empty() || mode == "auto") && crate::nl::is_natural(&req.query)) {
+        if mode == "natural" || ((mode.is_empty() || mode == "auto") && (crate::nl::is_natural(&req.query) || self.has_nickname(&req.query) || self.names_equipment(&req.query))) {
             return self.search_natural(req);
         }
         let exact = self.search_exact(req);
+        // Hardly anything spells it out, but the words describe one piece of
+        // equipment ("sulfur plant waste heat exchanger"): its documents.
+        if exact.total <= 2 && (mode.is_empty() || mode == "auto") && req.query.split_whitespace().count() >= 3 {
+            let nl = self.search_natural(req);
+            if nl.card.is_some() && nl.ambiguity.is_empty() && nl.total > exact.total {
+                return nl;
+            }
+        }
         // Nothing matched every word: fall back to best-fit matches.
         if exact.total == 0 && (mode.is_empty() || mode == "auto") && req.query.split_whitespace().count() >= 2 && exact.notice.as_deref().map(|n| !n.starts_with("No equipment numbered")).unwrap_or(true) {
             let mut nl = self.search_natural(req);
@@ -787,6 +810,25 @@ impl Engine {
         // ── Identifiers: equipment numbers, tags, circuits ─────────────
         let mut groups: Vec<Group> = wild_groups;
         let ids = text::scan_ids(&q);
+        // Context for telling apart equipment that shares a tag: units and
+        // topic words named anywhere in the request.
+        let ctx_words: Vec<String> = {
+            let mut r = q.clone();
+            for t in ids.iter().rev() {
+                r.replace_range(t.start..t.end, " ");
+            }
+            text::word_tokens(&r).into_iter().filter(|w| !text::STOPS.contains(w.as_str()) && w != "unit").collect()
+        };
+        let mut ctx_units: Vec<u16> = unit_hits.clone();
+        let mut topic_ids: Vec<Vec<u32>> = Vec::new();
+        for w in &ctx_words {
+            let us: Vec<u16> = self.idx.units.iter().enumerate().filter(|(_, u)| u.keys.iter().any(|k| k == w)).map(|(i, _)| i as u16).collect();
+            if !us.is_empty() && w.len() >= 3 {
+                ctx_units.extend(us);
+            } else if let Some(&t) = self.idx.term_ids.get(w.as_str()) {
+                topic_ids.push(vec![t]);
+            }
+        }
         let mut consumed: Vec<(usize, usize)> = Vec::new();
         for tok in &ids {
             consumed.push((tok.start, tok.end));
@@ -877,6 +919,17 @@ impl Engine {
                             g.members.entry(fi).or_insert((Via::Literal, u32::MAX));
                         }
                     }
+                    if list.len() > 1 && req.equipment.is_none() {
+                        let (narrow, why) = self.narrow_by_context(&list, &ctx_units, &topic_ids);
+                        if narrow.len() < list.len() {
+                            let e = &self.idx.equipment[narrow[0] as usize];
+                            if narrow.len() == 1 {
+                                resp.chips.push(Chip { kind: "equipment", text: e.number.clone(), detail: format!("{} {} — {}", tok.raw.to_uppercase(), e.description, why.join(", ")).trim().into() });
+                            }
+                            g = self.group_for_equipment(&tok.raw, &narrow, None);
+                            list = narrow;
+                        }
+                    }
                     if list.len() > 1 {
                         let units: HashSet<Option<u16>> = list.iter().map(|&e| self.idx.equipment[e as usize].unit).collect();
                         if units.len() > 1 && req.equipment.is_none() {
@@ -885,7 +938,7 @@ impl Engine {
                             resp.ambiguity.push(Ambiguity { token: tok.raw.to_uppercase(), options: opts });
                         }
                     }
-                    if list.len() == 1 {
+                    if list.len() == 1 && !resp.chips.iter().any(|c| c.kind == "equipment" && c.text == self.idx.equipment[list[0] as usize].number) {
                         let e = &self.idx.equipment[list[0] as usize];
                         resp.chips.push(Chip { kind: "equipment", text: e.number.clone(), detail: format!("{} {}", tok.raw.to_uppercase(), e.description).trim().into() });
                     } else if list.is_empty() {
@@ -1128,6 +1181,11 @@ impl Engine {
             if matched == terms.len() && !terms.is_empty() {
                 score += 30;
                 reasons.push("All search words".into());
+                // About it, not just filed near it.
+                if terms.iter().all(|t| t.ids.iter().any(|id| f.name_terms.binary_search(id).is_ok() || f.meta_terms.binary_search(id).is_ok() || self.heading_has_term(fi, *id))) {
+                    score += 40;
+                    reasons.push("What you asked about is in the title".into());
+                }
             }
             for (w, us) in &unit_words {
                 if dir.unit.map(|u| us.contains(&u)).unwrap_or(false) {
@@ -1280,6 +1338,7 @@ impl Engine {
         }
         let _ = total_before;
         resp.total = visible.len();
+        resp.top = if req.sort.is_empty() || req.sort == "relevance" { Self::top_group(&visible.iter().map(|s| s.score as f32).collect::<Vec<_>>()) } else { visible.len().min(10) };
         for (rank, s) in visible.into_iter().enumerate().skip(req.offset).take(limit) {
             resp.hits.push(self.hit(s.fi, rank + 1, s.score, s.reasons));
         }
@@ -1409,6 +1468,7 @@ impl Engine {
             stale_copy: l.map(|l| l.stale_copy).unwrap_or(false),
             stranded_for: l.map(|l| l.stranded_for.iter().map(|&e| self.idx.equipment[e as usize].number.clone()).collect()).unwrap_or_default(),
             private: f.flags & crate::link::F_PRIVATE != 0,
+            corrected: self.links.corrections.get(&fi).map(|l| l.iter().map(|c| Corrected { kind: c.kind.clone(), value: c.value.clone(), by: c.by.clone() }).collect()).unwrap_or_default(),
         }
     }
 

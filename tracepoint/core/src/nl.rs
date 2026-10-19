@@ -412,7 +412,15 @@ impl Engine {
         // ── Units ("in the LRU", "crude unit", "sulfur plant") ─────────
         // A word names a unit when it is a unit code, an acronym/known unit
         // name, an everyday alias, or is followed by "unit"/"plant"/"area".
-        let rw = text::raw_words(&q);
+        let mut rw = text::raw_words(&q);
+        // A nickname people use in file names ("crude tower").
+        let mut by_nickname = false;
+        if let Some((i, ei, k)) = self.nickname_in(&rw) {
+            rw.drain(i..i + 2);
+            u.equipment = vec![(ei, 10.0, vec![k])];
+            u.equipment_strong = true;
+            by_nickname = true;
+        }
         let mut remaining: Vec<String> = Vec::new();
         let mut i = 0;
         while i < rw.len() {
@@ -477,7 +485,7 @@ impl Engine {
         }
         let asked_relief = words.iter().any(|w| ["psv", "prv", "relief", "safety", "rv", "valve", "tsv"].contains(&w.as_str())) || u.concepts.iter().any(|c| c.id == "psv");
         let asked_piping = words.iter().any(|w| ["pipe", "piping", "line", "circuit", "loop"].contains(&w.as_str()));
-        if !words.is_empty() && u.ids.is_empty() {
+        if !words.is_empty() && u.ids.is_empty() && !by_nickname {
             let mut best: Vec<(u32, f32, Vec<String>)> = Vec::new();
             let n_eq = self.eq_tokens.len().max(1) as f32;
             for (ei, toks) in self.eq_tokens.iter().enumerate() {
@@ -497,7 +505,9 @@ impl Engine {
                         let exact = expansions.iter().any(|e| *e == t.as_str());
                         let budget = text::typo_budget(w.len().min(t.len()));
                         let typo = !exact && t.len() >= 5 && w.len() >= 5 && text::edit_distance(w, t, budget) <= budget;
-                        if exact || typo {
+                        // Shorthand: "prefrac" for PREFRACTIONATOR, "deeth" for DEETHANIZER.
+                        let short = !exact && !typo && w.len() >= 4 && t.len() >= w.len() + 3 && t.starts_with(w.as_str());
+                        if exact || typo || short {
                             let df = *self.eq_df.get(t).unwrap_or(&1) as f32;
                             let idf = (n_eq / df).ln().max(0.3);
                             let s = if exact && t == w { idf } else { idf * 0.8 };
@@ -517,6 +527,10 @@ impl Engine {
                 let eq = &self.idx.equipment[ei];
                 if (asked_relief != is_relief(eq)) || (!asked_piping && is_piping(eq)) {
                     score *= 0.55;
+                }
+                // Removed or retired equipment only when nothing live fits.
+                if eq.folder_path.as_deref().map(crate::sense::out_of_service).unwrap_or(false) {
+                    score *= 0.7;
                 }
                 if !u.units.is_empty() {
                     if eq.unit.map(|x| u.units.contains(&x)).unwrap_or(false) {
@@ -549,6 +563,7 @@ impl Engine {
                 !used.contains(w)
                     && !used.iter().any(|t| KIND_SYNONYMS.iter().any(|(k, v)| *k == w.as_str() && v.contains(&t.as_str())))
                     && !used.iter().any(|t| t.len() >= 5 && w.len() >= 5 && text::edit_distance(w, t, 2) <= 2)
+                    && !used.iter().any(|t| w.len() >= 4 && t.len() >= w.len() + 3 && t.starts_with(w.as_str()))
                     && !text::STOPS.contains(w.as_str())
             })
             .collect();
@@ -566,12 +581,16 @@ impl Engine {
         let mut equip_set: Vec<u32> = Vec::new();
         // Possible equipment: boosts files, never narrows the search.
         let mut weak_equip: Vec<u32> = Vec::new();
+        let topic_ids: Vec<Vec<u32>> = u.words.iter().map(|w| word_variants(w).iter().filter_map(|v| self.idx.term_ids.get(v.as_str()).copied()).collect::<Vec<u32>>()).filter(|v| !v.is_empty()).collect();
         for t in &u.ids {
             if let Some(l) = self.idx.equip_keys.get(&t.key).or_else(|| t.parent.as_ref().and_then(|p| self.idx.equip_keys.get(p))) {
-                equip_set.extend(l);
-                for &e in l {
+                // "crude unit V-3": the V-3 the context points to.
+                let (l, why) = if req.equipment.is_none() { self.narrow_by_context(l, &u.units, &topic_ids) } else { (l.clone(), vec![]) };
+                equip_set.extend(&l);
+                for &e in &l {
                     let eq = &self.idx.equipment[e as usize];
-                    resp.chips.push(Chip { kind: "equipment", text: eq.number.clone(), detail: format!("{} {}", t.raw.to_uppercase(), eq.description).trim().into() });
+                    let because = if why.is_empty() { String::new() } else { format!(" — {}", why.join(", ")) };
+                    resp.chips.push(Chip { kind: "equipment", text: eq.number.clone(), detail: format!("{} {}{because}", t.raw.to_uppercase(), eq.description).trim().into() });
                 }
             } else {
                 resp.chips.push(Chip { kind: "tag", text: t.raw.to_uppercase(), detail: "Tag in file or folder names".into() });
@@ -580,14 +599,19 @@ impl Engine {
         if let Some(pin) = req.equipment {
             equip_set = vec![pin];
         } else if !u.equipment.is_empty() && equip_set.is_empty() {
-            if u.equipment_strong {
-                let (e, _, why) = &u.equipment[0];
-                equip_set.push(*e);
-                let eq = &self.idx.equipment[*e as usize];
+            // Several fit the description: the context may still pick one
+            // (the in-service prefrac, not the retired one).
+            let (picked, ctx) = if u.equipment_strong { (vec![u.equipment[0].0], vec![]) } else { self.narrow_by_context(&u.equipment.iter().map(|e| e.0).collect::<Vec<_>>(), &u.units, &topic_ids) };
+            if picked.len() == 1 {
+                let e = picked[0];
+                let why = &u.equipment.iter().find(|x| x.0 == e).map(|x| x.2.clone()).unwrap_or_default();
+                equip_set.push(e);
+                let eq = &self.idx.equipment[e as usize];
+                let because = if ctx.is_empty() { String::new() } else { format!(", {}", ctx.join(", ")) };
                 resp.chips.push(Chip {
                     kind: "equipment",
                     text: eq.number.clone(),
-                    detail: format!("{} {} — from “{}”", eq.tags.first().cloned().unwrap_or_default(), eq.description, why.join(" ")).trim().into(),
+                    detail: format!("{} {} — from “{}”{because}", eq.tags.first().cloned().unwrap_or_default(), eq.description, why.join(" ")).trim().into(),
                 });
             } else {
                 weak_equip.extend(u.equipment.iter().map(|e| e.0));
@@ -815,6 +839,11 @@ impl Engine {
                 }
             }
             let coverage = covered / max_word_weight;
+            // What was asked about is in the title (not just the folder).
+            if !word_ids.is_empty() && word_ids.iter().all(|(_, ids, _)| ids.iter().any(|t| f.name_terms.binary_search(t).is_ok() || f.meta_terms.binary_search(t).is_ok() || self.heading_has_term(fi, *t))) {
+                score += 45.0;
+                reasons.push("What you asked about is in the title".into());
+            }
             // Without equipment, require real evidence of what was asked.
             if equip_set.is_empty() {
                 let enough = (word_ids.is_empty() || coverage >= 0.5 || (weak_hit && coverage >= 0.25)) && (u.concepts.is_empty() || concept_hits >= 1);
@@ -974,6 +1003,15 @@ impl Engine {
             visible.push(s);
         }
         resp.total = visible.len();
+        resp.top = if !date_sort.is_empty() {
+            let best = visible.iter().filter(|s| s.fits).map(|s| s.score).fold(f32::MIN, f32::max);
+            let bar = best - (best.abs() * 0.45).max(60.0);
+            visible.iter().take(10).take_while(|s| s.fits && s.score >= bar).count().max(3.min(visible.len()))
+        } else if req.sort.is_empty() || req.sort == "relevance" {
+            Self::top_group(&visible.iter().map(|s| s.score).collect::<Vec<_>>())
+        } else {
+            visible.len().min(10)
+        };
         let top_fits = visible.first().map(|s| s.fits).unwrap_or(false);
         for (rank, s) in visible.into_iter().enumerate().skip(req.offset).take(limit) {
             resp.hits.push(self.hit(s.fi, rank + 1, s.score.round() as i32, s.reasons));

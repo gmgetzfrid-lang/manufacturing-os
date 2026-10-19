@@ -95,6 +95,8 @@ pub struct Service {
     groups: RwLock<crate::team::Loaded>,
     /// The last time this PC shared an index, and what was held back.
     published: Mutex<Option<crate::team::Published>>,
+    /// One publish at a time from this PC (a scan and a correction can overlap).
+    publishing: Mutex<()>,
     scan: Mutex<ScanState>,
     scan_cancel: Arc<AtomicBool>,
     scan_lock: Mutex<Option<PathBuf>>,
@@ -272,6 +274,7 @@ impl Service {
             exe_dir,
             groups: RwLock::new(Default::default()),
             published: Mutex::new(None),
+            publishing: Mutex::new(()),
             scan: Mutex::new(ScanState::default()),
             scan_cancel: Arc::new(AtomicBool::new(false)),
             scan_lock: Mutex::new(None),
@@ -483,6 +486,19 @@ impl Service {
             Ok(i) => i,
             Err(e) => return self.fail_index(&e),
         };
+        // Corrections administrators and indexers made, shared with everyone.
+        let mut corrections: std::collections::HashMap<u32, Vec<crate::link::Correction>> = std::collections::HashMap::new();
+        if let Ok(mut st) = mem.prepare("select file_id, kind, value, by from tp_corrections order by at, rowid") {
+            let by_id: std::collections::HashMap<&str, u32> = idx.files.iter().enumerate().map(|(i, f)| (f.file_id.as_str(), i as u32)).collect();
+            if let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))) {
+                for (fid, kind, value, by) in rows.flatten() {
+                    if let Some(&fi) = by_id.get(fid.as_str()) {
+                        corrections.entry(fi).or_default().push(crate::link::Correction { kind, value, by });
+                    }
+                }
+            }
+        }
+        corrections = corrections.into_iter().map(|(k, v)| (k, crate::link::resolve(&v))).filter(|(_, v)| !v.is_empty()).collect();
         drop(mem);
         // Mark private files (their roots live only in the private index).
         if let Some(pv) = &private {
@@ -503,7 +519,7 @@ impl Service {
         self.set_index_msg("Connecting copies, revisions and equipment…");
         let text = crate::engine::ContentIndex::open_many(&content, &idx);
         let cards = text.as_ref().map(|c| c.cards()).unwrap_or_default();
-        let links = crate::link::apply(&mut idx, &cards);
+        let links = crate::link::apply(&mut idx, &cards, &corrections);
         self.set_index_msg("Building the search engine…");
         let mut engine = Engine::new(idx);
         engine.links = links;
@@ -511,7 +527,12 @@ impl Service {
         let n = engine.content.read().unwrap().as_ref().map(|c| c.files_read).unwrap_or(0);
         self.content.lock().unwrap().files_read_total = n;
         let files = engine.idx.files.len();
-        *self.engine.write().unwrap() = Some(Arc::new(engine));
+        let engine = Arc::new(engine);
+        *self.engine.write().unwrap() = Some(engine.clone());
+        // Learn nicknames in the background so the first search is instant.
+        std::thread::spawn(move || {
+            let _ = engine.has_nickname("");
+        });
         *self.index_state.write().unwrap() = IndexState { ready: true, message: format!("{files} files ready in {:.1} s", t0.elapsed().as_secs_f64()), source, source_kind: kind.into(), error: None };
         self.platform.emit("index", json!({"ready": true}));
     }
@@ -628,6 +649,7 @@ impl Service {
         if !master.is_file() {
             return Err("Nothing to share yet.".into());
         }
+        let _one = self.publishing.lock().unwrap_or_else(|p| p.into_inner());
         let held_lock = self.scan_lock.lock().unwrap().is_some();
         let lock = if held_lock { None } else { self.take_scan_lock()? };
         let content = self.content_master_path();
@@ -1383,6 +1405,46 @@ impl Service {
                 crate::export::write_cleanup(&dest, &rows.iter().map(|(a, b, r)| (*a, *b, r.clone_rows())).collect::<Vec<_>>(), &source).map_err(|x| ApiError::new(500, x))?;
                 self.audit("cleanup_report", &format!("{} rows", rows.iter().map(|x| x.2.len()).sum::<usize>()));
                 Ok(json!({"path": dest.display().to_string(), "rows": rows.iter().map(|x| x.2.len()).sum::<usize>()}))
+            }
+
+            "file.correct" => {
+                self.require(|s| s.user.role.can_rescan(), "Only administrators and indexers can correct the index.")?;
+                let kind = s(a, "kind");
+                if !["equip", "not_equip", "current", "superseded", "clear"].contains(&kind.as_str()) {
+                    return Err(ApiError::new(400, "Unknown correction."));
+                }
+                let e = self.engine()?;
+                let id = a["id"].as_u64().unwrap_or(u64::MAX) as usize;
+                let f = e.idx.files.get(id).ok_or_else(|| ApiError::new(404, "No such file."))?;
+                // The index may have reloaded since the search: make sure it's the same file.
+                if a.get("name").and_then(|x| x.as_str()).map(|n| n != f.name).unwrap_or(false) {
+                    return Err(ApiError::new(409, "The index just updated — search again, then make the correction."));
+                }
+                if f.flags & crate::link::F_PRIVATE != 0 {
+                    return Err(ApiError::new(400, "That's a private file — corrections are for the shared index."));
+                }
+                let mut value = s(a, "value").trim().to_string();
+                if kind == "equip" || kind == "not_equip" {
+                    let ok = e.idx.equipment.iter().find(|q| q.number.eq_ignore_ascii_case(&value)).map(|q| q.number.clone());
+                    value = ok.ok_or_else(|| ApiError::new(400, format!("No equipment numbered {value}.")))?;
+                }
+                let file_id = f.file_id.clone();
+                let master = self.ensure_master().map_err(|x| ApiError::new(500, x))?.ok_or_else(|| ApiError::new(400, "No index on this PC to correct yet."))?;
+                {
+                    let c = rusqlite::Connection::open(&master).map_err(|x| ApiError::new(500, x.to_string()))?;
+                    // A dated entry; the latest word wins when the log is read.
+                    c.execute_batch(crate::link::CORRECTIONS_SQL).map_err(|x| ApiError::new(500, x.to_string()))?;
+                    c.execute("INSERT OR REPLACE INTO tp_corrections VALUES(?1,?2,?3,?4,?5)", rusqlite::params![file_id, kind, value, self.me.account, auth::now()]).map_err(|x| ApiError::new(500, x.to_string()))?;
+                }
+                self.audit("index_corrected", &format!("{} — {kind} {value}", f.name));
+                let me = self.clone();
+                std::thread::spawn(move || {
+                    if me.team_dir().is_some() {
+                        let _ = me.publish();
+                    }
+                    me.load_index();
+                });
+                Ok(json!({"ok": true, "message": if self.team_dir().is_some() { "Saved. Sharing it with everyone now." } else { "Saved." }}))
             }
 
             // ── Private folders (this PC, this person only) ──────────

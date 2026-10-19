@@ -33,6 +33,7 @@ pub const INDEX_TABLES: &[&str] = &[
     "directory_profiles",
     "tp_access",
     "tp_file_access",
+    "tp_corrections",
 ];
 
 fn has_table(c: &Connection, schema: &str, t: &str) -> bool {
@@ -87,6 +88,9 @@ pub fn split_index(master: &Path, class: &str, out: &Path) -> Result<usize, Stri
     c.execute("insert into cf select file_id from m.tp_file_access where class=?1", [class]).map_err(e)?;
     let n = copy_rows(&c, "m", "files", "where file_id in (select file_id from temp.cf)").map_err(e)?;
     copy_rows(&c, "m", "tp_file_access", "where file_id in (select file_id from temp.cf)").map_err(e)?;
+    if has_table(&c, "m", "tp_corrections") {
+        copy_rows(&c, "m", "tp_corrections", "where file_id in (select file_id from temp.cf)").map_err(e)?;
+    }
     c.execute("insert or ignore into tp_access select * from m.tp_access where class=?1", [class]).map_err(e)?;
     // Counts would tell readers about files they can't see.
     c.execute("update tp_access set files=0", []).map_err(e)?;

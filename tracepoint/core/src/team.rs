@@ -201,10 +201,17 @@ pub fn publish(guard: &Guard, team: &Path, me: &acl::Identity, master: &Path, co
     guard.create_dir_all(scratch).map_err(|e| e.to_string())?;
     let writer = acl::server_identity(&index_dir.to_string_lossy(), me);
     let mut fresh: Vec<GroupEntry> = Vec::new();
+    let old = read_manifest(team).unwrap_or_default();
     for (class, root, readers, broad, files) in &classes {
         let ra = ReadAccess::parse_fingerprint(readers);
         let short = &class[class.len().saturating_sub(12)..];
-        let folder = format!("g-{short}-{stamp}");
+        // A new folder every time: readers may have the last one open.
+        let mut folder = format!("g-{short}-{stamp}");
+        let mut n = 1;
+        while index_dir.join(&folder).exists() {
+            n += 1;
+            folder = format!("g-{short}-{stamp}-{n}");
+        }
         let dir = index_dir.join(&folder);
         let refuse = |reason: String, report: &mut Published| {
             let _ = std::fs::remove_dir_all(&dir);
@@ -216,6 +223,11 @@ pub fn publish(guard: &Guard, team: &Path, me: &acl::Identity, master: &Path, co
         if let Err(e) = crate::partition::split_index(master, class, &tmp_index) {
             refuse(e, &mut report);
             continue;
+        }
+        // Corrections anyone made to these files stay, whoever scanned last.
+        let previous: Vec<std::path::PathBuf> = old.groups.iter().filter(|g| g.class == *class).map(|g| index_dir.join(&g.folder).join("index.db")).filter(|p| p.is_file()).collect();
+        if let Err(e) = carry_corrections(&tmp_index, &previous) {
+            log(format!("Earlier corrections for a group couldn't be carried over ({e})."));
         }
         let has_content = match content_master.filter(|p| p.is_file()) {
             Some(cm) => match crate::partition::split_content(cm, master, class, &tmp_content) {
@@ -267,7 +279,7 @@ pub fn publish(guard: &Guard, team: &Path, me: &acl::Identity, master: &Path, co
     }
     // New list: other roots untouched; complete roots replaced; partial
     // roots keep any group this index couldn't produce.
-    let old = read_manifest(team).unwrap_or_default();
+    let old = read_manifest(team).unwrap_or(old);
     let fresh_classes: std::collections::HashSet<&str> = fresh.iter().map(|g| g.class.as_str()).collect();
     let mut groups: Vec<GroupEntry> = old
         .groups
@@ -293,6 +305,22 @@ pub fn publish(guard: &Guard, team: &Path, me: &acl::Identity, master: &Path, co
         }
     }
     Ok(report)
+}
+
+/// Copy the correction log of a group's earlier published copies into the
+/// new one, for files it still holds.
+fn carry_corrections(new: &Path, previous: &[std::path::PathBuf]) -> Result<(), String> {
+    let c = rusqlite::Connection::open(new).map_err(|e| e.to_string())?;
+    c.execute_batch(crate::link::CORRECTIONS_SQL).map_err(|e| e.to_string())?;
+    for p in previous {
+        c.execute("attach database ?1 as prev", [p.to_string_lossy()]).map_err(|e| e.to_string())?;
+        let has: bool = c.query_row("select count(*) from prev.sqlite_master where name='tp_corrections'", [], |r| r.get::<_, i64>(0)).map(|n| n > 0).unwrap_or(false);
+        if has {
+            c.execute("insert or ignore into tp_corrections(file_id,kind,value,by,at) select file_id,kind,value,by,at from prev.tp_corrections where file_id in (select file_id from files)", []).map_err(|e| e.to_string())?;
+        }
+        c.execute("detach database prev", []).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

@@ -55,9 +55,50 @@ pub struct LinkStats {
     pub ms: u128,
 }
 
+/// A correction an administrator or indexer made; shared through the index
+/// so everyone gets the same, better answer.
+#[derive(Clone, Debug)]
+pub struct Correction {
+    /// "equip" (belongs with), "not_equip" (not about), "current" (the
+    /// current revision), "superseded".
+    pub kind: String,
+    /// Equipment number for equip / not_equip.
+    pub value: String,
+    pub by: String,
+}
+
+/// Corrections are kept as a dated log, so any indexer's publish can carry
+/// everyone's forward and the latest word wins.
+pub const CORRECTIONS_SQL: &str = "CREATE TABLE IF NOT EXISTS tp_corrections(file_id TEXT NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', by TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY(file_id, kind, value, at))";
+
+/// What a file's correction log adds up to (entries oldest first): "clear"
+/// wipes what came before; each entry replaces its opposite.
+pub fn resolve(log: &[Correction]) -> Vec<Correction> {
+    let mut out: Vec<Correction> = Vec::new();
+    for c in log {
+        match c.kind.as_str() {
+            "clear" => out.clear(),
+            "equip" | "not_equip" => {
+                out.retain(|x| !((x.kind == "equip" || x.kind == "not_equip") && x.value.eq_ignore_ascii_case(&c.value)));
+                out.push(c.clone());
+            }
+            "current" | "superseded" => {
+                out.retain(|x| x.kind != "current" && x.kind != "superseded");
+                out.push(c.clone());
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 #[derive(Default)]
 pub struct Links {
     pub files: HashMap<u32, FileLink>,
+    /// What each read document says it is (title / first lines), lower case.
+    pub headings: HashMap<u32, String>,
+    /// Corrections in force, by file.
+    pub corrections: HashMap<u32, Vec<Correction>>,
     /// Equipment → documents about it that live elsewhere.
     pub stranded: HashMap<u32, Vec<u32>>,
     pub stats: LinkStats,
@@ -136,11 +177,36 @@ fn year_of_mtime(ns: i64) -> i32 {
 
 /// Work out all connections and add content-found equipment to the index
 /// (so searching an equipment number also finds its stranded documents).
-pub fn apply(idx: &mut Index, cards: &HashMap<u32, Card>) -> Links {
+pub fn apply(idx: &mut Index, cards: &HashMap<u32, Card>, corrections: &HashMap<u32, Vec<Correction>>) -> Links {
     let t0 = std::time::Instant::now();
     let n = idx.files.len();
     let mut links = Links::default();
     links.stats.cards = cards.len();
+    links.headings = cards.iter().filter_map(|(&fi, c)| c.heading.clone().map(|h| (fi, h))).collect();
+    links.corrections = corrections.clone();
+    // People's corrections first: "not about" removes a link; "belongs
+    // with" adds one.
+    let by_number: HashMap<String, u32> = idx.equipment.iter().enumerate().map(|(i, e)| (e.number.to_lowercase(), i as u32)).collect();
+    for (&fi, list) in corrections {
+        for c in list {
+            let Some(&ei) = by_number.get(&c.value.to_lowercase()) else { continue };
+            match c.kind.as_str() {
+                "not_equip" => {
+                    idx.files[fi as usize].equip.retain(|x| x.0 != ei);
+                    idx.equip_files[ei as usize].retain(|&x| x != fi);
+                    idx.equipment[ei as usize].file_count = idx.equip_files[ei as usize].len() as u32;
+                }
+                "equip" if !idx.files[fi as usize].equip.iter().any(|x| x.0 == ei) => {
+                    idx.files[fi as usize].equip.push((ei, LinkSrc::Content));
+                    idx.equip_files[ei as usize].push(fi);
+                    idx.equipment[ei as usize].file_count += 1;
+                    links.files.entry(fi).or_default().content_equip.push((ei, format!("Confirmed by {}", c.by)));
+                }
+                _ => {}
+            }
+        }
+    }
+    let said_not = |fi: u32, ei: u32, idx: &Index| corrections.get(&fi).map(|l| l.iter().any(|c| c.kind == "not_equip" && c.value.eq_ignore_ascii_case(&idx.equipment[ei as usize].number))).unwrap_or(false);
     let live = |idx: &Index, fi: u32| idx.files[fi as usize].flags & (F_GONE | F_JUNK | F_ZERO) == 0;
 
     // ── Equipment from contents ──────────────────────────────────────
@@ -198,7 +264,7 @@ pub fn apply(idx: &mut Index, cards: &HashMap<u32, Card>) -> Links {
         picks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         picks.truncate(3);
         for (ei, _, why) in picks {
-            if !f.equip.iter().any(|x| x.0 == ei) {
+            if !f.equip.iter().any(|x| x.0 == ei) && !said_not(fi, ei, idx) {
                 added.push((fi, ei, why));
             }
         }
@@ -415,7 +481,10 @@ pub fn apply(idx: &mut Index, cards: &HashMap<u32, Card>) -> Links {
         let distinct_revs: HashSet<i32> = ev.iter().filter_map(|e| e.rev).collect();
         let distinct_dates: HashSet<i32> = ev.iter().filter_map(|e| e.doc_date).collect();
         // Pick the newest, and how sure we are.
-        let (newest, basis) = if with_rev >= 2 && distinct_revs.len() >= 2 {
+        let marked = |fi: u32, k: &str| corrections.get(&fi).map(|l| l.iter().any(|c| c.kind == k)).unwrap_or(false);
+        let (newest, basis) = if let Some(e) = ev.iter().find(|e| marked(e.fi, "current")) {
+            (e.fi, "person")
+        } else if with_rev >= 2 && distinct_revs.len() >= 2 {
             let top = ev.iter().filter(|e| e.rev.is_some()).max_by_key(|e| (e.rev, e.doc_date, e.file_date)).unwrap();
             (top.fi, "rev")
         } else if ev.iter().filter(|e| e.doc_date.is_some()).count() >= 2 && distinct_dates.len() >= 2 {
@@ -437,7 +506,8 @@ pub fn apply(idx: &mut Index, cards: &HashMap<u32, Card>) -> Links {
                 continue;
             }
             let older = match basis {
-                "rev" => e.rev.map(|r| r < top.rev.unwrap_or(r)).unwrap_or(false),
+                "person" => true,
+                "rev" => e.rev.map(|r| r < top.rev.unwrap_or(r)).unwrap_or(false) || marked(e.fi, "superseded"),
                 _ => e.doc_date.map(|d| d < top.doc_date.unwrap_or(d)).unwrap_or(false),
             };
             if !older {
@@ -445,6 +515,7 @@ pub fn apply(idx: &mut Index, cards: &HashMap<u32, Card>) -> Links {
             }
             l.newer = Some(newest);
             l.newer_why = Some(match basis {
+                "person" => format!("Marked as the current revision by {}", corrections[&newest].iter().find(|c| c.kind == "current").map(|c| c.by.as_str()).unwrap_or("an administrator")),
                 "rev" => format!(
                     "Rev {} {} vs Rev {} here{}",
                     top.rev_label.clone().unwrap_or_default(),
@@ -485,6 +556,14 @@ pub fn fmt_ymd(d: i32) -> String {
 mod tests {
     use super::*;
     use crate::card::{Card, Seen};
+
+    #[test]
+    fn latest_correction_wins() {
+        let c = |k: &str, v: &str| Correction { kind: k.into(), value: v.into(), by: "KERN\\a".into() };
+        let r = resolve(&[c("not_equip", "5610.15"), c("current", ""), c("equip", "5610.15"), c("superseded", "")]);
+        assert_eq!(r.iter().map(|x| x.kind.as_str()).collect::<Vec<_>>(), vec!["equip", "superseded"]);
+        assert!(resolve(&[c("equip", "2010.03"), c("clear", ""), c("not_equip", "2010.04")]).iter().all(|x| x.value == "2010.04"));
+    }
 
     #[test]
     fn stems_ignore_revision_and_copy_marks() {
@@ -543,7 +622,7 @@ mod tests {
         // A copy of Rev 2 dropped somewhere later: same bytes as rev2.
         cards.insert(copy2, card(&[("drawing", "D-5610-15", 4.0)], Some("2"), Some(20190104), "b"));
         let eq = idx.equip_keys["5610.15"][0];
-        let l = apply(&mut idx, &cards);
+        let l = apply(&mut idx, &cards, &HashMap::new());
         // The scan is about 5610.15, found by its National Board number.
         assert!(idx.files[scan as usize].equip.iter().any(|x| x.0 == eq && x.1 == LinkSrc::Content), "{:?}", l.get(scan));
         assert!(l.get(scan).unwrap().content_equip[0].1.contains("National Board"));
@@ -557,6 +636,16 @@ mod tests {
         assert_eq!(cp.home, Some(rev2));
         assert_eq!(cp.newer, Some(rev3));
         assert!(l.get(rev3).unwrap().newer.is_none());
+        // An administrator says the scan isn't about 5610.15 and Rev 2 is
+        // actually current: everyone gets that answer.
+        let mut idx2 = Index::load_conn(&c).unwrap();
+        let mut corr = HashMap::new();
+        corr.insert(scan, vec![Correction { kind: "not_equip".into(), value: "5610.15".into(), by: "KERN\\admin".into() }]);
+        corr.insert(rev2, vec![Correction { kind: "current".into(), value: String::new(), by: "KERN\\admin".into() }]);
+        let l2 = apply(&mut idx2, &cards, &corr);
+        assert!(!idx2.files[scan as usize].equip.iter().any(|x| x.0 == eq), "not about it any more");
+        assert_eq!(l2.get(rev3).unwrap().newer, Some(rev2));
+        assert!(l2.get(rev3).unwrap().newer_why.as_ref().unwrap().contains("Marked as the current revision"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
