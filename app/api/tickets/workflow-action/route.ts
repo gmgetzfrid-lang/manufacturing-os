@@ -815,25 +815,37 @@ export async function POST(req: NextRequest) {
       // ("Publish as a new document in <library>", /api/tickets/handback) —
       // and the close believes it on the same terms: a version in this org,
       // of the document the record names, carrying this ticket as its
-      // provenance. Same read rules as above (a failed read is a 503 with
-      // nothing written; a non-UUID id is unbacked with no read).
+      // provenance — and (DF-P15 fix, on review) of a document that is in
+      // the request's library, in its org, as /api/tickets/handback requires
+      // before it records one. Same read rules as above (a failed read is a
+      // 503 with nothing written; a non-UUID id is unbacked with no read).
       const recordedDoc = String(recordedState.document_id ?? "");
       if (!UUID_RE.test(String(recordedState.version_id)) || !UUID_RE.test(recordedDoc)) {
         unbackedPublish = true;
       } else {
+        const registerUnreadable = (message: string) => {
+          console.error(`[workflow-action] register read failed while closing ticket ${body.ticketId}: ${message}`);
+          return NextResponse.json(
+            { error: "The document register could not be read to confirm this request's published deliverable, so the request was not closed. Try again in a moment.", code: "register_unreadable" },
+            { status: 503 },
+          );
+        };
         const { data: backing, error: backingErr } = await supabaseAdmin
           .from("document_versions").select("id")
           .eq("id", recordedState.version_id).eq("org_id", ticket.orgId)
           .eq("record_id", recordedDoc).eq("related_ticket_id", body.ticketId)
           .maybeSingle();
-        if (backingErr) {
-          console.error(`[workflow-action] register read failed while closing ticket ${body.ticketId}: ${backingErr.message}`);
-          return NextResponse.json(
-            { error: "The document register could not be read to confirm this request's published deliverable, so the request was not closed. Try again in a moment.", code: "register_unreadable" },
-            { status: 503 },
-          );
+        if (backingErr) return registerUnreadable(backingErr.message);
+        if (!backing) {
+          unbackedPublish = true;
+        } else {
+          const { data: backingDoc, error: backingDocErr } = await supabaseAdmin
+            .from("documents").select("id, library_id")
+            .eq("id", recordedDoc).eq("org_id", ticket.orgId)
+            .maybeSingle();
+          if (backingDocErr) return registerUnreadable(backingDocErr.message);
+          unbackedPublish = !backingDoc || (backingDoc as { library_id?: string | null }).library_id !== ticket.libraryId;
         }
-        unbackedPublish = !backing;
       }
     }
   }

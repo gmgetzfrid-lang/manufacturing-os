@@ -46,11 +46,24 @@
 //     their copy, so the browser path keeps what they could do before DF-P15
 //     (READ_SCOPE_FALLBACK_NOTE says why); after the paste the page cannot
 //     load the ticket for them at all, so the fallback is never wider than
-//     the database. Anything else (401, 409 `archived`, 503 `unrecorded`, a
-//     JSON 502 …) is said in words and nothing is copied.
+//     the database. So is a 422 `unstampable` that carries `reason:
+//     "oversize"` (DF-P15 fix, on review): a PDF over the server's 64 MB
+//     stamping bound was stamped in the tab before DF-P15 (stampPdf /
+//     downloadStampedPdf, watermark, QR and superseded footer included), so
+//     the page keeps doing that — OVERSIZE_FALLBACK_NOTE says why — and the
+//     "take the UNSTAMPED copy anyway?" question is asked only when a stamp
+//     really failed. Anything else (401, 409 `archived`, 503 `unrecorded`, a
+//     JSON 502 …) is said in words and nothing is copied — except for a
+//     preview (below).
 //   * takeTicketCopy runs the questions in order. A preview ("view") asks
 //     none: the stamp says the file's standing, and an unstampable file is
-//     shown unstamped and recorded as such (the viewer marks it).
+//     shown unstamped and recorded as such (the viewer marks it). A preview
+//     the route refuses for a TRANSIENT reason — a JSON 502 (storage read) or
+//     a 503 other than `unrecorded` (the ticket, membership or read-scope read
+//     failed) — keeps the presigned inline frame it had before DF-P15, the
+//     reason said (DF-P15 fix, on review): a momentary read failure never
+//     blanks a preview the old path would have shown. A preview whose VIEW
+//     row was refused (503 `unrecorded`, DEC-44) is still not shown.
 
 import type { TicketAttachment } from "@/types/schema";
 import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
@@ -76,6 +89,10 @@ export const BROWSER_PATH_NOTE: Record<TicketCopyBrowserReason, string> = {
  *  unpasted) — the browser path, as before DF-P15. */
 export const READ_SCOPE_FALLBACK_NOTE =
   "the server's copy route applies the Contractor read scope, which does not include you on this request; until this workspace's database applies that scope too, the request stays open to you here";
+
+/** What the viewer says when the server answers that a PDF is over its
+ *  stamping bound: the copy is stamped in the tab, as before DF-P15. */
+export const OVERSIZE_FALLBACK_NOTE = "the file is over the 64 MB the server stamps";
 
 /** What the viewer says about a non-PDF file the server issues: its print
  *  keeps the browser path (a hidden frame cannot print a downloaded blob). */
@@ -118,7 +135,9 @@ export type TicketCopyResponse =
   | { kind: "unstampable"; message: string }
   /** The server cannot issue this file by construction — the browser path. */
   | { kind: "not_server"; message: string }
-  | { kind: "refused"; status: number; message: string };
+  /** `transient`: the route could not read what it checks right now (a JSON
+   *  502, or a 503 other than `unrecorded`) — not a ruling on this caller. */
+  | { kind: "refused"; status: number; message: string; transient?: boolean };
 
 /** The file name a response names (Content-Disposition), else the fallback. */
 export function filenameFromDisposition(header: string | null | undefined, fallback: string): string {
@@ -175,7 +194,7 @@ export async function requestTicketCopy(
       stamped: res.headers.get("x-ticket-copy-stamped") === "1",
     };
   }
-  const parsed = (await res.json().catch(() => null)) as { error?: string; message?: string } | null;
+  const parsed = (await res.json().catch(() => null)) as { error?: string; message?: string; reason?: string } | null;
   if ((parsed === null || typeof parsed !== "object") && PLATFORM_FAILURE_STATUSES.has(res.status)) {
     // The host refused or timed out the function (no JSON body: not the
     // route's answer) — the browser path, said.
@@ -184,6 +203,11 @@ export async function requestTicketCopy(
   const body = parsed && typeof parsed === "object" ? parsed : {};
   const message = body.message || body.error || `The copy was refused (HTTP ${res.status}).`;
   if (res.status === 409 && body.error === "confirm") return { kind: "confirm", message };
+  if (res.status === 422 && body.error === "unstampable" && body.reason === "oversize") {
+    // A PDF over the server's stamping bound: the tab stamps it, as before
+    // DF-P15 (see the header) — never offered only unstamped.
+    return { kind: "not_server", message: OVERSIZE_FALLBACK_NOTE };
+  }
   if (res.status === 422 && body.error === "unstampable") return { kind: "unstampable", message };
   if (res.status === 409 && (body.error === "legacy_file" || body.error === "That file is not stored under this request")) {
     return { kind: "not_server", message };
@@ -196,13 +220,18 @@ export async function requestTicketCopy(
     // load — the database's scope is not applied yet (see the header).
     return { kind: "not_server", message: READ_SCOPE_FALLBACK_NOTE };
   }
-  return { kind: "refused", status: res.status, message };
+  const transient = res.status === 502 || (res.status === 503 && body.error !== "unrecorded");
+  return transient ? { kind: "refused", status: res.status, message, transient: true } : { kind: "refused", status: res.status, message };
 }
 
 export type TicketCopyOutcome =
   | { kind: "file"; blob: Blob; filename: string; stamped: boolean }
   | { kind: "declined" }
-  | { kind: "browser"; message: string }
+  /** `acknowledged`: the user already answered the route's confirm question
+   *  for this copy — the browser path does not ask it a second time. */
+  /** `previewOnly`: a preview refused for a transient reason — the presigned
+   *  inline frame shows it; print and download still go through the server. */
+  | { kind: "browser"; message: string; acknowledged?: boolean; previewOnly?: boolean }
   | { kind: "refused"; message: string };
 
 /** The whole exchange for one copy: the questions the route asks, asked in
@@ -228,8 +257,13 @@ export async function takeTicketCopy(input: {
       token, fallbackName: input.fallbackName, acknowledged, acceptUnstamped,
     }, input.fetchImpl);
     if (res.kind === "file") return res;
-    if (res.kind === "not_server") return { kind: "browser", message: res.message };
-    if (res.kind === "refused") return { kind: "refused", message: res.message };
+    if (res.kind === "not_server") return !view && acknowledged ? { kind: "browser", message: res.message, acknowledged: true } : { kind: "browser", message: res.message };
+    if (res.kind === "refused") {
+      // A preview refused for a transient reason keeps the presigned inline
+      // frame, said (see the header); a print or download is refused in words.
+      if (view && res.transient) return { kind: "browser", message: res.message, previewOnly: true };
+      return { kind: "refused", message: res.message };
+    }
     if (res.kind === "confirm") {
       if (acknowledged || !(await input.confirm(res.message))) return acknowledged ? { kind: "refused", message: res.message } : { kind: "declined" };
       acknowledged = true;

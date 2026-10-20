@@ -16,11 +16,18 @@
 // runs the library's review policy. The page then records the outcome on the
 // request through /api/tickets/handback, which checks the version carries
 // the ticket and its document is in the request's library.
+//
+// DF-P15 fix (on review): the first version is found by what it IS — the
+// version of THIS new document that carries the ticket, in the request's
+// library (lib/ticketNewDocumentHandback.ts) — with the read checked; a read
+// that fails hands back no version and its reason, and the page then offers
+// to record the existing document, never to create a second one.
 
 import React, { useState } from "react";
 import { FilePlus2, Loader2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { createDocumentWithFile, type CreationStatus } from "@/lib/revisions";
+import { findTicketNewDocumentVersion } from "@/lib/ticketNewDocumentHandback";
 
 export interface PublishNewDocumentModalProps {
   orgId: string;
@@ -36,7 +43,7 @@ export interface PublishNewDocumentModalProps {
   onClose: () => void;
   /** The document was created: its first version (the one carrying the
    *  ticket), its number, and a creation-record refusal to say, if any. */
-  onCreated: (result: { versionId: string | null; documentId: string; documentNumber: string; status: CreationStatus; creationAuditError: string | null }) => void | Promise<void>;
+  onCreated: (result: { versionId: string | null; revisionLabel: string; versionReadError: string | null; documentId: string; documentNumber: string; status: CreationStatus; creationAuditError: string | null }) => void | Promise<void>;
 }
 
 export default function PublishNewDocumentModal(props: PublishNewDocumentModalProps) {
@@ -65,11 +72,16 @@ export default function PublishNewDocumentModal(props: PublishNewDocumentModalPr
         actorRole: props.actorRole,
         relatedTicketId: props.ticketRowId,
       });
-      // The first version is the document's current one right after creation.
-      const { data: docRow } = await supabase
-        .from("documents").select("current_version_id").eq("id", created.documentId).maybeSingle();
-      const versionId = ((docRow as { current_version_id?: string | null } | null)?.current_version_id) ?? null;
-      await props.onCreated({ versionId, documentId: created.documentId, documentNumber: num, status: created.status, creationAuditError: created.creationAuditError });
+      // The first version: this document's, carrying the ticket, read checked.
+      const found = await findTicketNewDocumentVersion(supabase, {
+        orgId: props.orgId, ticketRowId: props.ticketRowId, libraryId: props.libraryId, documentId: created.documentId,
+      });
+      await props.onCreated({
+        versionId: found.kind === "found" ? found.version.versionId : null,
+        revisionLabel: found.kind === "found" ? found.version.revisionLabel : "0",
+        versionReadError: found.kind === "found" ? null : found.kind === "unknown" ? found.error : "no version carrying this request was found",
+        documentId: created.documentId, documentNumber: num, status: created.status, creationAuditError: created.creationAuditError,
+      });
     } catch (e) {
       setError((e as Error)?.message || "The document could not be created.");
     } finally {

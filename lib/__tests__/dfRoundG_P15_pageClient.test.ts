@@ -27,7 +27,11 @@ const s = vi.hoisted(() => ({
   nudgeResult: 1 as number | Error,
   creates: [] as Array<Record<string, unknown>>,
   createError: null as Error | null,
-  currentVersion: "v-new" as string | null,
+  /** The register as the caller's client reads it (findTicketNewDocumentVersion). */
+  versions: [] as Array<Record<string, unknown>>,
+  documents: [] as Array<Record<string, unknown>>,
+  readErrors: {} as Record<string, { message: string } | null>,
+  reads: [] as Array<{ table: string; filters: Array<[string, string, unknown]> }>,
 }));
 vi.mock("@/lib/staleCopies", () => ({
   getTicketCopyRecall: vi.fn(async () => { s.recallCalls += 1; return s.recall; }),
@@ -44,13 +48,33 @@ vi.mock("@/lib/revisions", () => ({
     return { documentId: "doc-new", status: input.status, reviewPolicy: null, creationAuditError: null };
   }),
 }));
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { current_version_id: s.currentVersion }, error: null }) }) }) }),
-  },
-}));
+vi.mock("@/lib/supabase", () => {
+  const from = (table: string) => {
+    const filters: Array<[string, string, unknown]> = [];
+    s.reads.push({ table, filters });
+    const settle = () => {
+      const err = s.readErrors[table] ?? null;
+      if (err) return { data: null, error: err };
+      const rows = (table === "document_versions" ? s.versions : s.documents).filter((r) => filters.every(([op, k, v]) =>
+        op === "eq" ? r[k] === v : (v as unknown[]).includes(r[k])));
+      return { data: rows, error: null };
+    };
+    const q: Record<string, unknown> = {
+      select: () => q,
+      eq: (k: string, v: unknown) => { filters.push(["eq", k, v]); return q; },
+      in: (k: string, v: unknown[]) => { filters.push(["in", k, v]); return q; },
+      order: () => q,
+      then: (resolve: (v: unknown) => void) => resolve(settle()),
+    };
+    return q;
+  };
+  return { supabase: { from } };
+});
 
 import { ticketFileCopyPath, requestTicketCopy, takeTicketCopy, filenameFromDisposition, BROWSER_PATH_NOTE, NON_PDF_PRINT_NOTE, READ_SCOPE_FALLBACK_NOTE } from "@/lib/ticketCopyRequest";
+import { OVERSIZE_FALLBACK_NOTE } from "@/lib/ticketCopyRequest";
+import { findTicketNewDocumentVersion, newDocumentNotRecordedMessage } from "@/lib/ticketNewDocumentHandback";
+import { supabase as clientDb } from "@/lib/supabase";
 import TicketCopyRecallPanel from "@/components/requests/TicketCopyRecallPanel";
 import PublishNewDocumentModal from "@/components/requests/PublishNewDocumentModal";
 
@@ -203,10 +227,10 @@ describe("EVID-16 done-when 2 — the server copy, its questions asked once each
     expect(modal).toContain("} else if (out.kind === 'browser') {\n          setServerNote(out.message);\n          presign();");
     const printPart = modal.slice(modal.indexOf("const handlePrint = async"), modal.indexOf("const browserSourceUrl = async"));
     expect(printPart).toContain("if (out.kind === 'browser') {\n      setServerNote(out.message);");
-    expect(printPart).toContain("return browserPrint();\n    }\n    if (out.kind === 'refused')");
+    expect(printPart).toContain("return browserPrint({ standingConfirmed: out.acknowledged === true });\n    }\n    if (out.kind === 'refused')");
     const downloadPart = modal.slice(modal.indexOf("const performDownload = async"), modal.indexOf("const browserDownload = async"));
     expect(downloadPart).toContain("fallBack = true;");
-    expect(downloadPart).toContain("if (fallBack) await browserDownload();");
+    expect(downloadPart).toContain("if (fallBack) await browserDownload({ standingConfirmed });");
     // the viewer says why: serverNote is shown in the amber note
     expect(page).toContain("? `The server could not issue this file (${serverNote}). Its copies are stamped and recorded from your browser.`");
   });
@@ -270,7 +294,10 @@ let root: Root | null = null;
 const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
 const byText = (sel: string, text: RegExp) => (Array.from(host!.querySelectorAll(sel)).find((e) => text.test(e.textContent ?? "")) ?? null) as HTMLElement | null;
 beforeEach(() => {
-  s.recall = null; s.recallCalls = 0; s.nudges = []; s.nudgeResult = 1; s.creates = []; s.createError = null; s.currentVersion = "v-new";
+  s.recall = null; s.recallCalls = 0; s.nudges = []; s.nudgeResult = 1; s.creates = []; s.createError = null;
+  s.versions = [{ id: "v-new", org_id: ORG, related_ticket_id: T, record_id: "doc-new", revision_label: "0" }];
+  s.documents = [{ id: "doc-new", org_id: ORG, library_id: "lib-1", document_number: "P-101-ISO-001" }];
+  s.readErrors = {}; s.reads = [];
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -363,7 +390,18 @@ describe("DCW-4 — 'Publish as a new document in <library>'", () => {
     await act(async () => { byText("button", /Create the document/)!.click(); });
     await flush();
     expect(s.creates).toEqual([expect.objectContaining({ orgId: ORG, libraryId: "lib-1", collectionId: null, documentNumber: "P-101-ISO-001", title: "Pump iso", status: "Draft", actorUserId: "me", actorRole: "DocCtrl", relatedTicketId: T })]);
-    expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ versionId: "v-new", documentId: "doc-new", documentNumber: "P-101-ISO-001", status: "Draft" }));
+    expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ versionId: "v-new", revisionLabel: "0", versionReadError: null, documentId: "doc-new", documentNumber: "P-101-ISO-001", status: "Draft" }));
+    // the version is found by what it is: this document's, carrying the ticket, in this workspace
+    expect(s.reads[0]).toEqual({ table: "document_versions", filters: [["eq", "org_id", ORG], ["eq", "related_ticket_id", T], ["eq", "record_id", "doc-new"]] });
+  });
+  it("DF-P15 fix (review) — a version read that FAILS after the create hands back no version and the reason (checked, never ignored)", async () => {
+    const onCreated = vi.fn();
+    s.readErrors = { document_versions: { message: "statement timeout" } };
+    await act(async () => { root!.render(React.createElement(PublishNewDocumentModal, props(onCreated))); });
+    await setValue(host!.querySelector("input[placeholder]") as HTMLInputElement, "P-101-ISO-001");
+    await act(async () => { byText("button", /Create the document/)!.click(); });
+    await flush();
+    expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ versionId: null, versionReadError: "statement timeout", documentId: "doc-new" }));
   });
   it("no number, nothing created; a refusal is said and nothing is handed back", async () => {
     const onCreated = vi.fn();
@@ -384,8 +422,8 @@ describe("DCW-4 — 'Publish as a new document in <library>'", () => {
     expect(page).toContain("const newDocLibraryId = !sourceRefId && ticket?.libraryId ? ticket.libraryId : null;");
     expect(page).toContain("const may = await canPutFirstRevisionInContainer({ orgId: ticketOrgId, libraryId: newDocLibraryId, collectionId: null, actorUserId: uid, actorRole: activeRole ?? undefined });");
     expect(page).toContain("if (!newDocLibraryId || !ticketOrgId || !uid || activeRole === null) { setCanPublishNew(false); setTargetLibraryName(null); return; }");
-    expect(page).toContain("const canOfferNewDocument = !!newDocLibraryId && canPublishNew && !ticket.archivedAt && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published';");
-    expect(page).toContain("await recordHandback(r.versionId, '0');");
+    expect(page).toContain("const canOfferNewDocument = !!newDocLibraryId && canPublishNew && !ticket.archivedAt && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published' && !existingNewDoc;");
+    expect(page).toContain("if (await recordHandback(r.versionId, r.revisionLabel, { newDocumentNumber: r.documentNumber })) setExistingNewDoc(null);");
   });
   it("DF-P15 fix — the hand-back toast says what the register holds: a new document filed as a Draft is never announced as an issued Rev 0", () => {
     const page = src("app/(protected)/requests/[id]/page.tsx");
@@ -396,5 +434,107 @@ describe("DCW-4 — 'Publish as a new document in <library>'", () => {
     // the Rev toast is the other branch only
     expect(fn.indexOf("filedAsDraft\n        ? {")).toBeGreaterThan(-1);
     expect(fn.indexOf("title: `Rev ${revisionLabel} recorded on the request`")).toBeGreaterThan(fn.indexOf("title: 'Filed as a Draft document on the request'"));
+  });
+});
+
+// ─── DF-P15 fix (review) — the copy's marks, the preview and the hand-back recovery ───
+describe("DF-P15 fix (review) — an oversize PDF keeps the browser path's stamp", () => {
+  it("422 unstampable with reason oversize → the browser path for print and download, said; the unstamped question is NOT asked", async () => {
+    for (const channel of ["print", "download"] as const) {
+      const f = fakeFetch([json(422, { error: "unstampable", reason: "oversize", message: "The watermark / QR stamp could not be applied to this file (the file is 80 MB, over the 64 MB the server stamps). Take the UNSTAMPED copy anyway?" })]);
+      const confirm = vi.fn(async () => true);
+      const out = await takeTicketCopy({ ...base, channel, confirm, fetchImpl: f.impl });
+      expect(out, channel).toEqual({ kind: "browser", message: OVERSIZE_FALLBACK_NOTE });
+      expect(confirm).not.toHaveBeenCalled();
+      expect(f.calls).toHaveLength(1);
+    }
+  });
+  it("after the route's confirm was answered, the browser outcome carries acknowledged, so the tab does not ask again; REGRESSION: a real stamp failure (no reason) still asks the unstamped question", async () => {
+    const f = fakeFetch([json(409, { error: "confirm", message: "superseded" }), json(422, { error: "unstampable", reason: "oversize", message: "u" })]);
+    const out = await takeTicketCopy({ ...base, channel: "print", confirm: async () => true, fetchImpl: f.impl });
+    expect(out).toEqual({ kind: "browser", message: OVERSIZE_FALLBACK_NOTE, acknowledged: true });
+    const g = fakeFetch([json(422, { error: "unstampable", message: "u" })]);
+    const asked = vi.fn(async () => false);
+    expect(await takeTicketCopy({ ...base, channel: "print", confirm: asked, fetchImpl: g.impl })).toEqual({ kind: "declined" });
+    expect(asked).toHaveBeenCalledWith("u");
+  });
+  it("the page sends a >64 MB print to browserPrint and a download to browserDownload, passing the answered confirm on (source pins)", () => {
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    const modal = page.slice(page.indexOf("const FileViewerModal = ("), page.indexOf("<DownloadComplianceModal"));
+    expect(modal).toContain("return browserPrint({ standingConfirmed: out.acknowledged === true });");
+    expect(modal).toContain("standingConfirmed = out.acknowledged === true;");
+    expect(modal).toContain("const browserPrint = async (opts: { standingConfirmed?: boolean } = {}) => {");
+    expect(modal).toContain("if (!opts.standingConfirmed && !(await confirmStanding(plan))) return;");
+    expect(modal).toContain("const browserDownload = async (opts: { standingConfirmed?: boolean } = {}) => {");
+    expect(modal).toContain("if (!opts.standingConfirmed && !(await confirmStanding(plan))) { setShowCompliance(false); return; }");
+    // the browser path stamps in the tab (stampPdf / downloadStampedPdf), as before DF-P15
+    expect(modal).toContain('const { stampPdf } = await import("@/lib/stamping");');
+    expect(modal).toContain("await downloadStampedPdf({");
+  });
+});
+
+describe("DF-P15 fix (review) — a transient refusal never blanks the PDF preview", () => {
+  it("view: a JSON 502 (storage) or a 503 other than unrecorded (ticket / membership / scope read) → the presigned frame, previewOnly, said", async () => {
+    for (const ans of [
+      json(502, { error: "The file could not be read from storage right now — try again in a moment" }),
+      json(503, { error: "Couldn't confirm your membership of this workspace — try again in a moment" }),
+      json(503, { error: "Couldn't confirm you can see this request — try again in a moment" }),
+      json(503, { error: "The request could not be read right now — try again in a moment" }),
+    ]) {
+      const f = fakeFetch([ans]);
+      const out = await takeTicketCopy({ ...base, channel: "view", confirm: async () => true, fetchImpl: f.impl });
+      expect(out).toMatchObject({ kind: "browser", previewOnly: true });
+    }
+  });
+  it("REGRESSION: view with 503 unrecorded (DEC-44) or 401 is still refused; a print or download with a transient 503 is refused in words", async () => {
+    for (const ans of [json(503, { error: "unrecorded", message: "This preview was not served: …" }), json(401, { error: "Unauthorized" })]) {
+      const f = fakeFetch([ans]);
+      expect((await takeTicketCopy({ ...base, channel: "view", confirm: async () => true, fetchImpl: f.impl })).kind).toBe("refused");
+    }
+    for (const channel of ["print", "download"] as const) {
+      const f = fakeFetch([json(503, { error: "Couldn't confirm your membership of this workspace — try again in a moment" })]);
+      expect((await takeTicketCopy({ ...base, channel, confirm: async () => true, fetchImpl: f.impl })).kind).toBe("refused");
+    }
+  });
+  it("the page presigns on previewOnly and says it is the unstamped original while copies still go through the server (source pins)", () => {
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    expect(page).toContain("} else if (out.kind === 'browser' && out.previewOnly) {\n          setPreviewFallbackNote(out.message);\n          presign();");
+    expect(page).toContain("Unstamped preview: the server could not show its stamped preview right now (${previewFallbackNote}), so this is the original from storage. Print and download still go through the server, stamped and recorded there.");
+  });
+});
+
+describe("DF-P15 fix (review) — a created-but-unrecorded new document is recorded, never created twice", () => {
+  const input = { orgId: ORG, ticketRowId: T, libraryId: "lib-1" };
+  it("finds the version carrying the ticket whose document is in the request's library", async () => {
+    expect(await findTicketNewDocumentVersion(clientDb, input)).toEqual({ kind: "found", version: { versionId: "v-new", documentId: "doc-new", documentNumber: "P-101-ISO-001", revisionLabel: "0" } });
+  });
+  it("a document in another library, or another workspace's version, is 'none'; a failed read is 'unknown' (never 'none')", async () => {
+    s.documents = [{ id: "doc-new", org_id: ORG, library_id: "lib-OTHER", document_number: "X" }];
+    expect(await findTicketNewDocumentVersion(clientDb, input)).toEqual({ kind: "none" });
+    s.documents = [{ id: "doc-new", org_id: ORG, library_id: "lib-1", document_number: "X" }];
+    s.versions = [{ id: "v-new", org_id: "o-other", related_ticket_id: T, record_id: "doc-new", revision_label: "0" }];
+    expect(await findTicketNewDocumentVersion(clientDb, input)).toEqual({ kind: "none" });
+    s.readErrors = { documents: { message: "timeout" } };
+    s.versions = [{ id: "v-new", org_id: ORG, related_ticket_id: T, record_id: "doc-new", revision_label: "0" }];
+    expect(await findTicketNewDocumentVersion(clientDb, input)).toEqual({ kind: "unknown", error: "timeout" });
+  });
+  it("the recovery text points at the existing document, never at a second create", () => {
+    for (const retry of [true, false]) {
+      const m = newDocumentNotRecordedMessage("P-101-ISO-001", "The ticket changed while you were acting — refresh and try again", retry);
+      expect(m).toMatch(/Do not create it again\./);
+      expect(m).not.toMatch(/Publish as a new document/);
+    }
+    expect(newDocumentNotRecordedMessage("P-1", "x", true)).toContain('Use "Record P-1 on the request"');
+  });
+  it("the page: once a version carrying the ticket exists, the create offer is replaced by 'Record <number> on the request'; a failed hand-back says so (source pins)", () => {
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    expect(page).not.toContain('try "Publish as a new document" again');
+    expect(page).not.toContain('Refresh and try "Publish as a new document" again');
+    expect(page).toContain("void findTicketNewDocumentVersion(supabase, { orgId: ticketOrgId, ticketRowId: ticket.id, libraryId: newDocLibraryId }).then((found) => {");
+    expect(page).toContain("const canRecordExistingNewDocument = !!newDocLibraryId && canPublishNew && !ticket.archivedAt && deliverable?.state !== 'published' && !!existingNewDoc;");
+    expect(page).toContain("setExistingNewDoc({ versionId: r.versionId, documentId: r.documentId, documentNumber: r.documentNumber, revisionLabel: r.revisionLabel });");
+    expect(page).toContain("{recordingExisting ? 'Recording…' : `Record ${existingNewDoc.documentNumber || 'the existing document'} on the request`}");
+    const fn = page.slice(page.indexOf("const recordHandback = async"), page.indexOf("// --- 2. SAFE SCROLL ---"));
+    expect(fn).toContain("message: newDocumentNotRecordedMessage(opts.newDocumentNumber, (e as Error).message, true)");
   });
 });

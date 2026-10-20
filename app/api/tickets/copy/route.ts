@@ -72,7 +72,11 @@
 // same 422 `unstampable` question as any file the stamp cannot take, and its
 // record carries the reason (`unstampedReason`), as every unstamped copy's
 // does. A non-PDF is served as application/octet-stream (never a stored
-// content type).
+// content type). The 422 for an oversize PDF carries `reason: "oversize"`
+// (DF-P15 fix, on review): the ticket page answers it by stamping the file in
+// the tab and recording from the tab — what it did for such a file before
+// DF-P15 — so a print or download of a large drawing keeps its marks there;
+// the unstamped issue here stays for a caller that asks for it.
 //
 // A preview is a PDF preview (DF-P15 fix, on review): channel "view" is
 // refused (400 `not_previewable`, nothing recorded, nothing issued) for a file
@@ -368,6 +372,11 @@ export async function POST(req: NextRequest) {
     await piped?.cancel().catch(() => {});
     return json({
       error: "unstampable",
+      // DF-P15 fix (review): an OVERSIZE PDF is marked apart from a stamp
+      // that failed — the page's browser path stamps such a file in the tab
+      // (as it did before DF-P15), so the page takes that path rather than
+      // asking for the unstamped copy (lib/ticketCopyRequest.ts).
+      ...(piped && sourceIsPdf ? { reason: "oversize" } : {}),
       message: `The watermark / QR stamp could not be applied to this file (${stampProblem}). Take the UNSTAMPED copy anyway? It will be recorded as unstamped — treat it as uncontrolled and do not distribute it.`,
     }, 422);
   }

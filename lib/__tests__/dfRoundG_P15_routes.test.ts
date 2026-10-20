@@ -322,10 +322,11 @@ describe("DACL-10 remainder — the close notice's library label reads the libra
 
 // ─── DCW-4 — the close believes a library-only request's publication only when the register backs it ───
 describe("DCW-4 (DF-P15) — a library-only request's recorded publication, at the close", () => {
-  const seed = (deliverable: Row | null, versions: Row[] = []) => {
+  const seed = (deliverable: Row | null, versions: Row[] = [], documents: Row[] = [{ id: UUIDD, org_id: ORG, library_id: LIB }]) => {
     seedMembers();
     state.rows.libraries = [{ id: LIB, org_id: ORG, name: "Piping", acl: null, visibility: "normal", read_access: "ALL", visible_to: [], write_access: [], admin_access: [] }];
     state.rows.document_versions = versions;
+    state.rows.documents = documents;
     state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", library_id: LIB, deliverable_rev: "1", attachments: [DRAFT, FINAL1], metadata: deliverable ? { deliverable } : {} })];
     state.user = { id: REQ };
   };
@@ -345,6 +346,27 @@ describe("DCW-4 (DF-P15) — a library-only request's recorded publication, at t
     const hist = upd.history as Row[];
     expect(hist[hist.length - 1]).toMatchObject({ action: "Closed — deliverable not in the register" });
     expect(String(hist[hist.length - 1].details)).toContain("could not be matched to a document in Piping");
+  });
+  it("DF-P15 fix (review): a backed version whose document sits in ANOTHER library (or in no readable row) is unbacked — the close names it not in the register, as the hand-back would have refused it", async () => {
+    const OTHER_LIB = "99999999-2222-4333-8444-555555555555";
+    seed(published, [{ id: UUIDV, org_id: ORG, record_id: UUIDD, related_ticket_id: "t1" }], [{ id: UUIDD, org_id: ORG, library_id: OTHER_LIB }]);
+    expect((await act({ actionType: "close_ticket" })).status).toBe(200);
+    expect(((ticketUpdates()[0].metadata as Row).deliverable as Row).state).toBe("not_in_register");
+    expect(state.calls.some((c) => c.table === "documents" && c.method === "eq" && c.args[0] === "org_id" && c.args[1] === ORG)).toBe(true);
+  });
+  it("DF-P15 fix (review): a document in another workspace carrying the same id is not read as backing", async () => {
+    seed(published, [{ id: UUIDV, org_id: ORG, record_id: UUIDD, related_ticket_id: "t1" }], [{ id: UUIDD, org_id: "o2", library_id: LIB }]);
+    expect((await act({ actionType: "close_ticket" })).status).toBe(200);
+    expect(((ticketUpdates()[0].metadata as Row).deliverable as Row).state).toBe("not_in_register");
+  });
+  it("DF-P15 fix (review): the document read failing proves nothing — 503 register_unreadable, nothing written", async () => {
+    seed(published, [{ id: UUIDV, org_id: ORG, record_id: UUIDD, related_ticket_id: "t1" }]);
+    state.errors["documents.select"] = [{ message: "statement timeout" }];
+    const res = await act({ actionType: "close_ticket" });
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("register_unreadable");
+    expect(ticketUpdates()).toEqual([]);
+    expect(auditRows()).toEqual([]);
   });
   it("a register read that fails proves nothing: 503 register_unreadable, nothing written", async () => {
     seed(published, []);

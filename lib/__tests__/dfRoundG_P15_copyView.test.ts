@@ -286,6 +286,60 @@ describe("DF-P15 fix — a file over the platform's ~4.5 MB buffered-response ca
     expect(ins("audit_logs")).toEqual([expect.objectContaining({ action: "DOWNLOAD",
       details: expect.objectContaining({ watermark: "UNSTAMPED (stamping failed)", unstampedReason: "the file is 70 MB, over the 64 MB the server stamps" }) })]);
   });
+  it("DF-P15 fix (review) — the oversize 422 is marked reason \"oversize\" (a PDF only); the page reads it as the BROWSER path (stamped in the tab, as before DF-P15) for print and download, never the unstamped-anyway question; nothing is recorded by the route", async () => {
+    const { takeTicketCopy, OVERSIZE_FALLBACK_NOTE } = await import("@/lib/ticketCopyRequest");
+    st.objects[KEY] = await pdfBytes();
+    st.meta[KEY] = { contentLength: 70 * MiB };
+    for (const channel of ["print", "download"] as const) {
+      const res = await post({ ticketId: T, attachmentId: "f-1", channel });
+      expect(res.status, channel).toBe(422);
+      const body = await res.clone().json();
+      expect(body).toMatchObject({ error: "unstampable", reason: "oversize" });
+      const confirm = vi.fn(async () => true);
+      const out = await takeTicketCopy({
+        ticketRowId: T, attachmentId: "f-1", channel, fallbackName: "ifc-rev1.pdf",
+        getToken: async () => "tok", confirm, fetchImpl: async () => res,
+      });
+      expect(out, channel).toEqual({ kind: "browser", message: OVERSIZE_FALLBACK_NOTE });
+      expect(confirm).not.toHaveBeenCalled();
+    }
+    expect(st.inserts).toEqual([]);
+    expect(st.byteArrayReads).toBe(0);
+    // a large NON-PDF is not marked oversize: the stamp could never take it, so the unstamped question stands
+    st.objects[KEY] = new TextEncoder().encode("not a pdf, but large");
+    const np = await post({ ticketId: T, attachmentId: "f-1", channel: "download" });
+    expect(np.status).toBe(422);
+    expect((await np.json()).reason).toBeUndefined();
+  });
+  it("DF-P15 fix (review) — a superseded oversize PDF: the confirm is asked once by the route, then the browser path carries that answer (acknowledged) so the tab does not ask again", async () => {
+    const { takeTicketCopy, OVERSIZE_FALLBACK_NOTE } = await import("@/lib/ticketCopyRequest");
+    st.ticket = ticketRow({ deliverable_rev: "2", history: [issued(1), issued(2)] });
+    st.meta[KEY] = { contentLength: 70 * MiB };
+    const asked: string[] = [];
+    const out = await takeTicketCopy({
+      ticketRowId: T, attachmentId: "f-1", channel: "print", fallbackName: "ifc-rev1.pdf",
+      getToken: async () => "tok", confirm: async (m) => { asked.push(m); return true; },
+      fetchImpl: async (_u, init) => post(JSON.parse(init.body)),
+    });
+    expect(asked).toHaveLength(1);
+    expect(out).toEqual({ kind: "browser", message: OVERSIZE_FALLBACK_NOTE, acknowledged: true });
+    expect(st.inserts).toEqual([]);
+  });
+  it("DF-P15 fix (review) — a preview refused for a TRANSIENT reason (membership read failed: 503) keeps the presigned frame (previewOnly, said); a print in the same state is refused in words", async () => {
+    const { takeTicketCopy } = await import("@/lib/ticketCopyRequest");
+    const res503 = () => new Response(JSON.stringify({ error: "Couldn't confirm your membership of this workspace — try again in a moment" }), { status: 503 });
+    const view = await takeTicketCopy({ ticketRowId: T, attachmentId: "f-1", channel: "view", fallbackName: "x.pdf", getToken: async () => "tok", confirm: async () => true, fetchImpl: async () => res503() });
+    expect(view).toEqual({ kind: "browser", message: "Couldn't confirm your membership of this workspace — try again in a moment", previewOnly: true });
+    const print = await takeTicketCopy({ ticketRowId: T, attachmentId: "f-1", channel: "print", fallbackName: "x.pdf", getToken: async () => "tok", confirm: async () => true, fetchImpl: async () => res503() });
+    expect(print.kind).toBe("refused");
+    // the route's own unrecorded view (DEC-44) is still not shown
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    st.insertErrors = { audit_logs: [{ message: "audit refused" }] };
+    const unrecorded = await post({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true, acceptUnstamped: true });
+    expect(unrecorded.status).toBe(503);
+    const out = await takeTicketCopy({ ticketRowId: T, attachmentId: "f-1", channel: "view", fallbackName: "x.pdf", getToken: async () => "tok", confirm: async () => true, fetchImpl: async () => unrecorded });
+    expect(out.kind).toBe("refused");
+  });
   it("a large file whose stream cannot be opened records NOTHING (502) — a failed send never leaves a distribution row naming a copy that never arrived", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     st.meta[KEY] = { contentLength: 70 * MiB, streamFails: true };
