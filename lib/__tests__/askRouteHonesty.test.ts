@@ -1115,6 +1115,52 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
     expect(body.answer).toBe(text.replace("`370.5 psig`", RESULT_WITHHELD) + `\n\n${RESULT_WITHHELD_NOTE}`);
   });
 
+  // ── I-25 fix pass 5 (review major and minors) ─────────────────────────
+
+  describe("review major (fix pass 5) — SI digit grouping: a number written '20 000 kPa' (space, no-break or thin space) is ONE value, so the model's result is withheld whole", () => {
+    function siLibrary() {
+      seed({
+        knowledge_documents: [kdoc("k-en", { name: "EN pressure standard.pdf" })],
+        knowledge_chunks: [
+          kchunk("k-en", "The relief valve set pressure shall not exceed the design pressure. The allowable stress shall be taken as 10 000 kPa. The test factor is 1.43.", { id: "c-1", page: 3, section: "6.2 Stress" }),
+        ],
+      });
+    }
+
+    it("a marked answer that restates the result in prose ('σ is 20 000 kPa'), grounded on a passage printing '10 000 kPa': the formula and the input stay, the result is withheld whole — route, row and page", async () => {
+      siLibrary();
+      const text = "**Answer:** σ is 20 000 kPa [1].\n**Basis:**\n- S = `10 000 kPa` [1]\n**Substituted:** σ = 2 × 10 000 kPa";
+      h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
+      const body = await (await ask({ question: "What is σ for twice the allowable stress?" })).json();
+      // 49c21b6 returned this unchanged: '20' had no unit, '000 kPa' read as 0.
+      expect(body.answer).toBe(
+        `**Answer:** σ is ${RESULT_WITHHELD} [1].\n**Basis:**\n- S = \`10 000 kPa\` [1]\n**Substituted:** σ = 2 × 10 000 kPa\n\n${RESULT_WITHHELD_NOTE}`);
+      expect(body.arithmetic).toBe("unverified");
+      expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
+      // The page pass leaves the server's output as it is.
+      expect(withholdModelResults(body.answer)).toEqual({ text: body.answer, withheld: 0 });
+    });
+
+    it.each([
+      ["a space", " "],
+      ["a no-break space", "\u00A0"],
+      ["a narrow no-break space", "\u202F"],
+      ["a thin space", "\u2009"],
+    ])("%s between digit groups — the user's input 'PS = 1 600 kPa' and a result '2 288 kPa': no thousands digit of the result is left, the input is shown", async (_label, gap) => {
+      siLibrary();
+      const text = `**Answer:** The test pressure is 2${gap}288 kPa [1].\n- PS = 1${gap}600 kPa (USER-PROVIDED)\n- Factor 1.43 [1]`;
+      h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
+      const body = await (await ask({ question: "What is the test pressure?", inputs: `PS = 1${gap}600 kPa` })).json();
+      // 49c21b6 showed 'The test pressure is 2 [result withheld]'.
+      expect(body.answer).toBe(
+        `**Answer:** The test pressure is ${RESULT_WITHHELD} [1].\n- PS = 1${gap}600 kPa (USER-PROVIDED)\n- Factor 1.43 [1]\n\n${RESULT_WITHHELD_NOTE}`);
+      // A trailing group that matches a grounded one ('2 600' beside '1 600')
+      // is not grounded by it.
+      const r = withholdModelResults(`The test pressure is 2${gap}600 kPa`, `PS = 1${gap}600 kPa`);
+      expect(r.text.split("\n")[0]).toBe(`The test pressure is ${RESULT_WITHHELD}`);
+    });
+  });
+
   describe("withholdModelResults — the pure rule", () => {
     it("a lookup comes back as the very same string, with nothing withheld — and is never marked arithmetic, so the route runs no grounding pass on it", () => {
       for (const lookup of [
@@ -1294,6 +1340,63 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
         .toBe(`**Substituted:** 1.3 × 285 psig = ${RESULT_WITHHELD}`);
       expect(withholdModelResults("**Substituted:** 1.3 × 285 psig = 370.5 psig (2.55 MPa)").text.split("\n")[0])
         .toBe(`**Substituted:** 1.3 × 285 psig = ${RESULT_WITHHELD} (${RESULT_WITHHELD})`);
+    });
+
+    it("fix pass 5 major: an unmarked chain written with SI digit groups is a chain — marked, its result withheld whole; a grouped grounded value is grounded, a table row still grounds each value", () => {
+      for (const gap of [" ", "\u00A0", "\u202F", "\u2009"]) {
+        const line = `σ = 2 × 10${gap}000 kPa = 20${gap}000 kPa [1]`;
+        expect([gap, answerHasComputation(line, "")]).toEqual([gap, true]);
+        expect(withholdModelResults(line).text.split("\n")[0]).toBe(`σ = 2 × 10${gap}000 kPa = ${RESULT_WITHHELD} [1]`);
+        // Grounded on the passage's "10 000 kPa" the input stays; the result does not.
+        expect(withholdModelResults(`- S = 10${gap}000 kPa [1]\n- σ is 20${gap}000 kPa`, "Allowable 10 000 kPa").text.split("\n").slice(0, 2))
+          .toEqual([`- S = 10${gap}000 kPa [1]`, `- σ is ${RESULT_WITHHELD}`]);
+      }
+      // A row of a rating table ("150 285 260 230") still grounds each of its values.
+      expect(withholdModelResults("**Substituted:** P = 1.5 × 260 psig\n- S = 260 psig [1]", "Class 150 285 260 230 psig\nfactor 1.5"))
+        .toEqual({ text: "**Substituted:** P = 1.5 × 260 psig\n- S = 260 psig [1]", withheld: 0 });
+      // A decimal, a fraction or a code before a three-digit number is never a group's start.
+      for (const lookup of ["Use 1.5 285 psig rated parts [1]", "Torque 3/4 250 ft-lb bolts [1]", "PN16 000 series valves [1]"]) {
+        expect([lookup, answerHasComputation(lookup, "")]).toEqual([lookup, false]);
+        expect(withholdModelResults(lookup)).toEqual({ text: lookup, withheld: 0 });
+      }
+    });
+
+    it("fix pass 5 minor: the '∙ ✕ ✖' operators, the '＝ ≃' terminators, a '(g)' / '(a)' unit suffix and a squared unit after a slash are a chain — marked, the result withheld", () => {
+      for (const [line, shown] of [
+        ["P_T = 1.5 ∙ 285 psig = 427.5 psig", `P_T = 1.5 ∙ 285 psig = ${RESULT_WITHHELD}`],
+        ["1.5 ✕ 285 psig = 427.5 psig", `1.5 ✕ 285 psig = ${RESULT_WITHHELD}`],
+        ["1.5 ✖ 285 psig = 427.5 psig", `1.5 ✖ 285 psig = ${RESULT_WITHHELD}`],
+        ["1.5 × 285 psig ＝ 427.5 psig", `1.5 × 285 psig ＝ ${RESULT_WITHHELD}`],
+        ["1.5 × 285 psig ≃ 427.5 psig", `1.5 × 285 psig ≃ ${RESULT_WITHHELD}`],
+        ["1.5 × 28.5 bar(g) = 42.75 bar(g)", `1.5 × 28.5 bar(g) = ${RESULT_WITHHELD}`],
+        ["1.5 × 285 psi(g) = 427.5 psi(g)", `1.5 × 285 psi(g) = ${RESULT_WITHHELD}`],
+        ["1.5 × 10 bar(a) = 15 bar(a)", `1.5 × 10 bar(a) = ${RESULT_WITHHELD}`],
+        ["1.5 × 285 lbf/in² = 427.5 lbf/in²", `1.5 × 285 lbf/in² = ${RESULT_WITHHELD}`],
+        ["2 × 5 kg/m3 = 10 kg/m3", `2 × 5 kg/m3 = ${RESULT_WITHHELD}`],
+        ["285 psig/1.5 = 190 psig", `285 psig/1.5 = ${RESULT_WITHHELD}`],
+      ] as const) {
+        expect([line, answerHasComputation(line, "")]).toEqual([line, true]);
+        expect([line, withholdModelResults(line).text.split("\n")[0]]).toEqual([line, shown]);
+      }
+      // A gauge result is matched again where it is written ("bar(g)" is "barg").
+      expect(withholdModelResults("- P = 1.5 × 28.5 bar(g) = 42.75 bar(g)\n**Answer:** test at 42.75 barg [1]").text.split("\n")[1])
+        .toBe(`**Answer:** test at ${RESULT_WITHHELD} [1]`);
+      // "and/or" after a value is still no unit.
+      expect(withholdModelResults("- Use 2 and/or 3 valves [1]")).toEqual({ text: "- Use 2 and/or 3 valves [1]", withheld: 0 });
+    });
+
+    it("fix pass 5 minor: a number an identifier word owns — 'Class 300', the route's own '(…, page 6)' header — grounds nothing, so a result equal to it is withheld", () => {
+      const r = withholdModelResults(
+        "**Substituted:** P_T = 1.5 × 285 psig\n**Answer:** test at 300 psig minimum per Class 300 [1]",
+        "[1] (Flange standard.pdf, page 4)\nClass 300 flanges\nfactor 1.5\n285 psig");
+      expect(r.text.split("\n").slice(0, 2)).toEqual([
+        "**Substituted:** P_T = 1.5 × 285 psig",
+        `**Answer:** test at ${RESULT_WITHHELD} minimum per Class 300 [1]`,
+      ]);
+      expect(withholdModelResults("**Substituted:** t = 2 × 3 in\n**Answer:** use 6 in [1]", "[1] (Doc.pdf, page 6)\nfactor 2, 3 in").text.split("\n")[1])
+        .toBe(`**Answer:** use ${RESULT_WITHHELD} [1]`);
+      // The same value printed as a value is still grounded.
+      expect(withholdModelResults("**Substituted:** P_T = 1.5 × 285 psig\n**Answer:** test at 300 psig minimum [1]", "minimum 300 psig\nfactor 1.5\n285 psig").withheld).toBe(0);
     });
 
     it("a whole result is matched elsewhere only where it is written with no unit, never after an identifier word (review minor)", () => {

@@ -151,7 +151,10 @@ export const DATA_BOUNDARY_RULE =
 // long run of numbers that never reaches "=").
 const CALC_UNIT_TOKENS =
   "psig|psia|psi|ksi|kpa|mpa|barg|bar|°\\s?[fc]|mm2|mm|cm|inch(?:es)?|in2|in|ft-lb|ft|lbf|lbs|lb|kg|kn|gpm|%";
-const CALC_UNIT = "(?:\\s*(?:" + CALC_UNIT_TOKENS + ")(?![a-z]))?";
+/** (Fix pass 5) A gauge or absolute suffix written on a unit: "bar(g)",
+ *  "psi(g)", "bar(a)" (normUnit reads "bar(g)" as "barg"). */
+const GAUGE_SUFFIX = "(?:\\([ga]\\))?";
+const CALC_UNIT = "(?:\\s*(?:" + CALC_UNIT_TOKENS + ")" + GAUGE_SUFFIX + "(?![a-z]))?";
 /** One operand. (I-25) Its brackets are bounded, so a run of "(" never makes
  *  every position a start that scans the whole run. */
 const operandOf = (unit: string): string =>
@@ -167,7 +170,9 @@ const TEMPERATURE_OPERAND =
  *  word, a number or a citation ("S (1)(2) = 20 ksi", "Class 150 (1)(2)":
  *  footnote markers, not factors). */
 const IMPLICIT_OP = "(?<=\\))(?<![\\w\\]]\\s*\\(\\s*\\d\\s*\\))\\s*(?=\\()";
-/** The operators — (I-25) the dot and caret products too ("2 · 300", "10^3"). */
+/** The operators — (I-25) the dot and caret products too ("2 · 300", "10^3");
+ *  (fix pass 5) the bullet and cross variants "∙ ✕ ✖" are read as "×" by
+ *  normalizeLine, so they reach these as "×". */
 const CALC_OP = "(?:\\s*(?:[×x*÷/+−·⋅^]|-(?=\\s))\\s*|" + IMPLICIT_OP + ")";
 const CALC_OP_NOT_SLASH = "(?:\\s*(?:[×x*÷+−·⋅^]|-(?=\\s))\\s*|" + IMPLICIT_OP + ")";
 /** (I-25) At most this many operators in one chain: a real substitution has
@@ -240,8 +245,8 @@ export function answerHasComputation(answer: string, inputs: string): boolean {
   return answer.split("\n").some((line) => {
     const text = stripLine(line).text;
     if (proseArithmetic(text)) return true;
-    if (!CHAIN_TERMINATOR.test(line)) return false;
-    return CALC_CHAIN.test(line.replace(VALUE_MARKUP, "").replace(SIZE_FRACTION, "SIZE"))
+    if (!CHAIN_TERMINATOR.test(text)) return false;
+    return CALC_CHAIN.test(normalizeLine(line.replace(VALUE_MARKUP, "")).replace(SIZE_FRACTION, "SIZE"))
       || resultSpans(text).length > 0;
   });
 }
@@ -257,7 +262,12 @@ export function answerHasComputation(answer: string, inputs: string): boolean {
 //       grammar above, an operand allowed a citation after it and any unit
 //       token — "min" too — and (fix pass 4) implicit multiplication between
 //       brackets, the chain ending at "=", "≈", "→", "⇒" or "equals"), and any
-//       "= / ≈ / →" value restating it right after ("= 427.5 psig ≈ 430 psig");
+//       "= / ≈ / →" value restating it right after ("= 427.5 psig ≈ 430 psig").
+//       (Fix pass 5) Every line is read through normalizeLine first: a number
+//       written in SI digit groups ("20 000 kPa", with a space, no-break,
+//       narrow no-break or thin space) is one value, "∙ ✕ ✖" are "×", "＝"
+//       is "=" and "≃" is "≈"; a unit may carry "(g)" / "(a)" ("bar(g)") and
+//       a compound unit may open with an engineering token ("lbf/in²");
 //   (d) on a "**Substituted:**" line, every value after the formula's
 //       right-hand side — from the first later "=", "≈ ~ → ⇒", "is",
 //       "gives", "equals" or "yields" that a lone value follows ("= 427.5
@@ -283,7 +293,9 @@ export function answerHasComputation(answer: string, inputs: string): boolean {
 //       passages, the drawing facts, legend, conversation, owner
 //       instructions, org playbooks and Reasoning Skills, and the indexed
 //       text of the page images it was shown — never the route's own fixed
-//       rules): on EVERY line, any value with a unit or a decimal
+//       rules; each line read with its digit groups joined and without, and
+//       a number an identifier word owns — "Class 300", "page 6" — never
+//       grounding): on EVERY line, any value with a unit or a decimal
 //       point that none of that text holds — a number from nowhere in an
 //       arithmetic answer is one the model made, and when the detector
 //       cannot place the result it withholds rather than shows it. Prose
@@ -316,13 +328,15 @@ const NOT_A_UNIT =
   "should|must|may|can|will|gives|equals|yields|total|approx|about|both|all|any|only|also";
 /** (I-25) Any other unit token after a value ("N", "kW", "K", "m3/h"). It
  *  never re-matches an engineering unit above, so a value parses one way. */
+/** (Fix pass 5) An engineering unit token above may open a compound unit
+ *  here ("lbf/in²", "kg/m3"), and a "²" / "³" may follow the slash. */
 const ANY_UNIT_TOKEN =
-  "(?!(?:" + CALC_UNIT_TOKENS + "|" + NOT_A_UNIT + ")(?![a-z0-9]))" +
-  "[a-zµμΩ][a-z0-9µμΩ²³]{0,5}(?:/[a-z][a-z0-9]{0,3})?(?![a-z0-9/])";
-const ANY_UNIT = "(?:\\s*(?:(?:" + CALC_UNIT_TOKENS + ")(?![a-z0-9])|" + ANY_UNIT_TOKEN + "))?";
+  "(?!(?:" + NOT_A_UNIT + ")(?![a-z0-9]))(?!(?:" + CALC_UNIT_TOKENS + ")" + GAUGE_SUFFIX + "(?![a-z0-9]|/[a-z]))" +
+  "[a-zµμΩ][a-z0-9µμΩ²³]{0,5}(?:/[a-z][a-z0-9²³]{0,3})?(?![a-z0-9/²³])";
+const ANY_UNIT = "(?:\\s*(?:(?:" + CALC_UNIT_TOKENS + ")" + GAUGE_SUFFIX + "(?![a-z0-9]|/[a-z])|" + ANY_UNIT_TOKEN + "))?";
 /** (Fix pass 4) Inside a chain, and in the value it runs into, "min" is a
  *  unit ("2 × 30 min = 60 min"); elsewhere it is often "minimum" and is not. */
-const CHAIN_UNIT = "(?:\\s*(?:(?:" + CALC_UNIT_TOKENS + "|min)(?![a-z0-9])|" + ANY_UNIT_TOKEN + "))?";
+const CHAIN_UNIT = "(?:\\s*(?:(?:" + CALC_UNIT_TOKENS + "|min)" + GAUGE_SUFFIX + "(?![a-z0-9]|/[a-z])|" + ANY_UNIT_TOKEN + "))?";
 const RESULT_OPERAND = operandOf(CHAIN_UNIT);
 /** CALC_CHAIN with a citation allowed after each operand and any unit token,
  *  ending at "=", "≈", "→", "⇒" or (fix pass 4) "equals", capturing the
@@ -414,10 +428,28 @@ const VALUE_SRC = "(?<![\\w§#./\\[-])(" + CALC_NUM + ")(" + CALC_UNIT + ")(?![\
  *  for one, so the value keeps its sign and a withheld value takes it. */
 const SIGN_DASH = /(?<![\d)\]]\s*)[−–](?=\d)/g;
 
-/** A line with its value markup (`, **) removed, size fractions masked and a
- *  sign dash read as "-", and where each remaining character sits in the
- *  original line. */
-function stripLine(line: string): { text: string; at: number[] } {
+/** (Fix pass 5) A digit-group separator — a space, no-break space (U+00A0),
+ *  narrow no-break space (U+202F) or thin space (U+2009) between a group of
+ *  one to three digits (or an earlier group) and exactly three more, the SI
+ *  way of writing "10 000 kPa" or "2 288 kPa". Read as ",", one character
+ *  for one, so the number is one value ("10,000"). A digit run after a
+ *  word character, a decimal point, a comma, "/" or "-" is never a group's
+ *  start ("PN16 000", "1.5 285", "3/4 100"). */
+const DIGIT_GROUP_GAP =
+  /(?<=(?<![\w.,/-]|\d[ \u00A0\u202F\u2009])\d{1,3}(?:[ \u00A0\u202F\u2009]\d{3})*)[ \u00A0\u202F\u2009](?=\d{3}(?!\d))/g;
+/** (Fix pass 5) Glyph variants read as the one the grammar names, one
+ *  character for one: "∙ ✕ ✖" as "×", fullwidth "＝" as "=", "≃" as "≈". */
+const GLYPH_VARIANT = /[∙✕✖＝≃]/g;
+const GLYPH_AS: Record<string, string> = { "∙": "×", "✕": "×", "✖": "×", "＝": "=", "≃": "≈" };
+/** The same length as `text`: digit groups joined by "," (unless `groups`
+ *  is false), glyph variants read as the grammar's own. */
+const normalizeLine = (text: string, groups = true): string =>
+  (groups ? text.replace(DIGIT_GROUP_GAP, ",") : text).replace(GLYPH_VARIANT, (c) => GLYPH_AS[c] ?? c);
+
+/** A line with its value markup (`, **) removed, size fractions masked, a
+ *  sign dash read as "-" and (fix pass 5) normalizeLine applied, and where
+ *  each remaining character sits in the original line. */
+function stripLine(line: string, groups = true): { text: string; at: number[] } {
   const chars: string[] = [];
   const at: number[] = [];
   for (let i = 0; i < line.length; i++) {
@@ -426,7 +458,7 @@ function stripLine(line: string): { text: string; at: number[] } {
     chars.push(line[i]);
     at.push(i);
   }
-  const text = chars.join("").replace(SIZE_FRACTION, (m) => "S".repeat(m.length)).replace(SIGN_DASH, "-");
+  const text = normalizeLine(chars.join(""), groups).replace(SIZE_FRACTION, (m) => "S".repeat(m.length)).replace(SIGN_DASH, "-");
   return { text, at };
 }
 
@@ -436,7 +468,7 @@ const normValue = (v: string): string => {
   const n = Number(v.replace(/,/g, ""));
   return Number.isFinite(n) ? String(n) : v;
 };
-const normUnit = (u: string): string => u.toLowerCase().replace(/\s+/g, "");
+const normUnit = (u: string): string => u.toLowerCase().replace(/\s+/g, "").replace(/\(([ga])\)$/, "$1");
 
 /** Rule (a): the values chains run into on one (stripped) line, with any
  *  restatement right after each. */
@@ -609,9 +641,17 @@ export function withholdModelResults(answer: string, grounding?: string): { text
   let withheld = 0;
   const results: Array<{ value: string; unit: string }> = [];
   // Every value the text the model was given holds (rule (c); with none, the
-  // page's call, nothing is known to be grounded).
+  // page's call, nothing is known to be grounded). (Fix pass 5) Each line is
+  // read both with its digit groups joined ("10 000 kPa" is 10000) and
+  // without (a table row "150 285 260" is three values) — a set that holds
+  // more only withholds less of what the model was given. A number an
+  // identifier word owns ("Class 300", "Table 2", the "page 6" of the
+  // route's own passage headers) grounds nothing: it is not a value.
   const grounded = grounding === undefined ? null
-    : new Set(grounding.split("\n").flatMap((l) => valueSpans(stripLine(l).text).map((s) => s.value)));
+    : new Set(grounding.split("\n").flatMap((l) => [true, false].flatMap((groups) => {
+      const { text } = stripLine(l, groups);
+      return valueSpans(text).filter((s) => !afterIdentifier(text, s)).map((s) => s.value);
+    })));
   for (let i = 0; i < lines.length; i++) {
     // (a) chain results, and the values they hold.
     {

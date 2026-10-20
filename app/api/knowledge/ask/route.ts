@@ -2737,7 +2737,8 @@ export async function POST(req: NextRequest) {
       // The page images' text: every indexed chunk of each (document, page)
       // the answer was shown (an image-only page has none, so a value read
       // only off its picture is still withheld — PR-13). A read that fails
-      // grounds nothing more, which withholds more, never less.
+      // grounds at most the rows read before it failed, which withholds
+      // more, never less.
       const pageText: string[] = [];
       if (pageImages.length > 0) {
         const shown = new Set(pageImages.map((img) => `${img.documentId}:${img.page}`));
