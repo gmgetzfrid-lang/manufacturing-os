@@ -13,8 +13,8 @@
 //                       table: null) from "nothing here yet" (an empty
 //                       shelf: []), as lib/processFlows.ts does (I-09's
 //                       limb, pinned in processFlowsLib.test.ts). A missing
-//                       COLUMN is still read as "not installed" there: an
-//                       expected-fail tripwire pins that open residual.
+//                       COLUMN is thrown and shown, never "not installed"
+//                       (the residual, closed by I-26, 2026-10-20).
 //   IEDGE-10 / DACL-7   criteria 1-2 stay OPEN (third review fix pass): a
 //                       destination a Manager configured before the surface
 //                       was Admin-only is only reported "unconfirmed" by
@@ -127,17 +127,26 @@ describe("IRLS-12 criterion 3 — the skill libraries tell a missing table from 
     await expect(list()).rejects.toThrow(/statement timeout/);
   });
 
-  // Residual (review fix pass), owned on the IRLS-12 record: the skill
-  // libraries' `missing` test is `/does not exist/`, which a missing COLUMN
-  // (42703, e.g. an order column) also matches, so such a read would say
-  // "not installed" instead of the error. lib/processFlows.ts was tightened
-  // against exactly this. Expected to fail until the owner tightens
-  // `missing` in lib/linkRules.ts and lib/answerSkills.ts; then flip to `it`.
-  it.fails.each([
+  // Residual (review fix pass), owned on the IRLS-12 record and closed by
+  // intelligence Round G I-26 (2026-10-20): the skill libraries' `missing`
+  // test was `/does not exist/`, which a missing COLUMN (42703, e.g. an
+  // order column) also matched, so such a read said "not installed" instead
+  // of the error. It is now lib/processFlows.ts's missingTable test (42P01 /
+  // PGRST205 / "relation … does not exist" / "could not find the table"),
+  // and the expected-fail tripwire is flipped to `it`.
+  it.each([
     ["link_rules", () => listLinkRules("org-1", "u-1")],
     ["answer_skills", () => listAnswerSkills("org-1", "u-1")],
-  ] as const)("%s: a missing COLUMN (42703) is thrown, never shown as 'not installed' (open residual)", async (table, list) => {
+  ] as const)("%s: a missing COLUMN (42703) is thrown, never shown as 'not installed'", async (table, list) => {
     state.answer = () => ({ data: null, error: { code: "42703", message: `column ${table}.builtin_key does not exist` } });
     await expect(list()).rejects.toThrow(/builtin_key does not exist/);
+  });
+
+  it.each([
+    ["link_rules", () => listLinkRules("org-1", "u-1")],
+    ["answer_skills", () => listAnswerSkills("org-1", "u-1")],
+  ] as const)("%s: a missing table PostgREST names (PGRST205) is a missing TABLE too: 'not installed' (null), as lib/processFlows.ts reads it", async (_table, list) => {
+    state.answer = () => ({ data: null, error: { code: "PGRST205", message: "Could not find the table 'public.x' in the schema cache" } });
+    expect(await list()).toBeNull();
   });
 });

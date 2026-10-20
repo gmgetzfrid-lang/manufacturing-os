@@ -42,8 +42,14 @@ export interface LinkRule {
   disabled_reason?: string | null;
 }
 
+/** A pre-migration database: the TABLE is missing — never a missing COLUMN
+ *  (42703, "column … does not exist"), which is a real error and is shown,
+ *  never read as "not installed" (IRLS-12's residual; the same test as
+ *  lib/processFlows.ts missingTable). */
 const missing = (e: { code?: string; message?: string } | null) =>
-  !!e && (e.code === "42P01" || /does not exist/i.test(e.message ?? ""));
+  !!e && (e.code === "42P01" || e.code === "PGRST205"
+    || /relation "?[\w.]+"? does not exist/i.test(e.message ?? "")
+    || /could not find the table/i.test(e.message ?? ""));
 
 /** A column this database does not have yet: 20261125 adds share_requested,
  *  shared_by, shared_at and disabled_reason, and PostgREST answers PGRST204
