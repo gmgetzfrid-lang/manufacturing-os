@@ -228,6 +228,26 @@
    "sequencingNotes": [
     "Added by the integrator at the I-12 merge, 2026-10-14 (DEC-31; rulings under DEC-90 recorded on the DEC-90 I-12 landing line)."
    ]
+  },
+  {
+   "name": "PS-P10 SHEET TOKEN PRINT LINK \u2014 a pack's sheet tokens link by key to the cover's print, and a controller can void a settled print",
+   "findings": [
+    "public-surfaces PHYS-19 done-when 3 (assigned by the integrator at the PS-P9 merge, 2026-10-20, DEC-31; DEC-90): a work-package pack's mint carries the cover's work_package_prints id, checked server-side (same org, same caller, the pack being printed), and the token rows store it (a nullable column \u2014 migration 20261239 or the next free number \u2014 if print_id cannot carry it without loosening its meaning); a pack without a cover keeps a token print id of its own; every QR printed before answers as today",
+    "intelligence DACL-8 residual (c) (assigned at the PS-P9 merge): a controller can void a settled print (recall a printed pack) through the route as the service role; the guard already allows a void after a settle; the scan of a voided sheet reads stale, never green"
+   ],
+   "files": [
+    "app/api/print-sheet-tokens/route.ts, lib/printSheetTokensServer.ts, lib/printSheetTokensClient.ts, lib/docPack.ts (the cover id passed to the mint)",
+    "the work-package pack's print history surface (the void control)",
+    "one migration if a column is needed",
+    "tests: the link pinned on a pack with and without a cover; the void; every earlier QR unchanged"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "public-surfaces PS-P9 merged (2026-10-20)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the PS-P9 merge, 2026-10-20 (DEC-31; DEC-90)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

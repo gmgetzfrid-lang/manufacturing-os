@@ -34,8 +34,8 @@
       "LOW": 56
     },
     "by_status": {
-      "RESOLVED": 243,
-      "OPEN": 24,
+      "RESOLVED": 244,
+      "OPEN": 23,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -6131,7 +6131,7 @@
       "id": "DACL-8",
       "title": "Public verify endpoints disclose document number, title and revision status for any document UUID, with no visibility check",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
