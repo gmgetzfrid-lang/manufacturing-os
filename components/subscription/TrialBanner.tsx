@@ -7,20 +7,34 @@
 //   30+ days left  -> emerald (informational)
 //   7-29 days      -> amber (reminder)
 //   1-6 days       -> orange (urgent)
-//   0 days / expired -> red (blocked)
+//   0 days / expired -> red, shown only to the people who can renew (the
+//                       billing surface's writes set: Admin, Manager) —
+//                       BILL-14 (admin-and-org Round G P5, DEC-90): with
+//                       subscription enforcement off, an ended trial's only
+//                       consequence is this notice to the people who can act
+//                       on it; with it on, the server refuses new seats and
+//                       new files and SubscriptionGate curtains the app.
 
 import React from "react";
 import Link from "next/link";
 import { Clock, ArrowRight, AlertTriangle } from "lucide-react";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
+import { useRole } from "@/components/providers/RoleContext";
+import { adminSurface } from "@/lib/adminSurfaces";
+import type { Role } from "@/types/schema";
 import { trialDaysRemaining, isTrialExpired, shouldShowTrialBanner } from "@/lib/billing";
+
+/** Who may renew: the billing surface's writes set (the Stripe routes' gate). */
+const BILLING_WRITERS = (adminSurface("billing")?.writes ?? []) as Role[];
 
 export default function TrialBanner() {
   const { info } = useSubscription();
+  const { hasAnyRole } = useRole();
   if (!shouldShowTrialBanner(info)) return null;
 
   const days = trialDaysRemaining(info);
   const expired = isTrialExpired(info);
+  if (expired && !hasAnyRole(BILLING_WRITERS)) return null;
 
   // Pick the color tone
   let tone = "bg-emerald-600 text-white";

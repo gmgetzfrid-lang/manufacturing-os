@@ -120,6 +120,13 @@ describe("SURF-15 — the subscription gate has a caller on the billable mutatio
     expect(r).toMatch(/subscription gate would refuse org/);
     expect(src("lib/serverAuth.ts")).toMatch(/export async function assertOrgHasAccess/);
   });
+  it("BILL-10 (admin-and-org Round G P5): the routes that mint new stored bytes consult it too, through the one switch", () => {
+    const auth = src("lib/serverAuth.ts");
+    expect(auth).toMatch(/export function subscriptionEnforced\(\): boolean \{\n  return process\.env\.SUBSCRIPTION_ENFORCE === "true";/);
+    expect(auth).toMatch(/export async function enforceOrgAccess\(/);
+    expect(src("app/api/storage/upload-url/route.ts")).toMatch(/await enforceOrgAccess\(supabaseAdmin, orgMatch\[1\], "storage\/upload-url"\)/);
+    expect(src("app/api/storage/multipart/route.ts")).toMatch(/await enforceOrgAccess\(supabaseAdmin, orgMatch\[1\], "storage\/multipart"\)/);
+  });
 });
 
 describe("SURF-16 (app half) — team writes and member creation leave a trail", () => {
