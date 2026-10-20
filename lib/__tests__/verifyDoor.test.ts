@@ -187,13 +187,21 @@ describe("VFY-14 — verify-ticket selects only what it reads (headers / select 
     // drafting-flow AUTHZ-12 (DF-P10): unit and last_modified left the payload, so they left the select;
     // archived_at joined it (an archived stub answers "cannot confirm"); revision_count is back because
     // the verdict now reads it (SM-5 / PHYS-2 trust cap on history lines — VFY-14 done-when 3's "used").
-    expect(s).toContain('.select("id, ticket_id, title, status, deliverable_rev, history, revision_count, archived_at")');
+    expect(s).toContain('const BASE_COLUMNS = "id, ticket_id, title, status, deliverable_rev, history, revision_count, archived_at";');
+    // drafting-flow DF-P12 (SM-5): `attachments` is read only for a QR naming the
+    // file (?a=), and 20261221's history_guarded_from only for the verdict —
+    // neither is ever returned.
+    expect(s).toContain('const columns = BASE_COLUMNS + (printedAttachment ? ", attachments" : "");');
+    expect(s).toContain('.select(withGuard ? `${columns}, ${GUARD_COLUMN}` : columns)');
     expect(src("lib/verifyTicketVerdict.ts")).toContain("lastIssuedFromHistory(row.history, row.revision_count)");
     expect(s).not.toMatch(/revisionCount:|revision_count:\s*(t|v|row)\./);
+    expect(s).not.toMatch(/attachments:\s*(t|v|row)\.|history_guarded_from:\s*(t|v|row)\.|guardedFrom:/);
   });
   it("the read's error is checked: an outage is 503 + an 'error' scan row, never 'Unknown ticket' (behaviour: verifyTicketRead.test.ts)", () => {
     const s = src("app/api/verify-ticket/route.ts");
-    expect(s).toContain("const { data: row, error: rowErr } = await sb");
+    // DF-P12: the read retries once without 20261221's column before that paste
+    // (a missing column only — any other error is the outage below).
+    expect(s).toContain("let { data: row, error: rowErr } = await readTicket(askGuard);");
     expect(s.indexOf("if (rowErr) {")).toBeGreaterThan(-1);
     expect(s.indexOf("if (rowErr) {")).toBeLessThan(s.indexOf("if (!row) {"));
   });

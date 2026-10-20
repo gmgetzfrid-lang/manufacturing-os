@@ -116,6 +116,8 @@ describe("recall email routing (DIST-13, source pins)", () => {
     // FYI to the document's watchers — the 'watched' category on purpose: it
     // is not a recall of anything they hold, so their email toggle governs
     // it; then the stale-copy nudge. Both recalls keep the recall category.
-    expect(categories).toEqual(['category: "recall"', 'category: "watched"', 'category: "recall"']);
+    // drafting-flow DF-P12 (PHYS-17) adds the ticket deliverable's copy
+    // recall last — a recall too, so the recall category.
+    expect(categories).toEqual(['category: "recall"', 'category: "watched"', 'category: "recall"', 'category: "recall"']);
   });
 });
