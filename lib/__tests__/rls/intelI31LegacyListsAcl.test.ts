@@ -19,6 +19,17 @@
 //     own rebuild (lib/acl buildAclIndexFromChain) writes from the library's
 //     ACL after the paste; and the library row itself (libraries_org_access).
 //
+// Folders and document sets too (the integrator's minor (b) at the I-31
+// merge, 2026-10-20, DEC-90): their acl_index is rebuilt before and after
+// the paste the way the app's rebuild writes it (buildAclIndexFromChain
+// over [library ACL, …ancestor folder ACLs, folder ACL] / [library ACL, set
+// ACL]); per member nobody loses a row at the database, every row that
+// widens reaches a listed role only (DACL-13 R2, accepted), a row below a
+// non-inheriting folder does not widen (inventory row 12 is an upper bound),
+// and on folders the database's answer equals the app's explorerFolderVisible
+// after the rebuild (private / hidden folders; a normal folder stays open at
+// the database until intelligence I-30, as for documents).
+//
 // Controllers (a headline Admin and an additive DocCtrl — DEC-43), the
 // library's owner, deeper grants (a folder's role grant, a document's user
 // grant), hidden / private visibility, a list naming no role, a malformed
@@ -33,7 +44,7 @@ import { randomUUID } from "node:crypto";
 import { admin, mosDb, selectAs, seedOrg, skipReason, type SeededMember } from "./dbKit";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
-import { effectiveLibraryAclFromRow, explorerLibraryVisible, libraryConfigFromRow } from "@/lib/libraryAccess";
+import { effectiveLibraryAclFromRow, explorerFolderVisible, explorerLibraryVisible, libraryConfigFromRow } from "@/lib/libraryAccess";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import { canReadNode, type Principal } from "@/lib/permissions";
 import type { AccessControl, Role } from "@/types/schema";
@@ -86,6 +97,12 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
   let second: Paste = { rows: [], ok: false, error: null };
   /** Probe documents: library key → { doc key → { id, acl, folderAcl, visibility } }. */
   const docs: Array<{ lib: string; key: string; id: string; visibility: "normal" | "private"; acl: AccessControl | null; folderAcl: AccessControl | null; folderId: string | null }> = [];
+  /** Probe folders (pathIds root first) and document sets. */
+  const folders: Array<{ lib: string; key: string; id: string; visibility: "normal" | "private" | "hidden"; acl: AccessControl | null; pathIds: string[] }> = [];
+  const sets: Array<{ lib: string; key: string; id: string; visibility: string; acl: AccessControl | null }> = [];
+  /** The database's answers before the paste (indexes from the pre-paste library ACLs), read in the equivalence test. */
+  const dbFolderBefore: Record<string, Record<string, boolean>> = {};
+  const dbSetBefore: Record<string, Record<string, boolean>> = {};
 
   const LIBS: Lib[] = [];
   const memberKeys = ["admin", "addCtrl", "hr", "engineer", "supervisor", "vendor", "owner", "multi"] as const;
@@ -134,13 +151,33 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
   const dbLibraryRow = (lib: Lib, who: string) =>
     selectAs(scratch, m[who].caller, `SELECT count(*) FROM libraries WHERE id = '${libId[lib.key]}'`)[0] === "1";
 
-  /** What the app's rebuild writes into each probe document's acl_index from the library's CURRENT ACL. */
+  /** What the app's rebuild (lib/aclIndexRebuild) writes into each probe
+   *  document's, folder's and set's acl_index from the library's CURRENT ACL. */
   const rebuildDocIndexes = () => {
+    const sqlIdx = (idx: unknown) => (idx ? `'${JSON.stringify(idx)}'::jsonb` : "NULL");
     for (const d of docs) {
       const libAcl = (rowOf(scratch, libId[d.lib]).acl ?? undefined) as AccessControl | undefined;
       const idx = buildAclIndexFromChain([libAcl, d.folderAcl ?? undefined, d.acl ?? undefined]);
-      admin(scratch, `UPDATE documents SET acl_index = ${idx ? `'${JSON.stringify(idx)}'::jsonb` : "NULL"} WHERE id = '${d.id}'`);
+      admin(scratch, `UPDATE documents SET acl_index = ${sqlIdx(idx)} WHERE id = '${d.id}'`);
     }
+    for (const f of folders) {
+      const libAcl = (rowOf(scratch, libId[f.lib]).acl ?? undefined) as AccessControl | undefined;
+      const ancestors = f.pathIds.map((pid) => folders.find((x) => x.id === pid)?.acl ?? undefined);
+      const idx = buildAclIndexFromChain([libAcl, ...ancestors, f.acl ?? undefined]);
+      admin(scratch, `UPDATE collections SET acl_index = ${sqlIdx(idx)} WHERE id = '${f.id}'`);
+    }
+    for (const t of sets) {
+      const libAcl = (rowOf(scratch, libId[t.lib]).acl ?? undefined) as AccessControl | undefined;
+      const idx = buildAclIndexFromChain([libAcl, t.acl ?? undefined]);
+      admin(scratch, `UPDATE document_sets SET acl_index = ${sqlIdx(idx)} WHERE id = '${t.id}'`);
+    }
+  };
+  const dbFolder = (id: string, who: string) => selectAs(scratch, m[who].caller, `SELECT count(*) FROM collections WHERE id = '${id}'`)[0] === "1";
+  const dbSet = (id: string, who: string) => selectAs(scratch, m[who].caller, `SELECT count(*) FROM document_sets WHERE id = '${id}'`)[0] === "1";
+  /** The app's folder decision (the library page's explorerFolderVisible) over a library row. */
+  const appFolder = (row: Record<string, unknown>, f: (typeof folders)[number], who: string): boolean => {
+    const map = new Map(folders.filter((x) => x.lib === f.lib).map((x) => [x.id, { id: x.id, pathIds: x.pathIds, acl: x.acl ?? undefined, visibility: x.visibility }]));
+    return explorerFolderVisible(principalOf(who), effectiveLibraryAclFromRow(row), map.get(f.id)!, map, (row.owner_user_id as string | null) ?? null);
   };
 
   beforeAll(() => {
@@ -200,7 +237,29 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
     const folderId = randomUUID();
     const folderAcl = { inherit: true, visibility: "normal", rules: [rule({ type: "role", id: "Vendor" }, "discover", "read")] } as AccessControl;
     admin(scratch, `INSERT INTO collections (id, org_id, library_id, name, visibility, acl) VALUES ('${folderId}', '${orgId}', '${libId.L_deeper_folder_grant}', 'Vendor folder', 'normal', '${JSON.stringify(folderAcl)}'::jsonb)`);
+    folders.push({ lib: "L_deeper_folder_grant", key: "vendor_folder", id: folderId, visibility: "normal", acl: folderAcl, pathIds: [] });
     addDoc("L_deeper_folder_grant", "private_in_vendor_folder", "private", privateAcl, folderAcl, folderId);
+    // Probe folders (minor (b) at the I-31 merge): private / hidden folders in
+    // written libraries whose lists name a role (A, F — counted by inventory
+    // row 12), a non-inheriting private folder and a private folder below it
+    // (counted by row 12, an upper bound: neither widens), a private folder in
+    // a written library naming no role (C), one in an unwritten library (J),
+    // and a normal one (B).
+    const addFolder = (lib: string, key: string, visibility: "normal" | "private" | "hidden", acl: AccessControl | null, parent: string | null = null) => {
+      const id = randomUUID();
+      const pathIds = parent ? [...folders.find((x) => x.id === parent)!.pathIds, parent] : [];
+      admin(scratch, `INSERT INTO collections (id, org_id, library_id, parent_id, path_ids, name, visibility, acl) VALUES ('${id}', '${orgId}', '${libId[lib]}', ${parent ? `'${parent}'` : "NULL"}, '{${pathIds.join(",")}}'::uuid[], '${key}', '${visibility}', ${acl ? `'${JSON.stringify(acl)}'::jsonb` : "NULL"})`);
+      folders.push({ lib, key, id, visibility, acl, pathIds });
+      return id;
+    };
+    const privateFolder = { inherit: true, visibility: "private", rules: [] } as AccessControl;
+    addFolder("A_null_hr_write_engineer_owned", "private_folder", "private", privateFolder);
+    const noInherit = addFolder("A_null_hr_write_engineer_owned", "private_no_inherit", "private", { inherit: false, visibility: "private", rules: [] } as AccessControl);
+    addFolder("A_null_hr_write_engineer_owned", "private_below_no_inherit", "private", privateFolder, noInherit);
+    addFolder("B_zero_rule_hr_visible_supervisor", "normal_folder", "normal", null);
+    addFolder("C_no_role", "private_folder", "private", privateFolder);
+    addFolder("F_duplicates_and_garbage", "hidden_folder", "hidden", { inherit: true, visibility: "hidden", rules: [] } as AccessControl);
+    addFolder("J_acl_says_something", "private_folder", "private", privateFolder);
     // Document sets (inventory row 12 counts the private / hidden ones in a
     // written library whose lists name a role — the rebuild folds the
     // library's rung into each set's index, lib/aclIndexRebuild): A private
@@ -208,7 +267,9 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
     // and B normal are not.
     for (const [lib, vis] of [["A_null_hr_write_engineer_owned", "private"], ["F_duplicates_and_garbage", "hidden"],
                               ["C_no_role", "hidden"], ["J_acl_says_something", "private"], ["B_zero_rule_hr_visible_supervisor", "normal"]] as const) {
-      admin(scratch, `INSERT INTO document_sets (id, org_id, library_id, title, visibility) VALUES ('${randomUUID()}', '${orgId}', '${libId[lib]}', 'Probe set', '${vis}')`);
+      const id = randomUUID();
+      admin(scratch, `INSERT INTO document_sets (id, org_id, library_id, title, visibility) VALUES ('${id}', '${orgId}', '${libId[lib]}', 'Probe set', '${vis}')`);
+      sets.push({ lib, key: `${vis}_set`, id, visibility: vis, acl: null });
     }
 
     Object.assign(before, allRows(scratch));
@@ -245,8 +306,8 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
     expect(inv(first, "before: libraries whose read_access is restricted and whose ACL already says something")).toBe("2");
     expect(inv(first, "before: libraries whose read_access is \"ALL\" or NULL")).toBe("3");
     expect(inv(first, "before: documents filed in the libraries this paste writes")).toBe("16");
-    expect(inv(first, "before: folders in the libraries this paste writes")).toBe("1");
-    expect(inv(first, "before: private / hidden documents, folders and document sets in them")).toBe("8");
+    expect(inv(first, "before: folders in the libraries this paste writes")).toBe("7");
+    expect(inv(first, "before: private / hidden documents, folders and document sets in them")).toBe("12");
     expect(inv(first, "before: (library, member) pairs the lists leave out")).toBe("30");
     expect(inv(first, "before: of those pairs, distinct members")).toBe("6");
     expect(inv(first, "this paste: libraries written")).toBe("7");
@@ -308,6 +369,8 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
       dbBefore[l.key] = {};
       for (const who of memberKeys) dbBefore[l.key][who] = dbDocAnswers(l, who);
     }
+    for (const f of folders) dbFolderBefore[f.id] = Object.fromEntries(memberKeys.map((who) => [who, dbFolder(f.id, who)]));
+    for (const t of sets) dbSetBefore[t.id] = Object.fromEntries(memberKeys.map((who) => [who, dbSet(t.id, who)]));
     rebuildDocIndexes();
     const mismatches: string[] = [];
     const widened: string[] = [];
@@ -343,6 +406,57 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
     // listed roles held by headline or additively — 16 (member, row) pairs.
     expect(widened.length).toBe(16);
     expect(widened.every((w) => /\/(hr|engineer|supervisor|multi)$/.test(w))).toBe(true);
+  });
+
+  it("folders (collections_acl_select) and document sets (document_sets_acl_select), rebuilt after the paste: nobody loses a row, every widened row reaches a listed role only, a row below a non-inheriting folder does not widen, and the database's folder answer equals explorerFolderVisible", () => {
+    // (the equivalence test above read the pre-paste answers and rebuilt every index from the new library ACLs)
+    expect(Object.keys(dbFolderBefore)).toHaveLength(folders.length);
+    const lost: string[] = [];
+    const widenedFolders: string[] = [];
+    const widenedSets: string[] = [];
+    const mismatches: string[] = [];
+    for (const f of folders) {
+      const lib = LIBS.find((l) => l.key === f.lib)!;
+      for (const who of memberKeys) {
+        const db = dbFolder(f.id, who);
+        const a0 = appFolder(before[lib.key], f, who);
+        const a1 = appFolder(after[lib.key], f, who);
+        expect(a1, `${f.lib}/${f.key}/${who}: the app before and after`).toBe(a0);
+        if (f.visibility === "normal") {
+          // open at the database until intelligence I-30 (DEC-90 R5), before and after
+          expect(db, `${f.lib}/${f.key}/${who}: normal folder at the database`).toBe(true);
+          expect(dbFolderBefore[f.id][who]).toBe(true);
+          continue;
+        }
+        if (dbFolderBefore[f.id][who] && !db) lost.push(`${f.lib}/${f.key}/${who}`);
+        if (!dbFolderBefore[f.id][who] && db) widenedFolders.push(`${f.lib}/${f.key}/${who}`);
+        if (db !== a1) mismatches.push(`${f.lib}/${f.key}/${who}: app ${a1} db ${db}`);
+      }
+    }
+    for (const t of sets) {
+      for (const who of memberKeys) {
+        const db = dbSet(t.id, who);
+        if (t.visibility === "normal") { expect(db, `${t.lib}/${t.key}/${who}`).toBe(true); continue; }
+        if (dbSetBefore[t.id][who] && !db) lost.push(`${t.lib}/${t.key}/${who}`);
+        if (!dbSetBefore[t.id][who] && db) widenedSets.push(`${t.lib}/${t.key}/${who}`);
+      }
+    }
+    expect(lost).toEqual([]);
+    expect(mismatches).toEqual([]);
+    // widened rows reach a role the lists name, never anyone else (DACL-13 R2)
+    for (const w of [...widenedFolders, ...widenedSets]) expect(w).toMatch(/\/(hr|engineer|supervisor|multi)$/);
+    // A's private folder (HR, Engineer: hr, engineer, multi) and F's hidden folder (HR, Engineer: hr, engineer, multi)
+    expect(widenedFolders.sort()).toEqual([
+      "A_null_hr_write_engineer_owned/private_folder/engineer", "A_null_hr_write_engineer_owned/private_folder/hr", "A_null_hr_write_engineer_owned/private_folder/multi",
+      "F_duplicates_and_garbage/hidden_folder/engineer", "F_duplicates_and_garbage/hidden_folder/hr", "F_duplicates_and_garbage/hidden_folder/multi",
+    ]);
+    // inventory row 12 is an upper bound: the non-inheriting folder and the folder below it do not widen
+    expect(widenedFolders.some((w) => /no_inherit/.test(w))).toBe(false);
+    // A's private set and F's hidden set (the same listed roles); C's (no role) and J's (not written) do not move
+    expect(widenedSets.sort()).toEqual([
+      "A_null_hr_write_engineer_owned/private_set/engineer", "A_null_hr_write_engineer_owned/private_set/hr", "A_null_hr_write_engineer_owned/private_set/multi",
+      "F_duplicates_and_garbage/hidden_set/engineer", "F_duplicates_and_garbage/hidden_set/hr", "F_duplicates_and_garbage/hidden_set/multi",
+    ]);
   });
 
   it("the expected people: listed roles (headline or additive), controllers and the owner read; a member the lists leave out does not, unless a deeper grant names them", () => {

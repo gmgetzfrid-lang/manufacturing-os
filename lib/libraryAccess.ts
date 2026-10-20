@@ -25,10 +25,15 @@
 // legacyLibraryAcl returns for it (same roles, same order, same visibility,
 // discover / read / download), so after that paste the ACL says something on
 // every such row and effectiveLibraryAcl returns it — the same object — with
-// no change for any reader that takes the rung (the raw-ACL ticket readers
-// excepted, and the database's listing of private / hidden rows at the first
-// acl_index rebuild after the paste — both put to the integrator as
-// intelligence DACL-13, which the paste waits for). legacyLibraryAcl stays as the FALLBACK
+// no change for any reader that takes the rung; since the I-31 merge that
+// includes the ticket triage picker and the workflow-action library check
+// (lib/ticketLibrary, intelligence DACL-13 R1). What does move is the
+// database's LISTING of a private / hidden row in a written library: once
+// its acl_index is built or rebuilt after the paste (at once on upload,
+// folder create, move or drawer save; an existing row at the latest at the
+// next nightly rebuild) it is listed to the roles the lists name — a row the
+// rung already lets them read here (DACL-13 R2, accepted; rows below a
+// non-inheriting node do not widen). legacyLibraryAcl stays as the FALLBACK
 // (DEC-90's I-31 ruling (2)): before the paste it decides every legacy
 // library, after it none, and it still binds a library whose ACL is later
 // saved with nothing in it while its lists restrict. Its deletion (and the
@@ -183,15 +188,23 @@ export const LIBRARY_RUNG_COLUMNS = "acl, visibility, read_access, visible_to, w
  *  fix: it read as no rung — open at the AI seam and the bytes door). */
 export function effectiveLibraryAclFromRow(row: Record<string, unknown> | null | undefined): AccessControl | undefined {
   if (!row) return undefined;
+  return effectiveLibraryAcl(libraryAccessFieldsFromRow(row));
+}
+
+/** A raw `libraries` row (LIBRARY_RUNG_COLUMNS) read as the rung's fields,
+ *  by effectiveLibraryAclFromRow's rules (above) — exported so a reader that
+ *  keeps the fields on its own row shape (lib/ticketLibrary LibraryChoiceRow,
+ *  DACL-13 R1) decides by exactly the same reading. */
+export function libraryAccessFieldsFromRow(row: Record<string, unknown>): LibraryAccessFields {
   const ra = row.read_access;
-  return effectiveLibraryAcl({
+  return {
     readAccess: ra === "ALL" ? "ALL" : ra == null ? null : Array.isArray(ra) ? (ra as Role[]) : [],
     visibleTo: toRoles(row.visible_to),
     writeAccess: toRoles(row.write_access),
     adminAccess: toRoles(row.admin_access),
     acl: (row.acl as AccessControl | null | undefined) ?? null,
     visibility: (row.visibility as NodeVisibility | null | undefined) ?? null,
-  });
+  };
 }
 
 /** DACL-10 done-when 2 (review fix): may the reader see THIS library at all

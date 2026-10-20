@@ -258,6 +258,39 @@ describe("DCW-1 / DCW-7 — the workflow route: triage's library and unit, valid
       expect(JSON.stringify(u.history)).not.toContain("Legal");
     }
   });
+  it("intelligence DACL-13 R1 (I-31 merge, DEC-90): the library check decides on the EFFECTIVE ACL — a legacy library (no ACL, restricted lists) answers the same before and after migration 20261228 writes its lists into the ACL", async () => {
+    const legacy = { id: LIB, org_id: "o1", name: "HR records", visibility: "normal", acl: null, owner_user_id: null,
+      read_access: ["HR"], visible_to: [], write_access: ["Engineer"], admin_access: [] };
+    // what 20261228 writes for that row: the rung, exactly
+    const written = { ...legacy, acl: { inherit: true, visibility: "normal", rules: [
+      { effect: "allow", subject: { type: "role", id: "HR" }, actions: ["discover", "read", "download"] },
+      { effect: "allow", subject: { type: "role", id: "Engineer" }, actions: ["discover", "read", "download"] },
+    ] } };
+    const cases: Array<{ uid: string; role: string; roles?: string[]; status: number }> = [
+      { uid: "s-1", role: "Supervisor", status: 400 },                       // outside the lists: refused, before and after
+      { uid: "h-1", role: "Supervisor", roles: ["Supervisor", "HR"], status: 200 }, // a listed role held additively
+      { uid: "e-1", role: "Supervisor", roles: ["Supervisor", "Engineer"], status: 200 }, // the upload list reads too (the rung)
+      { uid: "a-1", role: "Admin", status: 200 },                             // a controller
+    ];
+    for (const lib of [legacy, written]) {
+      for (const c of cases) {
+        const tag = `${lib.acl ? "after" : "before"} / ${c.uid}`;
+        state.calls = [];
+        state.user = { id: c.uid };
+        state.rows.org_members = [member(c.uid, c.role, c.roles ?? [c.role]), member("req-1", "Requester"), member("d-1", "Drafter")];
+        state.rows.team_members = [];
+        state.rows.libraries = [{ ...lib }];
+        state.rows.tickets = [ticketRow()];
+        const res = await assign({ libraryId: LIB });
+        expect(res.status, tag).toBe(c.status);
+        expect(state.calls.find((x) => x.table === "libraries" && x.method === "select")?.args[0], tag)
+          .toBe("id, name, owner_user_id, acl, visibility, read_access, visible_to, write_access, admin_access");
+        if (c.status === 400) { expect(ticketUpdates(), tag).toHaveLength(0); continue; }
+        const line = (ticketUpdates()[0].history as Array<{ action: string; details?: string }>).find((h) => h.action === "Triage details set");
+        expect(line?.details, tag).toBe("Library: the target library");
+      }
+    }
+  });
   it("fix pass 2: the ticket's CURRENT library sent back unchanged is no change — a non-controller assigner who cannot discover it still assigns (200), library_id untouched, the library never read", async () => {
     for (const role of ["DraftingSupervisor", "Supervisor"]) {
       state.calls = [];

@@ -15,14 +15,15 @@
 //   3. The app before and after the paste (pure TypeScript, every reader
 //      that decides on a library's ACL): writing the rung into acl /
 //      acl_index changes no answer for anyone — the library page, the card,
-//      the content read predicate, publish, the drawer's authority. The
-//      raw-ACL readers that did not take the rung (the ticket triage picker,
-//      its server check, the ticket label) DO change at the paste — pinned
-//      here and said in the header and the records (DACL-13).
-//   1b. The paste order the header states: the I-31 deploy (controller-first
-//      canPublish) is a hard prerequisite of the paste, and so is the
-//      integrator's ruling on DACL-13 (the raw-ACL ticket readers; the
-//      private / hidden listing that widens at the first rebuild after it).
+//      the content read predicate, publish, the drawer's authority — and,
+//      since the I-31 merge (DACL-13 R1, ruled by the integrator under
+//      DEC-90), the ticket triage picker, its server check and its label,
+//      which now read the effective ACL (lib/ticketLibrary).
+//   1b. The paste order the header states: the I-31 deploy (the triage
+//      readers on the rung, the controller-first canPublish) is a hard
+//      prerequisite of the paste; no ruling gate remains (DACL-13 R1 built,
+//      R2 accepted), and the private / hidden listing that follows the paste
+//      is said precisely (DACL-13 R2).
 //   4. ALOG-13: the wizard's upload picker seed (wizardUploadRolesSeed); a
 //      NEW library's writers name no write_access / admin_access, and a
 //      wizard EDIT keeps them in step with its ACL (wizardListColumnsFromAcl)
@@ -37,7 +38,8 @@ import {
 } from "@/lib/libraryAccess";
 import { aclSaysSomething, buildAclIndexFromChain } from "@/lib/acl";
 import { canPublishOnLibrary, canPublishViaIndex, canReadNode, canWithAclChain, isControllerPrincipal, type Principal } from "@/lib/permissions";
-import { libraryLabelForTicket, offerableLibraries } from "@/lib/ticketLibrary";
+import { LIBRARY_CHOICE_COLUMNS, libraryChoiceFromRow, libraryLabelForTicket, offerableLibraries } from "@/lib/ticketLibrary";
+import { mergeWizardLibraryAcl } from "@/lib/acl";
 import type { AccessControl, AccessRule, LibraryConfig, Role } from "@/types/schema";
 
 const root = process.cwd();
@@ -265,56 +267,128 @@ describe("I-31 — the app's answer before the paste equals its answer after, fo
     }
   });
 
-  it("the raw-ACL readers that did not take the legacy rung CHANGE at the paste (said in the header and opened as DACL-13): the ticket picker, its server check and its label", () => {
+  it("DACL-13 R1: the ticket triage picker and its server check read the EFFECTIVE ACL, so their answer is the same before and after the paste — and equals the library page's", () => {
+    for (const [name, row] of Object.entries(LEGACY_ROWS)) {
+      const after = pasted(row);
+      for (const [who, principal] of Object.entries(PRINCIPALS)) {
+        const before0 = offerableLibraries([libraryChoiceFromRow({ ...row, name: "HR records" })], principal).length;
+        const after0 = offerableLibraries([libraryChoiceFromRow({ ...after, name: "HR records" })], principal).length;
+        expect(after0, `${name} / ${who}: offered before = after`).toBe(before0);
+        expect(before0 === 1, `${name} / ${who}: offered = the library page's answer`).toBe(answers(row, principal).page);
+      }
+    }
+    // the case DACL-13 named: the Vendor (no role in the lists) is not offered the legacy library, before or after
     const row = LEGACY_ROWS.nullAclOwned;
-    const after = pasted(row);
-    const choice = (r: Record<string, unknown>) => ({ id: String(r.id), name: "HR records", visibility: (r.visibility as string) ?? null, acl: (r.acl ?? null) as AccessControl | null, ownerUserId: (r.owner_user_id as string | null) ?? null });
-    // before: offered to a member the library page refuses (the Vendor); after: not
-    expect(answers(row, PRINCIPALS.vendor).page).toBe(false);
-    expect(offerableLibraries([choice(row)], PRINCIPALS.vendor)).toHaveLength(1);
-    expect(offerableLibraries([choice(after)], PRINCIPALS.vendor)).toHaveLength(0);
-    // listed roles, controllers and the owner keep it offered
-    for (const k of ["hr", "engineer", "admin", "addCtrl", "owner", "multi"]) expect(offerableLibraries([choice(after)], PRINCIPALS[k]), k).toHaveLength(1);
-    // the ticket history names a library only when it is open to every member: after the paste it is not
-    expect(libraryLabelForTicket({ name: "HR records", visibility: "normal", acl: row.acl })).toBe("HR records");
-    expect(libraryLabelForTicket({ name: "HR records", visibility: "normal", acl: after.acl })).toBe("the target library");
+    expect(offerableLibraries([libraryChoiceFromRow(row)], PRINCIPALS.vendor)).toHaveLength(0);
+    expect(offerableLibraries([libraryChoiceFromRow(pasted(row))], PRINCIPALS.vendor)).toHaveLength(0);
+    for (const k of ["hr", "engineer", "admin", "addCtrl", "owner", "multi"]) {
+      expect(offerableLibraries([libraryChoiceFromRow(row)], PRINCIPALS[k]), k).toHaveLength(1);
+      expect(offerableLibraries([libraryChoiceFromRow(pasted(row))], PRINCIPALS[k]), k).toHaveLength(1);
+    }
   });
 
-  it("the header does not claim the paste changes nothing: it names the raw-ACL readers whose answer changes and points at DACL-13", () => {
+  it("DACL-13 R1: the triage history label reads the effective ACL too — a legacy library is 'the target library' before the paste as after it", () => {
+    for (const [name, row] of Object.entries(LEGACY_ROWS)) {
+      const before0 = libraryLabelForTicket(libraryChoiceFromRow({ ...row, name: "HR records" }));
+      const after0 = libraryLabelForTicket(libraryChoiceFromRow({ ...pasted(row), name: "HR records" }));
+      expect(before0, name).toBe("the target library");
+      expect(after0, name).toBe(before0);
+    }
+  });
+
+  it("no regression: a library the paste does not write is offered and named exactly as before (Everyone, NULL lists, an ACL that says something), and a row read without the lists is decided by its raw ACL as before", () => {
+    const wizardEveryone = { inherit: true, visibility: "normal", rules: [
+      { effect: "allow", subject: { type: "org", id: ORG }, actions: ["discover", "read", "download"] },
+    ] } as AccessControl;
+    const untouched: Record<string, Record<string, unknown>> = {
+      all: { id: "U1", name: "Open", acl: null, visibility: "normal", owner_user_id: null, read_access: "ALL", visible_to: [], write_access: [], admin_access: [] },
+      nullRead: { id: "U2", name: "Open", acl: null, visibility: "normal", owner_user_id: null, read_access: null, visible_to: null, write_access: null, admin_access: null },
+      everyone: { id: "U3", name: "Open", acl: wizardEveryone, visibility: "normal", owner_user_id: null, read_access: "ALL", visible_to: [], write_access: ["Admin"], admin_access: ["Admin"] },
+      saysSomething: { id: "U4", name: "Eng", acl: { inherit: true, visibility: "normal", rules: [{ effect: "allow", subject: { type: "role", id: "Engineer" }, actions: ["discover", "read", "download"] }] }, visibility: "normal", owner_user_id: null, read_access: ["HR"], visible_to: [], write_access: [], admin_access: [] },
+      privateLib: { id: "U5", name: "Private", acl: null, visibility: "private", owner_user_id: "u-owner", read_access: "ALL", visible_to: [], write_access: [], admin_access: [] },
+    };
+    // the pre-R1 reading: the raw ACL only
+    const raw = (r: Record<string, unknown>) => ({ id: String(r.id), name: String(r.name), visibility: (r.visibility as string) ?? null, acl: (r.acl ?? null) as AccessControl | null, ownerUserId: (r.owner_user_id as string | null) ?? null });
+    for (const [name, r] of Object.entries(untouched)) {
+      for (const [who, principal] of Object.entries(PRINCIPALS)) {
+        expect(offerableLibraries([libraryChoiceFromRow(r)], principal), `${name} / ${who}`).toEqual(offerableLibraries([raw(r)], principal));
+      }
+      expect(libraryLabelForTicket(libraryChoiceFromRow(r)), name).toBe(libraryLabelForTicket(raw(r)));
+    }
+    expect(libraryLabelForTicket(libraryChoiceFromRow(untouched.all))).toBe("Open");
+    expect(offerableLibraries([libraryChoiceFromRow(untouched.all)], PRINCIPALS.vendor)).toHaveLength(1);
+    // a caller that does not carry the lists keeps the raw reading (the close notice's label)
+    expect(libraryLabelForTicket({ name: "HR records", visibility: "normal", acl: LEGACY_ROWS.nullAclOwned.acl })).toBe("HR records");
+    expect(offerableLibraries([raw(LEGACY_ROWS.nullAclOwned)], PRINCIPALS.vendor)).toHaveLength(1);
+  });
+
+  it("DACL-13 R1 is wired: the picker and the workflow-action library check select the rung's columns and decide through libraryChoiceFromRow; the route's close notice is the one raw read left (a label, said in the header)", () => {
+    expect(LIBRARY_CHOICE_COLUMNS).toBe("id, name, owner_user_id, acl, visibility, read_access, visible_to, write_access, admin_access");
+    const picker = src("components/requests/LibraryPicker.tsx");
+    expect(picker).toContain('supabase.from("libraries").select(LIBRARY_CHOICE_COLUMNS).eq("org_id", orgId)');
+    expect(picker).toContain(".map(libraryChoiceFromRow)");
+    expect(picker).not.toContain('select("id, name, visibility, acl, owner_user_id")');
+    const route = src("app/api/tickets/workflow-action/route.ts");
+    const check = route.slice(route.indexOf("if (wantsLibrary) {"), route.indexOf("if (wantsUnit) {"));
+    expect(check).toContain('supabaseAdmin.from("libraries").select(LIBRARY_CHOICE_COLUMNS)');
+    expect(check).toContain("const libRow = lib ? libraryChoiceFromRow(lib as unknown as Record<string, unknown>) : null;");
+    expect(check).toContain("const offered = libRow ? offerableLibraries([libRow], principal) : [];");
+    expect(check).toContain("name: libraryLabelForTicket(libRow)");
+    expect(route).not.toContain('select("id, name, visibility, acl, owner_user_id")');
+    // the close notice (outside the library check) still reads name / visibility / acl — its label narrows at the paste
+    expect(route).toContain('.from("libraries").select("name, visibility, acl").eq("id", ticket.libraryId)');
+    const header = SQL.slice(0, SQL.indexOf("CREATE OR REPLACE TEMP VIEW"));
+    expect(header).toMatch(/the ticket close notice's library label/);
+  });
+
+  it("the header names what still reads the raw ACL and the triage readers' move onto the rung (DACL-13 R1), never 'the paste changes nothing'", () => {
     const header = SQL.slice(0, SQL.indexOf("CREATE OR REPLACE TEMP VIEW"));
     expect(header).not.toMatch(/NO ONE'S ACCESS CHANGES AT THE PASTE\./);
-    expect(header).toMatch(/WHAT DOES CHANGE AT THE PASTE/);
-    for (const reader of ["offerableLibraries", "app/api/tickets/workflow-action", "libraryLabelForTicket", "View-as simulator"]) expect(header, reader).toContain(reader);
+    expect(header).toMatch(/THE TICKET TRIAGE READERS TAKE THE RUNG \(DACL-13 R1 — ruled by the\s+-- integrator at the I-31 merge, 2026-10-20, DEC-90/);
+    expect(header).toMatch(/WHAT STILL READS THE RAW ACL/);
+    for (const reader of ["offerableLibraries", "app/api/tickets/workflow-action", "libraryLabelForTicket", "View-as simulator", "LIBRARY_RUNG_COLUMNS"]) expect(header, reader).toContain(reader);
     expect(header).toMatch(/inventory rows 13 \/ 14/);
-    expect(header).toMatch(/DACL-13/);
+    expect(header).not.toMatch(/WHAT DOES CHANGE AT THE PASTE/);
     const record = src("audit-reports/intelligence/06-document-acl-leaks.md");
     expect(record).toMatch(/<a id="dacl-13"><\/a>/);
     expect(record).not.toMatch(/No one's answer changes at the paste \(proved\)/);
   });
 
-  it("the private / hidden LISTING that widens at the first acl_index rebuild after the paste is said as a widening and put to the integrator, not presented as ruled", () => {
+  it("DACL-13 R2: the private / hidden LISTING that follows the paste is ACCEPTED and said precisely — every row whose acl_index is built or rebuilt, at once on upload / folder create / move / drawer save, existing rows at the latest at the next nightly rebuild; row 12 an upper bound", () => {
     const header = SQL.slice(0, SQL.indexOf("CREATE OR REPLACE TEMP VIEW"));
-    expect(header).toMatch(/WHAT WIDENS AFTER THE PASTE \(said, not hidden — NOT YET ACCEPTED: put to\s+-- the integrator under DACL-13\)/);
-    expect(header).toMatch(/Within ONE nightly acl_index rebuild after the paste/);
+    expect(header).toMatch(/WHAT WIDENS AFTER THE PASTE \(said, not hidden — ACCEPTED: DACL-13 R2,\s+-- ruled by the integrator at the I-31 merge, 2026-10-20, DEC-90\)/);
+    expect(header).toMatch(/From the paste on, every private \/ hidden row in a written library\s+-- whose acl_index is built or rebuilt takes the library's rung — at once on\s+-- upload, folder create, move or drawer save, and for existing rows at the\s+-- latest at the next nightly rebuild/);
+    expect(header).toMatch(/it adds nothing\s+-- the app does not already show them/);
+    expect(header).toMatch(/Inventory row 12 is up to that many\s+-- rows \(an upper bound: rows below a non-inheriting node do not widen\)/);
+    expect(header).not.toMatch(/NOT YET ACCEPTED/);
+    expect(header).not.toMatch(/Within ONE nightly acl_index rebuild after the paste/);
     expect(header).not.toMatch(/WHAT CONVERGES LATER/);
-    expect(header).not.toMatch(/the one database answer that moves/);
+    expect(CODE).toMatch(/SELECT 12, 'before: private \/ hidden documents, folders and document sets in them — up to this many rows \(an upper bound: rows below a non-inheriting node do not widen\) that the database returns to the roles the lists name once their acl_index is built or rebuilt \(at once on upload, folder create, move or drawer save; existing rows at the latest at the next nightly rebuild\)/);
     const lib = src("lib/libraryAccess.ts");
-    expect(lib).not.toMatch(/with\s+\/\/ no change to anyone's answer/);
-    expect(lib).toMatch(/no change for any reader that takes the rung \(the raw-ACL ticket readers\s+\/\/ excepted/);
+    expect(lib).not.toMatch(/the raw-ACL ticket readers\s+\/\/ excepted/);
+    expect(lib).not.toMatch(/at the first\s+\/\/ acl_index rebuild after the paste/);
+    expect(lib).toMatch(/once\s+\/\/ its acl_index is built or rebuilt after the paste \(at once on upload,\s+\/\/ folder create, move or drawer save; an existing row at the latest at the\s+\/\/ next nightly rebuild\)/);
     const record = src("audit-reports/intelligence/06-document-acl-leaks.md");
+    const dacl10 = record.slice(record.indexOf('<a id="dacl-10"></a>'), record.indexOf('<a id="dacl-11"></a>'));
     const dacl13 = record.slice(record.indexOf('<a id="dacl-13"></a>'));
-    expect(dacl13).toMatch(/\*\*Second question for the same ruling/);
-    expect(dacl13).toMatch(/- \[ \] The integrator has ruled on question 2/);
-    expect(record).not.toMatch(/What converges later, said \(the one database answer that moves\)/);
+    for (const [n, rec] of [["DACL-10", dacl10], ["DACL-13", dacl13]] as const) {
+      expect(rec, n).toMatch(/every private \/ hidden row whose `acl_index` is built or rebuilt — at once on upload, folder create, move or drawer save, and for existing rows at the latest at the next nightly rebuild/);
+      expect(rec, n).toMatch(/up to N rows \(an upper bound: rows below a non-inheriting node do not widen\)/);
+      expect(rec, n).toMatch(/Ruled by the integrator at the I-31 merge, 2026-10-20 \(DEC-90\)/);
+    }
+    expect(dacl13).toMatch(/- \[x\] The integrator has ruled on question 2/);
     const dec = src("audit-reports/DECISIONS.md");
     const i31 = dec.slice(dec.indexOf("I-31 LEGACY LISTS INTO THE ACL): the integrator's rulings"));
-    expect(i31.slice(0, i31.indexOf("\n"))).toMatch(/put to the integrator as `DACL-13`'s question 2 for explicit acceptance/);
-    expect(i31.slice(0, i31.indexOf("\n"))).not.toMatch(/The one database answer that moves/);
+    const line = i31.slice(0, i31.indexOf("\n"));
+    expect(line).toMatch(/Ruled by the integrator at the I-31 merge, 2026-10-20 \(DEC-90\)/);
+    expect(line).toMatch(/every private \/ hidden row whose `acl_index` is built or rebuilt — at once on upload, folder create, move or drawer save, and for existing rows at the latest at the next nightly rebuild/);
+    expect(line).not.toMatch(/put to the integrator as `DACL-13`'s question 2 for explicit acceptance/);
   });
 
-  it("paste order: the I-31 deploy is a hard prerequisite (a pre-I-31 library page would hide Publish from controllers once the rung's index is written)", () => {
+  it("paste order: the I-31 deploy is a hard prerequisite (a pre-I-31 app's raw triage readers would change at the paste, and its library page would hide Publish from controllers once the rung's index is written)", () => {
     const facts = SQL.slice(SQL.indexOf("-- PASTE FACTS."), SQL.indexOf("-- ROLLBACK"));
     expect(facts).toMatch(/DEPLOY — HARD PREREQUISITE: deploy I-31 FIRST, then paste\./);
+    expect(facts).toMatch(/on a\s+--\s+pre-I-31 app the picker and the workflow-action library check read the\s+--\s+raw ACL and would change at the paste/);
     expect(facts).toMatch(/HIDES Publish \/ Revert from controllers/);
     expect(SQL).not.toMatch(/Either order with the I-31\s+--\s+deploy/);
     for (const rec of ["audit-reports/intelligence/06-document-acl-leaks.md", "audit-reports/DECISIONS.md"]) {
@@ -322,18 +396,24 @@ describe("I-31 — the app's answer before the paste equals its answer after, fo
     }
   });
 
-  it("paste order: the integrator's DACL-13 ruling is a second hard prerequisite — under (b) the drafting-flow change deploys first and cannot follow the paste", () => {
+  it("paste order: no ruling gate remains — DACL-13 was ruled at the I-31 merge (R1 built in the deploy, R2 accepted); the header, DACL-10 and DEC-90 say so", () => {
     const facts = SQL.slice(SQL.indexOf("-- PASTE FACTS."), SQL.indexOf("-- ROLLBACK"));
-    expect(facts).toMatch(/RULING — HARD PREREQUISITE: DO NOT PASTE until the integrator has ruled\s+--\s+on DACL-13/);
-    expect(facts).toMatch(/Under \(b\), the drafting-flow change\s+--\s+\(offerableLibraries \/ LibraryPicker \/ workflow-action on\s+--\s+effectiveLibraryAclFromRow with LIBRARY_RUNG_COLUMNS\) deploys first/);
-    expect(facts).toMatch(/Under \(a\), the paste row names the\s+--\s+readers\./);
+    expect(facts).not.toMatch(/DO NOT PASTE until the integrator has ruled/);
+    expect(facts).toMatch(/RULING: none outstanding\. DACL-13 was ruled by the integrator at the\s+--\s+I-31 merge \(2026-10-20, DEC-90\)/);
     const record = src("audit-reports/intelligence/06-document-acl-leaks.md");
     const dacl10 = record.slice(record.indexOf('<a id="dacl-10"></a>'), record.indexOf('<a id="dacl-11"></a>'));
-    expect(dacl10).toMatch(/\*\*DO NOT PASTE until the integrator has ruled on `DACL-13`\.\*\* Under \(b\), the drafting-flow change \(`offerableLibraries` \/ `LibraryPicker` \/ `workflow-action` on `effectiveLibraryAclFromRow` with `LIBRARY_RUNG_COLUMNS`\) deploys first\. Under \(a\), the paste row names the readers\./);
-    expect(record.slice(record.indexOf('<a id="dacl-13"></a>'))).toMatch(/\*\*The paste waits for this ruling\.\*\*/);
+    expect(dacl10).not.toMatch(/\*\*DO NOT PASTE until the integrator has ruled on `DACL-13`\.\*\*/);
+    expect(dacl10).toMatch(/deploy the I-31 app BEFORE pasting `20261228`/);
+    expect(record.slice(record.indexOf('<a id="dacl-13"></a>'))).not.toMatch(/\*\*The paste waits for this ruling\.\*\*/);
     const dec = src("audit-reports/DECISIONS.md");
     const i31 = dec.slice(dec.indexOf("I-31 LEGACY LISTS INTO THE ACL): the integrator's rulings"));
-    expect(i31.slice(0, i31.indexOf("\n"))).toMatch(/\*\*and DO NOT PASTE until the integrator has ruled on `DACL-13`\*\*/);
+    expect(i31.slice(0, i31.indexOf("\n"))).not.toMatch(/\*\*and DO NOT PASTE until the integrator has ruled on `DACL-13`\*\*/);
+  });
+
+  it("the by-hand ROLLBACK restores a NULL before-value as NULL (NULLIF over the audit row's JSON null), for acl and acl_index", () => {
+    const rb = SQL.slice(SQL.indexOf("-- ROLLBACK"), SQL.indexOf("-- ─", SQL.indexOf("-- ROLLBACK")));
+    expect(rb).toContain("acl = NULLIF(a.details->'before'->'acl', 'null'::jsonb)");
+    expect(rb).toContain("acl_index = NULLIF(a.details->'before'->'acl_index', 'null'::jsonb)");
   });
 });
 
@@ -416,6 +496,28 @@ describe("ALOG-13 — the wizard's upload picker is seeded from the ACL it wrote
     // The library page answers by the same rung.
     expect(canWithAclChain({ principal: PRINCIPALS.engineer, action: "read", aclChain: [rung] })).toBe(false);
     expect(canWithAclChain({ principal: PRINCIPALS.hr, action: "read", aclChain: [rung] })).toBe(true);
+  });
+
+  it("R3: a wizard EDIT writes write_access / admin_access exactly as wizardUploadRolesSeed reads them back from the ACL it stores; a drawer clear after it re-grants no role outside the last saved view / upload", () => {
+    for (const upload of [["Engineer" as Role], [] as Role[], ["Supervisor" as Role, "Engineer" as Role]]) {
+      for (const view of [["HR" as Role], ["HR" as Role, "Vendor" as Role]]) {
+        const form = wizardAcl(view, upload);
+        // a drawer grant already on the library (a user / team grant, an expiring role grant) survives the merge
+        const drawer = [
+          { effect: "allow", subject: { type: "user", id: "u9" }, actions: ["upload", "createFolder", "editMetadata", "write", "download", "read", "discover"] },
+          { effect: "allow", subject: { type: "role", id: "Vendor" }, actions: ["read"], expiresAt: "2030-01-01T00:00:00Z" },
+        ] as AccessRule[];
+        const stored = mergeWizardLibraryAcl(form, drawer)!;
+        const lists = wizardListColumnsFromAcl(form);
+        expect(wizardUploadRolesSeed({ acl: stored, writeAccess: lists.write_access })).toEqual(lists.write_access);
+        expect(wizardUploadRolesSeed({ acl: stored, writeAccess: undefined })).toEqual(lists.write_access);
+        // the drawer later clears the ACL: the fallback reads the lists the edit wrote — the last saved roles only
+        const visibleTo = Array.from(new Set([...view, ...lists.write_access]));
+        const rung = legacyLibraryAcl({ readAccess: view, visibleTo, writeAccess: lists.write_access, adminAccess: lists.admin_access, acl: { inherit: true, visibility: "normal", rules: [] } as AccessControl })!;
+        const saved = new Set<string>([...view, ...upload, "Admin", "DocCtrl"]);
+        for (const r of rung.rules) expect(saved.has(String(r.subject.id)), String(r.subject.id)).toBe(true);
+      }
+    }
   });
 
   it("a NEW library's writers name no write_access / admin_access; a wizard EDIT writes them from the wizard's ACL; the wizard's payload carries no writeAccess / adminAccess; the console comment says where the lists are read", () => {

@@ -55,55 +55,58 @@
 -- grant still merges in; a library whose read_access is "ALL" or NULL (the
 -- Everyone case) and a library whose ACL already says something are not
 -- touched. Proven member by member on PostgreSQL 16
--- (lib/__tests__/rls/intelI31LegacyListsAcl.test.ts) for every reader that
+-- (lib/__tests__/rls/intelI31LegacyListsAcl.test.ts) and in the default
+-- suite (lib/__tests__/intelI31LegacyListsAcl.test.ts) for every reader that
 -- takes the rung — the library page's per-row decision, its card, content
--- reads (the AI seam, the bytes door), publish and the drawer's authority:
--- the app's answer before the paste equals its answer after. Two answers DO
--- move, and neither is ruled yet (DACL-13): the raw-ACL readers just below,
--- at the paste; and the database's LISTING of private / hidden rows, at the
--- first acl_index rebuild after it (WHAT WIDENS AFTER THE PASTE).
+-- reads (the AI seam, the bytes door), publish, the drawer's authority, and
+-- (since the I-31 merge, DACL-13 R1) the ticket triage readers: the app's
+-- answer before the paste equals its answer after. The database's LISTING
+-- of private / hidden rows moves after it, as ACCEPTED under DACL-13 R2
+-- (WHAT WIDENS AFTER THE PASTE).
 --
--- WHAT DOES CHANGE AT THE PASTE (said, not hidden). Readers that decide on
--- the RAW libraries.acl and never took the legacy rung answer differently
--- once the ACL carries it — they move from "open to every member" to the
--- lists' answer:
---   * the ticket triage library picker (components/requests/LibraryPicker →
---     lib/ticketLibrary offerableLibraries) and its server check
---     (app/api/tickets/workflow-action, assign / request_eng_review): a
---     triager who is not a controller, not the owner and holds no role in
---     the lists is no longer offered a written library, and a request naming
---     it is refused 400 ("That library is not one of this workspace's") —
---     inventory rows 13 / 14 bound the (library, member) pairs and members;
---   * the ticket history's and close notice's library label
---     (libraryLabelForTicket): a written library is named "the target
---     library" instead of by its name;
---   * the View-as simulator and the access-recertification report show the
---     rung's grants (they become accurate).
--- Each of these is the lists' own answer (DEC-90 R1), so the change closes a
--- disclosure rather than opening one; it is opened as intelligence DACL-13
--- (owner proposed: drafting-flow, for the integrator's ruling — accept at
--- the paste, or move the triage readers onto the rung in a deploy first;
--- the paste waits for that ruling — PASTE FACTS).
+-- THE TICKET TRIAGE READERS TAKE THE RUNG (DACL-13 R1 — ruled by the
+-- integrator at the I-31 merge, 2026-10-20, DEC-90 — and built in the I-31
+-- deploy, so they do not change at the paste). The triage library picker
+-- (components/requests/LibraryPicker → lib/ticketLibrary offerableLibraries)
+-- and its server check (app/api/tickets/workflow-action, assign /
+-- request_eng_review — the check and its history label, libraryLabelForTicket)
+-- read the rung's columns (lib/libraryAccess LIBRARY_RUNG_COLUMNS) and
+-- decide on the EFFECTIVE ACL (effectiveLibraryAclFromRow's reading), so a
+-- triager outside a legacy library's lists is not offered it, and a request
+-- naming it is refused 400, from the I-31 deploy on — before the paste as
+-- after it (inventory rows 13 / 14 bound the (library, member) pairs and
+-- members). On a PRE-I-31 app those readers decide on the raw ACL, so there
+-- they WOULD move at the paste from "open to every member" to the lists'
+-- answer — one more reason the deploy goes first (PASTE FACTS).
 --
--- WHAT WIDENS AFTER THE PASTE (said, not hidden — NOT YET ACCEPTED: put to
--- the integrator under DACL-13). Folders, documents and document sets carry
--- a chain-resolved acl_index the APP builds (the drawer's save, the
--- folder-move rebuild, the nightly maintenance rebuild — DEC-10). This file
--- does not touch them. Within ONE nightly acl_index rebuild after the paste
--- (lib/aclIndexRebuild — automatic, no one has to act) they take the
--- library's rung, so the database returns a PRIVATE or HIDDEN row in a
--- written library to the roles its lists name (node_visible's allow branch).
--- The app's content doors (the AI seam, the bytes door) already give those
--- roles that row's content today, but the library page LISTS rows from the
--- database, and so do database-backed searches: from that rebuild on, every
--- member holding a listed role sees those private / hidden documents,
--- folders and document sets listed, which before the paste only controllers,
--- the owner and explicit grantees did (16 (member, row) pairs on the PG16
--- fixture). Inventory row 12 counts the rows it can touch. That is a
--- disclosure widening DEC-90's I-31 ruling (1) (before = after, hidden /
--- private included) did not accept; the integrator accepts it explicitly or
--- it is not pasted. A NORMAL row stays open at the database until
--- intelligence I-30 (DEC-90 R5), as today.
+-- WHAT STILL READS THE RAW ACL (said, not hidden; none is an access door).
+--   * the ticket close notice's library label (app/api/tickets/
+--     workflow-action's close path, libraryLabelForTicket over a row read
+--     without the lists): a written library is named "the target library"
+--     instead of by its name from the paste on — a name withheld, never one
+--     shown (fail-safe);
+--   * the View-as simulator, the access-recertification report and the
+--     Permissions console show the rung's grants (they become accurate);
+--   * the acl_index builders — next paragraph.
+--
+-- WHAT WIDENS AFTER THE PASTE (said, not hidden — ACCEPTED: DACL-13 R2,
+-- ruled by the integrator at the I-31 merge, 2026-10-20, DEC-90). Folders,
+-- documents and document sets carry a chain-resolved acl_index the APP
+-- builds from the library's ACL down (DEC-10). This file does not touch
+-- them. From the paste on, every private / hidden row in a written library
+-- whose acl_index is built or rebuilt takes the library's rung — at once on
+-- upload, folder create, move or drawer save, and for existing rows at the
+-- latest at the next nightly rebuild (lib/aclIndexRebuild — automatic, no
+-- one has to act) — so the database returns it to the roles the lists name
+-- (node_visible's allow branch), and the library page's listing and
+-- database-backed searches show it to them, where before only controllers,
+-- the owner and explicit grantees saw it listed (16 (member, row) pairs on
+-- the PG16 fixture). The database converges to the answer the app's doors
+-- (the AI seam, the bytes door) already give those roles: it adds nothing
+-- the app does not already show them. Inventory row 12 is up to that many
+-- rows (an upper bound: rows below a non-inheriting node do not widen). A
+-- NORMAL row stays open at the database until intelligence I-30 (DEC-90 R5),
+-- as today.
 --
 -- NOT DONE HERE. No RESTRICTIVE policy on libraries (DEC-90 R6). node_visible,
 -- acl_index_denies and the deny binding are not touched (intelligence I-30).
@@ -111,8 +114,9 @@
 --
 -- APP BEFORE AND AFTER THE PASTE. Before: the app's fallback rung decides
 -- each legacy library (I-12). After: the ACL decides it, with the same answer
--- for every reader that takes the rung (the raw-ACL readers above excepted,
--- and the private / hidden listing at the first rebuild after it).
+-- for every reader that takes the rung — the ticket triage readers included
+-- (DACL-13 R1); the raw-ACL displays above and the private / hidden listing
+-- (DACL-13 R2, accepted) are the answers that move.
 -- No column, function or table is added, so no 42703 / 42883 / 42P01 /
 -- PGRST202 / PGRST204 / PGRST205 can arise from it. Idempotent: a re-paste
 -- finds no legacy library and writes nothing.
@@ -124,7 +128,11 @@
 --   "before" picture of the libraries this file writes; pasted after this
 --   file they read 0) and with 20261224.
 --   DEPLOY — HARD PREREQUISITE: deploy I-31 FIRST, then paste. The I-31
---   deploy carries the library page's controller-first canPublish
+--   deploy carries the ticket triage readers on the rung (DACL-13 R1): on a
+--   pre-I-31 app the picker and the workflow-action library check read the
+--   raw ACL and would change at the paste (a triager outside the lists
+--   loses a written library at the paste instead of at the deploy). It also
+--   carries the library page's controller-first canPublish
 --   (app/(protected)/documents/[libraryId]/page.tsx: isControllerPrincipal
 --   before canPublishViaIndex). On an older app the page answers publish
 --   from canPublishViaIndex(library.aclIndex) whenever the index is
@@ -136,24 +144,23 @@
 --   app's legacy rung: pasted on an app older than I-12 this file would also
 --   close those libraries' contents to members outside the lists at the
 --   paste instead of at the deploy — the change R1 ruled.)
---   RULING — HARD PREREQUISITE: DO NOT PASTE until the integrator has ruled
---   on DACL-13 (both of its questions: the raw-ACL ticket readers that change
---   at the paste, and the private / hidden listing that widens at the first
---   acl_index rebuild after it). Under (b), the drafting-flow change
---   (offerableLibraries / LibraryPicker / workflow-action on
---   effectiveLibraryAclFromRow with LIBRARY_RUNG_COLUMNS) deploys first —
---   it cannot be done after the paste. Under (a), the paste row names the
---   readers. The listing widening is accepted in the paste row by name, or
---   the file is not pasted.
+--   RULING: none outstanding. DACL-13 was ruled by the integrator at the
+--   I-31 merge (2026-10-20, DEC-90): R1 — the ticket triage readers take the
+--   rung, built in the I-31 deploy (no paste gate); R2 — the private /
+--   hidden listing that follows the paste is accepted (WHAT WIDENS AFTER
+--   THE PASTE).
 --   ONE RESULT SET: probes first (ok true on a correct paste), then the
 --   counts-only inventory captured before the transaction and the counts of
 --   what the transaction wrote.
 --
 -- ROLLBACK (by hand; restores what each library had, from this file's audit
 -- rows — the rung's readers answer the same either way, the fallback rung
--- returning; the raw-ACL readers above return to "open to every member"):
---   UPDATE libraries l SET acl = a.details->'before'->'acl',
---          acl_index = a.details->'before'->'acl_index'
+-- returning; the raw-ACL displays above return to the empty ACL's picture;
+-- jsonb_build_object stored a SQL NULL before-value as JSON null, which
+-- NULLIF turns back into NULL; an ACL that was JSON null comes back as SQL
+-- NULL, which every reader reads the same):
+--   UPDATE libraries l SET acl = NULLIF(a.details->'before'->'acl', 'null'::jsonb),
+--          acl_index = NULLIF(a.details->'before'->'acl_index', 'null'::jsonb)
 --     FROM audit_logs a
 --    WHERE a.action = 'NODE_ACL_CHANGED' AND a.resource_type = 'library'
 --      AND a.user_email = 'system:migration-20261228'
@@ -265,7 +272,7 @@ UNION ALL
 SELECT 11, 'before: folders in the libraries this paste writes', COUNT(*)
   FROM collections c JOIN intel_i31_20261228_rung r ON r.id = c.library_id WHERE r.to_write
 UNION ALL
-SELECT 12, 'before: private / hidden documents, folders and document sets in them — at the next acl_index rebuild the database returns each to the roles the lists name (the app''s AI seam and bytes door already let those roles read them); nothing else moves at the database',
+SELECT 12, 'before: private / hidden documents, folders and document sets in them — up to this many rows (an upper bound: rows below a non-inheriting node do not widen) that the database returns to the roles the lists name once their acl_index is built or rebuilt (at once on upload, folder create, move or drawer save; existing rows at the latest at the next nightly rebuild) — the app''s AI seam and bytes door already let those roles read them (DACL-13 R2, accepted); nothing else moves at the database',
        (SELECT COUNT(*) FROM documents d JOIN intel_i31_20261228_rung r ON r.id = d.library_id
          WHERE r.to_write AND r.role_count > 0 AND d.visibility IN ('private', 'hidden'))
      + (SELECT COUNT(*) FROM collections c JOIN intel_i31_20261228_rung r ON r.id = c.library_id

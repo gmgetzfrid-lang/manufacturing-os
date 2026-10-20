@@ -28,7 +28,7 @@ import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type Outcome
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
-import { offerableLibraries, libraryLabelForTicket, type LibraryChoiceRow } from "@/lib/ticketLibrary";
+import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS } from "@/lib/ticketLibrary";
 import type { Principal } from "@/lib/permissions";
 
 // POST /api/tickets/workflow-action
@@ -635,13 +635,17 @@ export async function POST(req: NextRequest) {
       // a library the assigner cannot discover is refused exactly as one of
       // another workspace is (same answer: its existence is not confirmed),
       // whatever the client sends. A read that fails is a 503, never a guess.
+      // DACL-13 R1 (I-31 merge, DEC-90): the library is read with the rung's
+      // columns and decided — offered and labelled — by its EFFECTIVE ACL
+      // (lib/ticketLibrary libraryChoiceFromRow → lib/libraryAccess), so
+      // this check answers the same before and after migration 20261228.
       const [{ data: lib, error: libErr }, { data: teamRows, error: teamErr }] = await Promise.all([
-        supabaseAdmin.from("libraries").select("id, name, visibility, acl, owner_user_id")
+        supabaseAdmin.from("libraries").select(LIBRARY_CHOICE_COLUMNS)
           .eq("id", libraryId).eq("org_id", ticket.orgId).maybeSingle(),
         supabaseAdmin.from("team_members").select("team_id").eq("uid", caller.id),
       ]);
       if (libErr || teamErr) return NextResponse.json({ error: "Couldn't check that library right now — try again in a moment." }, { status: 503 });
-      const libRow = lib as { id: string; name?: string | null; visibility?: string | null; acl?: unknown; owner_user_id?: string | null } | null;
+      const libRow = lib ? libraryChoiceFromRow(lib as unknown as Record<string, unknown>) : null;
       const heldByCaller = heldRoles(member as { role?: unknown; roles?: unknown }) as Role[];
       const principal: Principal | null = heldByCaller.length === 0 ? null : {
         uid: caller.id,
@@ -651,18 +655,12 @@ export async function POST(req: NextRequest) {
         teamIds: ((teamRows ?? []) as Array<{ team_id?: unknown }>).map((t) => String(t.team_id ?? "")).filter(Boolean),
         isActiveMember: true,
       };
-      const offered = libRow ? offerableLibraries([{
-        id: String(libRow.id),
-        name: libRow.name ?? null,
-        visibility: libRow.visibility ?? null,
-        acl: (libRow.acl ?? null) as LibraryChoiceRow["acl"],
-        ownerUserId: libRow.owner_user_id ?? null,
-      }], principal) : [];
+      const offered = libRow ? offerableLibraries([libRow], principal) : [];
       if (!libRow || offered.length === 0) return NextResponse.json({ error: "That library is not one of this workspace's" }, { status: 400 });
       // The history line names a library only when every reader of the
       // ticket may know it (libraryLabelForTicket): a hidden / private one,
       // or one whose ACL carries any rule, is "the target library".
-      triage = { ...(triage ?? {}), library: { id: String(libRow.id), name: libraryLabelForTicket({ name: libRow.name, visibility: libRow.visibility, acl: libRow.acl }) } };
+      triage = { ...(triage ?? {}), library: { id: String(libRow.id), name: libraryLabelForTicket(libRow) } };
     }
   }
   if (wantsUnit) {
