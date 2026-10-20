@@ -1075,8 +1075,12 @@ export default function LibraryExplorerPage() {
       if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept — under a legal hold (e.g. ${r.held[0].label}).`);
       nudgeKnowledgeSources(activeOrgId, libraryId);
     } catch (e) {
-      setError(`Delete failed: ${(e as Error).message}`);
+      // Loud: a banner at the top of a long list is easy to miss, and a
+      // delete that silently didn't happen is the worst outcome.
+      const msg = (e as Error).message;
+      setError(`Delete failed: ${msg}`);
       setDocsRefreshTick((t) => t + 1);
+      void appAlert({ title: "Delete failed", message: msg, tone: "danger" });
     } finally {
       setBulkDeleting(null);
     }

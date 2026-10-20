@@ -44,11 +44,44 @@ export async function deleteDocumentRows(
   let i = 0;
   for (; i < todo.length && Date.now() < deadlineMs; i += DELETE_SLICE) {
     const slice = todo.slice(i, i + DELETE_SLICE);
-    const { error } = await admin.from("documents").delete().in("id", slice);
-    if (error) throw new Error(`Couldn't delete documents: ${error.message}`);
+    await deleteSlice(admin, slice);
     deleted.push(...slice);
   }
   return { deleted, held, remaining: todo.slice(i) };
+}
+
+/** documents and document_versions point at each other (current_version_id
+ *  one way, record_id the other) with no cascade, so a bare document delete
+ *  is refused by the database — the reason "Delete" did nothing. Same order
+ *  as the single-document path: detach the pointer, drop the revisions,
+ *  then the documents. */
+async function deleteSlice(admin: SupabaseClient, ids: string[]): Promise<void> {
+  const { data: vers, error: vErr } = await admin.from("document_versions")
+    .select("id").in("record_id", ids).limit(5000);
+  if (vErr) throw new Error(`Couldn't read revisions: ${vErr.message}`);
+  const versionIds = ((vers ?? []) as Array<{ id: string }>).map((v) => v.id);
+
+  const { error: e1 } = await admin.from("documents").update({ current_version_id: null }).in("id", ids);
+  if (e1) throw new Error(`Couldn't detach current revisions: ${e1.message}`);
+
+  // Other records that merely POINT at these revisions (a work package's
+  // pinned revision, a branch's divergence point) let go of them. Best
+  // effort: on a DB without those tables there is nothing to release.
+  for (let k = 0; k < versionIds.length; k += READ_SLICE) {
+    const chunk = versionIds.slice(k, k + READ_SLICE);
+    await admin.from("work_package_documents").update({ pinned_version_id: null })
+      .in("pinned_version_id", chunk).then(() => undefined, () => undefined);
+    await admin.from("revision_branches").update({ diverged_from_version_id: null })
+      .in("diverged_from_version_id", chunk).then(() => undefined, () => undefined);
+  }
+
+  // All of a document's revisions go in ONE statement — they reference
+  // each other (supersedes / reverted-from), which is fine when every row
+  // in the chain leaves together.
+  const { error: e2 } = await admin.from("document_versions").delete().in("record_id", ids);
+  if (e2) throw new Error(`Couldn't delete revisions: ${e2.message}`);
+  const { error: e3 } = await admin.from("documents").delete().in("id", ids);
+  if (e3) throw new Error(`Couldn't delete documents: ${e3.message}`);
 }
 
 /** Every live document filed directly in any of these folders (ids only). */
