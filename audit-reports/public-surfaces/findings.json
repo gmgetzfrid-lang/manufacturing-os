@@ -17,11 +17,11 @@
       "LOW": 29
     },
     "by_status": {
-      "RESOLVED": 59,
+      "RESOLVED": 60,
       "WONTFIX": 1,
       "RESOLVED (2026-10-20, the integrator's ruling R3 at the DF-P12 merge, `DEC-90` — PASTE pending: `20261223` after `20261068`; until it is pasted a ticket copy is recorded without the ticket / file columns and the ticket arm answers \"unavailable\")": 1,
-      "OPEN": 5,
-      "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261223` after `20261068`; until it is pasted the ticket copy is recorded without the two columns and the ticket arm answers \"unavailable\")": 1
+      "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261223` after `20261068`; until it is pasted the ticket copy is recorded without the two columns and the ticket arm answers \"unavailable\")": 1,
+      "OPEN": 4
     }
   },
   "status_vocabulary": [
@@ -725,7 +725,7 @@
       "id": "PHYS-13",
       "title": "Two QR generators bypass publicOrigin() and encode window.location.origin — including the share-link QR handed to external parties",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

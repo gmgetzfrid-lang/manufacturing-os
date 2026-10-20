@@ -1282,6 +1282,26 @@
       "sequencingNotes": [
         "Added by the integrator at the I-12 merge, 2026-10-14 (DEC-31; rulings under DEC-90 recorded on the DEC-90 I-12 landing line)."
       ]
+    },
+    {
+      "name": "I-32 PROVENANCE VIEW AND WIZARD ADOPT — one per-asset 'how we came to believe this' view, and the graph shape wizard adopts a drawing-held pair instead of failing",
+      "findings": [
+        "intelligence GAP-303 acceptance 1 (assigned at the I-15 merge): a single per-asset provenance view on the asset hub — every relation to the asset with who or what asserted it (person, drawing reading, AI reading with model and revision), when, and from which sheet / page; read under the viewer's own access; machine readings distinguishable from people's assertions",
+        "intelligence AREA-12 (LOW; opened by I-15, assigned at the I-15 merge): components/graph/GraphShapeWizard.tsx routes a document-equipment pair a 'drawing' row already holds through POST /api/equipment-bridge 'adopt' on 23505 (as the graph's Connect now does), a refused adopt or audit error shown, the link never presented as made"
+      ],
+      "files": [
+        "the asset hub page / panel (the provenance view)",
+        "components/graph/GraphShapeWizard.tsx",
+        "tests: the view lists every relation with its asserter; a restricted document's relation is not shown to a reader who may not read it; the wizard adopts on 23505 and says a refusal"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "intelligence I-15 merged (2026-10-20)",
+        "intelligence I-26 merged (it holds the drawing viewer's provenance limb)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the I-15 merge, 2026-10-20 (DEC-31)."
+      ]
     }
   ],
   "crossAreaFileOverlaps": [
