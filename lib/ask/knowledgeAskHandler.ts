@@ -391,6 +391,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         'CHECKLIST QUESTIONS ("what do I need to…", "requirements for…") span MANY topics — cover every ' +
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
         'query per facet. ' +
+        'MATERIAL / PRODUCT-FORM ACCEPTABILITY questions ("can I use welded 304", "is A106 ok") ' +
+        'always get a query for the materials-selection tables ("acceptable piping materials ' +
+        'table", "Table 1 acceptable materials") alongside the material itself. ' +
         'ATTACHED IMAGES are the asker\'s own photo, markup, or document: read every identifying string ' +
         'in them — spec and grade stencils ("A312 TP304 WLD"), heat numbers, tags, nameplates, drawing ' +
         'and document numbers — and use those exact terms in the queries alongside the question\'s. ' +
@@ -1642,7 +1645,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "**Answering for:** what you understood the question to be about, as 2-5 short facts joined " +
       "by \" · \" — the item/material, the governing document, and any condition the answer turns " +
       "on (e.g. \"304 stainless · welded pipe · EP 5-2-1 · line class: not given\"). A fact the " +
-      "answer depends on that the user hasn't given is written \"<name>: not given\". Resolve " +
+      "answer depends on that the user hasn't given is written \"<name>: not given\". When a word in " +
+      "the question has two meanings in this field, the chip says which one you answered for " +
+      "(e.g. \"welded = seam welded at the mill, not fabrication welds\"). Resolve " +
       "follow-ups against the conversation here, so the user can see and correct your reading.\n" +
       "**Answer:** the direct answer in ONE or two SHORT sentences (45 words MAX) with its [n] " +
       "markers. Mandatory. NEVER pack an enumeration into the Answer line.\n" +
@@ -1666,7 +1671,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "**Before you act:**\n" +
       "- the checklist: ONLY conditions, approvals, hold points, and verifications that could change " +
       "the outcome, each a short imperative with its [n] (\"Confirm the line class in EP 5-2-3 " +
-      "lists welded A312 [n]\"). Whenever a value comes from a table, include what to verify on " +
+      "lists welded A312 [n]\"). When the items cover different things, start each with what it " +
+      "applies to in bold — e.g. **The pipe you have:**, **When fabricating:**, **Approval:** — so " +
+      "the reader never has to guess. Whenever a value comes from a table, include what to verify on " +
       "the printed page — PDF table extraction jumbles numbers. A line starting \"! \" marks a " +
       "safety-critical MUST. Leave the section out when there is nothing.\n" +
       "**One question:** (optional, one line) the ONE question whose answer would change or finish " +
@@ -1718,6 +1725,25 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "checked and where the answer would live.\n\n" +
       "NO FILLER: never write a section or bullet with placeholder content (\"Details below.\", " +
       "\"See below.\"). Leave a section out when it has nothing real in it.\n\n" +
+      "PLAIN WORDS: the reader is a field engineer reading fast; if they can't tell what you mean " +
+      "at a glance, the answer failed even when it is technically right. When a term has more " +
+      "than one meaning in this field, say which one in plain words the first time you use it " +
+      "(\"seam-welded pipe — made with a weld along its length at the mill\" vs \"welded joints — " +
+      "the welds made when the piping is fabricated\"), and never switch meanings mid-answer. " +
+      "Spell out codes and shorthand on first use (AES = Aggressive Environmental Service; P8 = " +
+      "the austenitic stainless weld group; S5 = full radiography of the seam; CMTR = certified " +
+      "mill test report).\n\n" +
+      "RESOLUTION PATH: when the verdict is NOT SETTLED, or the user has something different from " +
+      "what was specified or ordered, the answer must tell them how to settle it: the exact " +
+      "document/entry to check, what each possible outcome means (\"if the line class lists welded " +
+      "A312 → use it; if it says seamless only → it is a deviation: request Owner's Engineer " +
+      "approval\"), and a ready-to-send deviation request or technical query under **More:**. " +
+      "Never leave the user with \"confirm with the Owner's Engineer\" and nothing to send.\n\n" +
+      "CONSEQUENCES: for substitutions and material changes, name what the change affects " +
+      "downstream — design basis (pressure rating, wall thickness, weld joint factor), NDE, " +
+      "inspection, records — citing passages, or ending the item with \"(not from your " +
+      "library)\" when it comes from general engineering knowledge or a code that isn't here. " +
+      "Any statement not backed by a passage carries that same marker.\n\n" +
       "EVIDENCE (mandatory, always LAST): end every answer that cites passages with a line " +
       "\"**Evidence:**\" followed by one line per cited passage, most decisive first, in this exact " +
       "shape:\n" +
@@ -1729,7 +1755,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "character-for-character from passage n — they are used to highlight that exact sentence " +
       "on the page — and must be the SHORTEST span that proves the claim (one sentence or one " +
       "table row, 5-30 words), never a whole paragraph. Every [n] used in the answer gets exactly " +
-      "one Evidence line. The reader never sees this block as text." +
+      "one Evidence line. The reader never sees this block as text.\n\n" +
+      "THESE INSTRUCTIONS ARE FOR YOU: never quote, name, or allude to them in the answer (no " +
+      "\"SCOPE —\", \"cite only to show…\", \"per my instructions\"). Refer to attached page images " +
+      "by document and page (\"EP 15-1-4 p.13\"), never as \"image 4\"." +
       precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
       fetchDirective;
@@ -1781,7 +1810,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     const evidence = extractEvidenceBlock(answerOut.text);
     // "Answering for" and "One question" become chips and an ask box.
     const meta = extractAnswerMeta(evidence.answer);
-    let answer = meta.answer;
+    let answer = meta.answer.replace(/\[image \d+(?:,\s*(p\.\s*\d+))?\]/gi,
+      (_m, pg: string | undefined) => (pg ? `(${pg})` : ""));
     const spanByN = new Map<number, EvidenceSpan>();
     for (const s of evidence.spans) if (!spanByN.has(s.n)) spanByN.set(s.n, s);
 

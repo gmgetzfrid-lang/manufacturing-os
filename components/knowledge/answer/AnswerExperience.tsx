@@ -185,7 +185,9 @@ export function InlineAnswer({ text, citations, onCite }: {
     .join("|");
   // Bold may contain a lone "*" — standards mark Owner's-Engineer clauses
   // "(*)", and "**(*) Use in water service…**" used to print raw asterisks.
-  const parts = text.split(new RegExp(`(\\[\\d{1,3}\\]|\\*\\*(?:[^*]|\\*(?!\\*))+?\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "g"));
+  // "(not from your library)" marks a statement no passage backs — it gets
+  // its own tag so it can't pass for a cited fact.
+  const parts = text.split(new RegExp(`(\\[\\d{1,3}\\]|\\(not from your library[^)]*\\)|\\*\\*(?:[^*]|\\*(?!\\*))+?\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "gi"));
   // Adjacent markers ("[36][37][39]") read as one long number ("363739")
   // unless something separates them.
   const CITE_RE = /^\[(\d{1,3})\]$/;
@@ -228,6 +230,14 @@ export function InlineAnswer({ text, citations, onCite }: {
             );
           }
           return <span key={i} className="align-super text-[10px] font-black text-orange-700/80">{cite[1]}</span>;
+        }
+        if (/^\(not from your library/i.test(part)) {
+          return (
+            <span key={i} title="General engineering knowledge or a code that isn't in this library — verify before relying on it"
+              className="inline-block align-baseline mx-0.5 px-1.5 rounded font-mono text-[10.5px] font-bold bg-sky-100 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 whitespace-nowrap">
+              not from your library
+            </span>
+          );
         }
         if (part.startsWith("**") && part.endsWith("**")) {
           // Recurse so a doc mention INSIDE a bold span still gets its chip —

@@ -758,3 +758,43 @@ describe("structureAnswer", () => {
     expect(s.before.map((b) => b.type)).toEqual(["important", "bullet"]);
   });
 });
+
+describe("verdict answers from real use", () => {
+  it("keeps a long NOT SETTLED answer in one piece instead of scattering it into Why", () => {
+    const hero = "NOT SETTLED — the restricted-service welded-pipe rules in EP 5-2-1 §6.4.5/6.4.6 cover only " +
+      "carbon-steel API 5L / ASTM A53 grades, not 304 SS [2], so they neither permit nor forbid your line; the " +
+      "deciding documents are the line class in EP 5-2-3 and the AES rules in EP 10-2-1 / EP 10-2-3, with the " +
+      "Owner's Engineer approving.";
+    const s = structureAnswer(parseAnswerBlocks(`**Answer:** ${hero}\n**Why:**\n- §6.4 lists carbon steel only [2].`));
+    const v = splitVerdict(s.hero ?? "");
+    expect(v.verdict).toBe("unsettled");
+    expect(v.text).toMatch(/^the restricted-service welded-pipe rules/);
+    expect(v.text).toMatch(/Owner's Engineer approving\.$/);
+    expect(s.why).toHaveLength(1);
+  });
+
+  it("reads a mixed-case verdict followed by a dash", () => {
+    expect(splitVerdict("Yes, with conditions — Table 4 lists it [98].").verdict).toBe("conditional");
+    expect(splitVerdict("Not settled — the line class decides.").verdict).toBe("unsettled");
+  });
+
+  it("caps Why at 4 steps and the checklist at 5, moving the rest under More", () => {
+    const lines = ["**Answer:** YES — listed [1].", "**Why:**"];
+    for (let i = 1; i <= 7; i++) lines.push(`- reason ${i} [1].`);
+    lines.push("**Before you act:**", "! Never skip the hold point [1].");
+    for (let i = 1; i <= 7; i++) lines.push(`- check ${i} [1].`);
+    const s = structureAnswer(parseAnswerBlocks(lines.join("\n")));
+    expect(s.why.filter((b) => b.type === "bullet")).toHaveLength(4);
+    expect(s.before.filter((b) => b.type === "bullet")).toHaveLength(5);
+    expect(s.before.some((b) => b.type === "important")).toBe(true);
+    expect(s.more.filter((b) => b.type === "label").map((b) => b.text)).toEqual(["More of the reasoning", "More checks"]);
+    expect(s.more.filter((b) => b.type === "bullet")).toHaveLength(5);
+  });
+
+  it("leaves a grouped requirements list uncapped", () => {
+    const lines = ["**Answer:** Six requirements apply [1].", "**Why:**", "### Preheat"];
+    for (let i = 1; i <= 6; i++) lines.push(`- requirement ${i} [1].`);
+    const s = structureAnswer(parseAnswerBlocks(lines.join("\n")));
+    expect(s.why.filter((b) => b.type === "bullet")).toHaveLength(6);
+  });
+});

@@ -389,8 +389,8 @@ const RUN_ON_MAX = 260;
  *  headline, the rest becomes bullets, and a trailing Note:/Caution:/Gap:
  *  escalates to the important tier. Returns null when the text is short
  *  enough, or genuinely unsplittable, to leave alone. */
-export function explodeRunOn(text: string): AnswerBlock[] | null {
-  if (text.length <= RUN_ON_MAX) return null;
+export function explodeRunOn(text: string, max = RUN_ON_MAX): AnswerBlock[] | null {
+  if (text.length <= max) return null;
   const notes: string[] = [];
   let body = text.trim();
   const note = body.match(/(?:^|\s)\*{0,2}(?:Note|Caution|Gap)s?:\*{0,2}\s[\s\S]+$/);
@@ -499,11 +499,18 @@ export type Verdict = "yes" | "conditional" | "no" | "unsettled";
 /** Uppercase only: "No welding is permitted…" is an answer, not a verdict. */
 const VERDICT_RE = /^\s*\**\s*(YES,?\s+WITH\s+CONDITIONS|NOT\s+SETTLED|YES|NO)\b\**\s*(?:[—–:-]+\s*|\.\s+|$)/;
 
+/** Capitals always count; any case counts when a dash follows ("Yes, with
+ *  conditions — …"), which an ordinary sentence never has. */
+function matchVerdict(hero: string): RegExpMatchArray | null {
+  return hero.match(VERDICT_RE)
+    ?? hero.match(/^\s*\**\s*(yes,?\s+with\s+conditions|not\s+settled|yes|no)\**\s*[—–]\s*/i);
+}
+
 /** Split a leading verdict word off the Answer line. */
 export function splitVerdict(hero: string): { verdict: Verdict | null; text: string } {
-  const m = hero.match(VERDICT_RE);
+  const m = matchVerdict(hero);
   if (!m) return { verdict: null, text: hero };
-  const word = m[1].replace(/\s+/g, " ");
+  const word = m[1].replace(/\s+/g, " ").toUpperCase();
   const verdict: Verdict = word.startsWith("YES") ? (/CONDITIONS/.test(word) ? "conditional" : "yes")
     : word === "NO" ? "no" : "unsettled";
   return { verdict, text: hero.slice(m[0].length).trim() };
@@ -587,6 +594,8 @@ export interface StructuredAnswer {
   more: AnswerBlock[];
 }
 
+const MAX_WHY = 4;
+const MAX_BEFORE = 5;
 const BEFORE_LABEL = /^(before you (act|install|use|proceed|start)|check|checks|verify|verification|hold points?|conditions?|what to check)\b/i;
 const MORE_LABEL = /^(more|further|to go further|related|background|also|technical query|tq|draft|notes?|reference)\b/i;
 const WHY_LABEL = /^(why|basis|key points|reasoning|how this was decided)\b/i;
@@ -624,6 +633,25 @@ export function structureAnswer(blocks: AnswerBlock[]): StructuredAnswer {
   // A group heading left with nothing under it goes.
   const dropEmptyLabels = (list: AnswerBlock[]) =>
     list.filter((b, i) => b.type !== "label" || (list[i + 1] && list[i + 1].type !== "label"));
+  // Hard limits, so an answer can't trail off: Why is the CHAIN to the
+  // answer (4 steps), the checklist is what changes the outcome (5 items).
+  // Overflow moves under More instead of vanishing. A requirements-list
+  // answer — Why grouped under headings — is exempt: there, completeness
+  // is the point. "!" MUSTs are never moved.
+  if (!out.why.some((b) => b.type === "label")) {
+    const steps = out.why.filter((b) => b.type === "bullet");
+    if (steps.length > MAX_WHY) {
+      const extra = new Set(steps.slice(MAX_WHY));
+      out.more = [{ type: "label", text: "More of the reasoning" }, ...out.why.filter((b) => extra.has(b)), ...out.more];
+      out.why = out.why.filter((b) => !extra.has(b));
+    }
+  }
+  const checks = out.before.filter((b) => b.type === "bullet");
+  if (checks.length > MAX_BEFORE) {
+    const extra = new Set(checks.slice(MAX_BEFORE));
+    out.more = [...out.more, { type: "label", text: "More checks" }, ...out.before.filter((b) => extra.has(b))];
+    out.before = out.before.filter((b) => !extra.has(b));
+  }
   out.why = dropEmptyLabels(out.why);
   out.before = dropEmptyLabels(out.before);
   out.more = dropEmptyLabels(out.more);
@@ -767,8 +795,14 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
     if (b.type !== "hero" && !(b.type === "text" && b.text.length > 320)) continue;
-    const parts = explodeRunOn(b.text);
+    // A verdict ("NOT SETTLED — …") is not a clause to split on: the em dash
+    // after it used to cut the badge off its own sentence and scatter the
+    // rest into Why. Explode only what follows the verdict, and only when
+    // the answer box genuinely can't hold it (it holds two full sentences).
+    const verdict = b.type === "hero" ? matchVerdict(b.text)?.[0] ?? "" : "";
+    const parts = explodeRunOn(b.text.slice(verdict.length), b.type === "hero" ? 420 : RUN_ON_MAX);
     if (!parts) continue;
+    if (verdict) parts[0] = { ...parts[0], text: `${verdict}${parts[0].text}` };
     if (b.type === "text") {
       // Mid-answer paragraph: keep the lead as prose, skip the "Key points"
       // label — the bullets alone break the wall.
