@@ -9,6 +9,7 @@
 import { supabase } from "@/lib/supabase";
 import { normalizeEvidence, isMachineActorName } from "@/lib/checklistEngine";
 import { auditActorNote, AUDIT_TRAIL_UNSEEN_NOTE_PACK } from "@/lib/auditActions";
+import type { Transmittal } from "@/lib/transmittals";
 
 /** admin-and-org ALOG-7: whose word an audit row's identity is (actor_kind,
  *  stamped by 20261201's trigger; a row without it is the writer's word). */
@@ -149,6 +150,9 @@ interface ProjectEvidence {
   milestones: Array<Record<string, unknown>>;
   audit: Array<Record<string, unknown>>;
   transmittals: Array<Record<string, unknown>>;
+  /** DIST-18 (limb a): the transmittals read failed — said, never printed
+   *  as "none" (absent = read). */
+  transmittalsUnread?: boolean;
   /** QUAL-10: the quality program's record (absent = not gathered). */
   quality?: ProjectQualityEvidence;
 }
@@ -321,21 +325,54 @@ export function projectPackCoverage(q: ProjectQualityEvidence): string {
   return parts.join(" ");
 }
 
+/** DIST-18 (limb a): a transmittal as the register served it, in the row
+ *  shape the pack prints — an item the viewer may not read is
+ *  "Restricted document" with no revision, status or hash, and a receipt
+ *  note withheld from them is absent. */
+export function transmittalEvidenceRow(t: Transmittal): Record<string, unknown> {
+  return {
+    id: t.id, number: t.number, status: t.status, purpose: t.purpose ?? null,
+    recipient_name: t.recipientName ?? null, recipient_company: t.recipientCompany ?? null,
+    issued_at: t.issuedAt ?? null, acknowledged_at: t.acknowledgedAt ?? null,
+    acknowledged_by_name: t.acknowledgedByName ?? null, acknowledged_via: t.acknowledgedVia ?? null,
+    acknowledged_meta: t.acknowledgedMeta ?? null, items: t.items ?? [],
+  };
+}
+
 export async function gatherProjectEvidence(projectId: string): Promise<ProjectEvidence> {
+  // One read of the project (a query builder runs again each time it is awaited).
+  const projectQ = Promise.resolve(supabase.from("projects").select("*").eq("id", projectId).maybeSingle());
+  // Formal issues to outside parties — contractual receipts belong in the
+  // pack. DIST-18 (limb a): read through the transmittal register route for
+  // the project's workspace (lib/transmittals listTransmittalsForProject), so
+  // each row is what the register shows this viewer — never a browser
+  // SELECT carrying every item and the portal token. A read that fails is
+  // said in the pack, never printed as "none".
+  const transmittalsQ = projectQ.then(async (p) => {
+    const orgId = ((p.data as Record<string, unknown> | null)?.org_id as string | undefined) ?? null;
+    if (!orgId) return { rows: [] as Array<Record<string, unknown>>, unread: true };
+    try {
+      const { listTransmittalsForProject } = await import("@/lib/transmittals");
+      return { rows: (await listTransmittalsForProject(orgId, projectId)).map(transmittalEvidenceRow), unread: false };
+    } catch (e) {
+      console.warn("[evidencePack] the project's transmittals could not be read", (e as Error)?.message);
+      return { rows: [] as Array<Record<string, unknown>>, unread: true };
+    }
+  });
   const [project, members, milestones, audit, transmittals] = await Promise.all([
-    supabase.from("projects").select("*").eq("id", projectId).maybeSingle(),
+    projectQ,
     supabase.from("project_members").select("*").eq("project_id", projectId).order("joined_at", { ascending: true }),
     supabase.from("milestones").select("*").eq("project_id", projectId).order("planned_at", { ascending: true }).limit(2000),
     supabase.from("audit_logs").select("*").eq("resource_type", "project").eq("resource_id", projectId).order("timestamp", { ascending: true }).limit(1000),
-    // Formal issues to outside parties — contractual receipts belong in the pack.
-    supabase.from("transmittals").select("*").eq("project_id", projectId).order("seq", { ascending: true }).limit(500),
+    transmittalsQ,
   ]);
   return {
     project: (project.data as Record<string, unknown>) ?? null,
     members: (members.data as Array<Record<string, unknown>>) ?? [],
     milestones: (milestones.data as Array<Record<string, unknown>>) ?? [],
     audit: (audit.data as Array<Record<string, unknown>>) ?? [],
-    transmittals: (transmittals.data as Array<Record<string, unknown>>) ?? [],
+    transmittals: transmittals.rows,
+    ...(transmittals.unread ? { transmittalsUnread: true } : {}),
     quality: await gatherProjectQualityEvidence(projectId),
   };
 }
@@ -420,7 +457,7 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   ${data.milestones.length === 0 ? '<div class="empty">No schedule tasks.</div>' : `<table><thead><tr><th>Task</th><th>Start</th><th>Finish</th><th>Status</th><th>Responsible</th><th>Deps</th></tr></thead><tbody>${join(msRows)}</tbody></table>`}
 
   <h2>Transmittals — formal document issues (${data.transmittals.length})</h2>
-  ${data.transmittals.length === 0 ? '<div class="empty">No transmittals tied to this project.</div>' : `<table><thead><tr><th>Number</th><th>To</th><th>Purpose</th><th>Issued</th><th>Receipt</th><th>Documents</th></tr></thead><tbody>${join(trRows)}</tbody></table>`}
+  ${data.transmittalsUnread ? '<div class="empty">The transmittals could not be read — left out, not absent.</div>' : data.transmittals.length === 0 ? '<div class="empty">No transmittals tied to this project.</div>' : `<table><thead><tr><th>Number</th><th>To</th><th>Purpose</th><th>Issued</th><th>Receipt</th><th>Documents</th></tr></thead><tbody>${join(trRows)}</tbody></table>`}
 ${data.quality ? renderQualitySections(data.quality) : ""}
   <h2>Audit trail (${data.audit.length})</h2>
   ${data.audit.length === 0 ? '<div class="empty">No audit entries.</div>' : `<table><thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead><tbody>${join(auditRows)}</tbody></table>`}

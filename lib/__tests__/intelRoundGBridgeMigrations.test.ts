@@ -264,7 +264,10 @@ describe("20261171 — the paste contract and provenance", () => {
     expect(m71).toContain("CREATE INDEX IF NOT EXISTS tickets_source_document_id_idx ON tickets ((metadata -> 'source_document' ->> 'id'));");
     // …which is exactly what lib/impact.ts and lib/transmittals.ts ask.
     expect(readFileSync(join(process.cwd(), "lib", "impact.ts"), "utf8")).toContain('.eq("metadata->source_document->>id", documentId)');
-    expect(readFileSync(join(process.cwd(), "lib", "transmittals.ts"), "utf8")).toMatch(/\.contains\("items", JSON\.stringify\(\[\{ documentId \}\]\)\)/);
+    // (document-control P29, DIST-18 limb (a): the transmittal containment read
+    // moved from lib/transmittals.ts to the register route, which runs it with
+    // the service role and redacts each row for the viewer.)
+    expect(readFileSync(join(process.cwd(), "app", "api", "transmittal", "register", "route.ts"), "utf8")).toMatch(/\.contains\("items", JSON\.stringify\(\[\{ documentId \}\]\)\)/);
   });
 });
 
