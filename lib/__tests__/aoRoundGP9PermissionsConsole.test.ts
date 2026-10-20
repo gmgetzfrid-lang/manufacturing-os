@@ -317,9 +317,15 @@ describe("AUTHZ-7 — lib/holds.ts assertHoldCapability fails CLOSED (DEC-89 ite
     await expect(releaseHold({ holdId: "h1", releasedBy: "u1", releasedReason: "cleared" }))
       .rejects.toThrow(/^The hold was not released: your permission to release holds could not be checked/);
     expect(reachedUpdate()).toBe(false);
-    // and a healthy read re-dates as before
+    // and a healthy read decides on the default: since drafting-flow HAND-2
+    // (20261239) holds.release is Admin and DocCtrl, so the Viewer is refused
+    // with the permission sentence and a Doc Controller re-dates
     db.readError = {};
     db.tables.org_configurations = [];
+    await expect(updateHoldExpectedRelease("h1", null)).rejects.toThrow(/isn't allowed/);
+    expect(reachedUpdate()).toBe(false);
+    db.tables.org_members = [{ org_id: "o1", uid: "u1", role: "DocCtrl", roles: ["DocCtrl"], status: "active" }];
+    __resetCapabilityPolicyCache();
     await updateHoldExpectedRelease("h1", null).catch(() => undefined);
     expect(reachedUpdate()).toBe(true);
   });

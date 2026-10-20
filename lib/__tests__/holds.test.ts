@@ -356,8 +356,10 @@ describe("HLD-8 / HLD-10 — holdControlsFor and the policy-derived audience", (
     // the additive collection counts, never the headline alone
     expect(holdControlsFor(narrowed, "Manager", ["DocCtrl"], "m1")).toEqual({ canOpen: true, canRelease: true });
     expect(holdControlsFor(narrowed, "Engineer-2", null, "e2")).toEqual({ canOpen: true, canRelease: false });
-    // shipped default ('*') admits every non-read-only member — the UI no longer blocks people the policy allows
-    expect(holdControlsFor({}, "Drafter", [], "d1")).toEqual({ canOpen: true, canRelease: true });
+    // shipped default: holds.open '*' admits every non-read-only member; holds.release is
+    // Admin and DocCtrl since drafting-flow HAND-2 (20261239) — the UI follows the policy either way
+    expect(holdControlsFor({}, "Drafter", [], "d1")).toEqual({ canOpen: true, canRelease: false });
+    expect(holdControlsFor({}, "DocCtrl", [], "dc1")).toEqual({ canOpen: true, canRelease: true });
     // an expired grant is dead
     const expired: CapabilityPolicy = { ...narrowed, grants: [{ cap: "holds.release", uid: "coordinator", expiresAt: "2020-01-01T00:00:00Z" }] };
     expect(holdControlsFor(expired, "Requester", [], "coordinator").canRelease).toBe(false);

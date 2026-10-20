@@ -47,8 +47,13 @@ describe("canForceReleaseCheckout — the checkout.force_release capability, not
 });
 
 describe("holdAffordances — holds.open / holds.release from the policy (HLD-8 done-when 1 & 3)", () => {
-  it("default policy is '*': every active member may place and release", () => {
-    expect(holdAffordances(null, "Viewer", [], "v")).toEqual({ canOpen: true, canRelease: true });
+  it("default policy: every active member may place a hold; releasing is Admin and DocCtrl (drafting-flow HAND-2 narrowed it from '*')", () => {
+    expect(holdAffordances(null, "Viewer", [], "v")).toEqual({ canOpen: true, canRelease: false });
+    expect(holdAffordances(null, "Drafter", ["Drafter"], "d")).toEqual({ canOpen: true, canRelease: false });
+    expect(holdAffordances(null, "DocCtrl", ["DocCtrl"], "dc")).toEqual({ canOpen: true, canRelease: true });
+    expect(holdAffordances(null, "Admin", ["Admin"], "a")).toEqual({ canOpen: true, canRelease: true });
+    // the additive collection counts: a Manager who also holds DocCtrl releases
+    expect(holdAffordances(null, "Manager", ["Manager", "DocCtrl"], "m")).toEqual({ canOpen: true, canRelease: true });
   });
 
   it("a user holding ONLY a UserGrant for holds.release sees the Release control; without it the narrowed org hides it", () => {

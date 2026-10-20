@@ -430,7 +430,9 @@ describe("20261052 — org_capability_allows_for + the 3-argument wrapper", () =
       return m;
     };
     // every default this migration ships is still what CAPABILITY_DEFS says
-    for (const [id, roles] of parse(caseNew)) expect(CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles, id).toEqual(roles);
+    // holds.release shipped as ["*"] until 20261239 narrowed it (drafting-flow HAND-2).
+    const shipped = (id: string, roles: readonly string[]) => (id === "holds.release" ? ["*"] : roles);
+    for (const [id, roles] of parse(caseNew)) expect(shipped(id, CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles ?? []), id).toEqual(roles);
     // and the LIVE evaluator — the last migration that re-creates it — carries every capability
     const dir = join(process.cwd(), "supabase", "migrations");
     const live = readdirSync(dir).filter((f) => /^\d{8}/.test(f) && f.endsWith(".sql")).sort()

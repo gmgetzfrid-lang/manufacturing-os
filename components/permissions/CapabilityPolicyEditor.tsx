@@ -601,7 +601,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
             ) : (
               <div className="mt-2 text-[11px] italic text-[var(--color-text-faint)]">No project-scoped rules — {projectScopedDefs.map((d) => d.label).join(", ")} uses its row above on every project.</div>
             )}
-            <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">A rule names roles, not people: everyone holding a ticked role who can see the project is granted there. A personal grant (View as… below) applies on every project — a person-scoped project grant is not available yet.</div>
+            <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">A rule names roles, not people: everyone holding a ticked role who can see the project is granted there. A personal grant (View as… below) applies on every project unless it names one — a grant on one project names one person there (QUAL-14; needs migration 20261239).</div>
           </div>
         )}
         {opaqueCount > 0 && (

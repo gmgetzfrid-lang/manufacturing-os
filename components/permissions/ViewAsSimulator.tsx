@@ -188,6 +188,10 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   const [grantCap, setGrantCap] = useState<CapabilityId>("ticket.assign");
   const [grantUntil, setGrantUntil] = useState("");
   const [grantNote, setGrantNote] = useState("");
+  // projects-and-cost QUAL-14 done-when 2 (drafting-flow DF-P11): a grant of
+  // a capability decided per project may name one project ("" = every
+  // project the person can see, as every grant before 20261239).
+  const [grantProject, setGrantProject] = useState("");
   const [grantBusy, setGrantBusy] = useState(false);
   const [grantErr, setGrantErr] = useState<string | null>(null);
 
@@ -230,19 +234,20 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
         orgId: activeOrgId, uid: who.uid, cap: grantCap,
         expiresAt: grantUntil ? new Date(`${grantUntil}T23:59:59`).toISOString() : null,
         note: grantNote.trim() || null,
+        projectId: PROJECT_SCOPED_CAPS.has(grantCap) && grantProject ? grantProject : null,
         actorUserId: actorUid, actorEmail,
       });
-      setGrantUntil(""); setGrantNote("");
+      setGrantUntil(""); setGrantNote(""); setGrantProject("");
       await refreshPolicy();
     } catch (e) { setGrantErr((e as Error).message); }
     finally { setGrantBusy(false); }
   };
 
-  const doRevoke = async (cap: CapabilityId) => {
+  const doRevoke = async (cap: CapabilityId, projectId?: string | null) => {
     if (!activeOrgId || !actorUid || !who) return;
     setGrantBusy(true); setGrantErr(null);
     try {
-      await revokeUserGrant({ orgId: activeOrgId, uid: who.uid, cap, actorUserId: actorUid, actorEmail });
+      await revokeUserGrant({ orgId: activeOrgId, uid: who.uid, cap, projectId: projectId ?? null, actorUserId: actorUid, actorEmail });
       await refreshPolicy();
     } catch (e) { setGrantErr((e as Error).message); }
     finally { setGrantBusy(false); }
@@ -330,6 +335,12 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
           .filter((pid) => policyAllows(policy, d.id, who.role, who.roles, who.uid, { projectId: pid }) !== row.ok)
           .map(nameOf);
         const rules = `${ruled.length} project rule${ruled.length === 1 ? "" : "s"}`;
+        // QUAL-14 (DF-P11): a personal grant naming one project holds there
+        // only — with no project picked it is named, never drawn as held.
+        const grantedOn = (policy.grants ?? [])
+          .filter((g) => g.cap === d.id && g.uid === who.uid && grantActive(g) && !!g.projectId)
+          .map((g) => nameOf(String(g.projectId)));
+        const personalNote = grantedOn.length > 0 ? `; granted on ${grantedOn.join(", ")} by a personal grant (pick a project)` : "";
         // Integrator fix pass: the projects this member OWNS — the owner
         // disjunct (user_owns_project) holds there whatever the policy says,
         // before and after 20261136, so with no project picked an owner is
@@ -352,13 +363,13 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               : `granted where no project rule applies — not on ${differs.join(", ")}, whose project rule replaces the base list (pick a project)`,
           };
         }
-        const elsewhere = differs.length > 0
+        const elsewhere = (differs.length > 0
           ? `not by the base list — granted on ${differs.join(", ")} by a project rule`
-          : "not by the base list";
+          : "not by the base list") + personalNote;
         if (ownsNote) return { ...row, ok: true, why: `${ownsNote}; elsewhere ${elsewhere} (pick a project)` };
         return {
           ...row,
-          why: differs.length > 0
+          why: differs.length > 0 || grantedOn.length > 0
             ? `${elsewhere}; a project's owner always can (pick a project)`
             : "per project — a project's owner always can; pick a project to see project-scoped rules",
         };
@@ -489,14 +500,16 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               {personalGrants.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">None — everything they can do comes from their role{contentRules.length ? " and the content rules on the right" : ""}.</div>}
               <ul className="space-y-1">
                 {personalGrants.map((g) => (
-                  <li key={g.cap} className="text-[11px] flex items-center gap-2">
+                  <li key={`${g.cap}:${g.projectId ?? ""}`} data-grant-project={g.projectId ?? ""} className="text-[11px] flex items-center gap-2">
                     <span className={`font-bold ${grantActive(g) ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)] line-through"}`}>{capLabel(g.cap)}</span>
+                    {/* QUAL-14 (DF-P11): a grant scoped to one project says which. */}
+                    {g.projectId && <span className="text-[var(--color-text-muted)]">on {projects.find((p) => p.id === g.projectId)?.name ?? g.projectId}</span>}
                     <span className="text-[var(--color-text-faint)]">
                       {g.expiresAt ? `until ${new Date(g.expiresAt).toLocaleDateString()}${grantActive(g) ? "" : " (expired)"}` : "until revoked"}
                       {g.note ? ` · “${g.note}”` : ""}
                     </span>
                     {canEdit && policyIssue?.kind !== "unreadable" && (
-                      <button onClick={() => void doRevoke(g.cap)} disabled={grantBusy} className="ml-auto p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600" title="Revoke">
+                      <button onClick={() => void doRevoke(g.cap, g.projectId ?? null)} disabled={grantBusy} className="ml-auto p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600" title="Revoke">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     )}
@@ -513,6 +526,12 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     <select value={grantCap} onChange={(e) => setGrantCap(e.target.value as CapabilityId)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
                       {CAPABILITY_DEFS.map((d) => <option key={d.id} value={d.id}>{d.area}: {d.label}</option>)}
                     </select>
+                    {PROJECT_SCOPED_CAPS.has(grantCap) && (
+                      <select aria-label="On which project" value={grantProject} onChange={(e) => setGrantProject(e.target.value)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
+                        <option value="">On every project they can see</option>
+                        {projects.map((p) => <option key={p.id} value={p.id}>On {p.name} only</option>)}
+                      </select>
+                    )}
                     <input type="date" value={grantUntil} onChange={(e) => setGrantUntil(e.target.value)} min={new Date().toISOString().slice(0, 10)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px] [color-scheme:light] dark:[color-scheme:dark]" title="Expires (optional)" />
                     <input value={grantNote} onChange={(e) => setGrantNote(e.target.value)} placeholder="why (goes on the audit)…" className="flex-1 min-w-[120px] h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
                     <button onClick={() => void doGrant()} disabled={grantBusy} className="h-7 inline-flex items-center gap-1 px-2.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
@@ -520,7 +539,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     </button>
                   </div>
                   {grantErr && <div className="text-[10px] text-rose-600 dark:text-rose-400 font-bold">{grantErr}</div>}
-                  <div className="text-[10px] text-[var(--color-text-faint)]">Additive only — a delegation can widen this person&apos;s authority, never narrow anyone else&apos;s. Admin only, never to yourself; applied and audited with before/after on the server (WF-11); a workflow action it admits names it in the audit log (WF-16). Grants have no request-type scope — a delegation applies to every ticket (WF-13). The &ldquo;View as&rdquo; list above updates instantly.</div>
+                  <div className="text-[10px] text-[var(--color-text-faint)]">Additive only — a delegation can widen this person&apos;s authority, never narrow anyone else&apos;s. Admin only, never to yourself; applied and audited with before/after on the server (WF-11); a workflow action it admits names it in the audit log (WF-16). Grants have no request-type scope — a delegation applies to every ticket (WF-13). A capability decided per project (quality sign-off) can be granted on one project only; that grant needs migration 20261239, and is refused until the database reads it. The &ldquo;View as&rdquo; list above updates instantly.</div>
                 </div>
               )}
             </div>

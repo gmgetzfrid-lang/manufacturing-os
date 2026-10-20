@@ -47,7 +47,9 @@ describe("20261063 — org_capability_allows_for learns admin.audit_view; audit_
     // 20261063 is now HISTORICAL (20261132 re-creates the evaluator from it);
     // the live census is rpPhase4Migration.test.ts.
     const later = new Set(["transmittal.issue", "quality.sign_off", "ai.manage_caps"]);
-    for (const def of CAPABILITY_DEFS) if (!later.has(def.id)) expect(sqlDefaults.get(def.id), def.id).toEqual(def.defaultRoles);
+    // holds.release shipped as ["*"] until 20261239 narrowed it (drafting-flow HAND-2).
+    const shipped = (id: string, roles: readonly string[]) => (id === "holds.release" ? ["*"] : roles);
+    for (const def of CAPABILITY_DEFS) if (!later.has(def.id)) expect(sqlDefaults.get(def.id), def.id).toEqual(shipped(def.id, def.defaultRoles));
     expect(sqlDefaults.size).toBe(CAPABILITY_DEFS.length - later.size);
     for (const id of later) expect(sqlDefaults.has(id), id).toBe(false);
   });
