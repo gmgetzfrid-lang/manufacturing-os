@@ -12,14 +12,21 @@
 //     the download voids the whole print (empty list, fired and not awaited);
 //     no QR at all (no public origin) mints nothing;
 //   - timeout: the mint and the settle give up after
-//     SHEET_TOKEN_FETCH_TIMEOUT_MS (a hung mint stamps today's QR).
+//     SHEET_TOKEN_FETCH_TIMEOUT_MS (a hung mint stamps today's QR);
+//   - integrator at the PS-P9 merge (DEC-90): the post-download settle never
+//     holds back the distribution record (EGR-6) or afterDownload (PKG-6) —
+//     it is fired after both are written, never awaited, so a hanging settle
+//     leaves the download complete; an empty mint (no eligible sheet) is null:
+//     no settle request, no warning.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const state = vi.hoisted(() => ({
   stamps: [] as Array<{ verifyUrl?: string }>,
   calls: [] as Array<{ url: string; body: Record<string, unknown> | null; signal: AbortSignal | null }>,
-  mint: "ok" as "ok" | "unavailable" | "error" | "throw" | "partial" | "hang",
+  mint: "ok" as "ok" | "unavailable" | "error" | "throw" | "partial" | "hang" | "empty",
+  /** the order things happened in: the download click, each insert, afterDownload, each settle request */
+  log: [] as string[],
   /** a settle that never answers until its signal aborts */
   settleHangs: false,
   failUrls: new Set<string>(),
@@ -34,6 +41,7 @@ vi.mock("@/lib/supabase", () => {
     const handler: ProxyHandler<Record<string, unknown>> = {
       get(_t, prop: string) {
         if (prop === "then") return (resolve: (v: unknown) => void) => resolve({ data: tables[table] ?? [], error: null });
+        if (prop === "insert") return () => { state.log.push(`insert:${table}`); return new Proxy(c, handler); };
         return () => new Proxy(c, handler);
       },
     };
@@ -79,6 +87,7 @@ const PRINT = "f0f0f0f0-0000-0000-0000-000000000000";
 beforeEach(() => {
   state.stamps = [];
   state.calls = [];
+  state.log = [];
   state.mint = "ok";
   state.settleHangs = false;
   state.failUrls = new Set();
@@ -98,6 +107,7 @@ beforeEach(() => {
     if (String(url) === "/api/print-sheet-tokens") {
       const body = init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
       state.calls.push({ url: String(url), body, signal: init?.signal ?? null });
+      if (body?.action === "settle") state.log.push("settle");
       const hang = () => new Promise<never>((_, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
       });
@@ -107,6 +117,7 @@ beforeEach(() => {
       if (state.mint === "throw") throw new Error("network down");
       if (state.mint === "unavailable") return { ok: true, status: 200, json: async () => ({ available: false }) };
       if (state.mint === "error") return { ok: false, status: 503, json: async () => ({ error: "Couldn't mint the sheet tokens" }) };
+      if (state.mint === "empty") return { ok: true, status: 200, json: async () => ({ available: true, printId: PRINT, tokens: {} }) };
       const tokens = state.mint === "partial" ? { [D1]: T1 } : { [D1]: T1, [D2]: T2 };
       return { ok: true, status: 200, json: async () => ({ available: true, printId: PRINT, tokens }) };
     }
@@ -114,7 +125,7 @@ beforeEach(() => {
   }));
   vi.stubGlobal("URL", { createObjectURL: () => "blob:pack", revokeObjectURL: () => {} });
   vi.stubGlobal("document", {
-    createElement: () => ({ click: () => {}, set href(_: string) {}, set download(_: string) {} }),
+    createElement: () => ({ click: () => { state.log.push("click"); }, set href(_: string) {}, set download(_: string) {} }),
     body: { appendChild: () => {}, removeChild: () => {} },
   });
 });
@@ -132,8 +143,8 @@ describe("PS-P9 — a printed pack's sheets are named by their per-print token",
     for (const s of state.stamps) expect(s.verifyUrl).not.toContain(D1);
     expect(mints()).toHaveLength(1);
     expect(mints()[0].body).toEqual({ action: "mint", orgId: "org1", sheets: [{ documentId: D1, versionId: V1 }, { documentId: D2, versionId: V2 }] });
-    // settled with exactly the sheets in the PDF
-    expect(settles().map((c) => c.body)).toEqual([{ action: "settle", orgId: "org1", printId: PRINT, printed: [D1, D2] }]);
+    // settled with exactly the sheets in the PDF (fired after the record — awaited by nobody)
+    await vi.waitFor(() => expect(settles().map((c) => c.body)).toEqual([{ action: "settle", orgId: "org1", printId: PRINT, printed: [D1, D2] }]));
   });
 
   it("a sheet the server did not mint keeps today's QR", async () => {
@@ -146,7 +157,7 @@ describe("PS-P9 — a printed pack's sheets are named by their per-print token",
     state.failUrls.add("https://files/p102.pdf");
     const r = await buildAndDownloadDocPack({ ...base });
     expect(r.included).toBe(1);
-    expect(settles().map((c) => c.body?.printed)).toEqual([[D1]]);
+    await vi.waitFor(() => expect(settles().map((c) => c.body?.printed)).toEqual([[D1]]));
   });
 
   it("a build that fails before the download voids the whole print (empty list) and still throws as before", async () => {
@@ -161,6 +172,7 @@ describe("PS-P9 — a printed pack's sheets are named by their per-print token",
 describe("PS-P9 — the print never waits on the token route for long", () => {
   it("the mint and the settle each carry an abort signal (SHEET_TOKEN_FETCH_TIMEOUT_MS)", async () => {
     await buildAndDownloadDocPack({ ...base });
+    await vi.waitFor(() => expect(settles()).toHaveLength(1));
     expect(mints()[0].signal).toBeInstanceOf(AbortSignal);
     expect(settles()[0].signal).toBeInstanceOf(AbortSignal);
     expect(SHEET_TOKEN_FETCH_TIMEOUT_MS).toBe(8000);
@@ -221,5 +233,61 @@ describe("PS-P9 REGRESSION — when no token can be minted the pack prints exact
     await buildAndDownloadDocPack({ ...base });
     expect(state.calls).toEqual([]);
     expect(state.stamps.map((s) => s.verifyUrl)).toEqual([undefined, undefined]);
+  });
+});
+
+describe("PS-P9 — the post-download settle never holds back the record or the pins (the integrator at the PS-P9 merge, DEC-90)", () => {
+  it("a settle that never answers: the download completes, recordPackDownloads (EGR-6) and afterDownload (PKG-6) run first, and the settle is fired after them", async () => {
+    state.settleHangs = true;
+    const afterDownload = vi.fn(async () => { state.log.push("afterDownload"); });
+    // resolves although the settle request never answers (it is not awaited)
+    const r = await buildAndDownloadDocPack({ ...base, afterDownload });
+    expect(r).toEqual({ included: 2, skipped: [], unrecorded: [] });
+    expect(afterDownload).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(settles()).toHaveLength(1));
+    expect(state.log).toEqual(["click", "insert:download_audits", "afterDownload", "settle"]);
+    // still pending: nothing waited on it
+    expect(settles()[0].signal?.aborted).toBe(false);
+  });
+
+  it("an afterDownload that throws still lets the settle go (fired in a finally) — the paper has left", async () => {
+    await expect(buildAndDownloadDocPack({ ...base, afterDownload: async () => { throw new Error("pins"); } })).rejects.toThrow(/pins/);
+    await vi.waitFor(() => expect(settles().map((c) => c.body?.printed)).toEqual([[D1, D2]]));
+  });
+});
+
+describe("PS-P9 — an empty mint settles nothing and warns about nothing (the integrator at the PS-P9 merge, DEC-90)", () => {
+  it("the server minted no sheet (none eligible): mintSheetTokens is null — today's QR on every sheet, no settle request, no warning", async () => {
+    state.mint = "empty";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      expect(await mintSheetTokens({ orgId: "org1", sheets: [{ documentId: D1, versionId: V1 }] })).toBeNull();
+      state.calls = [];
+      const r = await buildAndDownloadDocPack({ ...base });
+      expect(r.included).toBe(2);
+      expect(mints()).toHaveLength(1);
+      expect(state.stamps.map((s) => s.verifyUrl)).toEqual([todayQr(D1, V1), todayQr(D2, V2)]);
+      await new Promise((res) => setTimeout(res, 10));
+      expect(settles()).toEqual([]);
+      expect(warn).not.toHaveBeenCalled();
+      expect(info).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
+
+  it("no eligible sheet on the client (no current version): no mint request, no settle request, no warning", async () => {
+    tables.documents = tables.documents.map((d) => ({ ...d, current_version_id: null }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await mintSheetTokens({ orgId: "org1", sheets: [] })).toBeNull();
+      await expect(buildAndDownloadDocPack({ ...base })).rejects.toThrow(/No documents could be packed/);
+      expect(state.calls).toEqual([]);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

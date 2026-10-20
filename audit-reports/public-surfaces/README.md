@@ -22,13 +22,13 @@ The four unauthenticated verify endpoints, share links and the short link, the p
 
 ## Findings
 
-**67 findings** — 4 CRITICAL, 13 HIGH, 21 MEDIUM, 29 LOW.
+**68 findings** — 4 CRITICAL, 13 HIGH, 21 MEDIUM, 30 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [The public verify endpoints](./01-verify-endpoints.md) | 20 | `VFY-15` – `VFY-20` (LOW) opened at PS-VERIFY, 2026-10-01 (provisional ids) |
 | 02 | [Share links & the short link](./02-share-links.md) | 14 |  |
-| 03 | [The physical bridge — QR, labels, stamps, print](./03-physical-bridge.md) | 18 | `PHYS-14` (MEDIUM) opened at PS-VERIFY, 2026-10-01 (provisional id); `PHYS-15` (LOW) opened at the document-control P22 merge, 2026-10-07; `PHYS-16` (LOW) opened at public-surfaces PS-P7, 2026-10-07; `PHYS-17` (LOW) opened by drafting-flow DF-P10, 2026-10-13; `PHYS-18` (LOW) opened by drafting-flow DF-P12, 2026-10-14 (counted at the integrator's DF-P12 merge fix pass) |
+| 03 | [The physical bridge — QR, labels, stamps, print](./03-physical-bridge.md) | 19 | `PHYS-14` (MEDIUM) opened at PS-VERIFY, 2026-10-01 (provisional id); `PHYS-15` (LOW) opened at the document-control P22 merge, 2026-10-07; `PHYS-16` (LOW) opened at public-surfaces PS-P7, 2026-10-07; `PHYS-17` (LOW) opened by drafting-flow DF-P10, 2026-10-13; `PHYS-18` (LOW) opened by drafting-flow DF-P12, 2026-10-14 (counted at the integrator's DF-P12 merge fix pass); `PHYS-19` (LOW) opened by public-surfaces PS-P9, 2026-10-20 — WONTFIX by the integrator's ruling at the PS-P9 merge (DEC-90) (counted at the integrator's PS-P9 merge fix pass) |
 | 04 | [Offline, the service worker & the field device](./04-offline-pwa.md) | 15 | `OFF-15` (LOW) opened at identity-and-session IS-P1, 2026-10-07 |
 
 Every report except the critic was **adversarially verified** — a second agent

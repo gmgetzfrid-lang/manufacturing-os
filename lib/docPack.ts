@@ -26,7 +26,7 @@ import { supabase } from "@/lib/supabase";
 import { applyStampToPdfDoc, type StampTextMapping } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
-import { sheetTokenVerifyUrl } from "@/lib/printSheetTokens";
+import { mintedSheetToken, packSheetVerifyUrl } from "@/lib/printSheetTokens";
 import { mintSheetTokens, settleSheetTokens, type MintedSheetTokens } from "@/lib/printSheetTokensClient";
 import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { ackGateDocuments } from "@/lib/downloads";
@@ -781,7 +781,7 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
         });
         if (over) throw over;
       }
-      const sheetToken = versionId ? tokenPrint.minted?.tokens.get(documentId.toLowerCase()) ?? null : null;
+      const sheetToken = versionId ? mintedSheetToken(tokenPrint.minted, documentId) : null;
       const holderWarning = d.checked_out_by && (
         ` ACTIVE CHANGE IN PROGRESS: checked out by ${(d.checked_out_by_name as string) || "another user"} at time of issue.`
       );
@@ -796,9 +796,7 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
           (holderWarning || ""),
         // PS-P9: the sheet's own per-print token when one was minted for this
         // version; otherwise today's document + version QR, unchanged.
-        verifyUrl: versionId && publicOrigin()
-          ? (sheetToken ? sheetTokenVerifyUrl(publicOrigin(), sheetToken) : `${publicOrigin()}/verify/${String(d.id)}?v=${versionId}`)
-          : undefined,
+        verifyUrl: packSheetVerifyUrl(publicOrigin(), String(d.id), versionId, sheetToken),
       });
 
       const pages = await merged.copyPages(single, single.getPageIndices());
@@ -860,21 +858,27 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
   URL.revokeObjectURL(url);
   tokenPrint.downloaded = true;
 
-  // PS-P9: the paper has left — the tokens of sheets that are not in it are
-  // voided; every printed sheet's token stays live. Never throws.
-  if (tokenPrint.minted) {
-    await settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: includedSheets.map((s) => s.documentId) });
-  }
-
   // The distribution record and the reference intents name only paper that
   // left: written once the download is triggered (a failed build records
   // nothing), in one insert, and CHECKED (EGR-6) — a refused record never
   // blocks the pack, but the caller is told which sheets are unrecorded.
-  const unrecorded = await recordPackDownloads(input, includedRows);
+  let unrecorded: string[];
+  try {
+    unrecorded = await recordPackDownloads(input, includedRows);
 
-  // Pins (or any other state that asserts a print) move only AFTER the
-  // download is on its way — a failed build leaves them untouched (PKG-6).
-  if (input.afterDownload) await input.afterDownload([...includedSheets]);
+    // Pins (or any other state that asserts a print) move only AFTER the
+    // download is on its way — a failed build leaves them untouched (PKG-6).
+    if (input.afterDownload) await input.afterDownload([...includedSheets]);
+  } finally {
+    // PS-P9: the paper has left — the tokens of sheets that are not in it are
+    // voided; every printed sheet's token stays live. FIRED once the record
+    // and the pins are written, never awaited (DEC-90, the integrator at the
+    // PS-P9 merge): nothing waits on it — an unsettled print keeps every
+    // token live, which is what a downloaded pack needs. Never throws.
+    if (tokenPrint.minted) {
+      void settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: includedSheets.map((s) => s.documentId) });
+    }
+  }
 
   return { included, skipped, unrecorded };
 }

@@ -32,7 +32,7 @@ import {
   omitExportColumns,
   redactRow,
 } from "@/lib/exportTables";
-import { RESTORE_TABLE_ORDER, CONFLICT_TARGETS, planRestore, isBearerColumn, ORG_LESS_RESTORE_PARENTS } from "@/lib/dataRestore";
+import { RESTORE_TABLE_ORDER, CONFLICT_TARGETS, planRestore, isBearerColumn, ORG_LESS_RESTORE_PARENTS, RESTORE_BEARER_NAME_KEPT, remapRow, scrubRestoredRow } from "@/lib/dataRestore";
 import { censusSchema } from "./helpers/schemaKeys";
 
 /** Every table name created anywhere in supabase/ (schema.sql + migrations). */
@@ -88,10 +88,9 @@ const excluded = new Set<string>(Object.keys(EXPORT_EXCLUDED_TABLES));
  *  removes the table from here in the same merge — the test after the gap
  *  check fails once both say it, so the entry cannot outlive its merge. */
 const DECISION_AT_MERGE: Record<string, string> = {
-  // public-surfaces PS-P9 — proposed EXPORT_EXCLUDED_TABLES entry, written by
-  // the integrator at merge (lib/exportTables.ts is not this package's).
-  print_sheet_tokens:
-    "the per-print sheet tokens (SHA-256 of each printed sheet QR's bearer token, the print run, the document + version printed; 20261237) — service-role only, never client-readable, a bearer-derived column (token_hash); proposed EXCLUDED: a pack sheet printed before a restore then answers 'Unknown code' (never green) until it is re-printed, and every pre-PS-P9 QR (doc-only, ?v=, a cover's ?print=) is unaffected",
+  // public-surfaces PS-P9's print_sheet_tokens was decided at its merge
+  // (INCLUDED and restored after document_versions — lib/exportTables.ts,
+  // lib/dataRestore.ts RESTORE_TABLE_ORDER; DEC-90) and is no longer here.
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
@@ -99,6 +98,16 @@ const DECISION_AT_MERGE: Record<string, string> = {
 // and registry keys, not secrets. `auth` / `p256dh` are the Web Push
 // subscription secrets (push_subscriptions), excluded from the export whole.
 const BEARER_NAME_RE = /(^|_)(token|secret|password)(_|$)|api_key|_encrypted$|^(auth|p256dh)$/;
+
+/** A column whose name matches BEARER_NAME_RE but which is NOT a bearer
+ *  credential, each with why — exported as stored and never scrubbed by the
+ *  restore (isBearerColumn is false). */
+const BEARER_NAME_EXCEPTIONS: Record<string, string> = {
+  // public-surfaces PS-P9 (20261237), by the integrator at the PS-P9 merge,
+  // 2026-10-20 (DEC-90).
+  "print_sheet_tokens.token_hash":
+    "a one-way SHA-256 of a 192-bit random sheet token (the token itself is printed on the sheet and never stored) — nothing presentable can be derived from it: /api/verify hashes the scanned token and looks the hash up, so the hash is not a code; nulling it would make every sheet printed before a restore answer 'Unknown code'",
+};
 
 describe("backup coverage tripwire", () => {
   it("found a plausible number of tables (sanity)", () => {
@@ -185,6 +194,7 @@ describe("bearer-column redaction tripwire (EGR-7 / XEDGE-10)", () => {
     for (const table of exported) {
       for (const col of columns.get(table) ?? []) {
         if (!BEARER_NAME_RE.test(col) && !/^(token)$/.test(col)) continue;
+        if (`${table}.${col}` in BEARER_NAME_EXCEPTIONS) continue;
         if (!(REDACT_COLUMNS[table]?.columns ?? []).includes(col)) missing.push(`${table}.${col}`);
       }
     }
@@ -192,6 +202,29 @@ describe("bearer-column redaction tripwire (EGR-7 / XEDGE-10)", () => {
       missing,
       `Credential-looking columns exported un-redacted (add to REDACT_COLUMNS in lib/exportTables.ts): ${missing.join(", ")}`,
     ).toEqual([]);
+  });
+
+  it("every bearer-name exception is a real column of an exported table, matched by the pattern, never redacted nor scrubbed, with a written reason", () => {
+    expect(Object.keys(BEARER_NAME_EXCEPTIONS)).toEqual(["print_sheet_tokens.token_hash"]);
+    expect(Object.entries(RESTORE_BEARER_NAME_KEPT).flatMap(([t, cs]) => cs.map((c) => `${t}.${c}`)).sort()).toEqual(Object.keys(BEARER_NAME_EXCEPTIONS).sort());
+    for (const [key, why] of Object.entries(BEARER_NAME_EXCEPTIONS)) {
+      const [table, col] = key.split(".");
+      expect(exported.has(table), `${table} is not exported — drop its exception`).toBe(true);
+      expect(columns.get(table)?.has(col), `${key} does not exist in the schema`).toBe(true);
+      expect(BEARER_NAME_RE.test(col), `${key} no longer matches the bearer pattern — drop its exception`).toBe(true);
+      expect(REDACT_COLUMNS[table]?.columns ?? [], key).not.toContain(col);
+      expect(isBearerColumn(col, table), key).toBe(false);
+      expect(RESTORE_BEARER_NAME_KEPT[table], key).toContain(col);
+      // restored as stored: the restore's scrub keeps it for this table only
+      const row = { id: "r", [col]: "a".repeat(64) };
+      expect(remapRow(row, { orgId: {}, uid: {} } as unknown as Parameters<typeof remapRow>[1], table)[col], key).toBe("a".repeat(64));
+      expect(scrubRestoredRow(row)[col], `${key} under any other table is still scrubbed`).toBeNull();
+      expect(why.trim().length, key).toBeGreaterThan(20);
+    }
+    // PS-P9 (DEC-90, at its merge): the token table is exported and restored
+    // after the versions its rows name.
+    expect(ORG_SCOPED_TABLES).toContain("print_sheet_tokens");
+    expect(RESTORE_TABLE_ORDER.indexOf("print_sheet_tokens")).toBeGreaterThan(RESTORE_TABLE_ORDER.indexOf("document_versions"));
   });
 
   it("every redaction entry names an exported table, a real column and a written reason", () => {

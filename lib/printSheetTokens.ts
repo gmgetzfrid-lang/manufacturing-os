@@ -39,3 +39,27 @@ export function verifyQueryFor(segment: string, versionId: string | null): URLSe
   if (versionId) qs.set("v", versionId);
   return qs;
 }
+
+/** The token minted for one sheet of a print, or null (lookup by the
+ *  lowercased document id, as the server keys them). */
+export function mintedSheetToken(
+  minted: { tokens: Map<string, string> } | null | undefined,
+  documentId: string,
+): string | null {
+  return minted?.tokens.get(documentId.toLowerCase()) ?? null;
+}
+
+/** A printed pack's sheet QR — the one rule every multi-sheet pack builder
+ *  stamps by (lib/docPack.ts, the linked drawings' and the collection book's
+ *  "Print all"): no public origin or no current version → no QR, as before;
+ *  a minted token → `<origin>/verify/<token>`; otherwise today's
+ *  `<origin>/verify/<document>?v=<version>`, unchanged. */
+export function packSheetVerifyUrl(
+  origin: string | null | undefined,
+  documentId: string | null | undefined,
+  versionId: string | null | undefined,
+  sheetToken: string | null | undefined,
+): string | undefined {
+  if (!origin || !documentId || !versionId) return undefined;
+  return sheetToken ? sheetTokenVerifyUrl(origin, sheetToken) : `${origin}/verify/${documentId}?v=${versionId}`;
+}

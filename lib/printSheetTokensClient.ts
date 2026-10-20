@@ -59,7 +59,8 @@ async function bearer(): Promise<string | null> {
 
 /** Ask the server for one token per sheet about to be stamped. Never throws:
  *  null means "stamp today's QR" (said once in the console, not to the
- *  printer — the print itself is unaffected). */
+ *  printer — the print itself is unaffected; an empty mint — no eligible
+ *  sheet — is null too, silently, and nothing is settled). */
 export async function mintSheetTokens(input: {
   orgId: string;
   sheets: Array<{ documentId: string; versionId: string }>;
@@ -81,7 +82,12 @@ export async function mintSheetTokens(input: {
       return null;
     }
     const tokens = new Map<string, string>();
-    for (const [documentId, t] of Object.entries(body.tokens)) if (isSheetToken(t)) tokens.set(documentId, t);
+    for (const [documentId, t] of Object.entries(body.tokens)) if (isSheetToken(t)) tokens.set(documentId.toLowerCase(), t);
+    // An empty mint (no sheet eligible — none the caller's session may read
+    // here, or no version belonging to its document): nothing to settle, so
+    // null — every sheet carries today's QR, no settle request, no warning
+    // (the integrator at the PS-P9 merge, DEC-90).
+    if (tokens.size === 0) return null;
     return { printId: body.printId, tokens };
   } catch (e) {
     console.warn("[print-sheet-tokens] not minted — this pack's sheets carry today's QR:", (e as Error)?.message);

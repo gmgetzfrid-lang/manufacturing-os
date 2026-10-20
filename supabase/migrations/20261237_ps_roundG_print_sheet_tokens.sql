@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS print_sheet_tokens (
 );
 CREATE INDEX IF NOT EXISTS print_sheet_tokens_print_idx ON print_sheet_tokens (print_id);
 CREATE INDEX IF NOT EXISTS print_sheet_tokens_document_idx ON print_sheet_tokens (document_id);
--- the mint route's per-member window (sheets minted by one member in the last hour)
+-- the mint route's soft per-member window (sheets minted by one member in the last hour)
 CREATE INDEX IF NOT EXISTS print_sheet_tokens_minter_idx ON print_sheet_tokens (minted_by, minted_at);
 ALTER TABLE print_sheet_tokens ENABLE ROW LEVEL SECURITY;
 -- No policies on purpose: service role only. The default grants Supabase

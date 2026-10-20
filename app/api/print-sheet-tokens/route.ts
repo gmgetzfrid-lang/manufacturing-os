@@ -26,10 +26,14 @@
 //
 // Any active member of the workspace may print a pack (the pack builder has
 // no role gate), so any active member may mint (authorizeOrgRole over every
-// role — the additive collection, never the headline alone). One member may
-// mint at most SHEET_TOKEN_MINT_WINDOW_MAX sheets an hour (counted from the
-// table on (minted_by, minted_at)); over it the mint answers 429 and the pack
-// keeps today's QR.
+// role — the additive collection, never the headline alone). A SOFT
+// per-member window: a mint that would take one member past
+// SHEET_TOKEN_MINT_WINDOW_MAX sheets in the last hour (counted from the table
+// on (minted_by, minted_at)) answers 429 and the pack keeps today's QR. It is
+// a read-then-insert, not atomic: concurrent mints by one member can each
+// pass the check and together exceed it (the integrator at the PS-P9 merge,
+// DEC-90 — soft by choice: it bounds an ordinary member's rate, it is not a
+// quota, and an overrun only adds rows that grant nothing).
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
@@ -110,8 +114,9 @@ export async function POST(req: NextRequest) {
     const tokens: Record<string, string> = {};
     if (eligible.length === 0) return json({ available: true, printId, tokens });
 
-    // The per-member window: a member's mints in the last hour, plus this
-    // one, stay under the cap — or this pack keeps today's QR.
+    // The soft per-member window: a member's mints in the last hour, plus
+    // this one, stay under the cap — or this pack keeps today's QR. Not
+    // atomic (read, then insert): concurrent requests can exceed it.
     const since = new Date(Date.now() - SHEET_TOKEN_MINT_WINDOW_MS).toISOString();
     const { count: recent, error: windowErr } = await actor.admin
       .from("print_sheet_tokens")
