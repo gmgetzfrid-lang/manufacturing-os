@@ -1287,7 +1287,9 @@
       "name": "I-32 PROVENANCE VIEW AND WIZARD ADOPT — one per-asset 'how we came to believe this' view, and the graph shape wizard adopts a drawing-held pair instead of failing",
       "findings": [
         "intelligence GAP-303 acceptance 1 (assigned at the I-15 merge): a single per-asset provenance view on the asset hub — every relation to the asset with who or what asserted it (person, drawing reading, AI reading with model and revision), when, and from which sheet / page; read under the viewer's own access; machine readings distinguishable from people's assertions",
-        "intelligence AREA-12 (LOW; opened by I-15, assigned at the I-15 merge): components/graph/GraphShapeWizard.tsx routes a document-equipment pair a 'drawing' row already holds through POST /api/equipment-bridge 'adopt' on 23505 (as the graph's Connect now does), a refused adopt or audit error shown, the link never presented as made"
+        "intelligence AREA-12 (LOW; opened by I-15, assigned at the I-15 merge): components/graph/GraphShapeWizard.tsx routes a document-equipment pair a 'drawing' row already holds through POST /api/equipment-bridge 'adopt' on 23505 (as the graph's Connect now does), a refused adopt or audit error shown, the link never presented as made",
+        "intelligence GOV-9 criterion 4, the graph's label limb (assigned by the integrator at the I-26 merge, 2026-10-20, DEC-31; DEC-90): the org graph shows a sheet number read only off an AI transcription as 'AI-read, unconfirmed', as the drawing audit and the equipment table now do",
+        "intelligence GAP-303 graph remainder (assigned by the integrator at the I-26 merge, 2026-10-20, DEC-31): the graph's remaining provenance limb after I-15's edge styling — the one per-asset provenance view (GAP-316) and the graph's edges agree on machine-read vs person-asserted"
       ],
       "files": [
         "the asset hub page / panel (the provenance view)",

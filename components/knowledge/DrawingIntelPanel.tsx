@@ -34,6 +34,9 @@ type SheetRow = Omit<NonNullable<DrawingIntel["sheets"]>[number], "verdict" | "c
   waiting?: { pages: number[]; reason: string | null; retryAfter: string | null } | null;
   acceptedUnread?: number[] | null;
   notCounted?: boolean;
+  /** GOV-9 criterion 4 (I-26): the declared number was read only off an AI
+   *  model's transcription of the title block — AI-read, unconfirmed. */
+  declaredAiRead?: boolean;
 };
 type Intel = DrawingIntel & {
   truncated?: boolean;
@@ -59,6 +62,9 @@ type RecordResult = Awaited<ReturnType<typeof recordDrawingAudit>> & {
   seriesNotJudged?: string[];
   /** Before 20261124: recorded on the org-wide key, and why that matters. */
   notice?: string;
+  /** GOV-9 criterion 4 (I-26): sheet numbers filed under that were read only
+   *  off an AI transcription of a title block (unconfirmed). */
+  identityAiRead?: string[];
   /** Stored verdicts left as they are: one a computation now would lower
    *  (never lowered at a known revision)… */
   keptStored?: Array<{ sheetNumber: string; revision: string; stored: string; computed: string }>;
@@ -133,6 +139,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     stillWaiting: number;
     seriesNotJudged: string[];
     notice: string | null;
+    identityAiRead: string[];
   } | null>(null);
   const [showUnknown, setShowUnknown] = useState(false);
   const [showMissing, setShowMissing] = useState(false);
@@ -239,6 +246,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         keptStored: kept, waitingOn: waiting, stillWaiting: res.stillWaiting ?? 0,
         seriesNotJudged: res.seriesNotJudged ?? [],
         notice: res.notice ?? null,
+        identityAiRead: res.identityAiRead ?? [],
       });
       showToast({
         type: "success",
@@ -337,6 +345,13 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           )}
           {recorded.notice && (
             <div className="mt-0.5 text-amber-800 dark:text-amber-300">{recorded.notice}</div>
+          )}
+          {recorded.identityAiRead.length > 0 && (
+            <div className="mt-0.5 text-amber-800 dark:text-amber-300" data-identity-ai-read="true">
+              Filed under {recorded.identityAiRead.length} number{recorded.identityAiRead.length === 1 ? "" : "s"} read only off an AI
+              transcription of the title block — AI-read, unconfirmed ({recorded.identityAiRead.slice(0, 4).join(", ")}
+              {recorded.identityAiRead.length > 4 ? "…" : ""}): check each against the drawing.
+            </div>
           )}
           {recorded.notRecorded.length > 0 && (
             <div className="mt-0.5 text-amber-800 dark:text-amber-300">
@@ -734,8 +749,12 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                         )}
                         {s.declared && (
                           <span className="block truncate font-mono text-[9px] text-[var(--color-text-muted)]"
-                            title="Read from this sheet's own title block — the number its audit is recorded under">
+                            title={s.declaredAiRead
+                              ? "Read off an AI model's transcription of this sheet's title block — a reading, not the sheet's identity: check it against the drawing. The audit is recorded under it as read."
+                              : "Read from this sheet's own title block — the number its audit is recorded under"}>
                             ≡ {s.declared}
+                            {/* GOV-9 criterion 4: never shown as an identity when an AI read it. */}
+                            {s.declaredAiRead && <span data-declared-ai-read="true" className="font-sans font-black text-amber-700 dark:text-amber-300"> (AI-read, unconfirmed)</span>}
                           </span>
                         )}
                       </span>

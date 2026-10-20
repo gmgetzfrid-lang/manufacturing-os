@@ -1253,6 +1253,8 @@ export default function FullScreenViewer({
               userId={currentUserId}
               canManage={canManageAssets}
               variant="ribbon"
+              documentId={docRecord.id ?? null}
+              assetTags={docRecord.assetTags}
             />
           </div>
           <button

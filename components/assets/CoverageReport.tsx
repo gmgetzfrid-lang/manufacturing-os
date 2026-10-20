@@ -29,7 +29,9 @@ function whereText(w: CoverageWhere): string {
   // GOV-9: a sheet address read off an AI transcription is a reading, not an identity.
   const at = w.sheet ? (w.aiRead ? `${w.sheet} (AI-read, unconfirmed)` : w.sheet)
     : (w.pages.length > 0 ? `page${w.pages.length === 1 ? "" : "s"} ${w.pages.join(", ")}` : null);
-  const door = w.door === "knowledge" ? " (knowledge upload)" : w.via === "extracted" ? " (read, not applied)" : "";
+  // GAP-307 acceptance 3: an upload's link recorded in its own relation (20261235).
+  const door = w.door === "knowledge" ? (w.via === "relation" ? " (knowledge upload · linked)" : " (knowledge upload)")
+    : w.via === "extracted" ? " (read, not applied)" : "";
   return `${w.name}${at ? ` · ${at}` : ""}${door}`;
 }
 
@@ -88,8 +90,9 @@ export default function CoverageReport({ orgId, units, initialUnitCode }: {
     setDiscoverNote(null); setError(null);
     const entries = Object.entries(picked).filter(([, s]) => s.size > 0);
     if (entries.length === 0) return;
-    let created = 0, existing = 0, untyped = 0;
+    let created = 0, existing = 0, untyped = 0, linked = 0;
     const failures: string[] = [];
+    const relationNotes: string[] = [];
     const auditErrors: string[] = [];
     for (const [knowledgeDocumentId, set] of entries) {
       const res = await fetch("/api/equipment-bridge", {
@@ -103,13 +106,18 @@ export default function CoverageReport({ orgId, units, initialUnitCode }: {
       untyped += (json.held ?? []).length;
       for (const f of json.failed ?? []) failures.push(`${f.tag}: ${f.reason}`);
       if (json.auditError) auditErrors.push(String(json.auditError));
+      // GAP-307 acceptance 3: the upload's own links (20261235), or why not.
+      linked += Number(json.relations?.written ?? 0);
+      if (json.relations?.notRecorded) relationNotes.push(String(json.relations.notRecorded));
     }
     setPicked({});
     setDiscoverNote(
       `${created} discovered (filed to no unit — a knowledge upload has no drawing number to decode; file them on the Operating Areas page)` +
       (existing ? ` · ${existing} already in the registry` : "") +
       (untyped ? ` · ${untyped} with a prefix the Site Codebook does not know — teach it` : "") +
-      (failures.length ? ` · ${failures.length} failed: ${failures.slice(0, 3).join("; ")}` : ""),
+      (failures.length ? ` · ${failures.length} failed: ${failures.slice(0, 3).join("; ")}` : "") +
+      (linked ? ` · ${linked} link${linked === 1 ? "" : "s"} to the upload's sheets recorded` : "") +
+      (relationNotes.length ? ` · ${relationNotes[0]}` : ""),
     );
     await load();
     // The discovery landed but its audit row did not: said, never swallowed

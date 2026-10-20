@@ -205,6 +205,9 @@ export const RESTORE_SERVICE_ROLE_WAIVERS: Readonly<Record<string, string>> = {
   archive_settings: "the archive location hint, naming and storage-alert threshold — the values an Admin / Doc Control sets through /api/admin/archive-settings; they drive only the archive prompt and storage alerts and confer no access",
   archives: "the catalog of archives this workspace produced (label, kind, counts); restored versions' archive_id labels name these rows. A row carries no bytes and grants nothing — a reclaim (shed/commit) still frees only this workspace's keys, after its legal-hold and shared-key checks",
   knowledge_page_entities: "derived drawing-page tags the indexer writes; bounded to this workspace's knowledge documents (RESTORE_PARENT_RULES) and replaced on re-index — no gate reads a row as anyone's act",
+  // intelligence I-26 (20261235): INCLUDED and restored by the integrator at
+  // the I-26 merge, 2026-10-20 (DEC-90).
+  knowledge_document_assets: "a knowledge upload's document↔equipment relation (which equipment tags the upload carries, on which sheet and pages, with its machine provenance) — signed-in users cannot write it; the service role writes it (the Bridge's knowledge door). Bounded to this workspace's knowledge documents and assets (RESTORE_PARENT_RULES, and the table's same-workspace trigger refuses any other); a row grants no access (members read it only while they can read the knowledge document) and is no one's act — every row is a machine's reading off the sheet (the drawing-is-machine CHECK), re-written the next time a writer discovers from that upload",
   // public-surfaces PS-P9 (20261237): INCLUDED and restored by the integrator
   // at the PS-P9 merge, 2026-10-20 (DEC-90).
   print_sheet_tokens: "the per-print sheet tokens of printed packs — a one-way SHA-256 of each sheet's 192-bit token, the print, and the document + version that sheet printed (no scannable code). Bounded to this workspace's documents and versions (RESTORE_PARENT_RULES); a row grants no access and is no one's act: /api/verify computes the verdict from the live document, so a restored row only lets a sheet printed before the restore keep its verdict (a row naming a document of this workspace says no more than that document's own ?v= QR does); the guard keeps what a sheet printed immutable",
@@ -312,6 +315,8 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   knowledge_documents: fkRules("library_id>knowledge_libraries source_id>knowledge_sources source_document_id>documents"),
   knowledge_library_links: fkRules("library_id>knowledge_libraries linked_library_id>knowledge_libraries"),
   knowledge_page_entities: fkRules("library_id>knowledge_libraries document_id>knowledge_documents"),
+  // intelligence I-26 (20261235): the upload and the equipment it carries.
+  knowledge_document_assets: fkRules("knowledge_document_id>knowledge_documents asset_id>assets"),
   knowledge_questions: fkRules("library_id>knowledge_libraries"),
   knowledge_sources: fkRules("library_id>knowledge_libraries"),
   // An owner team makes its supervisor the library's effective owner
@@ -943,6 +948,10 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // document may mirror a controlled document (source_document_id), and
   // process_flows / entity_mentions below reference knowledge documents.
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources", "knowledge_documents",
+  // intelligence I-26 (20261235): a knowledge upload's equipment relation
+  // names the upload and the asset — restored after both (the integrator at
+  // the I-26 merge, 2026-10-20, DEC-90).
+  "knowledge_document_assets",
   // Intelligence layer: instructions have no doc FKs (early is fine);
   // related/recents/asks reference documents so they come after. The
   // library numbering counter sits with the libraries, above.

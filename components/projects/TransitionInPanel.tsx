@@ -151,6 +151,10 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     const collider = blockingCollider(impact);
     if (collider && !renum) { setMsg(`${c.label} collides with ${collider.label} — renumber it before adopting.`); return; }
     setBusy(c.docId); setMsg(null);
+    // GAP-314 (intelligence I-26): the renumber's unit decode is not awaited —
+    // its note (if any) is said after the adoption's own sentence.
+    const unitNotes: string[] = []; let reported = false;
+    const onUnitCodeNote = (n: string) => { if (reported) setMsg((prev) => (prev ? `${prev} ${n}` : n)); else unitNotes.push(n); };
     try {
       const res = await adoptDocument({
         orgId, projectId, docId: c.docId,
@@ -158,9 +162,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         newNumber: (renumber.get(c.docId) ?? "").trim() || null,
         linkAssets: impact?.matchedAssets ?? [],
         actorId: uid, actorEmail: userEmail ?? null,
+        onUnitCodeNote,
       });
       if (!res.ok) throw new Error(res.error);
-      setMsg(res.note ?? `${c.label} adopted into the controlled register.`);
+      reported = true;
+      setMsg([res.note ?? `${c.label} adopted into the controlled register.`, ...unitNotes].join(" "));
       setEquipMsg(res.equipmentNote ?? null);
       await refresh();
     } catch (e) { setMsg(userFacingCaughtError(e, { context: "TransitionInPanel" })); }
@@ -174,6 +180,10 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     if (!clean.length) return;
     setBusy("bulk"); setMsg(null);
     let ok = 0; const failed: string[] = []; const unkeyed: string[] = []; const equipment: string[] = [];
+    // GAP-314 (intelligence I-26): renumber decodes are not awaited — notes
+    // that settle before the summary join it, later ones are appended to it.
+    const unitNotes: string[] = []; let reported = false;
+    const onUnitCodeNote = (n: string) => { if (reported) setMsg((prev) => (prev ? `${prev} ${n}` : n)); else unitNotes.push(n); };
     for (const c of clean) {
       const res = await adoptDocument({
         orgId, projectId, docId: c.docId,
@@ -181,6 +191,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         newNumber: (renumber.get(c.docId) ?? "").trim() || null,
         linkAssets: impacts.get(c.docId)?.matchedAssets ?? [],
         actorId: uid, actorEmail: userEmail ?? null,
+        onUnitCodeNote,
       });
       if (res.ok) { ok++; if (res.note) unkeyed.push(c.label); if (res.equipmentNote) equipment.push(c.label); } else failed.push(c.label);
     }
@@ -188,9 +199,10 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     const unkeyedText = unkeyed.length
       ? ` ${unkeyed.length} adopted without a uniqueness key (the library's key names a field the sheet does not carry — set it in the document's properties): ${unkeyed.join(", ")}.`
       : "";
+    reported = true;
     setMsg((failed.length
       ? `Adopted ${ok} of ${clean.length} — failed: ${failed.join(", ")}`
-      : `Adopted ${ok} clean document${ok === 1 ? "" : "s"} into the controlled register. ${flaggedCount ? `${flaggedCount} flagged sheet${flaggedCount === 1 ? "" : "s"} stayed for resolution.` : ""}`) + unkeyedText);
+      : `Adopted ${ok} clean document${ok === 1 ? "" : "s"} into the controlled register. ${flaggedCount ? `${flaggedCount} flagged sheet${flaggedCount === 1 ? "" : "s"} stayed for resolution.` : ""}`) + unkeyedText + (unitNotes.length ? ` ${unitNotes.join(" ")}` : ""));
     setEquipMsg(equipment.length
       ? `${equipment.length === 1 ? "1 adopted sheet's" : `${equipment.length} adopted sheets'`} equipment links need attention — they were not recorded, or are still the equipment sweep's reading rather than your link. Open each sheet's tags in the equipment registry and Link them: ${equipment.join(", ")}.`
       : null);

@@ -130,7 +130,7 @@
 // intake folder, the project reference) stays service-role (projects-tab
 // SEC-22).
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { afterResponsePush } from "@/lib/push/afterResponsePush";
 import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
@@ -138,6 +138,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 import { runWithServerClient } from "@/lib/serverClientScope";
+import { enforceOrgAccess } from "@/lib/serverAuth";
 // NEDGE-6 done-when 3 (notifications N15): loading this module registers the
 // dispatcher's server-side discover check, so a published revision's
 // document followers (lib/postPublish.ts, through this door) are filtered by
@@ -371,6 +372,54 @@ async function appSessionOf(req: NextRequest): Promise<{ userId: string; email: 
 async function audit(ref: string, row: Record<string, unknown>): Promise<void> {
   const { error } = await supabaseAdmin.from("audit_logs").insert(row);
   if (error) console.error(`[intake/upload] ref=${ref} audit ${String(row.action)} failed: ${error.message}`);
+}
+
+/** How long the after-response unit decode may run before it is abandoned
+ *  (the decode is best-effort; the document already exists, and the
+ *  submitter already has their answer). */
+const INTAKE_UNIT_DECODE_TIMEOUT_MS = 8_000;
+
+/** GAP-314 (intelligence I-26): the created document's unit decode runs
+ *  AFTER the response (next/server after(), as the door's roster pushes do),
+ *  so neither the submitter's 200 nor the project team's notice waits on a
+ *  codebook read. Outside a request (after() cannot schedule) it is started
+ *  without being awaited. Never throws. */
+function scheduleCreatedDocumentDecode(ref: string, orgId: string, documentId: string, contactEmail: string | null): void {
+  try {
+    after(() => decodeCreatedDocument(ref, orgId, documentId, contactEmail));
+  } catch {
+    void decodeCreatedDocument(ref, orgId, documentId, contactEmail);
+  }
+}
+
+/** GAP-314 (intelligence I-26): decode a document the door just created.
+ *  Never throws. A decode that wrote a code, cleared one or left one without
+ *  a code is recorded as one UNIT_CODE_DECODE row (via "intake", as
+ *  /api/documents/unit-code records a browser door's); a decode with no
+ *  opinion (no codebook format, or 20261138 not pasted) records nothing; one
+ *  that could not run is logged — the next unit-identity run, or I-11's
+ *  staleness count on /admin/scope, finds the document. */
+async function decodeCreatedDocument(ref: string, orgId: string, documentId: string, contactEmail: string | null): Promise<void> {
+  try {
+    const { decodeDocumentUnitCodes } = await import("@/lib/unitCodeDecode");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const decoded = await Promise.race([
+      decodeDocumentUnitCodes({ orgId, documentIds: [documentId] }),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), INTAKE_UNIT_DECODE_TIMEOUT_MS); }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    if (!decoded) { console.error(`[intake/upload] ref=${ref} unit decode of ${documentId} did not finish within ${INTAKE_UNIT_DECODE_TIMEOUT_MS / 1000}s`); return; }
+    if (decoded.notApplied || decoded.noOpinion) return;
+    const recorded = decoded.results.filter((r) => r.outcome !== "unchanged" && r.outcome !== "not_found" && r.outcome !== "no_opinion");
+    if (recorded.length === 0) return;
+    await audit(ref, {
+      action: "UNIT_CODE_DECODE",
+      resource_type: "org", resource_id: orgId,
+      org_id: orgId, user_id: null, user_email: contactEmail,
+      details: { via: "intake", documents: recorded.map((r) => ({ id: r.documentId, outcome: r.outcome, unitCode: r.unitCode, reason: r.reason })) },
+    });
+  } catch (e) {
+    console.error(`[intake/upload] ref=${ref} unit decode of ${documentId} did not run: ${(e as Error)?.message ?? String(e)}`);
+  }
 }
 
 async function bumpUse(ref: string, linkId: string, bytes: number): Promise<void> {
@@ -939,6 +988,19 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
   const budget = await readLinkBudget(supabaseAdmin, linkId);
   const spent = linkBudgetRefusal(budget, null);
   if (spent) return fail(spent, 429, undefined, { code: "link_budget" });
+
+  // BILL-10 done-when 2 (admin-and-org; landed by the integrator at the I-26
+  // merge, 2026-10-20, DEC-90): the door is about to accept new stored bytes
+  // for the link's workspace — a begin's presign, a finalize's or a
+  // multipart POST's filing — so it passes the one subscription gate the
+  // storage routes pass (DEC-18). Switch off (the default): never refuses; a
+  // lapsed workspace's would-be refusal is only logged (throttled) and the
+  // door runs exactly as before. Switch on: a lapsed workspace is answered
+  // 402 with the gate's sentence before the body is read — nothing is
+  // presigned, reserved or filed, and a finalize's or fallback's staged
+  // object is deleted by POST's finally, as for every other refusal.
+  const subscriptionGate = await enforceOrgAccess(supabaseAdmin, orgId, "intake/upload");
+  if (subscriptionGate) return fail(subscriptionGate.error, subscriptionGate.status);
 
   // ── 3. Only now: the body ──────────────────────────────────────────────
   let file: DoorUpload;
@@ -1995,6 +2057,12 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       ));
     }
     if (refErr) console.error(`[intake/upload] ref=${ref} project reference for ${createdDocId} not written: ${refErr.message}`);
+    // GAP-314 (intelligence I-26): the unit decode at create time — the
+    // codebook's own planner over the stored number, through the backfill's
+    // guarded writes (lib/unitCodeDecode.ts, service role). Best-effort,
+    // bounded and scheduled after the response: it never fails or holds back
+    // the submission that landed (UNIT_CODE_DECODE records what it did).
+    scheduleCreatedDocumentDecode(ref, orgId, createdDocId, contactEmail);
   }
 
   // ── Notify the project team + audit ──
