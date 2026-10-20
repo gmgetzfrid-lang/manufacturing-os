@@ -692,7 +692,7 @@ Tests: `askRouteUnits.test.ts` "GOV-8: a refusal and an empty answer throw AiCal
 ## GOV-9 · AI page transcriptions are cited to the reader as verbatim quotes from the controlled drawing, with no per-citation provenance
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-26 BRIDGE REMAINDERS (criterion 4's remaining consumers: the drawing audit and the drawing route's sheet name) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeVision.ts:32-54`, `lib/knowledgeVision.ts:84-94`, `app/api/knowledge/ask/route.ts:1627-1650`, `supabase/migrations/20260922_vision_pages.sql:13`, `lib/knowledgeIngest.ts:458-470`
@@ -788,6 +788,19 @@ A title block read off a transcribed page is never an identity:
 - The asset hub marks the sheet chip itself when no "AI-read" badge stands beside it (a pair a person also tagged).
 
 Tests: `lib/__tests__/globalSearchTags.test.ts`, `equipmentSweepModalRender.test.ts`, `bridgeCoverage.test.ts`, `coverageReportRender.test.ts` and `assetHubRelation.test.ts`; each new case fails on the fix-pass-1 files. The statement now holds for every surface I-11 owns that shows the relation's label: the sweep, the asset hub, ⌘K and the coverage report. The graph (`lib/orgGraph.ts`, I-15) does not show the label yet; when it does, it carries the mark with it (handed with GM-14).
+
+**Resolution (2026-10-20, intelligence Round G).** Package I-26 BRIDGE REMAINDERS: criterion 4's remaining consumers.
+- **The drawing audit and title-block reading** (`app/api/knowledge/drawing/route.ts`, `components/knowledge/DrawingIntelPanel.tsx`). The route reads which pages of each sheet an AI model transcribed (`knowledge_chunks.source = 'vision'`, paged; any failure fails toward the warning — the whole sheet treated as AI-read) and marks a sheet whose declared number comes only from an AI transcription of its title block (name ≡ number, the `self` row read on a vision page): the per-sheet readout carries `declaredAiRead`, the panel shows "≡ <number> (AI-read, unconfirmed)" with a tooltip that it is a reading, not the sheet's identity, and the route adds a suggestion that names how many sheets declare their number only that way. Recording the audit answers `identityAiRead` (the numbers it filed under that were read only off an AI transcription) and the panel says so with the result ("Filed under N number(s) read only off an AI transcription of the title block — AI-read, unconfirmed (…): check each against the drawing"). The stored records are unchanged: the audit files under the number it read, and says which ones are unconfirmed.
+- **The equipment table's sheet name** (`components/knowledge/EquipmentTablePanel.tsx`). A sheet number its title block gave ("SHT n", `sheetFromTitleBlock`) on a sheet an AI transcribed is marked "(AI-read, unconfirmed)" beside PR-4's own vision mark; a page label ("p.N") is not a title-block reading and carries none.
+- A text layer's number reads exactly as before on every surface.
+
+**Done-when.**
+1. ✓ (2026-09-30).
+2. ✓ (2026-10-01, I-03).
+3. ✓ (2026-10-01, I-03).
+4. ✓ Title-block fields parsed out of a vision transcript are never treated as authoritative document identity without a human confirming them, on every consumer: the ask route's DRAWING FACTS (I-03), the sheet address and every surface that shows the relation's label (I-11, fix pass 2), and now the drawing audit, its record and the equipment table. Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "GOV-9 criterion 4 (I-26)" (4: the readout's mark with a text layer's number unchanged; a library with no AI-vision page unchanged; a transcription record that cannot be read fails toward the warning; the record's `identityAiRead`); `lib/__tests__/intelRoundGI26AiReadMarks.test.ts` (the panel and the table, rendered, with the regression).
+
+**Scope / residual.** None that a criterion names. "A human confirming them" is shown, not enforced: the mark tells the reader to check the number against the drawing; nothing stores a confirmation (no criterion asks for one). The graph does not show the label yet (I-15, unchanged — handed with GM-14).
 
 ---
 

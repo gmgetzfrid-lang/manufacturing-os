@@ -6071,6 +6071,8 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 
 *Landed 2026-10-13 (projects Round G, J19): Risk (2) re-read on base `49cd27e`. `lib/transitionIn.ts` sends a drawing-held pair through `adopt` and returns a refused link as `equipmentNote` (fix pass 3; pinned by `transitionIn.test.ts`). Showing it in `components/projects/TransitionInPanel.tsx` is opened as projects-tab `UX-17` (projects-joint, after J17).*
 
+*Landed 2026-10-20 (intelligence Round G, I-26 BRIDGE REMAINDERS): the schema decision item 3 left open — whether a knowledge upload gets a relation row of its own — is taken as the integrator's default: a second table, `knowledge_document_assets` (`20261235`), so `document_assets.document_id` keeps its FK to a controlled document. It has `document_assets`' shape and provenance (source 'drawing', sheet, pages, revision, model, `asserted_by` machine) and item 6's rails (a row readable only while its upload is; no signed-in write path; the service role writes, same-workspace enforced). Item 3 is otherwise unchanged: its rows are written only by a person's Discover pick, never automatically. Reversal: fold it into `document_assets` with a nullable `document_id` and a `knowledge_document_id` — a migration that moves the rows, if one reverse reader must read both doors in one query. References: `GAP-307` acceptance 3, `AREA-4` (the sweep launched from the Operating Areas page).*
+
 ---
 
 <a id="dec-97"></a>
