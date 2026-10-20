@@ -1,8 +1,9 @@
-// lib/knowledgeAskGuards.ts — SERVER-ONLY helpers for /api/knowledge/ask
-// (intelligence Round G, I-03). Pure, so the route's rules are testable
-// without the route: the paged read that never trusts a short page, the
-// fence that keeps document text out of the instructions, and the honesty
-// markers an answer carries.
+// lib/knowledgeAskGuards.ts — helpers for /api/knowledge/ask (intelligence
+// Round G, I-03). Pure, so the route's rules are testable without the route:
+// the paged read that never trusts a short page, the fence that keeps
+// document text out of the instructions, and the honesty markers an answer
+// carries. No server import: the knowledge page re-applies the PR-9 result
+// withholding (I-25) to the answers it shows.
 
 import { refSeries, sheetDrawingNumbers } from "@/lib/drawingText";
 
@@ -148,27 +149,587 @@ export const DATA_BOUNDARY_RULE =
 // Every piece below consumes whitespace only together with the token after
 // it, so a line can be split one way only (no exponential backtracking on a
 // long run of numbers that never reaches "=").
-const CALC_UNIT =
-  "(?:\\s*(?:psig|psia|psi|ksi|kpa|mpa|barg|bar|°\\s?[fc]|mm2|mm|cm|inch(?:es)?|in2|in|ft-lb|ft|lbf|lbs|lb|kg|kn|gpm|%)(?![a-z]))?";
-const CALC_OPERAND = "(?:\\(\\s*)*-?\\d[\\d,]*(?:\\.\\d+)?" + CALC_UNIT + "(?:\\s*\\))*";
-const CALC_OP = "\\s*(?:[×x*÷/+−]|-(?=\\s))\\s*";
-const CALC_CHAIN = new RegExp(
-  CALC_OPERAND + "(?:" + CALC_OP + CALC_OPERAND + ")+\\s*=\\s*-?\\d",
-  "i",
-);
+const CALC_UNIT_TOKENS =
+  "psig|psia|psi|ksi|kpa|mpa|barg|bar|°\\s?[fc]|mm2|mm|cm|inch(?:es)?|in2|in|ft-lb|ft|lbf|lbs|lb|kg|kn|gpm|%";
+/** (Fix pass 5) A gauge or absolute suffix written on a unit: "bar(g)",
+ *  "psi(g)", "bar(a)" (normUnit reads "bar(g)" as "barg"). */
+const GAUGE_SUFFIX = "(?:\\([ga]\\))?";
+const CALC_UNIT = "(?:\\s*(?:" + CALC_UNIT_TOKENS + ")" + GAUGE_SUFFIX + "(?![a-z]))?";
+/** One operand. (I-25) Its brackets are bounded, so a run of "(" never makes
+ *  every position a start that scans the whole run. */
+const operandOf = (unit: string): string =>
+  "(?:\\(\\s*){0,6}-?\\d[\\d,]*(?:\\.\\d+)?" + unit + "(?:\\s*\\)){0,6}";
+const CALC_OPERAND = operandOf(CALC_UNIT);
+/** (I-25) A temperature operand: "100 °F", "200 F", "650 deg F". */
+const TEMPERATURE_OPERAND =
+  "\\s*(?:\\(\\s*)?-?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:°|deg(?:rees)?(?![a-z])|[fc](?![a-z0-9]))";
+/** (Fix pass 4) Implicit multiplication between bracketed operands:
+ *  "(285 psig)(1.5)", "(2)(20000)(1)" — a ")" then "(" with only spaces
+ *  between. It consumes those spaces only when a "(" follows (the next
+ *  operand takes it), and never after a single-digit bracket that follows a
+ *  word, a number or a citation ("S (1)(2) = 20 ksi", "Class 150 (1)(2)":
+ *  footnote markers, not factors). */
+const IMPLICIT_OP = "(?<=\\))(?<![\\w\\]]\\s*\\(\\s*\\d\\s*\\))\\s*(?=\\()";
+/** The operators — (I-25) the dot and caret products too ("2 · 300", "10^3");
+ *  (fix pass 5) the bullet and cross variants "∙ ✕ ✖" are read as "×" by
+ *  normalizeLine, so they reach these as "×". */
+const CALC_OP = "(?:\\s*(?:[×x*÷/+−·⋅^]|-(?=\\s))\\s*|" + IMPLICIT_OP + ")";
+const CALC_OP_NOT_SLASH = "(?:\\s*(?:[×x*÷+−·⋅^]|-(?=\\s))\\s*|" + IMPLICIT_OP + ")";
+/** (I-25) At most this many operators in one chain: a real substitution has
+ *  a handful, and the bound keeps a long line of numbers linear to scan. */
+const CHAIN_MAX_OPS = 40;
+/** (I-25) A chain of operands that runs into a terminator. Two shapes:
+ *   - its first operator is not "/": it may start anywhere outside a number
+ *     ("PN 16 × 1.5 = 24 bar", "CL 300 × 1.5 = 450 psig" are worked), as
+ *     I-03's grammar did;
+ *   - its first operator is "/": a pressure-temperature rating is read as
+ *     "Class N / T", so such a chain never starts at a pressure class
+ *     ("Class 150 [1] / 100 °F [1] = 285 psig", "CL 300 / 200 F",
+ *     "150/300") or inside an identifier, and a lone "N / T = v" — two
+ *     operands, the second a temperature — is a table's row and column, not
+ *     a division. A slash with any other operator in the chain is division
+ *     ("(285 × 1.5) / 100 °F = 4.275"). */
+function chainSource(operand: string): string {
+  const more = (min: number) => "(?:" + CALC_OP + operand + "){" + min + "," + CHAIN_MAX_OPS + "}";
+  return "(?:" +
+    "(?<!\\d|\\d[.,])" + operand + CALC_OP_NOT_SLASH + operand + more(0) +
+    "|(?<![\\w.,])(?<!(?:\\bclass|\\bcl|#|\\bpn)\\s*)" + operand + "\\s*/\\s*" +
+    "(?:" + operand + more(1) + "|(?!" + TEMPERATURE_OPERAND + ")" + operand + ")" +
+    ")";
+}
+const CALC_CHAIN = new RegExp(chainSource(CALC_OPERAND) + "\\s*=\\s*-?\\d", "i");
+/** (I-25) Only a line with one of these can hold a worked chain; any other
+ *  line is never scanned for one. (Fix pass 4) "equals" ends a chain too
+ *  ("1.5 × 285 psig equals 427.5 psig"). */
+const CHAIN_TERMINATOR = /[=≈→⇒]|\bequals\b/i;
+/** (I-25) Arithmetic written in words: a number "times", "multiplied by",
+ *  "divided by" or "percent of" ANOTHER standalone value, and then a RESULT —
+ *  a third value right after "so", "=", "gives", "is", ":"… — in one clause
+ *  ("1.5 times the design pressure of 285 psig [1], so 428 psig", "90% of
+ *  285 psig = 256.5 psig"). It marks the answer as arithmetic, so the
+ *  grounding pass (rule (c) below) runs on it. (Fix pass 3) The second value
+ *  is never an identifier — "UG-99", "para 341.4.1", "Table 341.3.2",
+ *  "Section 345.5" — and a factor or percentage with no result ("1.5 times
+ *  the MAWP per UG-99 [1]", "110 percent of MAWP for 2 or more valves") is a
+ *  lookup (proseArithmetic, below). */
+const PROSE_OP_SRC =
+  "(?<![\\w.]|\\d,)-?\\d[\\d,]*(?:\\.\\d+)?(?:\\s*[a-z°]{1,6}(?![a-z]))?\\s*(?:times|multiplied\\s+by|divided\\s+by|(?:%|percent)\\s+of)\\b";
+/** What stands right before a prose result: "so 428 psig", "= 256.5 psig",
+ *  "gives 427.5", "is about 428 psig", ": 256.5 psig". */
+const PROSE_RESULT_BEFORE =
+  /(?:[=≈~→⇒:]|\b(?:so|thus|hence|gives|giving|is|are|equals|yields|makes|comes\s+to|results\s+in))\s*(?:(?:about|approximately|approx\.?|roughly|~)\s*)?$/i;
+/** Where a clause ends: a semicolon, or a sentence end (a period, then a new
+ *  sentence) — never a decimal point. */
+const CLAUSE_END = /;|\.\s+(?=[A-Z*#])/;
+/** How far after the operator word its operand, and after the operand the
+ *  result, may stand. */
+const PROSE_OPERAND_SPAN = 80;
+const PROSE_RESULT_SPAN = 60;
 /** Markdown emphasis an answer wraps values in (`285 psig`, **3/4 in**). */
 const VALUE_MARKUP = /\*\*|`/g;
 /** A fraction that is a SIZE, not a division: "3/4 in", "1/2\"", "NPS 1-1/2". */
 const SIZE_FRACTION = /\bNPS\s*(?:\d+-)?\d+\/\d+|\b\d+\/\d+\s*(?:inch(?:es)?\b|in\b|["″])/gi;
 
 /** PR-9: does an answer carry model arithmetic — a substitution worked to a
- *  result, an "Applied to your case" section, or values the user supplied? */
+ *  result, an "Applied to your case" section, values the user supplied, or
+ *  (I-25) the substituted expression the calculation protocol asks for, or
+ *  arithmetic written in words? */
 export function answerHasComputation(answer: string, inputs: string): boolean {
   if (inputs.trim().length > 0) return true;
   if (/###\s*Applied to your case/i.test(answer)) return true;
+  if (SUBSTITUTED_LINE.test(answer)) return true;
   // "285 × 1.5 = 427.5", "(2 * 300) / 4 = 150", "P = 1.5 x `285 psig` = `427.5 psig`"
-  return answer.split("\n").some((line) =>
-    CALC_CHAIN.test(line.replace(VALUE_MARKUP, "").replace(SIZE_FRACTION, "SIZE")));
+  // — and (I-25) the same chain with a citation after an operand,
+  // "1.5 × `285 psig` [2] = 427.5 psig", which the withholding below finds,
+  // and "1.5 times 285 psig, so 428 psig".
+  return answer.split("\n").some((line) => {
+    const text = stripLine(line).text;
+    if (proseArithmetic(text)) return true;
+    if (!CHAIN_TERMINATOR.test(text)) return false;
+    return CALC_CHAIN.test(normalizeLine(line.replace(VALUE_MARKUP, "")).replace(SIZE_FRACTION, "SIZE"))
+      || resultSpans(text).length > 0;
+  });
+}
+
+// ── PR-9 option (b) (DEC-90 A17, intelligence I-25): the ask route never
+//    presents a number the model computed ─────────────────────────────────
+//
+// A model's arithmetic is unvalidated: an answer that carries it shows the
+// formula and each cited input, and the number the model worked out is
+// replaced by RESULT_WITHHELD. What counts as that number:
+//   (a) on a line, the value a chain of numbers and operators runs straight
+//       into ("1.5 × 285 = 427.5 psig", "2 · 50 N → 100 N" — the CALC_CHAIN
+//       grammar above, an operand allowed a citation after it and any unit
+//       token — "min" too — and (fix pass 4) implicit multiplication between
+//       brackets, the chain ending at "=", "≈", "→", "⇒" or "equals"), and any
+//       "= / ≈ / →" value restating it right after ("= 427.5 psig ≈ 430 psig").
+//       (Fix pass 5) Every line is read through normalizeLine first: a number
+//       written in SI digit groups ("20 000 kPa", with a space, no-break,
+//       narrow no-break or thin space; since the integrator fix pass, a
+//       group after any digit) is one value, "∙ ✕ ✖" are "×", "＝"
+//       is "=" and "≃" is "≈"; a unit may carry "(g)" / "(a)" ("bar(g)") and
+//       a compound unit may open with an engineering token ("lbf/in²");
+//   (d) on a "**Substituted:**" line, every value after the formula's
+//       right-hand side — from the first later "=", "≈ ~ → ⇒", "is",
+//       "gives", "equals" or "yields" that a lone value follows ("= 427.5
+//       psig"); "= 1.5 × 285 psig", "= 1.5 (285 psig)" and "= 1.5 times
+//       285 psig" restate the formula with its values and are not a result,
+//       and a "with / where P = 285 psig" clause, or "P = 285 psig" after
+//       ";", ",", "(", "for", "given", "using", "when", "and" or "if", names
+//       an input (I-25 fix passes 1 and 3); a left-hand side that holds a
+//       number ("P_T at 100 °F =", "t per Eq. 3 =") is still the symbol
+//       unless a lone value follows its "=" (fix pass 4);
+//   (b) a value (a) or (d) withheld, written anywhere else in the answer
+//       ("**Answer:** the test pressure is `427.5 psig`") — in the same unit
+//       when the result has one; a result with no unit in any unit when it
+//       has a decimal point, and only where it is written with no unit when
+//       it is whole (a worked "= 300" is not "300 psig"); never a small whole
+//       number (a "= 1" ratio is withheld where it is worked, never every
+//       "1"), and never after an identifier word ("Class 300", "Table 2.1").
+//       On the server, a (d) value the grounding holds is not spread (it is
+//       also an input), and a grounded value on a line that states an input
+//       (USER-PROVIDED, or "symbol = value [n]") is never matched;
+//   (c) on the server, for an answer answerHasComputation marked, with the
+//       text the model was given (the question, the user's values, the
+//       passages, the drawing facts, legend, conversation, owner
+//       instructions, org playbooks and Reasoning Skills, and the indexed
+//       text of the page images it was shown — never the route's own fixed
+//       rules; each line read with its digit groups joined and without, and
+//       a number an identifier word owns — "Class 300", "page 6" — never
+//       grounding): on EVERY line, any value with a unit or a decimal
+//       point that none of that text holds — a number from nowhere in an
+//       arithmetic answer is one the model made, and when the detector
+//       cannot place the result it withholds rather than shows it. Prose
+//       arithmetic with a result ("1.5 times … 285 psig, so 428 psig", "90%
+//       of 285 psig = 256.5 psig") marks the answer, so this pass runs on it.
+// A lookup — no chain, no Substituted line, no prose operation worked to a
+// result, so no grounding pass — is returned byte-for-byte; a factor or a
+// percentage named beside a clause, table or paragraph number ("1.5 times
+// the MAWP per UG-99", "5% of the welds per para 341.4.1") is a lookup.
+// Running it again on its own output changes nothing.
+// This is a best-effort net, not a guarantee (the integrator's ruling at the
+// I-25 merge, DEC-90 A17): the shapes it is known to miss are listed in
+// PR-13, whose owner (intelligence I-33) computes the result itself.
+
+/** What stands where a model-computed number was. */
+export const RESULT_WITHHELD = "[result withheld]";
+/** The line an answer with a withheld result ends with (before the route's
+ *  own notes). */
+export const RESULT_WITHHELD_NOTE =
+  "! Result withheld — the AI worked this arithmetic itself and nothing in the app re-derived it, so the number it " +
+  "computed is not shown. Compute the result from the formula and the cited inputs above, and check every " +
+  "substitution and unit against the cited pages.";
+
+/** The line the calculation protocol asks the model to write its substituted
+ *  expression on (route.ts calcProtocol). */
+const SUBSTITUTED_LINE = /^\s*(?:[-*•]\s+)?\*{0,2}Substituted:/im;
+const CALC_NUM = "-?\\d[\\d,]*(?:\\.\\d+)?";
+const CALC_CITE = "(?:\\s*\\[\\d{1,3}\\])?";
+/** Words a value is often followed by that are never its unit. */
+const NOT_A_UNIT =
+  "a|an|and|or|nor|per|for|at|to|the|of|with|from|is|are|was|be|as|by|on|if|so|but|then|than|that|this|which|" +
+  "when|where|while|each|max|min|x|vs|via|see|use|plus|minus|times|over|under|into|it|its|not|no|we|you|shall|" +
+  "should|must|may|can|will|gives|equals|yields|total|approx|about|both|all|any|only|also";
+/** (I-25) Any other unit token after a value ("N", "kW", "K", "m3/h"). It
+ *  never re-matches an engineering unit above, so a value parses one way. */
+/** (Fix pass 5) An engineering unit token above may open a compound unit
+ *  here ("lbf/in²", "kg/m3"), and a "²" / "³" may follow the slash. */
+const ANY_UNIT_TOKEN =
+  "(?!(?:" + NOT_A_UNIT + ")(?![a-z0-9]))(?!(?:" + CALC_UNIT_TOKENS + ")" + GAUGE_SUFFIX + "(?![a-z0-9]|/[a-z]))" +
+  "[a-zµμΩ][a-z0-9µμΩ²³]{0,5}(?:/[a-z][a-z0-9²³]{0,3})?(?![a-z0-9/²³])";
+const ANY_UNIT = "(?:\\s*(?:(?:" + CALC_UNIT_TOKENS + ")" + GAUGE_SUFFIX + "(?![a-z0-9]|/[a-z])|" + ANY_UNIT_TOKEN + "))?";
+/** (Fix pass 4) Inside a chain, and in the value it runs into, "min" is a
+ *  unit ("2 × 30 min = 60 min"); elsewhere it is often "minimum" and is not. */
+const CHAIN_UNIT = "(?:\\s*(?:(?:" + CALC_UNIT_TOKENS + "|min)" + GAUGE_SUFFIX + "(?![a-z0-9]|/[a-z])|" + ANY_UNIT_TOKEN + "))?";
+const RESULT_OPERAND = operandOf(CHAIN_UNIT);
+/** CALC_CHAIN with a citation allowed after each operand and any unit token,
+ *  ending at "=", "≈", "→", "⇒" or (fix pass 4) "equals", capturing the
+ *  value the chain runs into (always the match's suffix). Whitespace is
+ *  still consumed only together with the token after it. */
+const RESULT_CHAIN_SRC =
+  chainSource(RESULT_OPERAND + CALC_CITE) + "\\s*(?:=|≈|→|⇒|equals(?![a-z]))\\s*(" + CALC_NUM + CHAIN_UNIT + ")";
+/** A value restating the one just withheld: "≈ 430 psig", "= 427.50". */
+const RESTATED = new RegExp("\\s*(?:=|≈|~|→|⇒)\\s*(" + CALC_NUM + ANY_UNIT + ")", "iy");
+/** A unit token written right after a value VALUE_SRC read without one
+ *  (sticky: read at the value's end, never by slicing the line). */
+const TRAILING_UNIT = new RegExp("\\s*" + ANY_UNIT_TOKEN, "iy");
+/** (Fix pass 4) The same for rule (b), with "min" a unit, so a withheld
+ *  "= 60 min" is matched where "60 min" is written again. */
+const TRAILING_UNIT_OR_MIN = new RegExp("\\s*(?:min(?![a-z0-9])|" + ANY_UNIT_TOKEN + ")", "iy");
+/** An identifier word a number belongs to ("Class 300", "Table 2.1", "Rev 2",
+ *  (fix pass 3) "para 341.4", "Div 1", "Appendix 2"). */
+const IDENTIFIER_BEFORE =
+  /(?:\b(?:class|cl|sch(?:edule)?|pn|nps|dn|rev(?:ision)?|table|note|fig(?:ure)?|section|para(?:graph)?|div(?:ision)?|clause|appendix|annex|item|grade|type|page|step|sheet|api|asme|ansi|astm|iso|din)\.?|#)\s*$/i;
+/** What ends a substituted formula's right-hand side (rule (d)). */
+const TAIL_TERM = /\s*(?:=|≈|~|→|⇒)|\b(?:is|gives|equals|yields)\b/i;
+const TAIL_TERMS = new RegExp(TAIL_TERM.source, "gi");
+/** (I-25 fix pass) What follows a separator when it opens the RESULT: a
+ *  lone value — a number with its unit and citation, no operator after it.
+ *  "= 427.5 psig" is a result; "= 1.5 × 285 psig" (the formula restated
+ *  with its values) and "= 1.5 × P" are the substitution. */
+const LONE_VALUE = new RegExp("^\\s*(?:~\\s*)?" + CALC_NUM + "(" + ANY_UNIT + ")" + CALC_CITE, "i");
+/** (Fix pass 3) An operator after a value — a symbol, or "times",
+ *  "multiplied by", "divided by", "of" a value ("1.5 times 285 psig"). */
+const OPERATOR_NEXT =
+  /^\s*(?:[×*÷/+−·⋅^]|x(?=\s*[\d(])|-(?=\s)|(?:times|multiplied\s+by|divided\s+by)(?![a-z])|of(?=\s*[-(\d]))/i;
+/** (Fix pass 3) A bracketed value right after a value: "1.5 (285 psig)",
+ *  "285 psig (10.75 in) / (…)" — implicit multiplication — or "427.5 psig
+ *  (2.95 MPa)", a result and its conversion. */
+const BRACKETED_VALUE_NEXT = /^\s*\(\s*(?:\(\s*)?-?\d[^()\n]{0,40}\)/;
+/** The value is read whole first (greedy, never backtracked to a shorter
+ *  number or no unit), then what follows it is checked for an operator. A
+ *  bare factor before a bracketed value multiplies it; a value with a unit
+ *  before one is multiplied only when an operator or another bracket follows
+ *  the group (fix pass 3). The marker of a result already withheld is a
+ *  lone value (fix pass 4). */
+const opensLoneResult = (segment: string): boolean => {
+  // (Fix pass 4) A result rule (a) already withheld on this line opens the
+  // result too ("= [result withheld] (2.55 MPa)": the conversion after it).
+  if (segment.trimStart().startsWith(RESULT_WITHHELD)) return true;
+  const m = LONE_VALUE.exec(segment);
+  if (!m) return false;
+  let rest = segment.slice(m[0].length);
+  if (OPERATOR_NEXT.test(rest)) return false;
+  const group = BRACKETED_VALUE_NEXT.exec(rest);
+  if (group) {
+    if (m[1].trim() === "") return false;
+    rest = rest.slice(group[0].length);
+    if (OPERATOR_NEXT.test(rest) || /^\s*\(/.test(rest)) return false;
+  }
+  return true;
+};
+/** (I-25 fix pass) Where a "with" / "where" clause names inputs. */
+const INPUT_CLAUSE = /\b(?:with|where)\b/i;
+/** (I-25 fix pass) One input such a clause names: "P = 285 psig",
+ *  "D = 10.75 in [1]", "P is 285 psig" — a symbol (captured) and a lone
+ *  value. */
+const CLAUSE_INPUT_TAIL =
+  CALC_NUM + ANY_UNIT + CALC_CITE + "(?=\\s*(?:[,;:)]|\\.(?:\\s|$)|\\band\\b|\\bis\\b|$))";
+const CLAUSE_INPUT = new RegExp("(?<![\\w.])([a-z][\\w]*)\\s*(?:=|\\bis\\b)\\s*" + CLAUSE_INPUT_TAIL, "gi");
+/** (Fix pass 3) An input a separator or a word introduces anywhere on the
+ *  line: "; P = 285 psig", ", for P = 285 psig", "given P = 285 psig [1]",
+ *  "(P = 285 psig [1])", "using / when / and / if P = …" — a symbol, "=" and
+ *  a lone value. */
+const INTRODUCED_INPUT = new RegExp(
+  "(?<=(?:[,;(]|\\b(?:with|where|for|given|using|when|and|if))\\s*)(?<![\\w.])([a-z][\\w]*)\\s*=\\s*" + CLAUSE_INPUT_TAIL,
+  "gi",
+);
+/** (I-25 fix pass) A line that states an input: the user's value
+ *  ("P = `285 psig` (USER-PROVIDED)") or a cited one ("- D = 10.75 in [1]"). */
+const USER_INPUT_LINE = /USER[- ]PROVIDED/i;
+const CITED_INPUT_LINE = new RegExp(
+  "^\\s*(?:[-*•]\\s+)?[a-z][\\w ()'’-]{0,40}?\\s*[=:]\\s*" + CALC_NUM + ANY_UNIT +
+  "(?:\\s*\\[\\d{1,3}\\])+\\s*(?:\\([^)]*\\))?\\s*[.;]?\\s*$",
+  "i",
+);
+/** A standalone value — never part of an identifier ("B31.3", "V-101",
+ *  "§345.4.2", "2026-10-01", "Table A-1") nor a citation marker ("[2]"). */
+const VALUE_SRC = "(?<![\\w§#./\\[-])(" + CALC_NUM + ")(" + CALC_UNIT + ")(?![\\w/\\]]|[.-]\\d)";
+
+/** (Fix pass 3) A Unicode minus or en dash used as a SIGN ("MDMT: −20 °F"):
+ *  before a digit, and not after a number, a ")" or a "]" (where it is the
+ *  operator, "285 −150", or a range, "10–20"). Read as "-", one character
+ *  for one, so the value keeps its sign and a withheld value takes it. */
+const SIGN_DASH = /(?<![\d)\]]\s*)[−–](?=\d)/g;
+
+/** (Fix pass 5; integrator fix pass) A digit-group separator — a space,
+ *  no-break space (U+00A0), narrow no-break space (U+202F) or thin space
+ *  (U+2009) between a digit and exactly three more digits that no digit
+ *  follows, the SI way of writing "10 000 kPa" or "2 288 kPa". Read as ",",
+ *  one character for one, so the position map stays valid and the number is
+ *  one value ("10,000"). Any digit before it counts (the integrator's fix
+ *  pass): fix pass 5 also required the run before to start a number, so a
+ *  sign hyphen ("-20 000 kPa") or a digit and space before it ("Item 3 2 288
+ *  kPa") left "2 [result withheld]". Where the run before is no number's
+ *  start the value reading is unchanged: "1.5 285" reads 1.5 and 285,
+ *  "3/4 250" and "PN16 000" read 250 and 000 (VALUE_SRC never starts a value
+ *  inside a decimal, a fraction or a code). Two numbers side by side, the
+ *  second exactly three digits ("150 300 psig", "2500 750"), read as one
+ *  value: on the server rule (c) withholds it whole unless the grounding
+ *  (read every line both ways, withholdModelResults) holds it, and rule (b)
+ *  never matches a result inside it (recorded in PR-13). */
+const DIGIT_GROUP_GAP = /(?<=\d)[ \u00A0\u202F\u2009](?=\d{3}(?!\d))/g;
+/** (Fix pass 5) Glyph variants read as the one the grammar names, one
+ *  character for one: "∙ ✕ ✖" as "×", fullwidth "＝" as "=", "≃" as "≈". */
+const GLYPH_VARIANT = /[∙✕✖＝≃]/g;
+const GLYPH_AS: Record<string, string> = { "∙": "×", "✕": "×", "✖": "×", "＝": "=", "≃": "≈" };
+/** The same length as `text`: digit groups joined by "," (unless `groups`
+ *  is false), glyph variants read as the grammar's own. */
+const normalizeLine = (text: string, groups = true): string =>
+  (groups ? text.replace(DIGIT_GROUP_GAP, ",") : text).replace(GLYPH_VARIANT, (c) => GLYPH_AS[c] ?? c);
+
+/** A line with its value markup (`, **) removed, size fractions masked, a
+ *  sign dash read as "-" and (fix pass 5) normalizeLine applied, and where
+ *  each remaining character sits in the original line. */
+function stripLine(line: string, groups = true): { text: string; at: number[] } {
+  const chars: string[] = [];
+  const at: number[] = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "`") continue;
+    if (line[i] === "*" && line[i + 1] === "*") { i++; continue; }
+    chars.push(line[i]);
+    at.push(i);
+  }
+  const text = normalizeLine(chars.join(""), groups).replace(SIZE_FRACTION, (m) => "S".repeat(m.length)).replace(SIGN_DASH, "-");
+  return { text, at };
+}
+
+type Span = { start: number; end: number; value: string; unit: string };
+
+const normValue = (v: string): string => {
+  const n = Number(v.replace(/,/g, ""));
+  return Number.isFinite(n) ? String(n) : v;
+};
+const normUnit = (u: string): string => u.toLowerCase().replace(/\s+/g, "").replace(/\(([ga])\)$/, "$1");
+
+/** Rule (a): the values chains run into on one (stripped) line, with any
+ *  restatement right after each. */
+function resultSpans(text: string): Span[] {
+  const out: Span[] = [];
+  if (!CHAIN_TERMINATOR.test(text)) return out;
+  const chain = new RegExp(RESULT_CHAIN_SRC, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = chain.exec(text)) !== null) {
+    let start = m.index + m[0].length - m[1].length;
+    let token = m[1];
+    for (;;) {
+      const trimmed = token.replace(/,+$/, "");
+      const num = trimmed.match(new RegExp("^" + CALC_NUM))?.[0] ?? trimmed;
+      out.push({ start, end: start + trimmed.length, value: normValue(num), unit: normUnit(trimmed.slice(num.length)) });
+      RESTATED.lastIndex = start + trimmed.length;
+      const again = RESTATED.exec(text);
+      if (!again) break;
+      start = again.index + again[0].length - again[1].length;
+      token = again[1];
+    }
+    // The value a chain ran into may open the next chain ("2 × 3 = 6 × 4 = 24").
+    chain.lastIndex = m.index + m[0].length - m[1].length;
+  }
+  return out;
+}
+
+/** A span read with no unit, with the unit token written right after it
+ *  ("100 N") taken in. */
+function withTrailingUnit(text: string, s: Span, trailing: RegExp = TRAILING_UNIT): Span {
+  if (s.unit !== "") return s;
+  trailing.lastIndex = s.end;
+  const m = trailing.exec(text);
+  return m ? { ...s, end: s.end + m[0].length, unit: normUnit(m[0]) } : s;
+}
+
+/** Rule (d): where a "**Substituted:**" line's result begins — after the
+ *  formula's right-hand side — or -1. The first separator ("=", "≈", "is"…)
+ *  divides the symbol from the formula unless values stand before it (no
+ *  symbol was written) AND a lone value follows it (fix pass 4): "1.5 ×
+ *  285 psig = 427.5 psig" opens the result there, but a left-hand side that
+ *  merely holds a number — "P_T at 100 °F =", "t per Eq. 3 =", "Step 2: P_T
+ *  =" — is still the symbol, and its formula's inputs are inputs. After
+ *  it, a separator opens the result only when a lone value follows it
+ *  (opensLoneResult): "P_T = 1.5 × P = 1.5 × 285 psig" restates the formula
+ *  with its values and has no result. The inputs a "with" / "where" clause
+ *  names ("(where P = 285 psig is the design pressure)", "with P = 285
+ *  psig, D = 10.75 in") are inputs, never the result (I-25 fix pass), and so
+ *  is a "symbol = value" a separator or a word introduces ("; P = 285 psig",
+ *  ", given P = 285 psig [1]", "(P = 285 psig [1])") — unless the symbol is
+ *  the one the line computes (fix pass 3). */
+function substitutedTail(text: string): { tail: number; masked: string } {
+  const none = { tail: -1, masked: text };
+  const label = /Substituted:\s*/i.exec(text);
+  if (!label) return none;
+  const from = label.index + label[0].length;
+  let body = text.slice(from);
+  // The symbol the line computes ("P_T" in "P_T = 1.5 × P"): a clause that
+  // names IT ("…, P_T = 427.5 psig") restates the result, never an input.
+  const first = TAIL_TERM.exec(body);
+  const lhs = first ? /^\s*([a-z][\w]*)\s*$/i.exec(body.slice(0, first.index))?.[1] ?? null : null;
+  const blank = (m: string, symbol: string) => (symbol === lhs ? m : " ".repeat(m.length));
+  const clause = INPUT_CLAUSE.exec(body);
+  if (clause) {
+    body = body.slice(0, clause.index) + body.slice(clause.index).replace(CLAUSE_INPUT, blank);
+  }
+  body = body.replace(INTRODUCED_INPUT, blank);
+  // The line with the clause's inputs blanked (same length): the result's
+  // values are read from it, so an input named after the result stays.
+  const masked = text.slice(0, from) + body;
+  const seps = [...body.matchAll(TAIL_TERMS)];
+  if (seps.length === 0) return { tail: -1, masked };
+  if (valueSpans(body.slice(0, seps[0].index)).length > 0
+    && opensLoneResult(body.slice(seps[0].index + seps[0][0].length))) return { tail: from + seps[0].index, masked };
+  for (let k = 1; k < seps.length; k++) {
+    const after = seps[k].index + seps[k][0].length;
+    if (opensLoneResult(body.slice(after))) return { tail: from + seps[k].index, masked };
+  }
+  return { tail: -1, masked };
+}
+
+/** (Fix pass 3) Arithmetic in words on one (stripped) line: a PROSE_OP_SRC
+ *  operator, its operand — the next standalone value, never an identifier,
+ *  within PROSE_OPERAND_SPAN characters of the same clause — and a result —
+ *  a later value of the same clause that PROSE_RESULT_BEFORE introduces,
+ *  within PROSE_RESULT_SPAN characters of the operand. Linear: the values
+ *  are read once and each operator looks only a bounded way ahead. */
+function proseArithmetic(text: string): boolean {
+  const op = new RegExp(PROSE_OP_SRC, "gi");
+  let spans: Span[] | null = null;
+  let j = 0;
+  let m: RegExpExecArray | null;
+  while ((m = op.exec(text)) !== null) {
+    const opEnd = m.index + m[0].length;
+    spans ??= valueSpans(text).filter((s) => !afterIdentifier(text, s));
+    while (j < spans.length && spans[j].start < opEnd) j++;
+    const operand = spans[j];
+    if (!operand || operand.start - opEnd > PROSE_OPERAND_SPAN || CLAUSE_END.test(text.slice(opEnd, operand.start))) continue;
+    for (let k = j + 1; k < spans.length && spans[k].start - operand.end <= PROSE_RESULT_SPAN; k++) {
+      const before = text.slice(spans[k - 1].end, spans[k].start);
+      if (CLAUSE_END.test(before)) break;
+      if (PROSE_RESULT_BEFORE.test(before)) return true;
+    }
+  }
+  return false;
+}
+
+/** Rule (b)/(c): every standalone value on one (stripped) line. */
+function valueSpans(text: string): Span[] {
+  const out: Span[] = [];
+  const re = new RegExp(VALUE_SRC, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const num = m[1].replace(/,+$/, "");
+    const unit = m[1].endsWith(",") ? "" : m[2];
+    out.push({ start: m.index, end: m.index + num.length + unit.length, value: normValue(num), unit: normUnit(unit) });
+  }
+  return out;
+}
+
+/** Replace the given (stripped-coordinate) spans of one line with the
+ *  marker, taking value markup that wraps a span exactly ("`427.5 psig`",
+ *  "**`427.5 psig`**") with it, so no bold or chip is left half-open. */
+function withholdSpans(line: string, at: number[], spans: Span[]): string {
+  if (spans.length === 0) return line;
+  const ranges = spans
+    .map((s) => {
+      let a = at[s.start];
+      let b = at[s.end - 1] + 1;
+      // Markup inside the span ("427.5 `psig`" has none, "`427.5` psig" has
+      // one tick) is balanced by taking its partner just outside.
+      const ticks = (line.slice(a, b).match(/`/g) ?? []).length;
+      if (ticks % 2 === 1) {
+        if (line[b] === "`") b++;
+        else if (line[a - 1] === "`") a--;
+      }
+      for (;;) {
+        const l = a >= 2 && line.startsWith("**", a - 2) ? "**" : line[a - 1] === "`" ? "`" : "";
+        if (!l || !line.startsWith(l, b)) break;
+        a -= l.length;
+        b += l.length;
+      }
+      return [a, b] as const;
+    })
+    .sort((x, y) => x[0] - y[0]);
+  let out = "";
+  let cursor = 0;
+  for (const [a, b] of ranges) {
+    if (a < cursor) continue;
+    out += line.slice(cursor, a) + RESULT_WITHHELD;
+    cursor = b;
+  }
+  return out + line.slice(cursor);
+}
+
+const isSmallWhole = (v: string): boolean => /^-?\d$/.test(v);
+/** (The words before the value only: an identifier word sits right before
+ *  its number, and the line is never re-scanned from its start per value.) */
+const afterIdentifier = (text: string, s: Span): boolean =>
+  IDENTIFIER_BEFORE.test(text.slice(Math.max(0, s.start - 40), s.start));
+
+/** PR-9 option (b): the answer with every number the model computed replaced
+ *  by RESULT_WITHHELD, and RESULT_WITHHELD_NOTE appended when one was. Pass
+ *  `grounding` — everything the model was given — for rule (c), and only for
+ *  an answer answerHasComputation marked (the route does both). The knowledge
+ *  page, which re-applies (a), (d) and (b) to every answer it shows (a row
+ *  saved before I-25), has no grounding and passes none. */
+export function withholdModelResults(answer: string, grounding?: string): { text: string; withheld: number } {
+  const lines = answer.split("\n");
+  let withheld = 0;
+  const results: Array<{ value: string; unit: string }> = [];
+  // Every value the text the model was given holds (rule (c); with none, the
+  // page's call, nothing is known to be grounded). (Fix pass 5) Each line is
+  // read both with its digit groups joined ("10 000 kPa" is 10000) and
+  // without (a table row "150 285 260" is three values) — a set that holds
+  // more only withholds less of what the model was given. A number an
+  // identifier word owns ("Class 300", "Table 2", the "page 6" of the
+  // route's own passage headers) grounds nothing: it is not a value.
+  const grounded = grounding === undefined ? null
+    : new Set(grounding.split("\n").flatMap((l) => [true, false].flatMap((groups) => {
+      const { text } = stripLine(l, groups);
+      return valueSpans(text).filter((s) => !afterIdentifier(text, s)).map((s) => s.value);
+    })));
+  for (let i = 0; i < lines.length; i++) {
+    // (a) chain results, and the values they hold.
+    {
+      const { text, at } = stripLine(lines[i]);
+      const spans = resultSpans(text);
+      if (spans.length > 0) {
+        for (const s of spans) results.push({ value: s.value, unit: s.unit });
+        lines[i] = withholdSpans(lines[i], at, spans);
+        withheld += spans.length;
+      }
+    }
+    // (d) on a Substituted line, everything after the right-hand side.
+    if (SUBSTITUTED_LINE.test(lines[i])) {
+      const { text, at } = stripLine(lines[i]);
+      const { tail, masked } = substitutedTail(text);
+      if (tail >= 0) {
+        const spans = valueSpans(masked.slice(tail))
+          .map((s) => ({ ...s, start: s.start + tail, end: s.end + tail }))
+          .map((s) => withTrailingUnit(masked, s));
+        if (spans.length > 0) {
+          // A value the grounding holds is withheld here, where it stands as
+          // the result, but never spread by rule (b): it is also an input.
+          for (const s of spans) if (!grounded?.has(s.value)) results.push({ value: s.value, unit: s.unit });
+          lines[i] = withholdSpans(lines[i], at, spans);
+          withheld += spans.length;
+        }
+      }
+    }
+  }
+  // (b) the same values written anywhere else.
+  if (results.length > 0) {
+    // A result with a unit is matched in that unit ("Class 150" is not the
+    // "= 150 lb" just worked); one without, in any unit when it has a decimal
+    // point and with no unit when it is whole — never a small whole number,
+    // never a number an identifier word owns.
+    const sameAs = (s: Span) => results.some((r) =>
+      r.value === s.value && (r.unit !== ""
+        ? r.unit === s.unit
+        : !isSmallWhole(r.value) && (r.value.includes(".") || s.unit === "")));
+    for (let i = 0; i < lines.length; i++) {
+      const { text, at } = stripLine(lines[i]);
+      // A grounded value on a line that states an input — the user's own or
+      // a cited one — is that input, never the result (I-25 fix pass).
+      const inputLine = grounded !== null && (USER_INPUT_LINE.test(text) || CITED_INPUT_LINE.test(text));
+      const spans = valueSpans(text).map((s) => withTrailingUnit(text, s, TRAILING_UNIT_OR_MIN))
+        .filter((s) => sameAs(s) && !afterIdentifier(text, s) && !(inputLine && grounded.has(s.value)));
+      if (spans.length === 0) continue;
+      lines[i] = withholdSpans(lines[i], at, spans);
+      withheld += spans.length;
+    }
+  }
+  // (c) on every line of an arithmetic answer, a value none of the text the
+  // model was given holds.
+  if (grounded !== null) {
+    for (let i = 0; i < lines.length; i++) {
+      const { text, at } = stripLine(lines[i]);
+      const spans = valueSpans(text).map((s) => withTrailingUnit(text, s)).filter((s) =>
+        (s.unit !== "" || s.value.includes(".")) && !grounded.has(s.value) && !afterIdentifier(text, s));
+      if (spans.length === 0) continue;
+      lines[i] = withholdSpans(lines[i], at, spans);
+      withheld += spans.length;
+    }
+  }
+  if (withheld === 0) return { text: answer, withheld: 0 };
+  const text = lines.join("\n");
+  return { text: text.includes(RESULT_WITHHELD_NOTE) ? text : `${text}\n\n${RESULT_WITHHELD_NOTE}`, withheld };
 }
 
 /** ASK-3: the line a cut-off answer ends with. */

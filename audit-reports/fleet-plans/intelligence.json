@@ -1302,6 +1302,24 @@
       "sequencingNotes": [
         "Added by the integrator at the I-15 merge, 2026-10-20 (DEC-31)."
       ]
+    },
+    {
+      "name": "I-33 DETERMINISTIC CALCULATION EVALUATOR — the ask route computes a substituted formula's result on the server from the cited inputs and shows it as the verified value; the withholding net stays as the fallback",
+      "findings": [
+        "intelligence PR-13 (MEDIUM; opened by I-25, assigned at the I-25 merge): a server-side deterministic evaluator — parse the model's **Substituted:** expression, bind every operand to a cited input (with its unit), evaluate with unit checking, and present that value as the result (labelled computed by the server from the cited inputs); a formula the evaluator cannot parse or an operand it cannot bind keeps the result withheld; covers every gap PR-13 lists (operator / terminator / unit variants, identifier-number coincidence, prose results, pre-I-25 rows, internet-mode answers) plus the hyphen-range shape ('1,600-2,288 kPa' withholds only '288 kPa') seen at the I-25 merge",
+        "intelligence PR-9 done-when 2 remainder (assigned at the I-25 merge): closes when the evaluator presents only server-computed values"
+      ],
+      "files": [
+        "lib/knowledgeAskGuards.ts (the evaluator beside the withholding net), app/api/knowledge/ask/route.ts (the answer assembly only), app/(protected)/knowledge/[id]/page.tsx (the verified-value mark)",
+        "tests: evaluator unit and dimension checks; every PR-13 shape; lookup answers unchanged byte for byte"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "intelligence I-25 merged (2026-10-20; withholdModelResults, calcProtocol's Substituted line)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the I-25 merge, 2026-10-20 (DEC-31; DEC-90 A17's later path)."
+      ]
     }
   ],
   "crossAreaFileOverlaps": [
