@@ -150,7 +150,7 @@ import {
 } from "@/lib/knowledge";
 import {
   MIRROR_SOURCE_RESTRICTED, MIRROR_ACCESS_UNVERIFIED, MIRROR_UNBOUND, MIRROR_KEY_OUTSIDE_WORKSPACE,
-  MIRROR_NOT_FOUND, MIRROR_IS_UPLOAD,
+  MIRROR_NOT_FOUND, MIRROR_IS_UPLOAD, MIRROR_KEY_INVALID,
 } from "@/lib/knowledgeMirrorAccess";
 import { readHeldBackIds, HELD_BACK_UNREADABLE, HELD_BACK_IDS_PAGE } from "@/lib/heldBackIds";
 
@@ -170,7 +170,7 @@ const acl = (rules: unknown[], visibility = "normal", inherit = true) => ({ inhe
 
 function seed(opts: {
   folderAcl?: unknown; docAcl?: unknown; docVisibility?: string; docIndex?: unknown;
-  teams?: string[]; mirrorKey?: string; archived?: boolean;
+  teams?: string[]; mirrorKey?: string; archived?: boolean; versionKey?: string;
 } = {}) {
   db.tables = {
     org_members: [
@@ -191,7 +191,7 @@ function seed(opts: {
       status: "Issued", archived_at: null, current_version_id: "v1", ai_excluded: false, name: null,
     }],
     document_versions: [{
-      id: "v1", record_id: DOC, org_id: ORG, file_url: KEY, file_type: "application/pdf",
+      id: "v1", record_id: DOC, org_id: ORG, file_url: opts.versionKey ?? KEY, file_type: "application/pdf",
       archived_at: opts.archived ? "2026-10-01T00:00:00Z" : null, archive_id: opts.archived ? "ar-1" : null,
       revision_label: "A", size: 10,
     }],
@@ -275,6 +275,22 @@ describe("KACL-5 criterion 4 / KACL-7 criterion 3 — the library list never sel
     expect(m.chunkVersion).toBeUndefined();
     expect(MIRROR_LIST_COLUMN_TIERS.every((t) => !t.split(",").map((c) => c.trim()).includes("file_key"))).toBe(true);
   });
+  it("review fix: creation order by the parsed time — a whole-second stamp lists before a fractional one in the same second; ties by id", async () => {
+    // PostgREST drops trailing zero fractions: '…:01+00:00' is earlier than
+    // '…:01.5+00:00', but sorts after it as text ('.' collates before '+').
+    const kd = db.tables.knowledge_documents;
+    kd.find((r) => r.id === KD_UPLOAD)!.created_at = "2026-10-01T10:00:00+00:00";
+    kd.find((r) => r.id === KD_MIRROR)!.created_at = "2026-10-01T10:00:00.5+00:00";
+    expect((await listKnowledgeDocuments(KL)).map((d) => d.id)).toEqual([KD_UPLOAD, KD_MIRROR]);
+    // …and the other way round within the same second
+    kd.find((r) => r.id === KD_UPLOAD)!.created_at = "2026-10-01T10:00:00.25+00:00";
+    kd.find((r) => r.id === KD_MIRROR)!.created_at = "2026-10-01T10:00:00+00:00";
+    expect((await listKnowledgeDocuments(KL)).map((d) => d.id)).toEqual([KD_MIRROR, KD_UPLOAD]);
+    // equal stamps: a stable order by id, across the two reads
+    kd.find((r) => r.id === KD_UPLOAD)!.created_at = "2026-10-01T10:00:00+00:00";
+    kd.find((r) => r.id === KD_MIRROR)!.created_at = "2026-10-01T10:00:00+00:00";
+    expect((await listKnowledgeDocuments(KL)).map((d) => d.id)).toEqual([KD_MIRROR, KD_UPLOAD].sort());
+  });
   it("a failed read is the empty list it always was", async () => {
     db.errors.knowledge_documents = { message: "statement timeout" };
     expect(await listKnowledgeDocuments(KL)).toEqual([]);
@@ -345,16 +361,70 @@ describe("KACL-5 criterion 4 / KACL-7 criterion 3 — /api/knowledge/mirror-url 
     expect(r.status).toBe(503);
     expect(db.signed).toBe(0);
   });
-  it("the decision is about the mirror's SOURCE: a key that is not a revision of it, or not under the workspace, is refused (409), never signed", async () => {
+  it("the decision is about the mirror's SOURCE: a key that is not a revision of it, or under another workspace, is refused (409), never signed", async () => {
     seed({ mirrorKey: `orgs/${ORG}/libraries/${LIB}/OTHER.pdf` });
     let r = await openMirror();
     expect(r.status).toBe(409);
     expect(r.body).toEqual({ error: MIRROR_UNBOUND });
+    // a legacy key (no orgs/ prefix) that is NOT a revision of the source
     seed({ mirrorKey: "legacy/HSE-7.pdf" });
+    r = await openMirror();
+    expect(r.status).toBe(409);
+    expect(r.body).toEqual({ error: MIRROR_UNBOUND });
+    const OTHER_ORG = "99999999-9999-4999-8999-999999999999";
+    seed({ mirrorKey: `orgs/${OTHER_ORG}/libraries/x/HSE-7.pdf`, versionKey: `orgs/${OTHER_ORG}/libraries/x/HSE-7.pdf` });
     r = await openMirror();
     expect(r.status).toBe(409);
     expect(r.body).toEqual({ error: MIRROR_KEY_OUTSIDE_WORKSPACE });
     expect(db.signed).toBe(0);
+  });
+  it("review fix: a bound key from before the orgs/ prefix is decided by the door's own gate (the same predicate), then signed — never refused outright, never signed on membership alone", async () => {
+    const LEGACY = "libraries/HSE-7.pdf";
+    // a reader of the source opens it, as today
+    seed({ mirrorKey: LEGACY, versionKey: LEGACY });
+    let r = await openMirror();
+    expect(r.status).toBe(200);
+    expect(r.body.url).toBe("https://signed.example/get");
+    expect(r.text).not.toContain(LEGACY);
+    expect(db.signed).toBe(1);
+    // a member the source's allow-list leaves out: restricted, nothing signed
+    seed({ mirrorKey: LEGACY, versionKey: LEGACY, folderAcl: acl([allow("team", "T-eng", ["read", "download"])]) });
+    r = await openMirror();
+    expect(r.status).toBe(403);
+    expect(r.body).toEqual({ error: MIRROR_SOURCE_RESTRICTED, restricted: true });
+    expect(db.signed).toBe(0);
+    // …the member inside it opens it
+    seed({ mirrorKey: LEGACY, versionKey: LEGACY, folderAcl: acl([allow("team", "T-eng", ["read", "download"])]), teams: ["T-eng"] });
+    expect((await openMirror()).status).toBe(200);
+    // an explicit download deny binds, as at the door
+    seed({ mirrorKey: LEGACY, versionKey: LEGACY, docIndex: { deny: { users: { download: ["u-viewer"] } } } });
+    expect((await openMirror()).status).toBe(403);
+    // DEC-43: a controller served only by the tier is recorded
+    seed({ mirrorKey: LEGACY, versionKey: LEGACY, folderAcl: acl([allow("team", "T-eng", ["read"])]) });
+    expect((await openMirror(KD_MIRROR, "u-dc")).status).toBe(200);
+    expect(restrictedReads()).toBe(1);
+    // a fault in the gate fails closed and says so
+    seed({ mirrorKey: LEGACY, versionKey: LEGACY, folderAcl: acl([allow("team", "T-eng", ["read"])]), teams: ["T-eng"] });
+    db.errors.collections = { message: "statement timeout" };
+    r = await openMirror();
+    expect(r).toMatchObject({ status: 503, body: { error: MIRROR_ACCESS_UNVERIFIED } });
+    expect(db.signed).toBe(0);
+    // an archived legacy file answers the archive identity, never the key
+    seed({ mirrorKey: LEGACY, versionKey: LEGACY, archived: true });
+    r = await openMirror();
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({ archived: true, archiveId: "ar-1", fileName: "HSE-7.pdf" });
+    expect(r.text).not.toContain(LEGACY);
+  });
+  it("review fix: a stored key the storage guard refuses is a permanent 409 that says so — never '503 try again', never signed", async () => {
+    for (const bad of ["https://files.example/HSE-7.pdf", "libraries/../HSE-7.pdf", "libraries//HSE-7.pdf"]) {
+      seed({ mirrorKey: bad, versionKey: bad });
+      const r = await openMirror();
+      expect({ bad, status: r.status, body: r.body }).toEqual({ bad, status: 409, body: { error: MIRROR_KEY_INVALID } });
+    }
+    expect(db.signed).toBe(0);
+    // the permanent refusals promise no re-sync (a re-sync copies the same reference)
+    for (const m of [MIRROR_KEY_OUTSIDE_WORKSPACE, MIRROR_UNBOUND, MIRROR_KEY_INVALID]) expect(m).not.toMatch(/re-sync/i);
   });
   it("an archived file answers the archive identity (never the key), as the door does", async () => {
     seed({ archived: true });

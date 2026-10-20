@@ -91,8 +91,11 @@ async function documentsNamingKey(path: string): Promise<string[]> {
  *  DEC-43 (review fix): a controller is answered before the chain, as
  *  readableControlledDocIds answers one before the landscape — a chain that
  *  is broken or cannot be read does not refuse a controller; the read is
- *  recorded (CONTROLLER_RESTRICTED_READ, `chain_unverified`). */
-async function documentKeyGate(
+ *  recorded (CONTROLLER_RESTRICTED_READ, `chain_unverified`).
+ *  Exported for /api/knowledge/mirror-url (intelligence I-29): a mirror
+ *  bound to its source whose key predates the orgs/ prefix is decided by
+ *  this same gate, which this handler applies to org keys only. */
+export async function documentKeyGate(
   keyOrg: string,
   path: string,
   user: { id: string; email: string | null },

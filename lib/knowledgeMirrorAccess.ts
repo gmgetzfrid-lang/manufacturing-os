@@ -20,15 +20,24 @@ export const MIRROR_SOURCE_RESTRICTED =
 export const MIRROR_ACCESS_UNVERIFIED =
   "Couldn't verify your access to this document's source — try again.";
 
-/** The mirror's stored file is not under its workspace's storage prefix, so
- *  the read predicate cannot be applied to it: closed, and said. */
+/** The mirror's stored file is under ANOTHER workspace's storage prefix, so
+ *  it is not this workspace's to open: closed, and said. Permanent — a
+ *  re-sync copies the source revision's file reference unchanged, so it
+ *  does not move the file. */
 export const MIRROR_KEY_OUTSIDE_WORKSPACE =
-  "This mirrored file is stored outside the workspace's storage area, so access to its source can't be checked. A document controller can re-sync the knowledge library to fix it.";
+  "This mirrored file is stored in another workspace's storage area, so it can't be opened from this library. Open the source document in Document Control instead.";
 
 /** The mirror's stored file is not a revision of the document it says it
- *  mirrors, so the decision could not be made about that document: closed. */
+ *  mirrors, so the decision could not be made about that document: closed.
+ *  A re-sync re-points a mirror only when its source publishes a new
+ *  revision, so this does not promise one fixes it. */
 export const MIRROR_UNBOUND =
-  "This mirrored file no longer matches a revision of its source document, so access to it can't be checked. A document controller can re-sync the knowledge library to fix it.";
+  "This mirrored file no longer matches a revision of its source document, so access to it can't be checked and it can't be opened here. Open the source document in Document Control instead.";
+
+/** The mirror's stored key is one the storage guard refuses (a URL, a
+ *  traversal segment, a control byte): it can never be signed. Permanent. */
+export const MIRROR_KEY_INVALID =
+  "This mirrored file's stored key is invalid, so it can't be opened — a document controller must repair the source document's file.";
 
 /** No such knowledge document in a workspace the caller belongs to. */
 export const MIRROR_NOT_FOUND = "That document is no longer in the library.";

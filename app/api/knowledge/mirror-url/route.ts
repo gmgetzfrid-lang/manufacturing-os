@@ -19,19 +19,26 @@
 // they opened before, and a reader the door refuses gets no URL.
 //
 // Before the door is asked, the mirror is BOUND to its source: its key must
-// be under its workspace's storage prefix (the door decides only org keys)
-// and must be a revision file of the very document the mirror names
+// be a revision file of the very document the mirror names
 // (document_versions.record_id = source_document_id) — so the decision is
-// made about the mirror's source. Anything that cannot be checked fails
-// CLOSED and says so: a failed lookup is 503, an unbound key is 409; the
-// door's own 503 / 409 pass through. A refusal (403) carries no key, no URL
-// and no detail beyond "the source is restricted".
+// made about the mirror's source. A key under ANOTHER workspace's prefix is
+// refused. A bound key from before the orgs/ prefix (registers can still
+// carry one — the sync copies a revision's file_url unchanged) is decided by
+// the door's own gate (documentKeyGate, exported for this: the same
+// predicate, which the door's handler applies to org keys only) with the
+// mirror's workspace as the key's, then signed by the door — one walk, never
+// a key signed on membership alone. Anything that cannot be checked fails
+// CLOSED and says so: a failed lookup is 503, an unbound key is 409, a key
+// the door's guard refuses (its 400) is a permanent 409; the door's own
+// 503 / 409 pass through. A refusal (403) carries no key, no URL and no
+// detail beyond "the source is restricted".
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { GET as signStorageKey } from "@/app/api/storage/download-url/route";
+import { GET as signStorageKey, documentKeyGate } from "@/app/api/storage/download-url/route";
+import { isSafeStorageKey } from "@/lib/storageKey";
 import {
-  MIRROR_ACCESS_UNVERIFIED, MIRROR_IS_UPLOAD, MIRROR_KEY_OUTSIDE_WORKSPACE, MIRROR_NOT_FOUND,
+  MIRROR_ACCESS_UNVERIFIED, MIRROR_IS_UPLOAD, MIRROR_KEY_INVALID, MIRROR_KEY_OUTSIDE_WORKSPACE, MIRROR_NOT_FOUND,
   MIRROR_SOURCE_RESTRICTED, MIRROR_UNBOUND,
 } from "@/lib/knowledgeMirrorAccess";
 
@@ -41,6 +48,31 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NO_STORE = { "Cache-Control": "no-store" };
 const answer = (body: Record<string, unknown>, status: number) =>
   NextResponse.json(body, { status, headers: NO_STORE });
+
+/** A refusal the door (its handler or its gate) answered, in this route's
+ *  words — never the key. `null` = not a refusal this maps. */
+function doorRefusal(status: number, body: Record<string, unknown> | null): NextResponse | null {
+  // The door refused this caller: the source is restricted for them.
+  if (status === 403) return answer({ error: MIRROR_SOURCE_RESTRICTED, restricted: true }, 403);
+  // An archived file (the archive identity, never the key) or a broken
+  // chain the door named: passed through as the door said them.
+  if (status === 409 && body) {
+    if (body.archived === true) {
+      return answer({
+        archived: true,
+        archiveId: body.archiveId ?? null,
+        root: body.root ?? null,
+        fileName: body.fileName ?? null,
+      }, 409);
+    }
+    return answer({ error: typeof body.error === "string" ? body.error : MIRROR_ACCESS_UNVERIFIED }, 409);
+  }
+  // The door's guard refused the stored key itself (assertSafeStorageKey's
+  // 400): permanent, so said as such — never "try again".
+  if (status === 400) return answer({ error: MIRROR_KEY_INVALID }, 409);
+  if (status === 401) return answer({ error: "Unauthorized" }, 401);
+  return null;
+}
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
@@ -75,10 +107,12 @@ export async function GET(req: NextRequest) {
   const key = mirror.file_key ?? "";
   if (!key) return answer({ error: MIRROR_NOT_FOUND }, 404);
 
-  // The door decides only keys under a workspace prefix; a mirror's key is
-  // its source revision's file under its own workspace's. Anything else
-  // cannot be decided by the predicate — closed, and said.
-  if (!key.startsWith(`orgs/${mirror.org_id}/`)) return answer({ error: MIRROR_KEY_OUTSIDE_WORKSPACE }, 409);
+  // A key under ANOTHER workspace's prefix is not this workspace's mirror
+  // to open — closed, and said. A key the storage guard refuses (a URL, a
+  // traversal or control byte) can never be signed — permanent, and said.
+  const orgKey = key.startsWith(`orgs/${mirror.org_id}/`);
+  if (!orgKey && key.startsWith("orgs/")) return answer({ error: MIRROR_KEY_OUTSIDE_WORKSPACE }, 409);
+  if (!isSafeStorageKey(key)) return answer({ error: MIRROR_KEY_INVALID }, 409);
 
   // Bound to the source: the key must be a revision file of the document the
   // mirror names (the sync writes file_key = that revision's file_url).
@@ -89,6 +123,17 @@ export async function GET(req: NextRequest) {
   if (boundErr) return answer({ error: MIRROR_ACCESS_UNVERIFIED }, 503);
   if ((Array.isArray(bound) ? bound : bound ? [bound] : []).length === 0) {
     return answer({ error: MIRROR_UNBOUND }, 409);
+  }
+
+  // A bound key from before the orgs/ prefix: the door's handler gates org
+  // keys only, so its gate decides this one here — the same predicate, with
+  // the mirror's workspace as the key's — before the door signs it.
+  if (!orgKey) {
+    const gate = await documentKeyGate(mirror.org_id, key, { id: user.id, email: user.email ?? null });
+    if (gate) {
+      const gateBody = (await gate.json().catch(() => null)) as Record<string, unknown> | null;
+      return doorRefusal(gate.status, gateBody) ?? answer({ error: MIRROR_ACCESS_UNVERIFIED }, 503);
+    }
   }
 
   // The bytes door's own decision and signature, for the caller's session.
@@ -110,22 +155,7 @@ export async function GET(req: NextRequest) {
       contentType: body.contentType ?? null,
     }, 200);
   }
-  // The door refused this caller: the source is restricted for them.
-  if (door.status === 403) return answer({ error: MIRROR_SOURCE_RESTRICTED, restricted: true }, 403);
-  // An archived file (the archive identity, never the key) or a broken
-  // chain the door named: passed through as the door said them.
-  if (door.status === 409 && body) {
-    if (body.archived === true) {
-      return answer({
-        archived: true,
-        archiveId: body.archiveId ?? null,
-        root: body.root ?? null,
-        fileName: body.fileName ?? null,
-      }, 409);
-    }
-    return answer({ error: typeof body.error === "string" ? body.error : MIRROR_ACCESS_UNVERIFIED }, 409);
-  }
-  // Anything else (the door's 503, a 401 for an expired session): closed.
-  if (door.status === 401) return answer({ error: "Unauthorized" }, 401);
-  return answer({ error: MIRROR_ACCESS_UNVERIFIED }, 503);
+  // Anything the door refused, in this route's words; anything else (the
+  // door's own 503): closed, and said.
+  return doorRefusal(door.status, body) ?? answer({ error: MIRROR_ACCESS_UNVERIFIED }, 503);
 }

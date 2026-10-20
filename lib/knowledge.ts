@@ -524,8 +524,15 @@ export async function listKnowledgeDocuments(libraryId: string): Promise<Knowled
     ...((uploads.data ?? []) as Array<Record<string, unknown>>).filter((r) => !r.source_document_id),
     ...mirrors.filter((r) => !!r.source_document_id),
   ];
-  // One list in creation order, as the single read gave it.
-  rows.sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
+  // One list in creation order, as the single read gave it: by the parsed
+  // time (PostgREST drops trailing zero fractions, so the raw text of a
+  // whole-second stamp does not sort before a fractional one in the same
+  // second), ties broken by id so the order is stable across the two reads.
+  const at = (r: Record<string, unknown>) => {
+    const t = Date.parse(String(r.created_at ?? ""));
+    return Number.isNaN(t) ? 0 : t;
+  };
+  rows.sort((a, b) => (at(a) - at(b)) || String(a.id ?? "").localeCompare(String(b.id ?? "")));
   return rows.map(mapDocument);
 }
 
