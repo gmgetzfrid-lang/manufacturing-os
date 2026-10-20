@@ -10,6 +10,13 @@ import React, { useState } from "react";
 import { ChevronDown, ChevronRight, Crosshair, Table2, Search } from "lucide-react";
 import type { EquipmentTable } from "@/lib/knowledge";
 
+/** The table's label is "SHT n" when a title block declared it, "p.N" when
+ *  none did (the ask route's EquipmentTable): only the former is a reading
+ *  of the title block. */
+export function sheetFromTitleBlock(label: string | null | undefined): boolean {
+  return !!label && !/^p\.\d+$/.test(label);
+}
+
 export default function EquipmentTablePanel({ table, onOpenTag }: {
   table: EquipmentTable;
   /** Open the sheet in the cited-page viewer with the tag ringed. */
@@ -113,6 +120,13 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
                                 <Crosshair className="w-2.5 h-2.5" />
                                 <span className="truncate max-w-[9rem]">{s.documentName.replace(/\.pdf$/i, "")}</span>
                                 <span className="text-orange-600/70">{s.sheetLabel ?? `p.${s.page}`}</span>
+                                {/* GOV-9 criterion 4 (I-26): a sheet number read off an AI
+                                    transcription of the title block is a reading, never the
+                                    sheet's identity — said beside the label. */}
+                                {s.viaVision && sheetFromTitleBlock(s.sheetLabel) && (
+                                  <span data-sheet-ai-read="true" title="This sheet number was read off an AI model's transcription of the title block — unconfirmed; check it against the drawing."
+                                    className="text-[9px] font-bold text-amber-700 dark:text-amber-300">(AI-read, unconfirmed)</span>
+                                )}
                                 {/* PR-4: this sheet's tags were transcribed from the page image by an AI model. */}
                                 {s.viaVision && (
                                   <span data-via-vision="true" title="Tags on this sheet were transcribed from the page image by an AI model — confirm on the drawing."

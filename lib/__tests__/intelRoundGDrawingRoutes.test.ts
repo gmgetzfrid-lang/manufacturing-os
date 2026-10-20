@@ -3171,3 +3171,63 @@ describe("ING-12 — the library page's Re-index all continues where it stopped 
     expect(db.tables.knowledge_libraries[0].ai_features).toEqual({ rebuildCursor: expect.objectContaining({ cursor: "a-1" }) });
   });
 });
+
+// ── GOV-9 criterion 4 (intelligence Round G I-26) ───────────────────────────
+describe("GOV-9 criterion 4 (I-26) — a title block read only off an AI transcription is 'AI-read, unconfirmed', never the sheet's identity", () => {
+  const vchunk = (document_id: string, page: number): Row => ({ id: `c-${++seq}`, document_id, page, seq: ++seq, content: "DRAWING NO: 025-PID-0201", source: "vision", source_model: "vision-model-a" });
+  function aiSet() {
+    seed({
+      knowledge_documents: [
+        kdoc("v-201", { name: "v-201.pdf", vision_pages: 1 }),                    // its title block only on an AI-transcribed page
+        kdoc("t-202", { name: "t-202.pdf" }),                                     // a text layer
+        kdoc("m-203", { name: "m-203.pdf", vision_pages: 1, page_count: 2 }),     // declared on an AI page AND a text page
+      ],
+      knowledge_page_entities: [
+        ent("v-201", "self", "025-PID-0201", 1), ent("v-201", "equipment", "P-1", 1),
+        ent("t-202", "self", "025-PID-0202", 1), ent("t-202", "equipment", "P-2", 1),
+        ent("m-203", "self", "025-PID-0203", 1), ent("m-203", "self", "025-PID-0203", 2), ent("m-203", "equipment", "P-3", 1),
+      ],
+      knowledge_chunks: [vchunk("v-201", 1), chunk("t-202", "P-2"), vchunk("m-203", 1), { ...chunk("m-203", "P-3"), page: 2 }],
+    });
+  }
+  const sheet = (body: { sheets: Array<Record<string, unknown>> }, id: string) => body.sheets.find((s) => s.id === id)!;
+
+  it("the per-sheet readout marks the AI-read number; a text layer's, and one a text page confirms, are as before", async () => {
+    aiSet();
+    const body = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(sheet(body, "v-201")).toMatchObject({ declared: "025-PID-0201", declaredAiRead: true });
+    // REGRESSION: a text layer's identity — the payload carries no new key
+    expect(sheet(body, "t-202").declared).toBe("025-PID-0202");
+    expect("declaredAiRead" in sheet(body, "t-202")).toBe(false);
+    expect("declaredAiRead" in sheet(body, "m-203")).toBe(false);
+    expect(body.suggestions.join(" ")).toMatch(/1 sheet\(s\) declare their drawing number only through an AI model's transcription of the title block \(v-201\.pdf ≡ 025-PID-0201\)\. Those numbers are AI-read and unconfirmed/);
+  });
+
+  it("a library with no AI-vision page says nothing new and reads no transcription record", async () => {
+    seed({ knowledge_documents: [kdoc("t-202")], knowledge_page_entities: [ent("t-202", "self", "025-PID-0202", 1)], knowledge_chunks: [chunk("t-202", "x")] });
+    const body = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(body.suggestions.join(" ")).not.toMatch(/AI-read and unconfirmed/);
+    expect(db.ops.some((o) => o.table === "knowledge_chunks" && o.filters.some((f) => f.col === "source"))).toBe(false);
+  });
+
+  it("which pages an AI read cannot be told (a database before 20261122, or a failed read): every number of a document that counted AI-vision pages reads AI-read", async () => {
+    aiSet();
+    db.missingColumns = { knowledge_chunks: ["source"] };
+    const before = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(sheet(before, "v-201").declaredAiRead).toBe(true);
+    expect(sheet(before, "m-203").declaredAiRead).toBe(true);
+    expect("declaredAiRead" in sheet(before, "t-202")).toBe(false);
+    db.missingColumns = {};
+    db.hooks.push((op, filters) => (op.table === "knowledge_chunks" && filters.some((f) => f.col === "source") ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    const failed = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(sheet(failed, "m-203").declaredAiRead).toBe(true);
+  });
+
+  it("recording the audit names the sheet numbers it filed under that were AI-read; the record itself is unchanged", async () => {
+    aiSet();
+    const r = await record("kl-1");
+    expect(r.status).toBe(200);
+    expect(r.body.identityAiRead).toEqual(["025-PID-0201"]);
+    expect(logRows().map((x) => x.sheet_number).sort()).toEqual(["025-PID-0201", "025-PID-0202", "025-PID-0203"]);
+  });
+});
