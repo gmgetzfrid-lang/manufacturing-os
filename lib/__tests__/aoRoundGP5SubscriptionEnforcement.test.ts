@@ -334,7 +334,19 @@ describe("ON — a lapsed workspace is refused by the server, with a clear sente
     // second spelling of SUBSCRIPTION_ENFORCE on any seat / file route
     const cu = readFileSync(join(root, "app/api/admin/create-user/route.ts"), "utf8");
     expect(cu).toMatch(/const gate = await enforceOrgAccess\(supabaseAdmin, orgId, "create-user"\);/);
-    for (const f of ["app/api/admin/create-user/route.ts", "app/api/storage/upload-url/route.ts", "app/api/storage/multipart/route.ts"]) {
+    // BILL-10 done-when 2 (the integrator at the I-26 merge, 2026-10-20,
+    // DEC-90): the intake door accepts new stored bytes for the link's
+    // workspace, so it calls the same gate (its OFF / ON behaviour:
+    // lib/__tests__/intakeUploadRoute.test.ts "BILL-10").
+    const intake = readFileSync(join(root, "app/api/intake/upload/route.ts"), "utf8");
+    expect(intake).toMatch(/const subscriptionGate = await enforceOrgAccess\(supabaseAdmin, orgId, "intake\/upload"\);\n\s*if \(subscriptionGate\) return fail\(subscriptionGate\.error, subscriptionGate\.status\);/);
+    // … after the link, project and budget are read, and before the body
+    const door = intake.slice(intake.indexOf("async function door("));
+    expect(door.indexOf("readLinkBudget(supabaseAdmin, linkId)")).toBeLessThan(door.indexOf('enforceOrgAccess(supabaseAdmin, orgId, "intake/upload")'));
+    expect(door.indexOf('enforceOrgAccess(supabaseAdmin, orgId, "intake/upload")')).toBeLessThan(door.indexOf("getSignedUrl(r2"));
+    expect(door.indexOf('enforceOrgAccess(supabaseAdmin, orgId, "intake/upload")')).toBeLessThan(door.indexOf("await req.formData()"));
+    expect(door.indexOf('enforceOrgAccess(supabaseAdmin, orgId, "intake/upload")')).toBeLessThan(door.indexOf("stagedHead(uploadKey)"));
+    for (const f of ["app/api/admin/create-user/route.ts", "app/api/storage/upload-url/route.ts", "app/api/storage/multipart/route.ts", "app/api/intake/upload/route.ts"]) {
       expect(readFileSync(join(root, f), "utf8"), f).not.toMatch(/assertOrgHasAccess|process\.env\.SUBSCRIPTION_ENFORCE/);
     }
   });

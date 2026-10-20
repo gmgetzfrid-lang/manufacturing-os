@@ -91,12 +91,10 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // public-surfaces PS-P9's print_sheet_tokens was decided at its merge
   // (INCLUDED and restored after document_versions — lib/exportTables.ts,
   // lib/dataRestore.ts RESTORE_TABLE_ORDER; DEC-90) and is no longer here.
-  // intelligence Round G I-26 (GAP-307 acceptance 3). Proposed decision: EXPORT it
-  // (ORG_SCOPED_TABLES, beside document_assets) and restore it with the service
-  // role — the relation carries provenance (asserted_by, model, revision), and
-  // GAP-303 acceptance 4 holds that provenance survives export and restore. Its
-  // parents: knowledge_documents (knowledge_document_id) and assets (asset_id).
-  knowledge_document_assets: "a knowledge upload's document↔equipment relation with its provenance — export (proposed), restored after knowledge_documents and assets",
+  // intelligence Round G I-26's knowledge_document_assets was decided at its
+  // merge (EXPORTED beside document_assets and restored after
+  // knowledge_documents and assets — lib/exportTables.ts, lib/dataRestore.ts;
+  // DEC-90) and is no longer here.
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
@@ -231,6 +229,18 @@ describe("bearer-column redaction tripwire (EGR-7 / XEDGE-10)", () => {
     // after the versions its rows name.
     expect(ORG_SCOPED_TABLES).toContain("print_sheet_tokens");
     expect(RESTORE_TABLE_ORDER.indexOf("print_sheet_tokens")).toBeGreaterThan(RESTORE_TABLE_ORDER.indexOf("document_versions"));
+  });
+
+  it("I-26 (DEC-90, at its merge): knowledge_document_assets is exported beside document_assets, restored after its parents, and carries no bearer-named column", () => {
+    expect(ORG_SCOPED_TABLES).toContain("knowledge_document_assets");
+    expect(ORG_SCOPED_TABLES.indexOf("knowledge_document_assets")).toBe(ORG_SCOPED_TABLES.indexOf("document_assets") + 1);
+    expect(RESTORE_TABLE_ORDER.indexOf("knowledge_document_assets")).toBeGreaterThan(RESTORE_TABLE_ORDER.indexOf("knowledge_documents"));
+    expect(RESTORE_TABLE_ORDER.indexOf("knowledge_document_assets")).toBeGreaterThan(RESTORE_TABLE_ORDER.indexOf("assets"));
+    const cols = [...(columns.get("knowledge_document_assets") ?? [])];
+    expect(cols).toEqual(expect.arrayContaining(["knowledge_document_id", "asset_id", "tag_text", "asserted_by", "model", "source_revision", "source_version_id"]));
+    expect(cols.filter((c) => BEARER_NAME_RE.test(c) || isBearerColumn(c, "knowledge_document_assets"))).toEqual([]);
+    expect(REDACT_COLUMNS.knowledge_document_assets).toBeUndefined();
+    expect(RESTORE_BEARER_NAME_KEPT.knowledge_document_assets).toBeUndefined();
   });
 
   it("every redaction entry names an exported table, a real column and a written reason", () => {

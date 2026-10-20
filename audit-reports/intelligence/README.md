@@ -85,7 +85,7 @@ It is not a missing brain. It is a missing memory.
 | 19 | [Wiring](./19-wiring.md) | 10 | De-facto links, dead FKs, one-directional joins |
 | 20 | [Prompts](./20-prompts.md) | 13 | Every prompt read as a contract — `PR-13` (MEDIUM) opened by intelligence Round G I-25, 2026-10-20 (owner: I-33) |
 | 21 | [Edges & invariants](./21-edges-and-invariants.md) | 12 | The critic, plus what is sound. **Verified by hand** — record at the top of the file |
-| 90 | [**Gap register**](./90-gap-register.md) | 12 specs | `GAP-301`+ |
+| 90 | [**Gap register**](./90-gap-register.md) | 16 specs | `GAP-301`+ |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Three redo-pairs |
 
 **`01`–`20` were adversarially verified** — 273 raw findings, **246 survived**,

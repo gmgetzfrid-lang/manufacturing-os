@@ -43,7 +43,7 @@
 //                            runs the post-publish pipeline in the same
 //                            function or is pinned with its reason.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
@@ -3461,5 +3461,115 @@ describe("SEC-22 (b) (J20) on the direct door (INTK-15): a finalize answers as b
     expect(housekeepCalls()).toEqual(["intake_folder"]);
     expect(serviceContentWrites()).toEqual(["documents.insert", "document_versions.insert", "documents.update"]);
     expect(serviceHousekeeping()).toEqual(["project_documents.upsert"]);
+  });
+});
+
+// ── admin-and-org BILL-10 done-when 2: the intake door's subscription gate ──
+// Landed by the integrator at the I-26 merge, 2026-10-20 (DEC-90). The door
+// passes the ONE gate the storage routes pass (lib/serverAuth.ts
+// enforceOrgAccess) once the link, its project and its budget are read and
+// before the body: switch off, a lapsed workspace's upload runs exactly as
+// today (the would-be refusal is only logged, throttled); switch on, it is
+// refused 402 with the gate's sentence and nothing is presigned, reserved,
+// stored or filed — a finalize's staged object is deleted as for every
+// other refusal.
+describe("BILL-10 — the intake door and the subscription switch", () => {
+  const STAGING = "intake-staging/o1/p1/lnk1/";
+  const HASH = createHash("sha256").update(TOKEN).digest("hex");
+  const json = (step: "begin" | "finalize", payload: Row) => POST(new NextRequest(
+    `http://x/api/intake/upload?step=${step}`,
+    { method: "POST", body: JSON.stringify(payload), headers: { "x-intake-token": TOKEN, "content-type": "application/json" } },
+  ));
+  const lapsed = () => { db.tables.orgs = [{ id: ORG, subscription_status: "canceled", trial_ends_at: null }]; };
+  const reserveStagedPdf = (id: string) => {
+    (db.tables.intake_attempts ??= []).push({ id, token_hash: HASH, ip: "unknown", link_id: LINK, outcome: "staged", bytes: PDF.byteLength, created_at: new Date().toISOString() });
+    db.r2Objects.set(`${STAGING}${id}`, PDF);
+    return `${STAGING}${id}`;
+  };
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(async () => {
+    (await import("@/lib/serverAuth")).resetWouldRefuseLogForTests();
+    warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    delete process.env.SUBSCRIPTION_ENFORCE;
+    warn.mockRestore();
+  });
+
+  it("OFF (the default): a lapsed workspace's multipart upload is filed exactly as today — stored, recorded, the decode scheduled; the would-be refusal is logged once (throttled)", async () => {
+    delete process.env.SUBSCRIPTION_ENFORCE;
+    seed({ doc: null });
+    lapsed();
+    const res = await upload({ title: "Skid GA", number: "V-200" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+    expect(db.r2Puts).toHaveLength(1);
+    expect(docWrites().map((w) => `${w.table}.${w.method}`)).toEqual(expect.arrayContaining(["documents.insert", "document_versions.insert"]));
+    await runAfterResponse();
+    expect(unitDecode.fn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[intake\/upload\] subscription gate would refuse org o1 \(SUBSCRIPTION_ENFORCE off\)/));
+    // a second upload in the hour writes no second line
+    seed({ doc: null });
+    lapsed();
+    expect((await upload({ title: "Skid GA 2", number: "V-201" })).status).toBe(200);
+    expect(warn.mock.calls.filter((c: unknown[]) => /\[intake\/upload\]/.test(String(c[0])))).toHaveLength(1);
+  });
+
+  it("OFF: a lapsed workspace's direct upload begins and finalizes as today", async () => {
+    seed({ doc: null });
+    lapsed();
+    const begin = await json("begin", { fileName: "sheet.pdf", size: PDF.byteLength, contentType: "application/pdf" });
+    expect(begin.status).toBe(200);
+    const b = await begin.json() as { uploadKey: string };
+    db.r2Objects.set(b.uploadKey, PDF);
+    const fin = await json("finalize", { uploadKey: b.uploadKey, fileName: "sheet.pdf", contentType: "application/pdf", fields: { title: "Skid GA" } });
+    expect(fin.status).toBe(200);
+    expect(db.r2Puts).toHaveLength(1);
+  });
+
+  it("ON: a lapsed workspace's multipart upload is refused 402 with the gate's one sentence — nothing stored, nothing written, no decode", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    seed({ doc: null });
+    lapsed();
+    const res = await upload({ title: "Skid GA", number: "V-200" });
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    const { lapsedWorkspaceMessage } = await import("@/lib/serverAuth");
+    expect(body.error).toBe(lapsedWorkspaceMessage({ status: "canceled", trialEndsAt: null }));
+    expect(body.ref).toMatch(/^[0-9a-f]{8}$/);
+    expect(db.r2Puts).toEqual([]);
+    expect(docWrites()).toEqual([]);
+    expect(db.writes.filter((w) => w.table !== "intake_attempts")).toEqual([]);
+    await runAfterResponse();
+    expect(unitDecode.fn).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("ON: a lapsed workspace's begin presigns and reserves nothing; its finalize is refused and the staged object deleted, nothing filed", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    seed({ doc: null });
+    lapsed();
+    const begin = await json("begin", { fileName: "sheet.pdf", size: PDF.byteLength, contentType: "application/pdf" });
+    expect(begin.status).toBe(402);
+    expect(db.presigns).toEqual([]);
+    expect((db.tables.intake_attempts ?? []).filter((a) => a.outcome === "staged")).toEqual([]);
+    const key = reserveStagedPdf("00000000-0000-4000-8000-0000000000b1");
+    const fin = await json("finalize", { uploadKey: key, fileName: "sheet.pdf", contentType: "application/pdf", fields: { title: "Skid GA" } });
+    expect(fin.status).toBe(402);
+    expect(db.r2Puts).toEqual([]);
+    expect(docWrites()).toEqual([]);
+    expect(db.r2Deletes.map((d) => String(d.Key))).toEqual([key]);
+  });
+
+  it("ON: a workspace in good standing, and one whose row cannot be read (fail-open), upload as before", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    seed({ doc: null });
+    db.tables.orgs = [{ id: ORG, subscription_status: "active", trial_ends_at: null }];
+    expect((await upload({ title: "Skid GA", number: "V-200" })).status).toBe(200);
+    seed({ doc: null });
+    lapsed();
+    db.errors["orgs.select"] = [{ message: "connection reset" }];
+    expect((await upload({ title: "Skid GA", number: "V-201" })).status).toBe(200);
+    expect(db.r2Puts).toHaveLength(2);
   });
 });

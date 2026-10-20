@@ -91,10 +91,7 @@ const GRANDFATHERED = new Set<string>();
  *  the 2026-10-07 wave), with the file that creates it. The integrator adds
  *  the row and removes the table from here in the same merge — the tripwire
  *  below fails once both say it, so the entry cannot outlive its merge. */
-const ROW_AT_MERGE: Record<string, string> = {
-  // intelligence Round G I-26 (GAP-307 acceptance 3): a knowledge upload's own relation.
-  knowledge_document_assets: "20261235_intel_roundG_knowledge_document_assets.sql",
-};
+const ROW_AT_MERGE: Record<string, string> = {};
 
 const BASE = "schema.sql (base schema)";
 const sqlOf = (file: string) =>

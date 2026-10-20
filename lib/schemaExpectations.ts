@@ -117,6 +117,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "export_runs", migration: "20260530_data_export_schedules.sql" },
   { table: "intake_attempts", migration: "20261105_prj_roundG_intake_review_and_attempts.sql" },
   { table: "knowledge_chunks", migration: "20260911_knowledge_ai.sql" },
+  { table: "knowledge_document_assets", migration: "20261235_intel_roundG_knowledge_document_assets.sql" },
   { table: "knowledge_documents", migration: "20260911_knowledge_ai.sql" },
   { table: "knowledge_libraries", migration: "20260911_knowledge_ai.sql" },
   { table: "knowledge_library_links", migration: "20260915_knowledge_links.sql" },

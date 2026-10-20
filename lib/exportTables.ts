@@ -46,6 +46,13 @@ export const ORG_SCOPED_TABLES = [
   "document_supersessions",
   "document_holds",
   "document_assets",
+  // intelligence I-26 (20261235, GAP-307 acceptance 3) — a knowledge upload's
+  // own document↔equipment relation, with document_assets' provenance
+  // columns (asserted_by, model, source revision). EXPORTED, by the
+  // integrator at the I-26 merge (2026-10-20, DEC-90): GAP-303 acceptance 4
+  // holds that provenance survives export and restore. Restored after
+  // knowledge_documents and assets (lib/dataRestore.ts). No bearer column.
+  "knowledge_document_assets",
   "document_sets",
   "document_shares",
   "project_intake_links",

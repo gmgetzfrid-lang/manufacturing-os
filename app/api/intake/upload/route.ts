@@ -138,6 +138,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 import { runWithServerClient } from "@/lib/serverClientScope";
+import { enforceOrgAccess } from "@/lib/serverAuth";
 // NEDGE-6 done-when 3 (notifications N15): loading this module registers the
 // dispatcher's server-side discover check, so a published revision's
 // document followers (lib/postPublish.ts, through this door) are filtered by
@@ -987,6 +988,19 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
   const budget = await readLinkBudget(supabaseAdmin, linkId);
   const spent = linkBudgetRefusal(budget, null);
   if (spent) return fail(spent, 429, undefined, { code: "link_budget" });
+
+  // BILL-10 done-when 2 (admin-and-org; landed by the integrator at the I-26
+  // merge, 2026-10-20, DEC-90): the door is about to accept new stored bytes
+  // for the link's workspace — a begin's presign, a finalize's or a
+  // multipart POST's filing — so it passes the one subscription gate the
+  // storage routes pass (DEC-18). Switch off (the default): never refuses; a
+  // lapsed workspace's would-be refusal is only logged (throttled) and the
+  // door runs exactly as before. Switch on: a lapsed workspace is answered
+  // 402 with the gate's sentence before the body is read — nothing is
+  // presigned, reserved or filed, and a finalize's or fallback's staged
+  // object is deleted by POST's finally, as for every other refusal.
+  const subscriptionGate = await enforceOrgAccess(supabaseAdmin, orgId, "intake/upload");
+  if (subscriptionGate) return fail(subscriptionGate.error, subscriptionGate.status);
 
   // ── 3. Only now: the body ──────────────────────────────────────────────
   let file: DoorUpload;
