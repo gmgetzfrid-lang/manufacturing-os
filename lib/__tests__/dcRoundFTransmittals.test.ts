@@ -292,7 +292,10 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
 
   it("the composer prints the cover sheet from the outcome's row, not a synthesized object", () => {
     const page = src("app/(protected)/transmittals/page.tsx");
-    expect(page).toMatch(/void openTransmittalSheet\(result\.outcome\.transmittal\);/);
+    // DIST-17 (document-control P27): still the outcome's row — as the register
+    // serves it to this viewer (the portal link only for someone who may read
+    // every item; lib/__tests__/dcRoundGP27TransmittalRegister.test.ts).
+    expect(page).toMatch(/void transmittalForViewer\(result\.outcome\.transmittal\)\.then\(\(v\) => openTransmittalSheet\(v\)\);/);
     expect(page).not.toMatch(/status: "issued", issuedAt: new Date\(\)\.toISOString\(\)/);
     expect(page).not.toMatch(/portal link emailed to \$\{t\.recipientEmail\.trim\(\)\} and /);
   });
@@ -660,7 +663,7 @@ describe("TRX-8 / TRX-3 / TRX-13 — the cover sheet and evidence carry the as-s
     const legacy = rowToTransmittal({ id: "t", org_id: "o", seq: 1, number: "TR-0001", status: "issued" });
     expect(legacy.portalOpenCount).toBeNull();
     expect(legacy.portalDownloadCount).toBeNull();
-    expect(src("app/(protected)/transmittals/page.tsx")).toContain('t.portalToken && t.status !== "draft" && t.portalOpenCount != null && (');
+    expect(src("app/(protected)/transmittals/page.tsx")).toContain('(t.portalToken || t.viewer?.portalWithheld) && t.status !== "draft" && t.portalOpenCount != null && ('); // DIST-17 (P27): also on a row whose token the register withheld
   });
   it("the project evidence pack prints the hash prefix, the status as sent and the receipt's evidence", async () => {
     const { renderProjectEvidenceHtml } = await import("@/lib/evidencePack");

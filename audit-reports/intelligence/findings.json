@@ -34,8 +34,8 @@
       "LOW": 54
     },
     "by_status": {
-      "RESOLVED": 238,
-      "OPEN": 27,
+      "RESOLVED": 239,
+      "OPEN": 26,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -1459,7 +1459,7 @@
       "id": "KACL-5",
       "title": "The byte door checks 'discover', not 'read'/'download', evaluates only the document's own ACL (no folder or library chain), and only for private/hidden documents — so an allow-list ACL never blocks a download",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

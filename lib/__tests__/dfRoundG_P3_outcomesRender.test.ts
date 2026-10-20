@@ -72,6 +72,7 @@ describe("LEAK-9 — the leak-rate headline never overclaims", () => {
   });
   it("the page renders the block from the summary (no second computation)", () => {
     const p = readFileSync(join(process.cwd(), "app/(protected)/admin/analytics/page.tsx"), "utf8");
-    expect(p).toContain("<RequestOutcomes summary={outcomes} />");
+    // drafting-flow DF-P16 (GAP-13 acceptance 2): the per-reason breakdown rides beside the same summary
+    expect(p).toContain("<RequestOutcomes summary={outcomes} reasons={outcomeReasons} />");
   });
 });

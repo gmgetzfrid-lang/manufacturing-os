@@ -700,7 +700,8 @@
     "drafting-flow SM-15 (LOW; assigned at the DF-P12 merge): the workflow route mints a ticket file's id on the server (crypto.randomUUID()) for every new attachment and never keeps a client-supplied id already on the ticket",
     "drafting-flow LEAK-7 residual (ruled by the integrator at the DF-P12 merge, DEC-90): ONLY IF 20261222's paste-back reports a (b) count that is not 0 — a paste-time server snapshot (a guard-protected column naming each label a row issued twice, computed from the history at the paste) so a pre-DF-P10 print of a (b) row answers 'cannot confirm', with no member-writable line able to add to it; if the count is 0, close this limb by record",
     "drafting-flow DCW-7's last limb (re-owned at the DF-P12 merge): the 'Publish as a new document in <library>' offer is DCW-4's page half above; the free-text unit box for an unconfigured workspace stays by DEC-101 item 1",
-    "drafting-flow EVID-5 (closes by pointer; re-owned at the DF-P12 merge): closes when EVID-16 (this package) and projects-joint EVID-15 (J15) are RESOLVED and document-control 20261068 is pasted — record the pointer close here"
+    "drafting-flow EVID-5 (closes by pointer; re-owned at the DF-P12 merge): closes when EVID-16 (this package) and projects-joint EVID-15 (J15) are RESOLVED and document-control 20261068 is pasted — record the pointer close here",
+    "drafting-flow SM-16 (LOW; opened by DF-P16, assigned at the DF-P16 merge): reopen_ticket removes metadata.outcome_reason on the same compare-and-set write that nulls tickets.outcome (the old reason kept in the reopen's history line if wanted), with a route test; plus a counts-only inventory of rows whose metadata.outcome_reason.category differs from tickets.outcome"
    ],
    "files": [
     "app/(protected)/requests/[id]/page.tsx (print, download, preview, publish offer, recall control)",

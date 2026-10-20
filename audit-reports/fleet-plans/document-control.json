@@ -790,6 +790,25 @@
    "sequencingNotes": [
     "Added by the integrator at the P26 merge, 2026-10-14 (DEC-31). Regression-first: every notice a door sends today keeps being sent, except the copy-holder recall for a never-issued supersede (R1)."
    ]
+  },
+  {
+   "name": "P29 TRANSMITTAL READ \u2014 portal_token and transmittal items are read only through the server's per-viewer redaction, then narrowed at the database after intelligence I-30",
+   "findings": [
+    "document-control DIST-18 (HIGH; opened by P27, assigned at the P27 merge, DEC-90 R2): limb (a) NOW \u2014 portal_token stops being readable by client roles and every browser reader of transmittals (global search, the evidence pack, listTransmittalsForDocument, getTransmittal, the Inspector trail, and every client select('*') of transmittals, which a column REVOKE would otherwise break with 42501) reads through the register route's per-viewer redaction (redactTransmittalForViewer over the I-12 predicate); the sender, controllers and full readers keep everything they see today; a member who takes no token cannot download as the recipient; limb (b) AFTER intelligence I-30 (node_visible becomes the app predicate) \u2014 transmittals_select narrowed at the database, counts-only inventory first"
+   ],
+   "files": [
+    "lib/transmittals.ts, app/api/transmittal/register/route.ts and every client reader of transmittals (search the codebase: lib/globalSearch.ts, the evidence pack, components/documents/InspectorPanel.tsx's transmittal trail)",
+    "supabase/migrations: limb (a) the column privilege (one DEC-30 file, after every client select('*') is repointed); limb (b) after I-30",
+    "tests: every reader sees exactly what the register shows it; the sender, controllers and the outside recipient unchanged; a client role cannot read portal_token"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "document-control P27 merged (2026-10-20; the register route and redactTransmittalForViewer)",
+    "limb (b) only: intelligence I-30 merged"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P27 merge, 2026-10-20 (DEC-31; DEC-90 R2). Limb (a) can launch now."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

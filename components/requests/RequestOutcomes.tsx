@@ -11,15 +11,143 @@
 // cancel named a category and some named none, the rate is NOT MEASURED
 // ('—', with how many cancels named none); when some did, the rate is shown
 // and the cancels that named none are counted next to it, as not in it.
+//
+// drafting-flow DF-P16 — roles-and-permissions GAP-13 acceptance 2 (the
+// integrator's ruling under DEC-90, fail-safe, no regression): under each
+// outcome, a count per reason the workspace keeps (DF-P14's list, read by
+// `metadata.outcome_reason.id`, named as the list names it NOW — or, for a
+// reason since removed, in the words stored when the request ended), plus
+// "No reason recorded". The outcome-level numbers above are unchanged and the
+// rows under each outcome add up to its number exactly (`reasonBreakdown`).
+// A workspace that keeps no reasons and recorded none sees exactly today's
+// panel (no `reasons` prop is rendered as nothing).
 
 import React from 'react';
 import { ArrowUpRight } from 'lucide-react';
-import { OUTCOME_LABEL, TICKET_OUTCOMES, type OutcomeSummary } from '@/lib/ticketOutcome';
+import { OUTCOME_LABEL, TICKET_OUTCOMES, isTicketOutcome, type OutcomeSummary, type TicketOutcome } from '@/lib/ticketOutcome';
+import type { OutcomeReason } from '@/lib/ticketOutcomeReasons';
 
 const formatPercent = (val: number) => `${(val * 100).toFixed(1)}%`;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export default function RequestOutcomes({ summary: outcomes }: { summary: OutcomeSummary }) {
+/** An ended request as the breakdown reads it. */
+export interface ReasonRow {
+  status?: string | null;
+  outcome?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+/** One line under an outcome. `reasonId` null = "No reason recorded". */
+export interface ReasonLine {
+  reasonId: string | null;
+  label: string;
+  count: number;
+  /** A reason recorded on requests but no longer in the workspace's list —
+   *  named in the words stored when the request ended. */
+  removed: boolean;
+  /** Under "Not recorded": the outcome the reason was recorded with. */
+  recordedAs?: string;
+}
+
+export interface ReasonBreakdown {
+  /** Only the outcomes that have a reason configured or recorded, in the
+   *  panel's order; each one's lines add up to its outcome-level number. */
+  groups: Array<{ outcome: TicketOutcome | 'unrecorded'; label: string; total: number; lines: ReasonLine[] }>;
+  /** The workspace's reason list could not be read: every reason is named
+   *  in its stored words, and configured reasons nothing ended with are not
+   *  listed. */
+  listUnread: boolean;
+}
+
+/** The recorded reason on an ended request (`metadata.outcome_reason`, as
+ *  the workflow route writes it), or null. */
+function recordedReason(meta: Record<string, unknown> | null | undefined): { id: string; label: string; category: string } | null {
+  const r = meta && typeof meta === 'object' ? (meta as Record<string, unknown>).outcome_reason : null;
+  if (!r || typeof r !== 'object') return null;
+  const o = r as Record<string, unknown>;
+  const id = typeof o.id === 'string' ? o.id.trim() : '';
+  if (!id) return null;
+  const label = typeof o.label === 'string' && o.label.trim() ? o.label.trim() : id;
+  return { id, label, category: typeof o.category === 'string' ? o.category : '' };
+}
+
+/**
+ * The recorded reason that belongs to how the request ended NOW (DF-P16 fix
+ * pass): under one of the five outcomes, only a reason recorded with that
+ * same outcome (`category`). A reopen clears `tickets.outcome` but not
+ * `metadata.outcome_reason` (drafting-flow `SM-16`), so a request withdrawn
+ * with a reason, reopened and then completed still carries the old reason —
+ * it is not the completed request's reason and is not credited to it. Where
+ * no outcome was written ("Not recorded") the stored reason is kept, named
+ * with the outcome it was recorded as.
+ */
+export function reasonForOutcome(outcome: unknown, meta: Record<string, unknown> | null | undefined): { id: string; label: string; category: string } | null {
+  const rec = recordedReason(meta);
+  if (!rec) return null;
+  if (!isTicketOutcome(outcome)) return rec;
+  return isTicketOutcome(rec.category) && rec.category === outcome ? rec : null;
+}
+
+/**
+ * GAP-13 acceptance 2 (DF-P16): the per-reason breakdown of how requests
+ * ended. Counted from the same rows and the same rule as `summarizeOutcomes`
+ * (an ended request = CLOSED or CANCELED; its outcome = `tickets.outcome` when
+ * it is one of the five, else "Not recorded"), so the lines under an outcome
+ * always add up to the outcome-level number. Under each outcome: every reason
+ * the workspace keeps under it (its current words; 0 when nothing ended with
+ * it), every other reason recorded with it (the list's current words for an
+ * id it still holds, else the stored words, marked removed), and "No reason
+ * recorded". A reason recorded with another outcome than the request has now
+ * (a reopen left it behind) counts as "No reason recorded" (`reasonForOutcome`).
+ * Returns null — the panel exactly as before — when the workspace keeps no
+ * reasons and no ended request recorded one, and its list was read; when the
+ * list could not be read it returns no groups and `listUnread`, so the panel
+ * says so (DEC-90: a failed read is said).
+ */
+export function reasonBreakdown(rows: readonly ReasonRow[], configured: readonly OutcomeReason[], listUnread = false): ReasonBreakdown | null {
+  const byId = new Map(configured.map((r) => [r.id, r] as const));
+  type Acc = { total: number; none: number; lines: Map<string, ReasonLine> };
+  const acc = new Map<TicketOutcome | 'unrecorded', Acc>();
+  const get = (o: TicketOutcome | 'unrecorded'): Acc => {
+    let a = acc.get(o);
+    if (!a) { a = { total: 0, none: 0, lines: new Map() }; acc.set(o, a); }
+    return a;
+  };
+  let anyRecorded = false;
+  for (const row of rows) {
+    if (row.status !== 'CLOSED' && row.status !== 'CANCELED') continue;
+    const outcome: TicketOutcome | 'unrecorded' = isTicketOutcome(row.outcome) ? row.outcome : 'unrecorded';
+    const a = get(outcome);
+    a.total += 1;
+    const rec = reasonForOutcome(outcome, row.metadata);
+    if (!rec) { a.none += 1; continue; }
+    anyRecorded = true;
+    const kept = byId.get(rec.id);
+    const line = a.lines.get(rec.id) ?? {
+      reasonId: rec.id,
+      label: kept ? kept.label : rec.label,
+      count: 0,
+      removed: !kept && !listUnread,
+      ...(outcome === 'unrecorded' && isTicketOutcome(rec.category) ? { recordedAs: OUTCOME_LABEL[rec.category] } : {}),
+    };
+    line.count += 1;
+    a.lines.set(rec.id, line);
+  }
+  if (configured.length === 0 && !anyRecorded) return listUnread ? { groups: [], listUnread: true } : null;
+  const groups: ReasonBreakdown['groups'] = [];
+  for (const outcome of [...TICKET_OUTCOMES, 'unrecorded' as const]) {
+    const a = acc.get(outcome) ?? { total: 0, none: 0, lines: new Map<string, ReasonLine>() };
+    const keptHere = outcome === 'unrecorded' ? [] : configured.filter((r) => r.category === outcome);
+    if (keptHere.length === 0 && a.lines.size === 0) continue;
+    const lines: ReasonLine[] = keptHere.map((r) => a.lines.get(r.id) ?? { reasonId: r.id, label: r.label, count: 0, removed: false });
+    for (const [id, line] of a.lines) if (!keptHere.some((r) => r.id === id)) lines.push(line);
+    lines.push({ reasonId: null, label: 'No reason recorded', count: a.none, removed: false });
+    groups.push({ outcome, label: outcome === 'unrecorded' ? 'Not recorded' : OUTCOME_LABEL[outcome], total: a.total, lines });
+  }
+  return { groups, listUnread };
+}
+
+export default function RequestOutcomes({ summary: outcomes, reasons = null }: { summary: OutcomeSummary; reasons?: ReasonBreakdown | null }) {
   const recorded = outcomes.ended - outcomes.byOutcome.unrecorded;
   const unnamed = outcomes.uncategorizedCancels;
   return (
@@ -42,6 +170,41 @@ export default function RequestOutcomes({ summary: outcomes }: { summary: Outcom
           </div>
         ))}
       </div>
+      {reasons && reasons.groups.length > 0 && (
+        <div data-testid="outcome-reasons" className="mb-4">
+          <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-2">Why they ended — this workspace&rsquo;s reasons</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {reasons.groups.map((g) => (
+              <div key={g.outcome} data-testid={`outcome-reasons-${g.outcome}`} className="rounded-lg border border-[var(--color-border)] p-3">
+                <p className="text-xs font-bold text-[var(--color-text)] mb-1">{g.label} <span className="font-normal text-[var(--color-text-muted)]">({g.total})</span></p>
+                <table className="w-full text-sm">
+                  <tbody>
+                    {g.lines.map((l) => (
+                      <tr key={l.reasonId ?? '(none)'} data-testid={`outcome-reason-${g.outcome}-${l.reasonId ?? 'none'}`}>
+                        <td className={`py-0.5 pr-3 ${l.reasonId ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)] italic'}`}>
+                          {l.label}
+                          {l.removed ? <span className="text-xs text-[var(--color-text-faint)]"> (no longer in the list)</span> : null}
+                          {l.recordedAs ? <span className="text-xs text-[var(--color-text-faint)]"> (recorded as {l.recordedAs})</span> : null}
+                        </td>
+                        <td className="py-0.5 text-right font-bold text-[var(--color-text)]" data-testid={`outcome-reason-${g.outcome}-${l.reasonId ?? 'none'}-count`}>{l.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-[var(--color-text-muted)]" data-testid="outcome-reasons-note">
+            Each outcome&rsquo;s lines add up to its number above. A reason is named as the list names it now; one since removed keeps the words it had when the request ended. &ldquo;No reason recorded&rdquo; counts requests that ended before the list existed, under an outcome with no reasons of its own, or without one.
+            {reasons.listUnread ? <> The workspace&rsquo;s reason list could not be read, so every reason is named in the words it was recorded with, and reasons nothing ended with are not listed.</> : null}
+          </p>
+        </div>
+      )}
+      {reasons && reasons.groups.length === 0 && reasons.listUnread && (
+        <p className="mb-4 text-xs text-[var(--color-text-muted)]" data-testid="outcome-reasons-unread">
+          The workspace&rsquo;s reason list could not be read, so the reasons requests ended for cannot be broken down here; no ended request recorded one.
+        </p>
+      )}
       {outcomes.byType.length > 0 && (
         <table className="w-full text-sm">
           <thead>
