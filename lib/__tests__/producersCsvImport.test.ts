@@ -75,7 +75,31 @@ describe("PROD-5 — a CSV import notifies the library's followers, once per bat
     await importCsv("documentNumber,title,rev\nP-101,Pump,0\nP-102,Valve,0", { actorName: "dc@acme.test" });
     expect(s.db.tables.documents).toHaveLength(2);           // REGRESSION: the rows land
     expect(s.imported).toEqual([2]);                         // REGRESSION: onImported, with the count
-    expect(s.notified).toEqual([{ orgId: "o1", libraryId: "lib1", count: 2, firstLabel: "P-101", actorUserId: "u1", actorName: "dc@acme.test" }]);
+    // NEDGE-22 (notifications N16): the first row's document id rides along with its number
+    expect(s.notified).toEqual([{ orgId: "o1", libraryId: "lib1", count: 2, firstLabel: "P-101", firstDocumentId: s.db.tables.documents[0].id, actorUserId: "u1", actorName: "dc@acme.test" }]);
+    expect(s.db.tables.documents[0].document_number).toBe("P-101");
+  });
+
+  it("NEDGE-22 (notifications N16): a one-row import hands the notice THAT row's inserted id — the document its title names", async () => {
+    await importCsv("documentNumber,title,rev\nP-101,Pump,0");
+    expect(s.db.tables.documents).toHaveLength(1);
+    expect(s.notified).toEqual([{ orgId: "o1", libraryId: "lib1", count: 1, firstLabel: "P-101", firstDocumentId: s.db.tables.documents[0].id, actorUserId: "u1", actorName: undefined }]);
+  });
+
+  it("NEDGE-22: the first row's insert refused and the second landed — the notice names the first INSERTED row and its id, never the refused row's number or another row's id", async () => {
+    s.db.beforeInsert!.documents = (row) => { if (row.document_number === "P-101") throw { code: "23505", message: "duplicate key value" }; return row; };
+    await importCsv("documentNumber,title,rev\nP-101,Pump,0\nP-102,Valve,0\nP-103,Tank,0");
+    expect(s.db.tables.documents.map((d) => d.document_number)).toEqual(["P-102", "P-103"]);
+    const p102 = s.db.tables.documents.find((d) => d.document_number === "P-102")!;
+    expect(s.notified).toEqual([{ orgId: "o1", libraryId: "lib1", count: 2, firstLabel: "P-102", firstDocumentId: p102.id, actorUserId: "u1", actorName: undefined }]);
+  });
+
+  it("NEDGE-22: a row whose insert answers no id (the read-back fallback) hands the notice no id — with one row the notice names no document", async () => {
+    // the insert succeeds but returns no row (PostgREST answering an empty representation)
+    s.db.beforeInsert!.documents = () => null;
+    await importCsv("documentNumber,title,rev\nP-101,Pump,0");
+    expect(s.imported).toEqual([1]); // REGRESSION: counted as imported, as before
+    expect(s.notified).toEqual([{ orgId: "o1", libraryId: "lib1", count: 1, firstLabel: "P-101", firstDocumentId: null, actorUserId: "u1", actorName: undefined }]);
   });
 
   it("only the rows that landed count; a batch that inserted nothing notifies nobody", async () => {

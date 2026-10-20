@@ -18,7 +18,11 @@
 // Discovery (NEDGE-6 done-when 3, TAX-4 done-when 3 — notifications Round G
 // N15): a document's follower who may not DISCOVER it (a hidden or private
 // node, an ACL that excludes them) is dropped from a document-scoped event —
-// discoveringAmong, below; controllers are never dropped (DEC-43).
+// discoveringAmong, below; controllers are never dropped (DEC-43). A
+// library's follower is asked the same about each document a library-scoped
+// notice names (NEDGE-22, N16 — dispatch.ts resolveAudience). A failed
+// check's controllers lookup is bounded (controllersAmong — NEDGE-6's
+// remainder, N16).
 //
 // Membership (NEDGE-3, notifications Round G N5): only an ACTIVE member of
 // the event's org is a recipient. The role pool always asked for status =
@@ -29,6 +33,7 @@
 // defence in depth, for any caller that reads followers directly.
 
 import { supabase } from "@/lib/supabase";
+import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 
 export type ResourceType = "ticket" | "document" | "project" | "asset" | "library";
 export interface ResourceRef {
@@ -197,6 +202,95 @@ export const DISCOVER_TIMEOUT_MS = 5000;
 
 const DISCOVER_TIMED_OUT = `the discover check did not answer within ${DISCOVER_TIMEOUT_MS} ms`;
 
+/** NEDGE-6 remainder (notifications N16): how long a FAILED check's
+ *  controllers lookup (controllersAmong — who among the people the check
+ *  could not settle still gets the notice in full) may take, in the browser
+ *  and on the server. Past it the lookup answers with nobody confirmed, so
+ *  the LOOKUP itself never holds the emit open: the notice goes on to
+ *  whoever was resolved — a controller not confirmed in time gets the notice
+ *  without its details, like everyone else the check could not settle — and
+ *  the shortfall is logged. It bounds the lookup only: the reads and inserts
+ *  after it go through the same shared client, and a stalled session read
+ *  (which that client awaits before every request) stalls them as it stalls
+ *  every write in the app (NEDGE-6's residual). The same length as the
+ *  check's own bound. */
+export const CONTROLLERS_LOOKUP_TIMEOUT_MS = DISCOVER_TIMEOUT_MS;
+
+/** NEDGE-6 remainder (N16): the row cap of the controllers read. The lookup
+ *  reads the org's active controllers in ONE query (lib/roleHeld roleFilter
+ *  — headline or additive, the one place that filter is spelled), at most
+ *  this many rows (`.limit`; PostgREST's usual max-rows), and keeps the ones
+ *  among the people asked. A read that comes back AT the cap is logged: a
+ *  controller past it is left unconfirmed (the redacted notice), never
+ *  dropped. An org's controller tier is a handful of people, so the cap is
+ *  a guard, not a page size. */
+export const CONTROLLERS_LOOKUP_MAX_ROWS = 1000;
+
+/** The controller tier (DEC-43): an active Admin or DocCtrl, headline or
+ *  additive. */
+const CONTROLLER_ROLES = ["Admin", "DocCtrl"] as const;
+
+export type ControllersLookup = {
+  /** the active controllers among the people asked (none when the read did
+   *  not answer in time or failed) */
+  controllers: Set<string>;
+  /** the lookup did not finish within CONTROLLERS_LOOKUP_TIMEOUT_MS */
+  timedOut: boolean;
+  /** the read failed */
+  error?: string;
+  /** the read came back with CONTROLLERS_LOOKUP_MAX_ROWS rows — a controller
+   *  past the cap could not be confirmed */
+  capped?: boolean;
+};
+
+/** NEDGE-6 remainder (notifications N16): the org's controllers among `uids`
+ *  — the people a FAILED discover check still tells in full (DEC-43, DEC-106
+ *  item 2). One read of the org's active controllers (roleFilter), bounded
+ *  by a deadline (CONTROLLERS_LOOKUP_TIMEOUT_MS, the request aborted where
+ *  the client supports it) and a row cap (CONTROLLERS_LOOKUP_MAX_ROWS),
+ *  intersected with `uids` and re-checked with memberHoldsAny (the server
+ *  rule; is_org_controller's). On the deadline or a read error it confirms
+ *  nobody; whoever it could not confirm is left to the caller's failed-check
+ *  path (the redacted notice). Never throws, never waits past the deadline.
+ *  Exported for the test. */
+export async function controllersAmong(orgId: string, uids: string[]): Promise<ControllersLookup> {
+  const want = new Set(uids.filter(Boolean));
+  if (!orgId || want.size === 0) return { controllers: new Set(), timedOut: false };
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const deadline = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => { timedOut = true; ctrl?.abort(); resolve("timeout"); }, CONTROLLERS_LOOKUP_TIMEOUT_MS);
+  });
+  const looked = (async (): Promise<Omit<ControllersLookup, "timedOut">> => {
+    try {
+      let q = supabase
+        .from("org_members")
+        .select("uid, role, roles")
+        .eq("org_id", orgId)
+        .eq("status", "active")
+        .or(roleFilter(CONTROLLER_ROLES))
+        .limit(CONTROLLERS_LOOKUP_MAX_ROWS);
+      const withSignal = q as unknown as { abortSignal?: (s: AbortSignal) => typeof q };
+      if (ctrl && typeof withSignal.abortSignal === "function") q = withSignal.abortSignal(ctrl.signal);
+      const { data, error } = await q;
+      if (error) return { controllers: new Set(), error: error.message };
+      const rows = (data as Array<{ uid: string; role: string | null; roles: string[] | null }> | null) ?? [];
+      const controllers = new Set(rows.filter((m) => want.has(m.uid) && memberHoldsAny(m, CONTROLLER_ROLES)).map((m) => m.uid));
+      return rows.length >= CONTROLLERS_LOOKUP_MAX_ROWS ? { controllers, capped: true } : { controllers };
+    } catch (e) {
+      return { controllers: new Set(), error: (e as Error)?.message ?? String(e) };
+    }
+  })();
+  try {
+    const first = await Promise.race([looked, deadline]);
+    if (first === "timeout" || timedOut) return { controllers: new Set(), timedOut: true };
+    return { ...first, timedOut: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The BROWSER check: POST /api/documents/discoverers with the member's own
  *  token. The route answers only about a document the caller's session can
  *  read, and only the subset of the people sent. Never throws; the session
@@ -262,8 +356,19 @@ export type DiscoverFilter = {
  * (fail closed — a notice names the document, so it is not sent to someone
  * who might not be allowed to know it exists; DEC-90's fail-safe rule) and
  * logs; the caller decides what the others get (emit() sends them a notice
- * without the details — dispatch.ts redactedNotice). A context with no
- * check (unregistered server entry) keeps everyone, logged — the behaviour before this filter. Never throws.
+ * without the details — dispatch.ts redactedNotice). The controllers are
+ * read by controllersAmong — one read, bounded by CONTROLLERS_LOOKUP_TIMEOUT_MS
+ * and a row cap (NEDGE-6 remainder, notifications N16): a controller it could
+ * not confirm in time is left with the others, never waited for. A context with
+ * no check (unregistered server entry) keeps everyone, logged — the
+ * behaviour before this filter. Never throws.
+ *
+ * NEDGE-22 (N16): a notice about a LIBRARY that names a document in it asks
+ * the same question about that document (dispatch.ts resolveAudience,
+ * EmitInput.namesDocuments) — the server check and the route evaluate the
+ * library rung the library page evaluates (lib/libraryAccess
+ * effectiveLibraryAclFromRow through lib/docFileServer
+ * loadContainerAclChain, DEC-90 R1).
  */
 export async function discoveringAmong(orgId: string, documentId: string, uids: Array<string | null | undefined>): Promise<DiscoverFilter> {
   const want = Array.from(new Set(uids.filter((u): u is string => !!u)));
@@ -286,12 +391,22 @@ export async function discoveringAmong(orgId: string, documentId: string, uids: 
     else answer.discover.forEach((u) => seen.add(u));
   }
   if (failure) {
-    let controllers = new Set<string>();
-    try {
-      controllers = new Set(await resolveRoleRecipients(orgId, ["Admin", "DocCtrl"]));
-    } catch { /* nobody but a known controller */ }
-    const kept = want.filter((u) => controllers.has(u));
-    console.warn(`[notify] the discover check for document ${documentId} failed (${failure}) — ${want.length - kept.length} non-controller recipient(s) not settled (the caller withholds them or sends them a notice without the details)`);
+    // NEDGE-6 remainder (notifications N16): the controllers lookup is
+    // bounded (controllersAmong — one read of the org's controllers under a
+    // deadline and a row cap). A lookup that times out, fails or comes back
+    // at its cap keeps the controllers it confirmed (none, unless capped);
+    // the rest are left unsettled (the redacted notice) — the lookup never
+    // holds the emit open — and the shortfall is logged.
+    const lookup = await controllersAmong(orgId, want);
+    const kept = want.filter((u) => lookup.controllers.has(u));
+    const short = lookup.timedOut || !!lookup.error || !!lookup.capped;
+    if (short) {
+      const why = lookup.timedOut
+        ? `did not answer within ${CONTROLLERS_LOOKUP_TIMEOUT_MS} ms`
+        : lookup.error ? `failed (${lookup.error})` : `came back at its row cap (${CONTROLLERS_LOOKUP_MAX_ROWS} rows)`;
+      console.warn(`[notify] the controllers lookup for document ${documentId} ${why} — ${kept.length} controller(s) confirmed; the other ${want.length - kept.length} recipient(s), any controller among them included, are left to the notice without its details`);
+    }
+    console.warn(`[notify] the discover check for document ${documentId} failed (${failure}) — ${want.length - kept.length} ${short ? "unconfirmed" : "non-controller"} recipient(s) not settled (the caller withholds them or sends them a notice without the details)`);
     return { uids: kept, outcome: "failed", error: failure };
   }
   return { uids: want.filter((u) => seen.has(u)), outcome: "checked" };

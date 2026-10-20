@@ -261,8 +261,18 @@ describe("PROD-5 — one helper for every library insert path: library_doc_added
   });
 
   it("one document: 'New document: <number>'; no count, no org, no library or no actor: nobody is told; a dispatch failure is swallowed", async () => {
+    // NEDGE-22 (notifications N16): the named document's id rides along, for the dispatcher's discover check
+    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 1, firstLabel: "P-101", firstDocumentId: "d-101", actorUserId: "stranger" });
+    expect(s.emits[0]).toMatchObject({
+      title: "New document: P-101", body: "Someone added P-101 to a library you subscribe to.",
+      namesDocuments: { ids: ["d-101"], unnamed: { title: "New document added", body: "Someone added a document to a library you subscribe to." } },
+    });
+    s.emits = [];
+    // NEDGE-22: no id to check the name against — the notice names no document to anyone (fail safe)
     await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 1, firstLabel: "P-101", actorUserId: "stranger" });
-    expect(s.emits[0]).toMatchObject({ title: "New document: P-101", body: "Someone added P-101 to a library you subscribe to." });
+    expect(s.emits[0]).toMatchObject({ title: "New document added", body: "Someone added a document to a library you subscribe to." });
+    expect(s.emits[0]).not.toHaveProperty("namesDocuments");
+    expect(JSON.stringify(s.emits[0])).not.toContain("P-101");
     s.emits = [];
     for (const bad of [{ count: 0 }, { orgId: null }, { libraryId: undefined }, { actorUserId: null }]) {
       await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 3, firstLabel: "x", actorUserId: "dc1", ...bad });

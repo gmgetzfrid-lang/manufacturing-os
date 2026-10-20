@@ -229,6 +229,10 @@ describe("20261142 — SEC-20: audit_logs_admin_trail re-created from its NEWEST
       // SEC-21 (J12) re-creates it from 20261142's body with one more
       // clause; that lineDiff is prjRoundGJ12Migration.test.ts's.
       "20261157_prj_roundG_server_remainders.sql",
+      // ALOG-16 (admin-and-org P13) re-creates it from 20261157's body (or
+      // 20261142's, by what is applied) with one more clause; those lineDiffs
+      // are aoRoundGP13AuditTrailMigration.test.ts's.
+      "20261219_ao_roundG_audit_node_trail_and_outbox.sql",
     ]);
   });
   it("lineDiff: nothing of 20261063's body is lost; only the comment and the project clause (its type test inline) are added", () => {

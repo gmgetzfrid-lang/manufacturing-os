@@ -60,7 +60,14 @@ export async function notifySuperseded(input: {
     const { listLiveIntents } = await import("@/lib/intents");
     const intents = await listLiveIntents(input.documentId);
     const involved = [...new Set(intents.map((i) => i.userId))];
-    await emit({
+    // NEDGE-22 (notifications N16 fix pass 2): the two notices are
+    // independent — different resources, audiences and checks — so both are
+    // started here, in this order, and awaited together: the library's
+    // notice no longer waits on the document notice's discover round trip
+    // (in the browser, a fire-and-forget notice that waits is one a closed
+    // tab can lose). Each is sent exactly as before; a failure of one is
+    // logged and no longer stops the other.
+    const docNotice = emit({
       orgId: input.orgId,
       category: "watched",
       kind: "doc_superseded",
@@ -74,7 +81,10 @@ export async function notifySuperseded(input: {
     });
     // Library subscribers hear about every rev-up in the library they watch —
     // the "subscriptions" idea from Hermes, on the existing watch machinery.
-    await emit({
+    // NEDGE-22 (notifications N16): the notice names the document, so a
+    // subscriber who may not discover it reads the rev-up without the name
+    // or the document's link (the dispatcher's discover check, DEC-106).
+    const libraryNotice = emit({
       orgId: input.orgId,
       category: "watched",
       kind: "library_doc_revised",
@@ -85,7 +95,18 @@ export async function notifySuperseded(input: {
       actorUserId: input.actorUserId,
       actorName: input.actorName,
       audience: { followers: true },
+      namesDocuments: {
+        ids: [input.documentId],
+        unnamed: {
+          title: "New revision in a library you follow",
+          body: `${input.actorName} published a new revision in a library you subscribe to.`,
+          link: `/documents/${input.libraryId}`,
+        },
+      },
     });
+    for (const r of await Promise.allSettled([docNotice, libraryNotice])) {
+      if (r.status === "rejected") console.warn("[postPublish] supersede notify failed (non-blocking)", r.reason);
+    }
   } catch (e) {
     console.warn("[postPublish] supersede notify failed (non-blocking)", e);
   }

@@ -749,7 +749,8 @@
   {
    "name": "P27 SHARE REMAINDERS \u2014 a share link written straight into document_shares leaves a SHARE_LINK_CREATED audit row, as the app's door does",
    "findings": [
-    "intelligence DACL-4 criterion 3 (assigned at the I-12 merge): a direct insert into document_shares (PostgREST) writes the same SHARE_LINK_CREATED audit row lib/documentShares.ts writes, from a trigger or by routing creation through a definer door; the DB half also waits on 20261080's paste (DC wave 1)"
+    "intelligence DACL-4 criterion 3 (assigned at the I-12 merge): a direct insert into document_shares (PostgREST) writes the same SHARE_LINK_CREATED audit row lib/documentShares.ts writes, from a trigger or by routing creation through a definer door; the DB half also waits on 20261080's paste (DC wave 1)",
+    "document-control DIST-17 (HIGH \u2014 raised by the integrator at the N16 merge; opened by notifications N16 fix pass 2, assigned at the N16 merge): the transmittal register shows a transmittal's items only to a member the document ACL lets read each item (or a controller), and a cover sheet's portal link / QR is offered only to such a member \u2014 transmittals_select (20260910:33-37) narrowed, or the register and cover sheet filtered server-side; the portal token's downloads by a signed-in member are attributed to that member, not the outside recipient; the sender and controllers keep everything they see today; notifications NEDGE-23 closes by pointer"
    ],
    "files": [
     "supabase/migrations: one DEC-30 file (the audit trigger or door, from the NEWEST document_shares definitions, lineDiff-pinned, DRLS-16)",

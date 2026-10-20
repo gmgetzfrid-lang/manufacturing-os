@@ -8,7 +8,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { normalizeEvidence, isMachineActorName } from "@/lib/checklistEngine";
-import { auditActorNote } from "@/lib/auditActions";
+import { auditActorNote, AUDIT_TRAIL_UNSEEN_NOTE_PACK } from "@/lib/auditActions";
 
 /** admin-and-org ALOG-7: whose word an audit row's identity is (actor_kind,
  *  stamped by 20261201's trigger; a row without it is the writer's word). */
@@ -102,6 +102,7 @@ export function renderEvidenceHtml(data: EvidenceData): string {
   .muted { color: #94a3b8; } .open { color: #b91c1c; font-weight: 700; } .sup { color: #b45309; } .empty { color: #94a3b8; font-style: italic; padding: 8px 0; }
   .toolbar { position: sticky; top: 0; background: #fff; padding-bottom: 10px; } .btn { background: #ea580c; color: #fff; border: 0; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
   .footer { margin-top: 28px; color: #94a3b8; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+  .unseen { font-size: 10px; margin-bottom: 4px; }
   @media print { .toolbar { display: none; } body { padding: 0; } }
 </style></head><body>
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
@@ -125,6 +126,7 @@ export function renderEvidenceHtml(data: EvidenceData): string {
     <tbody>${rows(holdRows)}</tbody></table>`}
 
   <h2>Audit trail (${data.audit.length})</h2>
+  <div class="muted unseen">${esc(AUDIT_TRAIL_UNSEEN_NOTE_PACK)}</div>
   ${data.audit.length === 0 ? '<div class="empty">No audit entries.</div>' : `<table>
     <thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead>
     <tbody>${rows(auditRows)}</tbody></table>`}
