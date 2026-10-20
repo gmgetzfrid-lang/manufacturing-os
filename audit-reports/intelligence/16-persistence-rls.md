@@ -841,7 +841,7 @@ Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("fix pass 5 (IRLS-15): appli
 ## IRLS-16 · A per-document mention rebuild is not recorded in the mention index's run state
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (it edits the graph's routes; no package in the plan owned `app/api/graph/mentions/route.ts`) — by the integrator, 2026-10-13 (I-23 merge, DEC-31). Opened 2026-10-07 by intelligence Round G I-23.
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/graph/mentions/route.ts` (the `body.documentId` branch), `lib/mentionRunState.ts`
@@ -857,6 +857,16 @@ No page calls this branch today (the graph posts `{ orgId }` only), so nothing a
 
 - [ ] The `documentId` branch wraps its build like `rebuildDocumentMentions`: `startMentionRun(supabaseAdmin, orgId, "map", documentId)` before the build; after it, `clearStandingFailure` when the standing failure is this document's, then `finishMentionRun(…, { outcome: "succeeded" })`; on a throw, `finishMentionRun(…, { outcome: "failed", error })` before the route answers the error exactly as today.
 - [ ] A route test: a failed per-document rebuild is recorded (source `map`, the document, plain words) and still answers the same 500; a success clears that document's standing failure; with `mention_index_runs` absent the route answers exactly as before.
+
+**Resolution (2026-10-20, intelligence Round G).** I-15 GRAPH SERVER ASSEMBLY (assigned at the I-23 merge, 2026-10-13). Reproduced first (DEC-29): on `8224f80` `app/api/graph/mentions/route.ts:59` called `indexDocumentMentions` with no run-state write. What landed in that route's `body.documentId` branch (`:61-82`), wrapped as `lib/knowledgeIngest.ts` `rebuildDocumentMentions` wraps an ingest-time build: `startMentionRun(supabaseAdmin, orgId, "map", documentId)` beside the build (after the document is found — an unknown document is still 404 and records nothing); on success, `clearStandingFailure` when the standing failure is THIS document's, then `finishMentionRun(…, { outcome: "succeeded" })`; on a throw, `finishMentionRun(…, { outcome: "failed", error })` and the same throw reaches the route's existing catch, so the answer is byte-for-byte the one before. Every run-state write is `lib/mentionRunState.ts`'s (logged, never thrown; nothing written while `20261194` is unpasted). No checked-write census change: the route writes nothing itself.
+
+Tests: `lib/__tests__/intelRoundGGraphMentionsRunState.test.ts` (new, 7, through the real route, engine and run-state writer on the in-memory database): a failed per-document rebuild is recorded (map, the document, the plain-words sentence) and still answers the same 500 body; a success clears that document's standing failure and records the build; a success never clears another document's failure; an unknown document is 404 and records nothing; with `mention_index_runs` absent a success answers the same body as with it and a failure the same 500, and nothing is written.
+
+**Done-when.**
+1. ✓ The `documentId` branch wraps its build like `rebuildDocumentMentions`: start before; `clearStandingFailure` when the standing failure is this document's, then `finishMentionRun` succeeded; on a throw `finishMentionRun` failed before the route answers the error exactly as today.
+2. ✓ A route test: a failed per-document rebuild is recorded (source `map`, the document, plain words) and still answers the same 500; a success clears that document's standing failure; with `mention_index_runs` absent the route answers exactly as before.
+
+**Scope / residual.** No page calls this branch yet (the graph posts `{ orgId }`); the optional "Start over" control (IRLS-14's residual, the integrator's call) is unchanged.
 
 ---
 

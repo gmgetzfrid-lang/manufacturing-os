@@ -35,6 +35,8 @@ import {
 import { stampPdf } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { mintedSheetToken, packSheetVerifyUrl } from "@/lib/printSheetTokens";
+import { mintSheetTokens, settleSheetTokens, type MintedSheetTokens } from "@/lib/printSheetTokensClient";
 import { resolveFileUrl } from "@/lib/storage";
 import { PDFDocument } from "pdf-lib";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
@@ -303,6 +305,19 @@ interface MultiDocViewerProps {
   /** First two VISIBLE table columns — drives each thumbnail's two-line label so
    *  it matches what the library table shows. */
   labelColumns?: { key: string; label: string }[];
+}
+
+/** PS-P9: one book's per-print sheet tokens (see assembleStampedBook). */
+interface BookSheetTokens { orgId: string; minted: MintedSheetTokens; printed: string[]; settled?: boolean }
+
+/** PS-P9: settle a book's print once — delivered: the sheets in the PDF stay
+ *  live and every other token is voided; not delivered: the whole print is
+ *  voided. Fired, never awaited (settleSheetTokens never throws; an unsettled
+ *  print keeps every token live). No tokens minted → nothing to settle. */
+function settleBookTokens(tokens: BookSheetTokens | null | undefined, delivered: boolean): void {
+  if (!tokens || tokens.settled) return;
+  tokens.settled = true;
+  void settleSheetTokens({ orgId: tokens.orgId, printId: tokens.minted.printId, printedDocumentIds: delivered ? [...tokens.printed] : [] });
 }
 
 export default function MultiDocViewer({ docs, onClose, currentUserId, currentUserEmail, orgId, userRole, customColumns, labelColumns }: MultiDocViewerProps) {
@@ -733,7 +748,17 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   // sheet is stamped with its hold (HLD-1); only the sheets that actually
   // made it into the book are recorded, rows with no organization are never
   // sent, and a refused record is reported, not swallowed (EGR-6).
-  const assembleStampedBook = async (scope: typeof entries): Promise<{ blob: Blob; unrecorded: number } | null> => {
+  // PS-P9 (intelligence DACL-8 criterion 2; the integrator at the PS-P9
+  // merge, DEC-90): each sheet's QR names it by a per-print token, minted and
+  // settled exactly as lib/docPack.ts buildAndDownloadDocPack does — minted
+  // before the first sheet is stamped (only when the sheets carry a QR at
+  // all, for the book's one workspace), today's /verify/<document>?v=<version>
+  // QR on any sheet not minted (the table absent, the mint failed, a book
+  // spanning workspaces — the print is never refused); once the book is
+  // delivered and its record written, the print is settled with exactly the
+  // sheets in the PDF (fired, never awaited, by settleBookTokens); a book
+  // that never left (a failure, the print tab blocked) voids the whole print.
+  const assembleStampedBook = async (scope: typeof entries): Promise<{ blob: Blob; unrecorded: number; tokens: BookSheetTokens | null } | null> => {
     if (!currentUserId || scope.length === 0) return null;
     const gate = await ackGateDocuments(scope.map((e) => e.doc), currentUserId);
     const namesOf = (ids: Set<string>) => scope.filter((e) => e.doc.id && ids.has(e.doc.id))
@@ -752,78 +777,95 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         `Try again, or leave ${names.length === 1 ? "it" : "them"} out of the book.`,
       );
     }
-    const merged = await PDFDocument.create();
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
-    const bound: typeof entries = [];
-    for (const entry of scope) {
-      try {
-        const hold = await readCopyHoldState(entry.doc.id);
-        const holdLine = holdFooterLine(hold);
-        const stamped = await stampPdf(entry.resolvedUrl!, {
-          userLabel: currentUserEmail ?? undefined,
-          email: currentUserEmail ?? undefined,
-          timestamp: now,
-          expiresAt,
-          watermarkText: hold.blocked
-            ? copyWatermark({ versionIsCurrent: true }, hold)
-            : `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
-          footerNotice: (holdLine ? `${holdLine} ` : "") +
-            `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue — verify current revision before use.`,
-          verifyUrl: entry.doc.id && entry.doc.currentVersionId && publicOrigin()
-            ? `${publicOrigin()}/verify/${entry.doc.id}?v=${entry.doc.currentVersionId}`
-            : undefined,
-        });
-        const buf = await stamped.arrayBuffer();
-        const src = await PDFDocument.load(buf);
-        const copied = await merged.copyPages(src, src.getPageIndices());
-        copied.forEach((p) => merged.addPage(p));
-        bound.push(entry);
-      } catch (e) {
-        console.error("Failed to add doc to book", entry.doc.documentNumber, e);
+    const origin = publicOrigin();
+    const bookOrgs = new Set(scope.map((e) => e.doc.orgId).filter((o): o is string => !!o));
+    const bookOrgId = bookOrgs.size === 1 ? [...bookOrgs][0] : null;
+    const minted = origin && bookOrgId
+      ? await mintSheetTokens({
+          orgId: bookOrgId,
+          sheets: scope.flatMap((e) => e.doc.id && e.doc.currentVersionId && e.doc.orgId === bookOrgId
+            ? [{ documentId: e.doc.id, versionId: e.doc.currentVersionId }] : []),
+        })
+      : null;
+    const tokens: BookSheetTokens | null = minted && bookOrgId ? { orgId: bookOrgId, minted, printed: [] } : null;
+    try {
+      const merged = await PDFDocument.create();
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
+      const bound: typeof entries = [];
+      for (const entry of scope) {
+        try {
+          const hold = await readCopyHoldState(entry.doc.id);
+          const holdLine = holdFooterLine(hold);
+          const stamped = await stampPdf(entry.resolvedUrl!, {
+            userLabel: currentUserEmail ?? undefined,
+            email: currentUserEmail ?? undefined,
+            timestamp: now,
+            expiresAt,
+            watermarkText: hold.blocked
+              ? copyWatermark({ versionIsCurrent: true }, hold)
+              : `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
+            footerNotice: (holdLine ? `${holdLine} ` : "") +
+              `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue — verify current revision before use.`,
+            verifyUrl: packSheetVerifyUrl(origin, entry.doc.id, entry.doc.currentVersionId,
+              entry.doc.id && entry.doc.currentVersionId ? mintedSheetToken(minted, entry.doc.id) : null),
+          });
+          const buf = await stamped.arrayBuffer();
+          const src = await PDFDocument.load(buf);
+          const copied = await merged.copyPages(src, src.getPageIndices());
+          copied.forEach((p) => merged.addPage(p));
+          bound.push(entry);
+          if (entry.doc.id) tokens?.printed.push(entry.doc.id);
+        } catch (e) {
+          console.error("Failed to add doc to book", entry.doc.documentNumber, e);
+        }
       }
-    }
-    const bytes = await merged.save();
-    const recordable = bound.filter((e) => !!e.doc.orgId && !!e.doc.id);
-    let unrecorded = bound.length - recordable.length;
-    if (recordable.length > 0) {
-      const rows = recordable.map((e) => ({
-        org_id: e.doc.orgId,
-        document_id: e.doc.id,
-        version_id: e.doc.currentVersionId ?? null,
-        user_id: currentUserId,
-        user_email: currentUserEmail ?? null,
-        created_at: now.toISOString(),
-        expires_at: expiresAt.toISOString(),
-        watermark_policy_id: null,
-      }));
-      try {
-        const { error } = await supabase.from("download_audits").insert(rows);
-        if (error) {
-          console.error("[download_audits] REFUSED — this book is missing from the distribution record:", error.message);
+      const bytes = await merged.save();
+      const recordable = bound.filter((e) => !!e.doc.orgId && !!e.doc.id);
+      let unrecorded = bound.length - recordable.length;
+      if (recordable.length > 0) {
+        const rows = recordable.map((e) => ({
+          org_id: e.doc.orgId,
+          document_id: e.doc.id,
+          version_id: e.doc.currentVersionId ?? null,
+          user_id: currentUserId,
+          user_email: currentUserEmail ?? null,
+          created_at: now.toISOString(),
+          expires_at: expiresAt.toISOString(),
+          watermark_policy_id: null,
+        }));
+        try {
+          const { error } = await supabase.from("download_audits").insert(rows);
+          if (error) {
+            console.error("[download_audits] REFUSED — this book is missing from the distribution record:", error.message);
+            unrecorded = bound.length;
+          }
+        } catch (e) {
+          console.error("[download_audits] insert failed — this book is missing from the distribution record:", e);
           unrecorded = bound.length;
         }
-      } catch (e) {
-        console.error("[download_audits] insert failed — this book is missing from the distribution record:", e);
-        unrecorded = bound.length;
       }
+      // Same ambient trail as a single-doc pull: each included sheet leaves a
+      // reference intent so the stale-copy radar sees book pulls too.
+      for (const e of bound) {
+        if (!e.doc.id || !e.doc.orgId) continue;
+        void recordIntent({
+          orgId: e.doc.orgId,
+          documentId: e.doc.id,
+          libraryId: e.doc.libraryId ?? null,
+          userId: currentUserId,
+          userName: currentUserEmail?.split("@")[0] ?? null,
+          kind: "reference",
+          source: "download",
+          baseVersionId: e.doc.currentVersionId ?? null,
+        });
+      }
+      return { blob: new Blob([bytes as BlobPart], { type: "application/pdf" }), unrecorded, tokens };
+    } catch (e) {
+      // PS-P9: the book failed before it left — void the whole print.
+      settleBookTokens(tokens, false);
+      throw e;
     }
-    // Same ambient trail as a single-doc pull: each included sheet leaves a
-    // reference intent so the stale-copy radar sees book pulls too.
-    for (const e of bound) {
-      if (!e.doc.id || !e.doc.orgId) continue;
-      void recordIntent({
-        orgId: e.doc.orgId,
-        documentId: e.doc.id,
-        libraryId: e.doc.libraryId ?? null,
-        userId: currentUserId,
-        userName: currentUserEmail?.split("@")[0] ?? null,
-        kind: "reference",
-        source: "download",
-        baseVersionId: e.doc.currentVersionId ?? null,
-      });
-    }
-    return { blob: new Blob([bytes as BlobPart], { type: "application/pdf" }), unrecorded };
   };
 
   /** EGR-6: what the person is told when book sheets are not on the record. */
@@ -835,8 +877,10 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     if (!currentUserId || scope.length === 0) return;
     setBookBusy(true);
     setActionError(null);
+    let book: Awaited<ReturnType<typeof assembleStampedBook>> = null;
+    let delivered = false;
     try {
-      const book = await assembleStampedBook(scope);
+      book = await assembleStampedBook(scope);
       if (!book) return;
       const url = URL.createObjectURL(book.blob);
       const a = document.createElement("a");
@@ -844,6 +888,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       a.download = `Reference_Book_${scope.length}_docs_UNCONTROLLED.pdf`;
       document.body.appendChild(a);
       a.click();
+      delivered = true;
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       // A delivered-but-unrecorded book closes the dialog and alerts, like a
@@ -853,6 +898,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     } catch (e) {
       setActionError((e as Error).message || "Book download failed");
     } finally {
+      // PS-P9: the book (and its record) has left, or it never did.
+      settleBookTokens(book?.tokens, delivered);
       setBookBusy(false);
     }
   };
@@ -863,12 +910,15 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     if (!currentUserId || scope.length === 0) return;
     setBookBusy(true);
     setActionError(null);
+    let book: Awaited<ReturnType<typeof assembleStampedBook>> = null;
+    let delivered = false;
     try {
-      const book = await assembleStampedBook(scope);
+      book = await assembleStampedBook(scope);
       if (!book) return;
       const url = URL.createObjectURL(book.blob);
       const w = window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      delivered = !!w;
       if (!w) {
         // Stamping a big book can outlast the click's transient activation, so
         // the print tab may be pop-up blocked. Keep the dialog open and say so.
@@ -883,6 +933,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     } catch (e) {
       setActionError((e as Error).message || "Book print failed");
     } finally {
+      // PS-P9: the print tab opened (the book and its record have left), or
+      // nothing left (a failure, the tab blocked) and the print is voided.
+      settleBookTokens(book?.tokens, delivered);
       setBookBusy(false);
     }
   };

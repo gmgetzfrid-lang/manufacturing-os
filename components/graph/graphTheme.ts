@@ -70,13 +70,31 @@ export const LIBRARY_VIA_LABELS = {
   knowledge: "Knowledge library bound to the unit",
 } as const;
 
-export function edgeRgbFor(e: Pick<GraphEdge, "type" | "via">): string {
+/** GAP-303 / GM-14 (intelligence Round G, I-15) — a document ↔ equipment
+ *  link a MACHINE read off a drawing (the equipment sweep's relation row,
+ *  asserted_by 'machine') is drawn apart from one a person asserted: orange,
+ *  where a person's link keeps the shared-equipment slate. Its label carries
+ *  the sheet (or pages) it was read on, and a page read off an AI
+ *  transcription is marked AI_READ_MARK, as the asset hub, the sweep, ⌘K and
+ *  the coverage report mark it. */
+export const TAG_MACHINE_RGB = "249,115,22";
+export const TAG_MACHINE_LABEL = "Read from a drawing (not yet a person's link)";
+export const AI_READ_MARK = "AI-read, unconfirmed";
+
+export function edgeRgbFor(e: Pick<GraphEdge, "type" | "via" | "assertedBy">): string {
   if (e.type === "library" && e.via) return LIBRARY_VIA_RGB[e.via] ?? EDGE_RGB.library;
+  if (e.type === "tag" && e.assertedBy === "machine") return TAG_MACHINE_RGB;
   return EDGE_RGB[e.type] ?? "148,163,184";
 }
 
-export function edgeLabelFor(e: Pick<GraphEdge, "type" | "via">): string {
+export function edgeLabelFor(e: Pick<GraphEdge, "type" | "via" | "assertedBy" | "sheet" | "pages" | "aiRead">): string {
   if (e.type === "library" && e.via) return LIBRARY_VIA_LABELS[e.via] ?? EDGE_LABELS.library;
+  if (e.type === "tag") {
+    const base = e.assertedBy === "machine" ? "Read from the drawing" : EDGE_LABELS.tag;
+    const where = e.sheet ? ` · ${e.sheet}`
+      : e.pages && e.pages.length > 0 ? ` · page${e.pages.length === 1 ? "" : "s"} ${e.pages.join(", ")}` : "";
+    return `${base}${where}${e.aiRead ? ` (${AI_READ_MARK})` : ""}`;
+  }
   return EDGE_LABELS[e.type] ?? "Connected";
 }
 
@@ -114,6 +132,7 @@ export const EDGE_LEGEND: Array<{ key: string; label: string; rgb: string; arrow
   { key: "flow", label: EDGE_LABELS.flow, rgb: EDGE_RGB.flow, arrow: true },
   { key: "supersession", label: EDGE_LABELS.supersession, rgb: EDGE_RGB.supersession, arrow: true },
   { key: "tag", label: EDGE_LABELS.tag, rgb: EDGE_RGB.tag, arrow: false },
+  { key: "tag-machine", label: TAG_MACHINE_LABEL, rgb: TAG_MACHINE_RGB, arrow: false },
   { key: "mention", label: EDGE_LABELS.mention, rgb: EDGE_RGB.mention, arrow: false },
   { key: "related", label: EDGE_LABELS.related, rgb: EDGE_RGB.related, arrow: false },
   { key: "unit", label: EDGE_LABELS.unit, rgb: EDGE_RGB.unit, arrow: false },

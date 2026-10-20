@@ -39,7 +39,8 @@
 //   * Honest answers: a cut-off answer is said to be cut off and never rated
 //     (ASK-3); a partial tag census says it is partial (ASK-2); AI-transcribed
 //     passages are labelled (GOV-9, PR-4); model arithmetic is marked
-//     unverified (PR-9); "hybrid" means a meaning-found passage is in the
+//     unverified and the number the model computed is withheld — the
+//     formula and its cited inputs are shown (PR-9, I-25); "hybrid" means a meaning-found passage is in the
 //     answer's pool (ASK-10), with the coverage of every library searched
 //     (SEM-12).
 //   * The stored row records every knowledge document whose passages, legend
@@ -77,7 +78,7 @@ import { aiReadability } from "@/lib/aiBoundary";
 import { screenAssistantRequest } from "@/lib/assistantScreen";
 import {
   readAll, readAllByKey, READ_PAGE, columnsMissing, asDocumentData, asName, DATA_OPEN, DATA_CLOSE, OWNER_OPEN, OWNER_CLOSE,
-  DATA_BOUNDARY_RULE, answerHasComputation, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
+  DATA_BOUNDARY_RULE, answerHasComputation, withholdModelResults, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
   PROMPT_CHARS_PER_TOKEN, PROMPT_TOKENS_PER_IMAGE, MIN_ANSWER_TOKENS, ANSWER_MAX_TOKENS, MIN_ANSWER_PROMPT_CHARS,
   DRAWING_FACTS_ROW_CEILING, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
   insertAnswerRow,
@@ -2330,16 +2331,24 @@ export async function POST(req: NextRequest) {
       "merge several provisions into one bullet or one citation: a claim built from §A plus §B " +
       "cites [nA] on the §A part and [nB] on the §B part, so each highlight matches its claim. " +
       "When the user supplied their own operating numbers, END with '### Applied to your case' " +
-      "walking those values through the path to a concrete result. If a required user-specific " +
+      "walking those values through the path to the substituted expression of its final step — never " +
+      "a computed number (see CALCULATIONS). If a required user-specific " +
       "input is MISSING for that final step, do NOT append a Need inside the answer — follow the " +
       "CALCULATIONS rule instead: reply with ONLY the one-line '**Need:** …' question; the full " +
       "decision path comes after they answer.";
+    // PR-9 option (b) (DEC-90 A17, I-25): the model substitutes and stops —
+    // the app never presents a number the model computed, and the route
+    // withholds one the model writes anyway (withholdModelResults below).
     const calcProtocol =
       "\n\nCALCULATIONS: when the question requires computing from a cited formula (test pressures, " +
       "spans, thicknesses…): (1) transcribe the formula EXACTLY as printed with its variable " +
       "definitions [n]; (2) list every input with its source — a cited passage [n], a table lookup " +
-      "(name the table and the exact row/column you read), or USER-PROVIDED; (3) substitute and " +
-      "compute step by step; (4) state units, and end with a **Check:** naming the table cells to " +
+      "(name the table and the exact row/column you read), or USER-PROVIDED; (3) substitute the inputs " +
+      "into the formula and STOP at the substituted expression, on its own line as " +
+      "'**Substituted:** <symbol> = <the formula with every value and its unit in place>' — do NOT " +
+      "evaluate, simplify or round it, and state no resulting number anywhere in the answer (the " +
+      "app never shows a number the AI computed: the engineer computes it from the formula and the " +
+      "cited inputs); (4) state the result's units, and end with a **Check:** naming the table cells to " +
       "verify. If a required input is user-specific (test temperature, design pressure, material " +
       "grade…) and was NOT provided, do NOT assume a value: reply with ONLY one line " +
       "'**Need:** <one specific question naming exactly which value(s) you need and why>' — nothing else.";
@@ -2575,6 +2584,9 @@ export async function POST(req: NextRequest) {
      *  rate limit, an overload, a 5xx — AiCallError). The request was sent,
      *  so its pages reached a prompt; the answer did not come back. */
     let refetchFailed: AiCallError | null = null;
+    /** PR-9 (I-25 fix pass 4): the FETCHED / FETCH RESULT note the answer
+     *  that came back was given — part of its grounding. */
+    let answeredFetchNote = "";
     // Either way the ask ends with a stated sentence, saved as a library
     // answer, after the first answer was paid for: never a 402 or 429 from
     // the second call's reservation or its provider. What every call spent
@@ -2649,6 +2661,7 @@ export async function POST(req: NextRequest) {
                 : {}),
             });
             pageImages = secondImages;
+            answeredFetchNote = fetchNote;
           } catch (e) {
             if (e instanceof AiCallError) {
               pageImages = secondImages;
@@ -2699,6 +2712,52 @@ export async function POST(req: NextRequest) {
           assistantCaution = screen.caution;
         }
       }
+    }
+    // PR-9: model arithmetic is marked unverified (I-03) and — option (b),
+    // DEC-90 A17, I-25 — the number it computed is withheld: the answer keeps
+    // the formula and every cited input, and RESULT_WITHHELD stands where the
+    // model's result was. Decided on the model's own text, before the route's
+    // notes are added; a lookup (no computation) is returned byte-for-byte.
+    // The grounding is every piece of content the model was given — the
+    // question, the user's values, the passages as rendered, the drawing
+    // facts, anchor facts, legend, chosen scope and page list
+    // (dataSections), the aspects, the library owner's instructions, the
+    // org playbooks and Reasoning Skills in the system prompt
+    // (orgInstructions), the Fetch note, the text of every page image the
+    // answer was shown (attached up front or fetched — read from the
+    // page's indexed text, I-25 fix pass 4), and the conversation (an
+    // earlier answer with its own computed numbers withheld first, so a
+    // pre-I-25 result never grounds itself). The route's own fixed rules
+    // are not: their worked examples must never ground a value. On any line
+    // of an arithmetic answer, a value none of it holds is one the model
+    // made, and it is withheld.
+    const arithmetic = !needRefused && !unanswered && !/^\*\*Need:\*\*/.test(answer.trim())
+      && answerHasComputation(answer, inputs);
+    if (arithmetic) {
+      // The page images' text: every indexed chunk of each (document, page)
+      // the answer was shown (an image-only page has none, so a value read
+      // only off its picture is still withheld — PR-13). A read that fails
+      // grounds at most the rows read before it failed, which withholds
+      // more, never less.
+      const pageText: string[] = [];
+      if (pageImages.length > 0) {
+        const shown = new Set(pageImages.map((img) => `${img.documentId}:${img.page}`));
+        const docs = [...new Set(pageImages.map((img) => img.documentId))];
+        const pages = [...new Set(pageImages.map((img) => img.page))];
+        const read = await readAll<{ document_id: string; page: number; content: string | null }>((from, to) => supabaseAdmin
+          .from("knowledge_chunks").select("document_id, page, content")
+          .eq("org_id", orgId).in("document_id", docs).in("page", pages)
+          .order("id").range(from, to), 5_000);
+        for (const r of read.rows) {
+          if (shown.has(`${r.document_id}:${r.page}`) && r.content) pageText.push(r.content);
+        }
+      }
+      const grounding = [
+        question, inputs, renderPassages(), dataSections(pageImages), focusLine, ownerBlock,
+        orgInstructions, answeredFetchNote, ...pageText,
+        ...history.flatMap((t) => [t.question, withholdModelResults(t.answer).text]),
+      ].join("\n");
+      answer = withholdModelResults(answer, grounding).text;
     }
     if (partial) answer += `\n\n${CUT_OFF_LINE}` +
       (lengthLimitedByBudget ? " (This month's remaining AI budget limited how long this answer could be.)" : "");
@@ -2950,8 +3009,6 @@ export async function POST(req: NextRequest) {
       // every passage of one of them.
       ...graphHops.flatMap((hop) => [hop.from, hop.toId]),
     ]);
-    const arithmetic = !needRefused && !unanswered && !/^\*\*Need:\*\*/.test(answer.trim())
-      && answerHasComputation(answer, inputs);
     const contextDocuments = [...drawn].slice(0, ANSWER_CONTEXT_DOC_CAP);
     const context: AnswerContext = {
       v: 1,

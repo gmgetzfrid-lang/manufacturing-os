@@ -268,6 +268,9 @@ describe("FK order — every parent is restored before its child (census of supa
     expect(fk("documents", "authored_by_link_id")).toBeUndefined();        // 20261104 drops it (restore order)
     expect(fk("project_intake_links", "project_id")).toBeUndefined();      // 20261104 drops it
     expect(fk("users", "id")).toBe("auth.users");
+    // public-surfaces PS-P9 (20261237): a sheet token names the version it printed.
+    expect(fk("print_sheet_tokens", "version_id")).toBe("document_versions");
+    expect(fk("print_sheet_tokens", "document_id")).toBe("documents");
   });
 
   it("for EVERY foreign key between two tables RESTORE_TABLE_ORDER places, the parent comes first", () => {
@@ -293,6 +296,10 @@ describe("FK order — every parent is restored before its child (census of supa
     before("knowledge_sources", "knowledge_documents");
     before("tickets", "milestones");
     before("tickets", "document_holds");
+    // PS-P9 (the integrator at its merge, DEC-90): the sheet tokens after the
+    // documents and versions they name.
+    before("documents", "print_sheet_tokens");
+    before("document_versions", "print_sheet_tokens");
   });
 
   it("orderTablesForRestore follows the order", () => {

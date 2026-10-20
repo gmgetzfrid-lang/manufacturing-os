@@ -87,6 +87,14 @@ export const ORG_SCOPED_TABLES = [
   "work_package_documents",
   "work_package_prints",
   "distribution_acks",
+  // public-surfaces PS-P9 (20261237) — the per-print sheet tokens: org-scoped,
+  // a one-way SHA-256 of each printed sheet's 192-bit token plus the print,
+  // the document and the version (no scannable code — the token itself is
+  // never stored). INCLUDED, by the integrator at the PS-P9 merge
+  // (2026-10-20, DEC-90), and restored after document_versions so a pack
+  // sheet printed before a restore keeps its verdict; token_hash is not a
+  // bearer column (exportCoverage.test.ts BEARER_NAME_EXCEPTIONS).
+  "print_sheet_tokens",
 
   // Access + cost tracking. access_requests has carried org_id since
   // 20261023 (BKP-4 / DEC-75: it stays exported — a pending request is the

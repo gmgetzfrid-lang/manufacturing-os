@@ -807,7 +807,8 @@ describe("PKG-12 — (budget ON) a pack has a budget, keeps its order, and the c
       documentId: "big", code: "too_large", versionId: "v-big",
       reason: "600 MB on its own — over a field pack's 150 MB budget, so it was left out; download it on its own",
     })]);
-    expect(vi.mocked(fetch).mock.calls.map((c) => String(c[0]))).toEqual(["https://files/a.pdf"]);
+    // the FILE fetches (public-surfaces PS-P9 adds the per-print token request, /api/print-sheet-tokens)
+    expect(vi.mocked(fetch).mock.calls.map((c) => String(c[0])).filter((u) => u !== "/api/print-sheet-tokens")).toEqual(["https://files/a.pdf"]);
     expect(state.bodyReads).toEqual(["https://files/a.pdf"]);
   });
 
