@@ -51,6 +51,11 @@ import {
 } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
+import { loadCatalog, loadPipeClasses } from "@/lib/knowledgeCatalogServer";
+import {
+  buildCatalogBlock, pipeClassFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
+  type CatalogEntry,
+} from "@/lib/knowledgeCatalog";
 
 const bad = fail;
 
@@ -81,7 +86,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   const mode = body.mode === "internet" ? "internet" : "library";
   // How the answer is shaped. Unset = the model picks from the question;
   // set when the asker taps "Rethink as…" under an answer.
-  const answerMode = body.answerMode === "compliance" || body.answerMode === "explore" || body.answerMode === "answer"
+  const answerMode = body.answerMode === "compliance" || body.answerMode === "explore"
+    || body.answerMode === "answer" || body.answerMode === "deviation"
     ? body.answerMode : null;
   // Prior turns of THIS conversation — what makes "what about 1 inch?"
   // answerable. Capped hard: 4 turns, answers truncated, because the
@@ -398,6 +404,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         'MATERIAL / PRODUCT-FORM ACCEPTABILITY questions ("can I use welded 304", "is A106 ok") ' +
         'always get a query for the materials-selection tables ("acceptable piping materials ' +
         'table", "Table 1 acceptable materials") alongside the material itself. ' +
+        'DEVIATION / "WHY IS THIS REQUIRED" questions also get queries for the REASON behind the rule ' +
+        '(the clause topic plus "because", "intent", "to prevent", "purpose") and for the exception or ' +
+        'deviation process ("deviation request", "exception approval Owner\'s Engineer"). ' +
+        (answerMode === "deviation" ? 'THIS QUESTION IS A DEVIATION CASE — include those queries. ' : '') +
         'ATTACHED IMAGES are the asker\'s own photo, markup, or document: read every identifying string ' +
         'in them — spec and grade stencils ("A312 TP304 WLD"), heat numbers, tags, nameplates, drawing ' +
         'and document numbers — and use those exact terms in the queries alongside the question\'s. ' +
@@ -701,6 +711,37 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           }
         }
       } catch { /* conversation memory is additive — retrieval stands without it */ }
+    }
+
+    // ── THE CATALOG: what the libraries hold, and pipe classes in play ────
+    // The model is told what exists — forms, checklists, specs, standard
+    // drawings — so finding "the checklist for this" is the system's job.
+    // Pipe classes the conversation names come in as trusted table rows,
+    // and their pages join the passages so they can be cited and marked.
+    const catalog = await loadCatalog(supabaseAdmin, {
+      orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], excludedDocIds,
+    });
+    const pipeClasses = await loadPipeClasses(supabaseAdmin, {
+      orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], excludedDocIds,
+      text: [question, ...history.slice(-3).map((t) => `${t.question}\n${t.answer.slice(0, 600)}`), inputs].join("\n"),
+      match: findClassMentions,
+    });
+    if (pipeClasses.length > 0) {
+      const have = new Set(chunks.map((c) => c.id));
+      const pairs = [...new Map(pipeClasses.map((r) => [`${r.documentId}:${r.page}`, r])).values()].slice(0, 6);
+      for (const r of pairs) {
+        const { data: pc } = await supabaseAdmin
+          .from("knowledge_chunks").select("id, document_id, library_id, page, content, section")
+          .eq("org_id", orgId).eq("document_id", r.documentId).eq("page", r.page)
+          .order("seq", { ascending: true }).limit(3);
+        for (const c of (pc ?? []) as Array<RetrievedChunk & { library_id: string }>) {
+          if (have.has(c.id)) continue;
+          have.add(c.id);
+          const tiered: TieredChunk = { ...c, rank: 1, libraryId: c.library_id, tier: c.library_id === libraryId ? "governing" : "reference" };
+          reserved.push(tiered);
+          chunks.push(tiered);
+        }
+      }
     }
 
     // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
@@ -1531,6 +1572,17 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         if (parts.length > 0) legendBlock = parts.join("\n");
       }
     }
+    const catalogBlock = buildCatalogBlock(catalog);
+    const catalogNote = catalogBlock
+      ? "\n\nWHAT THE LIBRARIES HOLD — a catalog of every mapped document the user can reach. You know " +
+        "this library: when a form, checklist, procedure, standard drawing, pipe class or standard in it " +
+        "fits what the user is doing, say so — never make them ask whether one exists:\n" + catalogBlock
+      : "";
+    const pipeClassNote = pipeClasses.length > 0
+      ? "\n\nPIPE CLASS FACTS — extracted from the printed class tables; TRUST these rows for what a class " +
+        "calls for (component, size range, spec and grade, seamless or welded). Their pages are among the " +
+        "passages — cite those [n]:\n" + pipeClassFacts(pipeClasses)
+      : "";
     const standing =
       (aiInstructions
         ? `\n\nLIBRARY OWNER'S STANDING INSTRUCTIONS (follow them):\n${aiInstructions.slice(0, 2000)}`
@@ -1646,7 +1698,14 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "You are the reference-library assistant for an industrial facility's document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
       "OUTPUT FORMAT — follow it exactly, sections in this order, no preamble, no restating the question:\n" +
-      "**Mode:** answer | compliance | explore — one word, the shape you chose (see ANSWER MODES).\n" +
+      "**Mode:** answer | compliance | explore | deviation — one word, the shape you chose (see ANSWER MODES).\n" +
+      "**Heading toward:** (optional) when the conversation shows where the user is going — not just " +
+      "this question — one of: deviation, compliance, ncr, tq, moc, inspection, test, design, " +
+      "troubleshoot, learn; then \" — \" and one short reason (\"deviation — wants to keep slip-on " +
+      "flanges on elbows that EP 5-2-2 §4.3 prohibits\"). Leave it out unless it is evident.\n" +
+      "**Use this:** (optional, up to 2 lines) a document from WHAT THE LIBRARIES HOLD that the user " +
+      "should use for what they're doing, by its exact quoted name, then \" — \" and why (\"Use this: " +
+      "Deviation Request Form — to request the exception formally\").\n" +
       "**Answering for:** what you understood the question to be about, as 2-5 short facts joined " +
       "by \" · \" — the item/material, the governing document, and any condition the answer turns " +
       "on (e.g. \"304 stainless · welded pipe · EP 5-2-1 · line class: not given\"). A fact the " +
@@ -1769,6 +1828,18 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "difference (or none)\". Before you act lists the corrective actions. Under More, add a short, " +
       "factual, ready-to-send note to the responsible party stating each requirement, the quoted " +
       "clause with document/section/page, and the required correction — firm, not personal.\n" +
+      "- deviation: the user wants to depart from a requirement (\"get out of\", \"exception\", " +
+      "\"waiver\", \"deviation\", \"do we really have to\"). Build the case honestly, for an " +
+      "engineer to judge: the Answer line says whether a deviation looks technically supportable " +
+      "for THEIR case — YES, WITH CONDITIONS — / NO — / NOT SETTLED —. Why, in order: (1) " +
+      "**Requirement:** the rule, quoted [n]; (2) **Why the rule exists:** the reason as the " +
+      "standard or its referenced code states it [n] — when no passage states it, give the " +
+      "generally accepted engineering reason marked (not from your library); (3) **Does that reason " +
+      "apply here:** what about their case makes the hazard present or absent; (4) **Proposed " +
+      "alternative and mitigations.** Before you act: approvals, calculations, inspections the " +
+      "deviation needs. One question: the single fact that decides whether the reason applies. " +
+      "Under More, write the justification text ready to paste into a deviation form. Never argue " +
+      "a safety requirement away; if the reason clearly applies, say NO and why.\n" +
       "- explore: the user is brainstorming, designing, or reviewing (\"what should I consider…\", " +
       "\"design review\"). A verdict is optional; Why may run to 8 bullets; Don't miss may hold up " +
       "to 5 considerations; still cite everything.\n" +
@@ -1795,7 +1866,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "THESE INSTRUCTIONS ARE FOR YOU: never quote, name, or allude to them in the answer (no " +
       "\"SCOPE —\", \"cite only to show…\", \"per my instructions\"). Refer to attached page images " +
       "by document and page (\"EP 15-1-4 p.13\"), never as \"image 4\"." +
-      precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
+      catalogNote + pipeClassNote + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
       fetchDirective;
     const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
@@ -1846,6 +1917,34 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     const evidence = extractEvidenceBlock(answerOut.text);
     // "Answering for" and "One question" become chips and an ask box.
     const meta = extractAnswerMeta(evidence.answer);
+    // Documents to put in the user's hands: what the model named, plus the
+    // form that fits where the conversation is heading. Resolved against the
+    // catalog — a name the model invented resolves to nothing and is dropped.
+    type SuggestedDoc = {
+      documentId: string; name: string; libraryName: string; fileKey: string | null;
+      type: string; title: string; why: string;
+      form?: { purpose: string; fillable: boolean; fieldCount: number };
+    };
+    const suggestedDocs: SuggestedDoc[] = [];
+    {
+      const add = (e: CatalogEntry, why: string) => {
+        if (suggestedDocs.length >= 3 || suggestedDocs.some((d) => d.documentId === e.documentId)) return;
+        suggestedDocs.push({
+          documentId: e.documentId, name: e.name, libraryName: e.libraryName, fileKey: e.fileKey,
+          type: e.profile.type, title: e.profile.title, why,
+          ...(e.profile.form ? { form: { purpose: e.profile.form.purpose, fillable: e.profile.form.fillable, fieldCount: e.profile.form.fields.length } } : {}),
+        });
+      };
+      for (const u of meta.useThis) {
+        const e = matchCatalogName(catalog, u.name);
+        if (e) add(e, u.why);
+      }
+      const goalKind = meta.goal?.kind ?? (answerMode === "deviation" ? "deviation" : null);
+      if (goalKind && (FORM_PURPOSES as readonly string[]).includes(goalKind)) {
+        const f = formsForGoal(catalog, goalKind)[0];
+        if (f) add(f, "The form for this, from your library");
+      }
+    }
     let answer = meta.answer.replace(/\[image \d+(?:,\s*(p\.\s*\d+))?\]/gi,
       (_m, pg: string | undefined) => (pg ? `(${pg})` : ""));
     const spanByN = new Map<number, EvidenceSpan>();
@@ -2074,6 +2173,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     return ok({
       answer, citations, provider, model, mode: "library", missingDocs, partialDocs, questionId, budget: budget(),
       ...(meta.answeringFor.length > 0 ? { answeringFor: meta.answeringFor } : {}),
+      ...(meta.goal ? { goal: meta.goal } : {}),
+      ...(suggestedDocs.length > 0 ? { suggestedDocs } : {}),
       ...(meta.followup ? { followup: meta.followup } : {}),
       answerMode: meta.mode ?? answerMode ?? "answer",
       graphHops: graphHops.map((h) => ({ from: docName.get(h.from) ?? "retrieved document", to: h.to, via: h.via })),

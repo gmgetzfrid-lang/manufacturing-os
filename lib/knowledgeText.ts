@@ -301,8 +301,12 @@ export function splitPageIntoSections(
   const segments: PageSegment[] = [];
   let section = carrySection;
   let buf: string[] = [];
+  // Lines stay lines. Joining with spaces here used to flatten every table
+  // before chunkPageText could see it — splitTables needs 3+ separate rows,
+  // so pipe-class tables and material lists were indexed as prose soup.
+  // Prose is whitespace-collapsed later in chunkProse, so nothing else moves.
   const flush = () => {
-    const text = buf.join(" ").trim();
+    const text = buf.join("\n").trim();
     if (text.length > 0) segments.push({ section, text });
     buf = [];
   };
@@ -555,21 +559,48 @@ export function extractEvidenceBlock(answer: string): { answer: string; spans: E
  *  to be about ("Answering for") and the one question that would finish it —
  *  pulled out of the prose into fields the UI renders as chips and an ask
  *  box. Removed from the text either way. */
-export type AnswerMode = "answer" | "compliance" | "explore";
+export type AnswerMode = "answer" | "compliance" | "explore" | "deviation";
+
+export const GOAL_KINDS = [
+  "deviation", "compliance", "ncr", "tq", "moc", "inspection", "test", "design", "troubleshoot", "learn",
+] as const;
+export type GoalKind = typeof GOAL_KINDS[number];
 
 export function extractAnswerMeta(answer: string): {
   answer: string;
   answeringFor: string[];
   followup: { question: string; options: string[] } | null;
   mode: AnswerMode | null;
+  /** Where the conversation is heading, when the model saw it. */
+  goal: { kind: GoalKind; why: string } | null;
+  /** Library documents the model says to use, by written name. */
+  useThis: Array<{ name: string; why: string }>;
 } {
   let answeringFor: string[] = [];
   let followup: { question: string; options: string[] } | null = null;
   let mode: AnswerMode | null = null;
+  let goal: { kind: GoalKind; why: string } | null = null;
+  const useThis: Array<{ name: string; why: string }> = [];
   const kept: string[] = [];
   for (const raw of answer.split("\n")) {
-    const md = raw.trim().match(/^\*{0,2}Mode:?\*{0,2}:?\s*\**\s*(answer|compliance|explore)\b/i);
+    const md = raw.trim().match(/^\*{0,2}Mode:?\*{0,2}:?\s*\**\s*(answer|compliance|explore|deviation)\b/i);
     if (md && !mode) { mode = md[1].toLowerCase() as AnswerMode; continue; }
+    const ht = raw.trim().match(/^\*{0,2}Heading toward:?\*{0,2}:?\s*\**\s*([a-z]+)\**\s*(?:[—–:-]+\s*(.*))?$/i);
+    if (ht) {
+      const kind = ht[1].toLowerCase();
+      if (!goal && (GOAL_KINDS as readonly string[]).includes(kind)) {
+        goal = { kind: kind as GoalKind, why: (ht[2] ?? "").replace(/\*\*/g, "").trim().slice(0, 200) };
+      }
+      continue;
+    }
+    const ut = raw.trim().match(/^(?:[-*•]\s*)?\*{0,2}Use this:?\*{0,2}:?\s*(.+)$/i);
+    if (ut) {
+      const body = ut[1].replace(/\*\*/g, "").trim();
+      const [namePart, ...whyParts] = body.split(/\s+[—–]\s+|\s+-\s+/);
+      const name = namePart.replace(/^["“'`]|["”'`]$/g, "").trim();
+      if (name && useThis.length < 3) useThis.push({ name: name.slice(0, 160), why: whyParts.join(" — ").trim().slice(0, 200) });
+      continue;
+    }
     const af = raw.trim().match(/^\*{0,2}Answering for:?\*{0,2}:?\s*(.+)$/i);
     if (af && answeringFor.length === 0) {
       answeringFor = af[1].replace(/\*\*/g, "").split(/\s*[·•|]\s*/).map((s) => s.trim())
@@ -585,7 +616,7 @@ export function extractAnswerMeta(answer: string): {
     }
     kept.push(raw);
   }
-  return { answer: kept.join("\n").trim(), answeringFor, followup, mode };
+  return { answer: kept.join("\n").trim(), answeringFor, followup, mode, goal, useThis };
 }
 
 /** "line class: not given" — a fact the answer depends on that the asker

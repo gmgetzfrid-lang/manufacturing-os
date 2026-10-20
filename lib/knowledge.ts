@@ -45,7 +45,21 @@ export interface KnowledgeAiFeatures {
   /** Legend / symbols / line-key documents (ids from THIS library) whose
    *  content rides along with every question. Max 3. */
   legendDocIds?: string[];
+  /** What this library holds. A hint for mapping and answers — every
+   *  document is still profiled on its own, so a mixed library works. */
+  kind?: LibraryKind;
 }
+
+export const LIBRARY_KINDS = [
+  { id: "mixed", label: "Mixed — figure it out per document" },
+  { id: "standards", label: "Engineering standards / practices (EPs)" },
+  { id: "pipe_specs", label: "Piping specifications & material lists" },
+  { id: "forms", label: "Forms & checklists" },
+  { id: "std_drawings", label: "Standard drawings / typical details" },
+  { id: "pids", label: "P&IDs & plant drawings" },
+  { id: "procedures", label: "Procedures & work instructions" },
+] as const;
+export type LibraryKind = typeof LIBRARY_KINDS[number]["id"];
 
 export interface KnowledgeLibraryLink {
   id: string;
@@ -143,7 +157,16 @@ export interface KnowledgeAnswer {
   followup?: { question: string; options: string[] };
   /** The shape this answer took: direct answer, compliance check, or
    *  exploration — the model's pick unless the asker chose one. */
-  answerMode?: "answer" | "compliance" | "explore";
+  answerMode?: "answer" | "compliance" | "explore" | "deviation";
+  /** Where the conversation is heading, when the model saw it. */
+  goal?: { kind: string; why: string };
+  /** Library documents to use for what the user is doing — forms,
+   *  checklists, specs — resolved against the catalog. */
+  suggestedDocs?: Array<{
+    documentId: string; name: string; libraryName: string; fileKey: string | null;
+    type: string; title: string; why: string;
+    form?: { purpose: string; fillable: boolean; fieldCount: number };
+  }>;
   /** Structured, clickable equipment register — attached when the question
    *  asks for equipment lists/tables. Deterministic data, never model
    *  output; every sheet reference opens the drawing with the tag ringed. */
@@ -293,8 +316,14 @@ export async function saveLibraryAiInstructions(libraryId: string, instructions:
 
 /** Save the library's AI feature toggles (controllers; RLS enforces). */
 export async function saveLibraryAiFeatures(libraryId: string, features: KnowledgeAiFeatures): Promise<void> {
+  // MERGE onto what's stored. A full replace used to wipe every key this
+  // modal doesn't edit — drawingIntel, autoRead, embedBuild, the tag-reader
+  // version — each time someone saved their standing instructions.
+  const { data: current } = await supabase.from("knowledge_libraries")
+    .select("ai_features").eq("id", libraryId).maybeSingle();
+  const merged = { ...((current?.ai_features ?? {}) as Record<string, unknown>), ...features };
   const { error } = await supabase.from("knowledge_libraries")
-    .update({ ai_features: features }).eq("id", libraryId);
+    .update({ ai_features: merged }).eq("id", libraryId);
   if (error) {
     throw new Error(
       error.code === "PGRST204" || /ai_features/.test(error.message)
@@ -1025,4 +1054,92 @@ export async function removeKnowledgeSource(orgId: string, sourceId: string): Pr
   });
   const data = (await res.json().catch(() => null)) as { error?: string } | null;
   if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+}
+
+
+// ── Library catalog + forms ─────────────────────────────────────────────────
+
+export interface CatalogSummaryEntry {
+  documentId: string; name: string; type: string; designation: string | null; title: string;
+  purpose: string; checklistFor: string | null;
+  form: { purpose: string; fillable: boolean; fieldCount: number } | null;
+  pipeSpec: { pagesDone: number; pageCount: number; classes: number; done: boolean } | null;
+}
+
+export async function getLibraryCatalog(orgId: string, libraryId: string): Promise<{
+  canMap: boolean; entries: CatalogSummaryEntry[]; unmapped: number; notReady: number;
+}> {
+  return apiGet(`/api/knowledge/catalog?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}`);
+}
+
+/** Map the library: repeated bounded passes until nothing is left, or a
+ *  pass makes no progress (then it says so instead of spinning). */
+export async function mapLibraryCatalog(
+  orgId: string, libraryId: string,
+  onProgress?: (p: { profiled: number; pipePages: number; remaining: number }) => void,
+  documentId?: string,
+): Promise<void> {
+  let stalls = 0;
+  let total = { profiled: 0, pipePages: 0 };
+  for (let i = 0; i < 400; i++) {
+    let out: { profiled: number; pipePages: number; remaining: number; failed: number };
+    try {
+      out = await apiPost("/api/knowledge/catalog", { orgId, libraryId, ...(documentId ? { documentId } : {}) });
+    } catch (e) {
+      if (!(e as { transient?: boolean }).transient || ++stalls > 4) throw e;
+      await new Promise((r) => setTimeout(r, 1500 * stalls));
+      continue;
+    }
+    total = { profiled: total.profiled + out.profiled, pipePages: total.pipePages + out.pipePages };
+    onProgress?.({ ...total, remaining: out.remaining });
+    if (out.remaining === 0) return;
+    if (out.profiled === 0 && out.pipePages === 0) {
+      if (++stalls >= 3) {
+        throw new Error(`Mapping stopped with ${out.remaining} document(s) left${out.failed ? ` — ${out.failed} failed to read` : ""}. Try again, or check your AI key and monthly budget.`);
+      }
+    } else stalls = 0;
+  }
+}
+
+export interface DraftedFormField {
+  name: string; label: string; kind: "text" | "long" | "date" | "check" | "choice" | "signature";
+  options?: string[]; value: string;
+}
+export interface DraftedForm {
+  form: { documentId: string; name: string; title: string; purpose: string; fillable: boolean; fields: DraftedFormField[] };
+  needsInput: string[];
+  notes: string;
+}
+
+export async function draftLibraryForm(input: {
+  orgId: string; documentId: string; question: string; answer: string;
+  citations: KnowledgeCitation[]; goal?: string;
+}): Promise<DraftedForm> {
+  return apiPost<DraftedForm>("/api/knowledge/forms", {
+    action: "draft", orgId: input.orgId, documentId: input.documentId,
+    question: input.question, answer: input.answer, goal: input.goal,
+    citations: input.citations.filter((c) => !c.url).map((c) => ({
+      documentName: c.documentName, section: c.section, page: c.page, highlight: c.highlight, quote: c.quote?.slice(0, 600),
+    })),
+  });
+}
+
+/** Render the filled form and save it to the user's downloads. */
+export async function downloadLibraryForm(orgId: string, documentId: string, values: Record<string, string>): Promise<void> {
+  const token = await authToken();
+  const res = await fetch("/api/knowledge/forms", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action: "render", orgId, documentId, values }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "form - completed.pdf";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }

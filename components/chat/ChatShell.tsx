@@ -300,7 +300,7 @@ export default function ChatShell() {
   // ── The turn ──
   const send = useCallback(async (question: string, opts: {
     focus?: string[]; inputs?: string; approved?: string[]; retry?: boolean;
-    answerMode?: "answer" | "compliance" | "explore";
+    answerMode?: "answer" | "compliance" | "explore" | "deviation";
   } = {}) => {
     const q = question.trim();
     if (!orgId || !uid || !q || streaming) return;

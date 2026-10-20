@@ -798,3 +798,23 @@ describe("verdict answers from real use", () => {
     expect(s.why.filter((b) => b.type === "bullet")).toHaveLength(6);
   });
 });
+
+describe("tables survive section splitting", () => {
+  it("keeps a pipe-class table as its own chunk with rows intact", () => {
+    const lines = [
+      "6.2 Pipe Class 1S4",
+      "The following components apply to class 1S4.",
+      "Table 6 – Pipe Class 1S4",
+      "Component | Size | Spec | Notes",
+      "Pipe | 1/2-2 | ASTM A312 TP304 Seamless | Sch 40S",
+      "Pipe | 3-24 | ASTM A312 TP304 Welded | Sch 10S",
+      "Flange | All | ASTM A182 F304 | WN RF",
+    ];
+    const { segments } = splitPageIntoSections(lines, null);
+    const chunks = segments.flatMap((s) => chunkPageText(s.text));
+    const table = chunks.find((c) => c.includes("Component | Size"));
+    expect(table).toBeDefined();
+    expect(table!.split("\n")).toHaveLength(5);
+    expect(table).toContain("Pipe | 3-24 | ASTM A312 TP304 Welded | Sch 10S");
+  });
+});

@@ -31,6 +31,7 @@ import { listThreads, type ChatThread } from "@/lib/chatClient";
 import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
+import LibraryMapPanel from "@/components/knowledge/LibraryMapPanel";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 
 // pdf.js only loads when someone actually opens a cited page.
@@ -327,6 +328,9 @@ export default function KnowledgeLibraryPage() {
       {activeOrgId && (
         <AskEntry orgId={activeOrgId} libraryId={libraryId} readyDocs={readyDocs} docsTotal={docs.length} />
       )}
+
+      {/* What the assistant knows is in here — forms, checklists, specs. */}
+      {activeOrgId && readyDocs > 0 && <LibraryMapPanel orgId={activeOrgId} libraryId={libraryId} />}
 
       <div>
         {/* ── Documents ──────────────────────────────────────────────────── */}

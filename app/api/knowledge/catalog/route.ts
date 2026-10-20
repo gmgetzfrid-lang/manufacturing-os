@@ -1,0 +1,112 @@
+// /api/knowledge/catalog — the library's map of what it holds.
+//
+// GET  ?orgId&libraryId → every document's profile (type, designation,
+//      purpose, form fields, pipe-class progress) plus what is still
+//      unmapped. Any active member.
+// POST { orgId, libraryId, documentId? } → one bounded mapping pass:
+//      profile unprofiled documents, advance pipe-class extraction. The
+//      client calls again until `remaining` is 0. Admin/DocCtrl only — it
+//      writes the shared catalog — on the caller's own key, fast tier.
+
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { openAiKey } from "@/lib/ai/keyVault";
+import { ALLOWED_PROVIDERS, type AiUsage } from "@/lib/ai/pricing";
+import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import type { AiProviderId } from "@/lib/ai/providerCall";
+import { drainCatalog, profilesFor } from "@/lib/knowledgeCatalogServer";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
+const BUDGET_MS = 48_000;
+
+async function authUser(req: NextRequest) {
+  const h = req.headers.get("authorization");
+  if (!h?.startsWith("Bearer ")) return null;
+  const { data: { user }, error } = await supabaseAdmin.auth.getUser(h.slice(7));
+  return error || !user ? null : user;
+}
+
+async function memberRoles(orgId: string, uid: string): Promise<Set<string> | null> {
+  const { data: m } = await supabaseAdmin
+    .from("org_members").select("role, roles")
+    .eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle();
+  if (!m) return null;
+  return new Set<string>([(m.role as string) ?? "", ...((m.roles as string[]) ?? [])]);
+}
+
+export async function GET(req: NextRequest) {
+  const user = await authUser(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const orgId = req.nextUrl.searchParams.get("orgId") ?? "";
+  const libraryId = req.nextUrl.searchParams.get("libraryId") ?? "";
+  if (!orgId || !libraryId) return NextResponse.json({ error: "orgId and libraryId are required" }, { status: 400 });
+  const roles = await memberRoles(orgId, user.id);
+  if (!roles) return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
+
+  const { data: docs } = await supabaseAdmin
+    .from("knowledge_documents").select("id, name, status")
+    .eq("org_id", orgId).eq("library_id", libraryId).limit(2000);
+  const list = (docs ?? []) as Array<{ id: string; name: string; status: string }>;
+  const profiles = await profilesFor(supabaseAdmin, list.map((d) => d.id));
+  const ready = list.filter((d) => d.status === "ready");
+  return NextResponse.json({
+    canMap: roles.has("Admin") || roles.has("DocCtrl"),
+    entries: list.filter((d) => profiles.has(d.id)).map((d) => {
+      const p = profiles.get(d.id)!;
+      return {
+        documentId: d.id, name: d.name, type: p.type, designation: p.designation, title: p.title,
+        purpose: p.purpose, checklistFor: p.checklistFor ?? null,
+        form: p.form ? { purpose: p.form.purpose, fillable: p.form.fillable, fieldCount: p.form.fields.length } : null,
+        pipeSpec: p.pipeSpec ?? null,
+      };
+    }),
+    unmapped: ready.filter((d) => {
+      const p = profiles.get(d.id);
+      return !p || (p.type === "pipe_spec" && !p.pipeSpec?.done);
+    }).length,
+    notReady: list.length - ready.length,
+  });
+}
+
+export async function POST(req: NextRequest) {
+  const user = await authUser(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let body: { orgId?: string; libraryId?: string; documentId?: string };
+  try { body = await req.json(); } catch { return NextResponse.json({ error: "Expected JSON body" }, { status: 400 }); }
+  const orgId = String(body.orgId ?? "");
+  const libraryId = String(body.libraryId ?? "");
+  if (!orgId || !libraryId) return NextResponse.json({ error: "orgId and libraryId are required" }, { status: 400 });
+  const roles = await memberRoles(orgId, user.id);
+  if (!roles || (!roles.has("Admin") && !roles.has("DocCtrl"))) {
+    return NextResponse.json({ error: "Only Admins and Document Control can map a library." }, { status: 403 });
+  }
+  const { data: conn } = await supabaseAdmin
+    .from("ai_connections").select("provider, model, api_key")
+    .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
+  if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
+    return NextResponse.json({ error: "Add your Claude or OpenAI key in AI settings to map the library." }, { status: 412 });
+  }
+  const [spent, cap] = await Promise.all([getMonthUsage(orgId, user.id), getCapUsd(orgId, user.id)]);
+  if (cap > 0 && spent.spentUsd >= cap) {
+    return NextResponse.json({ error: `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}).` }, { status: 402 });
+  }
+
+  const usage: AiUsage = { inputTokens: 0, outputTokens: 0 };
+  let usedModel = conn.model as string;
+  try {
+    const result = await drainCatalog(supabaseAdmin, {
+      orgId, libraryId, documentId: body.documentId || undefined,
+      deadlineMs: Date.now() + BUDGET_MS,
+      conn: {
+        provider: conn.provider as AiProviderId, model: conn.model as string, apiKey: openAiKey(conn.api_key as string),
+        onUsage: (u, model) => { usage.inputTokens += u.inputTokens; usage.outputTokens += u.outputTokens; usedModel = model; },
+      },
+    });
+    await recordAskUsage({ orgId, userId: user.id, provider: conn.provider as string, model: usedModel, usage, ok: true, op: "knowledgeCatalog" });
+    return NextResponse.json(result);
+  } catch (e) {
+    await recordAskUsage({ orgId, userId: user.id, provider: conn.provider as string, model: usedModel, usage, ok: false, op: "knowledgeCatalog" });
+    return NextResponse.json({ error: `Mapping failed: ${(e as Error).message}` }, { status: 502 });
+  }
+}

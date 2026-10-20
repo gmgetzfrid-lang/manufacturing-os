@@ -391,7 +391,7 @@ export interface AskTurnInput {
   attachments?: ChatAttachment[];
   /** How the library answer is shaped: a direct answer, a compliance check
    *  against the standard, or a broader exploration. Unset = the AI picks. */
-  answerMode?: "answer" | "compliance" | "explore";
+  answerMode?: "answer" | "compliance" | "explore" | "deviation";
 }
 
 /** Send one turn and read the stream. Resolves when the stream ends; every

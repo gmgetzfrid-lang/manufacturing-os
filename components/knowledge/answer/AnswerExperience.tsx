@@ -24,6 +24,7 @@ import {
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
 import { buildAnswerExport, printableDocument } from "@/lib/answerExport";
+import FormFillModal from "@/components/knowledge/answer/FormFillModal";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
@@ -1039,14 +1040,98 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
   );
 }
 
-const MODES: Array<{ id: "answer" | "compliance" | "explore"; label: string; hint: string }> = [
+const MODES: Array<{ id: "answer" | "compliance" | "explore" | "deviation"; label: string; hint: string }> = [
   { id: "answer", label: "Direct answer", hint: "The answer and its proof, nothing extra" },
   { id: "compliance", label: "Compliance check", hint: "Does what was done meet the standard? Findings with quoted proof, and a note you can send" },
+  { id: "deviation", label: "Deviation case", hint: "Why the rule exists, whether that reason applies to you, and a justification ready for the form" },
   { id: "explore", label: "Explore / design review", hint: "Broader — related rules and what to consider" },
 ];
 
+const GOAL_LABEL: Record<string, string> = {
+  deviation: "a deviation from the standard",
+  compliance: "a compliance check",
+  ncr: "a nonconformance report",
+  tq: "a technical query",
+  moc: "a management of change",
+  inspection: "an inspection",
+  test: "a test",
+  design: "a design decision",
+  troubleshoot: "troubleshooting a problem",
+  learn: "understanding why the rule exists",
+};
+
+const DOC_TYPE_WORD: Record<string, string> = {
+  form: "Form", checklist: "Checklist", pipe_spec: "Piping spec", standard: "Standard",
+  procedure: "Procedure", std_drawing: "Standard drawing", pid: "Drawing", datasheet: "Data sheet", other: "Document",
+};
+
+/** The helper: where the conversation seems to be heading, the next step
+ *  that fits, and the library documents to use for it — forms to fill,
+ *  checklists to open. Offered, never assumed. */
+function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
+  answer: KnowledgeAnswer;
+  mode: string;
+  onRethink?: (m: "answer" | "compliance" | "explore" | "deviation") => void;
+  onOpenDoc?: (d: DocLink) => void;
+  onFill: (doc: NonNullable<KnowledgeAnswer["suggestedDocs"]>[number]) => void;
+}) {
+  const goal = answer.goal;
+  const docs = answer.suggestedDocs ?? [];
+  const step = goal?.kind === "deviation" && mode !== "deviation" ? { m: "deviation" as const, label: "Work up the deviation case" }
+    : goal?.kind === "compliance" && mode !== "compliance" ? { m: "compliance" as const, label: "Run it as a compliance check" }
+    : null;
+  if (!goal && docs.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/20 px-4 py-3 space-y-2.5">
+      {goal && (
+        <div className="text-[13.5px] leading-snug text-[var(--color-text)]">
+          <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-violet-700 dark:text-violet-300 mr-1.5">Helper</span>
+          Looks like you&apos;re working toward <b>{GOAL_LABEL[goal.kind] ?? goal.kind}</b>{goal.why ? <> — {goal.why}</> : null}.
+        </div>
+      )}
+      {!goal && (
+        <div className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-violet-700 dark:text-violet-300">From your library</div>
+      )}
+      {(step && onRethink) || docs.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          {step && onRethink && (
+            <button type="button" onClick={() => onRethink(step.m)}
+              className="self-start inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors">
+              <RefreshCw className="w-3.5 h-3.5" /> {step.label}
+            </button>
+          )}
+          {docs.map((d) => (
+            <div key={d.documentId} className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-3 py-2">
+              <FileText className="w-4 h-4 text-violet-600 shrink-0" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-bold text-[var(--color-text)] truncate">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mr-1.5">{DOC_TYPE_WORD[d.type] ?? "Document"}</span>
+                  {d.name.replace(/\.pdf$/i, "")}
+                </span>
+                {d.why && <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{d.why}</span>}
+              </span>
+              {d.form && (
+                <button type="button" onClick={() => onFill(d)}
+                  className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-md bg-orange-600 text-white hover:bg-orange-700">
+                  <PenLine className="w-3.5 h-3.5" /> Fill it in
+                </button>
+              )}
+              {d.fileKey && onOpenDoc && (
+                <button type="button" onClick={() => onOpenDoc({ id: d.documentId, name: d.name, fileKey: d.fileKey!, page: 1, mention: d.name })}
+                  className="inline-flex items-center gap-1.5 text-[12.5px] font-bold px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-violet-400">
+                  <Eye className="w-3.5 h-3.5" /> Open
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** Under every answer: reshape it if it isn't what was needed. */
-function RethinkBar({ mode, onRethink }: { mode: string; onRethink: (m: "answer" | "compliance" | "explore") => void }) {
+function RethinkBar({ mode, onRethink }: { mode: string; onRethink: (m: "answer" | "compliance" | "explore" | "deviation") => void }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[12px] text-[var(--color-text-muted)] mr-0.5">Not what you needed? Rethink as</span>
@@ -1081,11 +1166,12 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
    *  (a corrected chip or the answer to the one question). */
   onFollowup?: (value: string) => void;
   /** Re-ask this question, optionally reshaped as another answer mode. */
-  onRethink?: (mode?: "answer" | "compliance" | "explore") => void;
+  onRethink?: (mode?: "answer" | "compliance" | "explore" | "deviation") => void;
   /** Add files to the next question (the "settle this" drop zone). */
   onAttach?: (files: File[]) => void;
 }) {
   const mode = answer.answerMode ?? "answer";
+  const [filling, setFilling] = useState<NonNullable<KnowledgeAnswer["suggestedDocs"]>[number] | null>(null);
   const parts = useMemo(() => structureAnswer(parseAnswerBlocks(answer.answer), answer.answerMode ?? null), [answer.answer, answer.answerMode]);
   const heroV = parts.hero !== null ? splitVerdict(parts.hero) : null;
   const docLinkCtx = useMemo(
@@ -1205,6 +1291,12 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         onOpenPage={(c) => { setProof(null); onCite(c); }}
       />
     )}
+    {filling && shapeOrgId && (
+      <FormFillModal orgId={shapeOrgId} documentId={filling.documentId} formName={filling.name}
+        question={question} answer={answer.answer} citations={answer.citations}
+        goal={answer.goal ? `${answer.goal.kind}${answer.goal.why ? ` — ${answer.goal.why}` : ""}` : undefined}
+        onClose={() => setFilling(null)} />
+    )}
     {shaping && shapeOrgId && shapeUid && (
       <GraphShapeWizard
         orgId={shapeOrgId}
@@ -1262,6 +1354,8 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 {heroV ? inline(heroV.text) : <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />}
               </div>
             </div>
+
+            <HelperBand answer={answer} mode={mode} onRethink={onRethink} onOpenDoc={onOpenDoc} onFill={setFilling} />
 
             {heroV && parts.settle.length > 0 && (
               <SettleBox items={parts.settle} inline={inline} onAttach={onAttach}
@@ -1337,7 +1431,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
               <span>·</span>
               {/* Version beacon: which renderer produced this card. */}
-              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt10</span>
+              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt11</span>
             </div>
           </div>
 

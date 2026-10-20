@@ -136,7 +136,7 @@ export function AssistantTurn({
   onClarify: (question: string, focus: string[]) => void;
   onNeed: (question: string, values: string, focus?: string[], priorInputs?: string) => void;
   /** Re-ask the same question, optionally reshaped as another answer mode. */
-  onRethink: (question: string, answerMode?: "answer" | "compliance" | "explore") => void;
+  onRethink: (question: string, answerMode?: "answer" | "compliance" | "explore" | "deviation") => void;
   /** Add files to the next question (the "settle this" drop zone). */
   onAttach: (files: File[]) => void;
   onConfirm: (m: ChatMessage, a: PendingAction) => void;

@@ -12,8 +12,8 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import {
   listKnowledgeLibraries, listLibraryLinks, setLibraryLinks, saveLibraryAiInstructions,
-  saveLibraryAiFeatures, listKnowledgeDocuments,
-  type KnowledgeLibrary, type KnowledgeDocument,
+  saveLibraryAiFeatures, listKnowledgeDocuments, LIBRARY_KINDS,
+  type KnowledgeLibrary, type KnowledgeDocument, type LibraryKind,
 } from "@/lib/knowledge";
 
 const DECODER_PLACEHOLDER =
@@ -36,6 +36,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   const [visionAllPages, setVisionAllPages] = useState(library.aiFeatures?.visionAllPages === true);
   const [drawingIntel, setDrawingIntel] = useState(library.aiFeatures?.drawingIntel === true);
   const [decoder, setDecoder] = useState(library.aiFeatures?.decoder ?? "");
+  const [kind, setKind] = useState<LibraryKind>(library.aiFeatures?.kind ?? "mixed");
   const [legendDocIds, setLegendDocIds] = useState<Set<string>>(
     new Set(library.aiFeatures?.legendDocIds ?? []));
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
@@ -52,6 +53,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setVisionAllPages(library.aiFeatures?.visionAllPages === true);
     setDrawingIntel(library.aiFeatures?.drawingIntel === true);
     setDecoder(library.aiFeatures?.decoder ?? "");
+    setKind(library.aiFeatures?.kind ?? "mixed");
     setLegendDocIds(new Set(library.aiFeatures?.legendDocIds ?? []));
     let cancelled = false;
     Promise.all([
@@ -84,7 +86,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     try {
       await saveLibraryAiInstructions(library.id, instructions);
       await saveLibraryAiFeatures(library.id, {
-        clarifyFacets, visionPages, visionAllPages,
+        clarifyFacets, visionPages, visionAllPages, drawingIntel, kind,
         decoder: decoder.trim() || undefined,
         legendDocIds: legendDocIds.size > 0 ? [...legendDocIds].slice(0, 3) : undefined,
       });
@@ -114,6 +116,20 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
         </div>
 
         <div className="p-5 space-y-5">
+          <div>
+            <label htmlFor="library-kind" className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              What&apos;s in this library
+            </label>
+            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+              A hint for mapping and answers. Every document is still identified on its own — forms,
+              checklists, piping specs and standards are found wherever they live.
+            </p>
+            <select id="library-kind" value={kind} onChange={(e) => setKind(e.target.value as LibraryKind)}
+              className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)]">
+              {LIBRARY_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
+            </select>
+          </div>
+
           <div>
             <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               Standing instructions
