@@ -192,4 +192,6 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "cached AI line traces over drawing sheets — regenerated on demand from the drawings themselves; no authored data lives here",
   signup_attempts:
     "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
+  _policy_backup:
+    "database-maintenance record of row-security policies replaced by a repair script (20261022) — schema, not org data",
 };
