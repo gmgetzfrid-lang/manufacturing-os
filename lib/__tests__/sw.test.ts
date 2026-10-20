@@ -35,7 +35,7 @@
 // alone (OFF-3). The page halves — the update toast (OFF-4), the offline copy
 // (OFF-3) and the sign-out purge (OFF-8) — are pinned at the bottom.
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -1046,6 +1046,32 @@ describe("lib/swSession — the page's side of the contract", () => {
     expect(layout).toMatch(/announceServiceWorkerSession\(uid\)/);
     // no other sign-out site exists to miss (the signatures route's probe client is server-side)
     expect(src("app/page.tsx")).not.toMatch(/auth\.signOut\(/);
+  });
+
+  it("OS-15 census: no file in app/, components/, hooks/ or lib/ calls auth.signOut() itself — a NEW sign-out site must go through signOutOfThisBrowser", () => {
+    const root = process.cwd();
+    // the helper itself, and the signatures route's server-side probe client
+    // (a throwaway session, never this browser's)
+    const allowed = new Set(["lib/swSession.ts", "app/api/signatures/sign/route.ts"]);
+    const offenders: string[] = [];
+    let scanned = 0;
+    const walk = (dir: string) => {
+      for (const n of readdirSync(join(root, dir))) {
+        const rel = `${dir}/${n}`;
+        if (statSync(join(root, rel)).isDirectory()) {
+          if (n !== "node_modules" && n !== "__tests__" && !n.startsWith(".")) walk(rel);
+        } else if (/\.(ts|tsx|js|jsx|mjs)$/.test(n)) {
+          scanned++;
+          if (allowed.has(rel)) continue;
+          if (/auth\s*\.\s*signOut\s*\(/.test(readFileSync(join(root, rel), "utf8"))) offenders.push(rel);
+        }
+      }
+    };
+    for (const d of ["app", "components", "hooks", "lib"]) walk(d);
+    expect(scanned).toBeGreaterThan(100);
+    expect(offenders).toEqual([]);
+    // the census is live: both allowed files really do call it
+    for (const f of allowed) expect(readFileSync(join(root, f), "utf8"), f).toMatch(/auth\s*\.\s*signOut\s*\(/);
   });
 });
 

@@ -344,10 +344,14 @@ interface DocForAck {
  *  on policy change, and idempotently thereafter.
  *  REV-15: `writeErrors`, when given, also collects each roster write's error —
  *  the stale-revision void, the no-policy void and the roster insert — as the
- *  error the write answered; without it the behaviour is unchanged. */
+ *  error the write answered; without it the behaviour is unchanged.
+ *  OS-14 (notifications N17): `notifyPush: false` skips the push leg only —
+ *  the bell rows, the roster and the audit are unchanged. The bulk
+ *  library / folder policy save passes it, so one save over N issued
+ *  documents never fans out N fire-and-forget POST /api/push/notify. */
 export async function recomputeDocumentAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null; notifyNew?: boolean;
-  writeErrors?: string[];
+  writeErrors?: string[]; notifyPush?: boolean;
 }): Promise<void> {
   const { data: docRow } = await supabase
     .from("documents")
@@ -425,7 +429,9 @@ export async function recomputeDocumentAck(input: {
         ));
         // OS-14: only the assignees whose bell row landed; never awaited
         // past the request itself (the browser leg is fire-and-forget)
-        await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: doc.id, recipients: asked.filter((_, i) => landed[i] === true).map((a) => a.uid) });
+        if (input.notifyPush !== false) {
+          await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: doc.id, recipients: asked.filter((_, i) => landed[i] === true).map((a) => a.uid) });
+        }
       }
       await logAuditAction({
         action: "ACK_REQUESTED", resourceType: "document", resourceId: doc.id,
@@ -630,6 +636,10 @@ export async function setAckPolicy(input: {
   // abandoned every later batch at the first one. Each batch is settled
   // whole, every batch runs, and the documents that were not recomputed are
   // reported once, after the last — the policy itself is already saved.
+  // OS-14 (N17 review): no push leg here (`notifyPush: false`) — a policy
+  // saved over a whole library or folder would otherwise send one
+  // fire-and-forget push request per issued document; the bell rows and
+  // emails are unchanged.
   const col = input.level === "library" ? "library_id" : "collection_id";
   const { data, error: listErr } = await supabase.from("documents").select("id").eq(col, input.id).eq("status", "Issued");
   if (listErr) {
@@ -641,7 +651,7 @@ export async function setAckPolicy(input: {
   for (let i = 0; i < ids.length; i += 20) {
     const batch = ids.slice(i, i + 20);
     const settled = await Promise.allSettled(batch.map((id) =>
-      recomputeDocumentAck({ orgId: input.orgId, documentId: id, actorId: input.actorId, actorName: input.actorName })));
+      recomputeDocumentAck({ orgId: input.orgId, documentId: id, actorId: input.actorId, actorName: input.actorName, notifyPush: false })));
     settled.forEach((r, k) => {
       if (r.status === "rejected") {
         failed.push(batch[k]);

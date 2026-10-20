@@ -10,7 +10,10 @@
 //                                 insert AND the email insert.
 //   /api/tickets/workflow-action  an assignment's bell rows → sendPushSafe
 //                                 ({ kind: "ticket_assigned" }) for the
-//                                 audience told; no other transition pushes.
+//                                 ASSIGNEE only (the committed ticket's
+//                                 assigned_drafter_id, when in the audience
+//                                 told) — never the watchers; a self_assign
+//                                 pushes nobody; no other transition pushes.
 //
 // Fail-safe (DEC-90): a refused bell insert pushes nobody; a push that fails,
 // or cannot even be scheduled, never fails the action or touches its bell
@@ -282,7 +285,7 @@ describe("OS-14 — a mention on a request reaches the push channel after its be
 });
 
 describe("OS-14 — an assignment reaches the push channel after its bell rows (workflow-action route)", () => {
-  it("assign: every member the ticket_assigned bell row went to is pushed (ticket_assigned, this ticket), after the bell and email inserts", async () => {
+  it("assign (no watchers): the assignee — whose ticket_assigned bell row landed — is pushed (ticket_assigned, this ticket), after the bell and email inserts", async () => {
     seedMembers();
     state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, watchers: [] })];
     state.user = { id: ADMIN };
@@ -297,10 +300,71 @@ describe("OS-14 — an assignment reaches the push channel after its bell rows (
     const p = pushes();
     expect(p).toHaveLength(1);
     expect(p[0]).toMatchObject({ orgId: ORG, kind: "ticket_assigned", resourceId: "t1" });
-    // exactly the members whose bell row landed
-    expect([...p[0].recipients].sort()).toEqual(bells.map((b) => b.user).sort());
+    // the assignee, whose bell row landed
+    expect(p[0].recipients).toEqual([DRAFTER2]);
+    expect(bells.map((b) => b.user)).toEqual([DRAFTER2]);
     expect(indexOf("notifications", "insert")).toBeLessThan(indexOf("push", "sendPushSafe"));
     if (indexOf("email_notifications", "insert") >= 0) expect(indexOf("email_notifications", "insert")).toBeLessThan(indexOf("push", "sendPushSafe"));
+  });
+
+  it("assign with watchers present: ONLY the assignee is pushed — the watchers share the ticket_assigned bell row (and its email) exactly as before, but were not assigned", async () => {
+    seedMembers();
+    state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, watchers: [W_ACTIVE, REQ] })];
+    state.user = { id: ADMIN };
+    expect((await workflowAction(req("/api/tickets/workflow-action", { ticketId: "t1", actionType: "assign", assignment: { id: DRAFTER2, name: "d" } }))).status).toBe(200);
+    // REGRESSION: the bell rows and emails are untouched by the push leg
+    expect(bellRows()).toEqual([DRAFTER2, REQ, W_ACTIVE].sort().map((user) => ({ user, kind: "ticket_assigned" })));
+    expect(mailUsers()).toEqual([DRAFTER2, REQ, W_ACTIVE].sort());
+    await afterRun();
+    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_assigned", resourceId: "t1", recipients: [DRAFTER2] }]);
+    // the assignee was read from the committed ticket, scoped to its org
+    const read = state.calls.findIndex((c) => c.table === "tickets" && c.method === "select" && c.args[0] === "assigned_drafter_id");
+    expect(read).toBeGreaterThan(indexOf("notifications", "insert"));
+    expect(read).toBeLessThan(indexOf("push", "sendPushSafe"));
+  });
+
+  it("reassign_drafter with watchers present: ONLY the new drafter is pushed; the old drafter and the watchers keep their bell rows and emails as before", async () => {
+    seedMembers();
+    state.rows.tickets = [ticketRow({ status: "DRAFTING", assigned_drafter_id: DRAFTER, watchers: [W_ACTIVE, REQ] })];
+    state.user = { id: ADMIN };
+    expect((await workflowAction(req("/api/tickets/workflow-action", { ticketId: "t1", actionType: "reassign_drafter", comment: "out", assignment: { id: DRAFTER2, name: "d" } }))).status).toBe(200);
+    const bells = bellRows();
+    expect(bells.every((b) => b.kind === "ticket_assigned")).toBe(true);
+    expect(bells.map((b) => b.user)).toEqual(expect.arrayContaining([DRAFTER2, REQ, W_ACTIVE]));
+    const mails = mailUsers();
+    await afterRun();
+    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_assigned", resourceId: "t1", recipients: [DRAFTER2] }]);
+    expect(bellRows()).toEqual(bells);
+    expect(mailUsers()).toEqual(mails);
+  });
+
+  it("self_assign pushes NOBODY — the requester, the engineer and the watchers get the bell row and email as before, but nobody else was assigned and the actor is not in the audience", async () => {
+    seedMembers();
+    state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, assigned_engineer_id: W_ACTIVE, watchers: [W_ACTIVE, ADMIN] })];
+    state.user = { id: DRAFTER2, email: "07@x.io" };
+    expect((await workflowAction(req("/api/tickets/workflow-action", { ticketId: "t1", actionType: "self_assign" }))).status).toBe(200);
+    const bells = bellRows();
+    expect(bells.length).toBeGreaterThan(0);
+    expect(bells.every((b) => b.kind === "ticket_assigned")).toBe(true);
+    expect(bells.map((b) => b.user)).not.toContain(DRAFTER2);
+    expect(bells.map((b) => b.user)).toEqual(expect.arrayContaining([REQ, W_ACTIVE, ADMIN]));
+    expect(state.rows.tickets[0].assigned_drafter_id).toBe(DRAFTER2);
+    await afterRun();
+    expect(pushes()).toEqual([]);
+    expect(vi.mocked(sendPushSafe)).not.toHaveBeenCalled();
+  });
+
+  it("a failed assignee read pushes nobody (fail-safe) and is logged; the bell rows and emails stand", async () => {
+    seedMembers();
+    state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, watchers: [W_ACTIVE] })];
+    state.user = { id: ADMIN };
+    expect((await workflowAction(req("/api/tickets/workflow-action", { ticketId: "t1", actionType: "assign", assignment: { id: DRAFTER2, name: "d" } }))).status).toBe(200);
+    const bells = bellRows();
+    state.errors["tickets.select"] = [{ message: "read failed" }];
+    await afterRun();
+    expect(pushes()).toEqual([]);
+    expect(bellRows()).toEqual(bells);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/assignee was not read/), "read failed");
   });
 
   it("a status transition (submit_draft) pushes nothing — only the assignment's leg was added; its bell rows and emails are exactly as before", async () => {

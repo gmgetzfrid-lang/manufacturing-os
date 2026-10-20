@@ -199,6 +199,13 @@ describe("OS-3 — the permission prompt is reached only by a deliberate click, 
     // what is still bell / email only is said, never promised
     expect(PUSH_NOT_YET_NOTE).toMatch(/daily reminders/);
     expect(PUSH_NOT_YET_NOTE).not.toMatch(/mentions and assignments/);
+    // N17 review: the read-and-understood re-send (nudgeAcknowledgment) is not
+    // pushed until 20261160 stamps its writer — the card never promises it
+    const ack = PUSH_SENT_TODAY.find((l) => l.pushKind === "ack_requested")!.line;
+    expect(ack).toBe("A request to confirm you have read a document's current revision — from its distribution list, or from its read-and-understood list when a revision is issued");
+    expect(ack).not.toMatch(/re-sen[dt]/);
+    // the bulk library / folder policy save skips the push leg — said, never promised
+    expect(PUSH_NOT_YET_NOTE).toMatch(/a policy set on a whole library or folder/);
   });
 
   it("major 3: the card's two lists split the push-worthy set exactly — each listed kind has a producer that reaches the push leg (an emit(), or since OS-14 a writer outside emit() that pushes after its bell rows), and each 'not yet' kind has none", () => {

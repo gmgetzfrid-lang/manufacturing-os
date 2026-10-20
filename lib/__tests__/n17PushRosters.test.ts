@@ -13,6 +13,9 @@
 //                          reminder's row landed; none when it was refused.
 //   openReviewRoster       (a draft submitted for sign-off) → one push request
 //                          for the primaries whose review_requested row landed.
+//   setAckPolicy           (library / folder level) → no push request at all
+//                          (bounded: never one per issued document); the
+//                          document level pushes as recomputeDocumentAck.
 //   scanAndNotifyAcks      (the maintenance cron's daily reminders) → no push
 //                          (DEC-108 §6: the cron only prunes).
 //
@@ -58,7 +61,7 @@ vi.mock("@/lib/ownership", async (importOriginal) => {
   };
 });
 
-import { recomputeDocumentAck, nudgeAcknowledgment, scanAndNotifyAcks } from "@/lib/acknowledgments";
+import { recomputeDocumentAck, nudgeAcknowledgment, scanAndNotifyAcks, setAckPolicy } from "@/lib/acknowledgments";
 import { openReviewRoster } from "@/lib/reviewControl";
 import type { ReviewControl } from "@/types/schema";
 
@@ -139,6 +142,38 @@ describe("OS-14 — the read-&-understood roster's requests reach the push leg a
     expect(notified()).toHaveLength(1);
     expect(pushed()).toEqual([]);
     expect(T("document_acknowledgments")[0].notified_at).toBeTruthy();
+  });
+
+  it("setAckPolicy over a whole library recomputes every issued document with its bell rows as before, and sends NO push request (bounded — never one per document)", async () => {
+    T("org_members").push(member("u1", "Una"), member("u2", "Udo"), member("ctl1", "Cass", "DocCtrl"));
+    T("libraries").push({ id: "L1", org_id: ORG, ack_policy: null });
+    T("collections");
+    T("document_acknowledgments");
+    const N = 45;
+    for (let i = 0; i < N; i++) {
+      T("documents").push({
+        id: `d${i}`, org_id: ORG, library_id: "L1", collection_id: null, status: "Issued", current_version_id: `v${i}`,
+        document_number: `P-${i}`, title: null, name: null, ack_policy: null, owner_user_id: null, owner_name: null,
+      });
+      T("document_versions").push({ id: `v${i}`, record_id: `d${i}`, revision_label: "1", file_hash: null });
+    }
+    await setAckPolicy({ level: "library", id: "L1", orgId: ORG, policy: { ...ACK_POLICY, assigneeIds: ["u1", "u2"] }, actorId: "ctl1", actorName: "Cass" });
+    // REGRESSION: every document's roster and bell rows, as before
+    expect(T("document_acknowledgments")).toHaveLength(N * 2);
+    expect(notified()).toHaveLength(N * 2);
+    expect(notified().every((n) => n.kind === "ack_requested")).toBe(true);
+    // the push leg is skipped for the bulk save
+    expect(pushed()).toEqual([]);
+
+    // a document-level save still pushes its one document's landed rows
+    state.log = [];
+    T("documents").push({
+      id: "dx", org_id: ORG, library_id: "L1", collection_id: null, status: "Issued", current_version_id: "vx",
+      document_number: "P-X", title: null, name: null, ack_policy: null, owner_user_id: null, owner_name: null,
+    });
+    T("document_versions").push({ id: "vx", record_id: "dx", revision_label: "1", file_hash: null });
+    await setAckPolicy({ level: "document", id: "dx", orgId: ORG, policy: { ...ACK_POLICY, assigneeIds: ["u1"] }, actorId: "ctl1", actorName: "Cass" });
+    expect(pushed()).toEqual([{ orgId: ORG, kind: "ack_requested", resourceId: "dx", recipients: ["u1"] }]);
   });
 
   it("scanAndNotifyAcks (the maintenance cron's daily reminder) never pushes — the cron only prunes (DEC-108 §6)", async () => {

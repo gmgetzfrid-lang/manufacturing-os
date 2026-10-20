@@ -57,10 +57,12 @@ export const PUSH_DECLINE_KEY = "push-optin-declined";
  *   - checkout_force_released: lib/checkoutEpisodes.ts forceReleaseDocument;
  *   - ack_requested: the distribution list's request (lib/distributionAcks.ts
  *     — DistributionAcks / DistributionRecall), and (OS-14, notifications
- *     N17) the read-&-understood list's request when a revision is issued,
- *     and its re-send from the roster panel (lib/acknowledgments.ts
- *     recomputeDocumentAck / nudgeAcknowledgment, through
- *     lib/notify/dispatch.ts pushAfterBellRows);
+ *     N17) the read-&-understood list's request when a revision is issued
+ *     (lib/acknowledgments.ts recomputeDocumentAck, through
+ *     lib/notify/dispatch.ts pushAfterBellRows). Its re-send from the roster
+ *     panel (nudgeAcknowledgment) takes the same leg, but its reminder row
+ *     names no actor, so /api/push/notify cannot push it until 20261160
+ *     stamps the writer — the line does not promise it;
  *   - review_requested: a change proposed at check-in, sent to the document's
  *     owner (components/documents/CheckInPanel.tsx), and (OS-14) a draft's
  *     sign-off request from its review roster (lib/reviewControl.ts
@@ -77,7 +79,7 @@ export const PUSH_DECLINE_KEY = "push-optin-declined";
 export const PUSH_SENT_TODAY: ReadonlyArray<{ pushKind: ClassifiedKind; line: string }> = Object.freeze([
   { pushKind: "hold_opened", line: "A hold placed on a document you work on or follow" },
   { pushKind: "checkout_force_released", line: "Your checkout released by someone else" },
-  { pushKind: "ack_requested", line: "A request to confirm you have read a document's current revision — from its distribution list, or from its read-and-understood list when a revision is issued or the request is re-sent to you" },
+  { pushKind: "ack_requested", line: "A request to confirm you have read a document's current revision — from its distribution list, or from its read-and-understood list when a revision is issued" },
   { pushKind: "review_requested", line: "A request to review a document — a draft waiting for your sign-off, or a change proposed at check-in to a document you own" },
   { pushKind: "ticket_mention", line: "A mention in a comment on a request" },
   { pushKind: "ticket_assigned", line: "A request assigned to you" },
@@ -91,10 +93,12 @@ export const PUSH_WHAT_IS_SENT: readonly string[] = Object.freeze(PUSH_SENT_TODA
  *  maintenance cron never pushes — DEC-108 §6) and the read-and-understood
  *  request opened when a file arriving through a project's intake link is
  *  published (a server writer: app/api/intake/upload → lib/postPublish.ts →
- *  lib/acknowledgments.ts, with no push sender — OS-16). */
+ *  lib/acknowledgments.ts, with no push sender — OS-16), and the requests a
+ *  library- or folder-level policy save opens (setAckPolicy skips the push
+ *  leg there, so one save never sends a push request per document). */
 export const PUSH_NOT_SENT_YET: readonly ClassifiedKind[] = Object.freeze([] as ClassifiedKind[]);
 export const PUSH_NOT_YET_NOTE =
-  "Not sent to devices: the daily reminders about acknowledgments and sign-offs still outstanding, and read-and-understood requests for a revision published straight from a project's intake link. The bell and email still bring them.";
+  "Not sent to devices: the daily reminders about acknowledgments and sign-offs still outstanding, and read-and-understood requests opened by a policy set on a whole library or folder, or for a revision published straight from a project's intake link. The bell and email still bring them.";
 
 export const PUSH_PRIVACY_NOTE =
   "The notification says only what kind of thing happened — never a document number, a title, a reason or a person's name — so nothing sensitive shows on a lock screen. Open it to see the details.";
