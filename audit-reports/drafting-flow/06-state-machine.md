@@ -1,6 +1,6 @@
 # 06 · State machine & transition integrity
 
-**13 findings** — 2 CRITICAL · 3 HIGH · 8 MEDIUM.
+**16 findings** — 2 CRITICAL · 2 HIGH · 5 MEDIUM · 7 LOW. *(Corrected at the DF-P16 integrator fix pass, 2026-10-20: this line read "13 findings — 2 CRITICAL · 3 HIGH · 8 MEDIUM", stale against the findings below — their own Severity lines, `SM-14`, `SM-15` and `SM-16` included.)*
 
 Whether the flow's own rules can be enforced at all: reachable transitions, concurrency, partial failure, and the actions that skip the gates.
 
@@ -938,7 +938,7 @@ if (action.requiresFile) {
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** proposed — drafting-flow, the next package that holds `app/api/tickets/workflow-action/route.ts` and `lib/ticketTransitions.ts` (the integrator assigns, `DEC-31`: a remainder is a new id with an owner). Opened by drafting-flow Round G DF-P16's review fix pass, 2026-10-20, from the package reviewer's finding; both files are other packages' in this round, so it is recorded here, not fixed.
+- **Assigned:** drafting-flow DF-P15 DELIVERABLE PAGE WIRING — by the integrator at the DF-P16 merge, 2026-10-20 (it holds the workflow route next). *Was:* proposed — drafting-flow, the next package that holds `app/api/tickets/workflow-action/route.ts` and `lib/ticketTransitions.ts` (the integrator assigns, `DEC-31`: a remainder is a new id with an owner). Opened by drafting-flow Round G DF-P16's review fix pass, 2026-10-20, from the package reviewer's finding; both files are other packages' in this round, so it is recorded here, not fixed.
 - **Verification:** CONFIRMED by reading (not exercised against a live database).
 - **Independently verified:** — opened 2026-10-20 by DF-P16's review fix pass from the package reviewer's finding; not yet challenged by a second party.
 - **Blast radius:** reporting integrity (the per-reason counts on `/admin/analytics`, the reason shown in the queue's Closed history and in `metadata`)
