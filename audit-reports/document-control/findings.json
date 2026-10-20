@@ -15,17 +15,18 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 173,
+    "findings": 174,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
-      "HIGH": 55,
+      "HIGH": 56,
       "MEDIUM": 73,
       "LOW": 26
     },
     "by_status": {
       "RESOLVED": 161,
-      "OPEN": 12
+      "OPEN": 12,
+      "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1
     }
   },
   "status_vocabulary": [
@@ -793,7 +794,7 @@
       "id": "DIST-17",
       "title": "The transmittal register lets every active member read a transmittal's items whatever the documents' ACL — each listed document's number, title and revision, and, on a live transmittal's cover sheet, the portal link that downloads its as-sent file",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading the code on `fleet/N16-library-discover` (`9b52f56` plus N16).",
       "blast_radius": null,
@@ -811,6 +812,31 @@
       ],
       "refuted": false,
       "summary": "PID-4412 sits in an open P&ID library under a document-level ACL: only the process-safety group and the controllers may discover it. A controller transmits it with two other drawings to an outside contractor. A Viewer elsewhere in the plant follows the library. Their bell reads \"Transmittal TR-0007 issued to Jane Doe, BuildCo\" with no names, since NEDGE-22. They click it, open TR-0007's cover shee",
+      "area": "document-control",
+      "report": "audit-reports/document-control/05-distribution.md"
+    },
+    {
+      "id": "DIST-18",
+      "title": "Any active member still reads every transmittal's items and its portal token through the REST read of `transmittals` — the database half of `DIST-17`",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED at runtime on PostgreSQL 16 (the I-17 harness, `lib/__tests__/rls/dcP27ShareRemainders.test.ts` \"… but OPEN (DIST-18)\"): a Viewer who cannot read a private, ACL'd document (documents RLS, 0 rows) reads that document's number in `transmittals.items` and a non-null `portal_token`.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20260910_transmittal_portal.sql:33-37",
+        "lib/globalSearch.ts:198-211",
+        "lib/evidencePack.ts:329",
+        "lib/transmittals.ts:860"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "DIST-17's scenario, through the API instead of the page: a Viewer outside PID-4412's ACL sends GET /rest/v1/transmittals?select=number,items,portaltoken with their own session. They read \"PID-4412 · Unit 3 HF alkylation relief system · Rev C\" and the token, and open /api/transmittal?token=…&file=<id> without a session. They download Rev C, stamped UNCONTROLLED, and the pull is logged as the contra",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
     },

@@ -225,7 +225,7 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 
 - **Severity:** HIGH
 - **Status:** OPEN
-- **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (as its record's Remaining names) — by the integrator, 2026-10-13 (I-01B merge, DEC-31; fleet plan `audit-reports/fleet-plans/intelligence.json`)
+- **Assigned:** the operator's pastes (`20261080`, then `20261227`); no further code — ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`). *(Earlier owners: intelligence I-12 DOCUMENT ACL BOUNDARY — by the integrator, 2026-10-13 (I-01B merge, DEC-31; fleet plan `audit-reports/fleet-plans/intelligence.json`); document-control P27 SHARE REMAINDERS for criterion 3's direct-insert audit row — by the integrator at the I-12 merge, 2026-10-14, built in P27 as `20261227`.)*
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260623_document_shares.sql:37-54`, `lib/documentShares.ts:33-57`, `app/api/share/file/route.ts:42-58`, `app/api/share/file/route.ts:105-125`, `app/api/storage/download-url/route.ts:92-111`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every limb: RLS gates share creation on org membership only, and the file route is service-role with no ACL/legal-hold/download-deny/ack check. I looked for a compensating guard in /api/share/resolve and in ShareLinkModal and found none — the modal is pure UI, and the insert goes through PostgREST so any UI gating is bypassable. If anything the finding understates it: the WITH CHECK never verifies that document_id belongs to org_id, and share/file resolves the document by id with no org filter, so a member can also mint a link for a document in a DIFFERENT tenant.
@@ -285,6 +285,9 @@ Tests: `lib/__tests__/shareRoutes.test.ts` "DACL-4 (intelligence I-12): a docume
 3. ◐ Through the app: unchanged, ✓. At the database: the minting tier and the 90-day ceiling are `20261080`'s, and the creation record for a direct insert is `20261227`'s. Both are written, and both are **pending operator pastes**, `20261080` first (`20261227` refuses without it). Until both are pasted, a minting-tier member's direct PostgREST insert still writes no `SHARE_LINK_CREATED` row.
 
 **Remaining / owner.** The operator's pastes, in order: `20261080` (document-control wave 1 — `MIGRATION-PASTE-ORDER.md` row 72), then `20261227` (its row is added by the integrator at the P27 merge). Paste and deploy order for `20261227`: either order works, since the P27 app works on every database. Deploying the P27 app first keeps the window at zero: today's app with the trigger pasted writes two rows per app mint (never none) until the deploy lands. Once both are pasted, criterion 3 holds as written and this record can be RESOLVED by the integrator at the paste-back, with no code.
+
+**Ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — R3.** Criterion 3 stays **Partial**: `20261227` is written, and criterion 3 holds as written once the operator pastes `20261080` and then `20261227` (`20261227`'s first statement refuses, changing nothing, without `20261080`). The record stays OPEN until that paste-back.
+- **Assigned:** the operator's pastes (`20261080`, then `20261227`); no further code.
 
 ---
 

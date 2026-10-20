@@ -88,6 +88,9 @@ async function sessionHeaders(): Promise<Record<string, string>> {
 /** DIST-17 (ruling 3): a ticket older than this is renewed (a quiet re-read
  *  of the snapshot) before a download — half its 30-minute life. */
 const MEMBER_TICKET_RENEW_MS = 15 * 60 * 1000;
+/** DIST-17 (P27 review): while a member's visible fallback link is on screen,
+ *  how often the page checks whether its ticket is due for renewal. */
+const MEMBER_TICKET_CHECK_MS = 60 * 1000;
 
 /** DIST-17 (ruling 3): the sentence for a member the server could not name. */
 const MEMBER_UNNAMED = "You are signed in as a member of the issuing workspace, but your download could not be recorded in your name, so it was not started. Reload the page and try again.";
@@ -281,6 +284,43 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
     }, DOWNLOAD_FRAME_TTL_MS);
   };
 
+  // DIST-17 (P27 review): the visible "did not start?" link renews the
+  // member's ticket exactly as download() does. While it is on screen for a
+  // member, the snapshot is re-read quietly once the ticket is older than
+  // MEMBER_TICKET_RENEW_MS (and on returning to the tab), so the address it
+  // carries — opened by any means — is a fresh one; a click on a link whose
+  // ticket is still old renews it first, then opens the file with the fresh
+  // ticket. The recipient (no member) is untouched: no timer, the plain link.
+  const hasMember = !!data?.member;
+  const hasFallback = started.size > 0;
+  useEffect(() => {
+    if (!hasMember || !hasFallback) return;
+    const renewIfOld = () => {
+      if (Date.now() - ticketAt.current > MEMBER_TICKET_RENEW_MS) void refresh({ recheck: true });
+    };
+    const id = window.setInterval(renewIfOld, MEMBER_TICKET_CHECK_MS);
+    const onVisible = () => { if (document.visibilityState === "visible") renewIfOld(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", onVisible); };
+  }, [hasMember, hasFallback, refresh]);
+
+  const openFallback = (e: React.MouseEvent<HTMLAnchorElement>, docId: string) => {
+    if (!data?.member) return; // the recipient: the plain link, as before
+    if (data.member.ticket && Date.now() - ticketAt.current <= MEMBER_TICKET_RENEW_MS) return; // fresh: the link as rendered
+    e.preventDefault();
+    // Opened now, inside the click, so the browser keeps it; pointed at the
+    // file once the ticket is renewed.
+    const w = window.open("", "_blank");
+    if (w) { try { w.opener = null; } catch { /* cross-origin: nothing to clear */ } }
+    void refresh({ recheck: true }).then((fresh) => {
+      const ticket = (fresh ?? data).member?.ticket ?? null;
+      if (!ticket) { w?.close(); setMsg({ tone: "err", text: MEMBER_UNNAMED }); return; }
+      const href = fileHref(token, docId, ticket);
+      if (w) w.location.href = href;
+      else window.location.assign(href);
+    });
+  };
+
   const acknowledge = async () => {
     if (!ackName.trim()) { setMsg({ tone: "err", text: "Enter your name to acknowledge receipt." }); return; }
     setAckBusy(true); setMsg(null);
@@ -407,6 +447,8 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                       href={fileHref(token, i.documentId, data.member?.ticket ?? null)}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={(e) => openFallback(e, i.documentId)}
+                      data-testid="portal-fallback-link"
                       className="mt-0.5 inline-block text-[10px] font-bold text-blue-700 underline"
                     >
                       Download didn&apos;t start? Open the file directly

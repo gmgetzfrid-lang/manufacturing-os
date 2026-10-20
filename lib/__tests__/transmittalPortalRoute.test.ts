@@ -86,8 +86,9 @@ const state = vi.hoisted(() => ({
   authUser: null as { id: string; email?: string | null } | null,
   authThrows: false,
   // DIST-17 fix pass: the auth service's answer when it rejects or cannot
-  // answer (a 4xx is a rejection; a 5xx or a transport failure is not)
-  authError: null as { message: string; status?: number } | null,
+  // answer (400 / 401 / 403 or an invalid-token code is a rejection; a 429,
+  // a 408, another 4xx, a 5xx or a transport failure is not)
+  authError: null as { message: string; status?: number; code?: string } | null,
   members: {} as Record<string, { email: string | null; status?: string } | null>,
   memberReadError: null as { message: string } | null,
 }));
@@ -1261,7 +1262,7 @@ describe("DIST-17 ruling 3 — a signed-in member's portal pull is recorded as t
     expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "open" } }]);
   });
 
-  it("a session the auth service REJECTS (expired, revoked, malformed: a 4xx) is no session — the recipient's path, as before P27; one it cannot ANSWER (a 5xx, a transport failure, a throw) or a membership that cannot be read is refused (503) — never treated as the recipient", async () => {
+  it("a session the auth service REJECTS (expired, revoked, malformed: 400 / 401 / 403) is no session — the recipient's path, as before P27; one it cannot ANSWER (a 5xx, a transport failure, a throw) or a membership that cannot be read is refused (503) — never treated as the recipient", async () => {
     // rejected: the recipient's portal, the open counted
     for (const status of [401, 403, 400]) {
       state.rpcs = [];
@@ -1295,6 +1296,46 @@ describe("DIST-17 ruling 3 — a signed-in member's portal pull is recorded as t
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "member_check_failed" });
     expect(state.rpcs).toEqual([]);
+  });
+
+  it("only an answer that the TOKEN is invalid (400 / 401 / 403, or the SDK's invalid-token code) is no session; a rate limit (429), a timeout (408) or any other 4xx is 'could not answer' — refused (503 member_check_failed), never the recipient, nothing counted", async () => {
+    // rejected by status, or by the SDK's code whatever the status
+    const rejected: Array<{ status?: number; code?: string }> = [
+      { status: 401 }, { status: 403 }, { status: 400 },
+      { status: 403, code: "bad_jwt" }, { status: 404, code: "user_not_found" }, { code: "session_not_found" },
+      { status: 401, code: "no_authorization" }, { status: 401, code: "session_expired" },
+    ];
+    for (const e of rejected) {
+      state.rpcs = [];
+      state.authError = { message: "rejected", ...e };
+      const res = await as(bearer);
+      expect(res.status, JSON.stringify(e)).toBe(200);
+      expect(await res.json()).not.toHaveProperty("member");
+      expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "open" } }]);
+    }
+    // not an answer about the token: fail closed
+    const unanswered: Array<{ status?: number; code?: string }> = [
+      { status: 429 }, { status: 429, code: "over_request_rate_limit" }, { status: 408 },
+      { status: 404 }, { status: 409 }, { status: 422 }, { status: 499 },
+      { status: 429, code: "bad_jwt" }, // a rate limit is never read as a rejection
+    ];
+    for (const e of unanswered) {
+      state.rpcs = [];
+      state.authError = { message: "busy", ...e };
+      const res = await as(bearer);
+      expect(res.status, JSON.stringify(e)).toBe(503);
+      expect(await res.json()).toEqual({ error: "member_check_failed" });
+      expect(state.rpcs).toEqual([]);
+    }
+    // the receipt (POST) fails closed on a 429 too — nothing written
+    state.authError = { message: "rate limited", status: 429 };
+    const post = await POST(new NextRequest("https://app/api/transmittal", {
+      method: "POST", body: JSON.stringify({ token: TOKEN, name: "Jane Doe" }), headers: { "content-type": "application/json", ...bearer },
+    }));
+    expect(post.status).toBe(503);
+    expect(await post.json()).toEqual({ error: "member_check_failed" });
+    expect(state.updates).toEqual([]);
+    expect(state.audits).toEqual([]);
   });
 
   it("a member who IS the recipient (their membership address is the recipient's, any case): recorded under their own uid, and the open and the download count as the recipient's", async () => {

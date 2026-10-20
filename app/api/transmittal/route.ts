@@ -201,17 +201,32 @@ const SEATED_MEMBER_STATUSES = new Set(["active", "suspended"]);
 const sameAddress = (a: unknown, b: unknown): boolean =>
   typeof a === "string" && typeof b === "string" && a.trim() !== "" && a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** An auth-service answer that REJECTS the bearer (expired, revoked,
- *  malformed: a 4xx) — as opposed to one it could not give (a transport
- *  failure or a 5xx). A rejected bearer is no session. */
+/** The auth service's answers that mean the TOKEN is invalid (malformed,
+ *  expired, revoked, its session or user gone) — never a busy or slow
+ *  service. */
+const BEARER_REJECTED_STATUSES: ReadonlySet<number> = new Set([400, 401, 403]);
+const BEARER_REJECTED_CODES: ReadonlySet<string> = new Set([
+  "bad_jwt", "session_not_found", "user_not_found", "no_authorization", "session_expired",
+]);
+/** An auth-service answer that REJECTS the bearer (400 / 401 / 403, or the
+ *  SDK's code for an invalid token where it is exposed) — as opposed to one
+ *  it could not give. A rejected bearer is no session. Everything else — a
+ *  rate limit (429), a timeout (408), any other 4xx, a 5xx, a transport
+ *  failure, no status at all — is "could not answer": the caller fails
+ *  closed (503 member_check_failed), never treating a possible member as the
+ *  recipient. */
 function bearerRejected(error: unknown): boolean {
-  const status = (error as { status?: unknown } | null)?.status;
-  return typeof status === "number" && status >= 400 && status < 500;
+  const e = error as { status?: unknown; code?: unknown } | null;
+  const status = e?.status;
+  if (status === 429 || status === 408) return false;
+  if (typeof e?.code === "string" && BEARER_REJECTED_CODES.has(e.code)) return true;
+  return typeof status === "number" && BEARER_REJECTED_STATUSES.has(status);
 }
 
 /** DIST-17 (ruling 3): who is behind a snapshot GET (or a receipt POST). No
  *  bearer → null (the outside recipient, exactly as before), and a bearer the
- *  auth service rejects (expired, revoked, malformed) is no bearer. A bearer
+ *  auth service rejects (expired, revoked, malformed: bearerRejected) is no
+ *  bearer. A bearer
  *  naming someone with a membership row in the transmittal's workspace →
  *  that member, with whether they count as the recipient. A bearer naming
  *  someone outside it → null (a recipient who happens to hold an account).
