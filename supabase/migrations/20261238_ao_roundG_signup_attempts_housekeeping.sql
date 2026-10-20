@@ -19,8 +19,8 @@
 --   2. The function was executable by PUBLIC (the default), so anon and every
 --      signed-in session could call it over PostgREST. It is SECURITY INVOKER
 --      and the table has RLS on with no policy, so such a call deleted
---      nothing — but housekeeping is the service role's alone, as for
---      prune_verify_scans (20261134) and prune_intake_attempts (20261105):
+--      nothing — but housekeeping is the service role's alone, as for the
+--      other attempt-log prunes (prune_intake_attempts, 20261105):
 --      EXECUTE is revoked from PUBLIC, anon and authenticated and granted to
 --      service_role, and its search_path is pinned (ALTER FUNCTION … SET).
 --   3. ORG-8 done-when 4: the anonymous INSERT policy on access_requests
