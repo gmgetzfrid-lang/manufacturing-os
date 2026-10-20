@@ -91,7 +91,7 @@ Measured 2026-10-14 (review fix pass 2) on PostgreSQL 16.13 with pgvector 0.6.0:
 ## AREA-2 · Any active member can permanently delete every document↔equipment link in the org, and create new ones, straight from the client
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (the graph's Connect gate) and projects J19 (the `lib/transitionIn.ts` adopt hand-off) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260609_phase1_normalization.sql:186-190`, `app/(protected)/admin/assets/page.tsx:1345-1354`, `app/(protected)/graph/page.tsx:356-362`, `lib/operationalGraph.ts:372-377`
@@ -156,6 +156,17 @@ Residual: `components/projects/TransitionInPanel.tsx` (on the do-not-edit list, 
 
 So the projects half of done-when 3's "a person's assertion is never lost to a machine row" holds for transition-in. The one remainder fix pass 3 named, `components/projects/TransitionInPanel.tsx` never showing `equipmentNote` (`:158`, `:178`), had no projects finding. It is opened as projects-tab `UX-17` (owner: projects-joint, after projects J17, which is editing `components/projects/**`; DEC-31). AREA-2 stays OPEN on done-when 2 (the graph's Connect gate; intelligence I-15).
 
+**Resolution (2026-10-20, intelligence Round G).** I-15 GRAPH SERVER ASSEMBLY — the graph's Connect limb (done-when 2; assigned at the I-11 merge, 2026-10-13). Reproduced first (DEC-29): on `8224f80` `app/(protected)/graph/page.tsx:574-579` inserted a manual `document_assets` row for any member and took a 23505 for "already linked", so a writer's link onto a pair a 'drawing' row held stayed the machine's and a later Dismiss took it away. What landed in `app/(protected)/graph/page.tsx`:
+- `completeConnect` refuses a document ↔ equipment link BEFORE any write unless the member holds the registry writer tier `20261170`'s `document_assets_insert` admits — `LINK_WRITER_ROLES` (`:122`; Admin, DocCtrl, Manager, Supervisor) through `hasAnyRole`, i.e. any role of the collection (ADD-1) — and says why (`:594`); the Connect panel says it up front for a member outside the tier. A link between two documents and a flow are decided exactly as before (their own policies), so a member keeps both.
+- A 23505 on the insert is sent through `POST /api/equipment-bridge` `action "adopt"` — the registry drawer's path: a 'drawing' row becomes the person's (`source` manual, `asserted_by` human, the sheet kept, audited `EQUIPMENT_BRIDGE_RELATION_ADOPTED`); any other existing link is left as it is (`already`). A refused adopt, or an audit row it could not write, is said; the edge is drawn only when the link is the person's.
+- Tests: `lib/__tests__/graphPageRender.test.ts` "AREA-2 graph limb — …" (four cases: a non-writer refused before any write while a document ↔ document link still lands; a writer by a held role inserts as before; a drawing-held pair adopted; a refused adopt said, never shown as linked).
+
+**Done-when.**
+1. ✓ (I-11) unchanged.
+2. ✓ The graph gates Connect's document ↔ equipment link on the same authority (the writer tier, by the role collection), before any write; a drawing-held pair is adopted, not swallowed as 23505.
+3. ✓ (I-11) unchanged.
+
+**Scope / residual.** Before `20261170` is pasted a member outside the writer tier could insert a manual link from the graph; the page now refuses it either way — the tier the integrator ruled for this table (DEC-53 item 1), the fail-safe side. `components/graph/GraphShapeWizard.tsx` (shown to Admin / DocCtrl only, so inside the tier) still takes a 23505 for "already linked" without adopting: the fix-pass hand-off, outside this package's files, is opened as `AREA-12` (DEC-31).
 
 ---
 
@@ -591,5 +602,27 @@ Tests: `lib/__tests__/setupNavigatorIdentity.test.ts` (E-22 filed under 20 with 
 1. ✓ (2026-09-30).
 2. ✓ (2026-09-30).
 3. ✓ The navigator's registry stage counts mismatches alongside `unitless`.
+
+---
+
+<a id="area-12"></a>
+
+## AREA-12 · The shape wizard's document ↔ equipment link takes a 23505 for "already linked" and never adopts the drawing's row
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** the next package that edits `components/graph/GraphShapeWizard.tsx` (proposed: intelligence I-26 BRIDGE REMAINDERS, which owns the Bridge's other hand-offs) — opened 2026-10-20 by intelligence Round G, I-15, as the remainder of `AREA-2` (DEC-31).
+- **Verification:** CONFIRMED
+- **Locations:** `components/graph/GraphShapeWizard.tsx:150-154`
+
+**Mechanism.** `AREA-2`'s fix pass handed two 23505 doors to the graph's owner: the graph's Connect (closed by I-15) and the shape wizard's link writer. The wizard inserts a manual `document_assets` row and treats `23505` as success (`if (e && e.code !== "23505") throw …`). On a pair the equipment sweep already relates (a 'drawing' row, which a person cannot write), the person's accepted link is never written: the row stays the machine's, and a later Dismiss of the drawing's reading — or "It left the sheet" — removes the link the person meant to keep.
+
+**Failure scenario.** An Admin shapes the graph from an answer and accepts "PID-1 ↔ P-101". The sweep had read P-101 off PID-1. The wizard counts the link as made. Months later a reviewer dismisses the sweep's reading of P-101 on PID-1; the link is gone, and nothing recorded that a person had asserted it.
+
+**Done when.**
+- [ ] On 23505 the wizard calls `POST /api/equipment-bridge` `action "adopt"` (as the registry drawer and the graph's Connect do), says a refused adopt, and counts the link only when it is the person's.
+- [ ] A rendered test: a drawing-held pair accepted in the wizard is adopted; a refused adopt is said.
+
+**Scope.** Authority is not in question: the wizard's entry point is shown to Admin / DocCtrl only (inside the writer tier), and `20261170` refuses anyone else at the database.
 
 ---

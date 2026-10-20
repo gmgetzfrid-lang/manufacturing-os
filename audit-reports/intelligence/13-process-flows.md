@@ -663,7 +663,7 @@ Tests: `lib/__tests__/knowledgePageRender.test.ts` ("a drawing reader renders at
 ## FLOW-14 · The confirmed flow topology feeds nothing but line-drawing — the app's reachability engine is fed by page co-occurrence instead, and every reasoning surface is blind to it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (done-when 3: the graph's reachable-set scope filter) — by the integrator, 2026-10-13 (I-21 merge, DEC-31: I-21 built done-whens 1 and 2 and has merged; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orchestrator/tools.ts:369-377`, `lib/orchestrator/tools.ts:287-312`, `lib/pidTrace.ts:105-216`, `lib/orgGraph.ts:286-289`, `app/(protected)/setup/page.tsx:94`
@@ -720,5 +720,14 @@ What landed:
 3. ✗ Not done here. The graph's scope-to-reachable-set filter belongs to the graph page (`app/(protected)/graph/**`, `components/graph/**`). I-24 edits those files in parallel and this package may not. The pieces it needs are built: `flowsToLineEdges(orgId)` with its default browser client (RLS), and `traceNeighbourhood(edges, start, hops, "downstream" | "upstream", new Set(unitNodes))` (`lib/pidTrace.ts:225`), which the orchestrator already uses to answer "what does this feed, what feeds it".
 
 **Scope / residual.** Stays OPEN for done-when 3 only (`GAP-315` acceptance 3: the graph shows a unit's upstream and downstream set from confirmed flows). The integrator assigns the owner: the next package that edits the graph page. Revision impact (`lib/impact.ts`, `lib/revisionImpact.ts`) still does not fan out by process. It was named in the failure scenario, not in a done-when, and stays outside this record.
+
+**Resolution (2026-10-20, intelligence Round G).** I-15 GRAPH SERVER ASSEMBLY — done-when 3 (assigned at the I-21 merge, 2026-10-13). Reproduced first (DEC-29): on `8224f80` nothing under `app/(protected)/graph/` read confirmed flows for reachability. What landed (details on `GAP-315`): `app/(protected)/graph/page.tsx` `showReach` — selecting a unit (or an item) offers what it feeds and what feeds it, computed by `flowsToLineEdges(orgId)` + `traceNeighbourhood(edges, unitTraceTag(code), 6, "downstream" | "upstream", new Set(unitNodes))`, confirmed rows only, a unit a place the walk stops; the set is lit and listed, and "Show only this set on the map" is the scope-to-reachable-set filter (the drawn map narrowed to the start and its set, and back). A failed read, a missing table, an empty direction and a truncated read are each said. Tests: `lib/__tests__/graphPageRender.test.ts` "FLOW-14 done-when 3 / GAP-315 acceptance 3 — …" (four cases).
+
+**Done-when.**
+1. ✓ (I-21) unchanged.
+2. ✓ (I-21) unchanged.
+3. ✓ The graph gains a scope-to-reachable-set filter driven by `traceNeighbourhood`: selecting a unit shows what it feeds and what feeds it, and the map can be narrowed to that set.
+
+**Scope / residual.** Revision impact by process stays outside this record (named in the failure scenario, not a done-when), as before.
 
 ---
