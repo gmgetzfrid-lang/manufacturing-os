@@ -23,7 +23,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import { isControllerPrincipal } from "@/lib/permissions";
-import PackPrintHistory from "@/components/documents/PackPrintHistory";
+import PackPrintHistory, { PACK_RECALL_UI_ENABLED } from "@/components/documents/PackPrintHistory";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint,
   setWorkPackageStatus, coverEntryLabels, mergeLeftOut, readPackageMemberIds, type WorkPackage,
@@ -435,9 +435,11 @@ export default function PackagesPage() {
                 </div>
 
                 {/* PS-P10: the pack's print history; a controller recalls a
-                    printed pack here (DACL-8 residual (c)). */}
+                    printed pack here (DACL-8 residual (c)) once
+                    PACK_RECALL_UI_ENABLED is on — it ships off until
+                    public-surfaces PHYS-20 limbs 1 and 2 land. */}
                 {activeOrgId && (
-                  <PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController} refreshKey={printRound} />
+                  <PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController && PACK_RECALL_UI_ENABLED} refreshKey={printRound} />
                 )}
 
                 <div className="px-3 pb-3 flex items-center gap-2">

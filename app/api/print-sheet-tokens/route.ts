@@ -95,12 +95,17 @@ export const dynamic = "force-dynamic";
 const noStore = { "Cache-Control": "no-store" };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: noStore });
 
-/** A recall by a cover's print id that finds no sheet code linked to it. */
+/** A recall by a cover's print id that finds no sheet code linked to it.
+ *  Three cases leave a print record with no linked code, and the answer
+ *  names all three (PS-P10 second review fix): the print may have been
+ *  STOPPED before anything was downloaded — its cover snapshot is recorded
+ *  before the link, so a link that failed leaves the record and no paper. */
 const NO_LINKED_SHEET_CODE =
   "No sheet code is linked to this print record, so a recall from here cannot reach its sheets — nothing was changed. " +
-  "Its sheets carry either the document's own QR (no per-print code could be issued) or codes printed before per-print " +
-  "codes were linked to their print record (database update 20261240 and this release); either way they keep scanning " +
-  "by their revision's status. Withdraw that paper by hand, and hold or supersede the revision if its sheets must read red.";
+  "Either this print was stopped before anything was downloaded (its record is kept, but no paper left — there is nothing to withdraw), " +
+  "or its sheets carry the document's own QR (no per-print code could be issued) or codes printed before per-print " +
+  "codes were linked to their print record (database update 20261240 and this release); those sheets keep scanning " +
+  "by their revision's status. If paper from this print is in use, withdraw it by hand, and hold or supersede the revision if its sheets must read red.";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHUNK = 100;

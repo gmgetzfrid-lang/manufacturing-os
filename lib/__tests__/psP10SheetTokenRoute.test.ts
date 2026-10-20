@@ -19,6 +19,10 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { printSnapshotSheets, mergeLeftOut } from "@/lib/workPackages";
+import type { PackSheetRef, PackSkip } from "@/lib/docPack";
 
 const ORG = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const OTHER_ORG = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -105,6 +109,13 @@ function chain(table: string) {
   };
   return new Proxy(c, h);
 }
+
+// lib/workPackages (printSnapshotSheets, mergeLeftOut — the snapshot the
+// packages page records) is imported for the contract test below; its
+// browser client and side-effect modules are stood in for.
+vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }));
+vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => {}) }));
+vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => {}) }));
 
 vi.mock("@/lib/serverAuth", () => ({
   authorizeOrgRole: async (_req: Request, orgId: string) => ({
@@ -262,6 +273,52 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
   it("a short link (the print changed under it) is a 409", async () => {
     state.updateShort = true;
     expect((await post(linkBody())).status).toBe(409);
+  });
+
+  // Second review fix: the cover the route checks is the snapshot the
+  // packages page REALLY records — printSnapshotSheets over the included
+  // sheets (mapped as the page maps them) plus the merged left-out list —
+  // and `printed` is those same included sheets. A rename in
+  // PrintSnapshotSheet that coverPrintedSheets no longer reads would refuse
+  // every work-package print with codes; this test fails first.
+  it("CONTRACT: the snapshot the packages page records (printSnapshotSheets) is accepted as this print's cover", async () => {
+    const D3 = "d3d3d3d3-0000-0000-0000-000000000003";
+    const V3 = "e3e3e3e3-0000-0000-0000-000000000003";
+    const included: PackSheetRef[] = [
+      { documentId: D1, versionId: V1, label: "P-101", pageCount: 1 },
+      { documentId: D2, versionId: V2, label: "P-102", pageCount: 2, stampMapped: [{ char: "Δ", codePoint: "U+0394", printedAs: "Delta" }] },
+    ];
+    const builderSkipped: PackSkip[] = [{ documentId: D3, label: "P-103", reason: "could not be read", code: "build_failed", versionId: V3 }];
+    const sheets = printSnapshotSheets(
+      // exactly the page's mapping (pinned on its source below)
+      included.map((s) => ({
+        documentId: s.documentId,
+        versionId: s.versionId,
+        revLabel: "B",
+        label: s.label,
+        ...(s.stampMapped ? { stampMapped: s.stampMapped } : {}),
+      })),
+      mergeLeftOut([], builderSkipped).flatMap((s) =>
+        s.documentId && s.code ? [{ documentId: s.documentId, label: s.label, code: s.code, reason: s.reason, versionId: s.versionId ?? null }] : []),
+    );
+    expect(sheets).toHaveLength(3);
+    state.cover = coverOf({ sheets: JSON.parse(JSON.stringify(sheets)) });
+    state.tokenRows = [
+      ...state.tokenRows,
+      { id: "t3", document_id: D3, version_id: V3, minted_at: MINTED, print_id: PRINT, settled_at: null, voided_at: null },
+    ];
+    const res = await post(linkBody({ printed: included.map((s) => s.documentId) }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ linked: true, sheets: 3 });
+    expect(state.updates[0].filters).toContainEqual(["in", "id", ["t1", "t2", "t3"]]);
+
+    // The page maps the included sheets into the snapshot by these keys, and
+    // sends the same included sheets as `printed` (lib/docPack.ts).
+    const page = readFileSync(join(process.cwd(), "app/(protected)/packages/page.tsx"), "utf8");
+    const call = page.slice(page.indexOf("const printId = await recordPackagePrint({"), page.indexOf("await cover.linkPrint(printId);"));
+    expect(call).toContain("sheets: includedSheets.map((s) => ({\n              documentId: s.documentId,\n              versionId: s.versionId,");
+    const pack = readFileSync(join(process.cwd(), "lib/docPack.ts"), "utf8");
+    expect(pack).toContain("printedDocumentIds: includedSheets.map((s) => s.documentId),\n        });");
   });
 });
 
@@ -424,6 +481,9 @@ describe("PS-P10 void — a controller recalls a printed pack", () => {
     expect(said).toMatch(/nothing was changed/);
     expect(said).toMatch(/keep scanning by their revision's status/);
     expect(said).not.toMatch(/carries no per-print code|cannot reach its paper/);
+    // second review fix: a print stopped by a failed link leaves its record and no paper — said too
+    expect(said).toMatch(/stopped before anything was downloaded/);
+    expect(said).toMatch(/no paper left — there is nothing to withdraw/);
     state.tokenRows = [{ id: "t1", document_id: D1, print_id: PRINT, settled_at: "x", voided_at: "y" }];
     expect((await post(voidBody())).status).toBe(409);
     expect(state.inserts).toEqual([]);

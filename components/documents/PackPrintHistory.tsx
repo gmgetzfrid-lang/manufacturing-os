@@ -20,6 +20,17 @@
 // and a print whose sheets carry no per-print code (printed before database
 // update 20261240, or the codes could not be issued — the server answers so
 // and nothing is changed).
+//
+// SHIPPED OFF (PS-P10 second review fix): until public-surfaces PHYS-20
+// limbs 1 and 2 land, a recalled pack's cover QR can still read current and
+// a recalled sheet's scan says its paper was never issued — so the page
+// offers Recall only while PACK_RECALL_UI_ENABLED is true, and it is false.
+// The PHYS-20 package flips it as its last step. The route action stays
+// (controller-only, audited).
+//
+// The history lists the newest PACK_PRINT_HISTORY_LIMIT prints and pages
+// back through older ones ("Show older prints", keyset on printed_at, id),
+// so every print of the package is reachable from here.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { History, Loader2, Ban, ChevronDown, ChevronRight } from "lucide-react";
@@ -28,10 +39,36 @@ import { appPrompt } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { recallSheetPrint } from "@/lib/printSheetTokensClient";
 
-/** How many of a package's most recent prints the history lists. */
+/** How many prints the history reads at a time (newest first; older ones
+ *  page in by "Show older prints"). */
 export const PACK_PRINT_HISTORY_LIMIT = 10;
 
+/** PS-P10 second review fix: the Recall control ships OFF until
+ *  public-surfaces PHYS-20 limbs 1 and 2 land (the cover QR answers a
+ *  recalled print as not current; the sheet scan reads the void reason and
+ *  says "recalled"). Until then a recall would leave the cover reading green
+ *  and each sheet saying its paper was never issued. The packages page gates
+ *  canRecall on it; the PHYS-20 package sets it to true. */
+export const PACK_RECALL_UI_ENABLED = false;
+
 interface PrintRow { id: string; printedAt: string | null; printedByName: string | null; sheets: number }
+
+/** The PostgREST filter for "strictly older than `c` in (printed_at desc,
+ *  id desc) order". Values are double-quoted — a timestamp carries '.', ':'
+ *  and '+' — and an embedded quote or backslash is escaped. Pure. */
+export function olderPrintsFilter(c: { printedAt: string; id: string }): string {
+  const v = (x: string) => `"${x.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `printed_at.lt.${v(c.printedAt)},and(printed_at.eq.${v(c.printedAt)},id.lt.${v(c.id)})`;
+}
+
+function toPrintRow(r: Record<string, unknown>): PrintRow {
+  return {
+    id: String(r.id),
+    printedAt: (r.printed_at as string | null) ?? null,
+    printedByName: (r.printed_by_name as string | null) ?? null,
+    sheets: printedSheetCount(r.sheets),
+  };
+}
 
 /** The sheets a snapshot says were printed: every entry whose `printed` is
  *  not false (a snapshot from before VFY-19 has no `printed` key). Pure. */
@@ -52,30 +89,65 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<PrintRow[] | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [olderBusy, setOlderBusy] = useState(false);
+  const [olderError, setOlderError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [recalled, setRecalled] = useState<Set<string>>(new Set());
 
-  const load = useCallback(async () => {
-    const { data, error } = await supabase
+  // One page of prints, newest first; `after` is the last row already shown.
+  // One more than a page is read, so "Show older prints" appears only when
+  // there are older prints.
+  const readPage = useCallback(async (after: { printedAt: string; id: string } | null) => {
+    let q = supabase
       .from("work_package_prints")
       .select("id, printed_at, printed_by_name, sheets")
       .eq("org_id", orgId)
-      .eq("package_id", packageId)
+      .eq("package_id", packageId);
+    if (after) q = q.or(olderPrintsFilter(after));
+    const { data, error } = await q
       .order("printed_at", { ascending: false })
-      .limit(PACK_PRINT_HISTORY_LIMIT);
-    if (error) {
+      .order("id", { ascending: false })
+      .limit(PACK_PRINT_HISTORY_LIMIT + 1);
+    if (error) return null;
+    const got = ((data as Array<Record<string, unknown>> | null) ?? []).map(toPrintRow);
+    return { rows: got.slice(0, PACK_PRINT_HISTORY_LIMIT), more: got.length > PACK_PRINT_HISTORY_LIMIT };
+  }, [orgId, packageId]);
+
+  const load = useCallback(async () => {
+    const page = await readPage(null);
+    setOlderError(null);
+    if (!page) {
       setRows(null);
+      setHasOlder(false);
       setReadError("This package's print history could not be read just now — reload to try again.");
       return;
     }
     setReadError(null);
-    setRows(((data as Array<Record<string, unknown>> | null) ?? []).map((r) => ({
-      id: String(r.id),
-      printedAt: (r.printed_at as string | null) ?? null,
-      printedByName: (r.printed_by_name as string | null) ?? null,
-      sheets: printedSheetCount(r.sheets),
-    })));
-  }, [orgId, packageId]);
+    setRows(page.rows);
+    setHasOlder(page.more);
+  }, [readPage]);
+
+  const loadOlder = async () => {
+    const last = rows && rows.length > 0 ? rows[rows.length - 1] : null;
+    if (!last || !last.printedAt) return;
+    setOlderBusy(true);
+    try {
+      const page = await readPage({ printedAt: last.printedAt, id: last.id });
+      if (!page) {
+        setOlderError("Older prints could not be read just now — try again.");
+        return;
+      }
+      setOlderError(null);
+      setRows((prev) => {
+        const seen = new Set((prev ?? []).map((r) => r.id));
+        return [...(prev ?? []), ...page.rows.filter((r) => !seen.has(r.id))];
+      });
+      setHasOlder(page.more);
+    } finally {
+      setOlderBusy(false);
+    }
+  };
 
   useEffect(() => {
     if (open) void load();
@@ -159,6 +231,22 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
                 ) : null}
               </div>
             ))
+          )}
+          {!readError && rows && rows.length > 0 && (hasOlder || olderError) && (
+            <div className="flex items-center gap-2 px-2">
+              {olderError && <span className="text-[11px] text-amber-700" role="status">{olderError}</span>}
+              {hasOlder && (
+                <button
+                  type="button"
+                  onClick={() => void loadOlder()}
+                  disabled={olderBusy}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+                >
+                  {olderBusy && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Show older prints
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

@@ -7,8 +7,13 @@
 // Recall on each, gives a reason, and the recall is sent by the cover's print
 // id; a non-controller sees the history and no Recall; a cancelled prompt
 // sends nothing; a refused recall is said; an unreadable history is said.
-// And the page's wiring (source pins): the cover links its print for the
-// settle, and canRecall is the role-COLLECTION controller test.
+// And the page's wiring (source pins): the cover links its print before the
+// download, and canRecall is the role-COLLECTION controller test AND
+// PACK_RECALL_UI_ENABLED — which ships false until public-surfaces PHYS-20
+// limbs 1 and 2 land (second review fix: a recall would otherwise leave the
+// cover QR reading current and each sheet saying it was never issued).
+// The history pages back through older prints ("Show older prints", keyset
+// on printed_at, id — second review fix: every print is reachable).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -20,6 +25,11 @@ const s = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
   readError: null as null | { message: string },
   filters: [] as Array<[string, string, unknown]>,
+  ors: [] as string[],
+  orders: [] as string[],
+  limits: [] as number[],
+  /** when set, each read answers the next page (then the plain rows) */
+  pages: [] as Array<Array<Record<string, unknown>> | "error">,
   prompt: vi.fn(),
   recall: vi.fn(),
   toasts: [] as Array<Record<string, unknown>>,
@@ -30,9 +40,19 @@ vi.mock("@/lib/supabase", () => {
     const c: Record<string, unknown> = {};
     const h: ProxyHandler<Record<string, unknown>> = {
       get(_t, prop: string) {
-        if (prop === "then") return (res: (v: unknown) => void) => res(s.readError ? { data: null, error: s.readError } : { data: s.rows, error: null });
+        if (prop === "then") {
+          return (res: (v: unknown) => void) => {
+            const next = s.pages.length > 0 ? s.pages.shift() : undefined;
+            if (next === "error") return res({ data: null, error: { message: "boom" } });
+            if (next) return res({ data: next, error: null });
+            res(s.readError ? { data: null, error: s.readError } : { data: s.rows, error: null });
+          };
+        }
         return (...args: unknown[]) => {
           if (prop === "eq") s.filters.push(["eq", String(args[0]), args[1]]);
+          if (prop === "or") s.ors.push(String(args[0]));
+          if (prop === "order") s.orders.push(String(args[0]));
+          if (prop === "limit") s.limits.push(Number(args[0]));
           return new Proxy(c, h);
         };
       },
@@ -45,7 +65,9 @@ vi.mock("@/components/providers/DialogProvider", () => ({ appPrompt: (...a: unkn
 vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => ({ showToast: (t: Record<string, unknown>) => s.toasts.push(t) }) }));
 vi.mock("@/lib/printSheetTokensClient", () => ({ recallSheetPrint: (...a: unknown[]) => s.recall(...a) }));
 
-import PackPrintHistory, { printedSheetCount, PACK_PRINT_HISTORY_LIMIT } from "@/components/documents/PackPrintHistory";
+import PackPrintHistory, {
+  printedSheetCount, olderPrintsFilter, PACK_PRINT_HISTORY_LIMIT, PACK_RECALL_UI_ENABLED,
+} from "@/components/documents/PackPrintHistory";
 
 const COVER_A = "c1c1c1c1-0000-0000-0000-000000000001";
 const COVER_B = "c2c2c2c2-0000-0000-0000-000000000002";
@@ -72,6 +94,10 @@ beforeEach(() => {
   ];
   s.readError = null;
   s.filters = [];
+  s.ors = [];
+  s.orders = [];
+  s.limits = [];
+  s.pages = [];
   s.prompt.mockReset();
   s.recall.mockReset();
   s.toasts = [];
@@ -143,6 +169,49 @@ describe("PS-P10 — the print history, rendered", () => {
     expect(host!.textContent).not.toMatch(/Not printed yet/);
   });
 
+  it("SHOW OLDER (second review fix): the newest ten are read first (one more to know if older exist); 'Show older prints' reads the next page strictly older than the last row shown, by (printed_at, id)", async () => {
+    const mk = (i: number) => ({
+      id: `c${String(i).padStart(7, "0")}-0000-0000-0000-000000000000`,
+      printed_at: `2026-10-${String(20 - Math.floor(i / 2)).padStart(2, "0")}T08:00:0${i % 2}.123456+00:00`,
+      printed_by_name: null,
+      sheets: [{ documentId: "d1", printed: true }],
+    });
+    const all = Array.from({ length: 15 }, (_, i) => mk(i));
+    s.pages = [all.slice(0, 11), all.slice(10, 15)];
+    await render(false);
+    expect(s.limits[0]).toBe(PACK_PRINT_HISTORY_LIMIT + 1);
+    expect(s.orders.slice(0, 2)).toEqual(["printed_at", "id"]);
+    expect(s.ors).toEqual([]);
+    expect(host!.querySelectorAll('[data-testid="pack-print-row"]')).toHaveLength(10);
+    const older = () => [...host!.querySelectorAll("button")].find((b) => /Show older prints/.test(b.textContent ?? ""));
+    expect(older()).toBeTruthy();
+    await act(async () => { older()!.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(s.ors).toEqual([olderPrintsFilter({ printedAt: all[9].printed_at, id: all[9].id })]);
+    expect(host!.querySelectorAll('[data-testid="pack-print-row"]')).toHaveLength(15);
+    // the 15th print — older than the first page — is listed, and no more remain
+    expect(older()).toBeUndefined();
+  });
+
+  it("an older page that cannot be read is said, and the shown prints and 'Show older prints' stay", async () => {
+    s.rows = Array.from({ length: 11 }, (_, i) => ({ id: `id-${i}`, printed_at: `2026-10-20T08:00:${String(59 - i).padStart(2, "0")}Z`, printed_by_name: null, sheets: [] }));
+    await render(false);
+    s.pages = ["error"];
+    const older = () => [...host!.querySelectorAll("button")].find((b) => /Show older prints/.test(b.textContent ?? ""));
+    await act(async () => { older()!.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(host!.textContent).toMatch(/Older prints could not be read just now/);
+    expect(host!.querySelectorAll('[data-testid="pack-print-row"]')).toHaveLength(10);
+    expect(older()).toBeTruthy();
+  });
+
+  it("olderPrintsFilter: strictly older in (printed_at desc, id desc), values double-quoted (a timestamp carries '.', ':' and '+')", () => {
+    expect(olderPrintsFilter({ printedAt: "2026-10-20T08:00:05.123456+00:00", id: "abc" })).toBe(
+      'printed_at.lt."2026-10-20T08:00:05.123456+00:00",and(printed_at.eq."2026-10-20T08:00:05.123456+00:00",id.lt."abc")',
+    );
+    expect(olderPrintsFilter({ printedAt: 'x"y\\z', id: "i" })).toContain('"x\\"y\\\\z"');
+  });
+
   it("printedSheetCount: printed:false entries are left out; a pre-VFY-19 entry counts", () => {
     expect(printedSheetCount([{ printed: true }, { printed: false }, {}])).toBe(2);
     expect(printedSheetCount(null)).toBe(0);
@@ -151,7 +220,7 @@ describe("PS-P10 — the print history, rendered", () => {
 
 describe("PS-P10 — the packages page's wiring (source pins)", () => {
   const src = readFileSync(join(process.cwd(), "app/(protected)/packages/page.tsx"), "utf8");
-  it("the cover links its recorded print for the post-download settle", () => {
+  it("the cover links its recorded print before the download", () => {
     expect(src).toContain("buildCoverAfter: async (includedSheets, builderSkipped, cover) => {");
     const recorded = src.indexOf("const printId = await recordPackagePrint({");
     const linked = src.indexOf("cover.linkPrint(printId);");
@@ -161,6 +230,12 @@ describe("PS-P10 — the packages page's wiring (source pins)", () => {
   });
   it("Recall is offered by the role-COLLECTION controller test (isControllerPrincipal over the headline and the roles)", () => {
     expect(src).toContain("const isController = isControllerPrincipal({ role: activeRole, roles });");
-    expect(src).toContain("<PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController} refreshKey={printRound} />");
+    expect(src).toContain("<PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController && PACK_RECALL_UI_ENABLED} refreshKey={printRound} />");
+  });
+  it("SHIPPED OFF (second review fix): Recall stays off until public-surfaces PHYS-20 limbs 1 and 2 land — the PHYS-20 package flips PACK_RECALL_UI_ENABLED", () => {
+    expect(PACK_RECALL_UI_ENABLED).toBe(false);
+    expect(src).toContain('import PackPrintHistory, { PACK_RECALL_UI_ENABLED } from "@/components/documents/PackPrintHistory";');
+    // canRecall is never the controller test alone
+    expect(src).not.toMatch(/canRecall=\{isController\}/);
   });
 });
