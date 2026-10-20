@@ -40,7 +40,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import { emit } from "@/lib/notify/dispatch";
+import { emit, type PushSender } from "@/lib/notify/dispatch";
 import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
@@ -136,6 +136,19 @@ export interface PostPublishInput {
    *  proposal sweep runs in-process; a browser caller leaves it out and the
    *  sweep runs through /api/links/invalidate. */
   serviceClient?: SupabaseClient;
+  /** notifications N17 (the integrator's rule R2, DEC-90): false when this
+   *  publish is one of MANY documents a single action publishes (the set
+   *  rev-up) — the read-&-understood requests keep their bell rows and
+   *  emails and skip only the push leg. */
+  notifyPush?: boolean;
+  /** OS-16 (the integrator's ruling R4 at the N17 merge): a SERVER caller's
+   *  push sender for the read-&-understood roster this publish opens — the
+   *  intake door passes lib/push/sendPush.ts sendPushSafe with its actor as
+   *  the writer, so the roster's recipients are pushed after their bell rows
+   *  land, exactly as a browser publish's are. A browser caller leaves it out
+   *  (its leg is POST /api/push/notify); the maintenance cron never runs
+   *  this. Never imported here: this module is bundled for the browser. */
+  serverPush?: PushSender;
 }
 
 /**
@@ -252,7 +265,11 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
       await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorUserId, userName: input.actorEmail ?? input.actorName });
     } catch { /* best-effort */ }
     try {
-      await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorEmail ?? input.actorName });
+      await onDocumentIssuedAck({
+        orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorEmail ?? input.actorName,
+        ...(input.notifyPush === false ? { notifyPush: false } : {}),
+        ...(input.serverPush ? { serverPush: input.serverPush } : {}),
+      });
     } catch { /* best-effort */ }
     try { await recomputeRetention(input.documentId); } catch { /* best-effort */ }
   }

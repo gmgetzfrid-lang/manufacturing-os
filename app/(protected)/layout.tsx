@@ -2,7 +2,7 @@
 
 import React from "react";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
-import { clearServiceWorkerSession, announceServiceWorkerSession } from "@/lib/swSession";
+import { signOutOfThisBrowser, announceServiceWorkerSession } from "@/lib/swSession";
 import Sidebar from "@/components/navigation/Sidebar";
 import TopBar from "@/components/navigation/TopBar";
 import GlobalCommandPalette from "@/components/navigation/GlobalCommandPalette";
@@ -182,9 +182,10 @@ function NotAMemberScreen({ email }: { email: string | null }) {
               // walks the user straight back into the identity they are
               // trying to leave (IDENT-4).
               setPreferMicrosoft(false);
-              // XEDGE-6: the worker's cache must not outlive this session.
-              void clearServiceWorkerSession();
-              void supabase.auth.signOut();
+              // XEDGE-6: the worker's cache must not outlive this session;
+              // OS-15: nor this browser's push registration for this account
+              // (lib/swSession.ts signOutOfThisBrowser — bounded, best-effort).
+              void signOutOfThisBrowser(supabase);
             }}
             className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-black shadow"
           >

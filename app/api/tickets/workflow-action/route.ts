@@ -1554,4 +1554,39 @@ async function fanOut(params: {
     const { error: mailErr } = await supabaseAdmin.from("email_notifications").insert(emailRows);
     if (mailErr) console.error("[workflow-action] emails were not queued (transition committed):", mailErr.message);
   }
+
+  // OS-14 (notifications N17): an assignment reaches the push channel —
+  // after the bell and email legs, only when the bell insert landed (never
+  // for a refused or rail-rejected row), and ONLY to the assignee: the
+  // committed ticket's assigned_drafter_id, when that member is in the active
+  // audience that got the ticket_assigned row. The watchers (and, on a
+  // self_assign, the requester / engineer) share the bell row but were not
+  // assigned, so they get no "assigned to you" push; a self_assign excludes
+  // the actor from the audience, so it pushes nobody. A failed read pushes
+  // nobody (fail-safe). The sender (lib/push/sendPush.ts) re-checks the bell
+  // row, push_enabled, membership and the device, and never throws; it runs
+  // after the response (next/server after()). N17 merge (DEC-90, the
+  // integrator's ruling R1): the actor is the writer (`writerUid`), so
+  // DEC-108's per-writer cap bounds a burst; the bell row and email stand.
+  if (cls.inAppKind === "ticket_assigned" && !bellErr) {
+    try {
+      after(async () => {
+        const { data: committed, error: assigneeErr } = await supabaseAdmin
+          .from("tickets").select("assigned_drafter_id").eq("id", ticketId).eq("org_id", ticket.orgId).maybeSingle();
+        if (assigneeErr) {
+          console.warn("[workflow-action] the assignee was not read — the assignment push is skipped (bell and email unaffected):", assigneeErr.message);
+          return;
+        }
+        const assigneeId = (committed as { assigned_drafter_id?: string | null } | null)?.assigned_drafter_id ?? null;
+        const assignees = assigneeId ? audience.filter((uid) => uid === assigneeId) : [];
+        if (assignees.length === 0) return;
+        // loaded here, not at module scope: the sender (web-push, the service
+        // role) is needed only once there is something to push
+        const { sendPushSafe } = await import("@/lib/push/sendPush");
+        await sendPushSafe({ orgId: ticket.orgId, kind: "ticket_assigned", resourceId: ticketId, recipients: assignees, writerUid: actorUid });
+      });
+    } catch (e) {
+      console.warn("[workflow-action] the assignment push was not scheduled (transition, bell and email unaffected):", (e as Error)?.message ?? e);
+    }
+  }
 }

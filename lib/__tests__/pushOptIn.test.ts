@@ -16,8 +16,9 @@
 //
 // Fix pass (the review's major 3 and a minor): the card lists only what is
 // pushed TODAY (PUSH_SENT_TODAY — each kind has an emit() producer) and says
-// what is not sent to devices yet (PUSH_NOT_SENT_YET — no emit() producer:
-// OS-14); a subscription made before the click (another person's, on a
+// what is not sent to devices yet (PUSH_NOT_SENT_YET — empty since OS-14
+// closed, notifications N17: the producers outside emit() push after their
+// bell rows; PUSH_NOT_YET_NOTE says what stays bell / email); a subscription made before the click (another person's, on a
 // shared browser) is never taken back when registration fails; an endpoint
 // the server holds under other keys (409 keys_mismatch) gets ONE fresh
 // subscription.
@@ -186,14 +187,48 @@ describe("OS-3 — the permission prompt is reached only by a deliberate click, 
     expect(panel.textContent).toContain(PUSH_PRIVACY_NOTE);
     expect(panel.textContent).toMatch(/Your browser will ask for permission next/);
     expect(calls.requestPermission).not.toHaveBeenCalled();
-    // major 3: no line promises a request mention or assignment (never pushed — OS-14)
+    // major 3: one line per kind pushed today. OS-14 (notifications N17):
+    // request mentions and assignments are pushed now, so the card lists them
     expect(panel.querySelectorAll("li")).toHaveLength(PUSH_SENT_TODAY.length);
-    for (const li of panel.querySelectorAll("li")) expect(li.textContent).not.toMatch(/mention|assigned/i);
     expect(PUSH_WHAT_IS_SENT).toEqual(PUSH_SENT_TODAY.map((l) => l.line));
-    expect(PUSH_WHAT_IS_SENT).toHaveLength(4);
+    expect(PUSH_WHAT_IS_SENT).toHaveLength(6);
+    expect([...panel.querySelectorAll("li")].map((li) => li.textContent)).toEqual(expect.arrayContaining([
+      "A mention in a comment on a request",
+      "A request assigned to you",
+    ]));
+    // what is still bell / email only is said, never promised
+    expect(PUSH_NOT_YET_NOTE).toMatch(/daily reminders/);
+    expect(PUSH_NOT_YET_NOTE).not.toMatch(/mentions and assignments/);
+    // N17 review: the read-and-understood re-send (nudgeAcknowledgment) is not
+    // pushed until 20261160 stamps its writer — the card never promises it
+    const ack = PUSH_SENT_TODAY.find((l) => l.pushKind === "ack_requested")!.line;
+    expect(ack).toBe("A request to confirm you have read a document's current revision — from its distribution list, or from its read-and-understood list when a revision is issued");
+    expect(ack).not.toMatch(/re-sen[dt]/);
+    // the bulk library / folder policy save skips the push leg — said, never promised
+    expect(PUSH_NOT_YET_NOTE).toMatch(/a policy set on a whole library or folder/);
   });
 
-  it("major 3: the card's two lists split the push-worthy set exactly — each listed kind has an emit() producer, and each 'not yet' kind has none (when OS-14 lands, this fails until the line moves)", () => {
+  it("the integrator's rulings at the N17 merge (DEC-90): R3 — the note says a reminder re-sent from the acknowledgment list is not pushed, worded to stay true once 20261160 is applied; R2 — it names every multi-document door; R4 — the intake link's auto-publish is no longer in it", () => {
+    // R3: verbatim clause; conditioned on the migration ("until … is applied"),
+    // never "yet" / "today" — true before the paste and after it
+    expect(PUSH_NOT_YET_NOTE).toContain("a reminder re-sent from the acknowledgment list, until the notification rails migration is applied");
+    expect(PUSH_NOT_YET_NOTE).not.toMatch(/\byet\b|\btoday\b/);
+    // the reminder's bell row is not changed by the ruling: it still names no actor
+    const ack = readFileSync(join(process.cwd(), "lib/acknowledgments.ts"), "utf8");
+    const nudge = ack.slice(ack.search(/\bfunction nudgeAcknowledgment\(/), ack.indexOf("\n}\n", ack.search(/\bfunction nudgeAcknowledgment\(/)));
+    expect(nudge).toMatch(/title: `Reminder — acknowledge \$\{label\}/);
+    expect(nudge).not.toMatch(/actorUserId/);
+    // R2: one rule — every door that opens rosters for many documents in one action is named
+    for (const door of ["a policy set on a whole library or folder", "a multi-file upload", "a bulk status edit", "a split", "a set rev-up", "a template filing run"]) {
+      expect(PUSH_NOT_YET_NOTE, door).toContain(door);
+    }
+    expect(PUSH_NOT_YET_NOTE).toMatch(/read-and-understood and sign-off requests opened by one action across many documents/);
+    // R4 (OS-16 resolved): the intake link's roster is pushed now — the note no longer excludes it
+    expect(PUSH_NOT_YET_NOTE).not.toMatch(/intake/);
+    expect(PUSH_NOT_YET_NOTE).toMatch(/The bell and email still bring them\.$/);
+  });
+
+  it("major 3: the card's two lists split the push-worthy set exactly — each listed kind has a producer that reaches the push leg (an emit(), or since OS-14 a writer outside emit() that pushes after its bell rows), and each 'not yet' kind has none", () => {
     const pushWorthy = NOTIFICATION_KINDS.filter((k) => (KIND_META[k] as { pushWorthy?: boolean }).pushWorthy).sort();
     const today = PUSH_SENT_TODAY.map((l) => l.pushKind);
     expect([...today, ...PUSH_NOT_SENT_YET].sort()).toEqual(pushWorthy);
@@ -214,8 +249,18 @@ describe("OS-3 — the permission prompt is reached only by a deliberate click, 
       const src = readFileSync(f, "utf8");
       for (const m of src.matchAll(/\bemit\(\{[\s\S]{0,600}?\bkind:\s*(?:input\.opened \? )?"(\w+)"/g)) emitKinds.add(m[1]);
     }
-    for (const k of today) expect(emitKinds.has(k), `${k} has an emit() producer`).toBe(true);
-    for (const k of PUSH_NOT_SENT_YET) expect(emitKinds.has(k), `${k} has no emit() producer yet (OS-14)`).toBe(false);
+    // OS-14 (notifications N17): the producers outside emit() that push after
+    // their bell rows — sendPushSafe on the server (the ticket routes) or
+    // pushAfterBellRows (lib/notify/dispatch.ts) from the rosters
+    const pushKinds = new Set<string>();
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (const m of src.matchAll(/\b(?:sendPushSafe|pushAfterBellRows|pushLandedRows)\(\{[\s\S]{0,200}?\bkind:\s*"(\w+)"/g)) pushKinds.add(m[1]);
+    }
+    for (const k of today) expect(emitKinds.has(k) || pushKinds.has(k), `${k} reaches the push leg`).toBe(true);
+    for (const k of PUSH_NOT_SENT_YET) expect(emitKinds.has(k) || pushKinds.has(k), `${k} has no producer that pushes yet`).toBe(false);
+    expect(PUSH_NOT_SENT_YET).toEqual([]);
+    for (const k of ["ticket_mention", "ticket_assigned", "ack_requested", "review_requested"]) expect(pushKinds.has(k), `${k} (OS-14)`).toBe(true);
   });
 
   // Fix pass 2 (the second review's minor): an emit() is pushed only from the BROWSER (its push leg POSTs
@@ -246,7 +291,29 @@ describe("OS-3 — the permission prompt is reached only by a deliberate click, 
       // the browser module is the producer itself
       { pushKind: "review_requested", file: "components/documents/CheckInPanel.tsx", emitIn: null, entry: null, module: null, callers: [] },
     ];
-    expect(PRODUCERS.map((p) => p.pushKind).sort()).toEqual(PUSH_SENT_TODAY.map((l) => l.pushKind).sort());
+    // OS-14 (notifications N17): the producers outside emit(), each pinned to
+    // the function that pushes after its bell rows — the ticket routes on the
+    // server (sendPushSafe, after the bell insert), the rosters from browser
+    // modules (pushAfterBellRows → POST /api/push/notify)
+    const OUTSIDE_EMIT: Array<{ pushKind: string; file: string; fn: string; push: RegExp; entryCallers: string[] }> = [
+      { pushKind: "ticket_mention", file: "app/api/tickets/comment/route.ts", fn: "fanOut", push: /sendPushSafe\(\{[^}]*kind: "ticket_mention"/, entryCallers: [] },
+      { pushKind: "ticket_assigned", file: "app/api/tickets/workflow-action/route.ts", fn: "fanOut", push: /sendPushSafe\(\{[^}]*kind: "ticket_assigned"/, entryCallers: [] },
+      { pushKind: "ack_requested", file: "lib/acknowledgments.ts", fn: "nudgeAcknowledgment", push: /pushLandedRows\(\{[^}]*kind: "ack_requested"/, entryCallers: ["components/documents/AckSection.tsx"] },
+      { pushKind: "ack_requested", file: "lib/acknowledgments.ts", fn: "recomputeDocumentAck", push: /pushLandedRows\(\{[^}]*kind: "ack_requested"/, entryCallers: [] },
+      { pushKind: "review_requested", file: "lib/reviewControl.ts", fn: "openReviewRoster", push: /pushLandedRows\(\{[^}]*kind: "review_requested"/, entryCallers: ["components/projects/IntakePanel.tsx"] },
+    ];
+    for (const o of OUTSIDE_EMIT) {
+      expect(fnBody(o.file, o.fn), `${o.fn} pushes ${o.pushKind}`).toMatch(o.push);
+      for (const c of o.entryCallers) {
+        expect(isClient(c), `${c} is a browser module`).toBe(true);
+        expect(src(c), `${c} calls ${o.fn}`).toMatch(new RegExp(`\\b${o.fn}\\(`));
+      }
+    }
+    // the daily scans' reminders never push (the cron only prunes — DEC-108 §6)
+    expect(fnBody("lib/acknowledgments.ts", "scanAndNotifyAcks")).not.toMatch(/pushLandedRows|pushAfterBellRows|sendPushSafe/);
+    expect(fnBody("lib/reviewControl.ts", "scanReviews")).not.toMatch(/pushLandedRows|pushAfterBellRows|sendPushSafe/);
+    expect(new Set([...PRODUCERS.map((p) => p.pushKind), ...OUTSIDE_EMIT.map((o) => o.pushKind)])).toEqual(new Set(PUSH_SENT_TODAY.map((l) => l.pushKind)));
+    expect(PRODUCERS.map((p) => p.pushKind).sort()).toEqual(["ack_requested", "checkout_force_released", "hold_opened", "review_requested"]);
     for (const p of PRODUCERS) {
       if (!p.emitIn) {
         expect(isClient(p.file), `${p.file} is a browser module`).toBe(true);

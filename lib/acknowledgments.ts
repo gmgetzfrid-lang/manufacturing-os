@@ -18,11 +18,22 @@ import { supabase } from "@/lib/supabase";
 // it does not land (lib/complianceNotify.ts).
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { loadScanRetryPlan } from "@/lib/complianceNotify";
+// OS-14 (notifications N17): the roster's requests reach the push channel
+// after their bell rows land — emit()'s own leg (the daily scan's reminders
+// do not: the cron only prunes, DEC-108 §6).
+import { pushAfterBellRows, type PushSendInput, type PushSender } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { resolveEffectiveOwner, effectiveOwnerForDocument, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
 import type { AckPolicy } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
+
+/** The push leg never touches the roster's own outcome (DEC-90: a push
+ *  failure never fails the action or its bell rows). `serverPush`: the
+ *  server caller's sender (OS-16 — the intake door's auto-publish); none in
+ *  the browser, where the leg is the fire-and-forget POST /api/push/notify. */
+const pushLandedRows = (input: PushSendInput, serverPush?: PushSender): Promise<void> =>
+  Promise.resolve().then(() => pushAfterBellRows(input, serverPush)).catch(() => undefined);
 
 type Level = "library" | "collection" | "document";
 interface PolicyCols { ack_policy?: AckPolicy | null }
@@ -335,10 +346,22 @@ interface DocForAck {
  *  on policy change, and idempotently thereafter.
  *  REV-15: `writeErrors`, when given, also collects each roster write's error —
  *  the stale-revision void, the no-policy void and the roster insert — as the
- *  error the write answered; without it the behaviour is unchanged. */
+ *  error the write answered; without it the behaviour is unchanged.
+ *  OS-14 (notifications N17): `notifyPush: false` skips the push leg only —
+ *  the bell rows, the roster and the audit are unchanged. The integrator's
+ *  rule at the N17 merge (DEC-90, R2): a door that opens rosters for MANY
+ *  documents in one action passes it — the library / folder policy save
+ *  (setAckPolicy), the library's multi-file upload, the bulk status editor,
+ *  a split, a set rev-up, the output-template filing run — so one action
+ *  never fans out one push request per document; a single-document door
+ *  keeps pushing. Pinned by the census in lib/__tests__/n17PushRosters.test.ts.
+ *  OS-16 (the integrator at the N17 merge, R4): `serverPush` — a SERVER
+ *  caller's sender (the intake door's auto-publish passes sendPushSafe with
+ *  its actor as the writer), threaded to pushAfterBellRows; without it a
+ *  server recompute pushes nothing (the maintenance cron passes none). */
 export async function recomputeDocumentAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null; notifyNew?: boolean;
-  writeErrors?: string[];
+  writeErrors?: string[]; notifyPush?: boolean; serverPush?: PushSender;
 }): Promise<void> {
   const { data: docRow } = await supabase
     .from("documents")
@@ -404,7 +427,8 @@ export async function recomputeDocumentAck(input: {
       input.writeErrors?.push(`the acknowledgment roster could not be saved (${upsertErr.message})`);
     } else {
       if (input.notifyNew !== false) {
-        await Promise.all(fresh.filter((a) => a.uid !== input.actorId).map((a) =>
+        const asked = fresh.filter((a) => a.uid !== input.actorId);
+        const landed = await Promise.all(asked.map((a) =>
           notify({
             orgId: input.orgId, userId: a.uid, kind: "ack_requested",
             title: `Please read & acknowledge: ${label}${revLabel ? ` Rev ${revLabel}` : ""}`,
@@ -413,6 +437,11 @@ export async function recomputeDocumentAck(input: {
             actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
           })
         ));
+        // OS-14: only the assignees whose bell row landed; never awaited
+        // past the request itself (the browser leg is fire-and-forget)
+        if (input.notifyPush !== false) {
+          await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: doc.id, recipients: asked.filter((_, i) => landed[i] === true).map((a) => a.uid) }, input.serverPush);
+        }
       }
       await logAuditAction({
         action: "ACK_REQUESTED", resourceType: "document", resourceId: doc.id,
@@ -445,13 +474,19 @@ export async function recomputeDocumentAck(input: {
  *  REV-15: `writeErrors`, when given, collects each roster write's error
  *  (recomputeDocumentAck) and, when the recompute threw part-way, that error
  *  (which this function still swallows); without it the behaviour is
- *  unchanged (logged only). */
+ *  unchanged (logged only).
+ *  `notifyPush` / `serverPush`: passed to recomputeDocumentAck as given
+ *  (the N17 merge's R2 / R4 — see there). */
 export async function onDocumentIssuedAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null;
-  writeErrors?: string[];
+  writeErrors?: string[]; notifyPush?: boolean; serverPush?: PushSender;
 }): Promise<void> {
   try {
-    await recomputeDocumentAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName, writeErrors: input.writeErrors });
+    await recomputeDocumentAck({
+      orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName, writeErrors: input.writeErrors,
+      ...(input.notifyPush === false ? { notifyPush: false } : {}),
+      ...(input.serverPush ? { serverPush: input.serverPush } : {}),
+    });
   } catch (e) {
     console.warn("[ack] onDocumentIssued failed", e);
     input.writeErrors?.push(`opening the acknowledgment roster stopped on an error (${(e as Error)?.message ?? String(e)})`);
@@ -542,13 +577,15 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
   const { data: doc } = await supabase.from("documents").select("library_id, document_number, title, name").eq("id", r.document_id as string).maybeSingle();
   const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
   const rev = (r.revision_label as string) || "";
-  await notify({
+  const landed = await notify({
     orgId: input.orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
     title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
     body: "Please confirm you've read and understood this revision.",
     link: `/documents/${doc?.library_id as string}?doc=${r.document_id as string}`,
     resourceType: "document", resourceId: r.document_id as string,
   });
+  // OS-14: the re-sent request is pushed once its bell row landed
+  if (landed === true) await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: r.document_id as string, recipients: [r.assignee_user_id as string] });
   await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", input.rosterId);
 }
 
@@ -615,6 +652,10 @@ export async function setAckPolicy(input: {
   // abandoned every later batch at the first one. Each batch is settled
   // whole, every batch runs, and the documents that were not recomputed are
   // reported once, after the last — the policy itself is already saved.
+  // OS-14 (N17 review): no push leg here (`notifyPush: false`) — a policy
+  // saved over a whole library or folder would otherwise send one
+  // fire-and-forget push request per issued document; the bell rows and
+  // emails are unchanged.
   const col = input.level === "library" ? "library_id" : "collection_id";
   const { data, error: listErr } = await supabase.from("documents").select("id").eq(col, input.id).eq("status", "Issued");
   if (listErr) {
@@ -626,7 +667,7 @@ export async function setAckPolicy(input: {
   for (let i = 0; i < ids.length; i += 20) {
     const batch = ids.slice(i, i + 20);
     const settled = await Promise.allSettled(batch.map((id) =>
-      recomputeDocumentAck({ orgId: input.orgId, documentId: id, actorId: input.actorId, actorName: input.actorName })));
+      recomputeDocumentAck({ orgId: input.orgId, documentId: id, actorId: input.actorId, actorName: input.actorName, notifyPush: false })));
     settled.forEach((r, k) => {
       if (r.status === "rejected") {
         failed.push(batch[k]);
