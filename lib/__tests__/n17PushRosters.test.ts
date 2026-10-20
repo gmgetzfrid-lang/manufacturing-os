@@ -317,6 +317,7 @@ describe("R2 (the integrator at the N17 merge, DEC-90) — one rule everywhere: 
       ["components/documents/RevUpModal.tsx", "revUpDocument", "single", "a rev-up"],
       ["components/documents/RevUpModal.tsx", "submitForReview", "single", "a submission for sign-off"],
       ["components/projects/IntakePanel.tsx", "openReviewRoster", "single", "an intake submission sent to its reviewers"],
+      ["components/requests/PublishNewDocumentModal.tsx", "createDocumentWithFile", "single", "a drafting request's deliverable published as one new document (drafting-flow DF-P15, DCW-4)"],
       ["lib/revisions.ts", "recordStatusIssue", "single", "an un-archive into an issue status"],
       ["lib/revisions.ts", "runPostPublishSideEffects", "single", "a revert"],
       ["lib/reviewControl.ts", "runPostPublishSideEffects", "single", "a reviewed revision finalized"],

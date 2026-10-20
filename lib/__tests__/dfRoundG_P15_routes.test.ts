@@ -188,8 +188,6 @@ const req = (path: string, body: unknown) => new NextRequest(`http://app.local${
 });
 const inserted = (table: string) => state.calls.filter((c) => c.table === table && c.method === "insert")
   .flatMap((c) => (Array.isArray(c.args[0]) ? c.args[0] : [c.args[0]]) as Row[]);
-const bellUsers = () => inserted("notifications").map((r) => r.user_id as string).sort();
-const mailUsers = () => inserted("email_notifications").map((r) => r.to_user_id as string).sort();
 
 const SUP = U(7), HOLDER = U(8);
 const UUIDV = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", UUIDD = "dddddddd-dddd-4ddd-8ddd-dddddddddddd", LIB = "11111111-2222-4333-8444-555555555555";

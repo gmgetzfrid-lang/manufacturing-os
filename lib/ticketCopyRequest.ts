@@ -57,7 +57,7 @@ export interface TicketCopyContext {
   /** The requester — a creation-time file may still sit at their staged key. */
   requesterId?: string | null;
   /** Every file the ticket lists (an id named twice is not addressable). */
-  attachments?: ReadonlyArray<Pick<TicketAttachment, "id"> | null | undefined> | null;
+  attachments?: ReadonlyArray<{ id?: string | null } | null | undefined> | null;
 }
 
 /** Which path this file's copies take — the route's own door, mirrored. */
