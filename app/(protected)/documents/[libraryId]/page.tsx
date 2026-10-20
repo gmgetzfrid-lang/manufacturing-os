@@ -2740,15 +2740,6 @@ export default function LibraryExplorerPage() {
       const attempted = stoppedAt >= 0 ? stoppedAt : resolved.length;
       const notStarted = resolved.length - attempted;
       const landed = attempted - failures.length;
-      // GAP-314 (intelligence I-26): the unit decode at create time, ONCE for
-      // every document that landed (one route call per 200, bounded), after
-      // the batch — best-effort: it never fails or holds back an upload that
-      // landed. A decode that did not run, or left something undone, is said
-      // with the batch's follow-ups; the route records a document it left
-      // without a code, with why (UNIT_CODE_DECODE).
-      const unitDecode = landedIds.size > 0
-        ? await requestUnitCodeDecode(activeOrgId!, [...landedIds.values()], "upload")
-        : { results: [], note: null };
       if (landed > 0) {
         // NEDGE-22: the first staged file's label, and its id only if it landed
         const first = firstNoticeTarget(resolved, landedIds);
@@ -2756,6 +2747,15 @@ export default function LibraryExplorerPage() {
       }
 
       const notes: string[] = [];
+      // GAP-314 (intelligence I-26): the unit decode at create time, ONCE for
+      // every document that landed (one route call per 200, bounded), after
+      // the batch and its notice — best-effort: it never fails or holds back an upload that
+      // landed. A decode that did not run, or left something undone, is said
+      // with the batch's follow-ups; the route records a document it left
+      // without a code, with why (UNIT_CODE_DECODE).
+      const unitDecode = landedIds.size > 0
+        ? await requestUnitCodeDecode(activeOrgId!, [...landedIds.values()], "upload")
+        : { results: [], note: null };
       if (foldersCreatedNote) notes.push(foldersCreatedNote);
       if (autoRenamed.length > 0) {
         const sample = autoRenamed.slice(0, 3).map((r) => `${r.original} → ${r.final}`).join(", ");
