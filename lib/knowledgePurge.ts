@@ -56,12 +56,23 @@ export async function purgeKnowledge(admin: SupabaseClient, opts: {
 }): Promise<PurgeResult> {
   const { orgId, libraryId, deadlineMs } = opts;
   const wholeLibrary = !opts.documentIds;
-  let q = admin.from("knowledge_documents").select("id, file_key, source_document_id")
+  type Row = { id: string; file_key: string | null; source_document_id: string | null };
+  const docs: Row[] = [];
+  const base = () => admin.from("knowledge_documents").select("id, file_key, source_document_id")
     .eq("org_id", orgId).eq("library_id", libraryId);
-  if (opts.documentIds) q = q.in("id", opts.documentIds.slice(0, 2000));
-  const { data: docRows, error } = await q.limit(5000);
-  if (error) throw new Error(error.message);
-  const docs = (docRows ?? []) as Array<{ id: string; file_key: string | null; source_document_id: string | null }>;
+  if (opts.documentIds) {
+    // Ids ride in the URL — 100 at a time stays under the gateway's limit.
+    const ids = opts.documentIds.slice(0, 2000);
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error } = await base().in("id", ids.slice(i, i + 100));
+      if (error) throw new Error(error.message);
+      docs.push(...((data ?? []) as Row[]));
+    }
+  } else {
+    const { data, error } = await base().limit(5000);
+    if (error) throw new Error(error.message);
+    docs.push(...((data ?? []) as Row[]));
+  }
 
   let removed = 0;
   const ownPrefix = `orgs/${orgId}/knowledge/`;

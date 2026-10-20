@@ -39,9 +39,13 @@ export async function POST(req: NextRequest) {
   if (Array.isArray(body.documentIds)) {
     documentIds = body.documentIds.filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 2000);
     // Mirrors of controlled documents are removed by unlinking their source.
-    const { data: mirrored } = await supabaseAdmin
-      .from("knowledge_documents").select("id").in("id", documentIds).not("source_document_id", "is", null);
-    const skip = new Set(((mirrored ?? []) as Array<{ id: string }>).map((r) => r.id));
+    const skip = new Set<string>();
+    for (let i = 0; i < documentIds.length; i += 100) {
+      const { data: mirrored } = await supabaseAdmin
+        .from("knowledge_documents").select("id").in("id", documentIds.slice(i, i + 100))
+        .not("source_document_id", "is", null);
+      for (const r of (mirrored ?? []) as Array<{ id: string }>) skip.add(r.id);
+    }
     documentIds = documentIds.filter((id) => !skip.has(id));
     if (documentIds.length === 0) return NextResponse.json({ done: true, removedDocuments: 0, remainingDocuments: 0 });
   }

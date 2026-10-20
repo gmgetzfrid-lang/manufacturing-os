@@ -1041,12 +1041,17 @@ export default function LibraryExplorerPage() {
     const ids = Array.from(selectedDocIds);
     // Records management: legal holds freeze records against deletion. The
     // server checks again (its word is final) and skips anything held.
-    const { data: held } = await supabase.from("documents")
-      .select("id, document_number, title, name")
-      .in("id", ids.slice(0, 500)).eq("legal_hold", true);
-    const heldN = held?.length ?? 0;
+    // Sliced: ids ride in the URL, and a select-all of hundreds overflowed it.
+    const held: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data } = await supabase.from("documents")
+        .select("id, document_number, title, name")
+        .in("id", ids.slice(i, i + 100)).eq("legal_hold", true);
+      held.push(...((data ?? []) as Array<Record<string, unknown>>));
+    }
+    const heldN = held.length;
     if (heldN === ids.length) {
-      const label = (held![0] as Record<string, unknown>);
+      const label = held[0];
       setError(`${heldN === 1 ? "That document is" : "Those documents are"} under a legal hold (e.g. ${(label.document_number as string) || (label.title as string) || (label.name as string) || "a record"}) and can't be deleted. Release the hold first.`);
       return;
     }
@@ -1084,17 +1089,28 @@ export default function LibraryExplorerPage() {
     if (!(await appConfirm({ title: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}?`, message: "They keep their history but disappear from the default view." }))) return;
     const ids = Array.from(selectedDocIds);
     const now = new Date().toISOString();
-    await supabase.from("documents").update({
-      status: "Archived",
-      archived_at: now,
-      archived_by: uid ?? null,
-      updated_at: now,
-      updated_by: uid ?? null,
-    }).in("id", ids);
+    // Sliced (ids ride in the URL) and checked — a failed slice used to be
+    // ignored while the screen showed everything archived.
+    const done = new Set<string>();
+    let failure: string | null = null;
+    for (let i = 0; i < ids.length; i += 100) {
+      const slice = ids.slice(i, i + 100);
+      const { error: archErr } = await supabase.from("documents").update({
+        status: "Archived",
+        archived_at: now,
+        archived_by: uid ?? null,
+        updated_at: now,
+        updated_by: uid ?? null,
+      }).in("id", slice);
+      if (archErr) { failure = archErr.message; break; }
+      slice.forEach((id) => done.add(id));
+    }
     setDocuments((prev) => prev.map((d) =>
-      ids.includes(d.id!) ? { ...d, status: "Archived" as DocumentRecord["status"] } : d
+      done.has(d.id!) ? { ...d, status: "Archived" as DocumentRecord["status"] } : d
     ));
-    setSelectedDocIds(new Set());
+    folderDocsCache.current.clear();
+    setSelectedDocIds(new Set(ids.filter((id) => !done.has(id))));
+    if (failure) setError(`Archived ${done.size} of ${ids.length}. The rest failed: ${failure}`);
   };
 
   const handleStageSelected = () => {
