@@ -8,7 +8,10 @@
 //     short-lived signed URL — never the key. A mirror whose source the
 //     caller may not read yields no key, no URL and no bytes; every reader
 //     who opened a mirror before opens exactly what they opened before (the
-//     same door decided the same key); a fault fails closed and says so.
+//     same door decided the same key), except a bound key from before the
+//     orgs/ prefix, now decided by the source's read predicate (the intended
+//     narrowing); a fault fails closed and says so. The browser remembers no
+//     URL by document id: a re-pointed mirror opens its new revision.
 //   KACL-9 residual — /api/flows/browse and /api/area/knowledge-status read
 //     the held-back flag CHECKED: an errored read withholds (503), a missing
 //     column holds nothing back (as the knowledge sync reads it).
@@ -39,6 +42,8 @@ const db = vi.hoisted(() => ({
   selects: [] as Array<{ table: string; columns: string; filters: string[] }>,
   user: null as null | { id: string; email?: string },
   signed: 0,
+  /** The storage key of every URL the presigner signed, in order. */
+  signedKeys: [] as string[],
 }));
 
 function chain(table: string) {
@@ -139,7 +144,13 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({})) }, R2_BUCKET: "test-bucket" }));
-vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: vi.fn(async () => { db.signed += 1; return "https://signed.example/get"; }) }));
+vi.mock("@aws-sdk/s3-request-presigner", () => ({
+  getSignedUrl: vi.fn(async (_client: unknown, command: { input?: { Key?: string } }) => {
+    db.signed += 1;
+    db.signedKeys.push(String(command?.input?.Key ?? ""));
+    return "https://signed.example/get";
+  }),
+}));
 
 import { GET as mirrorUrl } from "@/app/api/knowledge/mirror-url/route";
 import { GET as downloadUrl } from "@/app/api/storage/download-url/route";
@@ -222,6 +233,7 @@ function seed(opts: {
   db.inserts = [];
   db.selects = [];
   db.signed = 0;
+  db.signedKeys = [];
   db.user = { id: "u-viewer", email: "v@example.com" };
 }
 
@@ -459,13 +471,38 @@ describe("KACL-5 criterion 4 / KACL-7 criterion 3 — the viewer asks the route 
   });
   afterEach(() => { globalThis.fetch = realFetch; });
 
-  it("a readable mirror: the URL, and a reopen within the window does not re-sign", async () => {
+  it("a readable mirror: the URL; every open asks the route (nothing remembered by document id)", async () => {
     seed();
     const id = "77777777-7777-4777-8777-777777777771";
     db.tables.knowledge_documents.push({ ...db.tables.knowledge_documents[1], id });
     expect(await getKnowledgeMirrorUrl(id)).toBe("https://signed.example/get");
     expect(await getKnowledgeMirrorUrl(id)).toBe("https://signed.example/get");
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
+    expect(db.signedKeys).toEqual([KEY, KEY]);
+  });
+  it("fix pass (blocker): a mirror re-pointed to its source's new revision opens the NEW revision's file on the next open — never the superseded one", async () => {
+    seed();
+    const id = "77777777-7777-4777-8777-777777777773";
+    db.tables.knowledge_documents.push({ ...db.tables.knowledge_documents[1], id });
+    expect(await getKnowledgeMirrorUrl(id)).toBe("https://signed.example/get");
+    expect(db.signedKeys).toEqual([KEY]);
+    // The source publishes revision B; the sync updates the SAME row (same
+    // knowledge document id, new file_key, new source_rev) — as
+    // lib/knowledgeSourceSync does — and the page re-lists.
+    const KEY_B = `orgs/${ORG}/libraries/${LIB}/HSE-7-rev-B.pdf`;
+    db.tables.document_versions.push({ ...db.tables.document_versions[0], id: "v2", file_url: KEY_B, revision_label: "B" });
+    db.tables.documents[0].current_version_id = "v2";
+    const row = db.tables.knowledge_documents.find((r) => r.id === id)!;
+    row.file_key = KEY_B;
+    row.source_rev = "B";
+    const listed = await listKnowledgeDocuments(KL);
+    expect(listed.find((d) => d.id === id)).toMatchObject({ sourceRev: "B", fileKey: null });
+    expect(await getKnowledgeMirrorUrl(id)).toBe("https://signed.example/get");
+    expect(calls).toBe(2);
+    expect(db.signedKeys).toEqual([KEY, KEY_B]);
+    // and the library source carries no browser-side URL memory for mirrors
+    const lib = readFileSync(join(process.cwd(), "lib/knowledge.ts"), "utf8");
+    expect(lib).not.toMatch(/mirrorUrlCache/);
   });
   it("a restricted mirror throws KnowledgeMirrorRestrictedError carrying 'the source is restricted' — the words the viewer shows", async () => {
     seed({ folderAcl: acl([allow("team", "T-eng", ["read"])]) });

@@ -545,22 +545,22 @@ export class KnowledgeMirrorRestrictedError extends Error {
   }
 }
 
-/** Signed URLs for mirrors, per knowledge document id, for the window the
- *  route granted (minus a margin) — so reopening a page does not re-sign,
- *  as the storage cache spares a key (lib/storage signedUrlCache). */
-const mirrorUrlCache = new Map<string, { url: string; expiresAt: number }>();
-
 /** KACL-5 criterion 4 / KACL-7 criterion 3: a short-lived, inline signed URL
  *  for a SOURCE-LINKED mirror's file, decided by /api/knowledge/mirror-url
  *  (the bytes door's read predicate on the mirror's source). Throws
  *  KnowledgeMirrorRestrictedError when the source is restricted for the
  *  caller, ArchivedFileError when the file was shed to an offline archive,
  *  and an Error carrying the route's words otherwise (a check that could not
- *  be made says so). */
+ *  be made says so).
+ *  Never cached in the browser: a mirror keeps its knowledge document id
+ *  when its source publishes a new revision (lib/knowledgeSourceSync
+ *  re-points file_key on the same row), so a URL remembered by id would open
+ *  the superseded revision's file under the new revision's citation. Each
+ *  open asks the route, which signs the row's CURRENT key — as the old path
+ *  signed the listed key, whose storage cache was per key, so per revision.
+ *  The viewer asks once per file it opens (CitedPageViewer re-asks only when
+ *  the document changes). */
 export async function getKnowledgeMirrorUrl(documentId: string): Promise<string> {
-  const cached = mirrorUrlCache.get(documentId);
-  if (cached && cached.expiresAt > Date.now()) return cached.url;
-  const now = Date.now();
   const token = await authToken();
   const res = await fetch(`/api/knowledge/mirror-url?id=${encodeURIComponent(documentId)}`, {
     headers: { authorization: `Bearer ${token}` },
@@ -569,13 +569,7 @@ export async function getKnowledgeMirrorUrl(documentId: string): Promise<string>
     url?: string; expiresIn?: number | null; error?: string; restricted?: boolean;
     archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string | null;
   } | null;
-  if (res.ok && data && typeof data.url === "string") {
-    const seconds = typeof data.expiresIn === "number" && data.expiresIn > 0 ? data.expiresIn : 3600;
-    // Re-sign a minute (or a tenth of a short window) before it closes.
-    const margin = Math.min(60, Math.floor(seconds / 10)) * 1000;
-    mirrorUrlCache.set(documentId, { url: data.url, expiresAt: now + seconds * 1000 - margin });
-    return data.url;
-  }
+  if (res.ok && data && typeof data.url === "string") return data.url;
   if (res.status === 403 && data?.restricted) throw new KnowledgeMirrorRestrictedError(data.error || MIRROR_SOURCE_RESTRICTED);
   if (res.status === 409 && data?.archived) {
     throw new ArchivedFileError({ archiveId: data.archiveId ?? null, root: data.root ?? null, fileName: data.fileName || "file" });
