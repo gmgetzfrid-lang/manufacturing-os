@@ -319,6 +319,21 @@ export const RESULT_WITHHELD_NOTE =
   "! Result withheld — the AI worked this arithmetic itself and nothing in the app re-derived it, so the number it " +
   "computed is not shown. Compute the result from the formula and the cited inputs above, and check every " +
   "substitution and unit against the cited pages.";
+/** (PR-13, I-33 fix pass 2) The same line when the app's evaluator computed
+ *  at least one Substituted line of the answer (presentComputedResults): the
+ *  AI's own number is still withheld, but the app re-derived a value, shown
+ *  on the line below the Substituted line it computed. */
+export const RESULT_WITHHELD_COMPUTED_NOTE =
+  "! Result withheld — the AI's own number is withheld; the app's value is shown on the line below where it could " +
+  "re-derive it from the cited inputs. Any other withheld result was not re-derived: compute it from the formula and " +
+  "the cited inputs above, and check every substitution and unit against the cited pages.";
+/** (PR-13, I-33 fix pass 2) The withheld chip's tooltip on the page: the
+ *  first when nothing in the app re-derived the answer's arithmetic, the
+ *  second when the app computed a value on at least one Substituted line. */
+export const RESULT_WITHHELD_TITLE =
+  "The AI computed this number and nothing in the app re-derived it, so it is not shown. Compute it from the formula and the cited inputs.";
+export const RESULT_WITHHELD_COMPUTED_TITLE =
+  "The AI's own number is withheld; the app's value is shown on the line below where it could re-derive it from the cited inputs. Where no such line follows, compute it from the formula and the cited inputs.";
 
 /** The line the calculation protocol asks the model to write its substituted
  *  expression on (route.ts calcProtocol). */
@@ -439,6 +454,14 @@ const CITED_INPUT_LINE = new RegExp(
 const VALUE_SRC =
   "(?:(?<![\\w§#./\\[-])(" + CALC_NUM + ")|(?<=(?<![\\w.,/-])\\d[\\d,]*(?:\\.\\d+)?-)(" + CALC_NUM + ")(?!,\\d))(" +
   CALC_UNIT + ")(?![\\w/\\]]|[.-]\\d)";
+/** (I-33 fix pass 2) VALUE_SRC's base reading alone — 53b7973's VALUE_SRC,
+ *  the same groups (group 2 never matches). proseArithmetic reads its
+ *  operands with it, so whether an answer with no Substituted line is
+ *  arithmetic (answerHasComputation) is decided exactly as at 53b7973: a
+ *  hyphen range's end ("1.5 times 100-150 psig, so 225 psig") is no operand
+ *  there, as it was not before I-33. */
+const VALUE_BASE_SRC =
+  "(?:(?<![\\w§#./\\[-])(" + CALC_NUM + ")|(?!)(" + CALC_NUM + "))(" + CALC_UNIT + ")(?![\\w/\\]]|[.-]\\d)";
 
 /** (Fix pass 3) A Unicode minus or en dash used as a SIGN ("MDMT: −20 °F"):
  *  before a digit, and not after a number, a ")" or a "]" (where it is the
@@ -589,7 +612,7 @@ function proseArithmetic(text: string): boolean {
   let m: RegExpExecArray | null;
   while ((m = op.exec(text)) !== null) {
     const opEnd = m.index + m[0].length;
-    spans ??= valueSpans(text).filter((s) => !afterIdentifier(text, s));
+    spans ??= valueSpans(text, VALUE_BASE_SRC).filter((s) => !afterIdentifier(text, s));
     while (j < spans.length && spans[j].start < opEnd) j++;
     const operand = spans[j];
     if (!operand || operand.start - opEnd > PROSE_OPERAND_SPAN || CLAUSE_END.test(text.slice(opEnd, operand.start))) continue;
@@ -602,10 +625,11 @@ function proseArithmetic(text: string): boolean {
   return false;
 }
 
-/** Rule (b)/(c): every standalone value on one (stripped) line. */
-function valueSpans(text: string): Span[] {
+/** Rule (b)/(c): every standalone value on one (stripped) line (read with
+ *  `src`, VALUE_SRC unless a caller names VALUE_BASE_SRC). */
+function valueSpans(text: string, src: string = VALUE_SRC): Span[] {
   const out: Span[] = [];
-  const re = new RegExp(VALUE_SRC, "gi");
+  const re = new RegExp(src, "gi");
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const raw = m[1] ?? m[2];
@@ -744,7 +768,8 @@ export function withholdModelResults(answer: string, grounding?: string): { text
   }
   if (withheld === 0) return { text: answer, withheld: 0 };
   const text = lines.join("\n");
-  return { text: text.includes(RESULT_WITHHELD_NOTE) ? text : `${text}\n\n${RESULT_WITHHELD_NOTE}`, withheld };
+  const noted = text.includes(RESULT_WITHHELD_NOTE) || text.includes(RESULT_WITHHELD_COMPUTED_NOTE);
+  return { text: noted ? text : `${text}\n\n${RESULT_WITHHELD_NOTE}`, withheld };
 }
 
 // ── PR-13 (intelligence I-33; DEC-90 A17's later path): the deterministic
@@ -760,7 +785,9 @@ export function withholdModelResults(answer: string, grounding?: string): { text
 // asker's own values (the question and the inputs box) holds, in a
 // compatible unit: an operand with its own citation binds only in that
 // source (or the asker's own values). A dimensionless factor binds to any
-// cited source that prints it (a formula's constant): the evaluator checks
+// cited source that prints it as a plain number (a formula's constant) —
+// never to a value printed in a unit the evaluator does not read ("150 lb",
+// "1.5 mPa·s", "100 L/min"; I-33 fix pass 2): the evaluator checks
 // the arithmetic and the units, not that the formula was transcribed right
 // — the formula and its citation stay on screen for the engineer. The
 // expression is evaluated with dimension checking (mass, length,
@@ -770,10 +797,11 @@ export function withholdModelResults(answer: string, grounding?: string): { text
 // value, labelled COMPUTED_LABEL, in the unit of the first operand of the
 // result's dimension. Anything it cannot do — parse the whole expression,
 // bind an operand, reconcile a unit, a zero divisor, a non-finite result, an
-// ambiguous "a / b × c", a bracket nesting or a line past its bounds — adds
-// nothing, and the withholding stands. It never un-withholds a model number:
-// the model's own result on the line stays withheld (also after a
-// terminator the net does not read, "≅ 427.5 psig"), and where it differs
+// ambiguous "a / b × c", a model result written in a unit it cannot read or
+// in another dimension (I-33 fix pass 2), a bracket nesting or a line past
+// its bounds — adds nothing, and the withholding stands. It never
+// un-withholds a model number: the model's own result on the line stays
+// withheld (also after a terminator the net does not read, "≅ 427.5 psig"), and where it differs
 // from the server's value by more than COMPUTED_TOLERANCE the answer says so
 // and that number is withheld wherever else it is written. A lookup, and
 // any answer with no Substituted line, is returned as the very same string.
@@ -1159,7 +1187,34 @@ function evaluateTokens(tokens: EvalToken[], operand: (tok: Extract<EvalToken, {
 /** Every value a source text holds, read in base units, with its dimension
  *  — never a number an identifier owns ("Class 300", "UG-99", "B31.3",
  *  "§345.4", "[2]", "341.4.1"). */
-type SourceValue = { si: number; dim: Dim; ref: PressureRef; temp: boolean };
+type SourceValue = { si: number; dim: Dim | null; ref: PressureRef; temp: boolean };
+/** (I-33 fix pass 2) A unit token right after a value (after one optional
+ *  space) that readUnit did not read. A value with one is in a unit the
+ *  evaluator cannot check: it binds no operand (not even a unitless one),
+ *  and a model result written in one refuses the line. Three shapes:
+ *   - an engineering unit the evaluator leaves out ("lb", "lbs") or refused
+ *     for its prefix case ("mPa·s", "MM"), or a common unit outside its
+ *     table ("psid", "inHg", "hp", "kW", "rpm", "gal", "BTU"), in any case;
+ *   - a short lower-case abbreviation, one to three letters, that is no word
+ *     a value is often followed by (NOT_A_UNIT: "or", "of", "per", "to"…);
+ *   - a compound with a "/" or "·" and a lower-case letter ("L/min",
+ *     "gal/h").
+ *  A capital-led token with none of these ("1.5 P", "1.43 PS", "1.3 MAWP")
+ *  is a formula's symbol, as it is for an operand ("2 S" is not seconds), and
+ *  a longer lower-case word is no unit ("2 bolts", "1.5 times"). So "100 L"
+ *  alone stays a number (a litre is indistinguishable from the symbol L),
+ *  while "100 L/min" does not. */
+const UNREAD_UNIT_WORDS =
+  "lbs?|gals?|gpd|gph|lpm|ml|kw|mw|kwh|hp|bhp|rpm|psid|inhg|inh2o|inwc|mmhg|mmh2o|hz|btu|kj|mj|kcal|cal|kv|ma|" +
+  "tons?|oz|yds?|cfm|scfm|acfm|mph|cst|cps|cp";
+const UNREAD_KNOWN = new RegExp(
+  "^[ \\t]?(?:(?:" + CALC_UNIT_TOKENS + ")" + GAUGE_SUFFIX + "|" + UNREAD_UNIT_WORDS + ")(?![a-z0-9])", "i");
+const UNREAD_SHORT = new RegExp("^[ \\t]?(?!(?:" + NOT_A_UNIT + ")(?![A-Za-z0-9]))[a-zµμ][A-Za-z]{0,2}(?![A-Za-z0-9])");
+const UNREAD_COMPOUND = /^[ \t]?(?=[A-Za-z0-9µμ²³/·⋅]*[a-z])[A-Za-zµμ][A-Za-z0-9µμ²³]{0,5}[/·⋅][A-Za-z]/;
+const unreadUnitAt = (s: string, i: number): boolean => {
+  const at = s.slice(i, i + 24);
+  return UNREAD_KNOWN.test(at) || UNREAD_SHORT.test(at) || UNREAD_COMPOUND.test(at);
+};
 const SOURCE_NUMBER = /(?:(?<![\w.)\]])-)?(?<![\w.[§#]|\d,|[A-Za-z]-)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)/g;
 function sourceValues(text: string): SourceValue[] {
   const out: SourceValue[] = [];
@@ -1173,7 +1228,15 @@ function sourceValues(text: string): SourceValue[] {
         if (IDENTIFIER_BEFORE.test(t.slice(Math.max(0, numStart - 40), numStart))) continue;
         const n = Number(m[0].replace(/,/g, ""));
         if (!Number.isFinite(n)) continue;
-        const unit = readUnit(t, m.index + m[0].length);
+        const at = m.index + m[0].length;
+        const unit = readUnit(t, at);
+        // (I-33 fix pass 2) A unit the evaluator does not read is recorded
+        // as unknown (dim null), never as a plain number: "150 lb" is no 150
+        // a unitless factor may bind.
+        if (!unit && unreadUnitAt(t, at)) {
+          out.push({ si: n, dim: null, ref: "", temp: false });
+          continue;
+        }
         const def = unit?.def ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
         out.push({ si: n * def.scale, dim: def.dim, ref: def.ref, temp: def.temp });
       }
@@ -1309,8 +1372,8 @@ export function evaluateSubstitutedLine(
     if (def.temp) refuse("a temperature (a scale with an offset is never worked)");
     const q: Quantity = { v: tok.value * def.scale, dim: def.dim, ref: def.ref };
     if (dimEq(def.dim, DIM_PRESSURE) && def.ref !== "") refs.add(def.ref);
-    const same = (s: { si: number; dim: Dim; ref: PressureRef }) =>
-      dimEq(s.dim, q.dim) && Math.abs(s.si - q.v) <= BIND_EPSILON * Math.max(Math.abs(s.si), Math.abs(q.v))
+    const same = (s: { si: number; dim: Dim | null; ref: PressureRef }) =>
+      s.dim !== null && dimEq(s.dim, q.dim) && Math.abs(s.si - q.v) <= BIND_EPSILON * Math.max(Math.abs(s.si), Math.abs(q.v))
       && (q.ref === "a") === (s.ref === "a");
     let source: string | null = null;
     // An operand with its own citation binds only in the source it names
@@ -1369,6 +1432,17 @@ export function evaluateSubstitutedLine(
     if (lone) {
       const n = readNumber(seg, lone.index + lone[0].length - lone[1].length);
       const mu = n ? readUnit(seg, n.end) : null;
+      // (I-33 fix pass 2) The model's result in a unit the evaluator cannot
+      // read, or in another dimension than the value it computed ("3,000
+      // lb" where the operands give feet, "9,000 in-lb" where they give
+      // inches), is a unit mismatch it cannot reconcile: nothing is added
+      // and the I-25 withholding stands.
+      if (n && !mu && unreadUnitAt(seg, n.end)) {
+        return fail("the AI's result is in a unit the evaluator does not read", resultStart);
+      }
+      if (mu && (mu.def.temp || !dimEq(mu.def.dim, q.dim))) {
+        return fail("the AI's result is in another dimension than the computed value", resultStart);
+      }
       const mdef = mu?.def ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
       const mtext = n ? seg.slice(lone.index + lone[0].length - lone[1].length, mu ? mu.end : n.end).trim() : lone[1];
       let agrees: boolean | null = null;
@@ -1434,8 +1508,19 @@ export function neutralizeComputedLabels(text: string): string {
  *  computed never grounds a later answer's number (it never un-withholds a
  *  model number). Text the evaluator never touched comes back unchanged. */
 export function withoutComputedLines(text: string): string {
-  if (!text.includes(COMPUTED_LABEL) && !text.includes(COMPUTED_DISAGREES_NOTE)) return text;
-  return text.split("\n").filter((l) => !isComputedLine(l)).join("\n");
+  if (!text.includes(COMPUTED_LABEL) && !text.includes(COMPUTED_DISAGREES_NOTE)
+    && !text.includes(RESULT_WITHHELD_COMPUTED_NOTE)) return text;
+  // (I-33 fix pass 2) With its computed lines gone, the answer's withheld
+  // note is the plain one again (no line below says the app re-derived it).
+  return text.split("\n").filter((l) => !isComputedLine(l))
+    .map((l) => (l === RESULT_WITHHELD_COMPUTED_NOTE ? RESULT_WITHHELD_NOTE : l)).join("\n");
+}
+
+/** (I-33 fix pass 2) Does the answer carry a line the app's evaluator
+ *  computed (its label at the start of a line)? The page words the withheld
+ *  chip's tooltip by it. */
+export function hasComputedLine(text: string): boolean {
+  return text.includes(COMPUTED_LABEL) && text.split("\n").some((l) => l.startsWith(`**${COMPUTED_LABEL}**`));
 }
 
 /** PR-13 (I-33): `shownAnswer` (the model's answer after the withholding
@@ -1532,6 +1617,9 @@ export function presentComputedResults(modelAnswer: string, shownAnswer: string,
   }
   let text = out.join("\n");
   if (withheld > 0 && !text.includes(RESULT_WITHHELD_NOTE)) text = `${text}\n\n${RESULT_WITHHELD_NOTE}`;
+  // (I-33 fix pass 2) The app computed a value: the closing note says so,
+  // never that nothing in the app re-derived the arithmetic.
+  if (computed > 0) text = text.split("\n").map((l) => (l === RESULT_WITHHELD_NOTE ? RESULT_WITHHELD_COMPUTED_NOTE : l)).join("\n");
   return { text, computed, disagreed };
 }
 

@@ -49,7 +49,8 @@ import {
   evaluateSubstitutedLine, presentComputedResults, withoutComputedLines, withholdModelResults, formatComputed,
   neutralizeComputedLabels, answerHasComputation,
   COMPUTED_LABEL, COMPUTED_DISAGREES_NOTE, COMPUTED_TOLERANCE, RESULT_WITHHELD, RESULT_WITHHELD_NOTE, CUT_OFF_LINE,
-  AI_WRITTEN_LABEL, type CalcSources,
+  AI_WRITTEN_LABEL, RESULT_WITHHELD_COMPUTED_NOTE, RESULT_WITHHELD_TITLE, RESULT_WITHHELD_COMPUTED_TITLE, hasComputedLine,
+  type CalcSources,
 } from "@/lib/knowledgeAskGuards";
 
 const root = resolve(__dirname, "..", "..");
@@ -124,9 +125,9 @@ describe("PR-13 (I-33) — the evaluator: a hand-written parser, every operand b
     expect(at("2.948 MPa")).toBe(true); // the same pressure in another unit
     expect(at("430 psig")).toBe(false);
     expect(at("285 psig")).toBe(false);
-    // Another dimension cannot be compared: no claim either way (the number
-    // is withheld regardless).
-    expect(at("427.5 in")).toBeNull();
+    // (I-33 fix pass 2) A result in another dimension is a unit mismatch the
+    // evaluator cannot reconcile: the line is refused (the number withheld).
+    expect(at("427.5 in")).toBe("refused");
   });
 
   it("the B31.3 wall-thickness form: implicit products, nested brackets, a sum of a plain stress and a gauge pressure — the result in inches", () => {
@@ -325,7 +326,8 @@ describe("PR-13 (I-33) — presentComputedResults: adds the server's value, neve
     expect(shown).toBe(model); // I-25: the terminator is not read and 427.5 psig is grounded
     const out = presentComputedResults(model, shown, HYDRO);
     expect(out.text.split("\n")[1]).toBe(`**Substituted:** P_T = 1.5 × \`285 psig\` ≅ ${RESULT_WITHHELD}`);
-    expect(out.text.endsWith(RESULT_WITHHELD_NOTE)).toBe(true);
+    // (I-33 fix pass 2) The app computed a value: the note says so.
+    expect(out.text.endsWith(RESULT_WITHHELD_COMPUTED_NOTE)).toBe(true);
     // The same when nothing can be computed (an operand unbound): still withheld.
     const unbound = presentComputedResults(model, shown, sources({}, ""));
     expect(unbound.computed).toBe(0);
@@ -473,7 +475,8 @@ describe("PR-13 / PR-9 done-when 2 (I-33) — the ask route presents the server'
     expect(body.answer).not.toContain("430");
     expect(computedOf(body.answer)).toEqual(["427.5 psig"]);
     expect(body.answer.split("\n")).toContain(COMPUTED_DISAGREES_NOTE);
-    expect(body.answer.endsWith(RESULT_WITHHELD_NOTE)).toBe(true);
+    expect(body.answer.endsWith(RESULT_WITHHELD_COMPUTED_NOTE)).toBe(true);
+    expect(body.answer).not.toContain(RESULT_WITHHELD_NOTE);
     expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
   });
 
@@ -544,7 +547,7 @@ describe("PR-13 / PR-9 done-when 2 (I-33) — the ask route presents the server'
 
 describe("PR-13 (I-33) — the answer surface marks the server's value as computed by the app", () => {
   it("the computed label renders as its own mark, never as a model value chip; the page's withholding pass is unchanged", () => {
-    expect(pageSrc).toContain('import { withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL } from "@/lib/knowledgeAskGuards";');
+    expect(pageSrc).toMatch(/import \{\s*withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL, RESULT_WITHHELD_TITLE, RESULT_WITHHELD_COMPUTED_TITLE, hasComputedLine,\s*\} from "@\/lib\/knowledgeAskGuards";/);
     // (I-33 fix pass) Only where the server writes it: at the start of its own line.
     expect(pageSrc).toMatch(/if \(part === `\*\*\$\{COMPUTED_LABEL\}\*\*` && i === 1 && parts\[0\] === ""\) \{\s*return \(\s*<span key=\{i\} data-computed-by-app="true"/);
     // The mark is checked before the generic bold branch.
@@ -751,5 +754,120 @@ describe("I-33 fix pass — each source is read once per answer, and only so far
   it("a value printed past the read limit binds nothing (fewer computed, never wrong)", () => {
     const far = `${"x\n".repeat(15_000)}factor 1.7`;
     expect(refused("**Substituted:** P_T = 1.7 × 285 psig", sources({ 1: far }, "285 psig"))).toBe("an operand no cited source holds: 1.7");
+  });
+});
+
+// ── I-33 fix pass 2 (second review) ──────────────────────────────────────
+
+describe("I-33 fix pass 2 — a source value in a unit the evaluator does not read binds nothing; a model result in one refuses the line (blocker 1)", () => {
+  it("reproduction → fix: '150 lb per ft' × '20 ft' is never shown as '3,000 ft'; the model's '3,000 lb' stays withheld", () => {
+    const s = sources({ 1: "Pipe weight 150 lb per ft of length." }, "span length 20 ft");
+    const line = "**Substituted:** W = 150 × 20 ft = 3,000 lb";
+    expect(refused(line, s)).toBe("an operand no cited source holds: 150");
+    const model = "**Answer:** The span weight is computed below [1].\n" + line;
+    const shown = withholdModelResults(model, "Pipe weight 150 lb per ft of length.\nspan length 20 ft").text;
+    const out = presentComputedResults(model, shown, s);
+    expect(out.computed).toBe(0);
+    expect(computedOf(out.text)).toEqual([]);
+    expect(out.text).not.toContain("3,000");
+    expect(out.text.split("\n")[1]).toBe(`**Substituted:** W = 150 × 20 ft = ${RESULT_WITHHELD}`);
+  });
+
+  it.each([
+    ["500 gal/h × 8 h (was '4,000 h')", "Pump rate 500 gal/h.", "run time 8 h", "**Substituted:** V = 500 × 8 h = 4,000 gal", "500"],
+    ["100 L/min × 60 min (was '6,000 min')", "Flow 100 L/min.", "run 60 min", "**Substituted:** V = 100 × 60 min = 6,000 L", "100"],
+    ["2,000 lb × 4.5 in (was '9,000 in')", "Load 2,000 lb at the support.", "arm 4.5 in", "**Substituted:** M = 2,000 × 4.5 in = 9,000 in-lb", "2,000"],
+    ["1.5 mPa·s binding the hydrotest factor", "Viscosity 1.5 mPa·s at 20 °C.", "design pressure = 285 psig", "**Substituted:** P_T = 1.5 × 285 psig", "1.5"],
+    ["0.125 inHg binding a length factor", "Vacuum margin 0.125 inHg.", "wall 2 in", "**Substituted:** c = 0.125 × 2 in", "0.125"],
+  ])("reproduction → fix: %s is refused", (_v, cited, user, line, operand) => {
+    expect(refused(line, sources({ 1: cited }, user))).toBe(`an operand no cited source holds: ${operand}`);
+  });
+
+  it.each(["lbs", "kW", "hp", "rpm", "psid", "gal", "BTU", "L/min", "MM", "mPa"])(
+    "a source value in '%s' never binds a unitless operand", (unit) => {
+      expect(refused("**Substituted:** y = 7 × 2 in", sources({ 1: `rated 7 ${unit}.` }, "2 in"))).toBe("an operand no cited source holds: 7");
+    });
+
+  it("the model's own result in a unit the evaluator cannot read, or in another dimension, refuses the line", () => {
+    const s = sources({ 1: "multiplier 150, factor 2,000." }, "span length 20 ft, arm 4.5 in");
+    expect(refused("**Substituted:** W = 150 × 20 ft = 3,000 lb", s)).toBe("the AI's result is in a unit the evaluator does not read");
+    expect(refused("**Substituted:** M = 2,000 × 4.5 in = 9,000 in-lb", s)).toBe("the AI's result is in another dimension than the computed value");
+    expect(refused("**Substituted:** P_T = 1.5 × 285 psig = 427.5 °F")).toBe("the AI's result is in another dimension than the computed value");
+    // Controls: a result in the computed dimension, or with no unit, still computes.
+    expect(okValue("**Substituted:** W = 150 × 20 ft = 3,000 ft", s)).toBe("3,000 ft");
+    expect(okValue("**Substituted:** W = 150 × 20 ft = 3,000", s)).toBe("3,000 ft");
+    expect(okValue("**Substituted:** P_T = 1.5 × 285 psig = 2.948 MPa")).toBe("427.5 psig");
+  });
+
+  it("controls: a formula's symbol, a count and an operator word after a number are not units — the factor still binds", () => {
+    expect(okValue("**Substituted:** P_T = 1.5 × 285 psig", sources({ 1: "PT = 1.5 P" }, "P = 285 psig"))).toBe("427.5 psig");
+    expect(okValue("**Substituted:** P_T = 1.43 × 1,600 kPa", sources({ 1: "PT = 1.43 PS" }, "PS = 1,600 kPa"))).toBe("2,288 kPa");
+    expect(okValue("**Substituted:** P_T = 1.3 × 285 psig", sources({ 1: "1.3 MAWP" }, "MAWP 285 psig"))).toBe("370.5 psig");
+    expect(okValue("**Substituted:** F = 1500 N × 2", sources({ 1: "load 1500 N, 2 bolts" }))).toBe("3,000 N");
+    expect(okValue("**Substituted:** P_T = 1.5 × 285 psig")).toBe("427.5 psig"); // "1.5 times"
+  });
+
+  it("recorded residual: a lone capital letter after a number is read as a formula's symbol, so '100 L' alone is a number ('100 L/min' is not)", () => {
+    expect(okValue("**Substituted:** V = 100 × 2 in", sources({ 1: "volume 100 L" }, "2 in"))).toBe("200 in");
+    expect(refused("**Substituted:** V = 100 × 2 in", sources({ 1: "flow 100 L/min" }, "2 in"))).toBe("an operand no cited source holds: 100");
+  });
+});
+
+describe("I-33 fix pass 2 — prose arithmetic with a hyphen range is read as at 53b7973 (minor 2)", () => {
+  it.each([
+    "**Answer:** Test at 1.5 times 100-150 psig, so 225 psig [1].",
+    "**Answer:** Use 90% of 200-300 psig, giving 270 psig [1].",
+    "**Answer:** The relief set is 10% of 100-110 psig: 11 psig [1].",
+  ])("REGRESSION: %s is not marked arithmetic and is returned byte for byte (53b7973's output)", (a) => {
+    expect(answerHasComputation(a, "")).toBe(false);
+    expect(withholdModelResults(a).text).toBe(a);
+  });
+  it("control: the same prose with a standalone operand is still marked", () => {
+    expect(answerHasComputation("**Answer:** Test at 1.5 times 150 psig, so 225 psig [1].", "")).toBe(true);
+  });
+  it("proseArithmetic reads its operands with the base reading alone", () => {
+    expect(guardsSrc).toMatch(/spans \?\?= valueSpans\(text, VALUE_BASE_SRC\)/);
+  });
+});
+
+describe("I-33 fix pass 2 — the withheld note and tooltip say so when the app computed a value (minor 3)", () => {
+  const MODEL = "**Answer:** Compute P_T below [1].\n- P = `285 psig` (USER-PROVIDED)\n**Substituted:** P_T = 1.5 × `285 psig` = `427.5 psig`";
+  it("the wordings", () => {
+    expect(RESULT_WITHHELD_COMPUTED_NOTE).toBe(
+      "! Result withheld — the AI's own number is withheld; the app's value is shown on the line below where it could " +
+      "re-derive it from the cited inputs. Any other withheld result was not re-derived: compute it from the formula and " +
+      "the cited inputs above, and check every substitution and unit against the cited pages.");
+    expect(RESULT_WITHHELD_TITLE).toBe(
+      "The AI computed this number and nothing in the app re-derived it, so it is not shown. Compute it from the formula and the cited inputs.");
+    expect(RESULT_WITHHELD_COMPUTED_TITLE).toBe(
+      "The AI's own number is withheld; the app's value is shown on the line below where it could re-derive it from the cited inputs. Where no such line follows, compute it from the formula and the cited inputs.");
+    expect(RESULT_WITHHELD_COMPUTED_NOTE).not.toContain("nothing in the app re-derived");
+    expect(RESULT_WITHHELD_COMPUTED_TITLE).not.toContain("nothing in the app re-derived");
+  });
+  it("a computed answer ends with the variant note; one the app could not compute keeps the plain note", () => {
+    const shown = withholdModelResults(MODEL, "285 psig 1.5").text;
+    expect(shown.endsWith(RESULT_WITHHELD_NOTE)).toBe(true);
+    const out = presentComputedResults(MODEL, shown, HYDRO);
+    expect(out.computed).toBe(1);
+    expect(out.text.endsWith(RESULT_WITHHELD_COMPUTED_NOTE)).toBe(true);
+    expect(out.text).not.toContain(RESULT_WITHHELD_NOTE);
+    expect(hasComputedLine(out.text)).toBe(true);
+    const none = presentComputedResults(MODEL, shown, sources({}, ""));
+    expect(none.computed).toBe(0);
+    expect(none.text.endsWith(RESULT_WITHHELD_NOTE)).toBe(true);
+    expect(hasComputedLine(none.text)).toBe(false);
+    // The page's pass keeps the variant (it never adds the plain note beside it).
+    expect(withholdModelResults(out.text).text).toBe(out.text);
+    // Without its computed lines (history, grounding) the plain note is back.
+    expect(withoutComputedLines(out.text)).toBe(shown);
+  });
+  it("hasComputedLine reads only a label at the start of a line", () => {
+    expect(hasComputedLine(`see ${FORGED} 450 psig`)).toBe(false);
+    expect(hasComputedLine(`x\n${FORGED} P_T is \`1 psig\``)).toBe(true);
+  });
+  it("the page words the withheld chip and the footer chip by it", () => {
+    expect(pageSrc).toMatch(/title=\{appComputed \? RESULT_WITHHELD_COMPUTED_TITLE : RESULT_WITHHELD_TITLE\}/);
+    expect(pageSrc).toMatch(/const appComputed = hasComputedLine\(answerText\);/);
+    expect(pageSrc).toMatch(/<AppComputedContext\.Provider value=\{appComputed\}>/);
   });
 });

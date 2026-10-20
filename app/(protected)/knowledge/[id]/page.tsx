@@ -49,7 +49,9 @@ import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import { keylessPagesShown, keylessTextOnlyLabel } from "@/lib/knowledgeKeyless";
 import { readKeylessTextPages } from "@/lib/knowledgeKeylessClient";
 import { ClarifyCard, NeedCard } from "@/components/knowledge/AssistantAskCards";
-import { withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL } from "@/lib/knowledgeAskGuards";
+import {
+  withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL, RESULT_WITHHELD_TITLE, RESULT_WITHHELD_COMPUTED_TITLE, hasComputedLine,
+} from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 // pdf.js only loads when someone actually opens a cited page.
@@ -87,6 +89,10 @@ interface ViewerTarget {
  *  default (no links, no opener) leaves older saved answers unchanged. */
 type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLink) => void) | null }>({ links: [], open: null });
+/** (PR-13, I-33 fix pass 2) Whether the answer shown carries a value the
+ *  app's evaluator computed — the withheld chip's tooltip then says the
+ *  app's value is on the line below, never that nothing re-derived it. */
+const AppComputedContext = React.createContext(false);
 
 /** "3, 7, 12" — at most twelve page numbers, then "…" (as the engine's own
  *  messages list them). */
@@ -226,6 +232,7 @@ function InlineAnswer({ text, citations, onCite }: {
 }) {
   const { links, open } = React.useContext(DocLinkContext);
   const { show: showProof } = React.useContext(ProofContext);
+  const appComputed = React.useContext(AppComputedContext);
   // Longest mention first so "EP 5-5-1" never half-matches as "EP 5-5".
   const mentionAlt = links
     .map((d) => d.mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
@@ -246,7 +253,7 @@ function InlineAnswer({ text, citations, onCite }: {
         if (part === RESULT_WITHHELD) {
           return (
             <span key={i} data-result-withheld="true"
-              title="The AI computed this number and nothing in the app re-derived it, so it is not shown. Compute it from the formula and the cited inputs."
+              title={appComputed ? RESULT_WITHHELD_COMPUTED_TITLE : RESULT_WITHHELD_TITLE}
               className="inline-flex items-center align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-dashed border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-300 font-black text-[0.85em] leading-none">
               result withheld
             </span>
@@ -723,6 +730,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
   const shown = useMemo(() => withholdModelResults(answer.answer), [answer.answer]);
   const answerText = shown.text;
   const blocks = parseAnswerBlocks(answerText);
+  const appComputed = hasComputedLine(answerText);
   // SEM-12: how the passages were found, for every reader. A replayed answer
   // carries no flag (it was not searched now) and shows none.
   const retrieval = describeRetrieval(answer.retrieval, answer.retrievalCoverage ?? coverage ?? null);
@@ -808,6 +816,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
 
   return (
     <DocLinkContext.Provider value={docLinkCtx}>
+    <AppComputedContext.Provider value={appComputed}>
     <ProofContext.Provider value={proofCtx}>
     {proof && (
       <ProofCard
@@ -943,7 +952,9 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
                 (its memory turn carries no arithmetic flag). */}
             {(answer.arithmetic === "unverified" || shown.withheld > 0 || answerText.includes(RESULT_WITHHELD)) && (
               <span data-arithmetic="unverified"
-                title="The AI worked these numbers itself and nothing in the app re-derived them, so the result it computed is not shown — compute it from the formula and the cited inputs, and check every substitution and unit against the cited pages."
+                title={appComputed
+                  ? "The AI's own numbers are withheld; the app's value is shown on the line below each Substituted line it could re-derive from the cited inputs — compute any other result from the formula and the cited inputs, and check every substitution and unit against the cited pages."
+                  : "The AI worked these numbers itself and nothing in the app re-derived them, so the result it computed is not shown — compute it from the formula and the cited inputs, and check every substitution and unit against the cited pages."}
                 className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-950/20">
                 Unverified arithmetic — check every step
               </span>
@@ -1071,6 +1082,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
       )}
     </div>
     </ProofContext.Provider>
+    </AppComputedContext.Provider>
     </DocLinkContext.Provider>
   );
 }
