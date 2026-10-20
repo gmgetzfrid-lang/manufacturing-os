@@ -22,8 +22,8 @@
 --   anon and authenticated, and SELECT is granted back — to each of
 --   authenticated and anon that could SELECT the table before this paste —
 --   on EVERY column the table has at paste time except portal_token (the
---   list is read from the catalog, so a database with or without 20261133's
---   or 20261199's columns gets exactly its own columns). Every other column
+--   list is read from the catalog; 20261133's and 20261199's columns must
+--   already be there — ORDER below). Every other column
 --   stays readable exactly as today, through the same policy: a member reads
 --   the items, the subject, the dates, the link's lifecycle; anon still reads
 --   no row (no policy admits it) and its statements answer as before, 0 rows
@@ -52,10 +52,18 @@
 --   browser and works on the database as it is today. Pasted before that
 --   deploy, the old app's browser reads (`select("*")` in the Inspector's
 --   trail, the evidence pack, and the create / issue read-backs) would be
---   refused with 42501. Needs 20260717 and 20260910 (it refuses, changing
---   nothing, without the table or the portal_token column). Either order
---   with every other pending paste: it re-creates no function, policy or
---   trigger. Idempotent: a re-paste answers every probe true.
+--   refused with 42501. Needs 20260717 and 20260910 (the table, the
+--   portal_token column) AND PASTE AFTER 20261133 AND 20261199 — both add
+--   transmittals columns (20261133 the portal lifecycle columns, 20261199
+--   stamp_check), and the column grant reaches only the columns that exist
+--   when this runs: pasted before 20261133, its columns would reach members
+--   with no SELECT, and the revoke (UPDATE … WHERE portal_revoked_at IS
+--   NULL, from the member's session) would be refused, 42501. It refuses,
+--   changing nothing, without any of the four, naming the missing file — so
+--   it inherits 20261199's hold (deploy document-control P24, paste 20261199,
+--   then deploy P29, then paste this). Either order with every other pending
+--   paste: it re-creates no function, policy or trigger and adds no column.
+--   Idempotent: a re-paste answers every probe true.
 --
 -- TOKENS READ BEFORE THE PASTE STAY VALID (not closed by this file):
 --   revoking the column privilege stops NEW reads of the token; it does not
@@ -67,7 +75,10 @@
 --   Inventory row 4 counts the live links listing an item that is not
 --   plainly open: the links whose token a member outside an item's ACL could
 --   have read before this paste. After the paste, a Document Controller
---   reviews those links and decides, per link, whether to revoke it (the
+--   reviews those links — the read-only identification query in DIST-18's
+--   record (audit-reports/document-control/05-distribution.md, residual (v))
+--   lists them by transmittal id and number, never the token, kept apart
+--   from this counts-only paste — and decides, per link, whether to revoke it (the
 --   outside recipient's emailed link then stops; a new transmittal re-sends
 --   the files) or let it run to expiry. Tokens are NOT rotated here: that
 --   would silently break every recipient's emailed link, so it is a ruling,
@@ -77,7 +88,9 @@
 --   `GRANT SELECT (<column>) ON transmittals TO authenticated;` — the
 --   column grant names columns, so a new column is unreadable by members
 --   until it is granted (lib/__tests__/dcRoundGP29TransmittalRead.test.ts
---   refuses a later file that adds one without the grant). A later
+--   refuses a later file that adds one without the grant, and any file not
+--   yet LIVE that adds one, whatever its number, unless it grants it or this
+--   file refuses until it is pasted). A later
 --   `GRANT SELECT ON transmittals TO authenticated` (table level) re-opens
 --   the token and must never be written.
 --
@@ -92,8 +105,9 @@
 -- member the token (DIST-18 stays OPEN for that and for limb (b)).
 
 -- ── Before-apply inventory (aggregate counts only, never a row) ──────────
--- The portal columns are read through to_jsonb so the inventory runs on a
--- database without 20261133's lifecycle columns (and says 0 without 20260910).
+-- The portal columns are read through to_jsonb so the inventory itself runs
+-- on a database without 20261133's lifecycle columns (and says 0 without
+-- 20260910) — the DO block below then refuses, changing nothing.
 DROP TABLE IF EXISTS pg_temp._dc_g31_before;
 CREATE TEMP TABLE _dc_g31_before AS
 WITH tr AS (
@@ -163,6 +177,22 @@ BEGIN
                   WHERE attrelid = 'public.transmittals'::regclass AND attname = 'portal_token'
                     AND attnum > 0 AND NOT attisdropped) THEN
     RAISE EXCEPTION '20261231 needs 20260910 (transmittals.portal_token) — nothing was changed.';
+  END IF;
+  -- The column grant below names the columns that exist NOW: a column a
+  -- pending paste adds afterwards would reach members with no SELECT at all
+  -- (the revoke's own WHERE portal_revoked_at IS NULL then answers 42501). So
+  -- every pending file that adds a transmittals column goes first.
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['portal_expires_at', 'portal_revoked_at', 'portal_revoked_by',
+                                        'portal_last_used_at', 'portal_open_count', 'portal_download_count']) AS c(col)
+              WHERE NOT EXISTS (SELECT 1 FROM pg_attribute
+                                 WHERE attrelid = 'public.transmittals'::regclass AND attname = c.col
+                                   AND attnum > 0 AND NOT attisdropped)) THEN
+    RAISE EXCEPTION '20261231 needs 20261133 (the transmittals portal lifecycle columns) — paste 20261133 first; nothing was changed.';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_attribute
+                  WHERE attrelid = 'public.transmittals'::regclass AND attname = 'stamp_check'
+                    AND attnum > 0 AND NOT attisdropped) THEN
+    RAISE EXCEPTION '20261231 needs 20261199 (transmittals.stamp_check) — paste 20261199 first (it waits on the document-control P24 deploy); nothing was changed.';
   END IF;
 
   SELECT string_agg(quote_ident(attname), ', ' ORDER BY attnum) INTO v_cols

@@ -202,8 +202,9 @@ describe("PROD-12 dw2 — issuing tells the documents' owners and the libraries'
   it("issueTransmittal starts it without awaiting it (source pin)", () => {
     const src = readFileSync(join(process.cwd(), "lib/transmittals.ts"), "utf8");
     // document-control P29 (DIST-18 limb a): the email is sent from the row as
-    // the register shows it to the issuer, read after the notice is started.
-    expect(src).toMatch(/void notifyTransmittalIssued\(t, actor\);[\s\S]{0,400}?const shown = await transmittalForViewer\(t\);\s*const email = await sendTransmittalEmail\(shown, actor\);/);
+    // the register shows it to the issuer, read after the notice is started
+    // (registerViewOf: transmittalForViewer, saying whether the register served it).
+    expect(src).toMatch(/void notifyTransmittalIssued\(t, actor\);[\s\S]{0,400}?const \{ row: shown, served \} = await registerViewOf\(t\);\s*const email = await sendTransmittalEmail\(shown, actor\);/);
   });
 });
 

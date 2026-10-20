@@ -5,6 +5,7 @@
 //   DIST-18 limb (a) (document-control P29) — the other browser readers'
 //   slices, each through the same redaction (one slice per request):
 //     &documentId=<doc>   the Inspector's trail: rows listing it, 50 newest
+//                         (none unless this viewer may read the document)
 //     &projectId=<proj>   the project evidence pack: oldest first, 500
 //     &q=<text>[&limit=n] global search: number / subject / recipient name /
 //                         company matching, newest first, n (default 5, at
@@ -109,6 +110,24 @@ export async function GET(req: NextRequest) {
     throw e;
   }
   if (!principal) return bad("Not a member of this workspace.", 403);
+  // DIST-18 (limb a, review): the documentId slice answers only about a
+  // document this viewer may read. Otherwise the list of transmittals that
+  // sent a document (recipients, dates) would tell anyone who knows or
+  // guesses its id that it exists and where it went — a membership oracle on
+  // the service-role read that limb (b)'s database narrowing would not close.
+  // The Inspector asks only for the document the viewer has open, so a
+  // reader sees no change; a controller is answered before any read (DEC-43).
+  if (documentId && !principal.isController) {
+    let mayAsk: Set<string>;
+    try {
+      mayAsk = await readableControlledDocIds(principal, [documentId]);
+    } catch (e) {
+      if (!(e instanceof DcLandscapeUnreadableError)) throw e;
+      console.warn("[transmittal/register] the document read decision could not be made — the trail is not served (fail closed)", e.message);
+      return bad("Couldn't check your access to this document — try again.", 503, { unreadable: true });
+    }
+    if (!mayAsk.has(documentId)) return NextResponse.json({ transmittals: [] });
+  }
 
   const base = () => supabaseAdmin.from("transmittals").select("*").eq("org_id", orgId);
   let read = base();

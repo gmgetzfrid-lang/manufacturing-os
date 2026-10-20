@@ -1049,24 +1049,38 @@ export async function listTransmittals(orgId: string): Promise<Transmittal[]> {
  *  ("unchecked" — the sheet prints without the link and says why), never
  *  the row as the browser read it. */
 export async function transmittalForViewer(t: Transmittal): Promise<Transmittal> {
+  return (await registerViewOf(t)).row;
+}
+
+/** transmittalForViewer, saying whether the register actually served the
+ *  row (`served`) or the fallback below stood in for it. Only a served row
+ *  knows whether a portal link exists (DIST-18 limb (a), review): the
+ *  fallback infers one from the status, which a database before 20260910
+ *  would make wrong. */
+async function registerViewOf(t: Transmittal): Promise<{ row: Transmittal; served: boolean }> {
   try {
     const [row] = await readRegister(t.orgId, t.id);
-    if (row) return row;
+    if (row) return { row, served: true };
   } catch (e) {
     console.warn("[transmittals] the register could not decide this viewer's cover sheet — the portal link is withheld", (e as Error)?.message);
   }
   // DIST-18 (limb a): a row the browser read back from its own write carries
   // no token column, so an issued or acknowledged row is taken to carry a
   // link (minted at issue since 20260910) — withheld and said, never "none".
+  // The cover sheet prints no link either way; the issue outcome does not
+  // rely on this guess (issueTransmittal reports the portal "unknown").
   const linked = hasPortalLink(t) || t.status === "issued" || t.status === "acknowledged";
   return {
-    ...t,
-    portalToken: null,
-    viewer: {
-      restrictedItems: 0,
-      portalWithheld: linked,
-      portalWithheldReason: linked ? "unchecked" : null,
-      accessUnchecked: true,
+    served: false,
+    row: {
+      ...t,
+      portalToken: null,
+      viewer: {
+        restrictedItems: 0,
+        portalWithheld: linked,
+        portalWithheldReason: linked ? "unchecked" : null,
+        accessUnchecked: true,
+      },
     },
   };
 }
@@ -1486,8 +1500,11 @@ export interface IssueOutcome {
    *  someone who may read every item; `viewer` says whether a link exists). */
   transmittal: Transmittal;
   email: TransmittalEmailOutcome;
-  /** "missing" = issued without a recipient portal (pre-20260910 database). */
-  portal: "ready" | "missing";
+  /** "missing" = issued without a recipient portal (pre-20260910 database).
+   *  "unknown" = the register could not be asked right after the issue and
+   *  no email was sent, so whether a link exists is not known here (DIST-18
+   *  limb (a), review) — the register says once it can be read. */
+  portal: "ready" | "missing" | "unknown";
   /** A refused audit row leaves the issue standing; the caller says so. */
   auditError: string | null;
 }
@@ -1624,9 +1641,15 @@ export async function issueTransmittal(
   // DIST-18 (limb a): the issued row as the register shows it to this viewer
   // (the token only for someone who may read every item; whether a link
   // exists, for anyone) — the email, the toast and the cover sheet use it.
-  const shown = await transmittalForViewer(t);
+  const { row: shown, served } = await registerViewOf(t);
   const email = await sendTransmittalEmail(shown, actor);
-  return { transmittal: shown, email, portal: hasPortalLink(shown) ? "ready" : "missing", auditError };
+  // DIST-18 (limb a, review): "ready" / "missing" only from a row the
+  // register served. When it could not be asked, the email route (which
+  // reads the row server-side and sends only with a token) is the one
+  // witness: a sent email proves a link; anything else leaves it unknown —
+  // never "ready" on a guess from the status.
+  const portal: IssueOutcome["portal"] = served ? (hasPortalLink(shown) ? "ready" : "missing") : email.sent ? "ready" : "unknown";
+  return { transmittal: shown, email, portal, auditError };
 }
 
 /** PROD-12 dw2 (notifications Round G, N9): the internal notice of an issue.

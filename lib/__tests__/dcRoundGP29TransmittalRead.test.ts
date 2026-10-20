@@ -24,6 +24,7 @@ const s = vi.hoisted(() => ({
   principal: null as unknown,
   readable: new Set<string>() as Set<string>,
   readableCalls: [] as Array<{ uid: string; ids: string[] }>,
+  readableThrows: false,
   rows: [] as Row[],
   ops: [] as Array<[string, unknown[]]>,
   queries: [] as Array<Array<[string, unknown[]]>>,
@@ -80,6 +81,7 @@ vi.mock("@/lib/knowledgeAccess", async (orig) => {
     loadPrincipal: vi.fn(async () => s.principal),
     readableControlledDocIds: vi.fn(async (p: { uid: string }, ids: string[]) => {
       s.readableCalls.push({ uid: p.uid, ids });
+      if (s.readableThrows) throw new real.DcLandscapeUnreadableError("documents", "read failed");
       return new Set([...s.readable].filter((d) => ids.includes(d)));
     }),
   };
@@ -157,6 +159,7 @@ beforeEach(() => {
   s.principal = principalOf();
   s.readable = new Set([OPEN]);
   s.readableCalls = [];
+  s.readableThrows = false;
   s.rows = [
     row(),
     row({ id: T6, seq: 6, number: "TR-0006", subject: "Pump drawings", items: [{ documentId: OPEN, number: "P-101", rev: "A" }], portal_token: "tok-0006", acknowledged_meta: { ip: "203.0.113.9", note: "Received" } }),
@@ -182,6 +185,39 @@ describe("DIST-18 limb (a) — the register route serves each browser reader's s
     // REGRESSION: the transmittal the viewer may read whole is served whole, token included
     expect(t6.portalToken).toBe("tok-0006");
     expect(t6.subject).toBe("Pump drawings");
+  });
+
+  it("review minor: the documentId slice answers only about a document this viewer may read — never a membership oracle on a private document's id; a decision that cannot be made answers 503, never the rows", async () => {
+    // a Viewer outside the private P&ID's ACL asks about it by id: no row, and no transmittals read at all
+    const asked = await served(`orgId=${ORG}&documentId=${PID}`);
+    expect(asked).toEqual({ status: 200, body: { transmittals: [] } });
+    expect(s.queries).toEqual([]);
+    expect(s.readableCalls).toEqual([{ uid: "u-viewer", ids: [PID] }]);
+    // … a document id that names nothing answers the same as a private one
+    expect((await served(`orgId=${ORG}&documentId=eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee`)).body).toEqual({ transmittals: [] });
+    // REGRESSION: the same Viewer asking about a document they may read gets its trail
+    expect((await served(`orgId=${ORG}&documentId=${OPEN}`)).body.transmittals!.map((t) => t.number)).toEqual(["TR-0007", "TR-0006"]);
+    // REGRESSION: a reader of the P&ID (an Engineer in its ACL) gets the P&ID's trail
+    s.readable = new Set([PID]);
+    expect((await served(`orgId=${ORG}&documentId=${PID}`)).body.transmittals!.map((t) => t.number)).toEqual(["TR-0007"]);
+    // REGRESSION: a controller is answered before any read decision (DEC-43)
+    s.user = { id: "u-dc" };
+    s.principal = principalOf({ uid: "u-dc", role: "DocCtrl", roles: ["DocCtrl"], isController: true });
+    s.readable = new Set();
+    s.readableCalls = [];
+    expect((await served(`orgId=${ORG}&documentId=${PID}`)).body.transmittals!.map((t) => t.number)).toEqual(["TR-0007"]);
+    expect(s.readableCalls).toEqual([]);
+    // fail closed: the read decision cannot be made → 503 "try again", no row
+    s.user = { id: "u-viewer" };
+    s.principal = principalOf();
+    s.readableThrows = true;
+    s.queries = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failed = await served(`orgId=${ORG}&documentId=${OPEN}`);
+    warn.mockRestore();
+    expect(failed.status).toBe(503);
+    expect(failed.body.transmittals).toBeUndefined();
+    expect(s.queries).toEqual([]);
   });
 
   it("REGRESSION per reader: the sender and a controller get every row whole, as the browser read did", async () => {
@@ -448,6 +484,33 @@ describe("DIST-18 limb (a) — census: outside the server routes, no read of tra
 const MIG = "20261231_dc_roundG_transmittal_token_column.sql";
 const sql = readFileSync(join(ROOT, "supabase/migrations", MIG), "utf8");
 const code = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+const stripSql = (b: string) => b.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+/** The columns 20261231 refuses to run without — each pending file that adds
+ *  a transmittals column must be pasted first (review blocker). */
+const PASTE_FIRST_COLUMNS: Record<string, string[]> = {
+  "20261133": ["portal_expires_at", "portal_revoked_at", "portal_revoked_by", "portal_last_used_at", "portal_open_count", "portal_download_count"],
+  "20261199": ["stamp_check"],
+};
+/** Every column an ALTER TABLE … transmittals statement adds — several per
+ *  statement included, with or without the COLUMN keyword. */
+function transmittalsColumnsAdded(body: string): string[] {
+  const out: string[] = [];
+  for (const m of body.matchAll(/ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?"?transmittals"?\s+([^;]*)/gi)) {
+    for (const a of m[1].matchAll(/(?:^|,)\s*ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?/gi)) {
+      if (!/^(constraint|primary|unique|check|foreign|exclude)$/i.test(a[1])) out.push(a[1].toLowerCase());
+    }
+  }
+  return out;
+}
+/** audit-reports/MIGRATION-PASTE-ORDER.md §4: a file is LIVE only when every
+ *  row naming it says LIVE; an older file (before 20261001) is the shipped
+ *  baseline the guide does not list (lib/__tests__/auditExplorerSnapshot.test.ts). */
+const PASTE_TAGS = new Map<string, Set<string>>();
+for (const line of readFileSync(join(ROOT, "audit-reports/MIGRATION-PASTE-ORDER.md"), "utf8").split("\n")) {
+  const m = /^\| \d+[a-z]? (LIVE|PASTE|HOLD|ASK)\b[^|]*\| [^|]*?(\d{8})/.exec(line);
+  if (m) PASTE_TAGS.set(m[2], new Set([...(PASTE_TAGS.get(m[2]) ?? []), m[1]]));
+}
+const isLive = (n: string) => (n < "20261001" ? true : PASTE_TAGS.get(n)?.size === 1 && PASTE_TAGS.get(n)!.has("LIVE"));
 
 describe("20261231 — one paste, DEC-30 shape, a column privilege and nothing else", () => {
   it("TEMP counts-only inventory BEFORE the transaction; one BEGIN / COMMIT; ONE final SELECT (check, ok, n) after it", () => {
@@ -490,23 +553,54 @@ describe("20261231 — one paste, DEC-30 shape, a column privilege and nothing e
     expect(code).toMatch(/RAISE EXCEPTION '20261231 needs 20260910/);
   });
 
-  it("the header states the order (deploy first, then paste), the rollback, and the rule for a later column", () => {
+  it("review blocker: refuses, changing nothing, until every pending file that adds a transmittals column is pasted — 20261133's six portal lifecycle columns and 20261199's stamp_check — naming the missing file, BEFORE the revoke", () => {
+    for (const col of PASTE_FIRST_COLUMNS["20261133"]) expect(code, col).toMatch(new RegExp(`ARRAY\\[[^\\]]*'${col}'[^\\]]*\\]`));
+    expect(code).toMatch(/RAISE EXCEPTION '20261231 needs 20261133 \(the transmittals portal lifecycle columns\) — paste 20261133 first; nothing was changed\.';/);
+    expect(code).toMatch(/attname = 'stamp_check'/);
+    expect(code).toMatch(/RAISE EXCEPTION '20261231 needs 20261199 \(transmittals\.stamp_check\) — paste 20261199 first/);
+    const iRevoke = code.indexOf("REVOKE SELECT ON TABLE public.transmittals");
+    expect(code.indexOf("needs 20261133")).toBeLessThan(iRevoke);
+    expect(code.indexOf("needs 20261199")).toBeLessThan(iRevoke);
+  });
+
+  it("the header states the order (deploy first, then paste — after 20261133 and 20261199, inheriting 20261199's hold), the rollback, and the rule for a later column", () => {
     expect(sql).toMatch(/DEPLOY FIRST, THEN PASTE/);
+    expect(sql).toMatch(/PASTE AFTER 20261133 AND 20261199/);
+    expect(sql).toMatch(/it inherits 20261199's hold/);
+    expect(sql).not.toMatch(/Either order\s*\n?--\s*with every other pending paste: it re-creates/);
     expect(sql).toMatch(/--\s+GRANT SELECT ON transmittals TO anon, authenticated;/);
     expect(sql).toMatch(/A LATER MIGRATION THAT ADDS A COLUMN to transmittals must also/);
   });
 
-  it("tripwire: a later migration that adds a transmittals column grants it to authenticated, and none re-grants the table-level SELECT (which would re-open the token)", () => {
-    const later = readdirSync(join(ROOT, "supabase/migrations")).filter((f) => /^\d{8}_.*\.sql$/.test(f) && f.slice(0, 8) > "20261231").sort();
+  it("tripwire: every migration not yet LIVE that adds a transmittals column (whatever its number, one ALTER adding several included) either grants it to authenticated or is one 20261231 refuses to run before; none re-grants the table-level SELECT (which would re-open the token)", () => {
+    const files = readdirSync(join(ROOT, "supabase/migrations")).filter((f) => /^\d{8}_.*\.sql$/.test(f) && f !== MIG).sort();
     const offenders: string[] = [];
-    for (const f of later) {
-      const body = readFileSync(join(ROOT, "supabase/migrations", f), "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
-      if (/GRANT\s+(SELECT|ALL)[^;(]*\bON\s+(TABLE\s+)?(public\.)?transmittals\s+TO/i.test(body)) offenders.push(`${f}: table-level grant`);
-      const added = [...body.matchAll(/ALTER TABLE\s+(?:IF EXISTS\s+)?(?:public\.)?transmittals\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?([a-z_]+)/gi)].map((m) => m[1]);
+    const pending: string[] = [];
+    for (const f of files) {
+      const n = f.slice(0, 8);
+      const body = stripSql(readFileSync(join(ROOT, "supabase/migrations", f), "utf8"));
+      if (n > "20261231" && /GRANT\s+(SELECT|ALL)[^;(]*\bON\s+(TABLE\s+)?(public\.)?transmittals\s+TO/i.test(body)) offenders.push(`${f}: table-level grant`);
+      if (isLive(n)) continue;
+      const added = transmittalsColumnsAdded(body);
+      if (added.length > 0) pending.push(f);
       for (const col of added) {
-        if (!new RegExp(`GRANT\\s+SELECT\\s*\\([^)]*\\b${col}\\b[^)]*\\)\\s*ON\\s+(TABLE\\s+)?(public\\.)?transmittals\\s+TO\\s+[^;]*authenticated`, "i").test(body)) offenders.push(`${f}: ${col} not granted`);
+        const granted = new RegExp(`GRANT\\s+SELECT\\s*\\([^)]*\\b${col}\\b[^)]*\\)\\s*ON\\s+(TABLE\\s+)?(public\\.)?transmittals\\s+TO\\s+[^;]*authenticated`, "i").test(body);
+        const pastedFirst = (PASTE_FIRST_COLUMNS[n] ?? []).includes(col) && n < "20261231";
+        if (!granted && !pastedFirst) offenders.push(`${f}: ${col} neither granted to authenticated nor required by 20261231`);
       }
     }
     expect(offenders).toEqual([]);
+    // the scan sees the two files the review named for as long as they are not LIVE
+    for (const n of Object.keys(PASTE_FIRST_COLUMNS)) if (!isLive(n)) expect(pending.some((f) => f.startsWith(`${n}_`)), n).toBe(true);
+    // every column 20261231 names as a precondition is one that file really adds
+    for (const [n, cols] of Object.entries(PASTE_FIRST_COLUMNS)) {
+      const f = files.find((x) => x.startsWith(`${n}_`))!;
+      expect(transmittalsColumnsAdded(stripSql(readFileSync(join(ROOT, "supabase/migrations", f), "utf8"))).sort(), n).toEqual([...cols].sort());
+    }
+  });
+
+  it("the tripwire's parser reads one ALTER adding several columns, ADD without COLUMN, and skips constraints", () => {
+    expect(transmittalsColumnsAdded("ALTER TABLE public.transmittals ADD COLUMN IF NOT EXISTS a_one int, ADD b_two text,\n  ADD CONSTRAINT c_x CHECK (true), ADD COLUMN c_three jsonb;")).toEqual(["a_one", "b_two", "c_three"]);
+    expect(transmittalsColumnsAdded("ALTER TABLE IF EXISTS transmittals ALTER COLUMN x SET DEFAULT 0; ALTER TABLE documents ADD COLUMN y int;")).toEqual([]);
   });
 });

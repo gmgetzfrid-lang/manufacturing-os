@@ -317,6 +317,47 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
     expect(f.mock.calls.filter(([u]) => String(u) !== "/api/transmittal/stamp-check" && !isRegister(String(u)))).toEqual([]);
   });
 
+  it("P29 review: a pre-20260910 issue whose register read fails right after reports the portal 'unknown' (never 'ready' on a guess from the status); the email route, reading the row server-side, refuses for want of a token", async () => {
+    db.handlers["browser:transmittals"] = (ops) => has(ops, "update") ? { data: { ...draftRow, status: "issued" }, error: null } : { data: draftRow, error: null };
+    const f = withCheck((u) => isRegister(u)
+      ? new Response(JSON.stringify({ error: "Service unavailable" }), { status: 503 })
+      : new Response(JSON.stringify({ ok: false, sent: false, reason: "no portal token" }), { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const out = await issueTransmittal("t1", actor);
+    warn.mockRestore();
+    expect(out.portal).toBe("unknown");
+    expect(out.email).toEqual({ sent: false, reason: "no portal token" });
+    expect(out.transmittal.portalToken).toBeNull();
+    expect(out.transmittal.viewer).toMatchObject({ accessUnchecked: true, portalWithheldReason: "unchecked" });
+    // the toast is never the clean "ready" one for an unknown portal
+    const page = src("app/(protected)/transmittals/page.tsx");
+    expect(page).toMatch(/const clean = outcome\.portal === "ready" &&/);
+  });
+
+  it("P29 review: the register read fails after an issue but the email route sends — the server read the token, so the portal is 'ready'", async () => {
+    db.handlers["browser:transmittals"] = (ops) => has(ops, "update") ? { data: issuedRow, error: null } : { data: draftRow, error: null };
+    vi.stubGlobal("fetch", withCheck((u) => isRegister(u)
+      ? new Response(JSON.stringify({ error: "Service unavailable" }), { status: 503 })
+      : new Response(JSON.stringify({ ok: true, sent: true }), { status: 200 })));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const out = await issueTransmittal("t1", actor);
+    warn.mockRestore();
+    expect(out.portal).toBe("ready");
+    expect(out.email).toEqual({ sent: true, reason: null });
+  });
+
+  it("P29 review: no recipient email and no register answer — 'unknown', and no email attempted", async () => {
+    db.handlers["browser:transmittals"] = (ops) => has(ops, "update") ? { data: { ...issuedRow, recipient_email: null }, error: null } : { data: { ...draftRow, recipient_email: null }, error: null };
+    const f = withCheck((u) => isRegister(u) ? new Response("{}", { status: 503 }) : new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const out = await issueTransmittal("t1", actor);
+    warn.mockRestore();
+    expect(out.portal).toBe("unknown");
+    expect(f.mock.calls.map(([u]) => String(u))).not.toContain("/api/transmittal/send-email");
+  });
+
   it("the composer prints the cover sheet from the outcome's row, not a synthesized object", () => {
     const page = src("app/(protected)/transmittals/page.tsx");
     // DIST-17 (document-control P27): still the outcome's row — as the register

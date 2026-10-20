@@ -24,7 +24,9 @@
 //     same (the app works before the paste) and the token is still open;
 //   - the file pasted as ONE script, as the SQL editor sends it: probes true,
 //     the counts-only inventory in order, a re-paste the same; without
-//     20260910 it refuses, changing nothing.
+//     20260910, 20261133 or 20261199 it refuses, changing nothing (review
+//     blocker: a column a later paste adds would miss the column grant, and
+//     the revoke's WHERE on it would be refused).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -217,6 +219,20 @@ describe.skipIf(skip !== null)("DIST-18 limb (a), 20261231 replayed: portal_toke
     expect(one(db, svc, `UPDATE transmittals SET status = 'acknowledged', acknowledged_at = now(), acknowledged_by_name = 'Jane Doe', acknowledged_via = 'portal' WHERE id = '${w.tr}' AND status = 'issued' RETURNING *`)).toBe("ok:1");
   });
 
+  it("review minor: DIST-18 residual (v)'s identification query (the record, kept apart from the counts-only paste) runs after the paste and lists the live link with a restricted item by id and number — never the token", () => {
+    const rec = readFileSync(join(process.cwd(), "audit-reports", "document-control", "05-distribution.md"), "utf8");
+    const m = /```sql\n(-- DIST-18 residual \(v\)[\s\S]*?)```/.exec(rec);
+    expect(m, "the identification query is in DIST-18's record").not.toBeNull();
+    const q = m![1];
+    expect(q).toMatch(/^SELECT DISTINCT t\.id, t\.number\n/m);
+    const rows = admin(db, q).split("\n").filter((l) => l.length > 0);
+    expect(rows).toContain(`${w.tr}|TR-0007`);
+    expect(rows.every((r) => r.split("|").length === 2)).toBe(true);
+    expect(rows.join("\n")).not.toContain(w.token);
+    // the draft (no link) is not listed
+    expect(rows.some((r) => r.startsWith(w.draft))).toBe(false);
+  });
+
   it("review blocker: the search slice's old or() term was a service-role oracle on the token; the per-column ilike value is not", () => {
     const svc: Caller = { role: "service_role" };
     const p = w.token.slice(0, 4);
@@ -330,5 +346,44 @@ describe.skipIf(skip !== null)("20261231 pasted as ONE script, as the SQL editor
     const r = paste(scratch);
     expect(r.error).toMatch(/20261231 needs 20260910/);
     expect(admin(scratch, "SELECT has_table_privilege('authenticated', 'public.transmittals', 'SELECT')")).toBe("t");
+  });
+
+  it("review blocker: WITHOUT 20261133 (its portal lifecycle columns not yet added) it refuses, naming it, and changes nothing — the column grant would otherwise miss the columns 20261133 adds after it", () => {
+    const scratch = "mos_p29_no_1133";
+    scratches.push(scratch);
+    admin("postgres", `CREATE DATABASE ${scratch} TEMPLATE ${db}`);
+    toHead(scratch);
+    admin(scratch, `ALTER TABLE transmittals DROP COLUMN portal_expires_at CASCADE, DROP COLUMN portal_revoked_at CASCADE, DROP COLUMN portal_revoked_by CASCADE,
+      DROP COLUMN portal_last_used_at CASCADE, DROP COLUMN portal_open_count CASCADE, DROP COLUMN portal_download_count CASCADE;`);
+    const r = paste(scratch);
+    expect(r.error).toMatch(/20261231 needs 20261133/);
+    expect(admin(scratch, "SELECT has_table_privilege('authenticated', 'public.transmittals', 'SELECT')")).toBe("t");
+    expect(admin(scratch, "SELECT has_column_privilege('authenticated', 'public.transmittals', 'portal_token', 'SELECT')")).toBe("t");
+  });
+
+  it("review blocker: WITHOUT 20261199 (no stamp_check — the file held on the P24 deploy) it refuses, naming it, and changes nothing", () => {
+    const scratch = "mos_p29_no_1199";
+    scratches.push(scratch);
+    admin("postgres", `CREATE DATABASE ${scratch} TEMPLATE ${db}`);
+    toHead(scratch);
+    admin(scratch, "ALTER TABLE transmittals DROP COLUMN stamp_check CASCADE;");
+    const r = paste(scratch);
+    expect(r.error).toMatch(/20261231 needs 20261199/);
+    expect(admin(scratch, "SELECT has_table_privilege('authenticated', 'public.transmittals', 'SELECT')")).toBe("t");
+  });
+
+  it("why the order matters (the failure the refusal prevents): a column added AFTER the column grant reaches members with no SELECT, and the revoke's WHERE on it is refused (42501)", () => {
+    const scratch = "mos_p29_late_col";
+    scratches.push(scratch);
+    admin("postgres", `CREATE DATABASE ${scratch} TEMPLATE ${db}`);
+    toHead(scratch);
+    const r = paste(scratch);
+    expect(r.errors, r.stderr).toEqual([]);
+    admin(scratch, "ALTER TABLE transmittals ADD COLUMN p29_late_probe timestamptz;");
+    expect(admin(scratch, "SELECT has_column_privilege('authenticated', 'public.transmittals', 'p29_late_probe', 'SELECT')")).toBe("f");
+    const w = seedWorld(scratch);
+    expect(one(scratch, w.m.docctrl.caller, `UPDATE transmittals SET updated_at = now() WHERE id = '${w.tr}' AND p29_late_probe IS NULL RETURNING id`)).toMatch(/^err:42501:/);
+    // with every column present at paste time (the refusal's guarantee), the revoke answers
+    expect(asCallerTx(scratch, w.m.docctrl.caller, [appStatements(w, clientColumns()).revoke]).outcomes).toEqual(["ok:1"]);
   });
 });
