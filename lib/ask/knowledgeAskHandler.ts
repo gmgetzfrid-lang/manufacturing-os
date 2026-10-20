@@ -30,6 +30,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
+import { VISION_MODEL } from "@/lib/knowledgeVision";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
 import {
   ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText,
@@ -284,6 +285,23 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     askUsage.outputTokens += out.usage.outputTokens;
     return out;
   };
+  // Planning calls (search queries, the refine round) are short JSON jobs
+  // that don't need a frontier model — they run on the provider's fast tier,
+  // which takes seconds off every question before the answer starts. Falls
+  // back to the asker's own model if the fast tier is refused. Metered with
+  // the ask at the asker's model rate, so the cap over-estimates, never under.
+  const callFast = async (input: Omit<AiCallInput, "provider" | "model" | "apiKey">) => {
+    const fast = VISION_MODEL[provider];
+    if (!fast || fast === model) return call(input);
+    try {
+      const out = await callAiModel({ provider, model: fast, apiKey, ...input });
+      askUsage.inputTokens += out.usage.inputTokens;
+      askUsage.outputTokens += out.usage.outputTokens;
+      return out;
+    } catch {
+      return call(input);
+    }
+  };
   const meter = (ok: boolean) =>
     recordAskUsage({ orgId, userId: user.id, provider, model, usage: askUsage, ok });
   const budget = () => ({
@@ -363,7 +381,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   try {
     // ── Step 1: question → search queries ────────────────────────────────
     emit({ t: "status", text: userImages.length > 0 ? "Reading your attachment and writing search queries" : "Writing search queries" });
-    const queryText = await call({
+    const queryText = await callFast({
       system:
         'You generate full-text search queries for a technical document library at an oil refinery. ' +
         'Given a question, reply with ONLY a JSON array of 2-5 short keyword queries (2-6 words each) ' +
@@ -738,7 +756,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       emit({ t: "status", text: chunks.length === 0
         ? "Nothing matched yet — rewriting the search"
         : `Reviewing ${chunks.length} passage${chunks.length === 1 ? "" : "s"} and chasing references` });
-      const refineOut = await call({
+      const refineOut = await callFast({
         system:
           'You review passages retrieved from technical document libraries to answer a question. These ' +
           'standards are spaghetti: one references another ("per STD-205", "as required by ASME B31.3") ' +

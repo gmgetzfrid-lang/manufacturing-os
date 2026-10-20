@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import {
   parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
-  structureAnswer, isMissingFact, type AnswerBlock, type Verdict,
+  structureAnswer, isMissingFact, extractAnswerMeta, type AnswerBlock, type Verdict,
 } from "@/lib/knowledgeText";
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
@@ -1271,3 +1271,181 @@ export function CitationChips({ citations, onOpen }: {
   );
 }
 
+
+// ── While the answer is being written ────────────────────────────────────────
+//
+// Nobody should watch raw text typing itself out. Until the Answer line is
+// complete the reader sees the card's own shape, shimmering, with a stage
+// tracker that follows the real pipeline. The moment the Answer line lands
+// it takes its place in the card; Why and the checklist fill in step by
+// step; the proof column waits for the evidence and says so.
+
+const STAGES = [
+  { label: "Understanding the question", match: /starting|attachment|search queries/i },
+  { label: "Searching the library", match: /searching the library|nothing matched|rewriting the search/i },
+  { label: "Following references", match: /reviewing|chasing/i },
+  { label: "Reading the pages", match: /printed page|fetched page|reading \d/i },
+  { label: "Writing the answer", match: /composing|answering/i },
+  { label: "Attaching proof", match: /$^/ },
+];
+
+const EVIDENCE_SPLIT = /\n\s*(?:#{1,4}\s*)?\*{0,2}Evidence:?\*{0,2}:?\s*(?:\n|$)/i;
+
+function Shimmer({ className }: { className: string }) {
+  return (
+    <div aria-hidden
+      className={`rounded-md bg-[linear-gradient(90deg,var(--color-surface-2)_0%,var(--color-border)_50%,var(--color-surface-2)_100%)] bg-[length:200%_100%] motion-safe:animate-[shimmer_1.8s_linear_infinite] ${className}`} />
+  );
+}
+
+function StageTracker({ stage, status, compact }: { stage: number; status: string; compact: boolean }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (compact) {
+    return (
+      <div className="flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)]" role="status" aria-live="polite">
+        <span className="relative flex w-2 h-2">
+          <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-60" />
+          <span className="relative inline-flex rounded-full w-2 h-2 bg-orange-500" />
+        </span>
+        {STAGES[stage].label}<span className="text-[var(--color-text-faint)]">· {elapsed}s</span>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3" role="status" aria-live="polite">
+      <div className="flex items-center gap-1.5">
+        {STAGES.map((s, i) => (
+          <div key={s.label} className="flex-1 h-1 rounded-full overflow-hidden bg-[var(--color-surface-2)]">
+            <div className={`h-full rounded-full transition-all duration-700 ease-out ${i < stage ? "w-full bg-orange-500"
+              : i === stage ? "w-full bg-[linear-gradient(90deg,#f97316_0%,#fdba74_50%,#f97316_100%)] bg-[length:200%_100%] motion-safe:animate-[shimmer_1.6s_linear_infinite]"
+              : "w-0"}`} />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-[14px] font-bold text-[var(--color-text)]">{STAGES[stage].label}</div>
+        <div className="font-mono text-[11px] text-[var(--color-text-faint)] tabular-nums">{elapsed}s</div>
+      </div>
+      {status && !STAGES[stage].label.toLowerCase().startsWith(status.toLowerCase().slice(0, 12)) && (
+        <div className="-mt-2 text-[12px] text-[var(--color-text-muted)]">{status}</div>
+      )}
+    </div>
+  );
+}
+
+/** The answer card, filling in as the answer streams. `draft` is the raw
+ *  streamed text; only COMPLETE lines are shown, so nothing ever types. */
+export function StreamingAnswer({ status, draft }: { status: string; draft: string }) {
+  const [body, ...afterEvidence] = draft.split(EVIDENCE_SPLIT);
+  const inEvidence = afterEvidence.length > 0;
+  const complete = inEvidence ? body : body.slice(0, body.lastIndexOf("\n") + 1);
+  const meta = extractAnswerMeta(complete);
+  const parts = structureAnswer(parseAnswerBlocks(meta.answer));
+  const heroV = parts.hero !== null ? splitVerdict(parts.hero) : null;
+
+  const statusStage = STAGES.findIndex((s) => s.match.test(status));
+  const stage = inEvidence ? 5 : heroV ? 4 : Math.max(0, statusStage);
+  const inline = (text: string) => <InlineAnswer text={text} citations={[]} onCite={() => undefined} />;
+  const reveal = { animation: "rise 0.4s var(--ease-fluid) both" } as React.CSSProperties;
+
+  return (
+    <div className="@container">
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
+        <div className="grid @min-[760px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+          <div className="min-w-0 p-4 sm:p-5 space-y-5">
+            <StageTracker stage={stage} status={status} compact={!!heroV} />
+
+            {meta.answeringFor.length > 0 ? (
+              <div style={reveal}><AnsweringFor chips={meta.answeringFor} /></div>
+            ) : !heroV && (
+              <div className="flex gap-1.5"><Shimmer className="h-6 w-24 rounded-full" /><Shimmer className="h-6 w-32 rounded-full" /><Shimmer className="h-6 w-20 rounded-full" /></div>
+            )}
+
+            {heroV ? (
+              <div style={reveal} className={`rounded-xl border px-4 py-3.5 ${VERDICT_BOX[heroV.verdict ?? "none"]}`}>
+                {heroV.verdict
+                  ? <VerdictBadge verdict={heroV.verdict} />
+                  : <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">Answer</span>}
+                <div className="mt-1 text-[16.5px] font-semibold leading-snug text-[var(--color-text)]">{inline(heroV.text)}</div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-[var(--color-border)] px-4 py-4 space-y-2.5">
+                <Shimmer className="h-5 w-36" />
+                <Shimmer className="h-4 w-full" />
+                <Shimmer className="h-4 w-5/6" />
+              </div>
+            )}
+
+            {heroV && (
+              <div>
+                <PartHead>Why</PartHead>
+                <div className="space-y-2.5">
+                  {parts.why.filter((b) => b.type !== "label").map((b, i) => (
+                    <div key={i} style={reveal} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-start">
+                      <span className="mt-0.5 w-6 h-6 rounded-full border border-[var(--color-border)] font-mono text-[11px] text-[var(--color-text-muted)] flex items-center justify-center">{i + 1}</span>
+                      <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
+                    </div>
+                  ))}
+                  {parts.before.length === 0 && !inEvidence && (
+                    <div className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-center">
+                      <Shimmer className="w-6 h-6 rounded-full" /><Shimmer className="h-4 w-4/5" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {heroV && parts.before.length > 0 && (
+              <div style={reveal}>
+                <PartHead>Before you act</PartHead>
+                <div className="space-y-1.5">
+                  {parts.before.filter((b) => b.type !== "label").map((b, i) => (
+                    <div key={i} style={reveal} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start px-2">
+                      {b.type === "important"
+                        ? <AlertTriangle className="mt-0.5 w-4 h-4 text-amber-600" />
+                        : <span className="mt-1 w-3.5 h-3.5 rounded-[3px] border-[1.5px] border-[var(--color-text-muted)]" />}
+                      <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!heroV && (
+              <div className="space-y-2.5">
+                {["w-11/12", "w-3/4", "w-5/6"].map((w) => (
+                  <div key={w} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-center">
+                    <Shimmer className="w-6 h-6 rounded-full" /><Shimmer className={`h-4 ${w}`} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <aside className="min-w-0 p-4 sm:p-5 border-t @min-[760px]:border-t-0 @min-[760px]:border-l border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+            <div className="flex items-baseline justify-between gap-2 mb-3">
+              <h3 className="text-[15px] font-black text-[var(--color-text)]">Proof</h3>
+              <span className="font-mono text-[10px] text-[var(--color-text-faint)]">
+                {inEvidence ? "marking the exact words on each page" : "arrives with the answer"}
+              </span>
+            </div>
+            <div className="space-y-2">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2">
+                  <div className="flex items-center gap-2.5"><Shimmer className="w-6 h-6" /><Shimmer className="h-4 flex-1" /></div>
+                  <Shimmer className="h-3 w-2/5" />
+                  <Shimmer className="h-12 w-full" />
+                </div>
+              ))}
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  );
+}
