@@ -809,6 +809,24 @@
    "sequencingNotes": [
     "Added by the integrator at the P27 merge, 2026-10-20 (DEC-31; DEC-90 R2). Limb (a) can launch now."
    ]
+  },
+  {
+   "name": "P30 TRANSMITTAL READ AT THE DATABASE \u2014 after intelligence I-30, transmittals_select narrows so the REST read of items and free text matches the register's per-viewer redaction",
+   "findings": [
+    "document-control DIST-18 limb (b) (HIGH; limb (a) landed with P29, 2026-10-20): once intelligence I-30 makes node_visible the app predicate, transmittals_select (and the items' readability) narrows at the database so a member reads over REST only what the register shows them \u2014 the sender, controllers and full readers unchanged; counts-only inventory first; the app works before and after the paste"
+   ],
+   "files": [
+    "supabase/migrations: one DEC-30 file re-creating transmittals_select from its newest body, lineDiff-pinned",
+    "tests: the PG16 harness \u2014 every reader's REST read equals the register's view; sender, controllers, full readers, the outside recipient's portal and every issue / void / revoke / receipt flow unchanged"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "document-control P29 merged (2026-10-20; limb (a), 20261231)",
+    "intelligence I-30 merged (node_visible as the app predicate)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P29 merge, 2026-10-20 (DEC-31): DIST-18's limb (b), split out of P29 so P29 (limb (a)) could merge."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

@@ -34,6 +34,10 @@ export interface NodePeekProps {
   orgId: string;
   /** Nodes one hop away, for walking the web without leaving. */
   connections: GraphNode[];
+  /** GM-14 / GAP-303 — what the link to a listed node says about itself
+   *  (the sheet it was read on, a drawing's reading, the AI-read mark), in
+   *  the map theme's words; null when it says nothing beyond its type. */
+  linkNoteOf?: (n: GraphNode) => string | null;
   /** True when the map is currently collapsed to a neighbourhood. */
   focused: boolean;
   /** How many steps back the peek can go. */
@@ -75,7 +79,7 @@ export interface NodePeekProps {
 }
 
 export default function NodePeek({
-  node, orgId, connections, focused, historyDepth,
+  node, orgId, connections, linkNoteOf, focused, historyDepth,
   colorFor, colorOf, labelFor, onSelect, onBack, onGoIn, onGoOut, onOpen, onPath, onConnect,
   connectBlocked, viewDegree, libraryLinks, connectionsTotal, connectionsProposedOnly = 0, onScope, scopeLabel, onClose,
 }: NodePeekProps) {
@@ -194,14 +198,20 @@ export default function NodePeek({
               )}
             </div>
             <div className="space-y-0.5">
-              {connections.map((c) => (
-                <button key={c.id} onClick={() => onSelect(c)}
-                  className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left group">
-                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: dot(c) }} />
-                  <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
-                  <CornerDownLeft className="w-3 h-3 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
-                </button>
-              ))}
+              {connections.map((c) => {
+                const note = linkNoteOf?.(c) ?? null;
+                return (
+                  <button key={c.id} onClick={() => onSelect(c)} title={note ?? undefined}
+                    className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left group">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: dot(c) }} />
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[11px] font-bold text-[var(--color-text)] truncate">{c.label}</span>
+                      {note && <span className="block text-[10px] text-[var(--color-text-faint)] truncate" data-testid="peek-link-note">{note}</span>}
+                    </span>
+                    <CornerDownLeft className="w-3 h-3 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100" />
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
