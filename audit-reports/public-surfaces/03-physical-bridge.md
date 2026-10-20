@@ -369,7 +369,7 @@ physicalBridge.ts:84 `const url = \`${origin()}/assets/${encodeURIComponent(asse
 ## PHYS-8 · Every share-link and drafting-portal download writes download_audits rows containing columns that do not exist in the schema, and no caller checks the result — the distribution record for external and drafting copies is silently never written
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-10-20, the integrator's ruling R3 at the DF-P12 merge, `DEC-90` — PASTE pending: `20261223` after `20261068`; until it is pasted a ticket copy is recorded without the ticket / file columns and the ticket arm answers "unavailable")
 - **Assigned:** drafting-flow DF-P10 (= PKG-5, the drafting limb) and document-control P8 FIELD (the lib/downloads.ts limb) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS (done-when 3's drafting limb, carved out as [`PHYS-17`](#phys-17)) — by the integrator, 2026-10-13 (DF-P10 review fix pass 6, DEC-31).
 - **Verification:** CONFIRMED
@@ -428,7 +428,15 @@ schema.sql:789-799 (nine columns, no `source`, no `ticket_id`); share/file/route
 3. ✗ as written: drafting rows carry no `document_id` / `version_id` — a ticket file is no register version, so there is no true value to write (DF-P10's finding). The criterion's purpose ("so staleCopies can see them") holds through the remedy this record's own Scope line names (`ticket_id` / `attachment_id` and a ticket arm — `PHYS-17`). Closing it on that remedy departs from the wording, which needs the integrator's ruling under DEC-90 (the record's text allows it: "The remedy (no migration added — …; owner drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)").
 4. ✓ (P2).
 
-**Scope / residual.** For the integrator: rule done-when 3 superseded by `PHYS-17`'s remedy (then RESOLVED, pending `20261223`), or keep it OPEN. Nothing else is owed in code; the recall's callers are `PHYS-18`.
+**Scope / residual.** ~~For the integrator: rule done-when 3 superseded by `PHYS-17`'s remedy (then RESOLVED, pending `20261223`), or keep it OPEN.~~ Ruled (below). Nothing else is owed in code; the recall's callers are `PHYS-18` (owner: drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge)).
+
+**Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90).** (R3) Done-when 3 is RATIFIED as met by `PHYS-17`'s remedy. Its purpose — a drafting copy's row names what was copied, so the stale-copies ledger can see it — is met by `download_audits.ticket_id` / `attachment_id` and the `lib/staleCopies.ts` ticket arm (`PHYS-17`, `20261223`); a ticket file is not a register version, so `document_id` / `version_id` have no true value to carry. `PHYS-8` is RESOLVED with the area's PASTE-pending form: `20261223` after `20261068`.
+
+**Done-when (as ruled).**
+1. ✓ (DF-P10; plus the ticket columns, `20261223`).
+2. ✓ (DF-P10; the server copy route checks both writes and issues nothing on a refusal).
+3. ✓ by ruling R3 — the row names the ticket and the file (`PHYS-17`, pending `20261223`).
+4. ✓ (P2).
 
 ---
 
@@ -1053,7 +1061,7 @@ Done-when, as it stands:
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** proposed — the ticket page's owner after drafting-flow DF-P9 (the proposed DF-P13 DELIVERABLE PAGE WIRING, with drafting-flow `EVID-16` done-when 2 and `DCW-4`'s offer), and the workflow route's owner for the recall at a new issue; opened by drafting-flow Round G DF-P12, 2026-10-14 (DEC-31), for the integrator to allocate at the merge.
+- **Assigned:** drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge) — the recall control on the ticket page and the recall at a new issue (with drafting-flow `EVID-16` done-when 2, `DCW-4`'s page offer and `SM-15`). Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90); opened by drafting-flow Round G DF-P12, 2026-10-14 (DEC-31).
 - **Verification:** CONFIRMED on DF-P12's branch.
 - **Locations:** `lib/staleCopies.ts` (`getTicketCopyRecall`, `nudgeStaleTicketHolders` — no caller), `app/(protected)/requests/[id]/page.tsx`, `app/api/tickets/workflow-action/route.ts` (the issuing actions)
 - **Independently verified:** — opened 2026-10-14 by DF-P12; not yet challenged by a second party.

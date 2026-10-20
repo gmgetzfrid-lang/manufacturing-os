@@ -5,11 +5,13 @@
 //            client-appended "issued Rev N" line and stamps the history trust
 //            index (cleared by a shed, re-stamped past a restore); the verdict
 //            trusts an issue line only at or after it — and keeps DF-P10's
-//            trust boundary without it (regression), the three DF-P12
-//            demotions that need no index aside (pinned, each fail-safe).
+//            trust boundary without it (regression), the two DF-P12
+//            demotions that need no index aside (pinned, each fail-safe,
+//            neither driven by member-written history — R2, DEC-90).
 //   SM-5 dw3 / LEAK-7 (b)  the QR names the FILE (?a=): a print is told
-//            apart by identity; a label issued twice cannot be confirmed by
-//            label alone. Never greener.
+//            apart by identity; a label the workflow provably issued twice
+//            (two lines at or after the index) cannot be confirmed by label
+//            alone; with no index that rule never fires (R2). Never greener.
 //   EDGE-2 observation  a CLOSED ticket whose issued package was sent back
 //            (reject_final) and force-closed scans "cannot confirm", not green
 //            — on its issued label (any row), and, for a proven issue, after a
@@ -376,7 +378,7 @@ describe("REGRESSION — a legitimately issued, current deliverable scans curren
       expect(plan.footerNotice).toBe("This file is KE-1 deliverable Rev 1 — not a controlled document revision — scan the QR to confirm it is still the latest.");
     }
   });
-  it("a row with no trust index keeps DF-P10's trust boundary (the pre-paste reading, pinned by verifyTicketVerdict.test.ts) — the three DF-P12 demotions that need no index aside (next test)", () => {
+  it("a row with no trust index keeps DF-P10's trust boundary (the pre-paste reading, pinned by verifyTicketVerdict.test.ts) — the two DF-P12 demotions that need no index aside (next test)", () => {
     const reclosed = { status: "CLOSED", deliverable_rev: null, history: [issued(1), issued(2), { action: "Reopen Ticket" }, { action: "Force Close (Admin)" }], revision_count: 2 };
     expect(ticketVerdict(reclosed, "2").verdict).toBe("unknown");
     expect(ticketVerdict({ ...reclosed, history_guarded_from: null }, "2").verdict).toBe("unknown");
@@ -384,7 +386,7 @@ describe("REGRESSION — a legitimately issued, current deliverable scans curren
     const issue3 = { status: "PENDING_REVIEW", deliverable_rev: "3A", revision_count: 2, history: [issued(1), { action: "Reject Final" }, { action: "Submitted for review — Rev 2A" }, { action: "Reject" }, { action: "Submitted for review — Rev 3A" }, forged(2)] };
     expect(ticketVerdict(issue3, "1").verdict).toBe("superseded");
   });
-  it("review fix 2 — the three DF-P12 demotions that act with NO index, from the deploy (recorded on SM-5, DEC-90's Landed line, DEC-44 (DF-P12)): each turns green or amber into 'cannot confirm', never red, never green", () => {
+  it("review fix 2, as ruled at the DF-P12 merge (R2, DEC-90) — the two DF-P12 demotions that act with NO index, from the deploy (recorded on SM-5, DEC-90's Landed line, DEC-44 (DF-P12)): each turns green or amber into 'cannot confirm', never red, never green, and neither reads member-written history", () => {
     // (1) item 2 (a): CLOSED on issued label N with revision_count >= N — the package was sent back after the issue
     const rejectedClosed = { status: "CLOSED", deliverable_rev: "1", revision_count: 1, history: [issued(1), { action: "Submit Final" }, { action: "Reject Final (Re-Open)", revisionRound: 1 }, { action: "Force Close (Admin)" }] };
     expect(ticketVerdict(rejectedClosed, "1").verdict).toBe("unknown");
@@ -393,15 +395,13 @@ describe("REGRESSION — a legitimately issued, current deliverable scans curren
     const live = { status: "PENDING_IFC", deliverable_rev: "1", revision_count: 0, history: [issued(1)], attachments: [{ id: "f-1", type: "Final", rev: "1" }] };
     expect(ticketVerdict(live, "1", "f-x").verdict).toBe("unknown");
     expect(ticketVerdict(live, "1", "f-1").verdict).toBe("current");
-    // (3) a label the history issues twice counts every line within revision_count + 1, proven or not: a duplicate
-    //     a member appended BEFORE the paste (the guard admitted it then) greys out every print of a legitimately
-    //     current Rev 1 that names no confirmed file — all paper printed before DF-P12 (SM-5 residual, item 4)
+    // (3) NOT a third: a label issued twice counts only PROVEN issue lines (R2), so a duplicate a member appended
+    //     BEFORE the paste (the guard admitted it then) never greys out a legitimately current Rev 1
     const closedNormally = { status: "CLOSED", deliverable_rev: "1", revision_count: 0, history: [issued(1), { action: "Submit Final" }, { action: "Close Ticket" }] };
     expect(ticketVerdict(closedNormally, "1").verdict).toBe("current");
     const withForgedDuplicate = { ...closedNormally, history: [...closedNormally.history, forged(1)] };
-    expect(ticketVerdict(withForgedDuplicate, "1").verdict).toBe("unknown");
-    expect(ticketVerdict({ ...withForgedDuplicate, history_guarded_from: null }, "1").verdict).toBe("unknown");
-    // a print naming the file the ticket confirms is still told apart (a new print, since DF-P12)
+    expect(ticketVerdict(withForgedDuplicate, "1").verdict).toBe("current");
+    expect(ticketVerdict({ ...withForgedDuplicate, history_guarded_from: null }, "1").verdict).toBe("current");
     expect(ticketVerdict({ ...withForgedDuplicate, attachments: [{ id: "f-1", type: "Final", rev: "1" }] }, "1", "f-1").verdict).toBe("current");
     // none of them makes a red answer anything else: an older print is still superseded
     expect(ticketVerdict({ ...rejectedClosed, deliverable_rev: "2", revision_count: 2, history: [issued(1), issued(2)] }, "1").verdict).toBe("superseded");
@@ -469,16 +469,64 @@ describe("SM-5 done-when 3 / LEAK-7 (b) — the printed file's identity on the Q
     const rework = { status: "REVISION_REQ", deliverable_rev: "1", revision_count: 1, history: [issued(1)], attachments: [{ id: "f-1", rev: "1" }] };
     expect(ticketVerdict(rework, "1", "f-1").verdict).toBe("revision_in_progress");
   });
-  it("LEAK-7 (b): a label issued twice — an old print naming only the label cannot be told apart (never green); a print carrying a confirmed identity can", () => {
-    const twice = atIfc([{ id: "f-new", type: "Final", rev: "1" }], [issued(1), { action: "Reopen Ticket" }, issued(1)]);
-    expect(issuedMoreThanOnce(twice.history, 0, "1")).toBe(true);
+  it("a label the workflow provably issued twice — a print naming only the label cannot be told apart (never green); a print carrying a confirmed identity can", () => {
+    const twice = { ...atIfc([{ id: "f-new", type: "Final", rev: "1" }], [issued(1), { action: "Reopen Ticket" }, issued(1)]), history_guarded_from: 0 };
+    expect(issuedMoreThanOnce(twice.history, 0, "1", 0)).toBe(true);
     expect(ticketVerdict(twice, "1").verdict).toBe("unknown");
     expect(ticketVerdict(twice, "1", "f-new").verdict).toBe("current");
     expect(ticketVerdict({ ...twice, status: "REVISION_REQ" }, "1").verdict).toBe("unknown");
     // a line above revision_count + 1 never counts toward a duplicate
-    expect(issuedMoreThanOnce([issued(3), issued(3)], 0, "3")).toBe(false);
+    expect(issuedMoreThanOnce([issued(3), issued(3)], 0, "3", 0)).toBe(false);
+    // no index: never fires (R2) — LEAK-7 (b)'s pre-Round-E rows are answered by DF-P10's no-rev rule instead (R1)
+    expect(issuedMoreThanOnce(twice.history, 0, "1")).toBe(false);
+    expect(issuedMoreThanOnce(twice.history, 0, "1", null)).toBe(false);
+    expect(ticketVerdict({ ...twice, history_guarded_from: undefined }, "", "").verdict).toBe("unknown");
     // once issued, never twice: an ordinary row is untouched
     expect(ticketVerdict(atIfc([], [issued(1)]), "1").verdict).toBe("current");
+  });
+});
+
+describe("R2 (the integrator's ruling at the DF-P12 merge, DEC-90) — a label issued twice counts only PROVEN issue lines: member-written history never greys out a current deliverable", () => {
+  // DF-P10's answer: the verdict for the same row without the duplicate line — the forged line sits within the
+  // label's bound, so DF-P10's ladder reads it exactly as it reads the real one.
+  const legit = [
+    { status: "PENDING_IFC", deliverable_rev: "1", revision_count: 0, history: [issued(1)] },
+    { status: "FINAL_DRAFT", deliverable_rev: "1", revision_count: 0, history: [issued(1), { action: "Submit Final" }] },
+    { status: "CLOSED", deliverable_rev: "1", revision_count: 0, history: [issued(1), { action: "Submit Final" }, { action: "Close Ticket" }] },
+    { status: "REVISION_REQ", deliverable_rev: "1", revision_count: 1, history: [issued(1), { action: "Reject Final (Re-Open)", revisionRound: 1 }] },
+    { status: "PENDING_IFC", deliverable_rev: "2", revision_count: 1, history: [issued(1), { action: "Reopen Ticket" }, issued(2)] },
+  ];
+  it("(i) no index + a forged duplicate 'issued Rev N' line → the verdict is exactly DF-P10's answer, for every print", () => {
+    for (const base of legit) {
+      const n = Number(base.deliverable_rev);
+      for (const guardedFrom of [undefined, null]) {
+        const forgedRow = { ...base, history: [...base.history, forged(n)], history_guarded_from: guardedFrom };
+        expect(issuedMoreThanOnce(forgedRow.history, forgedRow.revision_count, String(n), guardedFrom)).toBe(false);
+        for (const printed of ["", String(n), String(n - 1), `${n + 1}A`]) {
+          expect(ticketVerdict(forgedRow, printed), `${base.status} ${printed} ${guardedFrom}`).toEqual(ticketVerdict(base, printed));
+        }
+      }
+    }
+    // pinned outright: the legitimately current print stays current / amber
+    expect(ticketVerdict({ ...legit[2], history: [...legit[2].history, forged(1)] }, "1").verdict).toBe("current");
+    expect(ticketVerdict({ ...legit[3], history: [...legit[3].history, forged(1)] }, "1").verdict).toBe("revision_in_progress");
+  });
+  it("(ii) two proven issue lines for one label + no confirmed identity → 'cannot confirm'", () => {
+    const row = { status: "PENDING_IFC", deliverable_rev: "1", revision_count: 0, history_guarded_from: 0, history: [issued(1), { action: "Reopen Ticket" }, issued(1)], attachments: [{ id: "f-b", type: "Final", rev: "1" }] };
+    expect(issuedMoreThanOnce(row.history, 0, "1", 0)).toBe(true);
+    expect(ticketVerdict(row, "1").verdict).toBe("unknown");
+    expect(ticketVerdict(row, "1", "f-other").verdict).toBe("unknown");
+    expect(ticketVerdict(row, "1", "f-b").verdict).toBe("current"); // a confirmed identity tells the prints apart
+    expect(ticketVerdict({ ...row, status: "CLOSED" }, "1").verdict).toBe("unknown");
+  });
+  it("(iii) one proven + one pre-index duplicate → not demoted by this rule", () => {
+    const row = { status: "PENDING_IFC", deliverable_rev: "1", revision_count: 0, history_guarded_from: 1, history: [forged(1), issued(1)] };
+    expect(issuedMoreThanOnce(row.history, 0, "1", 1)).toBe(false);
+    expect(ticketVerdict(row, "1").verdict).toBe("current");
+    const closed = { ...row, status: "CLOSED", history: [...row.history, { action: "Close Ticket" }] };
+    expect(ticketVerdict(closed, "1").verdict).toBe("current");
+    // the same two lines, both at or after the index → demoted (ii)
+    expect(ticketVerdict({ ...row, history_guarded_from: 0 }, "1").verdict).toBe("unknown");
   });
 });
 

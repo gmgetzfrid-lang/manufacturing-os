@@ -194,11 +194,12 @@ describe.skipIf(skip !== null)("DF-P12 — issue lines are the workflow's, the t
     expect(read(id, "history_guarded_from")).toBe(String(doctored.length));
     const restored = facts();
     expect(provenIssueFromHistory(restored.history, restored.history_guarded_from, restored.revision_count, restored.deliverable_rev)).toBeNull();
-    // nothing the restore wrote is trusted: the answer is exactly the unproven ticket's (DF-P10's reading). Here
-    // "cannot confirm" — the bundle's extra line makes label 1 issued twice (LEAK-7 (b)); without it the unproven
-    // ticket reads the base still-green path DEC-44 (DF-P12) item 2 records (DEC-29), never a doctored proof.
+    // nothing the restore wrote is trusted: the answer is exactly the unproven ticket's (DF-P10's reading) — the
+    // base still-green path DEC-44 (DF-P12) item 2 records (DEC-29), never a doctored proof. The bundle's extra
+    // issue line sits before the index, so it is not a proven duplicate: since the integrator's ruling R2 at the
+    // DF-P12 merge (DEC-90) the label-issued-twice rule counts only proven lines, and it greys nothing here.
     expect(ticketVerdict(restored, "1")).toEqual(ticketVerdict({ ...restored, history_guarded_from: null }, "1"));
-    expect(ticketVerdict(restored, "1").verdict).toBe("unknown");
+    expect(ticketVerdict(restored, "1").verdict).toBe("current");
     // the workflow's next line after the restore is past the index: the index is never moved back
     svc(`UPDATE tickets SET history = history || '[{"action":"note","user":"system"}]'::jsonb WHERE id = '${id}'`);
     expect(read(id, "history_guarded_from")).toBe(String(doctored.length));

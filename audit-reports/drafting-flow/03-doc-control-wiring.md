@@ -196,6 +196,7 @@ inherited, without maintaining a separate drawing-type taxonomy.
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge) — the ticket page's "Publish as a new document in <library>" offer (through `createDocumentWithFile({ …, relatedTicketId })`) and `/api/tickets/handback` accepting a new document's version that carries the ticket. Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90) (R4).
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / safety
 - **Locations:**
@@ -265,7 +266,7 @@ every issued deliverable, or visibly knows it does not.
 - ✗ (in part) See `LIFE-1` / `GAP-6` (unchanged).
 - ✗ (in part) "The register knows about every issued deliverable, or visibly knows it does not" — unchanged since DF-P4 (a source document or a library). A new document's first version can now carry the ticket, but no surface publishes one yet.
 
-**Scope / residual.** (b) The ticket page offers "Publish as a new document in <library>" for a ticket with a library and no source document, through `createDocumentWithFile({ …, relatedTicketId })` → owner: the ticket page's owner after drafting-flow DF-P9 (the proposed DF-P13 DELIVERABLE PAGE WIRING, with `EVID-16` done-when 2). (c) `/api/tickets/handback` accepts a version of a NEW document in the ticket's library carrying the ticket (today it requires a version of the ticket's source document, `app/api/tickets/handback/route.ts:48-60`) → owner: the same package (the route is drafting-flow's; no open package lists it). (d) A source-less, library-less request → triage sets a library (`DCW-1`).
+**Scope / residual.** (b) The ticket page offers "Publish as a new document in <library>" for a ticket with a library and no source document, through `createDocumentWithFile({ …, relatedTicketId })` → owner: drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge), with `EVID-16` done-when 2. (c) `/api/tickets/handback` accepts a version of a NEW document in the ticket's library carrying the ticket (today it requires a version of the ticket's source document, `app/api/tickets/handback/route.ts:48-60`) → owner: the same package, DF-P15. *(Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90), R4: the name first proposed, "DF-P13 DELIVERABLE PAGE WIRING", was taken.)* (d) A source-less, library-less request → triage sets a library (`DCW-1`).
 
 ---
 

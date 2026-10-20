@@ -34,8 +34,10 @@
 // (20261221) is read for the verdict — an "issued Rev N" line at or after it
 // is the workflow's own — and never returned; before that paste the column is
 // absent (42703 / PGRST204) and the ticket is read again without it: nothing
-// is proven (DF-P10's trust boundary; the DF-P12 demotions that need no index
-// still apply — lib/verifyTicketVerdict.ts).
+// is proven (DF-P10's trust boundary; the two DF-P12 demotions that need no
+// index — the CLOSED issued-label rule and the printed file's identity —
+// still apply, and neither reads member-written history; the label-issued-
+// twice rule counts only proven lines — lib/verifyTicketVerdict.ts).
 //
 // The door (public-surfaces PS-VERIFY; the verdict above is drafting-flow's):
 // every answered scan leaves a verify_scans row and counts toward a generous

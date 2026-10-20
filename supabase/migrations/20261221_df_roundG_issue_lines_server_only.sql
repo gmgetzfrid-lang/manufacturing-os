@@ -65,9 +65,12 @@
 -- otherwise, changing nothing). Either order with the DF-P12 deploy: the
 -- DF-P12 app reads history_guarded_from and, without the column (42703 /
 -- PGRST204), proves no issue line — it keeps DF-P10's trust boundary until
--- the paste (the DF-P12 demotions that need no index act from the deploy:
--- they only turn an answer grey). The app before DF-P12 never selects the
--- column.
+-- the paste (the two DF-P12 demotions that need no index — the CLOSED
+-- issued-label rule and the ?a= identity check — act from the deploy: they
+-- only turn an answer grey, and neither reads member-written history; the
+-- label-issued-twice rule counts only lines at or after the index, so it
+-- acts only after this paste — DEC-90 ruling R2 at the DF-P12 merge). The
+-- app before DF-P12 never selects the column.
 -- No browser path appends an "issued Rev" line or a `revisionRound` marker
 -- (the workflow route writes both as the service role; the one browser
 -- history writer, lib/projects.ts convertTicketToProject, appends "Converted

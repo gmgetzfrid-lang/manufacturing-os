@@ -111,11 +111,15 @@
 // from the archive — keeps DF-P10's trust boundary (a database without the
 // column proves nothing). Three DF-P12 rules below need no index and act on
 // every row from the deploy, each only turning a green or amber answer into
-// "cannot confirm": the CLOSED issued-label rule (item 2 (a)), the printed
-// file's identity (?a=), and a label the history issues twice. The last
-// counts every line within revision_count + 1, proven or not, so a duplicate
-// "issued Rev N" a member appended before the paste greys out every print of
-// a current Rev N that names no confirmed file (DEC-44 (DF-P12) item 4).
+// "cannot confirm": the CLOSED issued-label rule (item 2 (a); it reads the
+// server-written revision_count and label, never a history line) and the
+// printed file's identity (?a=; checked against the row's files). Neither can
+// be driven by member-written history. The third DF-P12 demotion, a label
+// issued twice, counts only PROVEN issue lines (at or after the index), so it
+// never acts before the paste or on a row not yet stamped: a duplicate
+// "issued Rev N" a member appended can never grey out a current deliverable
+// (the integrator's ruling R2 at the DF-P12 merge, DEC-90; DEC-44 (DF-P12)
+// item 4).
 //
 // A package sent back after its issue (DEC-44 (DF-P12) item 2): the
 // requester's reject_final returns an issued package (FINAL_DRAFT →
@@ -135,9 +139,12 @@
 // Identity on the QR (SM-5 done-when 3, LEAK-7 (b); DF-P12): a print's QR
 // also carries the FILE's id (?a=). When it does, the file must be on the
 // ticket, once, carrying the printed revision; otherwise the print cannot be
-// confirmed. A label the history issued TWICE (a pre-Round-E re-issue, LEAK-7
-// (b)) cannot be told apart by label: a print naming it without a confirmed
-// identity answers "cannot confirm", never green. Neither rule ever makes an
+// confirmed. A label the workflow provably issued TWICE (two proven issue
+// lines) cannot be told apart by label: a print naming it without a confirmed
+// identity answers "cannot confirm", never green. A pre-Round-E re-issue
+// (LEAK-7 (b)) predates the index; its files predate per-file revisions, so
+// every print of either package already answers "cannot confirm" (DF-P10's
+// no-rev rule; the integrator's ruling R1 at the DF-P12 merge, DEC-90). Neither rule ever makes an
 // answer greener: only current / revision_in_progress are demoted.
 
 export type TicketVerdict =
@@ -278,16 +285,30 @@ export function issueInForce(
   return provenIssueFromHistory(history, guardedFrom, revisionCount, deliverableRev) ?? issueOnRecord(history, revisionCount, deliverableRev);
 }
 
-/** LEAK-7 (b): does the history issue label `rev` more than once (lines
- *  within revision_count + 1 when the count is known)? Two packages then
- *  share the label, and a print naming it cannot be told apart by label. */
-export function issuedMoreThanOnce(history: unknown, revisionCount: number | null | undefined, rev: string): boolean {
+/** LEAK-7 (b): did the WORKFLOW provably issue label `rev` more than once?
+ *  Counts only PROVEN issue lines — those at or after `guardedFrom`
+ *  (20261221's index; the guard refuses a client-appended one from there on)
+ *  — and only while the label is within revision_count + 1 when the count is
+ *  known. Two packages then share the label, and a print naming it cannot be
+ *  told apart by label. With no index (before 20261221 is pasted, or a row
+ *  not yet stamped) it is false: a line a member could have written never
+ *  greys out a current deliverable (the integrator's ruling R2 at the DF-P12
+ *  merge, DEC-90). A pre-Round-E re-issue (LEAK-7 (b)) needs no help from
+ *  this rule: its files predate per-file revisions, so every print of either
+ *  package carries no ?r= and already answers "cannot confirm" (DF-P10). */
+export function issuedMoreThanOnce(
+  history: unknown,
+  revisionCount: number | null | undefined,
+  rev: string,
+  guardedFrom?: number | null,
+): boolean {
   if (!Array.isArray(history) || !isIssuedTicketRev(rev)) return false;
+  if (typeof guardedFrom !== "number" || !Number.isInteger(guardedFrom) || guardedFrom < 0) return false;
   const want = parseInt(rev, 10);
   if (typeof revisionCount === "number" && Number.isFinite(revisionCount) && want > revisionCount + 1) return false;
   let seen = 0;
-  for (const h of history) {
-    const m = ISSUED_LINE.exec(String((h as { action?: unknown } | null)?.action ?? ""));
+  for (let i = guardedFrom; i < history.length; i += 1) {
+    const m = ISSUED_LINE.exec(String((history[i] as { action?: unknown } | null)?.action ?? ""));
     if (m && parseInt(m[1], 10) === want) seen += 1;
   }
   return seen > 1;
@@ -509,9 +530,10 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string, pri
       // The QR names a file that is not this ticket's, is named twice, or
       // carries another revision: cannot confirm which printing this is.
       verdict = "unknown";
-    } else if (!confirmed && !proven && issuedMoreThanOnce(row.history, row.revision_count, printedRev)) {
-      // A label issued twice (LEAK-7 (b)): two packages share it, and a print
-      // naming only the label cannot be told apart.
+    } else if (!confirmed && issuedMoreThanOnce(row.history, row.revision_count, printedRev, row.history_guarded_from)) {
+      // A label the workflow provably issued twice: two packages share it,
+      // and a print naming only the label cannot be told apart. Only proven
+      // lines count, so with no index this never fires (R2, DEC-90).
       verdict = "unknown";
     }
   }

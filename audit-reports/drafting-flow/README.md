@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**149 findings** — 9 CRITICAL, 47 HIGH, 65 MEDIUM, 28 LOW — plus **14 gap specs**, all
+**150 findings** — 9 CRITICAL, 47 HIGH, 65 MEDIUM, 29 LOW — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
@@ -42,7 +42,7 @@ completeness critic, every finding put through an adversarial refutation pass.
 | 03 | [Document control wiring](./03-doc-control-wiring.md) | 7 | Routing drawings to the library's document controller for review and release |
 | 04 | [Flow leaks](./04-flow-leaks.md) | 10 | Where work, state and attention escape without saying so |
 | 05 | [Discoverability](./05-ui-discoverability.md) | 7 | Can a first-time user work this without studying it? |
-| 06 | [State machine](./06-state-machine.md) | 14 | Reachable transitions, concurrency, partial failure, and the actions that skip the gates |
+| 06 | [State machine](./06-state-machine.md) | 15 | Reachable transitions, concurrency, partial failure, and the actions that skip the gates; `SM-15` (LOW) opened by DF-P12's review fix pass, 2026-10-14 (counted at the integrator's DF-P12 merge fix pass) |
 | 07 | [Persistence & RLS](./07-persistence-and-rls.md) | 8 | What the database actually permits, and which writes fail silently |
 | 08 | [Routing & attention](./08-routing-and-attention.md) | 12 | Who is told what, and what goes quiet |
 | 09 | [Authority surfaces](./09-authority-surfaces.md) | 15 | Every door into a ticket, including the public verify endpoint — `AUTHZ-15` (LOW) opened at the admin-and-org P9 second review fix, 2026-10-07 (the count was corrected at the integrator's P9 fix pass) |
