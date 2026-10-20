@@ -72,6 +72,23 @@ function recordedReason(meta: Record<string, unknown> | null | undefined): { id:
 }
 
 /**
+ * The recorded reason that belongs to how the request ended NOW (DF-P16 fix
+ * pass): under one of the five outcomes, only a reason recorded with that
+ * same outcome (`category`). A reopen clears `tickets.outcome` but not
+ * `metadata.outcome_reason` (drafting-flow `SM-16`), so a request withdrawn
+ * with a reason, reopened and then completed still carries the old reason —
+ * it is not the completed request's reason and is not credited to it. Where
+ * no outcome was written ("Not recorded") the stored reason is kept, named
+ * with the outcome it was recorded as.
+ */
+export function reasonForOutcome(outcome: unknown, meta: Record<string, unknown> | null | undefined): { id: string; label: string; category: string } | null {
+  const rec = recordedReason(meta);
+  if (!rec) return null;
+  if (!isTicketOutcome(outcome)) return rec;
+  return isTicketOutcome(rec.category) && rec.category === outcome ? rec : null;
+}
+
+/**
  * GAP-13 acceptance 2 (DF-P16): the per-reason breakdown of how requests
  * ended. Counted from the same rows and the same rule as `summarizeOutcomes`
  * (an ended request = CLOSED or CANCELED; its outcome = `tickets.outcome` when
@@ -80,8 +97,12 @@ function recordedReason(meta: Record<string, unknown> | null | undefined): { id:
  * the workspace keeps under it (its current words; 0 when nothing ended with
  * it), every other reason recorded with it (the list's current words for an
  * id it still holds, else the stored words, marked removed), and "No reason
- * recorded". Returns null — the panel exactly as before — when the workspace
- * keeps no reasons and no ended request recorded one.
+ * recorded". A reason recorded with another outcome than the request has now
+ * (a reopen left it behind) counts as "No reason recorded" (`reasonForOutcome`).
+ * Returns null — the panel exactly as before — when the workspace keeps no
+ * reasons and no ended request recorded one, and its list was read; when the
+ * list could not be read it returns no groups and `listUnread`, so the panel
+ * says so (DEC-90: a failed read is said).
  */
 export function reasonBreakdown(rows: readonly ReasonRow[], configured: readonly OutcomeReason[], listUnread = false): ReasonBreakdown | null {
   const byId = new Map(configured.map((r) => [r.id, r] as const));
@@ -98,7 +119,7 @@ export function reasonBreakdown(rows: readonly ReasonRow[], configured: readonly
     const outcome: TicketOutcome | 'unrecorded' = isTicketOutcome(row.outcome) ? row.outcome : 'unrecorded';
     const a = get(outcome);
     a.total += 1;
-    const rec = recordedReason(row.metadata);
+    const rec = reasonForOutcome(outcome, row.metadata);
     if (!rec) { a.none += 1; continue; }
     anyRecorded = true;
     const kept = byId.get(rec.id);
@@ -112,7 +133,7 @@ export function reasonBreakdown(rows: readonly ReasonRow[], configured: readonly
     line.count += 1;
     a.lines.set(rec.id, line);
   }
-  if (configured.length === 0 && !anyRecorded) return null;
+  if (configured.length === 0 && !anyRecorded) return listUnread ? { groups: [], listUnread: true } : null;
   const groups: ReasonBreakdown['groups'] = [];
   for (const outcome of [...TICKET_OUTCOMES, 'unrecorded' as const]) {
     const a = acc.get(outcome) ?? { total: 0, none: 0, lines: new Map<string, ReasonLine>() };
@@ -178,6 +199,11 @@ export default function RequestOutcomes({ summary: outcomes, reasons = null }: {
             {reasons.listUnread ? <> The workspace&rsquo;s reason list could not be read, so every reason is named in the words it was recorded with, and reasons nothing ended with are not listed.</> : null}
           </p>
         </div>
+      )}
+      {reasons && reasons.groups.length === 0 && reasons.listUnread && (
+        <p className="mb-4 text-xs text-[var(--color-text-muted)]" data-testid="outcome-reasons-unread">
+          The workspace&rsquo;s reason list could not be read, so the reasons requests ended for cannot be broken down here; no ended request recorded one.
+        </p>
       )}
       {outcomes.byType.length > 0 && (
         <table className="w-full text-sm">

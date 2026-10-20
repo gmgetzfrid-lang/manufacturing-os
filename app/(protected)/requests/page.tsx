@@ -62,6 +62,7 @@ import { ticketStatusLabel, ticketUnitDisplay, TICKET_STATUS_FILTER_ORDER } from
 import { loadRequesterRoles } from '@/lib/ticketRequesterRoles';
 import { readQueueScope, foldHistoryChunk, historySearchFilter, historyBeforeCursor, HISTORY_CHUNK, HISTORY_SEARCH_MAX, type HistoryState, type QueueQuery, type QueueReadResult } from '@/lib/ticketQueueRead';
 import { OUTCOME_LABEL, isTicketOutcome } from '@/lib/ticketOutcome';
+import { reasonForOutcome } from '@/components/requests/RequestOutcomes';
 
 // =========================================================================================
 // SECTION 1: TYPES & CONFIGURATION INTERFACES
@@ -307,14 +308,16 @@ function ClosedHistory({ orgId, uid, roles, onClose }: { orgId: string; uid: str
               const id = String(r.id);
               const status = String(r.status ?? '');
               const outcome = isTicketOutcome(r.outcome) ? OUTCOME_LABEL[r.outcome] : null;
-              const reason = (r.metadata as { outcome_reason?: { label?: unknown } } | null | undefined)?.outcome_reason?.label;
+              // DF-P16 fix pass: only a reason recorded with the outcome the
+              // request has now — a reopen leaves the old one behind (SM-16).
+              const reason = reasonForOutcome(r.outcome, r.metadata as Record<string, unknown> | null | undefined)?.label;
               const lm = typeof r.last_modified === 'string' ? r.last_modified : null;
               return (
                 <li key={id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm">
                   <Link href={`/requests/${id}`} data-testid="closed-history-row" className="font-bold text-orange-700 hover:underline">{String(r.ticket_id ?? id)}</Link>
                   <span className="flex-1 min-w-0 truncate text-[var(--color-text)]">{String(r.title ?? '')}</span>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getStatusColor(status as TicketStatus)}`}>{ticketStatusLabel(status)}</span>
-                  {outcome && <span className="text-xs text-[var(--color-text-muted)]">{outcome}{typeof reason === 'string' && reason.trim() ? ` — ${reason.trim()}` : ''}</span>}
+                  {outcome && <span className="text-xs text-[var(--color-text-muted)]">{outcome}{reason ? ` — ${reason}` : ''}</span>}
                   {lm && <span className="text-xs text-[var(--color-text-faint)]">last active {new Date(lm).toLocaleDateString()}</span>}
                 </li>
               );

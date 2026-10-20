@@ -329,7 +329,12 @@ export default function AnalyticsPage() {
   // unchanged. A workspace that keeps no reasons and recorded none sees the
   // panel exactly as before; a list that cannot be read is said, and the
   // recorded reasons are named in their stored words.
-  const [outcomeReasonList, setOutcomeReasonList] = useState<{ reasons: OutcomeReason[]; unread: boolean }>({ reasons: [], unread: false });
+  // DF-P16 fix pass: the list is held with the workspace it was read for and
+  // is null until that read settles, so "not read yet" is never taken for
+  // "nothing configured" (every recorded reason "no longer in the list"), and
+  // after a workspace switch the previous workspace's list is never applied —
+  // until it lands the panel shows no breakdown.
+  const [outcomeReasonList, setOutcomeReasonList] = useState<{ orgId: string; reasons: OutcomeReason[]; unread: boolean } | null>(null);
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
@@ -342,17 +347,19 @@ export default function AnalyticsPage() {
           .eq('key', 'drafting')
           .maybeSingle();
         if (!alive) return;
-        if (error) { setOutcomeReasonList({ reasons: [], unread: true }); return; }
-        setOutcomeReasonList({ reasons: parseOutcomeReasons((data as { data?: unknown } | null)?.data), unread: false });
+        if (error) { setOutcomeReasonList({ orgId: activeOrgId, reasons: [], unread: true }); return; }
+        setOutcomeReasonList({ orgId: activeOrgId, reasons: parseOutcomeReasons((data as { data?: unknown } | null)?.data), unread: false });
       } catch {
-        if (alive) setOutcomeReasonList({ reasons: [], unread: true });
+        if (alive) setOutcomeReasonList({ orgId: activeOrgId, reasons: [], unread: true });
       }
     })();
     return () => { alive = false; };
   }, [activeOrgId]);
   const outcomeReasons = useMemo(
-    () => reasonBreakdown(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, metadata: (t.metadata as Record<string, unknown> | null | undefined) ?? null })), outcomeReasonList.reasons, outcomeReasonList.unread),
-    [tickets, outcomeReasonList],
+    () => (outcomeReasonList && outcomeReasonList.orgId === activeOrgId
+      ? reasonBreakdown(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, metadata: (t.metadata as Record<string, unknown> | null | undefined) ?? null })), outcomeReasonList.reasons, outcomeReasonList.unread)
+      : null),
+    [tickets, outcomeReasonList, activeOrgId],
   );
 
   // --- USER PROFILE COMPUTATION ---

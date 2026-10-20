@@ -24,22 +24,35 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot, type Root } from "react-dom/client";
-import RequestOutcomes, { reasonBreakdown, type ReasonRow } from "@/components/requests/RequestOutcomes";
+import RequestOutcomes, { reasonBreakdown, reasonForOutcome, type ReasonRow } from "@/components/requests/RequestOutcomes";
 import { summarizeOutcomes } from "@/lib/ticketOutcome";
 import type { OutcomeReason } from "@/lib/ticketOutcomeReasons";
 
 const h = vi.hoisted(() => ({
   config: { data: null as unknown, error: null as null | { message: string } },
   configReads: 0,
+  /** When set, the configuration read waits for it (it can settle after the tickets). */
+  configGate: null as null | Promise<void>,
+  /** The configuration answered per workspace (overrides `config` when it names the org). */
+  configByOrg: {} as Record<string, { data: unknown; error: null | { message: string } }>,
+  orgId: "o1",
   tickets: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@/lib/supabase", () => {
   const chain = (table: string): unknown => {
     const api: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "in", "order", "limit"]) api[m] = () => api;
+    let org: string | null = null;
+    for (const m of ["select", "in", "order", "limit"]) api[m] = () => api;
+    api.eq = (col: string, v: unknown) => { if (col === "org_id") org = String(v); return api; };
     api.maybeSingle = async () => {
-      if (table === "org_configurations") { h.configReads++; return h.config; }
+      if (table === "org_configurations") {
+        h.configReads++;
+        const gate = h.configGate;
+        const answer = (org && h.configByOrg[org]) || h.config;
+        if (gate) await gate;
+        return answer;
+      }
       return { data: null, error: null };
     };
     api.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(ok);
@@ -47,7 +60,7 @@ vi.mock("@/lib/supabase", () => {
   };
   return { supabase: { from: (t: string) => chain(t), auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) } } };
 });
-vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ activeOrgId: "o1", uid: "u1", activeRole: "Admin", roles: ["Admin"], hasAnyRole: () => true }) }));
+vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ activeOrgId: h.orgId, uid: "u1", activeRole: "Admin", roles: ["Admin"], hasAnyRole: () => true }) }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => React.createElement("a", { href, ...rest }, children),
 }));
@@ -145,6 +158,31 @@ describe("GAP-13 acceptance 2 — reasonBreakdown", () => {
     ]);
   });
 
+  it("a reason recorded with ANOTHER outcome (a reopen left it behind) is not credited to the outcome the request has now — 'No reason recorded' (SM-16)", () => {
+    // withdrawn with a reason, reopened (outcome nulled, metadata kept), acknowledged and closed as completed
+    const reopened: ReasonRow = { status: "CLOSED", outcome: "completed", metadata: reasonMeta("requester_left", "Requester left the site", "withdrawn") };
+    const b = reasonBreakdown([...ROWS, reopened], REASONS)!;
+    expect(b.groups.find((g) => g.outcome === "completed")).toBeUndefined(); // no reason of its own there: counted whole above
+    expect(line(b, "withdrawn", "requester_left")?.count).toBe(1); // unchanged — the reopened row is not a withdrawal
+    // under an outcome that keeps reasons, a mismatched category is "No reason recorded", and the lines still add up
+    const crossed: ReasonRow = { status: "CANCELED", outcome: "rejected", metadata: reasonMeta("requester_left", "Requester left the site", "withdrawn") };
+    const c = reasonBreakdown([...ROWS, crossed], REASONS)!;
+    const rejected = c.groups.find((g) => g.outcome === "rejected")!;
+    expect(rejected.lines.find((l) => l.reasonId === "requester_left")).toBeUndefined();
+    expect(line(c, "rejected", null)?.count).toBe(3);
+    expect(rejected.lines.reduce((s, l) => s + l.count, 0)).toBe(rejected.total);
+    // a reason with no category is not credited to a recorded outcome either
+    expect(reasonForOutcome("rejected", { outcome_reason: { id: "x", label: "X" } })).toBeNull();
+    expect(reasonForOutcome("completed", reopened.metadata)).toBeNull();
+    expect(reasonForOutcome("withdrawn", reopened.metadata)).toMatchObject({ id: "requester_left", label: "Requester left the site" });
+    // where no outcome was written, the stored reason is kept (named with what it was recorded as)
+    expect(reasonForOutcome(null, reopened.metadata)).toMatchObject({ id: "requester_left", category: "withdrawn" });
+  });
+
+  it("the list cannot be read and nothing recorded a reason: no groups, but the failure is returned (never the silent 'no reasons' null)", () => {
+    expect(reasonBreakdown(ROWS.map((r) => ({ ...r, metadata: null })), [], true)).toEqual({ groups: [], listUnread: true });
+  });
+
   it("junk in metadata.outcome_reason never counts as a reason (no id → 'No reason recorded')", () => {
     const b = reasonBreakdown([
       { status: "CANCELED", outcome: "rejected", metadata: { outcome_reason: "Not drafting work" } },
@@ -187,6 +225,14 @@ describe("GAP-13 acceptance 2 — the panel as rendered", () => {
     const d = doc(html(reasonBreakdown(ROWS, [], true)));
     expect(d.querySelector('[data-testid="outcome-reasons-note"]')?.textContent).toMatch(/reason list could not be read/);
   });
+
+  it("a list that cannot be read is said even when no ended request recorded a reason — a one-line notice under the tiles, the rest today's markup", () => {
+    const unread = html(reasonBreakdown(ROWS.map((r) => ({ ...r, metadata: null })), [], true));
+    const d = doc(unread);
+    expect(d.querySelector('[data-testid="outcome-reasons-unread"]')?.textContent).toMatch(/reason list could not be read/);
+    expect(d.querySelector('[data-testid="outcome-reasons"]')).toBeNull();
+    expect(unread.replace(/<p class="mb-4 text-xs[^"]*" data-testid="outcome-reasons-unread">[\s\S]*?<\/p>/, "")).toBe(html(undefined));
+  });
 });
 
 // ─── /admin/analytics, rendered ───────────────────────────────────────────────
@@ -199,6 +245,9 @@ beforeEach(() => {
   root = createRoot(host);
   h.config = { data: null, error: null };
   h.configReads = 0;
+  h.configGate = null;
+  h.configByOrg = {};
+  h.orgId = "o1";
   h.tickets = [];
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ tickets: h.tickets, documents: [] }), { status: 200, headers: { "Content-Type": "application/json" } })));
 });
@@ -245,5 +294,53 @@ describe("GAP-13 acceptance 2 — /admin/analytics reads the workspace's list an
     const t = (id: string) => host.querySelector(`[data-testid="${id}"]`)?.textContent?.replace(/\s+/g, " ").trim();
     expect(t("outcome-reason-rejected-vendor_scope")).toBe("Vendor scope1");
     expect(t("outcome-reasons-note")).toMatch(/reason list could not be read/);
+  });
+
+  it("the configuration cannot be read and no request recorded a reason: the panel still says the list could not be read", async () => {
+    h.config = { data: null, error: { message: "permission denied for table org_configurations" } };
+    h.tickets = [ticket("a", { outcome: "rejected", metadata: null })];
+    await act(async () => { root.render(React.createElement(AnalyticsPage)); });
+    await flush();
+    expect(host.querySelector('[data-testid="outcome-reasons"]')).toBeNull();
+    expect(host.querySelector('[data-testid="outcome-reasons-unread"]')?.textContent).toMatch(/reason list could not be read/);
+  });
+
+  it("the configuration settles AFTER the tickets: until it does, no breakdown (never every reason 'no longer in the list'); then the configured breakdown", async () => {
+    let open!: () => void;
+    h.configGate = new Promise<void>((r) => { open = r; });
+    h.config = { data: { data: { outcomeReasons: [{ id: "not_drafting_work", label: "Not drafting work", category: "rejected" }, { id: "vendor_scope", label: "Vendor scope", category: "rejected" }] } }, error: null };
+    h.tickets = [ticket("a", { outcome: "rejected", metadata: reasonMeta("not_drafting_work", "Not drafting work", "rejected") })];
+    await act(async () => { root.render(React.createElement(AnalyticsPage)); });
+    await flush();
+    expect(host.textContent).toContain("How Requests Ended"); // the tickets are in
+    expect(host.querySelector('[data-testid="outcome-reasons"]')).toBeNull();
+    expect(host.textContent).not.toContain("no longer in the list");
+    await act(async () => { open(); });
+    await flush();
+    const t = (id: string) => host.querySelector(`[data-testid="${id}"]`)?.textContent?.replace(/\s+/g, " ").trim();
+    expect(t("outcome-reason-rejected-not_drafting_work")).toBe("Not drafting work1");
+    expect(t("outcome-reason-rejected-vendor_scope-count")).toBe("0");
+    expect(host.textContent).not.toContain("no longer in the list");
+  });
+
+  it("a workspace switch never applies the previous workspace's list: no breakdown until the new list lands", async () => {
+    h.configByOrg = {
+      o1: { data: { data: { outcomeReasons: [{ id: "vendor_scope", label: "Org one: vendor scope", category: "rejected" }] } }, error: null },
+      o2: { data: { data: { outcomeReasons: [{ id: "vendor_scope", label: "Org two: vendor scope", category: "rejected" }] } }, error: null },
+    };
+    h.tickets = [ticket("a", { outcome: "rejected", metadata: reasonMeta("vendor_scope", "Vendor scope", "rejected") })];
+    await act(async () => { root.render(React.createElement(AnalyticsPage)); });
+    await flush();
+    expect(host.textContent).toContain("Org one: vendor scope");
+    let open!: () => void;
+    h.configGate = new Promise<void>((r) => { open = r; });
+    h.orgId = "o2";
+    await act(async () => { root.render(React.createElement(AnalyticsPage)); });
+    await flush();
+    expect(host.textContent).not.toContain("Org one: vendor scope");
+    expect(host.querySelector('[data-testid="outcome-reasons"]')).toBeNull();
+    await act(async () => { open(); });
+    await flush();
+    expect(host.textContent).toContain("Org two: vendor scope");
   });
 });

@@ -533,6 +533,23 @@ describe("ROUTE-13 done-when 1 — a closed request past the ceiling is reached 
     }
   });
 
+  it("a row names its reason only when it was recorded with the outcome it has now — a reopen's left-over reason is not shown (SM-16)", async () => {
+    const reason = (id: string, label: string, category: string) => ({ outcome_reason: { id, label, category } });
+    s.tickets = [
+      // withdrawn with a reason, reopened (outcome nulled, reason left), then completed
+      row("stale", { title: "Reopened then completed", outcome: "completed", metadata: reason("requester_left", "Requester left the site", "withdrawn"), last_modified: "2026-10-13T10:00:00.000Z" }),
+      row("kept", { status: "CANCELED", title: "Rejected with its reason", outcome: "rejected", metadata: reason("not_drafting_work", "Not drafting work", "rejected"), last_modified: "2026-10-13T09:00:00.000Z" }),
+    ];
+    await mount();
+    await click(q("[data-testid=closed-history-toggle]"));
+    const items = Array.from(host!.querySelectorAll("[data-testid=closed-history-list] li"));
+    const stale = items.find((li) => li.textContent?.includes("Reopened then completed"))!;
+    expect(stale.textContent).toContain("Completed");
+    expect(stale.textContent).not.toContain("Requester left the site");
+    const kept = items.find((li) => li.textContent?.includes("Rejected with its reason"))!;
+    expect(kept.textContent).toContain("Rejected — Not drafting work");
+  });
+
   it("the toggle stays reachable when the queue's own read failed (the page shell stays)", async () => {
     bigHistory();
     s.failWhen = (calls) => !calls.some((c) => c.m === "in" && c.a[0] === "status"); // every queue read fails
