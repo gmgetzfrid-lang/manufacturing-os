@@ -16,7 +16,9 @@
 //   * DRLS-16: both new SECURITY DEFINER functions pin search_path and are
 //     revoked from PUBLIC and anon (effective_owner_matches from every client
 //     role and the service role); org_capability_allows_for's REVOKE runs
-//     only inside the live-database precondition.
+//     only inside the live-database precondition. No later numbered file
+//     grants it to authenticated, PUBLIC or anon again, and a later
+//     re-creation (a new capability row) keeps EXECUTE to service_role only.
 //   * DEC-30: the apply-order check (a marker of every file it needs,
 //     20261137's ai.manage_caps row and 20261136's quality_signoff_granted_for
 //     included), then the counts-only inventory TEMP TABLE, before one
@@ -265,6 +267,65 @@ describe("20261224 — what it creates and re-creates, and nothing else (DEC-31)
       if (m[1] !== "user_is_effective_owner") expect(m[0], m[1]).not.toMatch(/\bmember_is_active\s*\(/);
     }
     expect(fnBody(M, "CREATE OR REPLACE FUNCTION user_is_effective_owner(")).toContain("STABLE SECURITY DEFINER SET search_path = public");
+  });
+});
+
+/**
+ * Why a later file would hand a client org_capability_allows_for back (INTK-19).
+ * A GRANT of EXECUTE (or ALL) on it to authenticated, PUBLIC or anon; a
+ * schema-wide function GRANT to one of them; or a re-creation (a new
+ * capability row) that does not keep EXECUTE to service_role only: it must
+ * revoke PUBLIC, anon and authenticated (a DROP and CREATE gives PUBLIC
+ * EXECUTE back) and grant service_role, and nothing else.
+ */
+function capabilityGrantViolations(sql: string): string[] {
+  const code = codeOnly(sql);
+  const out: string[] = [];
+  const fn = String.raw`(?:public\.)?org_capability_allows_for\b`;
+  const grants = [...code.matchAll(new RegExp(String.raw`GRANT\s+(?:EXECUTE|ALL)(?:\s+PRIVILEGES)?\s+ON\s+FUNCTION\s+${fn}[^;]*`, "gi"))].map((m) => m[0]);
+  for (const g of grants) {
+    if (/\bTO\b[^;]*\b(authenticated|PUBLIC|anon)\b/i.test(g)) out.push(`grants a client role: ${g.replace(/\s+/g, " ")}`);
+  }
+  for (const m of code.matchAll(/GRANT\s+(?:EXECUTE|ALL)(?:\s+PRIVILEGES)?\s+ON\s+ALL\s+FUNCTIONS\s+IN\s+SCHEMA\s+public\s+TO[^;]*\b(authenticated|PUBLIC|anon)\b[^;]*/gi)) {
+    out.push(`schema-wide grant to a client role: ${m[0].replace(/\s+/g, " ")}`);
+  }
+  if (new RegExp(String.raw`CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+${fn}\s*\(`, "i").test(code)) {
+    const revokes = [...code.matchAll(new RegExp(String.raw`REVOKE\s+(?:EXECUTE|ALL)(?:\s+PRIVILEGES)?\s+ON\s+FUNCTION\s+${fn}[^;]*`, "gi"))].map((m) => m[0]);
+    for (const role of ["PUBLIC", "anon", "authenticated"]) {
+      if (!revokes.some((r) => new RegExp(String.raw`\bFROM\b[^;]*\b${role}\b`, "i").test(r))) out.push(`re-creates it without revoking EXECUTE from ${role}`);
+    }
+    if (!grants.some((g) => /\bTO\s+service_role\s*$/i.test(g.trim()))) out.push("re-creates it without granting EXECUTE to service_role alone");
+    for (const g of grants) {
+      if (!/\bTO\s+service_role\s*$/i.test(g.trim())) out.push(`re-creates it and grants beyond service_role: ${g.replace(/\s+/g, " ")}`);
+    }
+  }
+  return out;
+}
+
+describe("20261224 — no later file hands a client org_capability_allows_for back (INTK-19)", () => {
+  it("the check itself: 20261137's grant fails it; a re-creation that keeps EXECUTE to service_role only passes", () => {
+    expect(capabilityGrantViolations(read("20261137_intel_roundG_ai_manage_caps.sql")).join("\n")).toMatch(/grants a client role/);
+    expect(capabilityGrantViolations("GRANT ALL ON FUNCTION public.org_capability_allows_for(uuid, text, uuid, jsonb) TO anon;")).toHaveLength(1);
+    expect(capabilityGrantViolations("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO authenticated;")).toHaveLength(1);
+    const body = "CREATE OR REPLACE FUNCTION org_capability_allows_for(p_org uuid, p_cap text, p_uid uuid, p_resource jsonb)\nRETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$ SELECT false; $$;\n";
+    expect(capabilityGrantViolations(body)).toEqual([
+      "re-creates it without revoking EXECUTE from PUBLIC",
+      "re-creates it without revoking EXECUTE from anon",
+      "re-creates it without revoking EXECUTE from authenticated",
+      "re-creates it without granting EXECUTE to service_role alone",
+    ]);
+    const kept = body + "REVOKE ALL ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) FROM PUBLIC, anon, authenticated;\nGRANT EXECUTE ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) TO service_role;\n";
+    expect(capabilityGrantViolations(kept)).toEqual([]);
+    expect(capabilityGrantViolations(kept + "GRANT EXECUTE ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) TO authenticated, service_role;\n")).toHaveLength(2);
+  });
+
+  it("every numbered migration after 20261224 keeps EXECUTE on org_capability_allows_for to service_role only (a new capability row starts from its newest body)", () => {
+    for (const f of numbered.filter((x) => x > FILE)) {
+      expect(
+        capabilityGrantViolations(read(f)),
+        `${f} hands a client role org_capability_allows_for back, undoing 20261224 (INTK-19). A later re-creation (a new capability row) starts from its newest body and grants EXECUTE to service_role only, never to authenticated.`,
+      ).toEqual([]);
+    }
   });
 });
 

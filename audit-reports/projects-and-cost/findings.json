@@ -9,17 +9,19 @@
     "audit-reports/projects-and-cost/05-intake-door.md"
   ],
   "totals": {
-    "findings": 78,
+    "findings": 79,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 22,
       "MEDIUM": 39,
-      "LOW": 15
+      "LOW": 16
     },
     "by_status": {
       "RESOLVED": 76,
-      "OPEN": 2
+      "OPEN": 1,
+      "RESOLVED (2026-10-14, intelligence Round G I-28 DEFINER ORACLES — PASTE pending: `20261224`, after `20261199`, `20261159`, `20261137` and `20261136`, inheriting the holds of `20261159` (`INTK-18` deployed) and `20261199` (document-control P24 deployed), either order with `20261217` and `20261212`, no deploy gate of its own; never re-paste `20261159`, `20261199`, `20261133` or `20261027` after it; the same-workspace remainder of done-when 1 is split to `INTK-20` (DEC-31), and `node_visible`'s `p_owner` is decided KEPT under the integrator's ruling for this package (DEC-90))": 1,
+      "WONTFIX": 1
     }
   },
   "status_vocabulary": [
@@ -1941,7 +1943,7 @@
       "id": "INTK-19",
       "title": "Six SECURITY DEFINER helpers answer questions about ANY person — five to the public anon key, one to any signed-in account — because they take the uid (or project) to judge as a parameter",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-14, intelligence Round G I-28 DEFINER ORACLES — PASTE pending: `20261224`, after `20261199`, `20261159`, `20261137` and `20261136`, inheriting the holds of `20261159` (`INTK-18` deployed) and `20261199` (document-control P24 deployed), either order with `20261217` and `20261212`, no deploy gate of its own; never re-paste `20261159`, `20261199`, `20261133` or `20261027` after it; the same-workspace remainder of done-when 1 is split to `INTK-20` (DEC-31), and `node_visible`'s `p_owner` is decided KEPT under the integrator's ruling for this package (DEC-90))",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (grant state read with `has_function_privilege` on a fresh replay of the whole sequence, PostgreSQL 16.13; `lib/__tests__/rls/definerCensus.test.ts`)",
       "blast_radius": null,
@@ -1956,6 +1958,34 @@
       ],
       "refuted": false,
       "summary": "- A former contractor who kept workspace uuids from their session calls orgcapabilityallows(org, 'document.publish', <a colleague's uid>) with the anon key and maps who holds which authority, with no session and no audit row. - A user signed into any workspace, a different tenant included, calls rpc/orgcapabilityallowsfor(<org>, 'document.publish', <colleague uid>, '{}') with their own JWT and doe",
+      "area": "projects-and-cost",
+      "report": "audit-reports/projects-and-cost/05-intake-door.md"
+    },
+    {
+      "id": "INTK-20",
+      "title": "Inside their own workspace, a container's effective owner can still learn whether a named member is active, through `user_is_effective_owner`'s and `node_visible`'s caller-supplied owner",
+      "severity": "LOW",
+      "status": "WONTFIX",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (exercised on the database harness, PostgreSQL 16, replay of the whole sequence with `20261224`; `lib/__tests__/rls/definerCensus.test.ts` \"INTK-19's membership answer, after 20261224\")",
+      "blast_radius": "information disclosure (one boolean per call, inside the caller's own workspace)",
+      "related": [
+        "INTK-19",
+        "INTK-14",
+        "DEC-90"
+      ],
+      "locations": [
+        "supabase/migrations/20261224_intel_roundG_definer_oracles.sql",
+        "lib/ownership.ts:234",
+        "lib/revisions.ts:884"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Viewer who owns a library calls rpc/useriseffectiveowner with a colleague's uid as pdocowner and learns whether that colleague is active or suspended. The same Viewer can read it with select status from orgmembers where uid = <colleague>.",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
     },

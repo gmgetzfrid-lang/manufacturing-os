@@ -462,3 +462,26 @@ describe.skipIf(skip !== null)("20261217: the app works before and after the pas
     });
   }
 });
+
+// projects-and-cost INTK-20 was ruled KEEP (WONTFIX) by the integrator at the
+// I-28 merge, 2026-10-20 (DEC-90): the same-workspace member-status answer
+// through user_is_effective_owner's caller-supplied p_doc_owner and
+// node_visible's p_owner tells the caller nothing org_members_read does not
+// already return to it. This tripwire holds the ruling to that fact on the
+// newest replay: if org_members_read is ever narrowed, the ruling has nothing
+// left to rest on, and INTK-20 reopens.
+describe.skipIf(skip !== null)("INTK-20's WONTFIX tripwire: org_members_read still returns member status to an active same-workspace member", () => {
+  const REOPEN = "INTK-20 reopens: its WONTFIX ruling (the integrator, I-28 merge, 2026-10-20, DEC-90) rests on org_members_read returning a same-workspace member's status to an active member. That policy no longer does, so user_is_effective_owner's p_doc_owner and node_visible's p_owner now disclose more than RLS shows. Reopen projects-and-cost INTK-20 and route the document-keyed client form (its Remediation (b)).";
+
+  it("a signed-in active Viewer reads every member of its own workspace with their status, suspended ones included (and no other workspace's)", () => {
+    const { orgId, m } = seedOrg(REPLAY_DB, { reader: { role: "Viewer" }, peer: { role: "Viewer" }, gone: { role: "Editor" } });
+    const other = seedOrg(REPLAY_DB, { stranger: { role: "Admin" } });
+    admin(REPLAY_DB, `UPDATE org_members SET status = 'suspended' WHERE org_id = '${orgId}' AND uid = '${m.gone.uid}';`);
+    const policy = admin(REPLAY_DB, `SELECT cmd || ':' || permissive FROM pg_policies WHERE schemaname = 'public' AND tablename = 'org_members' AND policyname = 'org_members_read'`);
+    expect(policy, `${REOPEN} (org_members_read is gone or no longer a permissive SELECT policy)`).toBe("SELECT:PERMISSIVE");
+    const seen = selectAs(REPLAY_DB, m.reader.caller, `SELECT uid::text || ':' || status FROM org_members WHERE org_id = '${orgId}' ORDER BY uid`);
+    expect(seen, REOPEN).toEqual([m.reader, m.peer, m.gone].map((x) => `${x.uid}:${x === m.gone ? "suspended" : "active"}`).sort());
+    // the ruling is about the caller's OWN workspace: another workspace's rows stay hidden
+    expect(selectAs(REPLAY_DB, m.reader.caller, `SELECT count(*) FROM org_members WHERE org_id = '${other.orgId}'`)).toEqual(["0"]);
+  });
+});
