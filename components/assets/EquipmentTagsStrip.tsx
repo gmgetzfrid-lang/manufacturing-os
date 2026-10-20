@@ -62,18 +62,23 @@ export default function EquipmentTagsStrip({
 }: EquipmentTagsStripProps) {
   const groups = collectTagGroups(metadata, customColumns);
   // GAP-303: the relation's machine readings for this document (viewer RLS).
-  const [prov, setProv] = useState<Map<string, DrawingTagProvenance> | null>(null);
   // A stable key for the person's tags (a parent may pass a new array each render).
   const personTags = Array.isArray(assetTags)
     ? (assetTags as Array<{ tag?: unknown } | null>).map((e) => (e && typeof e.tag === "string" ? e.tag : "")).join("\u0000")
     : "";
+  // Keyed by what was read: a different document (or none) shows no mark
+  // until its own reading answers.
+  const provKey = documentId ? `${documentId}\u0001${personTags}` : null;
+  const [provAnswer, setProvAnswer] = useState<{ key: string; map: Map<string, DrawingTagProvenance> | null } | null>(null);
   useEffect(() => {
+    if (!documentId) return;
     let alive = true;
-    if (!documentId) { setProv(null); return; }
+    const key = `${documentId}\u0001${personTags}`;
     const tags = personTags ? personTags.split("\u0000").filter(Boolean).map((tag) => ({ tag })) : [];
-    void readDrawingTagProvenance(documentId, tags).then((m) => { if (alive) setProv(m); });
+    void readDrawingTagProvenance(documentId, tags).then((m) => { if (alive) setProvAnswer({ key, map: m }); });
     return () => { alive = false; };
   }, [documentId, personTags]);
+  const prov = provKey && provAnswer?.key === provKey ? provAnswer.map : null;
   const markOf = (tag: string) => prov?.get(tagKey(tag));
 
   if (groups.length === 0) return null;
