@@ -626,7 +626,7 @@ Tests: `lib/__tests__/setupNavigatorIdentity.test.ts` (E-22 filed under 20 with 
 ## AREA-12 · The shape wizard's document ↔ equipment link takes a 23505 for "already linked" and never adopts the drawing's row
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-32 PROVENANCE VIEW AND WIZARD ADOPT (allocated by the integrator at the I-15 merge) — the shape wizard's adopt on 23505 (`components/graph/GraphShapeWizard.tsx`), with `GAP-303` acceptance 1. Ruled by the integrator at the I-15 merge, 2026-10-20 (DEC-90; DEC-31); opened 2026-10-20 by intelligence Round G, I-15, as the remainder of `AREA-2`. *(Was: the next package that edits `components/graph/GraphShapeWizard.tsx` — proposed: intelligence I-26 BRIDGE REMAINDERS.)*
 - **Verification:** CONFIRMED
 - **Independently verified:** — (`author`: opened 2026-10-20 by intelligence Round G I-15 as the remainder of `AREA-2`, from its fix pass; not yet challenged by a second party).
@@ -641,5 +641,21 @@ Tests: `lib/__tests__/setupNavigatorIdentity.test.ts` (E-22 filed under 20 with 
 - [ ] A rendered test: a drawing-held pair accepted in the wizard is adopted; a refused adopt is said.
 
 **Scope.** Authority is not in question: the wizard's entry point is shown to Admin / DocCtrl only (inside the writer tier), and `20261170` refuses anyone else at the database.
+
+
+**Resolution (2026-10-20, intelligence Round G).** Package I-32 PROVENANCE VIEW AND WIZARD ADOPT, under `DEC-90` ruling (3) — on 23505 the wizard adopts the existing row and says so; any other refusal is said, never swallowed. Reproduced first (`DEC-29`): on `a21c718`, `components/graph/GraphShapeWizard.tsx:150-154` inserted the manual `document_assets` row and took `23505` for success, so a pair the equipment sweep relates stayed the machine's. With the base wizard put back, six of the eight cases in the new `lib/__tests__/intelRoundGI32ShapeWizardAdopt.test.ts` fail (every adopt case) and the two regression pins pass.
+
+What landed, in `components/graph/GraphShapeWizard.tsx` only:
+- `adoptHeldPair(orgId, documentId, assetId)`, called on `23505` from the doc ↔ equipment branch of `apply`. It reads the pair's `source` as the member, the order the graph's Connect uses (`app/(protected)/graph/page.tsx`). A person's link (`manual`, or the document's own tags) needs nothing and is counted. A `'drawing'` row, or a row the member's read cannot see, goes to `POST /api/equipment-bridge` `{ action: "adopt" }`, the registry drawer's and the graph's path. The route decides: org, asset, the I-12 read predicate, `adoptDrawingRelation`.
+- A link is counted only once it is the person's: adopted, or the Bridge answers `already` (a person's link).
+- A refused adopt is said and not counted, in the wizard's existing "Some links failed: …" banner, naming the pair. That covers an HTTP refusal (the route's own sentence), an adopt that finds no row ("The existing link could not be found to make it yours …") and a network failure.
+- An adopt whose audit record could not be written is counted, because the link is now the person's, and the missing record is said ("… is now your link, but its audit record could not be written: …").
+- The done screen says how many accepted pairs were the sweep's reading and are now the person's links (`data-testid="shape-adopted"`): "… now yours, so dismissing the sweep's reading will not remove it".
+
+**Done-when.**
+- ✓ On 23505 the wizard calls `POST /api/equipment-bridge` `action "adopt"` (as the registry drawer and the graph's Connect do), says a refused adopt, and counts the link only when it is the person's.
+- ✓ A rendered test: a drawing-held pair accepted in the wizard is adopted, and a refused adopt is said. `lib/__tests__/intelRoundGI32ShapeWizardAdopt.test.ts` covers eight cases: adopted and said; refused (403) said and not counted; no row found said and not counted; audit record missing, counted and said; already a person's link, not sent to adopt; an unreadable source sent to adopt, which answers `already`; and two `DEC-90` ruling (4) pins. The pins are a new pair, written and counted with no adopt, exactly as before; and any other insert refusal (42501), said as before and never sent to adopt, with a doc ↔ doc `23505` still counted as already linked.
+
+**Scope / residual.** None. Authority is unchanged: the wizard's entry point is Admin / DocCtrl only, and the route and `20261170` decide at the server. The doc ↔ doc branch, the related-resources insert and the banner's wording for other refusals are byte-for-byte as before. No migration.
 
 ---
