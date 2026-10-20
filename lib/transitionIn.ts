@@ -374,6 +374,11 @@ export interface AdoptInput {
   linkAssets: Array<{ id: string; tag: string }>;
   actorId: string;
   actorEmail: string | null;
+  /** GAP-314 (intelligence I-26): told, once it settles, when the renumber's
+   *  unit decode did not run or left something undone — the adoption has
+   *  already answered by then (the decode never holds it back). Without a
+   *  listener the note is logged. */
+  onUnitCodeNote?: (note: string) => void;
 }
 
 /** Move one intake document into the controlled register. Provenance chain
@@ -601,14 +606,23 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
 
   // GAP-314 (intelligence I-26): an adoption that RENUMBERS the sheet drops
   // its unit decode (20261138) — ask the server to decode the stored number
-  // now, after the move landed. Best-effort and bounded
-  // (lib/unitCodeClient.ts never throws): a decode that did not run is said
-  // with the adoption's note, never as "not adopted". An adoption that keeps
-  // the number keeps its decode — nothing is asked.
-  const unitNote = newNumber ? (await requestUnitCodeDecode(input.orgId, [input.docId], "renumber")).note : null;
-  const notes = [note, unitNote ? `${newNumber}: ${unitNote}` : null].filter(Boolean).join(" ");
+  // now, after the move landed. NOT awaited: the adoption answers at once
+  // (the move is done whatever the route does), and lib/unitCodeClient.ts
+  // never throws. A decode that did not run is told to `onUnitCodeNote` once
+  // it settles — never as "not adopted", and never in `note` (which says
+  // what the sheet's uniqueness key lacks). An adoption that keeps the
+  // number keeps its decode — nothing is asked.
+  if (newNumber) {
+    const renumbered = newNumber;
+    void requestUnitCodeDecode(input.orgId, [input.docId], "renumber").then((r) => {
+      if (!r.note) return;
+      const said = `${renumbered}: ${r.note}`;
+      if (input.onUnitCodeNote) input.onUnitCodeNote(said);
+      else console.warn(`[adoptDocument] ${said}`);
+    });
+  }
 
-  return { ok: true, ...(notes ? { note: notes } : {}), ...(equipmentNote ? { equipmentNote } : {}) };
+  return { ok: true, ...(note ? { note } : {}), ...(equipmentNote ? { equipmentNote } : {}) };
 }
 
 /** The adoption's equipment links are the controller's assertion (intelligence

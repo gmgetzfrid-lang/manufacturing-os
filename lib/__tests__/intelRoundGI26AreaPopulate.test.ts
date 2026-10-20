@@ -123,7 +123,7 @@ describe("AREA-4 — countAreaEquipmentProposals (the caller's own reads)", () =
 
   it("counts the area's drawings only (never another unit's sheet in the same library), per library, most waiting first", async () => {
     expect(await count()).toEqual({
-      shelfDocuments: 3, documents: 1, tags: 2,
+      shelfDocuments: 3, readDocuments: 3, documents: 1, tags: 2,
       libraries: [
         { libraryId: "lib-pid", libraryName: "P&IDs", documents: 1, tags: 2 },
         { libraryId: "lib-pfd", libraryName: "PFDs", documents: 0, tags: 0 },
@@ -134,10 +134,20 @@ describe("AREA-4 — countAreaEquipmentProposals (the caller's own reads)", () =
     db.tables.knowledge_documents = [];
     db.tables.libraries.push({ id: "lib-new", name: "Isometrics" });
     const p = await countAreaEquipmentProposals({ orgId: "o1", knowledgeLibraryId: "kl1", sources: [{ type: "library", sourceId: "lib-new" }, { type: "folder", sourceId: "f1" }] });
-    expect(p).toEqual({ shelfDocuments: 0, documents: 0, tags: 0, libraries: [
+    expect(p).toEqual({ shelfDocuments: 0, readDocuments: 0, documents: 0, tags: 0, libraries: [
       { libraryId: "lib-new", libraryName: "Isometrics", documents: 0, tags: 0 },
       { libraryId: "lib-pid", libraryName: "P&IDs", documents: 0, tags: 0 },
     ] });
+  });
+  it("a drawing is READ when it has a ledger row of any status — one still indexing (no row) is not; another area's row never counts", async () => {
+    // d2's mirror is still indexing: no ledger row yet
+    db.tables.document_equipment_suggestions = db.tables.document_equipment_suggestions.filter((r) => r.document_id !== "d2");
+    const p = await count();
+    expect(p?.shelfDocuments).toBe(3);
+    expect(p?.readDocuments).toBe(2);
+    // an applied row (d9) is read, though nothing waits on it
+    db.tables.document_equipment_suggestions = db.tables.document_equipment_suggestions.filter((r) => r.document_id === "d9" || r.document_id === "d5");
+    expect((await count())?.readDocuments).toBe(1);
   });
   it("before 20261171 (no dismissed column) it reads without it — a suggestion's own dismissed flag still holds it back", async () => {
     db.fail["document_equipment_suggestions:document_id, status, suggested, applied, dismissed"] = { code: "42703", message: "column document_equipment_suggestions.dismissed does not exist" };
@@ -208,10 +218,35 @@ describe("AREA-4 — the checklist step, rendered", () => {
     db.tables.document_equipment_suggestions[1].status = "applied";
     await act(async () => { sweep.mounts[sweep.mounts.length - 1].onApplied(); });
     for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
-    expect(step(POPULATE).textContent).toContain("No equipment proposals are waiting on this area's 3 drawings");
+    expect(step(POPULATE).textContent).toContain("No equipment proposals are waiting on this area's 3 drawings — every one has been read for equipment.");
+    expect(step(POPULATE).textContent).not.toContain("read for equipment so far");
     expect(step(POPULATE).querySelector("svg.lucide-check")).not.toBeNull();
     await act(async () => { sweep.mounts[sweep.mounts.length - 1].onClose(); });
     expect(host.querySelector("[data-sweep-modal]")).toBeNull();
+  });
+
+  it("REGRESSION (review): nothing waiting while the area's drawings are still indexing is NOT done — the step says how many have been read", async () => {
+    db.tables.document_equipment_suggestions = [];
+    await mount(status());
+    const s = step(POPULATE);
+    expect(s.querySelector("svg.lucide-check")).toBeNull();
+    expect(s.textContent).not.toContain("No equipment proposals are waiting on this area's 3 drawings");
+    expect(s.textContent).toContain("None of this area's drawings has been read for equipment yet.");
+    expect(s.textContent).toContain("0 of 3 drawings read for equipment so far");
+    expect(s.querySelector("[data-area-drawings-read='0']")).not.toBeNull();
+  });
+
+  it("some drawings read, none waiting, others still indexing: 'in progress' with N of M read, never a tick", async () => {
+    db.tables.document_equipment_suggestions = [
+      sugg("d1", [{ tag: "P-101" }], { status: "applied", applied: ["P-101"] }),
+      sugg("d9", [], { status: "pending" }),
+    ];
+    await mount(status());
+    const s = step(POPULATE);
+    expect(s.querySelector("svg.lucide-check")).toBeNull();
+    expect(s.textContent).toContain("in progress");
+    expect(s.textContent).toContain("No equipment proposals are waiting on the drawings read so far.");
+    expect(s.textContent).toContain("2 of 3 drawings read for equipment so far");
   });
 
   it("several libraries: each can be swept from the step", async () => {

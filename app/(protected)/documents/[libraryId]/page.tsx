@@ -2747,15 +2747,6 @@ export default function LibraryExplorerPage() {
       }
 
       const notes: string[] = [];
-      // GAP-314 (intelligence I-26): the unit decode at create time, ONCE for
-      // every document that landed (one route call per 200, bounded), after
-      // the batch and its notice — best-effort: it never fails or holds back an upload that
-      // landed. A decode that did not run, or left something undone, is said
-      // with the batch's follow-ups; the route records a document it left
-      // without a code, with why (UNIT_CODE_DECODE).
-      const unitDecode = landedIds.size > 0
-        ? await requestUnitCodeDecode(activeOrgId!, [...landedIds.values()], "upload")
-        : { results: [], note: null };
       if (foldersCreatedNote) notes.push(foldersCreatedNote);
       if (autoRenamed.length > 0) {
         const sample = autoRenamed.slice(0, 3).map((r) => `${r.original} → ${r.final}`).join(", ");
@@ -2768,7 +2759,6 @@ export default function LibraryExplorerPage() {
       if (landedShortfalls.length > 0) {
         notes.push(`${landedShortfalls.length} follow-up step${landedShortfalls.length === 1 ? "" : "s"} did not complete on documents that DID upload — do not re-upload them: ${landedShortfalls.slice(0, 3).join("; ")}${landedShortfalls.length > 3 ? `, +${landedShortfalls.length - 3} more` : ""}. Tell Document Control so they can be completed.`);
       }
-      if (unitDecode.note) notes.push(unitDecode.note);
       if (failures.length > 0 || notStarted > 0) {
         if (failures.length > 0) {
           const sample = failures.slice(0, 3).map((f) => `${f.name} (${f.reason})`).join("; ");
@@ -2786,6 +2776,23 @@ export default function LibraryExplorerPage() {
         uploadPathsRef.current = new Map();
         uploadFolderPlanRef.current = null;
         if (notes.length > 0) setError(`Uploaded. ${notes.join(" ")}`);
+      }
+      // GAP-314 (intelligence I-26): the unit decode at create time, ONCE for
+      // every document that landed (one route call per 200, bounded), after
+      // the batch, its notice and its report — NOT awaited: the upload closes
+      // (modal, dock, AI-library nudge) whatever the route does, so the decode
+      // never fails or holds back an upload that landed. A decode that did not
+      // run, or left something undone, is said on the page once it settles,
+      // after whatever the batch already said; the route records a document it
+      // left without a code, with why (UNIT_CODE_DECODE).
+      if (landedIds.size > 0) {
+        void requestUnitCodeDecode(activeOrgId!, [...landedIds.values()], "upload").then((r) => {
+          if (r.note) {
+            const note = r.note;
+            console.warn(`[handleStagedUpload] ${note}`);
+            setError((prev) => (prev ? `${prev} ${note}` : `Uploaded. ${note}`));
+          }
+        });
       }
     } catch (e) {
       console.error(e);

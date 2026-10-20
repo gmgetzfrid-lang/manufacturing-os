@@ -282,6 +282,17 @@ vi.mock("@/lib/intents", () => ({ listLiveIntents: vi.fn(async () => [{ userId: 
 // says otherwise — the door's behaviour before the decode, exactly.
 const unitDecode = vi.hoisted(() => ({ fn: vi.fn() }));
 vi.mock("@/lib/unitCodeDecode", () => ({ decodeDocumentUnitCodes: unitDecode.fn }));
+// next/server after(): the work a route schedules for after its response is
+// queued here, and a case runs it (runAfterResponse) once it has the answer.
+const afterQueue = vi.hoisted(() => ({ tasks: [] as Array<() => unknown> }));
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: vi.fn((task: () => unknown) => { afterQueue.tasks.push(task); }),
+}));
+async function runAfterResponse() {
+  const tasks = afterQueue.tasks.splice(0);
+  for (const t of tasks) await t();
+}
 
 import { POST } from "@/app/api/intake/upload/route";
 
@@ -336,6 +347,7 @@ function resetDb() {
   db.doorSeen = []; db.doorInner = []; db.doorRestrictive = []; db.doorWroteAs = [];
   db.r2Objects = new Map(); db.r2Reads = []; db.presigns = []; db.afterGet = null; db.ignoreIfMatch = false;
   db.seq = 0; db.user = null;
+  afterQueue.tasks = [];
   db.rpc = {
     review_control_mode_for: () => ({ data: "none", error: null }),
     user_can_publish_on_library: () => ({ data: false, error: null }),
@@ -1331,6 +1343,11 @@ describe("what the door files where", () => {
     const res = await upload({ title: "Skid GA", docNumber: "025-PID-0201" });
     const body = await res.json();
     expect(res.status).toBe(200);
+    // the answer (and the team's notice) never waited on the decode: it is
+    // scheduled for after the response
+    expect(unitDecode.fn).not.toHaveBeenCalled();
+    expect((db.tables.audit_logs ?? []).find((a) => a.action === "UNIT_CODE_DECODE")).toBeUndefined();
+    await runAfterResponse();
     expect(unitDecode.fn).toHaveBeenCalledWith({ orgId: ORG, documentIds: [body.documentId] });
     expect(db.tables.audit_logs.find((a) => a.action === "UNIT_CODE_DECODE")).toMatchObject({
       org_id: ORG, user_id: null, user_email: "v@vendor.test",
@@ -1340,7 +1357,16 @@ describe("what the door files where", () => {
     unitDecode.fn.mockClear();
     seed({ link: { assigned_doc_ids: [D1] }, doc: { authored_by_link_id: null } });
     await upload({ docId: D1, revLabel: "C" });
+    await runAfterResponse();
     expect(unitDecode.fn).not.toHaveBeenCalled();
+  });
+  it("GAP-314 (I-26): a decode that hangs never holds the submitter's 200 — the route answers before the decode is even started", async () => {
+    seed({ doc: null });
+    unitDecode.fn.mockImplementationOnce(() => new Promise(() => {}));
+    const res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(200);
+    expect(unitDecode.fn).not.toHaveBeenCalled();
+    expect(afterQueue.tasks).toHaveLength(1);
   });
   it("GAP-314 (I-26): the decode never fails the submission — one that throws, has no opinion, is not pasted or changes nothing records nothing and the door answers 200 as before", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1355,6 +1381,7 @@ describe("what the door files where", () => {
       const res = await upload({ title: "Skid GA" });
       expect(res.status).toBe(200);
       expect((await res.json()).documentId).toBeTruthy();
+      await runAfterResponse();
       expect((db.tables.audit_logs ?? []).find((a) => a.action === "UNIT_CODE_DECODE")).toBeUndefined();
       expect(db.tables.project_documents).toHaveLength(1);
     }

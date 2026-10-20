@@ -258,14 +258,19 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     : areaTotal > 0 && linkedAssetCount >= areaTotal ? "done"
     : linkedAssetCount > 0 ? "partial" : "todo";
 
-  // AREA-4: the populate step — tags waiting is "in progress"; none waiting
-  // on a shelf that holds drawings is done; a count that failed is said.
+  // AREA-4: the populate step — tags waiting is "in progress"; done only
+  // when EVERY drawing on the shelf has been read for equipment and none
+  // waits (a drawing still indexing, or skipped, has no ledger row yet — "no
+  // proposal waiting" alone is not done); some read is "in progress"; a
+  // count that failed is said.
   const populateState: "done" | "partial" | "todo" | "loading" | "unknown" = status === null ? "loading"
     : !status.boundLibrary ? "todo"
     : proposals === undefined ? "loading"
     : proposals === null ? "unknown"
     : proposals.tags > 0 ? "partial"
-    : proposals.shelfDocuments > 0 ? "done" : "todo";
+    : proposals.shelfDocuments > 0 && proposals.readDocuments >= proposals.shelfDocuments ? "done"
+    : proposals.readDocuments > 0 ? "partial" : "todo";
+  const allDrawingsRead = !!proposals && proposals.shelfDocuments > 0 && proposals.readDocuments >= proposals.shelfDocuments;
   const firstSweep = proposals?.libraries[0] ?? null;
 
   const scrollToFlows = () => {
@@ -438,9 +443,16 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
               <span className="block" data-area-proposals={proposals.tags}>
                 {proposals.tags > 0
                   ? <><b>{proposals.tags}</b> equipment tag{proposals.tags === 1 ? "" : "s"} read off <b>{proposals.documents}</b> of this area&apos;s drawing{proposals.documents === 1 ? "" : "s"} {proposals.tags === 1 ? "is" : "are"} waiting for review.</>
-                  : proposals.shelfDocuments > 0
-                    ? <>No equipment proposals are waiting on this area&apos;s {proposals.shelfDocuments} drawing{proposals.shelfDocuments === 1 ? "" : "s"}.</>
-                    : <>None of this area&apos;s drawings has been read for equipment yet.</>}
+                  : allDrawingsRead
+                    ? <>No equipment proposals are waiting on this area&apos;s {proposals.shelfDocuments} drawing{proposals.shelfDocuments === 1 ? "" : "s"} — every one has been read for equipment.</>
+                    : proposals.readDocuments > 0
+                      ? <>No equipment proposals are waiting on the drawings read so far.</>
+                      : <>None of this area&apos;s drawings has been read for equipment yet.</>}
+                {proposals.shelfDocuments > 0 && !allDrawingsRead && (
+                  <span data-area-drawings-read={proposals.readDocuments}>
+                    {" "}<b>{proposals.readDocuments}</b> of <b>{proposals.shelfDocuments}</b> drawing{proposals.shelfDocuments === 1 ? "" : "s"} read for equipment so far — the rest are still indexing, or have not been read yet.
+                  </span>
+                )}
                 {" "}Applying files each tag in the equipment registry and records which sheets carry it — no document column needs mapping first.
               </span>
               {proposals.libraries.length > 1 && (

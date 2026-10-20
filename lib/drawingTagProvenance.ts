@@ -12,6 +12,12 @@
 // tags (documents.asset_tags, typed by a person) also name is "tagged · also
 // on drawing": a person asserted it, and the sweep read it too.
 //
+// The overlay's chips come from the document's metadata tag columns, which
+// a person types AND the Bridge's apply writes — nothing records which. So a
+// chip only the sweep's reading names is marked for how it was READ ("AI-read"
+// / "read from drawing"), never as "not typed by a person": whether a person
+// also typed it into the column is said to be unknown (DEC-29).
+//
 // Nothing is claimed it cannot say: a relation that cannot be read marks no
 // chip (the overlay reads as it did before this file); a database before
 // 20261171 has no provenance columns, so a 'drawing' row there reads "read
@@ -22,7 +28,9 @@ import { supabase } from "@/lib/supabase";
 import { tagKey } from "@/lib/codebook";
 
 export interface DrawingTagProvenance {
-  /** "machine": only the sweep's reading names it. "person_also": a person
+  /** "machine": the sweep read it off the drawing and the document's own
+   *  equipment tags (asset_tags) do not name it — whether a person typed it
+   *  into a metadata tag column is not recorded. "person_also": a person
    *  tagged the document with it, and the sweep read it off the drawing too. */
   kind: "machine" | "person_also";
   /** The AI model that transcribed the page it was read on; null: the PDF's
@@ -75,7 +83,9 @@ export function provenanceByTag(rows: ReadonlyArray<RelationRowForProvenance>, a
   return out;
 }
 
-/** The chip's mark and its tooltip, worded as the asset hub words them. */
+/** The chip's mark and its tooltip, worded as the asset hub words them —
+ *  except that a chip from a tag column is never said to be "not typed by a
+ *  person" (the column does not record who wrote it). */
 export function provenanceMark(p: DrawingTagProvenance): { label: string; title: string } {
   const how = p.model ? `from an AI transcription (${p.model}) — check it against the sheet` : "from the drawing's own text";
   const where = [p.sheet ? `on ${p.sheet}${p.model ? " (AI-read, unconfirmed)" : ""}` : null, p.revision ? `Rev ${p.revision}` : null].filter(Boolean).join(", ");
@@ -87,7 +97,7 @@ export function provenanceMark(p: DrawingTagProvenance): { label: string; title:
   }
   return {
     label: p.model ? "AI-read" : "read from drawing",
-    title: `Read off the drawing by the equipment sweep ${how}${where ? `, ${where}` : ""}. Not typed by a person.`,
+    title: `Read off the drawing by the equipment sweep ${how}${where ? `, ${where}` : ""}. Whether a person also typed it into this tag column is not recorded.`,
   };
 }
 

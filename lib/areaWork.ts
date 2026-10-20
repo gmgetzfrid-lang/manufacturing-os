@@ -13,7 +13,8 @@
 //     unit / equipment tag", free text) resolves to an asset or a unit when
 //     it names one (resolveMilestoneLocation, pure — the one tag grammar,
 //     lib/codebook tagKey; a unit by its code after "unit"/"area", or by its
-//     Site Codebook name), and the asset hub shows the open milestones whose
+//     Site Codebook name — only when no other unit is named, read against
+//     every codebook unit), and the asset hub shows the open milestones whose
 //     location names that asset (loadAssetScheduledWork).
 //
 // Every read is the reader's own (RLS): a hold, a package or a milestone the
@@ -43,11 +44,20 @@ export interface LocationContext {
 const TAG_TOKEN = /[A-Za-z]{1,4}-?\d{1,6}[A-Za-z]{0,2}/g;
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** "Unit 20", "area #3", "unit-025A": a unit / area designator that names a
+ *  code (a token with a digit — never a word such as "area tie-in"). */
+const DESIGNATOR = /\b(?:unit|area)\s*[-#:]?\s*([A-Za-z]{0,4}\d[A-Za-z0-9]*)(?![A-Za-z0-9])/gi;
+
 /** Pure: what a milestone's free-text location names — an asset first (any
  *  tag-shaped token, or the whole location, whose tagKey is a registry
- *  tag's), else a unit (its code after "unit" / "area", the whole location
- *  being the code, or its Site Codebook name as whole words). null: it names
- *  nothing the context holds — never a guess. */
+ *  tag's), else a unit named by its CODE (the whole location being the code,
+ *  or the code after "unit" / "area" — a code beats any name), else a unit
+ *  named by its Site Codebook name as whole words — but only when no other
+ *  unit is named: a location that also designates another unit by code
+ *  ("Unit 20 utilities tie-in" is unit 20's, never the unit named
+ *  "Utilities"), or whose words are more than one unit's name, resolves by
+ *  name to nothing. null: it names nothing the context holds unambiguously —
+ *  never a guess. */
 export function resolveMilestoneLocation(location: string | null | undefined, ctx: LocationContext): MilestoneLocationMatch | null {
   const text = String(location ?? "").trim();
   if (!text) return null;
@@ -58,15 +68,25 @@ export function resolveMilestoneLocation(location: string | null | undefined, ct
     const hit = byKey.get(tagKey(c));
     if (hit) return { kind: "asset", assetId: hit.id, tag: hit.tag };
   }
+  // A unit named by its code — over every unit before any name.
   for (const u of ctx.units) {
     const code = String(u.code ?? "").trim();
     if (!code) continue;
     if (text.toLowerCase() === code.toLowerCase()) return { kind: "unit", code };
     if (new RegExp(`\\b(?:unit|area)\\s*[-#:]?\\s*${escapeRe(code)}(?![A-Za-z0-9])`, "i").test(text)) return { kind: "unit", code };
-    const label = String(u.label ?? "").trim();
-    if (label.length >= 3 && new RegExp(`(?<![A-Za-z0-9])${escapeRe(label)}(?![A-Za-z0-9])`, "i").test(text)) return { kind: "unit", code };
   }
-  return null;
+  // A unit named by its name — refused when the location designates a unit
+  // by a code (one this context does not hold: the work is that unit's), or
+  // when more than one unit's name is in it.
+  if ([...text.matchAll(DESIGNATOR)].length > 0) return null;
+  const named: string[] = [];
+  for (const u of ctx.units) {
+    const code = String(u.code ?? "").trim();
+    const label = String(u.label ?? "").trim();
+    if (!code || label.length < 3) continue;
+    if (new RegExp(`(?<![A-Za-z0-9])${escapeRe(label)}(?![A-Za-z0-9])`, "i").test(text) && !named.includes(code)) named.push(code);
+  }
+  return named.length === 1 ? { kind: "unit", code: named[0] } : null;
 }
 
 export interface LocatedMilestone {
@@ -195,7 +215,19 @@ export async function loadAreaWork(orgId: string, unitCode: string): Promise<Are
   const ms = await readOpenLocatedMilestones(orgId);
   if (ms.error) { complete = false; notes.push(`The scheduled milestones could not be read (${ms.error}).`); }
   if (ms.capped) { complete = false; notes.push(`Only the first ${MILESTONE_CAP} open milestones with a location were read.`); }
-  const milestones = locate(ms.rows, { assets, units: [{ code: unitCode, label: scope.label }] }, () => true);
+  // The other areas' codes and names, so a location that names another unit
+  // — or more than one unit's name — is never this area's by a shared word.
+  const units: Array<{ code: string; label: string | null }> = [{ code: unitCode, label: scope.label }];
+  const others = await supabase.from("codebook_entries").select("code, label").eq("org_id", orgId).eq("kind", "unit").limit(PAGE);
+  if (others.error) {
+    complete = false;
+    notes.push(`The other areas' names could not be read (${others.error.message || "the read failed"}) — a milestone matched to this area by name alone may belong to another area.`);
+  } else {
+    for (const u of (others.data ?? []) as Array<{ code: string | null; label: string | null }>) {
+      if (u.code && u.code !== unitCode) units.push({ code: u.code, label: u.label });
+    }
+  }
+  const milestones = locate(ms.rows, { assets, units }, (m) => m.kind === "asset" || m.code === unitCode);
 
   return { holds, workPackages: workPackages.sort((a, b) => a.name.localeCompare(b.name)), milestones, complete, notes };
 }

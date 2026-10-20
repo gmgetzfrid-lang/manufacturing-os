@@ -130,7 +130,7 @@
 // intake folder, the project reference) stays service-role (projects-tab
 // SEC-22).
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { afterResponsePush } from "@/lib/push/afterResponsePush";
 import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
@@ -373,9 +373,23 @@ async function audit(ref: string, row: Record<string, unknown>): Promise<void> {
   if (error) console.error(`[intake/upload] ref=${ref} audit ${String(row.action)} failed: ${error.message}`);
 }
 
-/** How long the intake door waits for the unit decode before it answers
- *  (the decode is best-effort; the document already exists). */
+/** How long the after-response unit decode may run before it is abandoned
+ *  (the decode is best-effort; the document already exists, and the
+ *  submitter already has their answer). */
 const INTAKE_UNIT_DECODE_TIMEOUT_MS = 8_000;
+
+/** GAP-314 (intelligence I-26): the created document's unit decode runs
+ *  AFTER the response (next/server after(), as the door's roster pushes do),
+ *  so neither the submitter's 200 nor the project team's notice waits on a
+ *  codebook read. Outside a request (after() cannot schedule) it is started
+ *  without being awaited. Never throws. */
+function scheduleCreatedDocumentDecode(ref: string, orgId: string, documentId: string, contactEmail: string | null): void {
+  try {
+    after(() => decodeCreatedDocument(ref, orgId, documentId, contactEmail));
+  } catch {
+    void decodeCreatedDocument(ref, orgId, documentId, contactEmail);
+  }
+}
 
 /** GAP-314 (intelligence I-26): decode a document the door just created.
  *  Never throws. A decode that wrote a code, cleared one or left one without
@@ -2031,9 +2045,10 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     if (refErr) console.error(`[intake/upload] ref=${ref} project reference for ${createdDocId} not written: ${refErr.message}`);
     // GAP-314 (intelligence I-26): the unit decode at create time — the
     // codebook's own planner over the stored number, through the backfill's
-    // guarded writes (lib/unitCodeDecode.ts, service role). Best-effort and
-    // bounded: it never fails or holds back the submission that landed.
-    await decodeCreatedDocument(ref, orgId, createdDocId, contactEmail);
+    // guarded writes (lib/unitCodeDecode.ts, service role). Best-effort,
+    // bounded and scheduled after the response: it never fails or holds back
+    // the submission that landed (UNIT_CODE_DECODE records what it did).
+    scheduleCreatedDocumentDecode(ref, orgId, createdDocId, contactEmail);
   }
 
   // ── Notify the project team + audit ──

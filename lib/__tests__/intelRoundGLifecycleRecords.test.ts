@@ -142,6 +142,21 @@ describe("IRLS-12 criterion 3 — the skill libraries tell a missing table from 
     await expect(list()).rejects.toThrow(/builtin_key does not exist/);
   });
 
+  // Review (I-26 fix pass): on an INSERT / UPDATE, PostgreSQL's 42703 text
+  // is 'column "x" of relation "y" does not exist' — which the relation test
+  // alone matched. The predicate refuses 42703 / PGRST204 and the
+  // "column … of relation" form, with or without a code.
+  it.each([
+    ["link_rules", () => listLinkRules("org-1", "u-1")],
+    ["answer_skills", () => listAnswerSkills("org-1", "u-1")],
+  ] as const)("%s: the INSERT-shaped 42703 text ('column \"x\" of relation \"y\" does not exist') is thrown, with or without its code", async (table, list) => {
+    const message = `column "builtin_key" of relation "${table}" does not exist`;
+    state.answer = () => ({ data: null, error: { code: "42703", message } });
+    await expect(list()).rejects.toThrow(/of relation .* does not exist/);
+    state.answer = () => ({ data: null, error: { message } });
+    await expect(list()).rejects.toThrow(/of relation .* does not exist/);
+  });
+
   it.each([
     ["link_rules", () => listLinkRules("org-1", "u-1")],
     ["answer_skills", () => listAnswerSkills("org-1", "u-1")],

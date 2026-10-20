@@ -58,10 +58,10 @@ describe("GAP-303 — provenanceByTag / provenanceMark (pure)", () => {
     const m = provenanceByTag(ROWS, [{ tag: "P-7" }]);
     expect(provenanceMark(m.get("e22")!)).toEqual({
       label: "AI-read",
-      title: "Read off the drawing by the equipment sweep from an AI transcription (vision-model-x) — check it against the sheet, on 2002-D-10001 SHT 4 (AI-read, unconfirmed), Rev B. Not typed by a person.",
+      title: "Read off the drawing by the equipment sweep from an AI transcription (vision-model-x) — check it against the sheet, on 2002-D-10001 SHT 4 (AI-read, unconfirmed), Rev B. Whether a person also typed it into this tag column is not recorded.",
     });
     expect(provenanceMark(m.get("v101")!).label).toBe("read from drawing");
-    expect(provenanceMark(m.get("v101")!).title).toMatch(/from the drawing's own text, on 2002-D-10001 SHT 5, Rev B\. Not typed by a person\./);
+    expect(provenanceMark(m.get("v101")!).title).toMatch(/from the drawing's own text, on 2002-D-10001 SHT 5, Rev B\. Whether a person also typed it into this tag column is not recorded\./);
     expect(m.get("p7")!.kind).toBe("person_also");
     expect(provenanceMark(m.get("p7")!).label).toBe("tagged · also on drawing");
   });
@@ -109,6 +109,23 @@ describe("GAP-303 — the drawing viewer's ribbon, rendered", () => {
     expect(markOf("P-7")?.textContent).toBe("tagged · also on drawing");
     expect(markOf("P-7")?.getAttribute("data-tag-provenance")).toBe("person_also");
     expect(markOf("K-9")).toBeNull();
+  });
+
+  it("REGRESSION (review): a chip a person typed into the tag column that the sweep ALSO read is never told 'Not typed by a person' — the column does not record who wrote it", async () => {
+    // P-101A sits in the Equipment column (a document controller typed it);
+    // asset_tags does not name it; the sweep read the same tag off the sheet
+    metadata.equipment = ["E-22", "V-101", "P-7", "K-9", "P-101A"];
+    st.answer = () => ({ data: [...ROWS, { tag_text: "P-101A", source: "drawing", asserted_by: "machine", model: "vision-model-x", source_revision: "C", sheet_label: null }], error: null });
+    try {
+      await render({ documentId: "d1", assetTags: [] });
+      const title = markOf("P-101A")?.getAttribute("title") ?? "";
+      expect(title).not.toMatch(/Not typed by a person/i);
+      expect(title).toContain("Whether a person also typed it into this tag column is not recorded.");
+      for (const el of host.querySelectorAll("[data-tag-provenance]")) expect(el.getAttribute("title")).not.toMatch(/Not typed by a person/i);
+    } finally {
+      metadata.equipment = ["E-22", "V-101", "P-7", "K-9"];
+      st.answer = null;
+    }
   });
 
   it("REGRESSION — no document passed (the Inspector, every other mount): no read and no mark; the chips are as before", async () => {

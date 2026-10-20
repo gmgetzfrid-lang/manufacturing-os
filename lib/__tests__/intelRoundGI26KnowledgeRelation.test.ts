@@ -103,6 +103,17 @@ describe("GAP-307 acceptance 3 — the knowledge door writes the upload's own re
     expect(r2.relations.notRecorded).toBe(KNOWLEDGE_RELATION_NEEDS_MIGRATION);
   });
 
+  it("REGRESSION (review, IRLS-12 residual): a missing COLUMN on the relation's write (42703, INSERT-shaped 'column \"x\" of relation \"y\" does not exist') is said as the real error — never 'recorded once migration 20261235 is applied'", async () => {
+    const msg = 'column "sheet_label" of relation "knowledge_document_assets" does not exist';
+    for (const err of [{ code: "42703", message: msg }, { message: msg }, { code: "PGRST204", message: "Could not find the 'sheet_label' column of 'knowledge_document_assets' in the schema cache" }]) {
+      db.beforeInsert = { knowledge_document_assets: () => { throw err; } };
+      const r = await discoverFromKnowledge(admin(), { orgId: "o1", userId: "u1", knowledgeDocumentId: "k-up", tags: ["P-44"] });
+      expect(r.relations.written).toBe(0);
+      expect(r.relations.notRecorded).not.toBe(KNOWLEDGE_RELATION_NEEDS_MIGRATION);
+      expect(r.relations.notRecorded).toMatch(/could not be recorded: /);
+    }
+  });
+
   it("a refused relation write is said with the database's reason; the discovered equipment stands", async () => {
     db.beforeInsert = { knowledge_document_assets: () => { throw { code: "23503", message: "knowledge_document_assets: the asset is not in this workspace" }; } };
     const r = await discoverFromKnowledge(admin(), { orgId: "o1", userId: "u1", knowledgeDocumentId: "k-up", tags: ["P-44"] });
@@ -173,5 +184,9 @@ describe("GAP-307 acceptance 3 — the coverage report reads the upload's relati
     const failed = await loadCoverage(admin(), "o1", { unitCode: null, canRead: async () => new Set() });
     expect(failed.agree[0].where).toEqual([expect.objectContaining({ via: "extracted" })]);
     expect(failed.notes.join(" ")).toMatch(/The knowledge uploads' links could not be read \(statement timeout\)/);
+    // a missing COLUMN (42703) is a real error, never "before 20261235"
+    db.selectErrors = { knowledge_document_assets: { code: "42703", message: "column knowledge_document_assets.sheet_label does not exist" } };
+    const drifted = await loadCoverage(admin(), "o1", { unitCode: null, canRead: async () => new Set() });
+    expect(drifted.notes.join(" ")).toMatch(/The knowledge uploads' links could not be read \(column knowledge_document_assets\.sheet_label does not exist\)/);
   });
 });

@@ -92,6 +92,20 @@ describe("WIRE-7 criterion 3 — resolveMilestoneLocation (pure, never a guess)"
     expect(resolveMilestoneLocation("", CTX)).toBeNull();
     expect(resolveMilestoneLocation(null, CTX)).toBeNull();
   });
+  it("REGRESSION (review): a common word used as a unit's name never pulls in another area's work — a code beats a name, and a name is refused when another unit is named", () => {
+    const units = [{ code: "20", label: "Crude" }, { code: "40", label: "Utilities" }, { code: "50", label: "North" }, { code: "60", label: "Tank Farm" }];
+    const ctx = { assets: CTX.assets, units };
+    // unit 20's work that mentions utilities is unit 20's
+    expect(resolveMilestoneLocation("Unit 20 utilities tie-in", ctx)).toEqual({ kind: "unit", code: "20" });
+    // a unit this context does not hold, designated by code, is never the one named "Utilities"
+    expect(resolveMilestoneLocation("Unit 70 utilities tie-in", ctx)).toBeNull();
+    expect(resolveMilestoneLocation("area #7 utilities", ctx)).toBeNull();
+    // more than one unit's name in the location: nothing
+    expect(resolveMilestoneLocation("North tank farm dike", ctx)).toBeNull();
+    // one name, nothing else named: that unit (as before)
+    expect(resolveMilestoneLocation("Utilities", ctx)).toEqual({ kind: "unit", code: "40" });
+    expect(resolveMilestoneLocation("Tank Farm area tie-ins", ctx)).toEqual({ kind: "unit", code: "60" });
+  });
 });
 
 function seed() {
@@ -151,6 +165,31 @@ describe("WIRE-7 criterion 2 — loadAreaWork lists holds and work packages by o
     const w = await loadAreaWork("o1", "20");
     expect(w.complete).toBe(false);
     expect(w.notes).toEqual(expect.arrayContaining(["The open holds could not be read (timeout).", "The scheduled milestones could not be read (permission denied)."]));
+  });
+  it("REGRESSION (review): another area's milestone that mentions this area's name is not listed here — the other codebook units are read and a code beats a name", async () => {
+    db.scope.label = "Utilities";
+    db.tables.codebook_entries = [
+      { id: "c20", org_id: "o1", kind: "unit", code: "20", label: "Crude" },
+      { id: "c40", org_id: "o1", kind: "unit", code: "40", label: "Utilities" },
+      { id: "c50", org_id: "o1", kind: "unit", code: "50", label: "North" },
+    ];
+    db.tables.milestones.push(
+      { id: "m7", org_id: "o1", name: "Unit 20 tie-in", status: "planned", planned_at: "2026-11-06", location: "Unit 20 utilities tie-in", project_id: null },
+      { id: "m8", org_id: "o1", name: "Utilities header", status: "planned", planned_at: "2026-11-07", location: "Utilities header", project_id: null },
+      { id: "m9", org_id: "o1", name: "Shared", status: "planned", planned_at: "2026-11-08", location: "North utilities corridor", project_id: null },
+      { id: "m10", org_id: "o1", name: "Unknown unit", status: "planned", planned_at: "2026-11-09", location: "Unit 70 utilities", project_id: null },
+    );
+    db.scope.assets = [];
+    const w = await loadAreaWork("o1", "40");
+    expect(w.notes).toEqual([]);
+    expect(w.milestones.map((m) => m.id)).toEqual(["m8"]);
+  });
+  it("the other areas' names unread: said, and the list may be short of that check", async () => {
+    db.fail.codebook_entries = { message: "timeout" };
+    const w = await loadAreaWork("o1", "20");
+    expect(w.complete).toBe(false);
+    expect(w.notes).toEqual(expect.arrayContaining([expect.stringMatching(/The other areas' names could not be read \(timeout\)/)]));
+    expect(w.milestones.map((m) => m.id)).toEqual(["m2", "m1"]);
   });
   it("an incomplete scope is said", async () => {
     db.scope.complete = false;

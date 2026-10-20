@@ -20,6 +20,12 @@
 // not dismissed, not held (lib/equipmentBridgeServer.ts applyForDocument's
 // own rule — BR-5 / BR-9 / BR-13).
 //
+// A drawing the Bridge has READ is one with a ledger row of any status: a
+// successful compute always writes one (upsertSuggestions, even with no tag
+// found), so a drawing without one is still indexing, or was skipped. "No
+// proposal waiting" is therefore never "done" on its own — the step is done
+// only when every drawing has been read and nothing waits (`readDocuments`).
+//
 // Every read is the caller's own (RLS); nothing is written. Any read that
 // fails answers null: the step says "not counted", never "0 waiting".
 
@@ -37,6 +43,9 @@ export interface AreaProposalLibrary {
 export interface AreaProposals {
   /** The area's drawings (its shelf's mirrors of doc-control documents). */
   shelfDocuments: number;
+  /** Of those, the drawings the Bridge has read for equipment (a ledger row
+   *  of any status — computed, whether or not anything waits). */
+  readDocuments: number;
   documents: number;
   tags: number;
   /** Most waiting first; libraries with nothing waiting last, by name. */
@@ -114,6 +123,7 @@ export async function countAreaEquipmentProposals(input: {
 
     // Each drawing's library and its ledger row.
     let shelfDocuments = 0;
+    const readIds = new Set<string>();
     let withDismissed = true;
     for (let i = 0; i < sourceDocIds.length; i += CHUNK) {
       const slice = sourceDocIds.slice(i, i + CHUNK);
@@ -128,8 +138,10 @@ export async function countAreaEquipmentProposals(input: {
       }
       shelfDocuments += libOf.size;
       if (libOf.size === 0) continue;
+      // every status: a row of any status is a drawing the Bridge has read;
+      // only a 'pending' one can carry a proposal (pendingTagsOf).
       const read = (cols: string) => supabase.from("document_equipment_suggestions").select(cols)
-        .eq("org_id", orgId).eq("status", "pending").in("document_id", [...libOf.keys()]);
+        .eq("org_id", orgId).in("document_id", [...libOf.keys()]);
       let res = await read(withDismissed ? "document_id, status, suggested, applied, dismissed" : "document_id, status, suggested, applied");
       if (res.error && withDismissed && columnMissing(res.error)) {
         // Before 20261171 there is no dismissed column: a suggestion's own
@@ -139,6 +151,7 @@ export async function countAreaEquipmentProposals(input: {
       }
       if (res.error) throw new Unread(res.error.message);
       for (const row of (res.data ?? []) as unknown as SuggestionLedgerRow[]) {
+        if (libOf.has(row.document_id)) readIds.add(row.document_id);
         const tags = pendingTagsOf(row).length;
         const lib = libOf.get(row.document_id);
         if (!tags || !lib) continue;
@@ -161,6 +174,7 @@ export async function countAreaEquipmentProposals(input: {
       .sort((a, b) => b.tags - a.tags || a.libraryName.localeCompare(b.libraryName));
     return {
       shelfDocuments,
+      readDocuments: readIds.size,
       documents: libraries.reduce((n, l) => n + l.documents, 0),
       tags: libraries.reduce((n, l) => n + l.tags, 0),
       libraries,
