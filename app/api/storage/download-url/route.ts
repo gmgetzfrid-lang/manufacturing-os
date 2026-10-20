@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { r2, R2_BUCKET } from "@/lib/r2";
+import { R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import { resolvePresignedLifetime } from "@/lib/presignedLifetime";
@@ -11,6 +10,13 @@ import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition
 // in lib/documentKeyGate.ts — moved there verbatim by the integrator's DEC-90
 // ruling (4) at the intelligence I-29 merge, shared with /api/knowledge/mirror-url.
 import { documentKeyGate } from "@/lib/documentKeyGate";
+// drafting-flow AUTHZ-4 / EVID-16 (DF-P11, DEC-90 ruling (2)): a drafting-
+// ticket file is signed only for a member who may read that ticket.
+import { ticketKeyGate } from "@/lib/ticketKeyGate";
+// projects-tab GAP-401 remainder (b) (DF-P11): a contractor door upload is
+// signed for UNTRUSTED_CONTENT_ORIGIN when the operator sets it; everything
+// else, and every key while it is unset, is signed exactly as before.
+import { signStorageGet } from "@/lib/untrustedContent";
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -77,6 +83,12 @@ export async function GET(req: NextRequest) {
     // uploads, logos — they have their own doors).
     const gate = await documentKeyGate(orgMatch[1], path, { id: user.id, email: user.email ?? null });
     if (gate) return gate;
+    // AUTHZ-4 / EVID-16: a key under orgs/<org>/tickets/ that no revision
+    // names is signed only for a member who may read a ticket naming it
+    // (lib/ticketKeyGate.ts — /api/tickets/copy's read scope). Members who
+    // are not Contractor-only are answered with no further lookup, as before.
+    const ticketGate = await ticketKeyGate(orgMatch[1], path, { id: user.id });
+    if (ticketGate) return ticketGate;
   }
 
   // ARCHIVE-AWARE: if this key's binary was shed to an offline space archive,
@@ -117,7 +129,7 @@ export async function GET(req: NextRequest) {
     ...disposition.overrides,
   });
 
-  const url = await getSignedUrl(r2, command, { expiresIn: lifetime.seconds });
+  const url = await signStorageGet(command, { expiresIn: lifetime.seconds });
 
   // The payload IS a bearer credential: never cacheable (XEDGE-6 — the
   // service worker refuses no-store and every /api/ response anyway; the

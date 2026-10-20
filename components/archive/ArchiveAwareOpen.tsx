@@ -15,6 +15,7 @@ import React, { useCallback, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { appAlert } from "@/components/providers/DialogProvider";
 import BackupViewer, { type ArchiveTarget } from "@/components/archive/BackupViewer";
 
 export function useArchiveAwareOpen() {
@@ -36,6 +37,13 @@ export function useArchiveAwareOpen() {
       const body = await res.json().catch(() => null);
       if (res.ok && body && body.archived === false && body.url) {
         window.open(body.url as string, "_blank", "noopener");
+        return;
+      }
+      // admin-and-org ORG-20 / drafting-flow AUTHZ-4 (DF-P11): a refusal (403)
+      // or an outage (503 — storage could not be asked) is said as what it
+      // is, never shown as "this file is archived".
+      if (!res.ok) {
+        await appAlert((body && typeof body.error === "string" && body.error) || `Couldn't open this file (HTTP ${res.status}) — try again in a moment.`);
         return;
       }
       // Archived (or missing): show the in-memory viewer prompt.

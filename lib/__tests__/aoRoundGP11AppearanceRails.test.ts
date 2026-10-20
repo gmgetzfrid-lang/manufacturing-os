@@ -530,10 +530,13 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
     }
   });
 
-  it("DEC-29: the helper's comments do not claim more than the route gives — `missing: true` is any HEAD failure", () => {
+  it("DEC-29: the helper's comments do not claim more than the route gives — `missing: true` only for storage's NotFound since ORG-20 (drafting-flow DF-P11); the helper still trusts it no further", () => {
     const route = src("app/api/storage/resolve/route.ts");
-    // the route's catch around HeadObject is a catch-all: any error answers missing: true
-    expect(route).toMatch(/\} catch \{\n\s+const s = await settingsFor\(\);\n\s+return NextResponse\.json\(\{ archived: true, missing: true,/);
+    // ORG-20 (DF-P11): the HEAD's catch answers missing: true only for a
+    // NotFound; any other failure is a 503 the restore counts as "not
+    // reported missing" (check.ok is false).
+    expect(route).toMatch(/\} catch \(e\) \{\n\s+if \(!isStorageNotFound\(e\)\) \{/);
+    expect(route).toMatch(/status: 503/);
     const lib = src("lib/dataRestore.ts");
     const block = lib.slice(lib.indexOf("// ── ORG-18:"), lib.indexOf("export async function clearSkippedNodeImagePointers"));
     expect(block).toContain("That answer is NOT a proof of absence");
@@ -549,7 +552,8 @@ describe("ORG-18 — the restore page clears and names (app/(protected)/admin/re
   it("each skipped cover / background key is kept with whether the storage check reported it missing (the resolve route's `missing: true`)", () => {
     expect(page).toContain("skippedNodeImages.push({ key, reportedMissing: check.ok && state?.missing === true });");
     expect(page).toContain("as { archived?: boolean; archiveId?: string | null; missing?: boolean } | null;");
-    // the route answers that when HeadObject fails (for any reason)
+    // the route answers that when HeadObject answers NotFound (ORG-20, DF-P11:
+    // any other failure is a 503, which this flag reads as not reported missing)
     expect(src("app/api/storage/resolve/route.ts")).toMatch(/archived: true, missing: true, archiveId: v\?\.archive_id \?\? null/);
     // …and a file already present is counted present before any of this (never cleared)
     expect(page.indexOf("if (check.ok && state?.archived === false) { counters.skipped++; return; }"))

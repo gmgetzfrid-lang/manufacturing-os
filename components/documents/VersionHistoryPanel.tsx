@@ -146,11 +146,15 @@ export default function VersionHistoryPanel({
           { headers: { authorization: `Bearer ${session?.access_token ?? ""}` } }
         );
         const body = await res.json().catch(() => null);
-        if (res.ok && body?.archived) {
+        // ORG-20 / AUTHZ-4 (DF-P11): a refusal or a storage outage is said —
+        // it used to fall through and fetch the bare key, which failed with
+        // no reason given.
+        if (!res.ok) throw new Error((body && typeof body.error === "string" && body.error) || `Couldn't open this revision (HTTP ${res.status})`);
+        if (body?.archived) {
           void openArchived(v.fileUrl, `Rev ${v.revisionLabel}`);
           return;
         }
-        if (res.ok && body?.url) httpUrl = body.url as string;
+        if (body?.url) httpUrl = body.url as string;
       }
       // We pass a doc clone with checkedOutBy cleared, forcing the gate to
       // resolve "uncontrolled" regardless of the real checkout state.

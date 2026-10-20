@@ -70,7 +70,14 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "client-token" } } })) } },
 }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({})) }, R2_BUCKET: "test-bucket" }));
-vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class {}, HeadObjectCommand: class {} }));
+// GAP-401 remainder (b) (drafting-flow DF-P11): both doors sign through
+// lib/untrustedContent signStorageGet, which reads the command's Key — the
+// stand-in command keeps its input as the SDK's does.
+vi.mock("@aws-sdk/client-s3", () => ({
+  GetObjectCommand: class { input: unknown; constructor(input?: unknown) { this.input = input ?? {}; } },
+  HeadObjectCommand: class { input: unknown; constructor(input?: unknown) { this.input = input ?? {}; } },
+  S3Client: class {},
+}));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({
   getSignedUrl: vi.fn(async (_client: unknown, _cmd: unknown, opts?: { expiresIn?: number }) => {
     state.signed.push(opts ?? {});
@@ -208,10 +215,14 @@ describe("getSignedUrl census under app/api — no issuer is looser than the cei
   const calls: Array<{ file: string; text: string; src: string }> = [];
   for (const file of routes) {
     const src = readFileSync(file, "utf8");
-    let i = src.indexOf("getSignedUrl(");
-    while (i >= 0) {
-      calls.push({ file: file.replace(root + "/", ""), text: callText(src, i), src });
-      i = src.indexOf("getSignedUrl(", i + 1);
+    // GAP-401 remainder (b) (drafting-flow DF-P11): signStorageGet( is the
+    // same presigned GET (lib/untrustedContent.ts), so it is censused too.
+    for (const needle of ["getSignedUrl(", "signStorageGet("]) {
+      let i = src.indexOf(needle);
+      while (i >= 0) {
+        calls.push({ file: file.replace(root + "/", ""), text: callText(src, i), src });
+        i = src.indexOf(needle, i + 1);
+      }
     }
   }
 

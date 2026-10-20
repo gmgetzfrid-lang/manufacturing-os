@@ -21,8 +21,8 @@ One thing has to be confirmed once, after you set it, because nothing in the
 app can check it ahead of time: some parts of the app fetch a contractor's
 file from storage themselves, inside your browser, and storage must let them
 do that from the new address too. Today that is the **Full ZIP** backup, which
-is built inside your browser and fetches every file from storage itself. Once
-the Intake tab switches over (see "When to do it"), the app's own document
+is built inside your browser and fetches every file from storage itself.
+Since the Intake tab switched over (see "When to do it"), the app's own document
 viewer does the same every time someone opens a contractor drawing — in the
 intake review, for example (its full-screen view and a marked-up download
 fetch the file the same way). If storage does not allow it, the Full ZIP
@@ -32,20 +32,17 @@ display in the viewer. Step 5 of "How to check it worked" checks it, and it is
 
 ## When to do it
 
-Any time after the app version with `lib/untrustedContent.ts` is live. Today
-the setting changes **only the links in the workspace data export** (Admin →
-**Data export** → **Download JSON**, and the **Full ZIP**, which is built from
-the same links). The everyday download links — the
-**Intake** tab, the document viewer — keep coming from the usual address until
-two small code changes land (`app/api/storage/download-url/route.ts` and
-`app/api/storage/resolve/route.ts` start calling `signStorageGet`; recorded on
-projects-tab `GAP-401`, owner: the integrator at the J16 / P6 merge). You can
-set it before then, but only together with step 5 of "How to check it worked":
-those links switch over on their own the day that change is deployed, and from
-that day the app's viewer opens contractor files from the new address, which
-works only if step 5 passed. If you set it early, run step 5 again after that
-change is deployed, and open one contractor drawing from the **Intake** tab to
-see it display.
+Any time after the app version in which `app/api/storage/download-url/route.ts`
+and `app/api/storage/resolve/route.ts` call `signStorageGet` is live (landed
+for projects-tab `GAP-401` by drafting-flow DF-P11). From then on the setting
+changes the links of **every** contractor file: the **Intake** tab's
+downloads, the app's document viewer when it opens a contractor drawing, and
+the workspace data export (Admin → **Data export** → **Download JSON**, and the
+**Full ZIP**, which is built from the same links). Your organization's own
+files keep coming from the usual address. Because the app's viewer then opens
+contractor files from the new address, set it only together with step 5 of
+"How to check it worked", and open one contractor drawing from the **Intake**
+tab to see it display.
 
 ## The steps
 
@@ -81,23 +78,29 @@ see it display.
 You should not need to change anything in Cloudflare: the address in step 2 is
 one your storage already answers on, with the same keys the app already holds.
 The one thing that is not known in advance is whether storage lets a browser
-fetch files from that address — for the **Full ZIP** backup today, and for the
-app's document viewer once the Intake tab switches over. Step 5 below checks
+fetch files from that address — for the **Full ZIP** backup and for the app's
+document viewer. Step 5 below checks
 it, and it is required.
 
 ## How to check it worked
 
-Check it with the workspace export, the one place that uses the setting today:
+Check it with a contractor file on the **Intake** tab:
 
-1. Sign in to the app as an Admin and open **Admin → Data export**.
-2. Click **Download JSON**. A file downloads.
-3. Open that file in any text editor (Notepad, TextEdit) and search for
-   `project-intake/` — that is how a contractor's file is named.
-4. Next to it is a long link (`"presignedUrl"`). It should start with the
+1. Sign in to the app and open a project that has received a file through an
+   intake link. Open its **Intake** tab.
+2. Download one contractor file from there (or right-click its download link
+   and copy the link address).
+3. Look at the address the file came from (the browser's downloads list shows
+   it, or paste the copied link into a text editor). It should start with the
    address from step 2: your account ID, then `.r2.cloudflarestorage.com/`,
-   then the bucket name. A file your organization uploaded itself (not through
-   an intake link) still starts with `https://<bucket name>.<account ID>…` —
-   that is expected.
+   then the bucket name, then `orgs/…/project-intake/…`. A file your
+   organization uploaded itself (not through an intake link) still starts with
+   `https://<bucket name>.<account ID>…` — that is expected.
+4. You can check the workspace export the same way: as an Admin open **Admin →
+   Data export**, click **Download JSON**, open that file in any text editor
+   (Notepad, TextEdit) and search for `project-intake/` — that is how a
+   contractor's file is named. Next to it is a long link (`"presignedUrl"`)
+   that should start with the address from step 2.
 
 If the contractor file's link still starts with `https://<bucket name>.…`, the
 value was refused: the server log has one line starting with
@@ -116,17 +119,14 @@ value was refused: the server log has one line starting with
    such as "Failed to fetch") while your organization's own files are in the
    zip, storage is not letting the browser read files from the new address.
    Undo the setting (next section) so the Full ZIP gets every file again —
-   and so the app's viewer keeps opening contractor drawings once the Intake
-   tab switches over — and pass the result on to whoever looks after the app
-   (`GAP-401` records this check). Only opening a link from the JSON file
-   directly in a browser tab does not depend on this check.
+   and so the app's viewer keeps opening contractor drawings — and pass the
+   result on to whoever looks after the app (`GAP-401` records this check).
+   Only opening a link from the JSON file directly in a browser tab does not
+   depend on this check.
 
-The **Intake** tab's own download links do not change yet (see "When to do
-it"): a contractor file opened there still comes from the usual address, and
-that is expected, not a sign the setting is broken. Once they do, open one
-contractor drawing from the **Intake** tab in the app's viewer, and in its
-full-screen view, and check that it displays; if it does not, undo the
-setting.
+6. Then open one contractor drawing from the **Intake** tab in the app's viewer, and in its
+   full-screen view, and check that it displays; if it does not, undo the
+   setting.
 
 ## How to undo it
 
