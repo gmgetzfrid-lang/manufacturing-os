@@ -305,9 +305,34 @@ export async function createKnowledgeLibrary(input: {
   return mapLibrary(data as Record<string, unknown>);
 }
 
-export async function deleteKnowledgeLibrary(id: string): Promise<void> {
-  const { error } = await supabase.from("knowledge_libraries").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+/** Remove knowledge documents (documentIds) or a whole library (no ids).
+ *  The server works in bounded passes; this repeats until it's done and
+ *  reports progress as documents go. A gateway hiccup is retried. */
+export async function purgeKnowledge(
+  orgId: string, libraryId: string, documentIds?: string[],
+  onProgress?: (removed: number, remaining: number) => void,
+): Promise<number> {
+  let removed = 0;
+  let misses = 0;
+  for (let pass = 0; pass < 200; pass++) {
+    try {
+      const r = await apiPost<{ done: boolean; removedDocuments: number; remainingDocuments: number }>(
+        "/api/knowledge/purge", { orgId, libraryId, ...(documentIds ? { documentIds } : {}) });
+      removed += r.removedDocuments;
+      onProgress?.(removed, r.remainingDocuments);
+      if (r.done) return removed;
+      misses = 0;
+    } catch (e) {
+      if (!(e as { transient?: boolean }).transient || ++misses > 3) throw e;
+      await new Promise((res) => setTimeout(res, 1500 * misses));
+    }
+  }
+  throw new Error("Removal is still running — reopen the library to finish it.");
+}
+
+export async function deleteKnowledgeLibrary(orgId: string, id: string,
+  onProgress?: (removed: number, remaining: number) => void): Promise<void> {
+  await purgeKnowledge(orgId, id, undefined, onProgress);
 }
 
 /** Save the library's standing AI instructions (controllers; RLS enforces). */
@@ -400,6 +425,9 @@ export async function addKnowledgeDocument(input: {
   orgId: string; libraryId: string; file: File; userId: string; userName: string;
   onUpload?: (p: UploadProgress) => void;
   onIndex?: (indexed: number, total: number | null) => void;
+  /** false = upload and queue only; the library's indexer drains it. Bulk
+   *  uploads use this so 300 files don't wait on 300 sequential indexes. */
+  index?: boolean;
 }): Promise<KnowledgeDocument> {
   const safe = input.file.name.replace(/[^\w.\- ]+/g, "_");
   const fileKey = `orgs/${input.orgId}/knowledge/${input.libraryId}/${Date.now()}-${safe}`;
@@ -416,7 +444,7 @@ export async function addKnowledgeDocument(input: {
   if (error) throw new Error(error.message);
   const doc = mapDocument(data as Record<string, unknown>);
 
-  await ingestKnowledgeDocument(doc.id, input.onIndex);
+  if (input.index !== false) await ingestKnowledgeDocument(doc.id, input.onIndex);
   return doc;
 }
 
@@ -516,9 +544,10 @@ export async function rateKnowledgeAnswer(questionId: string, rating: 1 | -1 | 0
   await apiPost("/api/knowledge/feedback", { questionId, rating });
 }
 
-export async function deleteKnowledgeDocument(id: string): Promise<void> {
-  const { error } = await supabase.from("knowledge_documents").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+export async function deleteKnowledgeDocuments(orgId: string, libraryId: string, ids: string[],
+  onProgress?: (removed: number, remaining: number) => void): Promise<number> {
+  if (ids.length === 0) return 0;
+  return purgeKnowledge(orgId, libraryId, ids, onProgress);
 }
 
 // ── Ask + history ─────────────────────────────────────────────────────────

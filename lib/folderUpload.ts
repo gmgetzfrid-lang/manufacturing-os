@@ -32,7 +32,7 @@ export function isJunkFile(name: string): boolean {
 }
 
 /** Hard caps so a dropped drive root fails loudly instead of hanging. */
-export const MAX_FOLDER_UPLOAD_FILES = 1000;
+export const MAX_FOLDER_UPLOAD_FILES = 5000;
 export const MAX_FOLDER_DEPTH = 25;
 
 export class FolderUploadLimitError extends Error {

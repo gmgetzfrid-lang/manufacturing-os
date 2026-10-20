@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabaseAdmin
     .from("collections")
-    .select("id, name, path_names, deleted_at")
+    .select("id, name, path_names, deleted_at, parent_id")
     .eq("org_id", orgId).eq("library_id", libraryId)
     .not("deleted_at", "is", null)
     .order("deleted_at", { ascending: false })
@@ -55,7 +55,14 @@ export async function GET(req: NextRequest) {
     }
     return bad(`Couldn't load deleted folders: ${error.message}`, 500);
   }
-  const folders = (data ?? []).map((r) => {
+  // A branch deleted in one go shares one timestamp — list only its top
+  // folder; restoring that brings the rest back with it.
+  const stampOf = new Map((data ?? []).map((r) => [r.id as string, r.deleted_at as string]));
+  const tops = (data ?? []).filter((r) => {
+    const p = r.parent_id as string | null;
+    return !p || stampOf.get(p) !== r.deleted_at;
+  });
+  const folders = tops.map((r) => {
     const deletedAt = r.deleted_at as string;
     const purge = new Date(deletedAt);
     purge.setDate(purge.getDate() + TRASH_HOLD_DAYS);
@@ -99,6 +106,27 @@ export async function POST(req: NextRequest) {
     .update({ deleted_at: null, deleted_by: null, parent_id: parentId })
     .eq("id", collectionId);
   if (restoreErr) return bad(`Couldn't restore the folder: ${restoreErr.message}`, 500);
+
+  // Its branch, if it was deleted in the same operation (same timestamp).
+  const { data: sameOp } = await supabaseAdmin
+    .from("collections").select("id, parent_id")
+    .eq("library_id", node.library_id as string).eq("deleted_at", node.deleted_at as string).limit(5000);
+  const kids = new Map<string, string[]>();
+  for (const r of (sameOp ?? []) as Array<{ id: string; parent_id: string | null }>) {
+    if (!r.parent_id) continue;
+    const arr = kids.get(r.parent_id);
+    if (arr) arr.push(r.id); else kids.set(r.parent_id, [r.id]);
+  }
+  const branch: string[] = [];
+  for (let q = [collectionId]; q.length;) {
+    const next: string[] = [];
+    for (const id of q) for (const k of kids.get(id) ?? []) { branch.push(k); next.push(k); }
+    q = next;
+  }
+  for (let i = 0; i < branch.length; i += 200) {
+    await supabaseAdmin.from("collections")
+      .update({ deleted_at: null, deleted_by: null }).in("id", branch.slice(i, i + 200));
+  }
 
   await supabaseAdmin.from("audit_logs").insert({
     action: "FOLDER_RESTORED",

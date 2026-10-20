@@ -320,23 +320,85 @@ export async function moveDocumentsServer(params: {
   return { moved, retentionRecomputed, warning };
 }
 
-export async function deleteFolder(collectionId: string, orgId: string): Promise<void> {
-  // NOT a client-side supabase call, deliberately. collections carries a
+async function postAuthed<T>(url: string, body: unknown, fallback: string): Promise<T> {
+  // NOT client-side supabase calls, deliberately. collections carries a
   // RESTRICTIVE delete policy with no permissive one, so an anon-key DELETE
   // matches zero rows and reports success — a Delete that visibly does
-  // nothing (shipped once; reported within the hour). The server route runs
-  // on the service role behind the same controller check, and steps the
-  // folder's contents up a level before the row goes.
+  // nothing (shipped once; reported within the hour). The server routes run
+  // on the service role behind the same controller check.
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in.");
-  const res = await fetch("/api/collections/delete", {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ orgId, collectionId }),
+    body: JSON.stringify(body),
   });
-  const out = (await res.json().catch(() => null)) as { error?: string } | null;
-  if (!res.ok) throw new Error(out?.error ?? "Couldn't delete the folder.");
+  const out = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!res.ok || !out) throw new Error(out?.error ?? fallback);
+  return out;
+}
+
+/** What deleting a folder would touch — the delete dialog's numbers. */
+export interface FolderDeletePreview {
+  name: string;
+  /** Whole subtree (excluding the folder itself). */
+  subfolders: number;
+  documents: number;
+  held: number;
+  directSubfolders: number;
+  directDocuments: number;
+  parentName: string | null;
+}
+
+export async function previewFolderDelete(collectionId: string, orgId: string): Promise<FolderDeletePreview> {
+  return postAuthed("/api/collections/delete", { orgId, collectionId, preview: true },
+    "Couldn't read the folder's contents.");
+}
+
+/** mode "lift": only the folder goes; its contents step up a level.
+ *  mode "all": the folder, every subfolder and every document inside are
+ *  deleted (repeats until the server finishes a large tree). */
+export async function deleteFolder(
+  collectionId: string, orgId: string, mode: "lift" | "all" = "lift",
+  onProgress?: (deletedDocuments: number) => void,
+): Promise<{ deletedFolders: string[] }> {
+  if (mode === "lift") {
+    await postAuthed("/api/collections/delete", { orgId, collectionId }, "Couldn't delete the folder.");
+    return { deletedFolders: [collectionId] };
+  }
+  let total = 0;
+  for (let pass = 0; pass < 100; pass++) {
+    const r = await postAuthed<{ done: boolean; deletedDocuments: number; deletedFolders?: string[] }>(
+      "/api/collections/delete", { orgId, collectionId, mode: "all" }, "Couldn't delete the folder.");
+    total += r.deletedDocuments;
+    onProgress?.(total);
+    if (r.done) return { deletedFolders: r.deletedFolders ?? [collectionId] };
+  }
+  throw new Error("The folder is still being deleted — try again to finish.");
+}
+
+/** Permanently delete documents (server-side, chunked). Records under a
+ *  legal hold are skipped and returned in `held`. */
+export async function deleteDocuments(
+  orgId: string, ids: string[], onProgress?: (deleted: number) => void,
+): Promise<{ deleted: string[]; held: Array<{ id: string; label: string }> }> {
+  const deleted: string[] = [];
+  const held: Array<{ id: string; label: string }> = [];
+  let queue = [...ids];
+  while (queue.length) {
+    const batch = queue.slice(0, 500);
+    const r = await postAuthed<{ deleted: string[]; held: Array<{ id: string; label: string }>; remaining: string[] }>(
+      "/api/documents/delete", { orgId, documentIds: batch }, "Couldn't delete the documents.");
+    deleted.push(...r.deleted);
+    held.push(...r.held);
+    onProgress?.(deleted.length);
+    if (r.deleted.length === 0 && r.remaining.length > 0) {
+      throw new Error("Deleting stalled — try again.");
+    }
+    queue = [...r.remaining, ...queue.slice(500)];
+  }
+  return { deleted, held };
 }
 
 export interface DeletedFolder {
@@ -382,8 +444,12 @@ export function listenLibraryFolders(
   opts?: { orgId?: string; onError?: (msg: string) => void; hideHidden?: boolean }
 ): () => void {
   let alive = true;
+  // Fetches are sequenced: a slow older response must never overwrite a
+  // newer one (a bulk move fires dozens of row events in a burst).
+  let seq = 0;
 
   const fetch = async () => {
+    const mine = ++seq;
     // Manual order first (NULLs last, so untouched folders stay A-Z), name
     // as the tiebreak. A DB that hasn't run 20261009 yet errors on the
     // column — retry by name so folders never vanish over an ORDER BY.
@@ -399,6 +465,7 @@ export function listenLibraryFolders(
     if (error && /sort_order|column/i.test(error.message)) {
       ({ data, error } = await build(false));
     }
+    if (mine !== seq) return;
     if (error) { opts?.onError?.(error.message); return; }
     // Trash filter (20261011): soft-deleted folders vanish from every
     // listing. Client-side so a pre-migration DB (no column) changes nothing.
@@ -409,12 +476,22 @@ export function listenLibraryFolders(
 
   fetch();
 
+  // One refetch per burst, not one per changed row: deleting or moving a
+  // folder rewrites many rows, and refetching the whole list for each event
+  // is what made the screen lag behind a delete.
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const soon = () => {
+    if (!alive) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; if (alive) fetch(); }, 250);
+  };
+
   const channel = supabase
     .channel(`library-folders-${libraryId}`)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: TABLE, filter: `library_id=eq.${libraryId}` },
-      () => { if (alive) fetch(); }
+      soon
     )
     .on(
       "postgres_changes",
@@ -424,12 +501,13 @@ export function listenLibraryFolders(
       // refetching this library's list on ANY collections delete is cheap
       // and keeps every viewer's tree honest, not just the deleter's.
       { event: "DELETE", schema: "public", table: TABLE },
-      () => { if (alive) fetch(); }
+      soon
     )
     .subscribe();
 
   return () => {
     alive = false;
+    if (timer) clearTimeout(timer);
     supabase.removeChannel(channel);
   };
 }

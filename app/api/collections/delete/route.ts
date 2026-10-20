@@ -7,14 +7,22 @@
 // the app path belongs here, on the service role, behind the same
 // controller check the RLS policy encodes.
 //
-// The contract matches the confirm dialog: only the folder dies. Its direct
-// subfolders and documents step up to the deleted folder's parent first, so
-// nothing is ever orphaned into invisibility.
+// Two modes, both spelled out in the delete dialog before anything happens:
+//   mode "lift" (default) — only the folder goes. Its direct subfolders and
+//     documents step up to the deleted folder's parent first, so nothing is
+//     ever orphaned into invisibility.
+//   mode "all" — the folder AND everything under it: every document in the
+//     subtree is permanently deleted (legal holds block it), every subfolder
+//     goes to Recently deleted with it. Resumable: a huge tree answers
+//     { done: false } and the client calls again.
+// preview: true — counts only, nothing changes (the dialog's numbers).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { loadCollectionTree, rebuildSubtreePaths } from "@/lib/serverCollections";
+import { subtreeIds } from "@/lib/serverCollections";
+import { deleteDocumentRows, docIdsInFolders } from "@/lib/serverDocDelete";
 import {
   loadDestinationPolicies,
   reclockRetentionForDocs,
@@ -23,6 +31,7 @@ import {
 } from "@/lib/serverRetention";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -34,7 +43,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authErr || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; collectionId?: string };
+  let body: { orgId?: string; collectionId?: string; mode?: string; preview?: boolean };
   try { body = await req.json(); } catch { return bad("Invalid JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const collectionId = String(body.collectionId ?? "").trim();
@@ -52,6 +61,71 @@ export async function POST(req: NextRequest) {
     .eq("id", collectionId).eq("org_id", orgId).maybeSingle();
   if (!node) return bad("Folder not found.", 404);
   const heirParent = (node.parent_id as string | null) ?? null;
+
+  if (body.preview || body.mode === "all") {
+    let tree;
+    try { tree = await loadCollectionTree(supabaseAdmin, node.library_id as string); }
+    catch (e) { return bad((e as Error).message, 500); }
+    let ids: string[];
+    try { ids = subtreeIds(tree, [collectionId]); } catch (e) { return bad((e as Error).message, 400); }
+    let docs;
+    try { docs = await docIdsInFolders(supabaseAdmin, orgId, ids); }
+    catch (e) { return bad(`Couldn't count the folder's contents: ${(e as Error).message}`, 500); }
+    const held = docs.filter((d) => d.legal_hold).length;
+
+    if (body.preview) {
+      const { count: directDocs } = await supabaseAdmin.from("documents")
+        .select("id", { count: "exact", head: true }).eq("collection_id", collectionId);
+      const parentName = heirParent ? tree.byId.get(heirParent)?.name ?? null : null;
+      return NextResponse.json({
+        name: node.name, subfolders: ids.length - 1, documents: docs.length, held,
+        directSubfolders: (tree.childrenOf.get(collectionId) ?? []).length,
+        directDocuments: directDocs ?? 0, parentName,
+      });
+    }
+
+    if (held > 0) {
+      return bad(`${held} document${held === 1 ? " is" : "s are"} under a legal hold inside this folder — `
+        + "release the hold or move those records out first. Nothing was deleted.", 409);
+    }
+    const deadline = Date.now() + 45_000;
+    let deletedDocuments = 0;
+    const todo = docs.map((d) => d.id);
+    for (let i = 0; i < todo.length && Date.now() < deadline; i += 500) {
+      try {
+        const r = await deleteDocumentRows(supabaseAdmin, orgId, todo.slice(i, i + 500), deadline);
+        deletedDocuments += r.deleted.length;
+        if (r.remaining.length) break;
+      } catch (e) { return bad((e as Error).message, 500); }
+    }
+    if (deletedDocuments < todo.length) {
+      return NextResponse.json({ done: false, deletedDocuments, remainingDocuments: todo.length - deletedDocuments });
+    }
+    // Every folder in the subtree goes to Recently deleted under ONE
+    // timestamp, so restoring the top folder brings its branch back with it.
+    const stamp = new Date().toISOString();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await supabaseAdmin.from("collections")
+        .update({ deleted_at: stamp, deleted_by: user.id }).in("id", ids.slice(i, i + 200));
+      if (error) {
+        if (!/deleted_at|42703|PGRST204/i.test(`${error.code} ${error.message}`)) {
+          return bad(`Couldn't delete the folders: ${error.message}`, 500);
+        }
+        // Pre-migration DB: no trash — remove the rows, deepest first.
+        for (const id of [...ids].reverse()) {
+          await supabaseAdmin.from("collections").delete().eq("id", id);
+        }
+        break;
+      }
+    }
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "FOLDER_TREE_DELETED",
+      resource_type: "collection", resource_id: collectionId,
+      org_id: orgId, user_id: user.id, user_email: user.email ?? null,
+      details: { name: node.name, folders: ids.length, documentsDeleted: docs.length },
+    }).then(() => undefined, () => undefined);
+    return NextResponse.json({ ok: true, done: true, deletedDocuments, deletedFolders: ids, remainingDocuments: 0 });
+  }
 
   // Contents step UP, then the folder goes. Order matters: if the delete
   // ran first, a cascade or FK could take the contents with it.

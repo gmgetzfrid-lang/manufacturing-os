@@ -16,7 +16,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   X, Upload, AlertTriangle, CheckCircle2, Loader2, Wand2,
-  FileText, Copy, Trash2, Info, KeyRound,
+  FileText, Copy, Trash2, Info, KeyRound, FolderTree, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filenameParser";
 import { computeUniquenessKey } from "@/lib/uniqueness";
@@ -68,6 +68,14 @@ interface MetadataStagingModalProps {
   onAddSheetAndUseForUniqueness?: () => Promise<void>;
   /** When set, each file is checked against what the org already holds. */
   orgId?: string;
+  /** A folder upload: the batch keeps its subfolder tree. The window leads
+   *  with a one-click "upload as-is" summary; per-file rows are optional. */
+  folderUpload?: {
+    destination: string;
+    pathOf: (f: File) => string[] | undefined;
+  };
+  /** Live transfer count while submitting. */
+  progress?: { done: number; total: number } | null;
 }
 
 const DEFAULT_STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded"];
@@ -76,8 +84,25 @@ export default function MetadataStagingModal({
   isOpen, files, customColumns = [], defaultStatus = "Issued",
   statusOptions = DEFAULT_STATUS_OPTIONS,
   onCancel, onSubmit, onAddColumn,
-  uniquenessKeys, onAddSheetAndUseForUniqueness, orgId,
+  uniquenessKeys, onAddSheetAndUseForUniqueness, orgId, folderUpload, progress,
 }: MetadataStagingModalProps) {
+  const [showDetails, setShowDetails] = useState(false);
+  // The folder tree, summarised: top-level folders with file counts.
+  const folderSummary = useMemo(() => {
+    if (!folderUpload) return null;
+    const all = new Set<string>();
+    const top = new Map<string, number>();
+    let loose = 0;
+    for (const f of files) {
+      const rel = folderUpload.pathOf(f) ?? [];
+      if (rel.length === 0) { loose++; continue; }
+      for (let i = 1; i <= rel.length; i++) all.add(rel.slice(0, i).join("/").toLowerCase());
+      const key = rel.length > 1 ? `${rel[0]}/${rel[1]}` : rel[0];
+      top.set(key, (top.get(key) ?? 0) + 1);
+    }
+    return { folders: all.size, top: [...top.entries()].sort((a, b) => a[0].localeCompare(b[0])), loose };
+  }, [folderUpload, files]);
+  const detailed = !folderUpload || showDetails;
   // ── Same bytes already here? ──────────────────────────────────────
   // Hashed in the browser while the person reviews; nothing waits on it.
   const [hashes, setHashes] = useState<Map<File, string>>(new Map());
@@ -494,8 +519,12 @@ export default function MetadataStagingModal({
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-100 rounded-lg"><Upload className="w-5 h-5 text-blue-700" /></div>
             <div>
-              <div className="text-sm font-black text-[var(--color-text)]">Review metadata before uploading</div>
-              <div className="text-xs text-[var(--color-text-muted)]">{items.length} file{items.length === 1 ? "" : "s"} ready. Confirm or edit each row, then upload.</div>
+              <div className="text-sm font-black text-[var(--color-text)]">{folderUpload ? "Upload folder as-is" : "Review metadata before uploading"}</div>
+              <div className="text-xs text-[var(--color-text-muted)]">
+                {folderUpload
+                  ? `${items.length} file${items.length === 1 ? "" : "s"} in ${folderSummary?.folders ?? 0} folder${folderSummary?.folders === 1 ? "" : "s"} — the structure is recreated exactly.`
+                  : `${items.length} file${items.length === 1 ? "" : "s"} ready. Confirm or edit each row, then upload.`}
+              </div>
             </div>
           </div>
           {/* Never disabled. An upload the user can't get out of is worse than
@@ -508,6 +537,41 @@ export default function MetadataStagingModal({
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {folderUpload && folderSummary && (
+          <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] bg-emerald-50/60 dark:bg-emerald-950/20 shrink-0">
+            <div className="flex items-start gap-3">
+              <FolderTree className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-black text-[var(--color-text)]">
+                  Goes into <span className="text-emerald-700 dark:text-emerald-400">{folderUpload.destination}</span>, organized exactly as it is on your computer
+                </div>
+                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                  Folders that already exist here are reused, not duplicated. Document numbers, titles and revisions are read from each filename — you can edit them after, or open the file details below first.
+                </div>
+                <ul className="mt-2 grid gap-x-4 gap-y-0.5 text-[11px] sm:grid-cols-2 max-h-36 overflow-auto">
+                  {folderSummary.top.slice(0, 40).map(([path, n]) => (
+                    <li key={path} className="flex items-center gap-1.5 min-w-0">
+                      <span className="truncate font-mono text-[var(--color-text)]" title={path}>{path}/</span>
+                      <span className="shrink-0 text-[var(--color-text-faint)]">{n} file{n === 1 ? "" : "s"}</span>
+                    </li>
+                  ))}
+                  {folderSummary.top.length > 40 && (
+                    <li className="text-[var(--color-text-faint)]">+{folderSummary.top.length - 40} more folders</li>
+                  )}
+                  {folderSummary.loose > 0 && (
+                    <li className="text-[var(--color-text-faint)]">{folderSummary.loose} file{folderSummary.loose === 1 ? "" : "s"} at the top level</li>
+                  )}
+                </ul>
+                <button onClick={() => setShowDetails((v) => !v)}
+                  className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                  {showDetails ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  {showDetails ? "Hide file details" : `Review file details (${items.length})`}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Predictive uniqueness banner — only when a collision will actually
             hit the DB constraint */}
@@ -611,6 +675,7 @@ export default function MetadataStagingModal({
         )}
 
         {/* Bulk-apply row */}
+        {detailed && (<>
         <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] shrink-0">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-1">
@@ -689,6 +754,11 @@ export default function MetadataStagingModal({
                     </td>
                     <td className="px-3 py-1.5 max-w-[16ch]">
                       <div className="text-[11px] text-[var(--color-text)] font-mono truncate" title={it.file.name}>{it.file.name}</div>
+                      {folderUpload && (folderUpload.pathOf(it.file)?.length ?? 0) > 0 && (
+                        <div className="text-[9px] text-emerald-700 dark:text-emerald-400 font-mono truncate" title={folderUpload.pathOf(it.file)!.join("/")}>
+                          {folderUpload.pathOf(it.file)!.join("/")}/
+                        </div>
+                      )}
                       <div className="text-[9px] text-[var(--color-text-faint)]">{formatBytes(it.file.size)}</div>
                       {(copies.get(hashes.get(it.file) ?? "") ?? []).map((c) => (
                         <a key={c.href} href={c.href} target="_blank" rel="noreferrer" title={`Already here: ${c.where}`} className="block text-[9px] font-bold text-amber-700 hover:underline truncate">
@@ -825,6 +895,7 @@ export default function MetadataStagingModal({
             </tbody>
           </table>
         </div>
+        </>)}
 
         {/* Error + actions */}
         {error && (
@@ -833,8 +904,17 @@ export default function MetadataStagingModal({
           </div>
         )}
         <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
-          <div className="text-[11px] text-[var(--color-text-muted)]">
-            {items.length} file{items.length === 1 ? "" : "s"} · {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} total
+          <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
+            {submitting && progress ? (
+              <>
+                <span className="font-bold text-[var(--color-text)]">Uploading {progress.done} of {progress.total}…</span>
+                <span className="w-32 h-1.5 rounded-full bg-[var(--color-border)] overflow-hidden">
+                  <span className="block h-full bg-emerald-500 transition-all" style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }} />
+                </span>
+              </>
+            ) : (
+              <>{items.length} file{items.length === 1 ? "" : "s"} · {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} total</>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {submitting ? (
@@ -851,7 +931,7 @@ export default function MetadataStagingModal({
             )}
             <button onClick={submit} disabled={submitting || items.length === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow">
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-              {submitting ? "Uploading…" : "Upload All"}
+              {submitting ? "Uploading…" : folderUpload ? `Upload folder (${items.length} files)` : "Upload All"}
             </button>
           </div>
         </div>

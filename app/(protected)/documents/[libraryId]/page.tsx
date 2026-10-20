@@ -47,6 +47,7 @@ import LibraryOrderModal from "@/components/documents/LibraryOrderModal";
 import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import PathBar from "@/components/documents/PathBar";
+import FolderDeleteModal, { type FolderDeleteResult } from "@/components/documents/FolderDeleteModal";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
@@ -83,7 +84,7 @@ import {
   moveDocumentsServer,
   renameFolderAndDescendants,
   reorderFolders,
-  deleteFolder,
+  deleteDocuments,
   listDeletedFolders,
   restoreDeletedFolder,
   type DeletedFolder,
@@ -143,6 +144,8 @@ import type {
 } from "@/types/schema";
 import {
   ArrowLeft,
+  ArrowUp,
+  FolderUp,
   ArrowUpDown,
   Columns,
   ScanSearch,
@@ -554,6 +557,7 @@ export default function LibraryExplorerPage() {
       for (const p of pathed) if (p.relPath.length) map.set(p.file, p.relPath);
     }
     uploadPathsRef.current = map;
+    setFolderStaged(map.size > 0);
     setPendingUploadFiles(pathed.map((p) => p.file));
     setShowStagingModal(true);
     if (hasTree && isController) setError(null);
@@ -1033,23 +1037,44 @@ export default function LibraryExplorerPage() {
   };
 
   const handleBulkDelete = async () => {
-    // Records management: legal holds freeze records against deletion — same
-    // rule as the single-doc path, checked against the DB (server truth).
+    if (!activeOrgId || selectedDocIds.size === 0) return;
+    const ids = Array.from(selectedDocIds);
+    // Records management: legal holds freeze records against deletion. The
+    // server checks again (its word is final) and skips anything held.
     const { data: held } = await supabase.from("documents")
       .select("id, document_number, title, name")
-      .in("id", Array.from(selectedDocIds)).eq("legal_hold", true);
-    if (held && held.length > 0) {
-      const label = (held[0] as Record<string, unknown>);
-      setError(`${held.length} of the selected document${held.length === 1 ? " is" : "s are"} under a legal hold (e.g. ${(label.document_number as string) || (label.title as string) || (label.name as string) || "a record"}) and can't be deleted. Release the hold first.`);
+      .in("id", ids.slice(0, 500)).eq("legal_hold", true);
+    const heldN = held?.length ?? 0;
+    if (heldN === ids.length) {
+      const label = (held![0] as Record<string, unknown>);
+      setError(`${heldN === 1 ? "That document is" : "Those documents are"} under a legal hold (e.g. ${(label.document_number as string) || (label.title as string) || (label.name as string) || "a record"}) and can't be deleted. Release the hold first.`);
       return;
     }
-    if (!(await appConfirm({ title: `Permanently delete ${selectedDocIds.size} document(s)?`, message: "This cannot be undone.", tone: "danger" }))) return;
-    for (const id of selectedDocIds) {
-      await supabase.from("documents").delete().eq("id", id);
+    if (!(await appConfirm({
+      title: `Permanently delete ${ids.length - heldN} document${ids.length - heldN === 1 ? "" : "s"}?`,
+      message: "Every revision of each is deleted. This cannot be undone." +
+        (heldN ? ` ${heldN} selected record${heldN === 1 ? " is" : "s are"} under a legal hold and will be kept.` : "") +
+        " To hide documents but keep them recoverable, use Archive instead.",
+      confirmLabel: "Delete permanently",
+      tone: "danger",
+    }))) return;
+    setBulkDeleting({ done: 0, total: ids.length - heldN });
+    try {
+      const r = await deleteDocuments(activeOrgId, ids,
+        (done) => setBulkDeleting({ done, total: ids.length - heldN }));
+      const gone = new Set(r.deleted);
+      setDocuments((prev) => prev.filter((d) => !gone.has(d.id!)));
+      folderDocsCache.current.clear();
+      setSelectedDocIds(new Set(r.held.map((h) => h.id)));
+      if (selectedDoc?.id && gone.has(selectedDoc.id)) setSelectedDoc(null);
+      if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept — under a legal hold (e.g. ${r.held[0].label}).`);
+      nudgeKnowledgeSources(activeOrgId, libraryId);
+    } catch (e) {
+      setError(`Delete failed: ${(e as Error).message}`);
+      setDocsRefreshTick((t) => t + 1);
+    } finally {
+      setBulkDeleting(null);
     }
-    setDocuments((prev) => prev.filter((d) => !selectedDocIds.has(d.id!)));
-    setSelectedDocIds(new Set());
-    setSelectedDoc(null);
   };
 
   // Bulk archive — preserves history, sets status=Archived. Reversible
@@ -1217,6 +1242,12 @@ export default function LibraryExplorerPage() {
   // identity through the staging modal, so this map is how a dropped tree's
   // structure survives to the actual upload without touching the modal.
   const uploadPathsRef = useRef<Map<File, string[]>>(new Map());
+  // True while the staged batch is a folder tree (the staging window leads
+  // with "upload as-is" instead of a row per file).
+  const [folderStaged, setFolderStaged] = useState(false);
+  // Folders waiting on the delete window (one, or every selected tile).
+  const [deleteFolders, setDeleteFolders] = useState<Array<{ id: string; name: string }> | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState<{ done: number; total: number } | null>(null);
 
   // ... (useEffect hooks)
 
@@ -1299,9 +1330,10 @@ export default function LibraryExplorerPage() {
     }
   };
 
+  // Folder navigation lives in the address bar, so the browser's Back
+  // button steps back out of a folder (and a link opens the same folder).
   useEffect(() => {
-    const folderId = searchParams.get("folderId");
-    if (folderId) setCurrentFolderId(folderId);
+    setCurrentFolderId(searchParams.get("folderId"));
   }, [searchParams]);
 
   // Deep-link via ?doc=<id> — when arriving from the global search,
@@ -1404,10 +1436,15 @@ export default function LibraryExplorerPage() {
     } else if (showMultiView && openBookId) {
       sp.set("book", openBookId);
     }
+    const folderChanged = (searchParams.get("folderId") ?? null) !== (currentFolderId ?? null);
     if (currentFolderId) sp.set("folderId", currentFolderId); else sp.delete("folderId");
     const next = sp.toString();
     if (next !== searchParams.toString()) {
-      router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+      // Entering or leaving a folder is a step in history (Back undoes it);
+      // opening a document in place just rewrites the current entry.
+      const url = next ? `${pathname}?${next}` : pathname;
+      if (folderChanged) router.push(url, { scroll: false });
+      else router.replace(url, { scroll: false });
     }
   }, [selectedDoc, showFullScreen, showMultiView, openBookId, currentFolderId, searchParams, router, pathname]);
 
@@ -1566,11 +1603,22 @@ export default function LibraryExplorerPage() {
   const [docsRefreshTick, setDocsRefreshTick] = useState(0);
   useEffect(() => {
     if (!libraryId) return;
+    // One refetch per burst: a 300-file upload or a bulk delete fires a row
+    // event per document, and each used to reload the whole folder. Trailing
+    // debounce, but never starved longer than 2s while events keep coming.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let firstAt = 0;
+    const bump = () => {
+      const now = Date.now();
+      if (!timer) firstAt = now;
+      else clearTimeout(timer);
+      const wait = Math.max(0, Math.min(300, 2000 - (now - firstAt)));
+      timer = setTimeout(() => { timer = null; setDocsRefreshTick((t) => t + 1); }, wait);
+    };
     const channel = supabase.channel(`docs-lib-${libraryId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `library_id=eq.${libraryId}` },
-        () => setDocsRefreshTick((t) => t + 1))
+      .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `library_id=eq.${libraryId}` }, bump)
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => { if (timer) clearTimeout(timer); supabase.removeChannel(channel); };
   }, [libraryId]);
 
   useEffect(() => {
@@ -2184,39 +2232,66 @@ export default function LibraryExplorerPage() {
     }
   };
 
-  const handleDeleteFolder = async (id: string) => {
-    const f = folderMap.get(id);
-    if (!f) return;
-    const childCount = folders.filter((x) => x.parentId === id).length;
-    const ok = await appConfirm({
-      title: `Delete "${f.name}"?`,
-      message:
-        "Nothing inside is lost. Its documents"
-        + (childCount > 0 ? ` and ${childCount} subfolder${childCount === 1 ? "" : "s"}` : "")
-        + " move up one level, and the folder itself is held in Recently deleted (⋯ menu)"
-        + " for 30 days — restore it from there if this was a mistake. If an AI knowledge"
-        + " library watches this specific folder, its contents leave that library's scope.",
-      confirmLabel: "Delete folder",
-      tone: "danger",
-    });
-    if (!ok) return;
-    try {
-      await deleteFolder(id, activeOrgId!);
-      // The server confirmed; the screen must not wait for a realtime event
-      // that (for deletes) may never arrive. Remove the folder and step its
-      // children up a level locally — exactly what the server just did.
-      setFolders((prev) => prev
-        .filter((x) => x.id !== id)
-        .map((x) => (x.parentId === id ? { ...x, parentId: f.parentId ?? null } : x)));
-      setDocuments((prev) => prev.map((d) =>
-        d.collectionId === id ? { ...d, collectionId: f.parentId ?? null } : d));
-      if (currentFolderId === id) setCurrentFolderId(f.parentId ?? null);
-      nudgeKnowledgeSources(activeOrgId!, libraryId);
-    } catch (e) {
-      console.error(e);
-      setError("Couldn't delete that folder.");
-    }
+  // Deleting a folder opens a window that counts the branch and asks what
+  // happens to what's inside. Deleting a SELECTED tile deletes the selection.
+  const handleDeleteFolder = (id: string) => {
+    const ids = selectedFolderIds.has(id) && selectedFolderIds.size > 1 ? [...selectedFolderIds] : [id];
+    const list = ids.map((x) => ({ id: x, name: folderMap.get(x)?.name ?? "Folder" }));
+    if (list.length) setDeleteFolders(list);
   };
+  const onFoldersDeleted = (r: FolderDeleteResult) => {
+    setDeleteFolders(null);
+    setSelectedFolderIds(new Set());
+    // Reflect the server's work at once — never wait on realtime for deletes.
+    const gone = new Set(r.removedFolderIds);
+    if (r.mode === "all") {
+      setFolders((prev) => prev.filter((x) => !gone.has(x.id!)));
+      setDocuments((prev) => prev.filter((d) => !d.collectionId || !gone.has(d.collectionId)));
+    } else {
+      setFolders((prev) => {
+        const parentOf = new Map(prev.map((x) => [x.id!, x.parentId ?? null]));
+        const heir = (id: string): string | null => {
+          let p = parentOf.get(id) ?? null;
+          while (p && gone.has(p)) p = parentOf.get(p) ?? null;
+          return p;
+        };
+        return prev.filter((x) => !gone.has(x.id!))
+          .map((x) => (x.parentId && gone.has(x.parentId) ? { ...x, parentId: heir(x.id!) } : x));
+      });
+      setDocuments((prev) => prev.filter((d) => !d.collectionId || !gone.has(d.collectionId)));
+    }
+    folderDocsCache.current.clear();
+    setDocsRefreshTick((t) => t + 1);
+    if (currentFolderId && gone.has(currentFolderId)) {
+      let p = folderMap.get(currentFolderId)?.parentId ?? null;
+      while (p && gone.has(p)) p = folderMap.get(p)?.parentId ?? null;
+      setCurrentFolderId(p);
+    }
+    nudgeKnowledgeSources(activeOrgId!, libraryId);
+  };
+
+  // Up one level: the parent folder, or the library's top when at a
+  // top-level folder.
+  const goUp = useCallback(() => {
+    if (!currentFolderId) return false;
+    setCurrentFolderId(folderMap.get(currentFolderId)?.parentId ?? null);
+    return true;
+  }, [currentFolderId, folderMap]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (document.querySelector('[role="dialog"], .fixed.inset-0')) return;
+      if ((e.altKey && e.key === "ArrowUp") || (e.key === "Backspace" && !e.altKey && !e.metaKey && !e.ctrlKey)) {
+        if (goUp()) e.preventDefault();
+      } else if (e.key === "Delete" && isControllerRole(activeRole) && selectedFolderIds.size > 0 && selectedDocIds.size === 0) {
+        e.preventDefault();
+        setDeleteFolders([...selectedFolderIds].map((x) => ({ id: x, name: folderMap.get(x)?.name ?? "Folder" })));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goUp, activeRole, selectedFolderIds, selectedDocIds, folderMap]);
 
   // ── Folder trash (30-day delete hold) ──────────────────────────────
   const openTrash = async () => {
@@ -2424,14 +2499,20 @@ export default function LibraryExplorerPage() {
         originals.push(baseName(it.file.name));
       }
       const distinctBases = Array.from(new Set(originals));
-      const orClause = distinctBases.map((b) => `document_number.ilike.${escapeIlikeLiteral(b)}%`).join(",");
-      const { data: existingRows } = await supabase
-        .from("documents")
-        .select("document_number")
-        .eq("library_id", libraryId)
-        .or(orClause)
-        .not("status", "in", "(Archived,Superseded)");
-      const usedNumbers = new Set<string>((existingRows ?? []).map((r) => String((r as { document_number: string }).document_number || "")));
+      // In slices: a folder of thousands of files would otherwise build one
+      // URL too long for the API and silently skip the duplicate check.
+      const usedNumbers = new Set<string>();
+      for (let i = 0; i < distinctBases.length; i += 80) {
+        const orClause = distinctBases.slice(i, i + 80).map((b) => `document_number.ilike.${escapeIlikeLiteral(b)}%`).join(",");
+        const { data: existingRows } = await supabase
+          .from("documents")
+          .select("document_number")
+          .eq("library_id", libraryId)
+          .or(orClause)
+          .not("status", "in", "(Archived,Superseded)")
+          .limit(5000);
+        for (const r of existingRows ?? []) usedNumbers.add(String((r as { document_number: string }).document_number || ""));
+      }
 
       const resolved: Array<{ item: StagedItem; docNumber: string; original: string }> = items.map((item, i) => {
         const original = originals[i];
@@ -2584,6 +2665,7 @@ export default function LibraryExplorerPage() {
         setPendingUploadFiles([]);
         uploadPathsRef.current = new Map();
         uploadFolderPlanRef.current = null;
+        setFolderStaged(false);
         if (notes.length > 0) setError(`Uploaded. ${notes.join(" ")}`);
       }
     } catch (e) {
@@ -3229,10 +3311,21 @@ export default function LibraryExplorerPage() {
         <button
           onClick={() => router.push("/documents")}
           className="h-7 w-7 rounded-md hover:bg-[var(--color-surface-2)] flex items-center justify-center shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-          title="Back to libraries"
+          title="Back to all libraries"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
         </button>
+        {/* Up one level — always where the eye expects it, next to the path. */}
+        {currentFolderId && (
+          <button
+            onClick={() => goUp()}
+            className="h-7 px-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] flex items-center gap-1 shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
+            title={`Up to ${currentFolder?.parentId ? folderMap.get(currentFolder.parentId)?.name ?? "parent folder" : library.name} (Backspace or Alt+↑)`}
+          >
+            <ArrowUp className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Up</span>
+          </button>
+        )}
 
         {/* Breadcrumb — each segment wears its folder's own icon + color;
             deep paths fold their middle into a "…" menu. */}
@@ -3297,7 +3390,7 @@ export default function LibraryExplorerPage() {
           title="Upload files"
         >
           <UploadCloud className="w-3.5 h-3.5" />
-          <span className="hidden md:inline">Upload</span>
+          <span className="hidden sm:inline">Upload files</span>
         </button>
 
         {/* Upload a whole FOLDER — its subfolder tree is recreated here.
@@ -3306,10 +3399,10 @@ export default function LibraryExplorerPage() {
           <button
             onClick={() => folderInputRef.current?.click()}
             className="h-7 px-2 rounded-md hover:bg-[var(--color-surface-2)] flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
-            title="Upload a folder — subfolders and their files keep their structure"
+            title="Upload a whole folder as-is — every subfolder and file keeps its place"
           >
-            <FolderPlus className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Upload folder</span>
+            <FolderUp className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Upload folder</span>
           </button>
         )}
 
@@ -3654,7 +3747,7 @@ export default function LibraryExplorerPage() {
                     onMoveManyInto={isController ? (ids, targetId) => void dropMoveFolders(ids, targetId) : undefined}
                     onDocsDrop={isController ? (docIds, folderId) => void dropMoveDocs(docIds, folderId) : undefined}
                     onReorder={isController ? (dragId, targetId, pos) => void dropReorderFolder(dragId, targetId, pos) : undefined}
-                    onDelete={isController ? (id) => void handleDeleteFolder(id) : undefined}
+                    onDelete={isController ? (id) => handleDeleteFolder(id) : undefined}
                     isController={isController}
                     selectedIds={selectedFolderIds}
                     onTileSelect={handleFolderTileSelect}
@@ -4331,6 +4424,27 @@ export default function LibraryExplorerPage() {
         </div>
       )}
 
+      {/* Folder selection bar — ctrl/shift-click tiles, then act on them all. */}
+      {isController && selectedFolderIds.size > 0 && selectedDocIds.size === 0 && (
+        <div className={`fixed left-1/2 -translate-x-1/2 z-40 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"}`}>
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-900/95 text-white rounded-2xl shadow-2xl border border-slate-700/60"
+            style={{ backdropFilter: "blur(20px) saturate(200%)" }}>
+            <span className="text-xs font-bold">{selectedFolderIds.size} folder{selectedFolderIds.size === 1 ? "" : "s"} selected</span>
+            <div className="h-4 w-px bg-slate-700 mx-1" />
+            <button onClick={() => setSelectedFolderIds(new Set())}
+              className="px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition-colors">
+              Deselect
+            </button>
+            <button
+              onClick={() => setDeleteFolders([...selectedFolderIds].map((x) => ({ id: x, name: folderMap.get(x)?.name ?? "Folder" })))}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-red-500/90 hover:bg-red-500 rounded-lg transition-all active:scale-95"
+              title="Delete the selected folders (Delete key)">
+              <Trash2 className="w-3 h-3" /> Delete…
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* FLOATING BULK ACTION BAR — slides up from bottom when items selected */}
       <div
         className={`fixed left-1/2 -translate-x-1/2 z-40 transition-all duration-300 ${
@@ -4392,10 +4506,13 @@ export default function LibraryExplorerPage() {
           )}
           {isController && (
             <button
-              onClick={handleBulkDelete}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-red-500/90 hover:bg-red-500 rounded-lg transition-all active:scale-95"
+              onClick={() => void handleBulkDelete()}
+              disabled={bulkDeleting !== null}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-red-500/90 hover:bg-red-500 rounded-lg transition-all active:scale-95 disabled:opacity-70"
             >
-              <Trash2 className="w-3 h-3" /> Delete
+              {bulkDeleting
+                ? <><Loader2 className="w-3 h-3 animate-spin" /> Deleting {bulkDeleting.done} of {bulkDeleting.total}…</>
+                : <><Trash2 className="w-3 h-3" /> Delete</>}
             </button>
           )}
         </div>
@@ -4579,13 +4696,27 @@ export default function LibraryExplorerPage() {
         files={pendingUploadFiles}
         customColumns={(library?.customColumns ?? []) as unknown as CustomColumnDef[]}
         defaultStatus="Issued"
-        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); uploadPathsRef.current = new Map(); uploadFolderPlanRef.current = null; }}
+        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); uploadPathsRef.current = new Map(); uploadFolderPlanRef.current = null; setFolderStaged(false); }}
+        folderUpload={folderStaged ? {
+          destination: currentFolder ? [...(currentFolder.pathNames ?? []), currentFolder.name].join(" / ") : (library?.name ?? "this library"),
+          pathOf: (f) => uploadPathsRef.current.get(f),
+        } : undefined}
+        progress={uploadProgress}
         onSubmit={handleStagedUpload}
         onAddColumn={isController ? () => { setWizardInitType("text"); setWizardInitStep(2); setShowCreateColumn(true); } : undefined}
         uniquenessKeys={library?.uniquenessKeys}
         onAddSheetAndUseForUniqueness={isController ? handleAddSheetAndUseForUniqueness : undefined}
         orgId={activeOrgId ?? undefined}
       />
+
+      {deleteFolders && activeOrgId && (
+        <FolderDeleteModal
+          orgId={activeOrgId}
+          folders={deleteFolders}
+          onClose={() => setDeleteFolders(null)}
+          onDone={onFoldersDeleted}
+        />
+      )}
 
       {/* NEW: Checkout Flow Modal */}
       {showCheckoutFlow && checkoutDoc && (

@@ -9,7 +9,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, History, Globe, Bot,
-  ChevronRight, ChevronDown, Wand2, Eye, MessageSquare, ArrowRight,
+  ChevronRight, ChevronDown, Wand2, Eye, MessageSquare, ArrowRight, FolderUp,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -21,7 +21,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
-  ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
+  ingestKnowledgeDocument, deleteKnowledgeDocuments, deleteKnowledgeLibrary,
   listLibraryLinks,
   type KnowledgeLibrary, type KnowledgeDocument,
   type KnowledgeLibraryLink,
@@ -33,6 +33,7 @@ import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
 import LibraryMapPanel from "@/components/knowledge/LibraryMapPanel";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
+import { collectDroppedFiles, filesFromDirectoryInput } from "@/lib/folderUpload";
 
 // pdf.js only loads when someone actually opens a cited page.
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
@@ -81,6 +82,12 @@ export default function KnowledgeLibraryPage() {
   }, []);
 
   const fileInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  // Multi-select on the shelf: remove many at once instead of one by one.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // A long removal (a big library, many documents) shows progress in place.
+  const [removing, setRemoving] = useState<{ label: string; done: number; total: number } | null>(null);
   const [uploadState, setUploadState] = useState<{ name: string; phase: string } | null>(null);
   const [reindexing, setReindexing] = useState<string | null>(null);
   // Browser-driven queue drain: linked source documents index right here,
@@ -207,22 +214,27 @@ export default function KnowledgeLibraryPage() {
     })();
   }, [hasQueued, uploadState, reindexing, libraryId, refresh]);
 
-  const onFiles = async (files: FileList | null) => {
-    if (!files || !activeOrgId || !uid) return;
-    for (const file of Array.from(files)) {
-      if (!/\.pdf$/i.test(file.name)) {
-        showToast({ type: "error", title: `${file.name}: only PDF files can be indexed.` });
-        continue;
-      }
+  // Uploads go up THREE at a time and only queue the document; the
+  // library's indexer (above) drains the queue. A dropped folder of 300 PDFs
+  // used to upload-then-index one file at a time with a toast per file.
+  const onFiles = async (input: File[] | FileList | null) => {
+    if (!input || !activeOrgId || !uid) return;
+    const all = Array.from(input);
+    const pdfs = all.filter((f) => /\.pdf$/i.test(f.name));
+    const skipped = all.length - pdfs.length;
+    if (pdfs.length === 0) {
+      showToast({ type: "error", title: skipped ? `Only PDF files can be indexed — ${skipped} other file(s) skipped.` : "No files." });
+      return;
+    }
+    if (pdfs.length === 1) {
+      // One file: upload and index it right here, with page progress.
+      const file = pdfs[0];
       try {
         setUploadState({ name: file.name, phase: "Uploading…" });
         await addKnowledgeDocument({
           orgId: activeOrgId, libraryId, file,
           userId: uid, userName: userEmail ?? "Member",
-          onUpload: (p) => setUploadState({
-            name: file.name,
-            phase: `Uploading… ${Math.round(p.percent)}%`,
-          }),
+          onUpload: (p) => setUploadState({ name: file.name, phase: `Uploading… ${Math.round(p.percent)}%` }),
           onIndex: (indexed, total) => {
             setUploadState({ name: file.name, phase: `Indexing… ${indexed}${total ? ` / ${total}` : ""} pages` });
             void listKnowledgeDocuments(libraryId).then(setDocs);
@@ -232,9 +244,43 @@ export default function KnowledgeLibraryPage() {
       } catch (e) {
         showToast({ type: "error", title: `${file.name}: ${(e as Error).message}` });
       }
+    } else {
+      let done = 0;
+      const failed: string[] = [];
+      const queue = [...pdfs];
+      setUploadState({ name: `${pdfs.length} PDFs`, phase: `Uploading 0 of ${pdfs.length}…` });
+      const worker = async () => {
+        for (let file = queue.shift(); file; file = queue.shift()) {
+          try {
+            await addKnowledgeDocument({
+              orgId: activeOrgId, libraryId, file, index: false,
+              userId: uid, userName: userEmail ?? "Member",
+            });
+          } catch { failed.push(file.name); }
+          done++;
+          if (mountedRef.current) setUploadState({ name: `${pdfs.length} PDFs`, phase: `Uploading ${done} of ${pdfs.length}…` });
+        }
+      };
+      await Promise.all(Array.from({ length: 3 }, () => worker()));
+      showToast(failed.length
+        ? { type: "error", title: `${pdfs.length - failed.length} uploaded; ${failed.length} failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}` }
+        : { type: "success", title: `${pdfs.length} PDFs uploaded — indexing them now.` });
     }
+    if (skipped > 0) showToast({ type: "info", title: `${skipped} non-PDF file(s) skipped — only PDFs can be indexed.` });
     setUploadState(null);
     await refresh();
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (!isController || uploadState !== null) return;
+    const { promise } = collectDroppedFiles(e.dataTransfer.items);
+    setDocsOpen(true);
+    void promise.then(
+      (files) => onFiles(files.map((f) => f.file)),
+      (err) => showToast({ type: "error", title: (err as Error).message }),
+    );
   };
 
   const resumeIndex = async (doc: KnowledgeDocument) => {
@@ -250,31 +296,55 @@ export default function KnowledgeLibraryPage() {
     }
   };
 
-  const removeDoc = async (doc: KnowledgeDocument) => {
+  const removeDocs = async (ids: string[]) => {
+    if (!activeOrgId || ids.length === 0) return;
+    const names = docs.filter((d) => ids.includes(d.id)).map((d) => d.name);
     const ok = await appConfirm({
-      title: "Remove document?",
-      message: `"${doc.name}" and its search index will be removed from this library. The answers it already contributed to stay in the history.`,
-      confirmLabel: "Remove",
+      title: ids.length === 1 ? "Remove document?" : `Remove ${ids.length} documents?`,
+      message: (ids.length === 1 ? `"${names[0]}"` : `${ids.length} documents`) +
+        " — the PDF" + (ids.length === 1 ? "" : "s") + " and the search index — will be deleted from this library. " +
+        "Answers they already contributed to stay in the history.",
+      confirmLabel: ids.length === 1 ? "Remove" : `Remove ${ids.length}`,
     });
     if (!ok) return;
+    setRemoving({ label: "Removing documents", done: 0, total: ids.length });
     try {
-      await deleteKnowledgeDocument(doc.id);
-      await refresh();
+      const n = await deleteKnowledgeDocuments(activeOrgId, libraryId, ids,
+        (done) => setRemoving({ label: "Removing documents", done, total: ids.length }));
+      setSelected(new Set());
+      showToast({ type: "success", title: `${n} document${n === 1 ? "" : "s"} removed.` });
     } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
+    finally { setRemoving(null); await refresh(); }
   };
 
   const removeLibrary = async () => {
+    if (!library || !activeOrgId) return;
     const ok = await appConfirm({
-      title: "Delete this library?",
-      message: "All documents, their search index, and the question history will be deleted. This cannot be undone.",
+      title: `Delete "${library.name}"?`,
+      message: `This deletes the library and everything in it: ${docs.length} document${docs.length === 1 ? "" : "s"}, ` +
+        "their search index, and the library's conversations and question history. " +
+        "Controlled documents mirrored from Document Control stay in Document Control. This cannot be undone.",
       confirmLabel: "Delete library",
     });
-    if (!ok || !library) return;
+    if (!ok) return;
+    setRemoving({ label: "Deleting library", done: 0, total: docs.length });
     try {
-      await deleteKnowledgeLibrary(library.id);
+      await deleteKnowledgeLibrary(activeOrgId, library.id,
+        (done, remaining) => setRemoving({ label: "Deleting library", done, total: done + remaining }));
+      showToast({ type: "success", title: `"${library.name}" deleted.` });
       router.push("/knowledge");
-    } catch (e) { showToast({ type: "error", title: (e as Error).message }); }
+    } catch (e) {
+      setRemoving(null);
+      showToast({ type: "error", title: (e as Error).message });
+    }
   };
+
+  const removable = docs.filter((d) => !d.sourceDocumentId);
+  const toggleSelect = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   if (loading) return <PageShell><div className="py-16 text-center"><Spinner /></div></PageShell>;
   if (!library) {
@@ -302,7 +372,7 @@ export default function KnowledgeLibraryPage() {
             <Button variant="secondary" onClick={() => setShowAiSetup(true)}>
               <Wand2 className="w-4 h-4" /> Library AI setup
             </Button>
-            <Button variant="secondary" onClick={() => void removeLibrary()}>
+            <Button variant="secondary" onClick={() => void removeLibrary()} disabled={removing !== null}>
               <Trash2 className="w-4 h-4" /> Delete library
             </Button>
           </div>
@@ -321,6 +391,21 @@ export default function KnowledgeLibraryPage() {
         </div>
       )}
 
+      {removing && (
+        <div className="mb-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 px-3 py-2.5 text-xs">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-rose-600 shrink-0" />
+            <span className="font-bold">{removing.label}…</span>
+            <span className="text-[var(--color-text-muted)] ml-auto">{removing.done} of {removing.total} documents removed</span>
+          </div>
+          {removing.total > 0 && (
+            <div className="mt-1.5 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
+              <div className="h-full bg-rose-500 transition-all" style={{ width: `${Math.round((removing.done / removing.total) * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Ask ─────────────────────────────────────────────────────────── */}
       {/* The chat itself lives in the shell (/assistant), scoped to this
           library — one conversation model for every source. This card is
@@ -334,7 +419,14 @@ export default function KnowledgeLibraryPage() {
 
       <div>
         {/* ── Documents ──────────────────────────────────────────────────── */}
-        <div>
+        {/* The whole section is a drop target: files or folders (every PDF
+            inside, any depth), straight from the desktop. */}
+        <div
+          onDragOver={(e) => { if (isController && e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false); }}
+          onDrop={onDrop}
+          className={dragOver ? "rounded-2xl outline-2 outline-dashed outline-orange-400 outline-offset-4 bg-orange-50/40 dark:bg-orange-950/10" : undefined}
+        >
           {activeOrgId && (
             <SourcesPanel orgId={activeOrgId} libraryId={libraryId}
               isController={isController} onChanged={() => void refresh()} />
@@ -377,10 +469,26 @@ export default function KnowledgeLibraryPage() {
             {isController && (
               <>
                 <input ref={fileInput} type="file" accept=".pdf,application/pdf" multiple hidden
-                  onChange={(e) => { void onFiles(e.target.files); e.target.value = ""; }} />
-                <Button size="sm" onClick={() => fileInput.current?.click()} disabled={uploadState !== null}>
-                  <Upload className="w-3.5 h-3.5" /> Add PDFs
-                </Button>
+                  onChange={(e) => { void onFiles(e.target.files ? Array.from(e.target.files) : null); e.target.value = ""; }} />
+                <input ref={folderInput} type="file" multiple hidden
+                  {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+                  onChange={(e) => {
+                    try {
+                      const files = e.target.files ? filesFromDirectoryInput(e.target.files).map((f) => f.file) : null;
+                      setDocsOpen(true);
+                      void onFiles(files);
+                    } catch (err) { showToast({ type: "error", title: (err as Error).message }); }
+                    e.target.value = "";
+                  }} />
+                <div className="flex items-center gap-1.5">
+                  <Button size="sm" variant="secondary" onClick={() => folderInput.current?.click()} disabled={uploadState !== null}
+                    title="Pick a folder — every PDF inside it, in any subfolder, is added">
+                    <FolderUp className="w-3.5 h-3.5" /> Add folder
+                  </Button>
+                  <Button size="sm" onClick={() => fileInput.current?.click()} disabled={uploadState !== null}>
+                    <Upload className="w-3.5 h-3.5" /> Add PDFs
+                  </Button>
+                </div>
               </>
             )}
           </div>
@@ -419,12 +527,39 @@ export default function KnowledgeLibraryPage() {
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
               <FileText className="w-6 h-6 mx-auto mb-2 opacity-50" />
-              {isController ? "Drop your standards and practice PDFs here to build the shelf." : "No documents yet — Admin or Doc Control can add PDFs."}
+              {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet — Admin or Doc Control can add PDFs."}
             </div>
           ) : (
+            <>
+            {isController && removable.length > 0 && (
+              <div className="mb-1.5 flex items-center gap-2 text-[11px]">
+                <label className="inline-flex items-center gap-1.5 font-bold text-[var(--color-text-muted)] cursor-pointer select-none">
+                  <input type="checkbox" className="accent-orange-600"
+                    checked={selected.size > 0 && selected.size === removable.length}
+                    ref={(el) => { if (el) el.indeterminate = selected.size > 0 && selected.size < removable.length; }}
+                    onChange={() => setSelected(selected.size === removable.length ? new Set() : new Set(removable.map((d) => d.id)))} />
+                  {selected.size > 0 ? `${selected.size} selected` : "Select all"}
+                </label>
+                {selected.size > 0 && (
+                  <>
+                    <button onClick={() => void removeDocs([...selected])} disabled={removing !== null}
+                      className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-rose-600 text-white font-black hover:bg-rose-700 disabled:opacity-50">
+                      <Trash2 className="w-3.5 h-3.5" /> Remove {selected.size}
+                    </button>
+                    <button onClick={() => setSelected(new Set())} className="font-bold text-[var(--color-text-muted)] hover:underline">Clear</button>
+                  </>
+                )}
+              </div>
+            )}
             <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
               {docs.map((doc) => (
-                <li key={doc.id} className="px-3.5 py-2.5 bg-[var(--color-surface)] flex items-center gap-3">
+                <li key={doc.id} className={`px-3.5 py-2.5 flex items-center gap-3 ${selected.has(doc.id) ? "bg-orange-50/70 dark:bg-orange-950/20" : "bg-[var(--color-surface)]"}`}>
+                  {isController && (
+                    <input type="checkbox" className="accent-orange-600 shrink-0" aria-label={`Select ${doc.name}`}
+                      disabled={!!doc.sourceDocumentId} checked={selected.has(doc.id)}
+                      title={doc.sourceDocumentId ? "Mirrored from Document Control — remove it by unlinking the source" : undefined}
+                      onChange={() => toggleSelect(doc.id)} />
+                  )}
                   <FileText className="w-4 h-4 text-orange-600 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="text-xs font-bold text-[var(--color-text)] truncate flex items-center gap-1.5">
@@ -457,7 +592,7 @@ export default function KnowledgeLibraryPage() {
                     </button>
                   )}
                   {isController && !doc.sourceDocumentId && (
-                    <button onClick={() => void removeDoc(doc)} title="Remove"
+                    <button onClick={() => void removeDocs([doc.id])} title="Remove" disabled={removing !== null}
                       className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-rose-600">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -465,6 +600,7 @@ export default function KnowledgeLibraryPage() {
                 </li>
               ))}
             </ul>
+            </>
           )}
           {activeOrgId && library.aiFeatures?.drawingIntel === true && (
             <DrawingIntelPanel orgId={activeOrgId} libraryId={libraryId}
