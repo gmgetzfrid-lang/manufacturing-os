@@ -11,6 +11,8 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Network, ChevronDown, ChevronUp, Lock, Ticket as TicketIcon, Briefcase, GitBranch, ShieldAlert } from "lucide-react";
 import { getDocumentImpact, type DocumentImpact } from "@/lib/impact";
+// drafting-flow UI-7 (DF-P9 integrator fix pass): a request's status in words.
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 
 interface ImpactPanelProps {
   documentId: string;
@@ -175,7 +177,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
                 <Link key={t.id} href={`/requests/${t.id}`} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
                   <TicketIcon className="w-3 h-3 text-blue-500 shrink-0" />
                   <span className="text-xs text-[var(--color-text)] group-hover:text-blue-700 truncate">{t.ticketId ? `${t.ticketId} — ` : ""}{t.title}</span>
-                  <span className="ml-auto text-[9px] font-bold uppercase text-[var(--color-text-faint)] shrink-0">{t.status.replace(/_/g, " ")}</span>
+                  <span data-testid="impact-ticket-status" className="ml-auto text-[9px] font-bold uppercase text-[var(--color-text-faint)] shrink-0">{ticketStatusLabel(t.status)}</span>
                 </Link>
               ))}
             </div>

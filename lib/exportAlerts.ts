@@ -507,6 +507,62 @@ export async function unconfirmedGraceTonight(
   return { paused: false, night: tonight, of, pausing: tonight >= of };
 }
 
+/** IEDGE-10 residual (admin-and-org P13): run rows the pause recheck reads. */
+export const PAUSE_RECHECK_ROWS = 25;
+
+/** IEDGE-10 residual (admin-and-org P13, DEC-90 — a paused destination stays
+ *  paused until an Admin saves it): on a night whose grace count could not be
+ *  read, the sweep falls back on the card in hand (pausedAtLastRun), but two
+ *  things can leave the card without the pause — a refused card write on the
+ *  night that paused it, and (before P13) a Run Now since. This reads the
+ *  pause from the run rows themselves, in ONE bounded query (no paging, so a
+ *  cursor that would not advance cannot defeat it): the destination's newest
+ *  PAUSE_RECHECK_ROWS scheduled rows, newest first, read the way
+ *  unconfirmedGraceTonight reads them — a paused night, or the night that
+ *  paused it (`night=<of>/<of>`), is a pause; neutral rows (a gate skip, an
+ *  unread count, an unverified night) are read past; any other deciding row
+ *  (a counted night before the last, a confirmed push, a run from before the
+ *  rule) is not a pause. Answers `{ paused }`, or `{ error }` when the read
+ *  fails or the window holds no deciding row — the caller then keeps today's
+ *  path (the night runs uncounted). Never throws. */
+export async function pausedInLatestRuns(
+  sb: Pick<SupabaseClient, "from">,
+  destinationId: string,
+  of = UNCONFIRMED_GRACE_NIGHTS,
+  limit = PAUSE_RECHECK_ROWS,
+): Promise<{ paused: boolean } | { error: string }> {
+  try {
+    const { data, error } = await sb
+      .from("export_runs")
+      .select("id, status, diagnostics, started_at")
+      .eq("destination_id", destinationId)
+      .eq("trigger_type", "scheduled")
+      .not("started_at", "is", null)
+      .order("started_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(limit);
+    if (error) return { error: error.message };
+    const rows = (Array.isArray(data) ? data : []) as Array<{ status?: unknown; diagnostics?: unknown }>;
+    for (const run of rows) {
+      const steps = Array.isArray(run.diagnostics) ? run.diagnostics as Array<{ step?: unknown; detail?: unknown }> : [];
+      if (steps.some((d) => d?.step === GRACE_PAUSED_STEP)) return { paused: true };
+      const night = steps.find((d) => d?.step === GRACE_NIGHT_STEP);
+      if (night) {
+        const m = /^night=(\d+)\/\d+$/.exec(String(night.detail ?? ""));
+        if (!m) continue; // an unread count: neutral
+        return { paused: Number(m[1]) >= of };
+      }
+      if (steps.some((d) => d?.step === GRACE_UNVERIFIED_STEP)) continue; // neutral
+      if (run.status === "cancelled") continue; // a gate skip for another reason: neutral
+      return { paused: false }; // a confirmed push, or a run from before the rule
+    }
+    if (rows.length < limit) return { paused: false }; // the whole scheduled history holds no pause
+    return { error: `no deciding run in the newest ${limit} scheduled runs` };
+  } catch (e) {
+    return { error: (e as Error).message || String(e) };
+  }
+}
+
 /** DEC-87 §1: what an unconfirmed scheduled push's bell (and its
  *  run row and destination card) says about who last confirmed it. */
 export function unconfirmedSentence(u: { by: string; holds: string }): string {

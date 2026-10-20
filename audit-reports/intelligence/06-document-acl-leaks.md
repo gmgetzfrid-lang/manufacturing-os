@@ -446,6 +446,8 @@ app/api/data-export/run/route.ts:18 — `const ADMIN_ROLES = ["Admin", "Manager"
 
 **Scope / residual.** As on `IEDGE-10`. The I-01B residual pin ("IEDGE-10 / DACL-7 open residual") still passes: `destinationConfirmation` reports, never refuses, which is what the grace counts on; its header now points at the P14 test.
 
+*Residual (2026-10-14, admin-and-org Round G P13).* The two ways to lose a paused destination's card named on `IEDGE-10` (an Admin's Run Now since the last scheduled run; a refused card write on the pausing night) are closed — the same change, recorded in full on `IEDGE-10`: Run Now keeps the pause on the card it writes unless an Admin has saved the destination since (`app/api/data-export/run/route.ts:82-85`), and a night whose count cannot be read also reads the pause from the newest scheduled run rows (`lib/exportAlerts.ts pausedInLatestRuns`, `run-scheduled/route.ts:296-309`). Tests: `lib/__tests__/aoRoundGP13PauseResidual.test.ts`. Remaining, as on `IEDGE-10`: a night when neither the count nor the run rows can be read and the card lacks the pause runs uncounted (DEC-87 §1). **RATIFIED by the integrator (2026-10-14, at the admin-and-org P13 merge, `DEC-90`) as the accepted residual of `DEC-87` §1** — export availability over a pause that cannot be read; the next readable night pauses again; pinned by `lib/__tests__/aoRoundGP13PauseResidual.test.ts:242`. Recorded in full on `IEDGE-10`; no owner (ratified, not open).
+
 ---
 
 <a id="dacl-8"></a>

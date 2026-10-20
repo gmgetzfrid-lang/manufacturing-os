@@ -74,6 +74,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "asset_types", migration: "20260603_asset_registry.sql" },
   { table: "assets", migration: "20260603_asset_registry.sql" },
   { table: "audit_logs", migration: "schema.sql (base schema)" },
+  { table: "audit_dead_letters", migration: "20261219_ao_roundG_audit_node_trail_and_outbox.sql" },
   { table: "change_orders", migration: "20261013_project_controls_program.sql" },
   { table: "checklist_items", migration: "20261013_project_controls_program.sql" },
   { table: "checkout_episodes", migration: "20260729_checkout_episodes.sql" },

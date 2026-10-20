@@ -13,6 +13,8 @@ import { capSourceDocuments, contractLimitRefusal, droppedSourceDocumentsWarning
 import { submitTicketCreate, discardStagedFiles, loadCodebookUnitList, queueNotNotifiedLine } from '@/lib/ticketCreateClient';
 import { linkableDocumentQuery, linkableDocumentFilter } from '@/lib/ticketLibrary';
 import IsoGuidance from '@/components/ui/IsoGuidance';
+// UI-2 (drafting-flow DF-P9): the workflow map, before someone commits to the process.
+import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
@@ -25,6 +27,7 @@ import {
   X,
   Save,
   Info,
+  GitBranch,
 } from 'lucide-react';
 
 const DEFAULT_SETTINGS: OrgDraftingSettings = {
@@ -107,6 +110,7 @@ export default function NewTicketPage() {
   // File State
   const [files, setFiles] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showWorkflowMap, setShowWorkflowMap] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>('');
   // LIFE-4: the book-viewer hand-off stashes the marked-up sheet's document id
   // next to the blob. Keep it, so the ticket carries metadata.source_document
@@ -440,11 +444,19 @@ export default function NewTicketPage() {
           subtitle={
             <>
               Submit a new job ticket.{" "}
-              <IsoGuidance topic="drafting_request_intent" />
+              <IsoGuidance topic="drafting_request_intent" />{" "}
+              <button
+                type="button"
+                onClick={() => setShowWorkflowMap(true)}
+                className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline"
+              >
+                <GitBranch className="w-3.5 h-3.5" /> See how a request flows
+              </button>
             </>
           }
         />
       </div>
+      {showWorkflowMap && <WorkflowDiagramModal onClose={() => setShowWorkflowMap(false)} />}
 
         <form onSubmit={handleSubmit} className="space-y-6">
 

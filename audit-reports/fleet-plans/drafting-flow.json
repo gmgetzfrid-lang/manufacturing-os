@@ -293,7 +293,8 @@
     "FRIC-4",
     "FRIC-2",
     "FRIC-5",
-    "EVID-12 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: the e-signature bound to the approved attachment, with a server-computed content hash (sha256 at upload or at vetting) — the same limb as EVID-1; DF-P1 made the audit row written first and checked, 10-audit-evidence.md EVID-12 Scope / residual)"
+    "EVID-12 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: the e-signature bound to the approved attachment, with a server-computed content hash (sha256 at upload or at vetting) — the same limb as EVID-1; DF-P1 made the audit row written first and checked, 10-audit-evidence.md EVID-12 Scope / residual)",
+    "ROUTE-8 remainder (assigned at the DF-P9 merge): components/requests/EngineerPickerModal.tsx reads members in keyset pages (as lib/ticketPickerMembers.ts does for the drafter picker) and uses the one shared rule (lib/ticketPage.ts / lib/ticketRouting.ts heldRoles) instead of its own filter, so it never hides someone the route accepts"
    ],
    "severityMix": "2 HIGH, 4 MEDIUM",
    "files": [
@@ -431,7 +432,8 @@
     "LEAK-4 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push: convertTicketToProject's browser history push becomes part of the server-side project link, or is removed)",
     "EVID-1 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push limb, with LEAK-4)",
     "DEC-101's seam (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): TicketCreateInput.projectId is parsed and not written (lib/ticketCreate.ts, lib/ticketCreateClient.ts) — write project_id in /api/tickets/create",
-    "notifications DELIV-16 / DELIV-7 dw2 (re-owned by the integrator at the N15 merge, 2026-10-14): components/documents/CheckInPanel.tsx's review_requested adopts lib/complianceNotify.ts notifyCompliance (one import line, the alias the seven N14 producers use) — a browser notice to another member is retried only through notification_i_wrote (20261206), never blindly; regression: the check-in's notice reaches exactly whom it reaches today"
+    "notifications DELIV-16 / DELIV-7 dw2 (re-owned by the integrator at the N15 merge, 2026-10-14): components/documents/CheckInPanel.tsx's review_requested adopts lib/complianceNotify.ts notifyCompliance (one import line, the alias the seven N14 producers use) — a browser notice to another member is retried only through notification_i_wrote (20261206), never blindly; regression: the check-in's notice reaches exactly whom it reaches today",
+    "PERS-2 remainder (assigned at the DF-P9 merge): lib/projects.ts's browser push of a 'Converted to Project' history entry (convertTicketToProject, dormant) goes server-side with the project link or is removed"
    ],
    "severityMix": "1 HIGH, 1 MEDIUM, 7 LOW",
    "files": [
@@ -629,7 +631,8 @@
     "drafting-flow EVID-16: the drafting-ticket copy is stamped and recorded in the server request that serves it (a stamping route), not in the browser after the copy",
     "Wording and observation left by DF-P10 (DEC-31): what 'withdrawn' says for an RFI closed on a review label; reject_final then Force Close keeps issued label N, so the package the requester rejected scans green on CLOSED (base did the same) — decide and record (DEC-90: fail-safe)",
     "drafting-flow EVID-5 (MEDIUM; its ticket half landed in DF-P10): closes by pointer when EVID-16 (here) and EVID-15 (projects-joint J15) are RESOLVED and document-control's 20261068 policy half is pasted — record the pointer",
-    "DCW-4 (assigned at the DF-P4 merge 2026-10-14): a library-only close offers 'Publish as a new document in <library>'; createDocumentWithFile (lib/revisions.ts) gains an optional relatedTicketId recorded on its creation audit row (additive; every existing caller unchanged — pinned), so the deliverable's provenance is provable"
+    "DCW-4 (assigned at the DF-P4 merge 2026-10-14): a library-only close offers 'Publish as a new document in <library>'; createDocumentWithFile (lib/revisions.ts) gains an optional relatedTicketId recorded on its creation audit row (additive; every existing caller unchanged — pinned), so the deliverable's provenance is provable",
+    "DCW-7's last limb (recorded at the DF-P9 merge): the 'Publish as a new document in <library>' offer is DCW-4's, already in this package; the free-text unit box for an unconfigured workspace stays by DEC-101 item 1"
    ],
    "files": [
     "supabase/migrations: the guard limb, the LEAK-7 (a) repair and the download_audits columns (DEC-30 each, lineDiff-pinned, DRLS-16)",
@@ -661,6 +664,31 @@
    ],
    "sequencingNotes": [
     "Added by the integrator at the DF-P4 merge, 2026-10-14 (DEC-31)."
+   ]
+  },
+  {
+   "name": "DF-P14 QUEUE READ AND STATUS-LABEL REMAINDERS — the request queue reads every request it counts, and the last raw status words in the app's own text read the shared labels",
+   "findings": [
+    "ROUTE-12 (MEDIUM; opened by DF-P9's integrator fix pass, assigned at the DF-P9 merge): app/(protected)/requests/page.tsx's scope reads (~:386-404) page until a short page (keyset, ordered) so no request drops out of the list, the Needs-me lens or the counts above PostgREST max-rows, and a failed read is said, never shown as an empty or short queue; a normal workspace sees exactly today's list",
+    "UI-7 remaining sites (assigned at the DF-P9 merge): admin/analytics/page.tsx:516 (the member ticket-list chip); app/api/tickets/workflow-action/route.ts :360 (the refusal text), :1407 (the bell body), :1455 / :1458 (the email); lib/ticketSla.ts :192 / :196 / :197 (the SLA notice bodies); components/dashboard/widgets.tsx:283-296 (its own TICKET_STATUS label set) — each reads lib/ticketStatusLabels.ts ticketStatusLabel; stored values stay machine-readable where a header wants them",
+    "GAP-108 acceptance 4 (assigned at the DF-P9 merge): no user-facing surface shows a raw status identifier as the primary label — the UI-7 remaining sites above are its last ones",
+    "roles-and-permissions GAP-13 acceptance 1 and drafting-flow GAP-107 acceptance 1 (assigned at the DF-P9 merge; DF-P13, the proposed owner, merged without it): an org-configured reason list for ending a request — an editor on Admin → Request forms (the drafting-form editor set, DEC-107), reasons grouped under DEC-103's five outcome categories (the category CHECK stays), the Cancel Request picker and the workflow route offer and validate the org's reasons with the five categories as the fallback when none are configured; every cancel that works today works the same"
+   ],
+   "files": [
+    "app/(protected)/requests/page.tsx (the scope reads only)",
+    "app/(protected)/admin/analytics/page.tsx (one line), components/dashboard/widgets.tsx",
+    "app/api/tickets/workflow-action/route.ts (the four label lines only — edit only when no drafting-flow package holding the route (DF-P5 / DF-P6 / DF-P7 / DF-P8) is in flight)",
+    "lib/ticketSla.ts (the three notice bodies only)",
+    "tests: the queue with more requests than one page and a failed page; each label site renders the shared label; every notice and email sent today still sent with the same recipients"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "drafting-flow DF-P9 merged (2026-10-14; lib/ticketStatusLabels.ts, lib/ticketPickerMembers.ts's keyset pattern)",
+    "drafting-flow DF-P13 merged (2026-10-14; it held lib/ticketSla.ts)",
+    "no drafting-flow package holding app/api/tickets/workflow-action/route.ts in flight at launch (check every fleet plan's files list)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P9 merge, 2026-10-14 (DEC-31). Small and label-only except ROUTE-12's paging; regression-first."
    ]
   }
  ],

@@ -61,6 +61,13 @@ export interface TimelineEvent {
   userId: string | null;
   userName: string | null;
   userEmail: string | null;
+  /** ALOG-7 (admin-and-org P13): whose word `userEmail` is, on an event built
+   *  from an `audit_logs` row only — the row's stored `actor_kind`
+   *  (`member` / `server` / `system`, 20261201), or null when the row has none
+   *  (written before 20261201, or before it is pasted: the writer's own word).
+   *  Undefined on version / activity / hold-row events, whose identity is not
+   *  an audit row's. Rendered with lib/auditActions.ts auditActorNote. */
+  actorKind?: string | null;
   /** Short human-readable summary derived from the row. */
   summary: string;
   /** Full row details for the renderer. Shape varies by kind. */
@@ -88,6 +95,8 @@ export interface AuditRow {
   user_id: string | null;
   user_email: string | null;
   user_role: string | null;
+  /** 20261201 (ALOG-7): absent before that paste — every read here is `select("*")`. */
+  actor_kind?: string | null;
   details: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
   timestamp: string;
@@ -336,6 +345,7 @@ function auditRowToEvent(r: AuditRow): TimelineEvent {
     userId: r.user_id,
     userName: null,
     userEmail: r.user_email,
+    actorKind: typeof r.actor_kind === "string" ? r.actor_kind : null,
     summary,
     details: r.details,
   };

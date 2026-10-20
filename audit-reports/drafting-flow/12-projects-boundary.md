@@ -296,7 +296,7 @@ lib/impact.ts:95-96 — `.filter((d) => d.status !== "Superseded" && d.status !=
 ## PROJ-9 · The request detail page renders none of the metadata that carries its links — source document, custom categories and the intake-collision project are all write-only
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:904`, `app/(protected)/requests/[id]/page.tsx:1691`, `app/(protected)/requests/[id]/page.tsx:1735`, `app/(protected)/requests/new/page.tsx:289`, `app/(protected)/requests/new/page.tsx:536`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. A repo-wide grep for custom_categories finds exactly two hits: the writer (requests/new:289) and a comment in admin/requests/page.tsx:361 describing where the values are stored — no reader anywhere, so admin-defined required fields are collected on every request and never displayed. metadata.source_document is at least read server-side (lib/impact.ts:117, workflow-action route:231), but not on the request page itself.
@@ -322,6 +322,14 @@ Searches: `grep -rn "href=" 'app/(protected)/requests/[id]/page.tsx'` → no hit
 
 - [ ] The request detail page renders `metadata.source_document` as a link to the document and `metadata.custom_categories` as labelled fields
 - [ ] when a project reference exists it renders as a link to the project, mirroring the project page's chip
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE. The source document already renders as a card with "Open in register" (LIFE-13, re-verified). What the form collected and the project link now render after the Scope of Work (`app/(protected)/requests/[id]/page.tsx`:2447, :2457): `lib/ticketPage.ts` `customCategorySections` (:199) turns `metadata.custom_categories[categoryId][fieldKey]` into labelled sections — the workspace's configured category and field labels (read with the drafting configuration the page already loads), option values shown as their labels, booleans as Yes / No, and an answer whose question was renamed or removed still shown under its key in words, never hidden. `projectRefOf` (:224) reads the project a request is linked to (`metadata.intake_collision.projectId` — the only project reference a ticket carries until DF-P8 writes `tickets.project_id`), rendered as a link to `/projects/<id>`, by name when the viewer can read the project (an RLS read), else "Open the linked project".
+
+**Done-when.**
+- ✓ `metadata.source_document` renders as a link (existing card) and `metadata.custom_categories` as labelled fields — `lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "PROJ-9 — the request's write-only metadata is rendered"; `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "PROJ-9 / FRIC-3 — what the form collected, the project, the unit" (rendered).
+- ✓ A project reference renders as a link to the project (same tests).
+
+**Scope / residual.** When DF-P8 adds `tickets.project_id`, `projectRefOf` reads that column first (one line).
 
 ---
 

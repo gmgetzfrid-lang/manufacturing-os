@@ -1398,9 +1398,15 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
     ]);
     const labelOf = new Map((t.items ?? []).map((i) => [i.documentId, `${i.number}${i.rev ? ` Rev ${i.rev}` : ""}`] as const));
     const to = [t.recipientName?.trim(), t.recipientCompany?.trim()].filter(Boolean).join(", ") || "an outside party";
-    let started = 0;
+    // NEDGE-22 (notifications N16): each library's notice is started without
+    // waiting for the previous one (each now waits on its discover check), so
+    // a tab closed after "Issued" loses as few notices as possible.
+    const sends: Array<Promise<number>> = [];
     for (const [libraryId, rows] of byLibrary) {
       const owners = new Set<string>();
+      // NEDGE-22 done-when 2 (DEC-90): each owner is involved with their own
+      // document only — the dispatcher checks the other named documents for them
+      const ownerOf: Record<string, string[]> = {};
       for (const d of rows) {
         try {
           const eff = await effectiveOwnerForDocument({
@@ -1409,17 +1415,18 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
             collectionId: (d.collection_id as string | null) ?? null,
             libraryId, orgId: t.orgId,
           });
-          if (eff.userId) owners.add(eff.userId);
+          if (eff.userId) { owners.add(eff.userId); ownerOf[d.id as string] = [eff.userId]; }
         } catch { /* an unresolved owner leaves the followers' notice standing */ }
       }
       const labels = rows.map((d) => labelOf.get(d.id as string) ?? "a document");
       const what = labels.length === 1 ? labels[0] : `${labels.length} documents`;
-      await emit({
+      const by = actor.actorName || "A member of your workspace";
+      const sent = emit({
         orgId: t.orgId,
         category: "watched",
         kind: "transmittal_issued",
         title: `Transmittal ${t.number} issued: ${what} to ${to}`,
-        body: `${actor.actorName || "A member of your workspace"} issued transmittal ${t.number}${t.purpose ? ` (${t.purpose})` : ""} to ${to}: ` +
+        body: `${by} issued transmittal ${t.number}${t.purpose ? ` (${t.purpose})` : ""} to ${to}: ` +
           `${labels.slice(0, 5).join(", ")}${labels.length > 5 ? ` and ${labels.length - 5} more` : ""}. ` +
           "A controlled copy is now outside the organization; its receipt is tracked on the transmittal register.",
         link: "/transmittals",
@@ -1428,10 +1435,26 @@ export async function notifyTransmittalIssued(t: Transmittal, actor: Transmittal
         actorName: actor.actorName,
         audience: { involved: [...owners], followers: true },
         metadata: { transmittalId: t.id },
+        // NEDGE-22 (notifications N16): the title and body name up to five of
+        // the library's documents. A follower who may not discover every one
+        // of THOSE reads the issue without the names (the dispatcher's check,
+        // DEC-106). An owner named above is not checked for their own
+        // document, and is checked for every other one the notice names
+        // (done-when 2, the integrator's ruling under DEC-90): an owner who
+        // may not discover one reads the issue without the names too.
+        namesDocuments: {
+          ids: rows.slice(0, 5).map((d) => d.id as string),
+          involved: ownerOf,
+          unnamed: {
+            title: `Transmittal ${t.number} issued to ${to}`,
+            body: `${by} issued transmittal ${t.number}${t.purpose ? ` (${t.purpose})` : ""} to ${to}, with documents from a library you follow. ` +
+              "A controlled copy is now outside the organization; its receipt is tracked on the transmittal register.",
+          },
+        },
       });
-      started += 1;
+      sends.push(sent.then(() => 1, (e) => { console.warn("[transmittals] a library's issue notice failed (non-blocking)", e); return 0; }));
     }
-    return started;
+    return (await Promise.all(sends)).reduce((a, b) => a + b, 0);
   } catch (e) {
     console.warn("[transmittals] the issue notice failed (non-blocking)", e);
     return 0;

@@ -85,7 +85,9 @@ describe("census — no client affordance gate reads the headline alone", () => 
     expect(t).toContain("const isAdmin = hasAnyRole(['Admin', 'DocCtrl']);");
     // Round E (WF-9): the upload affordance is derived from the engine's
     // `attach_file` action (evaluated on the full collection) — no role list.
-    expect(t).toContain("const canAttach = availableActions.some((a) => a.action === 'attach_file');");
+    // drafting-flow Round G (DF-P9, AUTHZ-15): from the engine's actions, held back while the policy is unreadable
+    expect(t).toContain("const liveActions = policyFault ? [] : availableActions;");
+    expect(t).toContain("const canAttach = liveActions.some((a) => a.action === 'attach_file');");
     expect(t).toContain("{canAttach && (");
     expect(src("app/(protected)/requests/page.tsx")).toContain("{hasAnyRole(['Manager', 'Admin']) && (");
   });
