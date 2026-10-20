@@ -1151,7 +1151,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
               <span>·</span>
               {/* Version beacon: which renderer produced this card. */}
-              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt7</span>
+              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt8</span>
             </div>
           </div>
 
