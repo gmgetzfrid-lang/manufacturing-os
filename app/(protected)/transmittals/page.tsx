@@ -20,6 +20,16 @@
 // a Document Controller who is also an Admin / Manager or manages the
 // draft's project (the permissive 20261133 policy AND the RESTRICTIVE
 // 20260818 transmittals_delete_guard).
+//
+// What a viewer reads (DIST-17, document-control P27; the integrator's
+// rulings under DEC-90): the register is served by the server, filtered for
+// the viewer (lib/transmittals listTransmittals → /api/transmittal/register).
+// An item the viewer may not read arrives as "Restricted document" (the
+// transmittal's subject and notes withheld with it), and a portal link they
+// may not have arrives withheld — the row says so, the cover sheet prints
+// without the link and says why, and a draft carrying such an item is not
+// editable by them (editing would show — and save back — what they may not
+// read). The sheet printed right after an issue is the register's view too.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -42,7 +52,7 @@ import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import {
   listTransmittals, createTransmittal, updateTransmittalDraft, issueTransmittal,
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
-  revokeTransmittalLink, transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES,
+  revokeTransmittalLink, transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES, transmittalForViewer, portalWithheldSentence,
   transmittalPortalUrl, portalOriginConfigured, portalLinkAvailable, portalLinkState, mayTransmit, mayDeleteDraft, itemIssueBlocker,
   legalHoldNotice, PORTAL_LINK_DAYS, UnstampableItemsError, unstampableConfirmTitle, unstampableDeclinedMessage,
   type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome, type IssuePhase,
@@ -148,7 +158,11 @@ export default function TransmittalsPage() {
   const isController = useMemo(() => isControllerPrincipal({ role: activeRole, roles: (roles ?? []) as Role[] }), [activeRole, roles]);
   const canTransmit = useCallback((t: Transmittal) =>
     policy !== null && mayTransmit(policy, principal, t.items.map((i) => libOf.get(i.documentId) ?? null)), [policy, principal, libOf]);
-  const canEditDraft = (t: Transmittal) => isController || (!!uid && t.createdBy === uid) || (policy !== null && mayTransmit(policy, principal, []));
+  // DIST-17: a draft carrying an item restricted for this viewer is not
+  // editable by them — the composer would show it, and its save would write
+  // the placeholder back. Its author and controllers never see a restriction.
+  const canEditDraft = (t: Transmittal) => (t.viewer?.restrictedItems ?? 0) === 0
+    && (isController || (!!uid && t.createdBy === uid) || (policy !== null && mayTransmit(policy, principal, [])));
   // TRX-7: Delete is drawn from the COMBINED rule (mayDeleteDraft): the
   // permissive policy admits the author or a controller; the RESTRICTIVE
   // transmittals_delete_guard (20260818, unchanged) also requires an Admin /
@@ -371,6 +385,16 @@ export default function TransmittalsPage() {
           </div>
         )}
 
+        {!error && (list ?? []).some((t) => t.viewer?.accessUnchecked) && (
+          <div role="status" data-testid="transmittal-access-unchecked" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 p-3 text-xs flex items-start gap-2">
+            <Lock className="w-4 h-4 mt-0.5 shrink-0" />
+            <div>
+              <div className="font-bold">Your document access couldn&apos;t be checked</div>
+              <div className="mt-0.5">Documents on transmittals you did not send are shown as &ldquo;Restricted document&rdquo; and portal links are not shown until it can be. Refresh to try again.</div>
+            </div>
+          </div>
+        )}
+
         {!error && (list?.length ?? 0) === 0 ? (
           <EmptyState
             icon={Send}
@@ -395,6 +419,12 @@ export default function TransmittalsPage() {
                       <span className="font-mono text-sm font-black text-[var(--color-text)]">{t.number}</span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TONE_CHIP[meta.tone]}`}>{meta.label}</span>
                       {t.purpose && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">{t.purpose}</span>}
+                      {/* DIST-17: items this viewer may not read arrive as "Restricted document". */}
+                      {(t.viewer?.restrictedItems ?? 0) > 0 && (
+                        <span data-testid="transmittal-restricted" className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)] inline-flex items-center gap-1" title={`${t.viewer!.restrictedItems} of ${t.items.length} document${t.items.length === 1 ? "" : "s"} on this transmittal ${t.viewer!.restrictedItems === 1 ? "is" : "are"} restricted for you: shown as "Restricted document", with the transmittal's subject and notes not shown.`}>
+                          <Lock className="w-2.5 h-2.5" />{t.viewer!.restrictedItems} restricted
+                        </span>
+                      )}
                       {staleIds.has(t.id) && (
                         <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200" title="At least one transmitted document has revved since — the recipient holds a superseded revision. Consider issuing a superseding transmittal.">
                           superseded rev in circulation
@@ -417,7 +447,8 @@ export default function TransmittalsPage() {
                       {t.issuedAt && <span>Issued {new Date(t.issuedAt).toLocaleDateString()}</span>}
                       {link === "live" && t.portalExpiresAt && <span title="The recipient's portal link stops working on this date">Link until {new Date(t.portalExpiresAt).toLocaleDateString()}</span>}
                       {/* TRX-4 dw4: did the recipient ever collect the documents? */}
-                      {t.portalToken && t.status !== "draft" && t.portalOpenCount != null && (
+                      {/* DIST-17: a token withheld from this viewer still has its usage shown. */}
+                      {(t.portalToken || t.viewer?.portalWithheld) && t.status !== "draft" && t.portalOpenCount != null && (
                         <span title={t.portalLastUsedAt ? `Last portal activity ${new Date(t.portalLastUsedAt).toLocaleString()}` : "The portal has recorded no activity"}>
                           {(t.portalOpenCount ?? 0) === 0 && (t.portalDownloadCount ?? 0) === 0
                             ? "Portal not opened yet"
@@ -435,9 +466,11 @@ export default function TransmittalsPage() {
                     </button>
                     {link === "live" && (transmitter || (!!uid && t.createdBy === uid)) && (
                       <button
-                        disabled={!portalLinkAvailable()}
+                        disabled={!portalLinkAvailable() || !t.portalToken}
                         onClick={() => {
-                          const url = transmittalPortalUrl(t.portalToken!);
+                          // DIST-17 (ruling 2): a token the register withheld is never copied.
+                          if (!t.portalToken) return;
+                          const url = transmittalPortalUrl(t.portalToken);
                           if (!url) { showToast({ type: "error", title: "No portal link", message: "No portal link without a configured public address (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild." }); return; }
                           void navigator.clipboard.writeText(url);
                           showToast({
@@ -446,7 +479,9 @@ export default function TransmittalsPage() {
                             message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} — they can download the files and acknowledge receipt themselves.`,
                           });
                         }}
-                        title={portalLinkAvailable()
+                        title={!t.portalToken
+                          ? portalWithheldSentence(t.viewer?.portalWithheldReason ?? "restricted")
+                          : portalLinkAvailable()
                           ? "Copy the recipient's secure portal link — no account needed on their side"
                           : "No portal link: NEXT_PUBLIC_SITE_URL is not set — set it to the public site address and rebuild"}
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)] hover:brightness-95 transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
@@ -506,8 +541,10 @@ export default function TransmittalsPage() {
             await refresh();
             if (result.kind === "issued") {
               // TRX-10: the sheet is printed from the row the database wrote —
-              // portal token, as-sent snapshot and all.
-              void openTransmittalSheet(result.outcome.transmittal);
+              // portal token, as-sent snapshot and all — as the register serves
+              // it to this viewer (DIST-17, ruling 2: the portal link only for
+              // someone who may read every item; withheld, and said, otherwise).
+              void transmittalForViewer(result.outcome.transmittal).then((v) => openTransmittalSheet(v));
               showToast(issueToast(result.outcome));
             } else if (result.kind === "issue-failed") {
               showToast({ type: "error", title: "Saved as a draft — not issued", message: `${result.draft.number}: ${result.error}` });

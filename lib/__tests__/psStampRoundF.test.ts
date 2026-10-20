@@ -302,7 +302,8 @@ describe("TRX-14 / XEDGE-5 — the portal link is built on a configured origin o
     expect(page).not.toContain("this browser cannot build");
     expect(page).not.toContain("if this is a preview deploy the recipient cannot open it");
     // The Portal link button is not offered as an action that always fails.
-    expect(page).toContain("disabled={!portalLinkAvailable()}");
+    // (document-control P27, DIST-17: also held back where the register withheld the token from this viewer.)
+    expect(page).toContain("disabled={!portalLinkAvailable() || !t.portalToken}");
     expect(page).toContain('"No portal link: NEXT_PUBLIC_SITE_URL is not set — set it to the public site address and rebuild"');
     expect(page).toContain('message: "No portal link without a configured public address (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild."');
     // a copied link is always one built on the configured origin

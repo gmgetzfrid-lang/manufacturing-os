@@ -16,6 +16,7 @@
 
 import { searchDocuments, searchAssets, searchTickets, lookupTag } from "@/lib/search";
 import { supabase } from "@/lib/supabase";
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 
 export type GlobalHitKind = "document" | "ticket" | "project" | "asset" | "note" | "transmittal";
 
@@ -131,7 +132,8 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
         kind: "ticket",
         title: t.ticket_id ? `${t.ticket_id} · ${t.title}` : t.title,
         subtitle: t.requester_name || undefined,
-        badge: t.status ?? undefined,
+        // drafting-flow UI-7: the request's status as a person reads it.
+        badge: t.status ? ticketStatusLabel(t.status) : undefined,
         href: `/requests/${t.id}`,
       });
     }

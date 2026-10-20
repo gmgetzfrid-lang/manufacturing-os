@@ -15,6 +15,7 @@ import { Briefcase, AlertOctagon, FileSignature, Lock, Bell, Loader2, AlertTrian
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
@@ -541,7 +542,8 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
           <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:text-indigo-700 font-bold truncate flex-1">
             {t.title ?? "(untitled)"}
           </Link>
-          <span className="text-[10px] font-bold uppercase text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ?? "—"}</span>
+          {/* drafting-flow UI-7: the status a person reads, never the stored identifier. */}
+          <span className="text-[10px] font-bold text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ? ticketStatusLabel(t.status) : "—"}</span>
           <span className="text-[10px] text-[var(--color-text-muted)]"><Clock className="inline w-2.5 h-2.5 mr-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
         </li>
       ))}

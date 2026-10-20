@@ -200,7 +200,7 @@ app/api/share/file/route.ts:139 — `source: stamped ? "share_link" : "share_lin
 - **Severity:** MEDIUM
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/storage/download-url/route.ts:144-153`, `lib/storage.ts:118-154`
+- **Locations:** `app/api/storage/download-url/route.ts:41-45`, `app/api/storage/download-url/route.ts:120-134`, `lib/storage.ts:118-154`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified there is no clamp anywhere between parse and sign; SigV4's own 604800s maximum is the only bound, exactly the 7 days the finding claims. The ACL/visibility/deny checks above (lines 55-115) gate WHO may mint the URL at mint time, but they explicitly `catch { /* fail open */ }` and, more importantly, bind nothing to the resulting credential-free URL's lifetime.
 
 **Mechanism.** `const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");` — the value flows straight into `getSignedUrl(r2, command, { expiresIn })` with no upper bound and no validation. SigV4 permits up to 604800 seconds. The resulting URL is a bearer capability: it carries no session, is not tied to the requester, and cannot be revoked short of rotating the R2 credentials. Every authorization the route performs — active membership (:36-46), the private/hidden canDiscover gate (:64-90), the explicit deny-download rule (:91-111) — is evaluated exactly once, at issuance, and then has no further hold on the bytes. A non-numeric value yields NaN, which is passed through unvalidated.

@@ -25,6 +25,7 @@ import { loadRoutingContext, queuePool } from '@/lib/ticketRouting';
 import { unitOptionsFor, type UnitOption } from '@/lib/ticketCreate';
 import { loadCodebookUnitList } from '@/lib/ticketCreateClient';
 import { OUTCOME_LABEL, type TicketOutcome } from '@/lib/ticketOutcome';
+import { parseOutcomeReasons, outcomeChoiceGroups, decodeOutcomeChoice, type OutcomeReason } from '@/lib/ticketOutcomeReasons';
 import LibraryPicker from '@/components/requests/LibraryPicker';
 import SourceDriftBanner from '@/components/requests/SourceDriftBanner';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
@@ -156,7 +157,7 @@ const REVISION_REASONS = [
 interface ActionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (text: string, category?: string, outcome?: TicketOutcome) => void;
+  onSubmit: (text: string, category?: string, outcome?: TicketOutcome, outcomeReason?: string) => void;
   onRedline?: () => void;
   title: string;
   description: string;
@@ -168,13 +169,25 @@ interface ActionModalProps {
    *  must say HOW — one of the engine action's `outcomes` (lib/ticketOutcome.ts),
    *  chosen here and sent as `outcome`; the free text stays the comment. */
   outcomeOptions?: readonly TicketOutcome[];
+  /** GAP-13 / GAP-107 acceptance 1 (DF-P14): the workspace's own reasons
+   *  (lib/ticketOutcomeReasons.ts). None → the categories, exactly as before;
+   *  some → grouped under their categories (a category with none of its own
+   *  offered bare), and the chosen reason is sent beside its category. */
+  outcomeReasons?: readonly OutcomeReason[];
+  /** The reasons could not be read: the categories are offered, and said
+   *  (the route still refuses a bare category the workspace keeps reasons
+   *  under, when it can read them — DF-P14 fix pass). */
+  outcomeReasonsUnreadable?: boolean;
 }
 
-const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description, isDestructive, isLoading, defaultValue, showCategorySelection, outcomeOptions }: ActionModalProps) => {
+const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description, isDestructive, isLoading, defaultValue, showCategorySelection, outcomeOptions, outcomeReasons, outcomeReasonsUnreadable }: ActionModalProps) => {
   const [comment, setComment] = useState('');
   const [category, setCategory] = useState(REVISION_REASONS[0]);
-  const [outcome, setOutcome] = useState<TicketOutcome | ''>('');
+  // The select's value: a category, or a configured reason ("reason:<id>").
+  const [outcome, setOutcome] = useState<string>('');
   const needsOutcome = !!outcomeOptions && outcomeOptions.length > 0;
+  const outcomeChoices = outcomeChoiceGroups(outcomeOptions ?? [], outcomeReasons ?? []);
+  const chosen = outcome ? decodeOutcomeChoice(outcome, outcomeChoices.groups) : null;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -205,13 +218,22 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
               <select
                 data-testid="outcome-picker"
                 value={outcome}
-                onChange={(e) => setOutcome(e.target.value as TicketOutcome | '')}
+                onChange={(e) => setOutcome(e.target.value)}
                 className="w-full p-2.5 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface-2)] focus:ring-2 focus:ring-orange-500 outline-none"
               >
                 <option value="">Choose one…</option>
-                {outcomeOptions!.map((o) => <option key={o} value={o}>{OUTCOME_LABEL[o]}</option>)}
+                {outcomeChoices.grouped
+                  ? outcomeChoices.groups.map((g) => (
+                      <optgroup key={g.outcome} label={g.label}>
+                        {g.choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                      </optgroup>
+                    ))
+                  : outcomeOptions!.map((o) => <option key={o} value={o}>{OUTCOME_LABEL[o]}</option>)}
               </select>
               <p className="text-[10px] text-[var(--color-text-muted)] mt-1">Recorded on the request and counted in Admin → Analytics (&ldquo;How Requests Ended&rdquo;). Your reason below stays in the thread.</p>
+              {outcomeReasonsUnreadable && (
+                <p data-testid="outcome-reasons-unreadable" className="text-[10px] text-amber-700 mt-1">This workspace&rsquo;s own reasons could not be read, so only the categories are offered. If it keeps reasons under the one you choose, the request is refused and says so &mdash; reload and choose one of them.</p>
+              )}
             </div>
           )}
           {showCategorySelection && (
@@ -257,7 +279,7 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
             )}
             <div className="flex space-x-3 ml-auto">
               <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors" disabled={isLoading}>Cancel</button>
-              <button onClick={() => onSubmit(comment, showCategorySelection ? category : undefined, outcome || undefined)} disabled={!comment.trim() || isLoading || (needsOutcome && !outcome)} className={`px-6 py-2 text-sm font-bold text-white rounded-lg shadow-sm transition-all flex items-center ${isDestructive ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-300' : 'bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400'}`}>
+              <button onClick={() => onSubmit(comment, showCategorySelection ? category : undefined, chosen?.outcome, chosen?.reasonId ?? undefined)} disabled={!comment.trim() || isLoading || (needsOutcome && !chosen)} className={`px-6 py-2 text-sm font-bold text-white rounded-lg shadow-sm transition-all flex items-center ${isDestructive ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-300' : 'bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400'}`}>
                 {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Confirm
               </button>
             </div>
@@ -956,6 +978,11 @@ export default function TicketDetailView() {
   const [unitListState, setUnitListState] = useState<'loading' | 'ready' | 'unreadable'>('loading');
   // PROJ-9: the request form's custom categories, to label the answers.
   const [customCategoryConfig, setCustomCategoryConfig] = useState<CustomCategoryConfig[]>([]);
+  // GAP-13 / GAP-107 (DF-P14): the workspace's own reasons for ending a
+  // request (the drafting configuration's `outcomeReasons`); none → the
+  // categories, as before. Unreadable → the categories, said in the dialog.
+  const [outcomeReasons, setOutcomeReasons] = useState<OutcomeReason[]>([]);
+  const [outcomeReasonsUnreadable, setOutcomeReasonsUnreadable] = useState(false);
   // Separation-of-duties binds at >= 3 active members, and close-without-review
   // is a property of the configured request type — both fetched here so the
   // buttons match the workflow-action route's evaluation of the same context.
@@ -1001,6 +1028,8 @@ export default function TicketDetailView() {
         setEngineeringFirstTypes(flaggedRequestTypes(cfgRow?.data, 'engineeringFirst'));
         const cfg = (cfgRow?.data ?? null) as OrgDraftingSettings | null;
         setCustomCategoryConfig(Array.isArray(cfg?.customCategories) ? cfg!.customCategories! : []);
+        setOutcomeReasons(cfgErr ? [] : parseOutcomeReasons(cfgRow?.data));
+        setOutcomeReasonsUnreadable(!!cfgErr);
         // DCW-7: the list the route checks a triage unit against — the saved
         // units, else the Site Codebook's. A list that cannot be read offers
         // no unit (the route would 503 an unchecked one).
@@ -1551,6 +1580,7 @@ export default function TicketDetailView() {
     engineerData?: {id: string, name: string, email: string},
     triage?: { libraryId?: string; unit?: string },
     outcome?: TicketOutcome,
+    outcomeReason?: string,
   ) => {
     if (!ticket) return;
     // SM-13: Issue Final carries a file typed Final, or nothing is sent.
@@ -1633,6 +1663,8 @@ export default function TicketDetailView() {
           ...(triage?.unit ? { unit: triage.unit } : {}),
           // LEAK-9: how the request ended (cancel_request).
           ...(outcome ? { outcome } : {}),
+          // GAP-13 / GAP-107 (DF-P14): the workspace's own reason, beside its category.
+          ...(outcome && outcomeReason ? { outcomeReason } : {}),
         }),
       });
       let res = await send();
@@ -1995,7 +2027,9 @@ export default function TicketDetailView() {
         isDestructive={pendingAction?.variant === 'destructive' || pendingAction?.action === 'request_revision'} 
         showCategorySelection={pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject'}
         outcomeOptions={pendingAction?.requiresOutcome ? pendingAction.outcomes : undefined}
-        onSubmit={(comment, category, outcome) => pendingAction && executeWorkflowAction(pendingAction, comment, undefined, undefined, category, undefined, undefined, outcome)}
+        outcomeReasons={outcomeReasons}
+        outcomeReasonsUnreadable={outcomeReasonsUnreadable}
+        onSubmit={(comment, category, outcome, outcomeReason) => pendingAction && executeWorkflowAction(pendingAction, comment, undefined, undefined, category, undefined, undefined, outcome, outcomeReason)}
         isLoading={!!actionLoading} 
         defaultValue={preFilledComment}
         onRedline={

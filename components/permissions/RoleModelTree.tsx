@@ -51,7 +51,7 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
         ["Administration", ["Audit log, operational scope, hold release, equipment admin"]],
       ]},
       { role: "DraftingSupervisor", summary: "The drafting queue router.", perms: [
-        ["Requests (tickets)", ["Assign drafters at PENDING_ASSIGNMENT (their one special power)", "Default routing target for new assignment/IFC work"]],
+        ["Requests (tickets)", ["Assign drafters at the Awaiting drafter stage (their one special power)", "Default routing target for new assignment/IFC work"]],
       ]},
     ],
   },

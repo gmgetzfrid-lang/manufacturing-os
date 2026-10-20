@@ -211,6 +211,7 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "punch_items_void_rail()",
   "quality_records_delete_rail()",
   "quality_row_org_matches_project()",
+  "record_document_share_created()", // 20261227 (DACL-4 c3, document-control P27)
   "record_document_status_issue()",
   "record_milestone_scope_on_delete()",
   "record_work_package_repin()",

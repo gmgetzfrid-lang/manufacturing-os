@@ -23,6 +23,20 @@
 //   * the receipt is written once, by the recipient portal or the receipt
 //     route (both server-side), never by a member session.
 //
+// Who reads what (DIST-17, document-control P27; the integrator's rulings
+// under DEC-90): the register is served by the server
+// (app/api/transmittal/register → redactTransmittalForViewer), never by a
+// browser SELECT. A transmittal's items are shown only to a member the
+// document read predicate (lib/permissions canReadNode, through
+// lib/knowledgeAccess readableControlledDocIds — the I-12 predicate) lets
+// read each item, to its sender, and to controllers; anyone else sees that
+// the transmittal exists and its non-identifying fields, each unreadable
+// item as "Restricted document" (never its number, title or revision), and
+// no subject or notes (free text that may name it). The portal token — the
+// link and QR the cover sheet prints — is handed only to someone who may
+// read EVERY item; otherwise the sheet prints without it and says why. The
+// REST read of the row is not narrowed here (DIST-18).
+//
 // The data layer is resilient: if the `transmittals` table hasn't been
 // migrated yet, calls throw a friendly "run the migration" message instead of
 // a raw Postgres error (same pattern as the resilient library fetch). Every
@@ -91,6 +105,26 @@ export interface TransmittalItem {
   fileSize?: number | null;
   statusAsSent?: string | null;
   effectiveDate?: string | null;
+  /** DIST-17: withheld from this viewer — the document read predicate does
+   *  not let them read it. Shown as RESTRICTED_DOCUMENT_LABEL; the number,
+   *  title, revision, pinned version and as-sent facts are not carried. */
+  restricted?: boolean;
+}
+
+/** DIST-17: what the register decided for the signed-in viewer of one
+ *  transmittal (set only by the server — app/api/transmittal/register). */
+export interface TransmittalViewerView {
+  /** Items shown to this viewer as "Restricted document" (0 for its sender
+   *  and controllers, and when every item is readable). */
+  restrictedItems: number;
+  /** A portal token exists but was not handed to this viewer. */
+  portalWithheld: boolean;
+  /** Why: "restricted" — they may not read every item (ruling 2);
+   *  "unchecked" — their access could not be checked just now. */
+  portalWithheldReason: "restricted" | "unchecked" | null;
+  /** The document read decision could not be computed (a read failed), so
+   *  every item not the viewer's own to see was withheld. */
+  accessUnchecked: boolean;
 }
 
 /** TRX-13: what the server saw when the receipt was recorded. A portal
@@ -137,6 +171,9 @@ export interface Transmittal {
   portalDownloadCount?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  /** DIST-17: present on a row the register route served — what it withheld
+   *  from this viewer. Absent on a row read any other way. */
+  viewer?: TransmittalViewerView;
 }
 
 // ─── Pure helpers (unit-tested; no I/O) ─────────────────────────────────────
@@ -278,14 +315,83 @@ export function mayDeleteDraft(
 /** TRX-4: the state of the portal LINK, independent of the record's status. */
 export type PortalLinkState = "none" | "live" | "revoked" | "expired" | "voided";
 export function portalLinkState(
-  t: Pick<Transmittal, "status" | "portalToken" | "portalRevokedAt" | "portalExpiresAt">,
+  t: Pick<Transmittal, "status" | "portalToken" | "portalRevokedAt" | "portalExpiresAt" | "viewer">,
   now: number = Date.now(),
 ): PortalLinkState {
-  if (!t.portalToken) return "none";
+  // DIST-17: a token the register withheld from this viewer still has its
+  // lifecycle — revoke / expiry / void are drawn as for anyone.
+  if (!t.portalToken && !t.viewer?.portalWithheld) return "none";
   if (t.status === "voided") return "voided";
   if (t.portalRevokedAt) return "revoked";
   if (t.portalExpiresAt && Date.parse(t.portalExpiresAt) <= now) return "expired";
   return "live";
+}
+
+/** DIST-17: how a restricted item is named to a viewer who may not read it. */
+export const RESTRICTED_DOCUMENT_LABEL = "Restricted document";
+
+/** DIST-17: an item as a viewer who may not read its document sees it — the
+ *  opaque document id (so the register's per-library authority affordances,
+ *  read from the viewer's own documents read, are drawn exactly as before)
+ *  and nothing that names or identifies the revision. */
+function restrictedItem(it: TransmittalItem): TransmittalItem {
+  return { documentId: it.documentId, number: RESTRICTED_DOCUMENT_LABEL, title: null, rev: null, versionId: null, restricted: true };
+}
+
+/** DIST-17 (the integrator's rulings 1 and 2 under DEC-90): what the
+ *  register shows ONE viewer of a transmittal. Pure; the register route
+ *  (app/api/transmittal/register) runs it on every row it serves.
+ *   - The sender (created_by) and controllers (by the role collection —
+ *     DEC-43) see every item as stored.
+ *   - Anyone else sees an item only when `readable` (the document read
+ *     predicate's answer — lib/knowledgeAccess readableControlledDocIds over
+ *     lib/permissions canReadNode, the I-12 predicate) holds its document;
+ *     every other item reads "Restricted document", and the transmittal's
+ *     subject, notes and the recipient's receipt note — free text that may
+ *     name it — are not shown. The transmittal's existence, number, status,
+ *     purpose, recipient, dates, item count and portal usage stay visible.
+ *   - The portal token (the cover sheet's link and QR, the register's copy
+ *     button) is handed only to someone who may read EVERY item: a
+ *     controller, or anyone `readable` covers in full — the sender included
+ *     only on that condition. Otherwise it is withheld and `viewer` says why.
+ *   - `readable` null — the decision could not be made (a read failed): fail
+ *     closed; nobody but the sender and controllers sees an item, and nobody
+ *     but a controller is handed the token. */
+export function redactTransmittalForViewer(
+  t: Transmittal,
+  who: { uid: string; isController: boolean },
+  readable: ReadonlySet<string> | null,
+): Transmittal {
+  const seesAll = who.isController || (!!t.createdBy && t.createdBy === who.uid);
+  const mayRead = (it: TransmittalItem) =>
+    who.isController || (readable !== null && !!it.documentId && readable.has(it.documentId));
+  const mayReadEvery = (t.items ?? []).every(mayRead);
+  const items = seesAll ? t.items : (t.items ?? []).map((it) => (mayRead(it) ? it : restrictedItem(it)));
+  const restrictedItems = items.filter((it) => it.restricted).length;
+  const portalWithheld = !!t.portalToken && !mayReadEvery;
+  const hideFreeText = restrictedItems > 0;
+  return {
+    ...t,
+    items,
+    subject: hideFreeText ? null : t.subject,
+    notes: hideFreeText ? null : t.notes,
+    acknowledgedMeta: hideFreeText && t.acknowledgedMeta ? { ...t.acknowledgedMeta, note: null } : t.acknowledgedMeta,
+    portalToken: portalWithheld ? null : t.portalToken,
+    viewer: {
+      restrictedItems,
+      portalWithheld,
+      portalWithheldReason: portalWithheld ? (readable === null ? "unchecked" : "restricted") : null,
+      accessUnchecked: readable === null && !who.isController,
+    },
+  };
+}
+
+/** DIST-17: the sentence the cover sheet (and the register's copy button)
+ *  gives for a portal link it does not show this viewer. */
+export function portalWithheldSentence(reason: TransmittalViewerView["portalWithheldReason"]): string {
+  return reason === "unchecked"
+    ? "The recipient portal link is not shown: your access to the documents on this transmittal could not be checked just now. Reopen it from the register to try again."
+    : "The recipient portal link is not shown: you may not read every document on this transmittal. Its sender (if they can read them all) or a Document Controller can print or copy it.";
 }
 
 /** TRX-4: the portal's refusal for a transmittals ROW (the route reads raw
@@ -377,7 +483,17 @@ export function receiptEvidence(t: Pick<Transmittal, "acknowledgedByName" | "ack
  */
 export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: string | null; qrDataUrl?: string | null }): string {
   const showAsSent = (t.items ?? []).some((it) => it.statusAsSent || it.effectiveDate || it.fileHash || it.fileSize != null);
-  const itemRows = (t.items ?? []).map((it, i) => `
+  // DIST-17: an item the register withheld from this viewer is printed as
+  // "Restricted document" — never its number, title or revision.
+  const itemRows = (t.items ?? []).map((it, i) => it.restricted ? `
+    <tr class="restricted">
+      <td class="muted">${i + 1}</td>
+      <td class="muted"><i>${esc(RESTRICTED_DOCUMENT_LABEL)}</i></td>
+      <td class="muted">You may not read this document</td>
+      <td class="mono">—</td>${showAsSent ? `
+      <td>—</td>
+      <td class="mono">—</td>` : ""}
+    </tr>` : `
     <tr>
       <td class="muted">${i + 1}</td>
       <td class="mono"><b>${esc(it.number)}</b></td>
@@ -386,6 +502,15 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
       <td>${esc(itemAsSentLabel(it) || "—")}</td>
       <td class="mono">${esc(hashPrefix(it.fileHash) || "—")}${fileSizeLabel(it.fileSize) ? `<div class="muted">${esc(fileSizeLabel(it.fileSize))}</div>` : ""}</td>` : ""}
     </tr>`).join("");
+  const restrictedCount = t.viewer?.restrictedItems ?? (t.items ?? []).filter((it) => it.restricted).length;
+  const restrictedNote = restrictedCount > 0
+    ? `<div class="notice">${restrictedCount} of ${t.items?.length ?? 0} document${(t.items?.length ?? 0) === 1 ? "" : "s"} on this transmittal ${restrictedCount === 1 ? "is" : "are"} restricted for you and shown as &ldquo;${esc(RESTRICTED_DOCUMENT_LABEL)}&rdquo;; its subject and notes are not shown.${t.viewer?.accessUnchecked ? " Your access could not be checked just now — reopen it from the register to try again." : ""}</div>`
+    : "";
+  // DIST-17 (ruling 2): a live link the register did not hand this viewer is
+  // not printed, and the sheet says why.
+  const portalWithheldNote = !opts?.portalUrl && t.viewer?.portalWithheld && portalLinkState(t) === "live"
+    ? `<div class="notice">${esc(portalWithheldSentence(t.viewer.portalWithheldReason))}</div>`
+    : "";
 
   const meta = (label: string, value: string) =>
     `<tr><td class="lbl">${esc(label)}</td><td>${value}</td></tr>`;
@@ -413,6 +538,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
   .notes { background: #fafafa; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; color: #334155; white-space: pre-wrap; }
   .sign { display: flex; gap: 32px; margin-top: 28px; } .sigbox { flex: 1; } .sigline { border-bottom: 1px solid #94a3b8; height: 36px; } .siglbl { font-size: 10px; color: #64748b; margin-top: 4px; }
   .ack { margin-top: 24px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-weight: 700; padding: 10px 12px; border-radius: 8px; }
+  .notice { margin-top: 16px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 8px 12px; border-radius: 8px; font-size: 11px; }
   .toolbar { position: sticky; top: 0; background: #fff; padding-bottom: 10px; } .btn { background: #ea580c; color: #fff; border: 0; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
   .footer { margin-top: 28px; color: #94a3b8; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
   @media print { .toolbar { display: none; } body { padding: 0; } }
@@ -451,6 +577,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
   </div>
 
   <h2>Documents transmitted (${t.items?.length ?? 0})</h2>
+  ${restrictedNote}
   ${(t.items?.length ?? 0) === 0
     ? '<div class="muted" style="font-style:italic;padding:8px 0">No documents on this transmittal.</div>'
     : `<table>
@@ -470,7 +597,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
       <div class="mono" style="font-size:10px;color:#334155;margin-top:4px;word-break:break-all">${esc(opts.portalUrl)}</div>
       <div style="font-size:10px;color:#94a3b8;margin-top:4px">Scan or open the link to download the transmitted files at their as-issued revisions and record receipt. The link is unique to this transmittal.${t.portalExpiresAt ? ` It stops working on ${esc(new Date(t.portalExpiresAt).toLocaleDateString())}.` : ""}</div>
     </div>
-  </div>` : ""}
+  </div>` : portalWithheldNote}
 
   <div class="footer">Transmittal ${esc(t.number)} · Generated ${new Date().toLocaleString()} · ManufacturingOS · This is the controlled record of the documents and revisions issued above.${showAsSent ? " Each SHA-256 prefix (and size) identifies the exact file issued." : ""}</div>
 </body></html>`;
@@ -812,15 +939,56 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
   throw new Error(lastErr?.message || "Failed to create transmittal");
 }
 
+/** DIST-17: the register, as the server decided it for the signed-in
+ *  viewer (app/api/transmittal/register — redactTransmittalForViewer on
+ *  every row). Never a browser SELECT of the rows: that read hands every
+ *  member every item and the portal token (the database half, DIST-18).
+ *  `id` asks for one transmittal. The same 1,000 newest rows, newest first,
+ *  as the register read before. A refusal throws its sentence; a database
+ *  without the table answers the migration hint, as before. */
+async function readRegister(orgId: string, id?: string): Promise<Transmittal[]> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not signed in — sign in again to load the transmittal register.");
+  const qs = new URLSearchParams({ orgId });
+  if (id) qs.set("id", id);
+  const res = await fetch(`/api/transmittal/register?${qs.toString()}`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  const body = (await res.json().catch(() => ({}))) as { transmittals?: Transmittal[]; error?: string; missingTable?: boolean };
+  if (!res.ok) {
+    if (body.missingTable) throw new Error(MIGRATION_HINT);
+    throw new Error(body.error || `The transmittal register could not be loaded (HTTP ${res.status}).`);
+  }
+  return Array.isArray(body.transmittals) ? body.transmittals : [];
+}
+
 export async function listTransmittals(orgId: string): Promise<Transmittal[]> {
-  const { data, error } = await supabase
-    .from("transmittals")
-    .select("*")
-    .eq("org_id", orgId)
-    .order("seq", { ascending: false })
-    .limit(1000);
-  if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
-  return (data ?? []).map((r) => rowToTransmittal(r as Record<string, unknown>));
+  return readRegister(orgId);
+}
+
+/** DIST-17 (ruling 2): the transmittal as the register serves it to this
+ *  viewer — used for the cover sheet printed right after an issue, which
+ *  must hand out the portal link only to someone who may read every item.
+ *  A register that cannot be asked answers the row with its token withheld
+ *  ("unchecked" — the sheet prints without the link and says why), never
+ *  the row as the browser read it. */
+export async function transmittalForViewer(t: Transmittal): Promise<Transmittal> {
+  try {
+    const [row] = await readRegister(t.orgId, t.id);
+    if (row) return row;
+  } catch (e) {
+    console.warn("[transmittals] the register could not decide this viewer's cover sheet — the portal link is withheld", (e as Error)?.message);
+  }
+  return {
+    ...t,
+    portalToken: null,
+    viewer: {
+      restrictedItems: 0,
+      portalWithheld: !!t.portalToken,
+      portalWithheldReason: t.portalToken ? "unchecked" : null,
+      accessUnchecked: true,
+    },
+  };
 }
 
 export async function getTransmittal(id: string): Promise<Transmittal | null> {

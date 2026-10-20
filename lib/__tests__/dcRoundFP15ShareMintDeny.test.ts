@@ -168,14 +168,16 @@ describe("SHR-14 dw3 — createShareLink says the deny when the policy refuses f
     const made = await createShareLink({ ...input, expiresInDays: 7 });
     expect(made.id).toBe("new-share");
     expect(state.inserts).toHaveLength(1);
-    expect(state.rpcCalls).toEqual([]);
+    // document-control P27 (DACL-4 c3): the door asks whether the database
+    // records the mint (20261227) — that probe aside, no predicate call.
+    expect(state.rpcCalls.filter((c) => c.fn !== "document_share_creation_recorded_by_database")).toEqual([]);
     expect(state.audits.map((a) => a.action)).toEqual(["SHARE_LINK_CREATED"]);
   });
   it("a policy refusal the predicate attributes to a download deny names it", async () => {
     state.insertError = POLICY_REFUSAL;
     state.rpc.user_download_denied = { data: true, error: null };
     await expect(createShareLink(input)).rejects.toThrow(`This link was not created. ${SHARE_DOWNLOAD_DENIED}`);
-    expect(state.rpcCalls).toEqual([{ fn: "user_download_denied", args: { p_acl_index: ACL, p_uid: "u1", p_org: "orgA" } }]);
+    expect(state.rpcCalls.filter((c) => c.fn !== "document_share_creation_recorded_by_database")).toEqual([{ fn: "user_download_denied", args: { p_acl_index: ACL, p_uid: "u1", p_org: "orgA" } }]);
     expect(state.audits).toEqual([]);
   });
   it("any other policy refusal (the tier, the predicate absent or failing, the document unreadable) keeps the general sentence", async () => {

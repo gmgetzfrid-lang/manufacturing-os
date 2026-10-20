@@ -23,8 +23,10 @@ import {
 } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
 import { isTerminalTicketStatus } from '@/lib/ticketShed';
+import { ticketStatusLabel } from '@/lib/ticketStatusLabels';
 import { summarizeOutcomes } from '@/lib/ticketOutcome';
-import RequestOutcomes from '@/components/requests/RequestOutcomes';
+import RequestOutcomes, { reasonBreakdown } from '@/components/requests/RequestOutcomes';
+import { parseOutcomeReasons, type OutcomeReason } from '@/lib/ticketOutcomeReasons';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import UserAvatar from '@/components/ui/UserAvatar';
 
@@ -319,6 +321,47 @@ export default function AnalyticsPage() {
     [tickets],
   );
 
+  // roles-and-permissions GAP-13 acceptance 2 (drafting-flow DF-P16; the
+  // integrator's ruling under DEC-90): under each outcome, a count per reason
+  // the workspace keeps (the 'drafting' configuration's `outcomeReasons`,
+  // lib/ticketOutcomeReasons.ts) read from each ended request's
+  // `metadata.outcome_reason`. Read-only; the outcome-level numbers above are
+  // unchanged. A workspace that keeps no reasons and recorded none sees the
+  // panel exactly as before; a list that cannot be read is said, and the
+  // recorded reasons are named in their stored words.
+  // DF-P16 fix pass: the list is held with the workspace it was read for and
+  // is null until that read settles, so "not read yet" is never taken for
+  // "nothing configured" (every recorded reason "no longer in the list"), and
+  // after a workspace switch the previous workspace's list is never applied —
+  // until it lands the panel shows no breakdown.
+  const [outcomeReasonList, setOutcomeReasonList] = useState<{ orgId: string; reasons: OutcomeReason[]; unread: boolean } | null>(null);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('org_configurations')
+          .select('data')
+          .eq('org_id', activeOrgId)
+          .eq('key', 'drafting')
+          .maybeSingle();
+        if (!alive) return;
+        if (error) { setOutcomeReasonList({ orgId: activeOrgId, reasons: [], unread: true }); return; }
+        setOutcomeReasonList({ orgId: activeOrgId, reasons: parseOutcomeReasons((data as { data?: unknown } | null)?.data), unread: false });
+      } catch {
+        if (alive) setOutcomeReasonList({ orgId: activeOrgId, reasons: [], unread: true });
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId]);
+  const outcomeReasons = useMemo(
+    () => (outcomeReasonList && outcomeReasonList.orgId === activeOrgId
+      ? reasonBreakdown(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, metadata: (t.metadata as Record<string, unknown> | null | undefined) ?? null })), outcomeReasonList.reasons, outcomeReasonList.unread)
+      : null),
+    [tickets, outcomeReasonList, activeOrgId],
+  );
+
   // --- USER PROFILE COMPUTATION ---
   const userProfile = useMemo(() => {
     if (!selectedUser) return null;
@@ -513,7 +556,7 @@ export default function AnalyticsPage() {
                               <div className="min-w-0">
                                 <div className="flex items-center mb-1">
                                   <span className="text-xs font-mono font-bold text-[var(--color-text-muted)] mr-2">{t.ticketId}</span>
-                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' : 'bg-green-100 text-green-700 border-green-200'}`}>{t.status}</span>
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' : 'bg-green-100 text-green-700 border-green-200'}`}>{ticketStatusLabel(t.status)}</span>
                                 </div>
                                 <p className="text-sm font-bold text-[var(--color-text)] truncate pr-4">{t.title}</p>
                               </div>
@@ -594,7 +637,7 @@ export default function AnalyticsPage() {
       {/* LEAK ACCOUNTING (LEAK-9 / GAP-107): how requests ended, per request type
           (components/requests/RequestOutcomes.tsx — the rate is withheld, never
           shown as 0 %, while no cancel names a category; fix pass 3) */}
-      <RequestOutcomes summary={outcomes} />
+      <RequestOutcomes summary={outcomes} reasons={outcomeReasons} />
 
       {/* SECTION 2: CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

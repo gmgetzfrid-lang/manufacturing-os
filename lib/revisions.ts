@@ -910,6 +910,15 @@ export async function canPutFirstRevisionInContainer(opts: {
  * controller issuing unreviewed in a require-mode library: that the required
  * sign-off was not collected, and by whom) and the actor. A refused audit
  * write is returned (`creationAuditError`), never dropped.
+ *
+ * drafting-flow DCW-4 (DF-P12): `relatedTicketId` (optional) names the
+ * drafting ticket whose deliverable this NEW document is — "Publish as a new
+ * document in <library>". It is checked to be a ticket of this workspace
+ * BEFORE anything is written, and recorded on the first version
+ * (document_versions.related_ticket_id, as revUpDocument records a revision's
+ * — GAP-6 / DEC-22: provenance only, never a review waiver, DEC-23) and on the
+ * DOCUMENT_CREATED row. Absent, nothing about the creation changes: the
+ * insert payloads and the audit details are exactly as before.
  */
 export async function createDocumentWithFile(input: {
   orgId: string;
@@ -926,6 +935,9 @@ export async function createDocumentWithFile(input: {
   /** GAP-314: false when the caller decodes its documents' unit codes itself,
    *  in one batched call (a door that creates many — the template filing). */
   decodeUnitCode?: boolean;
+  /** drafting-flow DCW-4: the drafting ticket this new document delivers
+   *  (provenance only — see above). */
+  relatedTicketId?: string | null;
 }): Promise<{ documentId: string; status: CreationStatus; reviewPolicy: string | null; creationAuditError: string | null }> {
   const now = new Date().toISOString();
   const docNum = input.documentNumber.trim();
@@ -947,6 +959,18 @@ export async function createDocumentWithFile(input: {
     throw new Error(input.status === "Issued"
       ? "You don't have authority to issue controlled documents in this library — ask an Admin or Doc Control, or a publisher on this library."
       : "You don't have authority to add documents to this library (attaching a new document's file takes publish authority here, or ownership of the folder / library) — ask an Admin or Doc Control. Nothing was created.");
+  }
+  // DCW-4: the deliverable's provenance names a ticket of THIS workspace, or
+  // nothing is written (a read that cannot be made refuses too).
+  const relatedTicketId = input.relatedTicketId ?? null;
+  if (relatedTicketId !== null) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(relatedTicketId)) {
+      throw new Error("The drafting request this document delivers is not identified correctly. Nothing was created.");
+    }
+    const { data: tk, error: tkErr } = await supabase
+      .from("tickets").select("id").eq("id", relatedTicketId).eq("org_id", input.orgId).maybeSingle();
+    if (tkErr) throw new Error(`Couldn't confirm the drafting request this document delivers (${tkErr.message}). Nothing was created.`);
+    if (!tk) throw new Error("The drafting request this document delivers is not one of this workspace's. Nothing was created.");
   }
   let reviewPolicy: string | null = null;
   let reviewPolicyMode: string | null = null;
@@ -1007,6 +1031,8 @@ export async function createDocumentWithFile(input: {
       created_at: now,
       released_at: now,
       file_hash: fileHash,
+      // DCW-4: provenance only (DEC-22 / DEC-23), and only when given.
+      ...(relatedTicketId ? { related_ticket_id: relatedTicketId } : {}),
     })
     .select("id")
     .single();
@@ -1039,6 +1065,7 @@ export async function createDocumentWithFile(input: {
       reviewPolicyMode,
       reviewPolicy,
       fileHash,
+      ...(relatedTicketId ? { relatedTicketId } : {}),
     },
   });
   if (input.status === "Issued") {
