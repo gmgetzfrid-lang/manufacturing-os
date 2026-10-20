@@ -663,7 +663,7 @@ describe("TRX-8 / TRX-3 / TRX-13 — the cover sheet and evidence carry the as-s
     const legacy = rowToTransmittal({ id: "t", org_id: "o", seq: 1, number: "TR-0001", status: "issued" });
     expect(legacy.portalOpenCount).toBeNull();
     expect(legacy.portalDownloadCount).toBeNull();
-    expect(src("app/(protected)/transmittals/page.tsx")).toContain('t.portalToken && t.status !== "draft" && t.portalOpenCount != null && (');
+    expect(src("app/(protected)/transmittals/page.tsx")).toContain('(t.portalToken || t.viewer?.portalWithheld) && t.status !== "draft" && t.portalOpenCount != null && ('); // DIST-17 (P27): also on a row whose token the register withheld
   });
   it("the project evidence pack prints the hash prefix, the status as sent and the receipt's evidence", async () => {
     const { renderProjectEvidenceHtml } = await import("@/lib/evidencePack");
