@@ -423,8 +423,17 @@ const CITED_INPUT_LINE = new RegExp(
   "i",
 );
 /** A standalone value — never part of an identifier ("B31.3", "V-101",
- *  "§345.4.2", "2026-10-01", "Table A-1") nor a citation marker ("[2]"). */
-const VALUE_SRC = "(?<![\\w§#./\\[-])(" + CALC_NUM + ")(" + CALC_UNIT + ")(?![\\w/\\]]|[.-]\\d)";
+ *  "§345.4.2", "2026-10-01", "Table A-1") nor a citation marker ("[2]").
+ *  (PR-13, intelligence I-33) The second end of a hyphen range whose first
+ *  end is a standalone number ("1,600-2,288 kPa") is a value read whole, and
+ *  a digit run after "digit," never starts one, nor does a value stop just
+ *  before ",digit": until I-33 the range's "288 kPa" was read alone, so a
+ *  withheld range end left its leading digits shown ("1,600-2,[result
+ *  withheld]"). A date or an identifier is still no range ("2026-10-01",
+ *  "V-101-2", "B16.5-2017"). */
+const VALUE_SRC =
+  "(?:(?<![\\w§#./\\[-]|\\d,)|(?<=(?<![\\w.,/-])\\d[\\d,]*(?:\\.\\d+)?-))(" + CALC_NUM + ")(?!,\\d)(" + CALC_UNIT +
+  ")(?![\\w/\\]]|[.-]\\d)";
 
 /** (Fix pass 3) A Unicode minus or en dash used as a SIGN ("MDMT: −20 °F"):
  *  before a digit, and not after a number, a ")" or a "]" (where it is the
@@ -730,6 +739,722 @@ export function withholdModelResults(answer: string, grounding?: string): { text
   if (withheld === 0) return { text: answer, withheld: 0 };
   const text = lines.join("\n");
   return { text: text.includes(RESULT_WITHHELD_NOTE) ? text : `${text}\n\n${RESULT_WITHHELD_NOTE}`, withheld };
+}
+
+// ── PR-13 (intelligence I-33; DEC-90 A17's later path): the deterministic
+//    calculation evaluator ──────────────────────────────────────────────────
+//
+// For each "**Substituted:**" line of an arithmetic answer the server reads
+// the substituted expression with a small hand-written recursive-descent
+// parser — numbers (decimal, "20,000", SI-grouped "20 000", "1.5e3"), units,
+// "+ − × ÷ ^", brackets and implicit multiplication between brackets — and
+// never eval, Function or a library that runs code. Every operand must bind
+// to a value one of the answer's OWN cited sources (the passage its [n]
+// names, and that page's indexed text when the page image was shown) or the
+// asker's own values (the question and the inputs box) holds, in a
+// compatible unit: an operand with its own citation binds only in that
+// source (or the asker's own values). A dimensionless factor binds to any
+// cited source that prints it (a formula's constant): the evaluator checks
+// the arithmetic and the units, not that the formula was transcribed right
+// — the formula and its citation stay on screen for the engineer. The
+// expression is evaluated with dimension checking (mass, length,
+// time; exact conversions between units of one dimension, "20 ksi" against
+// "285 psig"; gauge and absolute pressure never mixed; a temperature never
+// worked), and ONE line is added under the Substituted line carrying the
+// value, labelled COMPUTED_LABEL, in the unit of the first operand of the
+// result's dimension. Anything it cannot do — parse the whole expression,
+// bind an operand, reconcile a unit, a zero divisor, a non-finite result, an
+// ambiguous "a / b × c", a bracket nesting or a line past its bounds — adds
+// nothing, and the withholding stands. It never un-withholds a model number:
+// the model's own result on the line stays withheld (also after a
+// terminator the net does not read, "≅ 427.5 psig"), and where it differs
+// from the server's value by more than COMPUTED_TOLERANCE the answer says so
+// and that number is withheld wherever else it is written. A lookup, and
+// any answer with no Substituted line, is returned as the very same string.
+
+/** The label of the line that carries a value the server computed. */
+export const COMPUTED_LABEL = "Computed by the app from the cited inputs:";
+/** The relative tolerance within which the model's own result "agrees"
+ *  with the server's (0.5 %: a result rounded to three significant figures
+ *  agrees). It only decides whether the answer says they differ — the
+ *  model's number is withheld either way. */
+export const COMPUTED_TOLERANCE = 0.005;
+/** The line added under the computed line when the model's own result
+ *  differs from the server's by more than COMPUTED_TOLERANCE. */
+export const COMPUTED_DISAGREES_NOTE =
+  "! The AI's own result on that Substituted line differs from the app's value by more than half a percent — it " +
+  "stays withheld. Check each input against its cited page before you use the app's value.";
+/** Bounds: the characters of a Substituted line read, the bracket nesting,
+ *  the tokens of one expression and the Substituted lines evaluated. */
+const EVAL_MAX_LINE = 600;
+const EVAL_MAX_DEPTH = 12;
+const EVAL_MAX_TOKENS = 160;
+const EVAL_MAX_LINES = 20;
+/** How close a source's value must be to an operand to bind it (both read
+ *  in base units: the same number written in another unit binds). */
+const BIND_EPSILON = 1e-9;
+
+type Dim = readonly [number, number, number];
+type PressureRef = "" | "g" | "a";
+type UnitSpec = { dim: Dim; scale: number; ref: PressureRef; temp: boolean };
+const DIM_NONE: Dim = [0, 0, 0];
+const DIM_PRESSURE: Dim = [1, -1, -2];
+const DIM_LENGTH: Dim = [0, 1, 0];
+const DIM_MASS: Dim = [1, 0, 0];
+const DIM_FORCE: Dim = [1, 1, -2];
+const DIM_TIME: Dim = [0, 0, 1];
+const DIM_TORQUE: Dim = [1, 2, -2];
+const DIM_TEMP: Dim = [0, 0, 0];
+// Exact by definition: the international inch, pound and standard gravity.
+const PSI_PA = (0.45359237 * 9.80665) / (0.0254 * 0.0254);
+const LBF_N = 0.45359237 * 9.80665;
+type UnitDef = { dim: Dim; scale: number; ref?: PressureRef; temp?: true };
+const u = (dim: Dim, scale: number, ref?: PressureRef): UnitDef => ({ dim, scale, ref });
+const TEMP_UNIT: UnitDef = { dim: DIM_TEMP, scale: 1, temp: true };
+/** The units an operand may carry (keys lower-case). "lb" alone is left out
+ *  on purpose (mass or force?), and so is every unit not listed: an operand
+ *  in an unknown unit cannot be checked, so nothing is computed. */
+const UNIT_TABLE: Record<string, UnitDef> = {
+  pa: u(DIM_PRESSURE, 1), kpa: u(DIM_PRESSURE, 1e3), mpa: u(DIM_PRESSURE, 1e6), gpa: u(DIM_PRESSURE, 1e9),
+  bar: u(DIM_PRESSURE, 1e5), barg: u(DIM_PRESSURE, 1e5, "g"), bara: u(DIM_PRESSURE, 1e5, "a"),
+  mbar: u(DIM_PRESSURE, 100),
+  psi: u(DIM_PRESSURE, PSI_PA), psig: u(DIM_PRESSURE, PSI_PA, "g"), psia: u(DIM_PRESSURE, PSI_PA, "a"),
+  ksi: u(DIM_PRESSURE, 1000 * PSI_PA),
+  m: u(DIM_LENGTH, 1), mm: u(DIM_LENGTH, 1e-3), cm: u(DIM_LENGTH, 1e-2), "µm": u(DIM_LENGTH, 1e-6),
+  "μm": u(DIM_LENGTH, 1e-6), um: u(DIM_LENGTH, 1e-6),
+  in: u(DIM_LENGTH, 0.0254), inch: u(DIM_LENGTH, 0.0254), inches: u(DIM_LENGTH, 0.0254),
+  "\"": u(DIM_LENGTH, 0.0254), "″": u(DIM_LENGTH, 0.0254),
+  ft: u(DIM_LENGTH, 0.3048), feet: u(DIM_LENGTH, 0.3048), foot: u(DIM_LENGTH, 0.3048),
+  kg: u(DIM_MASS, 1), lbm: u(DIM_MASS, 0.45359237),
+  n: u(DIM_FORCE, 1), kn: u(DIM_FORCE, 1e3), lbf: u(DIM_FORCE, LBF_N), kip: u(DIM_FORCE, 1000 * LBF_N),
+  kips: u(DIM_FORCE, 1000 * LBF_N), kgf: u(DIM_FORCE, 9.80665),
+  "ft-lb": u(DIM_TORQUE, 0.3048 * LBF_N), "ft-lbs": u(DIM_TORQUE, 0.3048 * LBF_N),
+  "ft-lbf": u(DIM_TORQUE, 0.3048 * LBF_N), "ft·lb": u(DIM_TORQUE, 0.3048 * LBF_N),
+  "ft·lbf": u(DIM_TORQUE, 0.3048 * LBF_N), "lbf-ft": u(DIM_TORQUE, 0.3048 * LBF_N),
+  "lbf·ft": u(DIM_TORQUE, 0.3048 * LBF_N), "in-lb": u(DIM_TORQUE, 0.0254 * LBF_N),
+  "in-lbs": u(DIM_TORQUE, 0.0254 * LBF_N), "in-lbf": u(DIM_TORQUE, 0.0254 * LBF_N),
+  "lbf-in": u(DIM_TORQUE, 0.0254 * LBF_N), "n·m": u(DIM_TORQUE, 1), "n-m": u(DIM_TORQUE, 1),
+  "kn·m": u(DIM_TORQUE, 1e3), "kn-m": u(DIM_TORQUE, 1e3),
+  s: u(DIM_TIME, 1), sec: u(DIM_TIME, 1), min: u(DIM_TIME, 60), h: u(DIM_TIME, 3600), hr: u(DIM_TIME, 3600),
+  gpm: u([0, 3, -1], 3.785411784e-3 / 60),
+  "%": u(DIM_NONE, 0.01), percent: u(DIM_NONE, 0.01),
+  // Temperatures are read so a value in one is never taken for a plain
+  // number — and never worked: a temperature scale has an offset.
+  "°f": TEMP_UNIT, "°c": TEMP_UNIT, "°r": TEMP_UNIT, "° f": TEMP_UNIT, "° c": TEMP_UNIT, "°": TEMP_UNIT,
+  "deg f": TEMP_UNIT, "deg c": TEMP_UNIT, degf: TEMP_UNIT, degc: TEMP_UNIT, f: TEMP_UNIT, c: TEMP_UNIT, k: TEMP_UNIT,
+};
+/** Longest key first, so "psig" is never read as "psi" then "g". */
+const UNIT_KEYS = Object.keys(UNIT_TABLE).sort((a, b) => b.length - a.length);
+/** A one-letter unit is read only in its own case: "s", "m", "h" lower,
+ *  "N", "K", "F", "C" upper — so a formula's symbol after a number ("2 S",
+ *  "1.5 P", "2 M") is never taken for seconds or metres. */
+const ONE_LETTER_CASE: Record<string, string> = { s: "s", m: "m", h: "h", n: "N", k: "K", f: "F", c: "C" };
+
+const dimEq = (a: Dim, b: Dim): boolean => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+const dimOp = (a: Dim, b: Dim, k: number): Dim => [a[0] + k * b[0], a[1] + k * b[1], a[2] + k * b[2]];
+const dimPow = (a: Dim, k: number): Dim => [a[0] * k, a[1] * k, a[2] * k];
+
+/** One unit token at `i` (case-insensitive, with a "²" / "³" / "2" / "3"
+ *  power and a "(g)" / "(a)" / "(abs)" suffix on a pressure), or null. */
+function readUnitToken(s: string, i: number): { def: UnitSpec; end: number } | null {
+  const low = s.slice(i, i + 12).toLowerCase();
+  for (const key of UNIT_KEYS) {
+    if (!low.startsWith(key)) continue;
+    if (key in ONE_LETTER_CASE && s[i] !== ONE_LETTER_CASE[key]) continue;
+    let end = i + key.length;
+    // A unit is never the start of a longer word ("in" of "inspection").
+    if (/^[a-zµμ]/i.test(key.slice(-1)) && /[a-zµμ_]/i.test(s[end] ?? "")) continue;
+    const base = UNIT_TABLE[key];
+    let dim = base.dim;
+    let scale = base.scale;
+    const pow = /^(?:[²³]|\^?[23](?!\d|[.,]\d))/.exec(s.slice(end));
+    if (pow && !base.temp && !dimEq(base.dim, DIM_NONE)) {
+      const k = /[²2]/.test(pow[0]) ? 2 : 3;
+      dim = dimPow(dim, k);
+      scale = scale ** k;
+      end += pow[0].length;
+    } else if (/^\d/.test(s.slice(end))) {
+      continue;
+    }
+    let ref: PressureRef = base.ref ?? "";
+    const suffix = /^\s?\((g|a|abs|gauge|absolute)\)/i.exec(s.slice(end));
+    if (suffix && dimEq(dim, DIM_PRESSURE)) {
+      const r: PressureRef = /^g/i.test(suffix[1]) ? "g" : "a";
+      if (ref !== "" && ref !== r) return null;
+      ref = r;
+      end += suffix[0].length;
+    }
+    return { def: { dim, scale, ref, temp: base.temp === true }, end };
+  }
+  return null;
+}
+
+/** A unit after a value: one token, then up to two more joined by "/" or
+ *  "·" with no space ("lbf/in²", "N/mm²", "kg/m3", "kN·m"); a "/" that a
+ *  number follows is a division, never a unit ("psig/1.5"). */
+function readUnit(s: string, i: number): { def: UnitSpec; end: number } | null {
+  const lead = /^[ \t]?/.exec(s.slice(i))![0].length;
+  const at = i + lead;
+  // An inch mark sits right on its number ('10.75"').
+  if (lead > 0 && /^["″]/.test(s.slice(at))) return null;
+  const first = readUnitToken(s, at);
+  if (!first) return null;
+  let { def } = first;
+  let end = first.end;
+  for (let parts = 1; parts < 3; parts++) {
+    const sep = s[end];
+    if (sep !== "/" && sep !== "·" && sep !== "⋅") break;
+    const next = readUnitToken(s, end + 1);
+    if (!next || next.def.temp || def.temp) break;
+    const k = sep === "/" ? -1 : 1;
+    def = {
+      dim: dimOp(def.dim, next.def.dim, k),
+      scale: k === 1 ? def.scale * next.def.scale : def.scale / next.def.scale,
+      ref: def.ref || next.def.ref,
+      temp: false,
+    };
+    end = next.end;
+  }
+  return { def, end };
+}
+
+/** A number at `i`: "285", "20,000" (groups of exactly three), "1.5",
+ *  ".75", "1.5e3"; never a run another digit, ",digit" or ".digit" follows
+ *  ("1,5", "1,0000", "1.2.3" are not numbers). */
+const EVAL_NUMBER = /(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d{1,3})?|\.\d+/y;
+function readNumber(s: string, i: number): { value: number; end: number } | null {
+  EVAL_NUMBER.lastIndex = i;
+  const m = EVAL_NUMBER.exec(s);
+  if (!m) return null;
+  const end = i + m[0].length;
+  if (/^(?:\d|[.,]\d)/.test(s.slice(end))) return null;
+  const value = Number(m[0].replace(/,/g, ""));
+  return Number.isFinite(value) ? { value, end } : null;
+}
+
+type EvalToken =
+  | { t: "num"; value: number; unit: UnitSpec | null; unitText: string; text: string; cites: number[] }
+  | { t: "op"; op: "+" | "-" | "*" | "/" | "^" }
+  | { t: "("; } | { t: ")" };
+
+const MUL_GLYPHS = "×*·⋅∙✕✖⨯•∗";
+
+/** The tokens of one expression, or null when any character is left that
+ *  is not a number, a unit, an operator, a bracket, a citation or a space. */
+function tokenizeExpression(s: string): EvalToken[] | null {
+  const out: EvalToken[] = [];
+  let i = 0;
+  const prevEndsOperand = () => {
+    const p = out[out.length - 1];
+    return p !== undefined && (p.t === "num" || p.t === ")");
+  };
+  while (i < s.length) {
+    if (out.length > EVAL_MAX_TOKENS) return null;
+    const c = s[i];
+    if (/\s/.test(c)) { i++; continue; }
+    const cite = /^\[(\d{1,3})\]/.exec(s.slice(i));
+    if (cite) {
+      const p = out[out.length - 1];
+      if (!p || p.t !== "num") return null;
+      p.cites.push(Number(cite[1]));
+      i += cite[0].length;
+      continue;
+    }
+    if (/[\d.]/.test(c)) {
+      if (prevEndsOperand() && out[out.length - 1].t === "num") return null; // "2 3": no operator
+      const n = readNumber(s, i);
+      if (!n) return null;
+      const unit = readUnit(s, n.end);
+      const end = unit ? unit.end : n.end;
+      if (out[out.length - 1]?.t === ")") out.push({ t: "op", op: "*" }); // ")2": implicit
+      out.push({
+        t: "num", value: n.value, unit: unit ? unit.def : null,
+        unitText: unit ? s.slice(n.end, unit.end).trim() : "", text: s.slice(i, end).trim(), cites: [],
+      });
+      i = end;
+      continue;
+    }
+    if (c === "(") {
+      if (prevEndsOperand()) out.push({ t: "op", op: "*" }); // "1.5 (285 psig)", "(a)(b)"
+      out.push({ t: "(" });
+      i++;
+      continue;
+    }
+    if (c === ")") { out.push({ t: ")" }); i++; continue; }
+    if (c === "+") { out.push({ t: "op", op: "+" }); i++; continue; }
+    if (c === "-" || c === "−") {
+      // A hyphen between two digits with no space is a range ("1,600-2,288"),
+      // never a subtraction.
+      if (c === "-" && /\d/.test(s[i - 1] ?? "") && /\d/.test(s[i + 1] ?? "")) return null;
+      out.push({ t: "op", op: "-" });
+      i++;
+      continue;
+    }
+    if (MUL_GLYPHS.includes(c)) { out.push({ t: "op", op: "*" }); i++; continue; }
+    if ((c === "x" || c === "X") && prevEndsOperand() && /^[xX](?=\s*[\d(.])/.test(s.slice(i))) {
+      out.push({ t: "op", op: "*" });
+      i++;
+      continue;
+    }
+    if (c === "/" || c === "÷") { out.push({ t: "op", op: "/" }); i++; continue; }
+    if (c === "^") { out.push({ t: "op", op: "^" }); i++; continue; }
+    const word = /^(times|multiplied\s+by|divided\s+by|of)(?![a-z])/i.exec(s.slice(i));
+    if (word && prevEndsOperand()) {
+      const w = word[1].toLowerCase();
+      if (w === "of") {
+        // "90 % of 285 psig" — only after a percentage.
+        const p = out[out.length - 1];
+        if (p.t !== "num" || p.unit === null || p.unit.scale !== 0.01 || !dimEq(p.unit.dim, DIM_NONE)) return null;
+      }
+      out.push({ t: "op", op: w.startsWith("divided") ? "/" : "*" });
+      i += word[0].length;
+      continue;
+    }
+    return null;
+  }
+  return out;
+}
+
+type Quantity = { v: number; dim: Dim; ref: PressureRef };
+class EvalRefusal extends Error {}
+const refuse = (why: string): never => { throw new EvalRefusal(why); };
+
+/** The recursive-descent evaluator over the tokens:
+ *    expr   := term (("+" | "-") term)*
+ *    term   := unary (("*" | "/") unary)*   — a "/" is the term's LAST
+ *              operator: "a / b × c" and "a / (b)(c)" are ambiguous, refused
+ *    unary  := ("-" | "+") unary | power
+ *    power  := primary ("^" unary)?         — the exponent dimensionless, an
+ *              integer from -4 to 4 when the base carries a unit
+ *    primary:= number [unit] [citation]* | "(" expr ")"
+ *  Each number is handed to `operand`, which binds it or refuses. */
+function evaluateTokens(tokens: EvalToken[], operand: (tok: Extract<EvalToken, { t: "num" }>) => Quantity): {
+  q: Quantity; mixedSum: boolean; ops: number;
+} {
+  let pos = 0;
+  let depth = 0;
+  let mixedSum = false;
+  let ops = 0;
+  const peek = () => tokens[pos];
+  const finite = (q: Quantity): Quantity => (Number.isFinite(q.v) ? q : refuse("a result that is not a finite number"));
+  const isPressure = (d: Dim) => dimEq(d, DIM_PRESSURE);
+  const productRef = (a: Quantity, b: Quantity, dim: Dim): PressureRef => {
+    if (!isPressure(dim)) return "";
+    if (isPressure(a.dim) && dimEq(b.dim, DIM_NONE)) return a.ref;
+    if (isPressure(b.dim) && dimEq(a.dim, DIM_NONE)) return b.ref;
+    return "";
+  };
+  const expr = (): Quantity => {
+    let left = term();
+    for (let tok = peek(); tok?.t === "op" && (tok.op === "+" || tok.op === "-"); tok = peek()) {
+      pos++;
+      ops++;
+      const right = term();
+      if (!dimEq(left.dim, right.dim)) refuse("a sum of two different dimensions");
+      if (isPressure(left.dim) && left.ref !== right.ref) mixedSum = true;
+      left = finite({
+        v: tok.op === "+" ? left.v + right.v : left.v - right.v,
+        dim: left.dim,
+        ref: left.ref === right.ref ? left.ref : "",
+      });
+    }
+    return left;
+  };
+  const term = (): Quantity => {
+    let left = unary();
+    let divided = false;
+    for (let tok = peek(); tok?.t === "op" && (tok.op === "*" || tok.op === "/"); tok = peek()) {
+      if (divided) refuse("an ambiguous division: a / b × c");
+      pos++;
+      ops++;
+      const right = unary();
+      if (tok.op === "/") {
+        divided = true;
+        if (right.v === 0) refuse("a division by zero");
+        const dim = dimOp(left.dim, right.dim, -1);
+        left = finite({ v: left.v / right.v, dim, ref: productRef(left, right, dim) });
+      } else {
+        const dim = dimOp(left.dim, right.dim, 1);
+        left = finite({ v: left.v * right.v, dim, ref: productRef(left, right, dim) });
+      }
+    }
+    return left;
+  };
+  const unary = (): Quantity => {
+    const tok = peek();
+    if (tok?.t === "op" && (tok.op === "-" || tok.op === "+")) {
+      pos++;
+      const q = unary();
+      return tok.op === "-" ? { ...q, v: -q.v } : q;
+    }
+    return power();
+  };
+  const power = (): Quantity => {
+    const base = primary();
+    const tok = peek();
+    if (tok?.t !== "op" || tok.op !== "^") return base;
+    pos++;
+    ops++;
+    const exp = unary();
+    if (!dimEq(exp.dim, DIM_NONE)) refuse("an exponent with a unit");
+    if (!dimEq(base.dim, DIM_NONE) && (!Number.isInteger(exp.v) || Math.abs(exp.v) > 4)) {
+      refuse("a unit raised to a power that is not a small whole number");
+    }
+    return finite({ v: base.v ** exp.v, dim: dimPow(base.dim, exp.v), ref: "" });
+  };
+  const primary = (): Quantity => {
+    const tok = peek();
+    if (!tok) return refuse("an expression that ends early");
+    if (tok.t === "num") { pos++; return operand(tok); }
+    if (tok.t === "(") {
+      if (++depth > EVAL_MAX_DEPTH) refuse("brackets nested too deep");
+      pos++;
+      const q = expr();
+      if (peek()?.t !== ")") refuse("an unclosed bracket");
+      pos++;
+      depth--;
+      return q;
+    }
+    return refuse("an operator where a value belongs");
+  };
+  const q = expr();
+  if (pos !== tokens.length) refuse("text the expression does not account for");
+  return { q, mixedSum, ops };
+}
+
+/** Every value a source text holds, read in base units, with its dimension
+ *  — never a number an identifier owns ("Class 300", "UG-99", "B31.3",
+ *  "§345.4", "[2]", "341.4.1"). */
+type SourceValue = { si: number; dim: Dim; ref: PressureRef; temp: boolean };
+const SOURCE_NUMBER = /(?:(?<![\w.)\]])-)?(?<![\w.[§#]|\d,|[A-Za-z]-)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)/g;
+function sourceValues(text: string): SourceValue[] {
+  const out: SourceValue[] = [];
+  for (const line of text.split("\n")) {
+    for (const groups of [true, false]) {
+      const t = stripLine(line, groups).text;
+      SOURCE_NUMBER.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = SOURCE_NUMBER.exec(t)) !== null) {
+        const numStart = m.index + m[0].length - m[1].length;
+        if (IDENTIFIER_BEFORE.test(t.slice(Math.max(0, numStart - 40), numStart))) continue;
+        const n = Number(m[0].replace(/,/g, ""));
+        if (!Number.isFinite(n)) continue;
+        const unit = readUnit(t, m.index + m[0].length);
+        const def = unit?.def ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
+        out.push({ si: n * def.scale, dim: def.dim, ref: def.ref, temp: def.temp });
+      }
+    }
+  }
+  return out;
+}
+
+/** The answer's own sources, for the evaluator: the text of each cited
+ *  passage by its [n] (with the indexed text of its page when the page
+ *  image was shown), and the asker's own values. */
+export type CalcSources = { cited: ReadonlyMap<number, string>; user: string };
+
+export type ComputedStep = {
+  symbol: string | null;
+  value: number;
+  unit: string;
+  display: string;
+  inputs: Array<{ text: string; source: string }>;
+  model: { text: string; agrees: boolean | null } | null;
+  /** Where the model's own result stands on the (stripped) line — the
+   *  lone value after the expression's terminator, up to an input clause
+   *  — or -1. */
+  resultStart: number;
+  resultEnd: number;
+};
+export type EvalOutcome =
+  | { ok: true; step: ComputedStep }
+  | { ok: false; reason: string; resultStart: number; resultEnd: number };
+
+/** A value the server computed, written for the reader: six significant
+ *  figures, thousands grouped, no trailing zeros. */
+export function formatComputed(v: number): string {
+  if (v === 0) return "0";
+  const a = Math.abs(v);
+  if (a >= 1e12 || a < 1e-6) return v.toPrecision(6).replace(/\.?0+e/, "e");
+  return Number(v.toPrecision(6)).toLocaleString("en-US", { maximumFractionDigits: 12 });
+}
+
+/** What ends a segment of a Substituted line (outside brackets): the
+ *  terminators the net reads, and (I-33) "≅", "≒" and the small "﹦". */
+const EVAL_TERMINATOR = /[=≈≅≒﹦~→⇒]|\b(?:equals|is|gives|yields)\b/gi;
+/** Where an input clause starts inside a segment: it is not the formula. */
+const EVAL_CLAUSE =
+  /;|,\s*(?=(?:for|given|using|when|where|with|and|if|per|from|see)\b)|\(\s*(?=(?:where|with|for|given|using|per|see|from)\b|[a-z]\w*\s*=)|\s(?=(?:where|with|for|given|using|when|if|per|from|see)\b)/i;
+
+/** Split a Substituted line's body at its terminators outside brackets. */
+function splitSegments(body: string): Array<{ start: number; text: string }> {
+  const out: Array<{ start: number; text: string }> = [];
+  let depth = 0;
+  let from = 0;
+  EVAL_TERMINATOR.lastIndex = 0;
+  const marks: Array<{ at: number; len: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = EVAL_TERMINATOR.exec(body)) !== null) marks.push({ at: m.index, len: m[0].length });
+  let k = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "(") depth++;
+    else if (c === ")") depth = Math.max(0, depth - 1);
+    while (k < marks.length && marks[k].at < i) k++;
+    if (k < marks.length && marks[k].at === i && depth === 0) {
+      out.push({ start: from, text: body.slice(from, i) });
+      from = i + marks[k].len;
+      i = from - 1;
+    }
+  }
+  out.push({ start: from, text: body.slice(from) });
+  return out;
+}
+
+/** PR-13 (I-33): evaluate one "**Substituted:**" line. `earlier` are the
+ *  values the server computed on earlier Substituted lines of the same
+ *  answer (a later step may use one). */
+export function evaluateSubstitutedLine(line: string, sources: CalcSources, earlier: Quantity[] = []): EvalOutcome {
+  let resultEnd = -1;
+  const fail = (reason: string, resultStart = -1): EvalOutcome => ({ ok: false, reason, resultStart, resultEnd });
+  if (!SUBSTITUTED_LINE.test(line)) return fail("not a Substituted line");
+  if (line.length > EVAL_MAX_LINE) return fail("a line longer than the evaluator reads");
+  const text = stripLine(line).text.replace(/\((?:\s*user[- ]provided\s*)\)/gi, (s) => " ".repeat(s.length));
+  const label = /Substituted:\s*/i.exec(text);
+  if (!label) return fail("no Substituted label");
+  const from = label.index + label[0].length;
+  const segments = splitSegments(text.slice(from));
+  // Walk the segments: the expression is the latest one that parses as a
+  // worked formula (an operator in it); a lone value right after it — its
+  // terminator not inside an input clause — is the model's own result.
+  let expr: { tokens: EvalToken[]; k: number; cut: boolean } | null = null;
+  let result: { k: number } | null = null;
+  for (let k = 0; k < segments.length; k++) {
+    const seg = segments[k].text;
+    if (expr && expr.k === k - 1 && !expr.cut && opensLoneResult(seg)) { result = { k }; break; }
+    const clause = EVAL_CLAUSE.exec(seg);
+    const candidate = (clause ? seg.slice(0, clause.index) : seg).replace(/[\s.,;:]+$/, "");
+    const tokens = candidate.trim() === "" ? null : tokenizeExpression(candidate);
+    if (tokens && tokens.some((tk) => tk.t === "op") && tokens.some((tk) => tk.t === "num")) {
+      expr = { tokens, k, cut: clause !== null };
+    } else if (expr) {
+      break;
+    }
+  }
+  const resultStart = result ? from + segments[result.k].start : -1;
+  if (result) {
+    // The result runs to the end of its segment, or to an input clause in it
+    // ("= 427.5 psig (where P = 285 psig …)": the clause's input stays).
+    const seg = segments[result.k].text;
+    const clause = EVAL_CLAUSE.exec(seg);
+    resultEnd = resultStart + (clause ? clause.index : seg.length);
+  }
+  if (!expr) return fail("no worked expression on the line", resultStart);
+  const exprTokens = expr.tokens;
+  // The symbol the line computes: the left-hand side's first identifier,
+  // past a step label ("Step 2: P_T", "P_T at 100 °F", "t per Eq. 3").
+  const lhs = expr.k > 0 ? segments[0].text.trim() : "";
+  const symbol = /^(?:step\s+\d+\s*:\s*)?([A-Za-zΑ-Ωα-ω][\w′'’]{0,15})(?![\w′'’])/i.exec(lhs)?.[1] ?? null;
+  const cache = new Map<string, SourceValue[]>();
+  const valuesOf = (t: string) => {
+    let v = cache.get(t);
+    if (!v) { v = sourceValues(t); cache.set(t, v); }
+    return v;
+  };
+  const inputs: Array<{ text: string; source: string }> = [];
+  const displayCandidates: Array<{ dim: Dim; scale: number; text: string }> = [];
+  const refs = new Set<PressureRef>();
+  const operand = (tok: Extract<EvalToken, { t: "num" }>): Quantity => {
+    const def = tok.unit ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
+    if (def.temp) refuse("a temperature (a scale with an offset is never worked)");
+    const q: Quantity = { v: tok.value * def.scale, dim: def.dim, ref: def.ref };
+    if (dimEq(def.dim, DIM_PRESSURE) && def.ref !== "") refs.add(def.ref);
+    const same = (s: { si: number; dim: Dim; ref: PressureRef }) =>
+      dimEq(s.dim, q.dim) && Math.abs(s.si - q.v) <= BIND_EPSILON * Math.max(Math.abs(s.si), Math.abs(q.v))
+      && (q.ref === "a") === (s.ref === "a");
+    let source: string | null = null;
+    // An operand with its own citation binds only in the source it names
+    // (or the asker's own values, which no [n] names); one without, in any
+    // cited source or the asker's values.
+    const pools: Array<[string, string]> = [
+      ...(tok.cites.length > 0
+        ? tok.cites.map((n) => [`[${n}]`, sources.cited.get(n) ?? ""] as [string, string])
+        : [...sources.cited.entries()].map(([n, t]) => [`[${n}]`, t] as [string, string])),
+      ["your value", sources.user],
+    ];
+    if (tok.cites.some((n) => !sources.cited.has(n))) refuse("an operand citing a source the answer was not given");
+    for (const [name, t] of pools) {
+      if (t && valuesOf(t).some((s) => !s.temp && same(s))) { source = name; break; }
+    }
+    if (source === null && tok.cites.length === 0 && earlier.some((e) => same({ si: e.v, dim: e.dim, ref: e.ref }))) {
+      source = "an earlier step the app computed";
+    }
+    if (source === null) refuse(`an operand no cited source holds: ${tok.text}`);
+    inputs.push({ text: tok.text, source: source! });
+    if (!dimEq(def.dim, DIM_NONE) && tok.unitText !== "") displayCandidates.push({ dim: def.dim, scale: def.scale, text: tok.unitText });
+    return q;
+  };
+  let evaluated: { q: Quantity; mixedSum: boolean };
+  try {
+    evaluated = evaluateTokens(exprTokens, operand);
+  } catch (e) {
+    if (e instanceof EvalRefusal) return fail(e.message, resultStart);
+    throw e;
+  }
+  const { q, mixedSum } = evaluated;
+  if (refs.has("g") && refs.has("a")) return fail("gauge and absolute pressure in one expression", resultStart);
+  if (dimEq(q.dim, DIM_PRESSURE) && mixedSum) return fail("a pressure summed across gauge, absolute or plain units", resultStart);
+  let value = q.v;
+  let unit = "";
+  if (!dimEq(q.dim, DIM_NONE)) {
+    const shown = displayCandidates.find((c) => dimEq(c.dim, q.dim));
+    if (!shown) return fail("a result in a unit no operand carries", resultStart);
+    value = q.v / shown.scale;
+    unit = shown.text;
+  }
+  if (!Number.isFinite(value)) return fail("a result that is not a finite number", resultStart);
+  // The model's own result, compared in base units.
+  let model: ComputedStep["model"] = null;
+  if (result) {
+    const seg = segments[result.k].text;
+    const lone = new RegExp("^\\s*(?:~\\s*)?(" + CALC_NUM + ")").exec(seg);
+    if (lone) {
+      const n = readNumber(seg, lone.index + lone[0].length - lone[1].length);
+      const mu = n ? readUnit(seg, n.end) : null;
+      const mdef = mu?.def ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
+      const mtext = n ? seg.slice(lone.index + lone[0].length - lone[1].length, mu ? mu.end : n.end).trim() : lone[1];
+      let agrees: boolean | null = null;
+      if (n && !mdef.temp && dimEq(mdef.dim, q.dim)) {
+        const mv = n.value * mdef.scale;
+        agrees = q.v === 0 ? mv === 0 : Math.abs(mv - q.v) <= COMPUTED_TOLERANCE * Math.abs(q.v);
+      }
+      model = { text: mtext, agrees };
+    }
+  }
+  return {
+    ok: true,
+    step: {
+      symbol, value, unit, display: unit ? `${formatComputed(value)} ${unit}` : formatComputed(value), inputs, model,
+      resultStart, resultEnd,
+    },
+  };
+}
+
+/** The line a computed step adds under its Substituted line. */
+function computedLine(step: ComputedStep): string {
+  const what = step.symbol ? `${step.symbol} is ` : "";
+  const inputs = step.inputs.map((x) => `${x.text}${x.source.startsWith("[") ? ` ${x.source}` : `, ${x.source}`}`).join("; ");
+  return `**${COMPUTED_LABEL}** ${what}\`${step.display}\` — evaluated on the server from the Substituted expression ` +
+    `above, each input matched to its source (${inputs}); not the AI's arithmetic.`;
+}
+
+/** A line the evaluator added (the computed value, or the note that the
+ *  model's own result differs). */
+const isComputedLine = (line: string): boolean =>
+  line.startsWith(`**${COMPUTED_LABEL}**`) || line === COMPUTED_DISAGREES_NOTE;
+
+/** The text without the lines the evaluator added — so a value the server
+ *  computed never grounds a later answer's number (it never un-withholds a
+ *  model number). Text the evaluator never touched comes back unchanged. */
+export function withoutComputedLines(text: string): string {
+  if (!text.includes(COMPUTED_LABEL) && !text.includes(COMPUTED_DISAGREES_NOTE)) return text;
+  return text.split("\n").filter((l) => !isComputedLine(l)).join("\n");
+}
+
+/** PR-13 (I-33): `shownAnswer` (the model's answer after the withholding
+ *  net, line for line with `modelAnswer`) with, under each Substituted line
+ *  the server could evaluate, the value it computed from the cited inputs.
+ *  On every evaluated or worked Substituted line the model's own result
+ *  stays withheld (and is withheld where the net did not read its
+ *  terminator); where it differs from the server's by more than
+ *  COMPUTED_TOLERANCE, COMPUTED_DISAGREES_NOTE follows and that number is
+ *  withheld on every other line except one that states an input. An answer
+ *  with no Substituted line comes back as the very same string. */
+export function presentComputedResults(modelAnswer: string, shownAnswer: string, sources: CalcSources): {
+  text: string; computed: number; disagreed: number;
+} {
+  if (!SUBSTITUTED_LINE.test(modelAnswer)) return { text: shownAnswer, computed: 0, disagreed: 0 };
+  const raw = modelAnswer.split("\n");
+  const shown = shownAnswer.split("\n");
+  const added = new Map<number, string[]>();
+  const spread: Array<{ value: string; unit: string }> = [];
+  const earlier: Quantity[] = [];
+  let computed = 0;
+  let disagreed = 0;
+  let withheld = 0;
+  let evaluatedLines = 0;
+  for (let i = 0; i < raw.length && i < shown.length; i++) {
+    if (!SUBSTITUTED_LINE.test(raw[i])) continue;
+    if (++evaluatedLines > EVAL_MAX_LINES) break;
+    const outcome = evaluateSubstitutedLine(raw[i], sources, earlier);
+    // The model's own result on this line stays withheld, whatever the net
+    // read: every value after its terminator.
+    if (outcome.ok ? outcome.step.resultStart >= 0 : outcome.resultStart >= 0) {
+      // (Read for its structure only: a marker stands as a one-digit
+      // value of the same length, so the positions hold.)
+      const structure = shown[i].split(RESULT_WITHHELD).join("1".padEnd(RESULT_WITHHELD.length));
+      const shownOutcome = evaluateSubstitutedLine(structure, { cited: new Map(), user: "" });
+      const { resultStart: start, resultEnd: end } = shownOutcome.ok ? shownOutcome.step : shownOutcome;
+      if (start >= 0) {
+        const { text, at } = stripLine(shown[i]);
+        const spans = valueSpans(text.slice(start, end))
+          .map((s) => ({ ...s, start: s.start + start, end: s.end + start }))
+          .map((s) => withTrailingUnit(text.slice(0, end), s));
+        if (spans.length > 0) {
+          shown[i] = withholdSpans(shown[i], at, spans);
+          withheld += spans.length;
+        }
+      }
+    }
+    if (!outcome.ok) continue;
+    const step = outcome.step;
+    computed++;
+    const lines = [computedLine(step)];
+    if (step.model && step.model.agrees === false) {
+      disagreed++;
+      lines.push(COMPUTED_DISAGREES_NOTE);
+      // Spread only a number that is not also one of the line's inputs.
+      const read = (t: string) => {
+        const st = stripLine(t).text;
+        const v = valueSpans(st)[0];
+        return v ? withTrailingUnit(st, v) : null;
+      };
+      const m = read(step.model.text);
+      if (m && !step.inputs.some((x) => {
+        const v = read(x.text);
+        return v !== null && v.value === m.value && v.unit === m.unit;
+      })) spread.push({ value: m.value, unit: m.unit });
+    }
+    added.set(i, lines);
+    // Rebuild the step's value in base units for a later step to bind.
+    const def = step.unit === "" ? null : readUnit(` ${step.unit}`, 0)?.def ?? null;
+    if (step.unit === "" || def) {
+      earlier.push({ v: def ? step.value * def.scale : step.value, dim: def ? def.dim : DIM_NONE, ref: def ? def.ref : "" });
+    }
+  }
+  // The model's differing number, withheld wherever else it is written —
+  // never on a line that states an input, nor in the lines just added.
+  if (spread.length > 0) {
+    for (let i = 0; i < shown.length; i++) {
+      const { text, at } = stripLine(shown[i]);
+      if (USER_INPUT_LINE.test(text) || CITED_INPUT_LINE.test(text) || SUBSTITUTED_LINE.test(shown[i])) continue;
+      const spans = valueSpans(text).map((s) => withTrailingUnit(text, s)).filter((s) =>
+        !afterIdentifier(text, s) && spread.some((r) => r.value === s.value && r.unit === s.unit
+          && (r.unit !== "" || !isSmallWhole(r.value))));
+      if (spans.length === 0) continue;
+      shown[i] = withholdSpans(shown[i], at, spans);
+      withheld += spans.length;
+    }
+  }
+  if (computed === 0 && withheld === 0) return { text: shownAnswer, computed: 0, disagreed: 0 };
+  const out: string[] = [];
+  for (let i = 0; i < shown.length; i++) {
+    out.push(shown[i]);
+    for (const l of added.get(i) ?? []) out.push(l);
+  }
+  let text = out.join("\n");
+  if (withheld > 0 && !text.includes(RESULT_WITHHELD_NOTE)) text = `${text}\n\n${RESULT_WITHHELD_NOTE}`;
+  return { text, computed, disagreed };
 }
 
 /** ASK-3: the line a cut-off answer ends with. */

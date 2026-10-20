@@ -49,7 +49,7 @@ import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import { keylessPagesShown, keylessTextOnlyLabel } from "@/lib/knowledgeKeyless";
 import { readKeylessTextPages } from "@/lib/knowledgeKeylessClient";
 import { ClarifyCard, NeedCard } from "@/components/knowledge/AssistantAskCards";
-import { withholdModelResults, RESULT_WITHHELD } from "@/lib/knowledgeAskGuards";
+import { withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL } from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 // pdf.js only loads when someone actually opens a cited page.
@@ -274,6 +274,17 @@ function InlineAnswer({ text, citations, onCite }: {
             );
           }
           return <span key={i} className="align-super text-[10px] font-black text-orange-700/80">{cite[1]}</span>;
+        }
+        // PR-13 (I-33): the value the SERVER computed from the cited inputs
+        // — marked as such, never like a value the model wrote.
+        if (part === `**${COMPUTED_LABEL}**`) {
+          return (
+            <span key={i} data-computed-by-app="true"
+              title="The app evaluated the Substituted expression above on the server, with every input matched to its cited source or your own value — not the AI's arithmetic. Check each input against its cited page."
+              className="inline-flex items-center gap-1 align-baseline mr-1 px-1.5 py-0.5 rounded-md border border-emerald-400 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300 font-black text-[0.85em] leading-none">
+              <CheckCircle2 className="w-3 h-3 shrink-0" />Computed by the app from the cited inputs
+            </span>
+          );
         }
         if (part.startsWith("**") && part.endsWith("**")) {
           // Recurse so a doc mention INSIDE a bold span still gets its chip —

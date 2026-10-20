@@ -79,6 +79,7 @@ import { screenAssistantRequest } from "@/lib/assistantScreen";
 import {
   readAll, readAllByKey, READ_PAGE, columnsMissing, asDocumentData, asName, DATA_OPEN, DATA_CLOSE, OWNER_OPEN, OWNER_CLOSE,
   DATA_BOUNDARY_RULE, answerHasComputation, withholdModelResults, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
+  presentComputedResults, withoutComputedLines,
   PROMPT_CHARS_PER_TOKEN, PROMPT_TOKENS_PER_IMAGE, MIN_ANSWER_TOKENS, ANSWER_MAX_TOKENS, MIN_ANSWER_PROMPT_CHARS,
   DRAWING_FACTS_ROW_CEILING, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
   insertAnswerRow,
@@ -2740,6 +2741,7 @@ export async function POST(req: NextRequest) {
       // grounds at most the rows read before it failed, which withholds
       // more, never less.
       const pageText: string[] = [];
+      const pageTextOf = new Map<string, string[]>();
       if (pageImages.length > 0) {
         const shown = new Set(pageImages.map((img) => `${img.documentId}:${img.page}`));
         const docs = [...new Set(pageImages.map((img) => img.documentId))];
@@ -2749,15 +2751,39 @@ export async function POST(req: NextRequest) {
           .eq("org_id", orgId).in("document_id", docs).in("page", pages)
           .order("id").range(from, to), 5_000);
         for (const r of read.rows) {
-          if (shown.has(`${r.document_id}:${r.page}`) && r.content) pageText.push(r.content);
+          if (shown.has(`${r.document_id}:${r.page}`) && r.content) {
+            pageText.push(r.content);
+            const key = `${r.document_id}:${r.page}`;
+            pageTextOf.set(key, [...(pageTextOf.get(key) ?? []), r.content]);
+          }
         }
       }
+      // (PR-13, I-33) A value an earlier answer's evaluator computed never
+      // grounds this answer's number: its lines are left out first.
       const grounding = [
         question, inputs, renderPassages(), dataSections(pageImages), focusLine, ownerBlock,
         orgInstructions, answeredFetchNote, ...pageText,
-        ...history.flatMap((t) => [t.question, withholdModelResults(t.answer).text]),
+        ...history.flatMap((t) => [t.question, withholdModelResults(withoutComputedLines(t.answer)).text]),
       ].join("\n");
+      const modelText = answer;
       answer = withholdModelResults(answer, grounding).text;
+      // PR-13 (DEC-90 A17's later path, intelligence I-33): under each
+      // "**Substituted:**" line the server can evaluate, the value it
+      // computes from the answer's OWN cited sources — each cited passage
+      // (with the indexed text of its page when that page image was shown)
+      // and the asker's own values — labelled as computed by the app. The
+      // model's own result stays withheld; anything the evaluator cannot
+      // bind, reconcile or parse adds nothing. A cut-off answer is never
+      // evaluated (its expression may be cut short).
+      if (!partial) {
+        const cited = new Map<number, string>();
+        for (const n of extractCitationNumbers(modelText)) {
+          const c = n >= 1 && n <= chunks.length ? chunks[n - 1] : null;
+          if (!c || cited.has(n)) continue;
+          cited.set(n, [c.content, ...(pageTextOf.get(`${c.document_id}:${c.page}`) ?? [])].join("\n"));
+        }
+        answer = presentComputedResults(modelText, answer, { cited, user: `${question}\n${inputs}` }).text;
+      }
     }
     if (partial) answer += `\n\n${CUT_OFF_LINE}` +
       (lengthLimitedByBudget ? " (This month's remaining AI budget limited how long this answer could be.)" : "");

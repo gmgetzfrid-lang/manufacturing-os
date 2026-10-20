@@ -53,6 +53,7 @@ import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import {
   DATA_OPEN, DATA_CLOSE, DATA_BOUNDARY_RULE, CUT_OFF_LINE, PROMPT_TOKEN_BUDGET, asDocumentData, answerHasComputation,
   MIN_ANSWER_PROMPT_CHARS, MIN_ANSWER_TOKENS, withholdModelResults, RESULT_WITHHELD, RESULT_WITHHELD_NOTE,
+  COMPUTED_LABEL, withoutComputedLines,
 } from "@/lib/knowledgeAskGuards";
 import { AGREEMENT_VERSION, worstCaseCostUsd } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
@@ -65,6 +66,11 @@ const EMB_LITE = catalogue("voyage")[0];
 const EMB_V = catalogue("voyage")[1];
 const EMB_OAI = catalogue("openai")[0];
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** (PR-13, I-33) The values the server computed into an answer: the chip on
+ *  each COMPUTED_LABEL line, in order. */
+const computedOf = (answer: string): string[] => answer.split("\n")
+  .filter((l) => l.startsWith(`**${COMPUTED_LABEL}**`))
+  .map((l) => /`([^`]+)`/.exec(l)?.[1] ?? "");
 
 const ask = (body: Record<string, unknown>, token = "good") => POST(new NextRequest("http://x/api/knowledge/ask", {
   method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -790,7 +796,13 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
       "- P = `285 psig` (USER-PROVIDED)\n**Substituted:** P_T = 1.5 × `285 psig`\n**Check:** the factor on page 4 [1].";
     h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: substituted }];
     const body = await (await ask({ question: "The design pressure is 285 psig — what is the test pressure?" })).json();
-    expect(body.answer).toBe(substituted);
+    // (PR-13, I-33) Shown as written, with the value the server computed
+    // from the cited factor and the asker's pressure added under it.
+    expect(withoutComputedLines(body.answer)).toBe(substituted);
+    expect(computedOf(body.answer)).toEqual(["427.5 psig"]);
+    expect(body.answer).toBe(substituted.replace("`285 psig`\n", "`285 psig`\n" +
+      `**${COMPUTED_LABEL}** P_T is \`427.5 psig\` — evaluated on the server from the Substituted expression above, ` +
+      "each input matched to its source (1.5 [1]; 285 psig, your value); not the AI's arithmetic.\n"));
     expect(body.arithmetic).toBe("unverified");
     expect(rowsOf("knowledge_questions")[0].context).toMatchObject({ arithmetic: "unverified" });
   });
@@ -829,7 +841,9 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
     h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text:
       "**Answer:** Compute the test pressure from the formula below [1].\n**Basis:**\n- P = `285 psig` (USER-PROVIDED)\n" + line }];
     const body = await (await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig" })).json();
-    expect(body.answer).not.toContain(result);
+    // (PR-13, I-33) The model's result is never carried; a value the
+    // server computed from the cited inputs may be, on its own line.
+    expect(withoutComputedLines(body.answer)).not.toContain(result);
     expect(body.answer).toContain("- P = `285 psig` (USER-PROVIDED)");
     expect(body.answer).toContain(RESULT_WITHHELD);
     expect(body.arithmetic).toBe("unverified");
@@ -896,9 +910,12 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
     hydrotestLibrary();
     h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: RESTATED_FORMULA }];
     const body = await (await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig" })).json();
-    expect(body.answer).toBe(RESTATED_FORMULA);
+    // (PR-13, I-33) Unchanged, with the server's value added under the
+    // Substituted line.
+    expect(withoutComputedLines(body.answer)).toBe(RESTATED_FORMULA);
+    expect(computedOf(body.answer)).toEqual(["427.5 psig"]);
     expect(body.arithmetic).toBe("unverified");
-    expect(rowsOf("knowledge_questions")[0].answer).toBe(RESTATED_FORMULA);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
     // The page's own pass (no grounding) leaves it whole too.
     expect(withholdModelResults(RESTATED_FORMULA)).toEqual({ text: RESTATED_FORMULA, withheld: 0 });
   });
@@ -917,7 +934,11 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
       "- D = `10.75 in` (USER-PROVIDED)\n" + line + "\n**Check:** the 1.5 factor on page 4 [1].";
     h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
     const body = await (await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig, OD = 10.75 in" })).json();
-    expect(body.answer).toBe(text);
+    // (PR-13, I-33) Unchanged but for the server's value, where the line
+    // holds a worked expression whose inputs bind.
+    expect(withoutComputedLines(body.answer)).toBe(text);
+    // Only the two lines that substitute the values are worked expressions.
+    expect(computedOf(body.answer)).toEqual(line.includes("= 1.5 × P = 1.5 × ") ? ["427.5 psig"] : []);
     expect(body.arithmetic).toBe("unverified");
     expect(withholdModelResults(text)).toEqual({ text, withheld: 0 });
     // The same line worked on to a result: only that result is withheld.
@@ -997,9 +1018,13 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
     const inputs = "design pressure = 285 psig, OD = 10.75 in, S = 20000 psi, E = 1.0";
     h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
     const body = await (await ask({ question: "What is the hydrotest pressure?", inputs })).json();
-    expect(body.answer).toBe(text);
+    // (PR-13, I-33) Unchanged but for the server's value, where the line
+    // holds a worked expression whose every input binds (the bare "2" of the
+    // thickness formula is in no cited source here, so nothing is computed).
+    expect(withoutComputedLines(body.answer)).toBe(text);
+    expect(computedOf(body.answer)).toEqual(/1\.5 (?:\(|times |× )285/.test(line) ? ["427.5 psig"] : []);
     expect(body.arithmetic).toBe("unverified");
-    expect(rowsOf("knowledge_questions")[0].answer).toBe(text);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
     expect(withholdModelResults(text)).toEqual({ text, withheld: 0 });
     // The same line worked on to a result: only that result is withheld, on
     // the server (with grounding) and on the page (without).
@@ -1044,10 +1069,13 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
     h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
     const body = await (await ask({ question: "What is the test pressure / wall thickness?", inputs })).json();
     // 1ee2039 withheld every value after the first "=": "P_T at 100 °F =
-    // [result withheld] × [result withheld]".
-    expect(body.answer).toBe(text);
+    // [result withheld] × [result withheld]". (PR-13, I-33) Unchanged but
+    // for the server's value where every input binds (the thickness lines'
+    // bare "2" is in no cited source here, so nothing is computed for them).
+    expect(withoutComputedLines(body.answer)).toBe(text);
+    expect(computedOf(body.answer)).toEqual(result === "`370.5 psig`" ? ["370.5 psig"] : []);
     expect(body.arithmetic).toBe("unverified");
-    expect(rowsOf("knowledge_questions")[0].answer).toBe(text);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
     expect(withholdModelResults(text)).toEqual({ text, withheld: 0 });
     const worked = text.replace(line, `${line} = ${result}`);
     const r = withholdModelResults(worked, inputs);
