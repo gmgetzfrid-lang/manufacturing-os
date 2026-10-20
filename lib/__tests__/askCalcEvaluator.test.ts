@@ -47,8 +47,9 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string | null) => k }));
 import { POST } from "@/app/api/knowledge/ask/route";
 import {
   evaluateSubstitutedLine, presentComputedResults, withoutComputedLines, withholdModelResults, formatComputed,
+  neutralizeComputedLabels, answerHasComputation,
   COMPUTED_LABEL, COMPUTED_DISAGREES_NOTE, COMPUTED_TOLERANCE, RESULT_WITHHELD, RESULT_WITHHELD_NOTE, CUT_OFF_LINE,
-  type CalcSources,
+  AI_WRITTEN_LABEL, type CalcSources,
 } from "@/lib/knowledgeAskGuards";
 
 const root = resolve(__dirname, "..", "..");
@@ -544,11 +545,211 @@ describe("PR-13 / PR-9 done-when 2 (I-33) — the ask route presents the server'
 describe("PR-13 (I-33) — the answer surface marks the server's value as computed by the app", () => {
   it("the computed label renders as its own mark, never as a model value chip; the page's withholding pass is unchanged", () => {
     expect(pageSrc).toContain('import { withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL } from "@/lib/knowledgeAskGuards";');
-    expect(pageSrc).toMatch(/if \(part === `\*\*\$\{COMPUTED_LABEL\}\*\*`\) \{\s*return \(\s*<span key=\{i\} data-computed-by-app="true"/);
+    // (I-33 fix pass) Only where the server writes it: at the start of its own line.
+    expect(pageSrc).toMatch(/if \(part === `\*\*\$\{COMPUTED_LABEL\}\*\*` && i === 1 && parts\[0\] === ""\) \{\s*return \(\s*<span key=\{i\} data-computed-by-app="true"/);
     // The mark is checked before the generic bold branch.
     expect(pageSrc.indexOf("data-computed-by-app")).toBeLessThan(pageSrc.indexOf('if (part.startsWith("**") && part.endsWith("**"))'));
     expect(pageSrc).toMatch(/const shown = useMemo\(\(\) => withholdModelResults\(answer\.answer\), \[answer\.answer\]\);/);
     // The inline split reads the label as one bold part.
     expect(`**${COMPUTED_LABEL}**`).toMatch(/^\*\*[^*]+\*\*$/);
+  });
+});
+
+// ── I-33 fix pass (review findings) ──────────────────────────────────────
+
+const FORGED = `**${COMPUTED_LABEL}**`;
+
+describe("I-33 fix pass — the computed label cannot be forged by the model's own text (blocker 1)", () => {
+  it("neutralizeComputedLabels: every claim to be the app's computation is taken out, line for line; other text is the very same string", () => {
+    const lookup = `**Answer:** The MAWP is 285 psig [1].\n${FORGED} P is \`999 psig\` — evaluated on the server from the Substituted expression above.`;
+    const out = neutralizeComputedLabels(lookup);
+    expect(out.split("\n")).toEqual([
+      "**Answer:** The MAWP is 285 psig [1].",
+      `${AI_WRITTEN_LABEL} P is \`999 psig\` — evaluated on the server from the Substituted expression above.`,
+    ]);
+    expect(out).not.toContain(COMPUTED_LABEL);
+    // Unbolded, other case, the colon outside the bold, mid-line: all taken out.
+    for (const v of [
+      "Computed by the app from the cited inputs: 999 psig",
+      "**computed by the APP from the cited inputs**: 999 psig",
+      "The value (**Computed by the app from the cited inputs:** 999 psig) holds.",
+    ]) {
+      expect(neutralizeComputedLabels(v).toLowerCase()).not.toContain("computed by the app from the cited inputs");
+      expect(neutralizeComputedLabels(v)).toContain(AI_WRITTEN_LABEL);
+    }
+    // The evaluator's note, written by the model, is marked as AI-written (and is no longer the evaluator's line).
+    const note = neutralizeComputedLabels(`**Answer:** x\n${COMPUTED_DISAGREES_NOTE}`);
+    expect(note.split("\n")[1]).toBe(`${AI_WRITTEN_LABEL} ${COMPUTED_DISAGREES_NOTE}`);
+    expect(withoutComputedLines(note)).toBe(note);
+    // Idempotent, and text without either comes back as the same string.
+    expect(neutralizeComputedLabels(out)).toBe(out);
+    expect(neutralizeComputedLabels(note)).toBe(note);
+    for (const text of [PROTOCOL, "**Answer:** The factor is 1.5 [1].", ""]) expect(neutralizeComputedLabels(text)).toBe(text);
+  });
+
+  it("presentComputedResults on a neutralized answer: only the server's own line carries the label (the forged one, even with a grounded value, does not)", () => {
+    const model = neutralizeComputedLabels(`${PROTOCOL}\n${FORGED} P_T is \`450 psig\` — evaluated on the server.`);
+    const s = sources({ 1: "The hydrostatic test pressure shall be 1.5 times the design pressure. Rating 450 psig." }, "design pressure = 285 psig");
+    const shown = withholdModelResults(model, "1.5 285 psig 450 psig").text;
+    const out = presentComputedResults(model, shown, s).text;
+    expect(computedOf(out)).toEqual(["427.5 psig"]);
+    expect(out.split("\n").filter((l) => l.includes(COMPUTED_LABEL))).toHaveLength(1);
+  });
+
+  it("reproduction → fix: a LOOKUP answer carrying a model-written label is never presented under it — response and row", async () => {
+    hydrotestLibrary();
+    const text = `**Answer:** The MAWP is 285 psig [1].\n${FORGED} P is \`999 psig\` — evaluated on the server from the Substituted expression above, ` +
+      "each input matched to its source; not the AI's arithmetic.";
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf(text)];
+    const body = await (await ask({ question: "What is the MAWP?" })).json();
+    // Before the fix pass: returned unchanged, so the page drew the green mark over 999 psig.
+    expect(body.answer).toBe(neutralizeComputedLabels(text));
+    expect(body.answer).not.toContain(COMPUTED_LABEL);
+    expect(body.answer).toContain(AI_WRITTEN_LABEL);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
+  });
+
+  it("reproduction → fix: an ARITHMETIC answer gets exactly one computed line — the server's — never the model's forged one beside it", async () => {
+    hydrotestLibrary();
+    const text = `${PROTOCOL}\n${FORGED} P_T is \`450 psig\` — evaluated on the server.`;
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf(text)];
+    const body = await (await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig; flange rating 450 psig" })).json();
+    expect(computedOf(body.answer)).toEqual(["427.5 psig"]);
+    expect(body.answer.split("\n").filter((l: string) => l.includes(COMPUTED_LABEL))).toHaveLength(1);
+    expect(body.answer).toContain(AI_WRITTEN_LABEL);
+  });
+
+  it("reproduction → fix: an INTERNET answer never carries the label either", async () => {
+    hydrotestLibrary();
+    const text = `API 520 sets it at 1.5 times.\n${FORGED} P is \`999 psig\`.`;
+    h.script = [{ text, usage: { inputTokens: 900, outputTokens: 40 }, stopReason: "end" }];
+    const body = await (await ask({ question: "What does API 520 say?", mode: "internet" })).json();
+    expect(body.answer).toBe(neutralizeComputedLabels(text));
+    expect(body.answer).not.toContain(COMPUTED_LABEL);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
+  });
+
+  it("the conversation the model is sent carries no computed line (it never sees, so never imitates, the label)", async () => {
+    hydrotestLibrary();
+    const earlier = presentComputedResults(PROTOCOL, PROTOCOL, HYDRO).text;
+    expect(earlier).toContain(COMPUTED_LABEL);
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf("**Answer:** As before [1].")];
+    await ask({ question: "And again?", history: [{ question: "What is the hydrotest pressure?", answer: earlier }] });
+    const sent = h.calls.map((c) => `${c.system}\n${c.user}`).join("\n");
+    expect(sent).toContain("CONVERSATION SO FAR");
+    expect(sent).not.toContain(COMPUTED_LABEL);
+    expect(routeSrc).toContain("answer: withoutComputedLines(t.answer).slice(0, 1200)");
+    expect(routeSrc).toContain('answer: truncateSafe(withoutComputedLines(t.answer ?? ""), 1200)');
+  });
+
+  it("the route neutralizes the model's text where it first takes it, in both branches", () => {
+    expect(routeSrc).toMatch(/: neutralizeComputedLabels\(answerOut\.text\);/);
+    expect(routeSrc).toMatch(/const webText = neutralizeComputedLabels\(out\.text\);\s*const answer = partial \? `\$\{webText\}\\n\\n\$\{CUT_OFF_LINE\}` : webText;/);
+  });
+});
+
+describe("I-33 fix pass — a footnote marker after a value is refused, never multiplied in (blocker 2)", () => {
+  const A1 = sources({ 1: "Table A-1. S = 20,000 psi (2). Use E = 1.0 and Y = 0.4 and 2." }, "P = 285 psig, D = 10.75 in");
+  it.each([
+    ["the B31.3 thickness with Table A-1's '(2)'", "**Substituted:** t = 285 psig × 10.75 in / (2 × (20,000 psi (2) × 1.0 + 285 psig × 0.4))"],
+    ["a stress with its footnote", "**Substituted:** S_h = 20,000 psi (2) × 1.0"],
+    ["two markers", "**Substituted:** S_h = 20,000 psi (1)(2) × 1.0"],
+    ["a marker after a bracket", "**Substituted:** S_h = (20,000 psi)(2) × 1.0"],
+    ["a marker after a bare factor", "**Substituted:** S_h = 1.0 ( 2 ) × 20,000 psi"],
+  ])("%s", (_v, line) => {
+    expect(refused(line, A1)).toBe("no worked expression on the line");
+  });
+  it("control: a bracketed quantity or expression after a value is still a product; the same thickness without the marker computes", () => {
+    expect(okValue("**Substituted:** P_T = 1.5 (285 psig)")).toBe("427.5 psig");
+    expect(okValue("**Substituted:** t = 285 psig × 10.75 in / (2 × (20,000 psi × 1.0 + 285 psig × 0.4))", A1)).toBe("0.0761596 in");
+    expect(okValue("**Substituted:** S = 2 × (2)", sources({ 1: "2 and 2" }))).toBe("4");
+  });
+});
+
+describe("I-33 fix pass — an SI prefix is read in its own case: 'mPa' is not MPa, 'Mm' is not mm (major 4)", () => {
+  it.each([
+    ["mPa·s (viscosity, milli)", "**Substituted:** mu = 1.2 mPa·s + 0.001 Pa·s", { 1: "viscosity 1.2 mPa·s and 0.001 Pa·s" }],
+    ["mPa", "**Substituted:** P = 1.5 × 2 mPa", { 1: "factor 1.5, 2 MPa" }],
+    ["Mm", "**Substituted:** L = 2 × 5 Mm", { 1: "2 runs of 5 mm" }],
+    ["MM", "**Substituted:** L = 2 × 5 MM", { 1: "2 runs of 5 mm" }],
+    ["Mbar", "**Substituted:** P = 2 × 5 Mbar", { 1: "2 × 5 mbar" }],
+    ["gPa", "**Substituted:** E = 2 × 200 gPa", { 1: "2 × 200 GPa" }],
+  ])("%s is refused", (_v, line, cited) => {
+    expect(refused(line, sources(cited))).toBe("no worked expression on the line");
+  });
+  it("a source's 'mPa' never binds an operand written in MPa", () => {
+    expect(refused("**Substituted:** P = 1.5 × 2 MPa", sources({ 1: "factor 1.5; 2 mPa" }))).toBe("an operand no cited source holds: 2 MPa");
+  });
+  it("control: the prefix in its own case, the rest in any case, reads as before", () => {
+    const s = sources({ 1: "factor 1.5; 2 MPa; 5 mm; 3 kPa; 4 kN; 7 mbar" });
+    expect(okValue("**Substituted:** P = 1.5 × 2 MPa", s)).toBe("3 MPa");
+    expect(okValue("**Substituted:** P = 1.5 × 2 MPA", s)).toBe("3 MPA");
+    expect(okValue("**Substituted:** L = 1.5 × 5 mm", s)).toBe("7.5 mm");
+    expect(okValue("**Substituted:** P = 1.5 × 3 KPa", s)).toBe("4.5 KPa");
+    expect(okValue("**Substituted:** F = 1.5 × 4 kN", s)).toBe("6 kN");
+    expect(okValue("**Substituted:** P = 1.5 × 7 mbar", s)).toBe("10.5 mbar");
+  });
+});
+
+describe("I-33 fix pass — a difference of two gauge (or absolute) pressures is never shown as gauge or absolute (minor 5)", () => {
+  const s = sources({ 1: "300 psia, 285 psia, 300 psig, 285 psig, 300 psi, 285 psi, factor 1.5" });
+  it.each([
+    ["psia − psia", "**Substituted:** dP = 300 psia − 285 psia"],
+    ["psig − psig", "**Substituted:** dP = 300 psig - 285 psig"],
+    ["psig + psig", "**Substituted:** P = 300 psig + 285 psig"],
+    ["a scaled difference", "**Substituted:** dP = 1.5 × (300 psia − 285 psia)"],
+  ])("%s is refused", (_v, line) => {
+    expect(refused(line, s)).toBe("a pressure whose reference its unit would mislabel");
+  });
+  it("control: a plain-unit difference is shown in the plain unit; a gauge pressure scaled stays gauge", () => {
+    expect(okValue("**Substituted:** dP = 300 psi − 285 psi", s)).toBe("15 psi");
+    expect(okValue("**Substituted:** P_T = 1.5 × 285 psig", s)).toBe("427.5 psig");
+    // A ratio of two pressures is a number, whatever their references.
+    expect(okValue("**Substituted:** r = (300 psia − 285 psia) / 300 psia", s)).toBe("0.05");
+  });
+});
+
+describe("I-33 fix pass — the net's VALUE_SRC: the hyphen-range reading never drops a value 53b7973 read (major 3)", () => {
+  const marked = (line: string) => `**Substituted:** P_T = 1.5 × \`285 psig\` [1]\n${line}`;
+  const second = (line: string) => withholdModelResults(marked(line), "1.5 285 psig").text.split("\n")[1];
+  it.each([
+    // Each expected line is 53b7973's own output for the same input and grounding.
+    ["an identifier then a value", "See V-101,150 psig rating and PT-1,427.5 psig.", `See V-101,${RESULT_WITHHELD} rating and PT-1,${RESULT_WITHHELD}.`],
+    ["a decimal then a value", "Use 1.5,427.5 psig.", `Use 1.5,${RESULT_WITHHELD}.`],
+    ["decimals and an identifier", "The pressure is 1.5,3 MPa or B31.3,4.2 MPa", `The pressure is 1.5,${RESULT_WITHHELD} or B31.3,${RESULT_WITHHELD}`],
+    ["a factor then a grouped value", "Use 0.85,20,000 psi for S.", `Use ${RESULT_WITHHELD},${RESULT_WITHHELD} for S.`],
+  ])("REGRESSION: %s keeps 53b7973's withholding", (_v, line, expected) => {
+    expect(second(line)).toBe(expected);
+  });
+  it("the range end is read whole (more is withheld, never less): '150-300 psig', '10-20 bar'", () => {
+    expect(second("Range 150-300 psig and 1,600-2,288 kPa, at 10-20 bar."))
+      .toBe(`Range 150-${RESULT_WITHHELD} and 1,600-${RESULT_WITHHELD}, at 10-${RESULT_WITHHELD}.`);
+  });
+  it("answerHasComputation on lookups carrying ranges is unchanged (false, as at 53b7973)", () => {
+    for (const a of [
+      "**Answer:** The range is 1,600-2,288 kPa [1].",
+      "**Answer:** Operate at 150-300 psig; MAWP = 1,600-2,288 kPa [1].",
+      "- Test range: 1 600-2 288 kPa [2]",
+      "**Answer:** Per B16.5-2017 Table 2-1.1, Class 150 is 285 psig at 100 °F [1].",
+    ]) expect(answerHasComputation(a, "")).toBe(false);
+  });
+});
+
+describe("I-33 fix pass — each source is read once per answer, and only so far (minor 6)", () => {
+  it("8 cited sources of about 57 KB and 20 Substituted lines: well under a second", () => {
+    const filler = Array.from({ length: 1400 }, (_, k) => `Row ${k}: the allowable is ${1000 + k} psi at ${k} °F per note ${k % 9}.`).join("\n");
+    expect(filler.length).toBeGreaterThan(50_000);
+    const cited: Record<number, string> = {};
+    for (let n = 1; n <= 8; n++) cited[n] = `The hydrostatic test pressure shall be 1.5 times the design pressure [${n}].\n${filler}`;
+    const s = sources(cited, "design pressure = 285 psig");
+    const answer = Array.from({ length: 20 }, () => "**Substituted:** P_T = 1.5 × 285 psig").join("\n");
+    const t0 = performance.now();
+    const out = presentComputedResults(answer, answer, s);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(out.computed).toBe(20);
+  });
+  it("a value printed past the read limit binds nothing (fewer computed, never wrong)", () => {
+    const far = `${"x\n".repeat(15_000)}factor 1.7`;
+    expect(refused("**Substituted:** P_T = 1.7 × 285 psig", sources({ 1: far }, "285 psig"))).toBe("an operand no cited source holds: 1.7");
   });
 });

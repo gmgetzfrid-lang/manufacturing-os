@@ -276,8 +276,11 @@ function InlineAnswer({ text, citations, onCite }: {
           return <span key={i} className="align-super text-[10px] font-black text-orange-700/80">{cite[1]}</span>;
         }
         // PR-13 (I-33): the value the SERVER computed from the cited inputs
-        // — marked as such, never like a value the model wrote.
-        if (part === `**${COMPUTED_LABEL}**`) {
+        // — marked as such, never like a value the model wrote. The route
+        // takes the label out of the model's own text (I-33 fix pass), and
+        // the server writes it only at the start of its own line, so the
+        // mark is drawn only there: a label anywhere else is plain bold.
+        if (part === `**${COMPUTED_LABEL}**` && i === 1 && parts[0] === "") {
           return (
             <span key={i} data-computed-by-app="true"
               title="The app evaluated the Substituted expression above on the server, with every input matched to its cited source or your own value — not the AI's arithmetic. Check each input against its cited page."

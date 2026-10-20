@@ -79,7 +79,7 @@ import { screenAssistantRequest } from "@/lib/assistantScreen";
 import {
   readAll, readAllByKey, READ_PAGE, columnsMissing, asDocumentData, asName, DATA_OPEN, DATA_CLOSE, OWNER_OPEN, OWNER_CLOSE,
   DATA_BOUNDARY_RULE, answerHasComputation, withholdModelResults, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
-  presentComputedResults, withoutComputedLines,
+  presentComputedResults, withoutComputedLines, neutralizeComputedLabels,
   PROMPT_CHARS_PER_TOKEN, PROMPT_TOKENS_PER_IMAGE, MIN_ANSWER_TOKENS, ANSWER_MAX_TOKENS, MIN_ANSWER_PROMPT_CHARS,
   DRAWING_FACTS_ROW_CEILING, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
   insertAnswerRow,
@@ -180,7 +180,11 @@ export async function POST(req: NextRequest) {
       !!t && typeof (t as { question?: unknown }).question === "string"
       && typeof (t as { answer?: unknown }).answer === "string")
     .slice(-4)
-    .map((t) => ({ question: t.question.slice(0, 500), answer: t.answer.slice(0, 1200) }));
+    // (PR-13, I-33 fix pass) An earlier answer is used without the lines the
+    // app's evaluator added — in every prompt that carries the conversation
+    // and in the grounding — so the model never sees, and never imitates,
+    // the computed label (the thread's turns below likewise).
+    .map((t) => ({ question: t.question.slice(0, 500), answer: withoutComputedLines(t.answer).slice(0, 1200) }));
   let threadId = typeof body.threadId === "string" && /^[0-9a-f-]{36}$/i.test(body.threadId)
     ? body.threadId : null;
   if (!orgId || !libraryId || !question) return bad("orgId, libraryId and question are required");
@@ -470,7 +474,7 @@ export async function POST(req: NextRequest) {
         const { visible } = planVisibleHistory(turns, turns, access.readable, user.id, access.gone);
         historyWithheld = turns.length - visible.length;
         history = visible.slice(-4).map((t) => ({
-          question: truncateSafe(t.question ?? "", 500), answer: truncateSafe(t.answer ?? "", 1200),
+          question: truncateSafe(t.question ?? "", 500), answer: truncateSafe(withoutComputedLines(t.answer ?? ""), 1200),
         }));
         historySource = history.length > 0 ? "thread" : "none";
       }
@@ -712,7 +716,10 @@ export async function POST(req: NextRequest) {
       // reason and served a cut-off answer as a complete one). It names no
       // document and sends no history (the question alone rides the prompt).
       const partial = out.truncated === true || out.stopReason === "max_tokens";
-      const answer = partial ? `${out.text}\n\n${CUT_OFF_LINE}` : out.text;
+      // (PR-13, I-33 fix pass) The model's text never carries the app's
+      // computed label: a web answer computes nothing on the server.
+      const webText = neutralizeComputedLabels(out.text);
+      const answer = partial ? `${webText}\n\n${CUT_OFF_LINE}` : webText;
       const webContext: AnswerContext | null = partial
         ? { v: 1, documents: [], uploads: [], complete: true, history: "none", partial: true }
         : null;
@@ -2690,7 +2697,11 @@ export async function POST(req: NextRequest) {
           : "shown (a table or figure), and this month's remaining AI budget could not cover answering again after " +
             "that page request.\n" +
             "! Ask about a narrower part of the question, or ask again once your monthly AI budget allows it.")
-      : answerOut.text;
+      // (PR-13, I-33 fix pass) Only the server's evaluator writes the
+      // computed label the page marks: wherever the MODEL wrote it (or a
+      // passage injected it) — lookup, arithmetic or any other answer — it
+      // is taken out first, line for line (neutralizeComputedLabels).
+      : neutralizeComputedLabels(answerOut.text);
     // ASK-3: the provider says when its output ceiling cut the answer off. A
     // cut-off answer says so, is stored as partial, and is never offered for
     // rating or used as proven ground.
