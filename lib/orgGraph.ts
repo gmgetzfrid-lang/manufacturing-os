@@ -51,10 +51,31 @@
 // from the id set lib/scope.ts resolves, so the caps apply to the unit, not to
 // an org-wide slice filtered afterwards, and every link that leaves the unit
 // is counted on the node it leaves from ("N more this way").
+//
+// TWO ENTRIES, ONE ASSEMBLY (GAP-313 / GM-14). Every read here goes through
+// the shared `supabase` client:
+//   * buildOrgGraph — the client entry. In a browser it reads as the signed-in
+//     member, so it can only ever see tables `authenticated` may read (RLS):
+//     never knowledge_page_entities or knowledge_line_traces, which are
+//     service-role only (20260921, 20261007).
+//   * buildOrgGraphForCaller — the server entry, which GET /api/graph runs
+//     inside lib/serverClientScope runWithServerClient(<the caller's own
+//     JWT-bound client>, …): the SAME reads, under the caller's own RLS, plus
+//     the app's per-caller document predicate (lib/knowledgeAccess
+//     readableControlledDocIds — lib/permissions canReadNode) applied to the
+//     documents read. A document the predicate refuses is not drawn, and
+//     neither is any link to it; a predicate that cannot decide THROWS, and
+//     the route answers that the map could not be checked (fails closed).
+//     Never one payload shared across callers: each call is one caller's.
+// The doc ↔ asset edge carries its sheet, pages and who asserted it (GM-14 /
+// GAP-303): a drawing relation row's sheet_label / pages (20261170) and
+// asserted_by / model (20261171), read with the same fallbacks the asset hub
+// uses when a database predates them.
 
 import { supabase } from "@/lib/supabase";
 import type { CodebookEntry } from "@/lib/codebook";
 import type { ResolvedScope, ScopeRef } from "@/lib/scope";
+import type { PendingPairsRead } from "@/lib/linkProposals";
 
 export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot";
 
@@ -118,6 +139,17 @@ export interface GraphEdge {
    *  folders) and on every other edge. Data, so a consumer never parses
    *  `note` to learn the folder. */
   folderIds?: string[];
+  /** GM-14 / GAP-303 — on a document ↔ asset ("tag") edge only, from its
+   *  relation row (document_assets): the sheet's address read off the
+   *  title block (sheet_label, 20261170) and the pages the tag was read on;
+   *  who asserted it (asserted_by, 20261171 — before it, a 'drawing' row is
+   *  a machine's); `aiRead` when the page was read off an AI transcription
+   *  (the row names a model) — shown "AI-read, unconfirmed". Each is absent
+   *  when the row does not say it. */
+  sheet?: string;
+  pages?: number[];
+  assertedBy?: "machine" | "human";
+  aiRead?: boolean;
 }
 
 /** IRLS-14 (the lib/orgGraph.ts half): what the mention read found. It tells
@@ -207,6 +239,14 @@ export interface AssetRowLite {
   plant_id?: string | null; system_id?: string | null;
   type_id?: string | null; library_id?: string | null;
 }
+/** A document ↔ asset relation row. The provenance columns are optional: a
+ *  database before 20261170 (source 'drawing', sheet_label, pages) or
+ *  20261171 (asserted_by, model) does not have them. */
+export interface DocAssetRow {
+  document_id: string; asset_id: string;
+  source?: string | null; sheet_label?: string | null; pages?: unknown;
+  asserted_by?: string | null; model?: string | null;
+}
 /** units.codebook_code is added by 20261138 (the codebook ↔ units mapping). */
 export interface UnitRowLite { id: string; name: string; code: string | null; plant_id: string; codebook_code?: string | null }
 export interface SystemRowLite { id: string; name: string; code: string | null; unit_id: string; plant_id: string }
@@ -223,7 +263,7 @@ export interface GraphRows {
   plotPlans: Array<{ id: string; name: string; markers: unknown }>;
   documents: DocumentRow[];
   assets: AssetRowLite[];
-  docAssets: Array<{ document_id: string; asset_id: string }>;
+  docAssets: DocAssetRow[];
   projectDocs: Array<{ project_id: string; document_id: string }>;
   related: Array<{ document_id: string; target_document_id: string | null; kind: string }>;
   supersessions: Array<{ superseded_doc_id: string; replacement_doc_id: string }>;
@@ -370,6 +410,29 @@ const DOC_COLS_LEGACY = "id, document_number, title, library_id, unit_id, plant_
 const ASSET_COLS = "id, tag, description, unit_code, unit_id, plant_id, system_id, type_id, library_id";
 const UNIT_COLS = "id, name, code, plant_id, codebook_code";
 const UNIT_COLS_LEGACY = "id, name, code, plant_id";
+
+/** GM-14 / GAP-303 — the relation's columns, newest first: with its
+ *  provenance (asserted_by / model, 20261171), with its sheet (source
+ *  'drawing', sheet_label / pages, 20261170), then the pair alone. A database
+ *  that predates a tier answers 42703 / PGRST204, and the next one is read —
+ *  the map draws exactly what it drew before that file. */
+const DA_COL_TIERS = [
+  "id, document_id, asset_id, source, sheet_label, pages, asserted_by, model",
+  "id, document_id, asset_id, source, sheet_label, pages",
+  "id, document_id, asset_id",
+] as const;
+type DocAssetRead = DocAssetRow & { id: string };
+
+async function readDocAssetsTiered(
+  read: (cols: string) => Promise<PagedRows<DocAssetRead>>,
+): Promise<PagedRows<DocAssetRead>> {
+  let r = await read(DA_COL_TIERS[0]);
+  for (const cols of DA_COL_TIERS.slice(1)) {
+    if (!(r.error && isMissingColumn(r.error))) break;
+    r = await read(cols);
+  }
+  return r;
+}
 
 type Res = { data: unknown; error: PgErr | null; count?: number | null };
 
@@ -533,7 +596,50 @@ function accessNote(access: GraphAccess): string | null {
   return `${plural(access.outsideAccess, "document")} in this org ${access.outsideAccess === 1 ? "is" : "are"} outside your access and not on this map — orphans, hubs and bridges are computed on what you can see.`;
 }
 
-async function readOrgRows(orgId: string, notes: string[]): Promise<{ rows: GraphRows; mentions: { installed: boolean; capped: boolean } }> {
+/** GAP-313 — the per-caller document predicate a server assembly applies on
+ *  top of the reader's own RLS: which of these document ids the caller may
+ *  read. It THROWS when it cannot decide; the assembly lets the throw through
+ *  (fails closed — no map rather than a map the predicate did not check). */
+export type ReadableDocs = (docIds: string[]) => Promise<Set<string>>;
+
+/** The documents a predicate refuses, out of the rows read. */
+async function gateDocuments<T extends { id: string }>(
+  gate: ReadableDocs | null, rows: T[],
+): Promise<{ kept: T[]; refused: Set<string> }> {
+  const refused = new Set<string>();
+  if (!gate || rows.length === 0) return { kept: rows, refused };
+  const ok = await gate(rows.map((d) => String(d.id)));
+  const kept = rows.filter((d) => {
+    if (ok.has(String(d.id))) return true;
+    refused.add(String(d.id));
+    return false;
+  });
+  return { kept, refused };
+}
+
+/** Drop every link row that names a refused document (GAP-313): it is not
+ *  drawn, and not counted as a link that leads off the map either. */
+function withoutRefused(rows: GraphRows, refused: ReadonlySet<string>): GraphRows {
+  if (refused.size === 0) return rows;
+  const out = (id: string | null | undefined) => !!id && refused.has(String(id));
+  return {
+    ...rows,
+    docAssets: rows.docAssets.filter((r) => !out(r.document_id)),
+    projectDocs: rows.projectDocs.filter((r) => !out(r.document_id)),
+    related: rows.related.filter((r) => !out(r.document_id) && !out(r.target_document_id)),
+    supersessions: rows.supersessions.filter((r) => !out(r.superseded_doc_id) && !out(r.replacement_doc_id)),
+    mentions: rows.mentions.filter((m) => !out(m.document_id)
+      && !(m.knowledge_document_id && out(rows.mirrorOf.get(m.knowledge_document_id) ?? null))),
+  };
+}
+
+function refusedNote(n: number): string {
+  return `${plural(n, "document")} you could otherwise list ${n === 1 ? "is" : "are"} outside your access under the library, folder and document rules — not on this map.`;
+}
+
+async function readOrgRows(
+  orgId: string, notes: string[], gate: ReadableDocs | null = null,
+): Promise<{ rows: GraphRows; mentions: { installed: boolean; capped: boolean }; refused: Set<string> }> {
   const [
     structure, libsRes, projectsRes, docsR, assetsR, plotRes,
     docAssets, projectDocs, related, supersessions, mentions, flows,
@@ -548,8 +654,7 @@ async function readOrgRows(orgId: string, notes: string[]): Promise<{ rows: Grap
     // Plot plans: spatial maps whose markers pin assets to a place. Each
     // plan is a node; each marker is an edge to the asset it pins.
     supabase.from("plot_plans").select("id, name, markers").eq("org_id", orgId).order("name").order("id").limit(LIST_CAP + 1) as unknown as PromiseLike<Res>,
-    pageRows<{ id: string; document_id: string; asset_id: string }>(
-      "document_assets", "id, document_id, asset_id", orgId, EDGE_CAP),
+    readDocAssetsTiered((cols) => pageRows<DocAssetRead>("document_assets", cols, orgId, EDGE_CAP)),
     pageRows<{ id: string; project_id: string; document_id: string }>(
       "project_documents", "id, project_id, document_id", orgId, EDGE_CAP),
     pageRows<{ id: string; document_id: string; target_document_id: string | null; kind: string }>(
@@ -573,8 +678,14 @@ async function readOrgRows(orgId: string, notes: string[]): Promise<{ rows: Grap
   if (docsR.degraded || structure.degraded) notes.push(UNIT_IDENTITY_NOTE);
   const { codebookUnits, units, plants, systems } = structure;
 
-  const documents = capList(docsR.rows, DOC_CAP,
-    `Showing the ${fmt(DOC_CAP)} most recently updated documents.`, notes);
+  // GAP-313: the caller's predicate, on the documents read (a no-op for the
+  // client entry). Past the cap, a refused document is not replaced by the
+  // next most recent one: the cap is still said.
+  const gated = await gateDocuments(gate, docsR.rows);
+  const capNote = `Showing the ${fmt(DOC_CAP)} most recently updated documents.`;
+  const documents = docsR.rows.length > DOC_CAP && gated.kept.length <= DOC_CAP
+    ? (notes.push(capNote), gated.kept)
+    : capList(gated.kept, DOC_CAP, capNote, notes);
   const libraries = capList((libsRes.data as GraphRows["libraries"] | null) ?? [], LIST_CAP,
     `Showing the first ${fmt(LIST_CAP)} libraries by name.`, notes);
   const assets = capList(optionalRows<AssetRowLite>({ data: assetsR.rows, error: assetsR.error }, "Equipment", notes), ASSET_CAP,
@@ -613,13 +724,14 @@ async function readOrgRows(orgId: string, notes: string[]): Promise<{ rows: Grap
   }
 
   return {
-    rows: {
+    rows: withoutRefused({
       codebookUnits, units, plants, systems, libraries, knowledgeLibraries, projects, plotPlans,
       documents, assets,
       docAssets: docAssets.rows, projectDocs: projectDocs.rows, related: related.rows,
       supersessions: supersessions.rows, mentions: mentions.rows, mirrorOf, flows: flows.rows,
-    },
+    }, gated.refused),
     mentions: { installed: !mentions.missing, capped: mentions.capped },
+    refused: gated.refused,
   };
 }
 
@@ -632,8 +744,8 @@ const byUpdatedDesc = (a: DocumentRow, b: DocumentRow) => {
 };
 
 async function readScopeRows(
-  orgId: string, scope: ResolvedScope, notes: string[],
-): Promise<{ rows: GraphRows; mentions: { installed: boolean; capped: boolean }; requestedDocs: number; fetchedDocs: number; filingLibraries: string[] }> {
+  orgId: string, scope: ResolvedScope, notes: string[], gate: ReadableDocs | null = null,
+): Promise<{ rows: GraphRows; mentions: { installed: boolean; capped: boolean }; requestedDocs: number; fetchedDocs: number; filingLibraries: string[]; refused: Set<string> }> {
   const docIds = scope.documents;
   const assetIds = scope.assets;
   const BIG = Math.max(EDGE_CAP, docIds.length + assetIds.length + 1);
@@ -655,7 +767,9 @@ async function readScopeRows(
   }
   if (docsR.error) throw new Error(docsR.error.message);
   const fetchedDocs = docsR.rows.length;
-  const documents = [...docsR.rows].sort(byUpdatedDesc);
+  // GAP-313: the caller's predicate (a no-op for the client entry).
+  const gated = await gateDocuments(gate, docsR.rows);
+  const documents = [...gated.kept].sort(byUpdatedDesc);
   if (documents.length > DOC_CAP) {
     notes.push(`This unit holds ${fmt(documents.length)} documents you can see; showing the ${fmt(DOC_CAP)} most recently updated.`);
     documents.length = DOC_CAP;
@@ -680,7 +794,7 @@ async function readScopeRows(
 
   const ids = documents.map((d) => d.id);
   const [docAssets, projectDocs, relA, relB, supA, supB, mentByAsset, mentByDoc, mirrorsOfDocs] = await Promise.all([
-    pageIn<{ id: string; document_id: string; asset_id: string }>("document_assets", "id, document_id, asset_id", orgId, "document_id", ids, BIG),
+    readDocAssetsTiered((cols) => pageIn<DocAssetRead>("document_assets", cols, orgId, "document_id", ids, BIG)),
     pageIn<{ id: string; project_id: string; document_id: string }>("project_documents", "id, project_id, document_id", orgId, "document_id", ids, BIG),
     pageIn<{ id: string; document_id: string; target_document_id: string | null; kind: string }>(
       "document_related_resources", "id, document_id, target_document_id, kind", orgId, "document_id", ids, BIG),
@@ -733,7 +847,7 @@ async function readScopeRows(
   for (const [k, v] of await resolveMirrors(orgId, unresolved, notes)) mirrorOf.set(k, v);
 
   return {
-    rows: {
+    rows: withoutRefused({
       codebookUnits: structure.codebookUnits,
       units: structure.units,
       plants: structure.plants,
@@ -747,7 +861,7 @@ async function readScopeRows(
       docAssets: docAssets.rows, projectDocs: projectDocs.rows,
       related: union(relA, relB), supersessions: union(supA, supB),
       mentions, mirrorOf, flows: flows.rows,
-    },
+    }, gated.refused),
     // A read with no ids issues no request and cannot report a missing
     // table, so the index is installed only if no read found it missing.
     mentions: {
@@ -757,6 +871,7 @@ async function readScopeRows(
     requestedDocs: docIds.length,
     fetchedDocs,
     filingLibraries,
+    refused: gated.refused,
   };
 }
 
@@ -774,6 +889,28 @@ export interface AssembleOptions {
     inScope: (nodeId: string) => boolean;
     keep: ReadonlySet<string>;
   };
+}
+
+/** GM-14 / GAP-303 — what a relation row says about its link: the sheet and
+ *  pages it was read on, who asserted it, and whether the page was read off
+ *  an AI transcription. Only what the row says; undefined when it says
+ *  nothing (a database before 20261170, or a link a person made with no
+ *  sheet), so such an edge is exactly the pair it always was. */
+export function relationOf(r: DocAssetRow): Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead"> | undefined {
+  const out: Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead"> = {};
+  const sheet = typeof r.sheet_label === "string" ? r.sheet_label.trim() : "";
+  if (sheet) out.sheet = sheet;
+  const pages = Array.isArray(r.pages)
+    ? [...new Set((r.pages as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n > 0))].sort((x, y) => x - y)
+    : [];
+  if (pages.length > 0) out.pages = pages;
+  // asserted_by (20261171) is the fact; before it, a 'drawing' row is a
+  // machine's reading by definition (GAP-302 — a person cannot write one).
+  const by = r.asserted_by === "machine" || r.asserted_by === "human"
+    ? r.asserted_by : r.source === "drawing" ? "machine" : null;
+  if (by) out.assertedBy = by;
+  if (by === "machine" && typeof r.model === "string" && r.model.trim()) out.aiRead = true;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 const SEVERED_LABEL: Record<GraphEdgeType, string> = {
@@ -797,7 +934,7 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
   const put = (n: GraphNode) => { if (!inScope || inScope(n.id)) nodes.set(n.id, n); };
 
   type Outcome = "added" | "duplicate" | "self" | "severed" | "boundary" | "unrelated";
-  const addEdge = (a: string, b: string, type: GraphEdgeType, extra?: Pick<GraphEdge, "via" | "note" | "folderIds">): Outcome => {
+  const addEdge = (a: string, b: string, type: GraphEdgeType, extra?: Pick<GraphEdge, "via" | "note" | "folderIds" | "sheet" | "pages" | "assertedBy" | "aiRead">): Outcome => {
     if (a === b) return "self";
     const hasA = nodes.has(a), hasB = nodes.has(b);
     if (!hasA || !hasB) {
@@ -994,7 +1131,7 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
     if (d.plant_id) addEdge(`doc:${d.id}`, `plant:${d.plant_id}`, "unit");
     addEdge(`doc:${d.id}`, `lib:${d.library_id}`, "library");
   }
-  for (const r of rows.docAssets) addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag");
+  for (const r of rows.docAssets) addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag", relationOf(r));
   for (const r of rows.projectDocs) addEdge(`proj:${r.project_id}`, `doc:${r.document_id}`, "project");
   for (const r of rows.related) {
     if (r.kind === "document" && r.target_document_id) {
@@ -1107,18 +1244,19 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
   };
 }
 
-// ─── Entry point ────────────────────────────────────────────────────────────
+// ─── Entry points ───────────────────────────────────────────────────────────
 
-/** The org graph — or, with `scope`, one unit's world (GAP-306). */
-export async function buildOrgGraph(
-  orgId: string, opts?: { scope?: ScopeRef | ResolvedScope | null },
-): Promise<OrgGraph> {
+/** One assembly behind both entries: `gate` null is the client entry,
+ *  exactly as it always assembled. */
+async function assembleFor(
+  orgId: string, opts: { scope?: ScopeRef | ResolvedScope | null } | undefined, gate: ReadableDocs | null,
+): Promise<{ graph: OrgGraph; refused: Set<string> }> {
   const notes: string[] = [];
   if (opts?.scope) {
     const { resolveScope, scopeMembership } = await import("@/lib/scope");
     const scope = "assets" in opts.scope ? opts.scope : await resolveScope(orgId, opts.scope);
     notes.push(...scope.truncations);
-    const read = await readScopeRows(orgId, scope, notes);
+    const read = await readScopeRows(orgId, scope, notes, gate);
     const hidden = read.requestedDocs > read.fetchedDocs ? read.requestedDocs - read.fetchedDocs : 0;
     if (hidden > 0) {
       // Only the relation can name a document the reader cannot open (the
@@ -1126,6 +1264,7 @@ export async function buildOrgGraph(
       // what the scope KNOWS it leaves out — a floor, never the whole count.
       notes.push(`${plural(hidden, "document")} linked to ${scope.label}'s equipment ${hidden === 1 ? "is" : "are"} outside your access — not drawn.`);
     }
+    if (read.refused.size > 0) notes.push(refusedNote(read.refused.size));
     const g = assembleOrgGraph(read.rows, {
       notes, mentions: read.mentions,
       scope: {
@@ -1138,16 +1277,104 @@ export async function buildOrgGraph(
     // see (restricted documents decoded, filed or pinned to the unit never
     // enter a reader's resolution), so it makes no total or outside claim.
     return {
-      ...g,
-      access: {
-        documentsVisible: read.fetchedDocs, documentsTotal: null, outsideAccess: null,
-        documentsDrawn: read.rows.documents.length, scoped: true,
+      graph: {
+        ...g,
+        access: {
+          documentsVisible: read.fetchedDocs - read.refused.size, documentsTotal: null, outsideAccess: null,
+          documentsDrawn: read.rows.documents.length, scoped: true,
+        },
       },
+      refused: read.refused,
     };
   }
-  const [read, counted] = await Promise.all([readOrgRows(orgId, notes), readAccess(orgId)]);
-  const access: GraphAccess = { ...counted, documentsDrawn: read.rows.documents.length, scoped: false };
+  const [read, counted] = await Promise.all([readOrgRows(orgId, notes, gate), readAccess(orgId)]);
+  // GAP-313: a document the predicate refused is one the reader's RLS
+  // listed (it came from their own read), so it leaves their visible count.
+  const visible = counted.documentsVisible === null ? null : Math.max(0, counted.documentsVisible - read.refused.size);
+  const access: GraphAccess = {
+    documentsVisible: visible,
+    documentsTotal: counted.documentsTotal,
+    outsideAccess: visible !== null && counted.documentsTotal !== null ? Math.max(0, counted.documentsTotal - visible) : null,
+    documentsDrawn: read.rows.documents.length, scoped: false,
+  };
   const an = accessNote(access);
   if (an) notes.push(an);
-  return { ...assembleOrgGraph(read.rows, { notes, mentions: read.mentions }), access };
+  else if (read.refused.size > 0) notes.push(refusedNote(read.refused.size));
+  return { graph: { ...assembleOrgGraph(read.rows, { notes, mentions: read.mentions }), access }, refused: read.refused };
+}
+
+/** The org graph — or, with `scope`, one unit's world (GAP-306). The CLIENT
+ *  entry: it reads through the shared client, so in a browser it sees what
+ *  the signed-in member's RLS lets them read and nothing else. */
+export async function buildOrgGraph(
+  orgId: string, opts?: { scope?: ScopeRef | ResolvedScope | null },
+): Promise<OrgGraph> {
+  return (await assembleFor(orgId, opts, null)).graph;
+}
+
+/** GAP-313 — the SERVER entry (GET /api/graph). Run it inside
+ *  runWithServerClient(<the caller's own JWT-bound client>, …), so every read
+ *  is the caller's own (RLS), exactly as buildOrgGraph's are in their
+ *  browser; `readable` is the caller's document predicate
+ *  (lib/knowledgeAccess readableControlledDocIds), applied to the documents
+ *  read. A refused document is not drawn and no link to it is drawn or
+ *  counted; for a controller the predicate refuses nothing, so the map is
+ *  the one buildOrgGraph assembles for them. A predicate that throws is
+ *  let through — the caller answers that the map could not be checked.
+ *  `refused` (ids) is for the route's own filtering (proposal pairs) and is
+ *  never part of the payload. */
+export async function buildOrgGraphForCaller(
+  orgId: string, opts: { scope?: ScopeRef | ResolvedScope | null; readable: ReadableDocs },
+): Promise<{ graph: OrgGraph; refused: ReadonlySet<string> }> {
+  return assembleFor(orgId, { scope: opts.scope ?? null }, opts.readable);
+}
+
+// ─── The page's one request (GAP-313) ───────────────────────────────────────
+
+/** What GET /api/graph answers: the caller's map and the pending proposal
+ *  pairs (lib/linkProposals readPendingProposalPairs, read as the caller),
+ *  in one payload. */
+export interface OrgGraphPayload {
+  graph: OrgGraph;
+  proposals: PendingPairsRead;
+}
+
+/** A map the server would not or could not assemble. `accessUnchecked`: the
+ *  caller's document access could not be decided, so no map was assembled
+ *  (fails closed — the page drops any snapshot it painted). */
+export class GraphLoadError extends Error {
+  constructor(message: string, readonly status: number, readonly accessUnchecked = false) {
+    super(message);
+    this.name = "GraphLoadError";
+  }
+}
+
+/** GAP-313 — the graph page's ONE request: GET /api/graph assembles the map
+ *  on the server for this caller (buildOrgGraphForCaller), the proposal
+ *  pairs with it. Throws GraphLoadError with the route's sentence. */
+export async function fetchOrgGraph(
+  orgId: string, opts?: { scope?: ScopeRef | null },
+): Promise<OrgGraphPayload> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const qs = new URLSearchParams({ orgId });
+  // lib/scope.ts formatScopeParam's spelling (`unit:<code>`), written here
+  // because lib/scope.ts imports this module.
+  if (opts?.scope) qs.set("scope", `${opts.scope.kind}:${opts.scope.code}`);
+  const res = await fetch(`/api/graph?${qs.toString()}`, {
+    headers: { authorization: `Bearer ${session?.access_token ?? ""}` },
+    cache: "no-store",
+  });
+  const body = await res.json().catch(() => null) as
+    | (Partial<OrgGraphPayload> & { error?: string; accessUnchecked?: boolean })
+    | null;
+  if (!res.ok || !body?.graph) {
+    throw new GraphLoadError(
+      body?.error || `The map could not be loaded (HTTP ${res.status}).`,
+      res.status, !!body?.accessUnchecked,
+    );
+  }
+  return {
+    graph: body.graph,
+    proposals: body.proposals ?? { pairs: [], total: null, capped: false, error: "the proposals were not in the answer" },
+  };
 }

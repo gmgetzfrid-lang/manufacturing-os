@@ -91,6 +91,15 @@ const g = vi.hoisted(() => ({
   runState: { data: null as Record<string, unknown> | null, error: null as { code: string; message: string } | null },
   runReads: 0,
   runColumns: "" as string,
+  // I-15: a load the server refused (GraphLoadError), when set.
+  loadError: null as Error | null,
+  // I-15 (AREA-2): what a document_assets insert answers, and what was written.
+  insertError: null as { code: string; message: string } | null,
+  inserts: [] as Array<{ table: string; row: unknown }>,
+  adopt: { ok: true, status: 200, body: { ok: true, adopted: true, already: null } as Record<string, unknown> },
+  // I-15 (FLOW-14 / GAP-315): what the confirmed-flow read answers.
+  flowEdges: { edges: [] as unknown[], state: "ok" as "ok" | "missing" | "error", error: undefined as string | undefined, truncated: false, skipped: 0, unitNodes: [] as string[] },
+  flowReads: 0,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -126,11 +135,19 @@ vi.mock("@/components/graph/OrgGraph2D", async (orig) => {
 vi.mock("@/components/graph/OrgGraph3D", () => ({
   default: (props: Record<string, unknown>) => { g.renders.push(props); return React.createElement("div", { "data-testid": "map3d" }); },
 }));
+// I-15 (GAP-313): the page loads ONE payload — GET /api/graph through
+// lib/orgGraph fetchOrgGraph — carrying the map and the proposal pairs. The
+// stand-in records each load's arguments exactly as the client assembly's
+// were recorded before (`g.build`), so every existing pin reads the same.
 vi.mock("@/lib/orgGraph", async (orig) => ({
   ...(await orig<typeof import("@/lib/orgGraph")>()),
-  buildOrgGraph: vi.fn(async (...args: unknown[]) => {
+  fetchOrgGraph: vi.fn(async (...args: unknown[]) => {
     g.build.push(args);
-    return structuredClone(args[1] && g.scopedGraph ? g.scopedGraph : g.graph);
+    if (g.loadError) throw g.loadError;
+    return {
+      graph: structuredClone(args[1] && g.scopedGraph ? g.scopedGraph : g.graph),
+      proposals: structuredClone(g.proposals),
+    };
   }),
 }));
 // The page's own graphView helpers, wrapped (never replaced) so a test can
@@ -156,7 +173,11 @@ vi.mock("@/lib/mentions", () => ({ mentionsForAsset: vi.fn(async () => []), ment
 vi.mock("@/lib/codebook", () => ({
   loadCodebook: vi.fn(async () => ({ units: [{ code: "20", label: "Crude Unit" }, { code: "30", label: "Coker" }] })),
 }));
-vi.mock("@/lib/processFlows", () => ({ createManualFlow: vi.fn(async (input: unknown) => { g.flows.push(input); return "confirmed"; }) }));
+vi.mock("@/lib/processFlows", () => ({
+  createManualFlow: vi.fn(async (input: unknown) => { g.flows.push(input); return "confirmed"; }),
+  flowsToLineEdges: vi.fn(async () => { g.flowReads += 1; return structuredClone(g.flowEdges); }),
+  unitTraceTag: (code: string) => `UNIT${code}`.toUpperCase().replace(/[^A-Z0-9]/g, ""),
+}));
 vi.mock("@/lib/relatedResources", () => ({ addRelatedResource: vi.fn(async () => undefined) }));
 vi.mock("@/lib/supabase", () => ({
   supabase: {
@@ -169,7 +190,7 @@ vi.mock("@/lib/supabase", () => ({
           }),
         }),
       }
-      : ({ insert: async () => ({ error: null }) }),
+      : ({ insert: async (row: unknown) => { g.inserts.push({ table, row }); return { error: g.insertError }; } }),
   },
 }));
 
@@ -177,6 +198,8 @@ import GraphPage from "@/app/(protected)/graph/page";
 import BackToGraphChip from "@/components/graph/BackToGraphChip";
 import { settingsKey, lensByKey } from "@/lib/graphSettings";
 import { URL_WRITE_BURST, keyboardOrder, keyboardBaseOrder } from "@/lib/graphView";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -252,6 +275,12 @@ beforeEach(() => {
   g.runState = { data: null, error: null };
   g.runReads = 0;
   g.runColumns = "";
+  g.loadError = null;
+  g.insertError = null;
+  g.inserts = [];
+  g.adopt = { ok: true, status: 200, body: { ok: true, adopted: true, already: null } };
+  g.flowEdges = { edges: [], state: "ok", error: undefined, truncated: false, skipped: 0, unitNodes: [] };
+  g.flowReads = 0;
   g.proposals = { pairs: [], total: 0, capped: false, error: null };
   role.roles = ["Admin"];
   nav.params = new URLSearchParams("");
@@ -265,6 +294,7 @@ beforeEach(() => {
     g.fetches.push({ url, body: init?.body ? JSON.parse(init.body) : null });
     if (url === "/api/graph/ask") return { ok: true, status: 200, json: async () => g.askBody };
     if (url === "/api/graph/mentions") return { ok: true, status: 200, json: async () => ({ documents: 4, mentionsWritten: 9, incomplete: false }) };
+    if (url === "/api/equipment-bridge") return { ok: g.adopt.ok, status: g.adopt.status, json: async () => g.adopt.body };
     return { ok: false, status: 404, json: async () => ({ error: "nope" }) };
   }));
   host = document.createElement("div");
@@ -1313,5 +1343,207 @@ describe("GPV-13 — the keyboard's walk is memoised on what changes it (fix pas
     await key(region, "ArrowDown");
     // P-101's neighbours, most connected first: Crude Unit (3), PID-1 (3), Coker (1).
     expect(host.querySelector("#graph-keyboard-status")?.textContent).toMatch(/^Crude Unit, Unit, 3 links — 1 of 3\./);
+  });
+});
+
+// ── intelligence Round G, I-15 GRAPH SERVER ASSEMBLY ─────────────────────────
+
+describe("GAP-313 acceptance 2 — one payload, and a snapshot that was not kept is said", () => {
+  it("the map and the proposals arrive in ONE load; a scope change is one more", async () => {
+    g.proposals = { pairs: [{ documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" }], total: 1, capped: false, error: null };
+    await render(page());
+    expect(g.build).toEqual([["o1"]]);
+    expect(last().edges.filter((e) => e.type === "proposed")).toHaveLength(1);
+    expect(g.fetches.filter((f) => f.url.startsWith("/api/graph?"))).toEqual([]); // the load is fetchOrgGraph's, stood in here
+  });
+
+  it("a map small enough is kept as the snapshot, and nothing is said", async () => {
+    await render(page());
+    expect(window.sessionStorage.getItem("org-graph-o1")).toBeTruthy();
+    expect(host.querySelector('[data-testid="snapshot-skipped"]')).toBeNull();
+  });
+
+  it("a map too large for a snapshot says so, and its stale snapshot is dropped (the base skipped it silently)", async () => {
+    window.sessionStorage.setItem("org-graph-o1", JSON.stringify(baseGraph()));
+    (g.graph as unknown as Record<string, unknown>).padding = "x".repeat(2_000_001);
+    await render(page());
+    expect(host.querySelector('[data-testid="snapshot-skipped"]')?.textContent).toMatch(/too large to keep a snapshot of in the browser \(2\.\d MB\), so it is fetched fresh each time you open it/);
+    expect(window.sessionStorage.getItem("org-graph-o1")).toBeNull();
+    expect(host.querySelector('[data-testid="map2d"]')).toBeTruthy();
+  });
+
+  it("a browser that refuses the snapshot is said too, and the fresh map still draws", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("QuotaExceededError"); });
+    await render(page());
+    expect(host.querySelector('[data-testid="snapshot-skipped"]')?.textContent).toMatch(/The browser refused to keep a snapshot of this map/);
+    expect(last().nodes.map((n) => n.id)).toContain("doc:d1");
+  });
+
+  it("a map whose access could not be checked is NOT drawn — not even the snapshot — and the page says why (fails closed)", async () => {
+    const { GraphLoadError } = await import("@/lib/orgGraph");
+    window.sessionStorage.setItem("org-graph-o1", JSON.stringify(baseGraph()));
+    g.loadError = new GraphLoadError("Your document access couldn't be checked just now, so the map is not drawn.", 503, true);
+    await render(page());
+    expect(text()).toContain("Your document access couldn't be checked just now, so the map is not drawn.");
+    expect(host.querySelector('[data-testid="map2d"]')).toBeNull();
+    expect(window.sessionStorage.getItem("org-graph-o1")).toBeNull();
+  });
+
+  it("any other failed load is said as before; the snapshot is kept for the next visit", async () => {
+    const { GraphLoadError } = await import("@/lib/orgGraph");
+    window.sessionStorage.setItem("org-graph-o1", JSON.stringify(baseGraph()));
+    g.loadError = new GraphLoadError("statement timeout", 500);
+    await render(page());
+    expect(text()).toContain("statement timeout");
+    expect(window.sessionStorage.getItem("org-graph-o1")).toBeTruthy();
+  });
+
+  it("the page comment states the real requests (GAP-313 acceptance 3)", () => {
+    const src = readFileSync(join(process.cwd(), "app/(protected)/graph/page.tsx"), "utf8");
+    expect(src).not.toMatch(/a dozen parallel table pulls/);
+    expect(src).toMatch(/The map is ONE request: GET \/api\/graph/);
+    expect(src).toMatch(/about fourteen for a typical org, up to ~56 at the caps/);
+  });
+});
+
+describe("PHYS-13 graph limb — the Copy link is built on publicOrigin()", () => {
+  const prev = process.env.NEXT_PUBLIC_SITE_URL;
+  afterEach(() => { if (prev === undefined) delete process.env.NEXT_PUBLIC_SITE_URL; else process.env.NEXT_PUBLIC_SITE_URL = prev; });
+
+  it("with a configured site the copied link carries it, never the page's own host", async () => {
+    process.env.NEXT_PUBLIC_SITE_URL = "https://app.example-refinery.com/";
+    const writes: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t: string) => { writes.push(t); } } });
+    nav.params = new URLSearchParams("lens=documents");
+    await render(page());
+    await click(btn(/^\s*Views/));
+    await click(btn("Copy a link to this view"));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^https:\/\/app\.example-refinery\.com\/graph\?/);
+    expect(writes[0]).not.toContain(window.location.origin);
+  });
+
+  it("no file of the graph page reads window.location.origin", () => {
+    const src = readFileSync(join(process.cwd(), "app/(protected)/graph/page.tsx"), "utf8");
+    expect(src).not.toMatch(/window\.location\.origin/);
+    expect(src).toContain('import { publicOrigin } from "@/lib/publicOrigin";');
+  });
+});
+
+describe("AREA-2 graph limb — Connect writes a document ↔ equipment link only for the registry's writers", () => {
+  it("a member outside the writer tier is refused BEFORE any write, with the reason; a document ↔ document link still works", async () => {
+    role.roles = ["Engineer"];
+    nav.params = new URLSearchParams("select=doc%3Ad1");
+    await render(page());
+    await click(btn("Draw a connection from this node"));
+    expect(text()).toContain("A document ↔ equipment link is for the equipment registry's writers");
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "asset:a1")!); });
+    await flush();
+    expect(g.inserts).toEqual([]);
+    expect(host.querySelector('[data-testid="connect-error"]')?.textContent).toMatch(/Linking a document to equipment is for Admin, Document Control, Manager and Supervisor/);
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "doc:d2")!); });
+    await flush();
+    expect(text()).toContain("Connected PID-1 ↔ LOOSE-2 ✓");
+  });
+
+  it("a writer (by any held role — Supervisor here) links as before: the manual row is inserted and drawn", async () => {
+    role.roles = ["Engineer", "Supervisor"];
+    nav.params = new URLSearchParams("select=doc%3Ad2");
+    await render(page());
+    await click(btn("Draw a connection from this node"));
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "asset:a2")!); });
+    await flush();
+    expect(g.inserts).toEqual([{ table: "document_assets", row: { org_id: "o1", document_id: "d2", asset_id: "a2", tag_text: "P-102", source: "manual" } }]);
+    expect(g.fetches.find((f) => f.url === "/api/equipment-bridge")).toBeUndefined();
+    expect(last().edges).toContainEqual({ a: "doc:d2", b: "asset:a2", type: "tag" });
+  });
+
+  it("a pair a drawing row already holds (23505) goes through the Bridge's 'adopt', and the link becomes the person's", async () => {
+    g.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
+    nav.params = new URLSearchParams("select=doc%3Ad2");
+    await render(page());
+    await click(btn("Draw a connection from this node"));
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "asset:a2")!); });
+    await flush();
+    expect(g.fetches.find((f) => f.url === "/api/equipment-bridge")?.body).toEqual({ action: "adopt", orgId: "o1", documentId: "d2", assetId: "a2" });
+    expect(text()).toContain("Connected LOOSE-2 ↔ P-102 ✓");
+  });
+
+  it("an adopt the Bridge refuses is said, never shown as linked", async () => {
+    g.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
+    g.adopt = { ok: false, status: 403, body: { error: "You cannot read this document, so you cannot link it." } };
+    nav.params = new URLSearchParams("select=doc%3Ad2");
+    await render(page());
+    await click(btn("Draw a connection from this node"));
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "asset:a2")!); });
+    await flush();
+    expect(host.querySelector('[data-testid="connect-error"]')?.textContent).toBe("You cannot read this document, so you cannot link it.");
+    expect(text()).not.toContain("Connected LOOSE-2 ↔ P-102 ✓");
+  });
+});
+
+describe("FLOW-14 done-when 3 / GAP-315 acceptance 3 — a unit's upstream and downstream set from confirmed flows", () => {
+  it("a selected unit offers both directions; downstream lights what it feeds along confirmed flows and lists each with its runs", async () => {
+    g.flowEdges = {
+      edges: [
+        { lineId: "f1", from: "UNIT20", to: "P101", basis: "confirmed_flow" },
+        { lineId: "f2", from: "P101", to: "P102", basis: "confirmed_flow" },
+        { lineId: "f3", from: "P102", to: "X999", basis: "confirmed_flow" },
+      ],
+      state: "ok", error: undefined, truncated: false, skipped: 0, unitNodes: ["UNIT20"],
+    };
+    nav.params = new URLSearchParams("select=cbunit%3A20");
+    await render(page());
+    expect(host.querySelector('[data-testid="process-reach"]')).toBeTruthy();
+    await click(btn("What it feeds (downstream)"));
+    const result = host.querySelector('[data-testid="process-reach-result"]')?.textContent ?? "";
+    expect(result).toContain("Fed by Crude Unit, within 6 runs of confirmed flow (proposals are never used):");
+    expect(result).toMatch(/P-1011.*P-1022.*X9993/);
+    expect(host.querySelector('[data-testid="process-reach-note"]')?.textContent).toMatch(/1 of these is not on this map/);
+    expect(last().flyTo?.ids).toEqual(["cbunit:20", "asset:a1", "asset:a2"]);
+    expect(g.flowReads).toBe(1);
+    // the scope-to-reachable-set filter: the map narrows to the unit and its set, and back
+    await click(btn("Show only this set on the map"));
+    expect(last().nodes.map((n) => n.id).sort()).toEqual(["asset:a1", "asset:a2", "cbunit:20"]);
+    expect(last().edges.every((e) => ["asset:a1", "asset:a2", "cbunit:20"].includes(e.a) && ["asset:a1", "asset:a2", "cbunit:20"].includes(e.b))).toBe(true);
+    await click(btn("Show the full map again"));
+    expect(last().nodes.map((n) => n.id)).toContain("doc:d1");
+  });
+
+  it("upstream walks against the flow and stops at a unit (never through it)", async () => {
+    g.flowEdges = {
+      edges: [
+        { lineId: "f1", from: "UNIT30", to: "P101", basis: "confirmed_flow" },
+        { lineId: "f0", from: "UNIT20", to: "UNIT30", basis: "confirmed_flow" },
+      ],
+      state: "ok", error: undefined, truncated: false, skipped: 0, unitNodes: ["UNIT20", "UNIT30"],
+    };
+    nav.params = new URLSearchParams("select=asset%3Aa1");
+    await render(page());
+    await click(btn("What feeds it (upstream)"));
+    const result = host.querySelector('[data-testid="process-reach-result"]')?.textContent ?? "";
+    expect(result).toContain("Feeding P-101");
+    expect(result).toContain("Coker");
+    expect(result).not.toContain("Crude Unit");
+  });
+
+  it("no confirmed flow that way is said as not proof; a missing table and a failed read are said, never 'nothing feeds it'", async () => {
+    nav.params = new URLSearchParams("select=cbunit%3A20");
+    await render(page());
+    await click(btn("What feeds it (upstream)"));
+    expect(host.querySelector('[data-testid="process-reach-result"]')?.textContent).toContain("No confirmed flow is recorded into Crude Unit — which is not proof that nothing feeds it.");
+    g.flowEdges = { ...g.flowEdges, state: "error", error: "statement timeout" };
+    await click(btn("What it feeds (downstream)"));
+    expect(host.querySelector('[data-testid="process-reach-note"]')?.textContent).toBe('The confirmed flows could not be read (statement timeout) — nothing is shown, which is not the same as "nothing it feeds".');
+    g.flowEdges = { ...g.flowEdges, state: "missing", error: undefined };
+    await click(btn("What it feeds (downstream)"));
+    expect(host.querySelector('[data-testid="process-reach-note"]')?.textContent).toBe("The process-flow map is not installed on this database, so there is nothing to trace.");
+  });
+
+  it("a document or a library offers no process reach, and nothing is read until asked", async () => {
+    nav.params = new URLSearchParams("select=doc%3Ad1");
+    await render(page());
+    expect(host.querySelector('[data-testid="process-reach"]')).toBeNull();
+    expect(g.flowReads).toBe(0);
   });
 });

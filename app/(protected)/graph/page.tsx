@@ -17,6 +17,19 @@
 //     unit's peek, arriving from the operating area as ?scope=unit:<code>
 //   * PROPOSALS — connections the system found, drawn as ghosts until a
 //     human confirms them; a failed or capped read is said (GM-7)
+//   * PROCESS REACH — a unit's (or an item's) upstream and downstream set
+//     from CONFIRMED process flows (FLOW-14 / GAP-315: lib/processFlows
+//     flowsToLineEdges + lib/pidTrace traceNeighbourhood), lit on the map
+//
+// THE REQUESTS (GAP-313). The map is ONE request: GET /api/graph assembles it
+// on the server under this member's own access (lib/orgGraph
+// buildOrgGraphForCaller — their RLS plus the document predicate) and sends
+// it with the pending proposal pairs. The server makes the table reads —
+// about fourteen for a typical org, up to ~56 at the caps — server to
+// database, not from this page. Besides it, on arrival the page reads the
+// mention index's run state (one request) and the Site Codebook's units for
+// the scope picker. A snapshot of the last map paints first (sessionStorage);
+// a map too large to keep one says so.
 //
 // What you are looking at lives in the URL (GPV-11 — lib/graphSettings.ts
 // formatGraphUrl): the lens, the focus and its depth, the scope, the search,
@@ -39,13 +52,17 @@ import {
   Minus, Plus, LocateFixed, RefreshCw,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import type { Role } from "@/types/schema";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import {
-  buildOrgGraph, type OrgGraph, type GraphNode, type GraphNodeType, type GraphEdge,
+  fetchOrgGraph, GraphLoadError, type OrgGraph, type GraphNode, type GraphNodeType, type GraphEdge,
 } from "@/lib/orgGraph";
 import { computeInsights } from "@/lib/graphInsights";
 import NodePeek from "@/components/graph/NodePeek";
-import { readPendingProposalPairs, PENDING_PAIRS_CAP } from "@/lib/linkProposals";
+import { PENDING_PAIRS_CAP } from "@/lib/linkProposals";
+import { publicOrigin } from "@/lib/publicOrigin";
+import { flowsToLineEdges, unitTraceTag } from "@/lib/processFlows";
+import { traceNeighbourhood, normalizeTag } from "@/lib/pidTrace";
 import { GraphSim, buildAdjacency, shortestPath } from "@/lib/graphSim";
 import {
   loadSettings, saveSettings, applyGraphUrl, parseGraphUrl, formatGraphUrl, urlFilterOf, matchLens,
@@ -95,6 +112,20 @@ const plural = (n: number, w: string) => `${n.toLocaleString("en-US")} ${w}${n =
 /** The sessionStorage snapshot key of a map: the org's, or one scope's. */
 const snapKeyOf = (orgId: string, scopeKey: string) => (scopeKey ? `org-graph-${orgId}-${scopeKey}` : `org-graph-${orgId}`);
 
+/** The largest snapshot kept (characters of JSON) — the session storage
+ *  quota is a few MB per origin, shared with everything else. */
+const SNAPSHOT_MAX = 2_000_000;
+
+/** AREA-2 — the registry's writer tier: the roles 20261170's
+ *  document_assets_insert admits for a manual document ↔ equipment link
+ *  (caller_holds_any_role), held anywhere in the member's role collection. */
+const LINK_WRITER_ROLES: Role[] = ["Admin", "DocCtrl", "Manager", "Supervisor"];
+const LINK_WRITER_REFUSAL =
+  "Linking a document to equipment is for Admin, Document Control, Manager and Supervisor (the equipment registry's writers) — your role cannot write it. A link between two documents, or a flow, can still be drawn.";
+
+/** FLOW-14 / GAP-315 — how far the process reach walks (runs of confirmed flow). */
+const REACH_HOPS = 6;
+
 function GraphPageInner() {
   const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   const router = useRouter();
@@ -114,6 +145,16 @@ function GraphPageInner() {
   const [proposals, setProposals] = React.useState<GraphEdge[]>([]);
   const [proposalRead, setProposalRead] = React.useState<{ total: number | null; capped: boolean; error: string | null } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // GAP-313: the fresh map was not kept as a snapshot for the next visit
+  // (too large, or the browser refused it) — said, never swallowed.
+  const [snapshotNote, setSnapshotNote] = React.useState<string | null>(null);
+  // FLOW-14 / GAP-315: a unit's (or an item's) reach along confirmed flows.
+  // …and, when asked, the map filtered to that set (the start included).
+  const [reachOnly, setReachOnly] = React.useState<ReadonlySet<string> | null>(null);
+  const [reach, setReach] = React.useState<{
+    nodeId: string; label: string; direction: "downstream" | "upstream"; loading: boolean;
+    items: Array<{ tag: string; hops: number; node: GraphNode | null }>; note: string | null;
+  } | null>(null);
   const [settings, setSettings] = React.useState<GraphSettings>(DEFAULT_GRAPH_SETTINGS);
   const [applied, setApplied] = React.useState(false);
   const [rawQuery, setRawQuery] = React.useState("");
@@ -206,15 +247,16 @@ function GraphPageInner() {
   const scopeKey = settings.scope ? formatScopeParam(settings.scope) : "";
 
   // ── Data: the graph (org-wide, or one unit's world) ───────────────────
+  // ONE request (GAP-313): GET /api/graph assembles the map on the server
+  // for this member and sends the pending proposal pairs with it.
   React.useEffect(() => {
     if (!activeOrgId || !applied) return;
     let alive = true;
     const scope = scopeKey ? parseScopeParam(scopeKey) : null;
-    // Stale-while-revalidate: the graph is a dozen parallel table pulls —
-    // fast, but never instant. The LAST BUILT graph paints immediately from
+    // Stale-while-revalidate: the LAST map paints immediately from
     // sessionStorage (the layout starts settling right away), and the fresh
-    // build swaps in when it lands. Oversized graphs skip the cache rather
-    // than fight the storage quota. A scoped map has its own snapshot.
+    // one swaps in when it lands. A map too large to keep one is said, and
+    // its stale snapshot is dropped. A scoped map has its own snapshot.
     const snapKey = snapKeyOf(activeOrgId, scope ? scopeKey : "");
     setFreshKey(null);
     setError(null);
@@ -227,37 +269,40 @@ function GraphPageInner() {
     if (!painted && graphFor.current !== snapKey) setGraph(null);
     graphFor.current = snapKey;
     setGraphKey(snapKey);
-    (scope ? buildOrgGraph(activeOrgId, { scope }) : buildOrgGraph(activeOrgId))
-      .then((g) => {
+    (scope ? fetchOrgGraph(activeOrgId, { scope }) : fetchOrgGraph(activeOrgId))
+      .then(({ graph: g, proposals: r }) => {
         if (!alive) return;
         setGraph(g);
         setFreshKey(snapKey);
-        try {
-          const s = JSON.stringify(g);
-          if (s.length < 2_000_000) window.sessionStorage.setItem(snapKey, s);
-        } catch { /* quota — fresh build still rendered */ }
-      })
-      .catch((e) => { if (alive) { setError((e as Error).message); setFreshKey(snapKey); } });
-    return () => { alive = false; };
-  }, [activeOrgId, applied, scopeKey, reloadNonce]);
-
-  // Proposals are org-wide pairs; the view keeps the ones it can draw.
-  React.useEffect(() => {
-    if (!activeOrgId) return;
-    let alive = true;
-    readPendingProposalPairs(activeOrgId)
-      .then((r) => {
-        if (!alive) return;
         setProposals(r.pairs.map((p) => ({ a: p.nodeA, b: p.nodeB, type: "proposed" as const })));
         setProposalRead({ total: r.total, capped: r.capped, error: r.error });
+        let note: string | null = null;
+        try {
+          const s = JSON.stringify(g);
+          if (s.length < SNAPSHOT_MAX) window.sessionStorage.setItem(snapKey, s);
+          else {
+            window.sessionStorage.removeItem(snapKey);
+            note = `This map is too large to keep a snapshot of in the browser (${(s.length / 1_000_000).toFixed(1)} MB), so it is fetched fresh each time you open it.`;
+          }
+        } catch {
+          try { window.sessionStorage.removeItem(snapKey); } catch { /* storage unavailable */ }
+          note = "The browser refused to keep a snapshot of this map, so it is fetched fresh each time you open it.";
+        }
+        setSnapshotNote(note);
       })
       .catch((e) => {
         if (!alive) return;
-        setProposals([]);
-        setProposalRead({ total: null, capped: false, error: (e as Error).message });
+        // Fails closed (GAP-313): a map whose access could not be checked is
+        // not drawn, and the snapshot is not painted again.
+        if (e instanceof GraphLoadError && e.accessUnchecked) {
+          try { window.sessionStorage.removeItem(snapKey); } catch { /* storage unavailable */ }
+          setGraph(null);
+        }
+        setError((e as Error).message);
+        setFreshKey(snapKey);
       });
     return () => { alive = false; };
-  }, [activeOrgId]);
+  }, [activeOrgId, applied, scopeKey, reloadNonce]);
 
   // The mention index's run state: the last build that failed (wherever it
   // ran), a build that never reported, a rebuild that stopped. Re-read with
@@ -305,6 +350,8 @@ function GraphPageInner() {
 
   const setScope = React.useCallback((scope: ScopeRef | null, thenSelect?: string) => {
     setSettings((prev) => ({ ...prev, scope }));
+    setReach(null);
+    setReachOnly(null);
     setFocusId(null);
     setSelected(null);
     setTrail([]);
@@ -320,12 +367,24 @@ function GraphPageInner() {
   // Only the settings that FILTER are dependencies: a force slider changes
   // the layout, never the slice (GPV-5's root — the slice used to be rebuilt
   // on every slider tick).
-  const view = React.useMemo(() => (graph
-    ? sliceView(graph, {
+  const view = React.useMemo(() => {
+    if (!graph) return null;
+    const v = sliceView(graph, {
       hiddenTypes: settings.hiddenTypes, showLibraryEdges: settings.showLibraryEdges,
       hideUnlinked: settings.hideUnlinked, showProposals: settings.showProposals, localDepth: settings.localDepth,
-    }, proposals, focusId)
-    : null), [graph, settings.hiddenTypes, settings.showLibraryEdges, settings.hideUnlinked, settings.showProposals, settings.localDepth, proposals, focusId]);
+    }, proposals, focusId);
+    // FLOW-14 done-when 3: the map scoped to a reach set (the unit and what
+    // it feeds, or what feeds it) while that filter is on; otherwise the
+    // slice exactly as before.
+    if (!reachOnly) return v;
+    const keep = (id: string) => reachOnly.has(id);
+    return {
+      ...v,
+      nodes: v.nodes.filter((n) => keep(n.id)),
+      edges: v.edges.filter((e) => keep(e.a) && keep(e.b)),
+      ghosts: v.ghosts.filter((e) => keep(e.a) && keep(e.b)),
+    };
+  }, [graph, settings.hiddenTypes, settings.showLibraryEdges, settings.hideUnlinked, settings.showProposals, settings.localDepth, proposals, focusId, reachOnly]);
 
   // ── Feed the simulation ───────────────────────────────────────────────
   React.useEffect(() => {
@@ -545,6 +604,13 @@ function GraphPageInner() {
       setConnect((c) => c && ({ ...c, status: "picking", error: plan.message }));
       return;
     }
+    // AREA-2: a document ↔ equipment link is the registry writer tier's
+    // (20261170's insert policy) — refused here, before any write, with the
+    // reason; the database refuses it too.
+    if (plan.kind === "tag" && !hasAnyRole(LINK_WRITER_ROLES)) {
+      setConnect((c) => c && ({ ...c, status: "picking", error: LINK_WRITER_REFUSAL }));
+      return;
+    }
     setConnect((c) => c && ({ ...c, status: "saving", error: undefined }));
     try {
       if (plan.kind === "flow") {
@@ -575,8 +641,24 @@ function GraphPageInner() {
           org_id: activeOrgId, document_id: plan.documentId, asset_id: plan.assetId,
           tag_text: plan.tag, source: "manual",
         });
-        // 23505 = already linked — the edge the user wanted already exists.
         if (error && error.code !== "23505") throw new Error(error.message);
+        if (error) {
+          // 23505: the pair is already linked. When the equipment sweep read
+          // it off the drawing (a 'drawing' row a person cannot write), the
+          // link becomes this person's through the Bridge's 'adopt' — the
+          // registry drawer's path — or a later Dismiss of the drawing's
+          // reading would take the person's link with it (AREA-2 / GAP-302).
+          // Any other existing link is left as it is (adopt answers `already`).
+          const { data: { session } } = await supabase.auth.getSession();
+          const res = await fetch("/api/equipment-bridge", {
+            method: "POST",
+            headers: { authorization: `Bearer ${session?.access_token ?? ""}`, "content-type": "application/json" },
+            body: JSON.stringify({ action: "adopt", orgId: activeOrgId, documentId: plan.documentId, assetId: plan.assetId }),
+          });
+          const json = await res.json().catch(() => ({})) as { error?: string; auditError?: string };
+          if (!res.ok) throw new Error(json.error ?? `The link could not be made yours (HTTP ${res.status}).`);
+          if (json.auditError) throw new Error(json.auditError);
+        }
       }
       // Draw it now — the row is real, the rebuild would only rediscover it.
       const edge: GraphEdge = plan.kind === "related"
@@ -587,7 +669,7 @@ function GraphPageInner() {
     } catch (e) {
       setConnect((c) => c && ({ ...c, status: "picking", error: (e as Error).message }));
     }
-  }, [activeOrgId, uid, userEmail]);
+  }, [activeOrgId, uid, userEmail, hasAnyRole]);
 
   const handleSelect = React.useCallback((n: GraphNode | null) => {
     if (connect?.status === "picking" && n) {
@@ -621,6 +703,50 @@ function GraphPageInner() {
     setHighlight((prev) => ({ ids, nonce: (prev?.nonce ?? 0) + 1 }));
     if (select) setSelected(select);
   }, []);
+
+  // ── Process reach (FLOW-14 done-when 3 / GAP-315 acceptance 3) ─────────
+  // What a unit (or an item of equipment) feeds, or what feeds it, along the
+  // CONFIRMED process flows only — lib/processFlows flowsToLineEdges (read
+  // as this member, RLS) walked by lib/pidTrace traceNeighbourhood in one
+  // direction, a unit being a place the walk stops (`unitNodes`). No new
+  // data layer; a proposed or dismissed flow is never read. The tags found
+  // are lit on the map where it draws them, and listed either way.
+  const showReach = React.useCallback(async (from: GraphNode, direction: "downstream" | "upstream") => {
+    if (!activeOrgId || !graph) return;
+    const code = from.id.startsWith("cbunit:") ? (from.unitCode ?? from.id.slice("cbunit:".length)) : null;
+    setReach({ nodeId: from.id, label: from.label, direction, loading: true, items: [], note: null });
+    setReachOnly(null);
+    try {
+      const start = code !== null ? unitTraceTag(code) : normalizeTag(from.label);
+      const read = await flowsToLineEdges(activeOrgId);
+      if (read.state !== "ok") {
+        setReach({
+          nodeId: from.id, label: from.label, direction, loading: false, items: [],
+          note: read.state === "missing"
+            ? "The process-flow map is not installed on this database, so there is nothing to trace."
+            : `The confirmed flows could not be read (${read.error ?? "the read failed"}) — nothing is shown, which is not the same as "nothing ${direction === "downstream" ? "it feeds" : "feeds it"}".`,
+        });
+        return;
+      }
+      // The map's nodes by the trace's key: an item by its tag, a unit by
+      // "UNIT <code>" (unitTraceTag) — the keys flowsToLineEdges writes.
+      const byKey = new Map<string, GraphNode>();
+      for (const n of graph.nodes) {
+        if (n.type === "asset") byKey.set(normalizeTag(n.label), n);
+        else if (n.id.startsWith("cbunit:")) byKey.set(unitTraceTag(n.unitCode ?? n.id.slice("cbunit:".length)), n);
+      }
+      const found = traceNeighbourhood(read.edges, start, REACH_HOPS, direction, new Set(read.unitNodes));
+      const items = found.map((f) => ({ tag: f.tag, hops: f.hops, node: byKey.get(f.tag) ?? null }));
+      const notes: string[] = [];
+      if (read.truncated) notes.push("More confirmed flows exist than one read takes — the set may be incomplete.");
+      if (items.some((i) => !i.node)) notes.push(`${items.filter((i) => !i.node).length} of these ${items.filter((i) => !i.node).length === 1 ? "is" : "are"} not on this map (beyond a cap, archived, or outside ${settings.scope ? "this scope" : "the map"}).`);
+      setReach({ nodeId: from.id, label: from.label, direction, loading: false, items, note: notes.join(" ") || null });
+      const ids = items.map((i) => i.node?.id).filter((id): id is string => !!id && inView.has(id));
+      if (ids.length > 0) spotlight([from.id, ...ids]);
+    } catch (e) {
+      setReach({ nodeId: from.id, label: from.label, direction, loading: false, items: [], note: `The confirmed flows could not be read (${(e as Error).message}).` });
+    }
+  }, [activeOrgId, graph, inView, spotlight, settings.scope]);
 
   // The peek's list: the NODES the selection is tied to in this view — by a
   // drawn link or by a proposal ghost — and how many of them only by a
@@ -691,7 +817,10 @@ function GraphPageInner() {
   // can trail the view by a deferred write.
   const copyLink = React.useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}${pathname}${urlNow ? `?${urlNow}` : ""}`);
+      // PHYS-13: the public origin (lib/publicOrigin), as the library page's
+      // /d/ copies are built — a link pasted to a colleague never carries a
+      // preview deployment's host.
+      await navigator.clipboard.writeText(`${publicOrigin()}${pathname}${urlNow ? `?${urlNow}` : ""}`);
       return true;
     } catch {
       return false;
@@ -1226,6 +1355,80 @@ function GraphPageInner() {
               </div>
             )}
 
+            {/* Process reach (FLOW-14 / GAP-315): what a unit or an item feeds,
+                or what feeds it, along confirmed flows. */}
+            {!pathMode && !connect && (reach || (selected && (selected.type === "asset" || selected.id.startsWith("cbunit:")))) && (
+              <div role="region" aria-label="Process reach along confirmed flows" data-testid="process-reach"
+                className="absolute top-2 left-1/2 -translate-x-1/2 w-80 max-w-[calc(100%-1.5rem)] rounded-xl border border-cyan-300 dark:border-cyan-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-xl p-2.5 space-y-1.5 z-10">
+                {(() => {
+                  const from = reach && (!selected || selected.id === reach.nodeId)
+                    ? (graph?.nodes.find((n) => n.id === reach.nodeId) ?? selected)
+                    : selected;
+                  const label = from?.label ?? reach?.label ?? "";
+                  return (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <Waypoints className="w-3.5 h-3.5 text-cyan-600" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1 truncate">Process flow · {label}</span>
+                        {reach && (
+                          <button onClick={() => { setReach(null); setReachOnly(null); }} aria-label="Close process reach"
+                            className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+                        )}
+                      </div>
+                      {from && (
+                        <div className="flex gap-1.5">
+                          <button onClick={() => void showReach(from, "downstream")} disabled={reach?.loading}
+                            className="flex-1 px-2 py-1 rounded-full border border-cyan-300 text-[10px] font-black text-cyan-800 dark:text-cyan-200 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 disabled:opacity-50">
+                            What it feeds (downstream)
+                          </button>
+                          <button onClick={() => void showReach(from, "upstream")} disabled={reach?.loading}
+                            className="flex-1 px-2 py-1 rounded-full border border-cyan-300 text-[10px] font-black text-cyan-800 dark:text-cyan-200 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 disabled:opacity-50">
+                            What feeds it (upstream)
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                {reach && reach.loading && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> Reading the confirmed flows…</div>
+                )}
+                {reach && !reach.loading && (
+                  <div className="space-y-1" data-testid="process-reach-result">
+                    <div className="text-[10px] text-[var(--color-text-muted)]">
+                      {reach.items.length === 0 && !reach.note
+                        ? `No confirmed flow is recorded ${reach.direction === "downstream" ? "from" : "into"} ${reach.label} — which is not proof that nothing ${reach.direction === "downstream" ? "it feeds" : "feeds it"}.`
+                        : reach.items.length > 0
+                          ? `${reach.direction === "downstream" ? "Fed by" : "Feeding"} ${reach.label}, within ${REACH_HOPS} runs of confirmed flow (proposals are never used):`
+                          : null}
+                    </div>
+                    {reach.items.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {reach.items.slice(0, 60).map((i) => (
+                          <button key={i.tag} disabled={!i.node}
+                            onClick={() => { if (i.node) spotlight([i.node.id], i.node); }}
+                            title={i.node ? undefined : "Not on this map"}
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] text-[10px] font-black ${i.node ? "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "text-[var(--color-text-faint)]"}`}>
+                            {i.node?.label ?? i.tag}
+                            <span className="text-[var(--color-text-faint)] font-mono">{i.hops}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {reach.items.some((i) => i.node) && (
+                      <button
+                        onClick={() => setReachOnly((cur) => cur ? null : new Set([reach.nodeId, ...reach.items.map((i) => i.node?.id).filter((id): id is string => !!id)]))}
+                        aria-pressed={!!reachOnly}
+                        className="text-[10px] font-black text-cyan-800 dark:text-cyan-200 underline">
+                        {reachOnly ? "Show the full map again" : "Show only this set on the map"}
+                      </button>
+                    )}
+                    {reach.note && <div className="text-[10px] text-amber-700" data-testid="process-reach-note">{reach.note}</div>}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Hints + truncation */}
             <div className="absolute bottom-2 inset-x-3 text-center space-y-1 pointer-events-none">
               <div className="text-[10px] font-bold text-[var(--color-text-faint)]">
@@ -1238,6 +1441,12 @@ function GraphPageInner() {
                   <Info className="w-3 h-3" /> {t}
                 </div>
               ))}
+              {/* GAP-313: a snapshot that was not kept is said. */}
+              {snapshotNote && (
+                <div className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5" data-testid="snapshot-skipped">
+                  <Info className="w-3 h-3" /> {snapshotNote}
+                </div>
+              )}
               {/* GM-7: a failed or capped proposal read is said, never shown as "none"
                   — while proposals are drawn at all: with Proposals off there
                   is no drawing for the note to qualify (fix pass 3). */}
@@ -1429,6 +1638,7 @@ function GraphPageInner() {
                 <div className="text-[10px] text-[var(--color-text-faint)]">
                   Document ↔ document or document ↔ equipment makes a LINK. Equipment ↔ equipment or
                   Site Codebook unit ↔ unit makes a FLOW — the first feeds the second, drawn with an arrow on the Process layout lens.
+                  {!hasAnyRole(LINK_WRITER_ROLES) && " A document ↔ equipment link is for the equipment registry's writers (Admin, Document Control, Manager, Supervisor)."}
                 </div>
               </div>
             )}
