@@ -7,8 +7,9 @@
 // with `assign` / `request_eng_review` at PENDING_ASSIGNMENT
 // (/api/tickets/workflow-action, body.libraryId). It offers only the
 // libraries the CALLER may discover (lib/ticketLibrary.ts
-// offerableLibraries → lib/permissions canDiscover): a library the assigner
-// cannot see is never offered — and the route refuses one by the same rule,
+// offerableLibraries → lib/permissions canDiscover over the library's
+// effective ACL — DACL-13 R1): a library the assigner cannot see is never
+// offered — and the route refuses one by the same rule,
 // on a principal it builds itself, whatever a client sends. "No library — decide later" is always there
 // and is the default when the request has none: a library is never required
 // (99-fix-sequencing Phase 2 item 1).
@@ -47,7 +48,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { getMyTeamIds } from "@/lib/teams";
-import { offerableLibraries, type LibraryChoiceRow } from "@/lib/ticketLibrary";
+import { LIBRARY_CHOICE_COLUMNS, libraryChoiceFromRow, offerableLibraries, type LibraryChoiceRow } from "@/lib/ticketLibrary";
 import type { Principal } from "@/lib/permissions";
 
 export const NO_LIBRARY_LABEL = "No library — decide later";
@@ -80,19 +81,16 @@ export function LibraryPicker({ orgId, value, onChange, disabled, label = "Targe
     let alive = true;
     (async () => {
       const [{ data, error }, teams] = await Promise.all([
-        supabase.from("libraries").select("id, name, visibility, acl, owner_user_id").eq("org_id", orgId),
+        // DACL-13 R1 (I-31 merge): the rung's columns too, so a library is
+        // offered by its effective ACL — the same answer before and after
+        // migration 20261228 (lib/ticketLibrary LibraryChoiceRow).
+        supabase.from("libraries").select(LIBRARY_CHOICE_COLUMNS).eq("org_id", orgId),
         uid ? getMyTeamIds(uid) : Promise.resolve([] as string[]),
       ]);
       if (!alive) return;
       if (error) { setLoaded({ orgId, ok: false }); return; }
       setTeamIds(teams);
-      setRows(((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
-        id: String(r.id ?? ""),
-        name: (r.name as string | null) ?? null,
-        visibility: (r.visibility as string | null) ?? null,
-        acl: (r.acl as LibraryChoiceRow["acl"]) ?? null,
-        ownerUserId: (r.owner_user_id as string | null) ?? null,
-      })));
+      setRows(((data ?? []) as unknown as Array<Record<string, unknown>>).map(libraryChoiceFromRow));
       setLoaded({ orgId, ok: true });
     })().catch(() => { if (alive) setLoaded({ orgId, ok: false }); });
     return () => { alive = false; };

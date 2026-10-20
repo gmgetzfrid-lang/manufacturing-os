@@ -22,6 +22,7 @@ import { ENGINEER_TIER_ROLES } from "@/lib/roleCapabilities";
 import { isDormantRole, roleDisplayNote } from "@/lib/roleCapabilities";
 import { ALL_ROLES } from "@/types/schema";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
+import { wizardUploadRolesSeed } from "@/lib/libraryAccess";
 
 interface LibraryWizardProps {
   orgId: string;
@@ -241,7 +242,10 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         setViewAccess(initialData.readAccess === "ALL" ? "all" : "restricted");
         setNewNodeVisibility(initialData.defaultNewVisibility === "hidden" ? "hidden" : "normal");
         setViewRoles(Array.isArray(initialData.readAccess) ? initialData.readAccess : []);
-        setUploadRoles(initialData.writeAccess ?? ["DocCtrl", "Admin"]);
+        // ALOG-13 (I-31): seeded from the ACL's upload rules the wizard wrote
+        // (the library's upload-role column is no longer written); a library
+        // with none keeps today's seed, that column (writeAccess).
+        setUploadRoles(wizardUploadRolesSeed(initialData) ?? ["DocCtrl", "Admin"]);
       } else {
         setName("");
         setDescription("");
@@ -298,8 +302,13 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
       type,
       customColumns: allColumns,
       readAccess,
-      writeAccess: writeRoles,
-      adminAccess: adminRoles,
+      // ALOG-13 (I-31): the upload / admin role columns (writeAccess /
+      // adminAccess) are not carried — those roles live in the ACL rules
+      // below, which every reader of this library's access evaluates (the
+      // legacy rung that reads the columns never applies to a library whose
+      // ACL says something, and this ACL always does). A new library leaves
+      // the columns unset; an edit's save derives them from these rules
+      // (lib/libraryAccess wizardListColumnsFromAcl) until that rung goes.
       visibleTo,
       folderSecurity: "Inherited",
       defaultNewVisibility: newNodeVisibility,

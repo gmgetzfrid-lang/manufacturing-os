@@ -693,9 +693,13 @@ async function deliver(input: EmitInput, recipients: string[], opts: { push: boo
 const DEFAULT_CHANNELS: NotifChannel[] = ["inapp", "email", "push"];
 
 /** One emit's push request: who to push about which bell row. The sender
- *  (lib/push/sendPush.ts) re-checks every condition itself. `writerUid` is
- *  set by POST /api/push/notify only — the signed-in member who wrote the
- *  bell rows; the server path leaves it unset. */
+ *  (lib/push/sendPush.ts) re-checks every condition itself. `writerUid`: the
+ *  member who wrote the bell rows — set by POST /api/push/notify (the
+ *  signed-in member) and, since the integrator's rulings at the N17 merge
+ *  (DEC-90, R1 / R4), by the server producers outside emit() that have an
+ *  actor (the ticket routes' fan-out, the intake door's roster sender —
+ *  lib/push/afterResponsePush.ts), so DEC-108's per-writer cap applies to
+ *  them too. A server emit() leaves it unset. */
 export interface PushSendInput {
   orgId: string;
   kind: NotificationKind;
@@ -759,6 +763,26 @@ async function pushLeg(input: PushSendInput, sender: PushSender | undefined): Pr
     ]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** OS-14 (notifications N17): emit()'s push leg for a producer that writes
+ *  its bell rows OUTSIDE emit() — the read-&-understood and sign-off rosters'
+ *  requests (lib/acknowledgments.ts, lib/reviewControl.ts). The caller calls
+ *  it only AFTER its rows landed, naming only the recipients whose row landed
+ *  (never a refused row; these producers write no redacted one). Exactly the
+ *  leg emit() runs: a KIND_META.pushWorthy kind only; in the browser a
+ *  fire-and-forget POST /api/push/notify; on the server only through the
+ *  caller's `serverPush` (none: no push, logged once). The sender re-checks
+ *  the bell row, push_enabled and the device itself. Never throws. */
+export async function pushAfterBellRows(input: PushSendInput, serverPush?: PushSender): Promise<void> {
+  try {
+    if (kindMeta(input.kind)?.pushWorthy !== true) return;
+    const recipients = Array.from(new Set((input.recipients ?? []).filter((u): u is string => typeof u === "string" && u !== "")));
+    if (!input.orgId || !input.resourceId || recipients.length === 0) return;
+    await pushLeg({ orgId: input.orgId, kind: input.kind, resourceId: input.resourceId, recipients }, serverPush);
+  } catch (e) {
+    console.info(`[notify] the ${input?.kind} push did not go out (bell and email are unaffected): ${(e as Error)?.message ?? e}`);
   }
 }
 

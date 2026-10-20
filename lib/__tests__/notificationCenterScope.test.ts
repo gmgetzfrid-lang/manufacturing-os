@@ -86,7 +86,7 @@ vi.mock("@/lib/supabase", () => {
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => fx.role }));
 vi.mock("@/components/providers/OrgBrandingProvider", () => ({ useOrgBranding: () => ({ logoUrl: null, branding: null, canEdit: false }) }));
 vi.mock("@/hooks/useIsMobile", () => ({ useIsMobile: () => false }));
-vi.mock("@/lib/swSession", () => ({ clearServiceWorkerSession: async () => {} }));
+vi.mock("@/lib/swSession", () => ({ clearServiceWorkerSession: async () => {}, signOutOfThisBrowser: async () => ({}) }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/dashboard", useRouter: () => ({ push: () => {}, replace: () => {} }) }));
 vi.mock("@/lib/capabilityPolicy", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),

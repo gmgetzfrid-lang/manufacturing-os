@@ -12,9 +12,10 @@
 //
 //   1. The person clicks "Turn on notifications for this device".
 //   2. The card says what will be sent — only what is pushed TODAY, by name
-//      of kind only, and what is not sent to devices yet — BEFORE the
-//      browser's dialog (OS-3 done-when 3; fix pass: the first pass listed
-//      request mentions and assignments, which no producer pushes — OS-14).
+//      of kind only, and what is not sent to devices — BEFORE the browser's
+//      dialog (OS-3 done-when 3; fix pass: the first pass listed request
+//      mentions and assignments before any producer pushed them — OS-14,
+//      since closed by notifications N17).
 //   3. "Allow notifications" calls Notification.requestPermission() first
 //      thing in the click, then subscribes from navigator.serviceWorker.ready
 //      (registration.pushManager.subscribe({ userVisibleOnly: true,
@@ -49,38 +50,70 @@ import type { ClassifiedKind } from "@/lib/notificationKinds";
 export const PUSH_DECLINE_KEY = "push-optin-declined";
 
 /** What a device notification is about TODAY: one line per push-worthy kind
- *  whose producer reaches emit()'s push leg, worded for exactly that
- *  producer (fix pass — the review's major 3). Said before the browser's
- *  dialog.
+ *  whose producer reaches the push leg, worded for exactly those producers
+ *  (fix pass — the review's major 3). Said before the browser's dialog.
  *   - hold_opened: openHold's stop-work notice (lib/holds.ts
  *     notifyHoldChange — the hold strip, check-in);
  *   - checkout_force_released: lib/checkoutEpisodes.ts forceReleaseDocument;
  *   - ack_requested: the distribution list's request (lib/distributionAcks.ts
- *     — DistributionAcks / DistributionRecall), NOT the read-&-understood
- *     roster (lib/acknowledgments.ts writes outside emit() — OS-14);
+ *     — DistributionAcks / DistributionRecall), and (OS-14, notifications
+ *     N17) the read-&-understood list's request when a revision is issued
+ *     (lib/acknowledgments.ts recomputeDocumentAck, through
+ *     lib/notify/dispatch.ts pushAfterBellRows). Its re-send from the roster
+ *     panel (nudgeAcknowledgment) takes the same leg, but its reminder row
+ *     names no actor, so /api/push/notify cannot push it until 20261160
+ *     stamps the writer — the line does not promise it, and PUSH_NOT_YET_NOTE
+ *     says so (the integrator's ruling R3 at the N17 merge, DEC-90). The
+ *     intake link's auto-publish opens this roster on the server and pushes
+ *     it through the door's server sender (OS-16, ruling R4);
  *   - review_requested: a change proposed at check-in, sent to the document's
- *     owner (components/documents/CheckInPanel.tsx), NOT the sign-off roster
- *     (lib/reviewControl.ts writes outside emit() — OS-14).
- *  ticket_mention / ticket_assigned are push-worthy but no producer pushes
- *  them yet (the ticket routes' fan-out bypasses emit() — OS-14): they are
- *  in PUSH_NOT_SENT_YET, not here. A test pins both lists against the
- *  push-worthy set and the emit() producers. (`pushKind`, not `kind`: this
- *  card writes no notification — lib/__tests__/kindSplitProducers.test.ts
- *  counts a `kind: "…"` literal as a writer.) */
+ *     owner (components/documents/CheckInPanel.tsx), and (OS-14) a draft's
+ *     sign-off request from its review roster (lib/reviewControl.ts
+ *     openReviewRoster, through pushAfterBellRows);
+ *   - ticket_mention (OS-14): a mention in a request comment
+ *     (app/api/tickets/comment/route.ts fanOut → sendPushSafe);
+ *   - ticket_assigned (OS-14): a request assigned to you
+ *     (app/api/tickets/workflow-action/route.ts fanOut → sendPushSafe).
+ *  What is still bell / email only is PUSH_NOT_YET_NOTE. A test pins the
+ *  list against the push-worthy set and each line to its producers.
+ *  (`pushKind`, not `kind`: this card writes no notification —
+ *  lib/__tests__/kindSplitProducers.test.ts counts a `kind: "…"` literal as
+ *  a writer.) */
 export const PUSH_SENT_TODAY: ReadonlyArray<{ pushKind: ClassifiedKind; line: string }> = Object.freeze([
   { pushKind: "hold_opened", line: "A hold placed on a document you work on or follow" },
   { pushKind: "checkout_force_released", line: "Your checkout released by someone else" },
-  { pushKind: "ack_requested", line: "A request, from a document's distribution list, to confirm you have its current revision" },
-  { pushKind: "review_requested", line: "A change proposed at check-in to a document you own, waiting for your review" },
+  { pushKind: "ack_requested", line: "A request to confirm you have read a document's current revision — from its distribution list, or from its read-and-understood list when a revision is issued" },
+  { pushKind: "review_requested", line: "A request to review a document — a draft waiting for your sign-off, or a change proposed at check-in to a document you own" },
+  { pushKind: "ticket_mention", line: "A mention in a comment on a request" },
+  { pushKind: "ticket_assigned", line: "A request assigned to you" },
 ]);
 export const PUSH_WHAT_IS_SENT: readonly string[] = Object.freeze(PUSH_SENT_TODAY.map((l) => l.line));
 
-/** The push-worthy kinds no producer pushes yet (OS-14), and the sentence the
- *  card says about them — so nobody relies on a device notification that
- *  never comes. */
-export const PUSH_NOT_SENT_YET: readonly ClassifiedKind[] = Object.freeze(["ticket_mention", "ticket_assigned"] as ClassifiedKind[]);
+/** The push-worthy kinds no producer pushes yet — none since OS-14 closed
+ *  (notifications N17) — and the sentence the card says about what still
+ *  reaches only the bell and email, so nobody relies on a device
+ *  notification that never comes:
+ *   - the daily scan's reminders (the maintenance cron never pushes —
+ *     DEC-108 §6);
+ *   - (ruling R3, the integrator at the N17 merge, DEC-90) a reminder
+ *     re-sent from the acknowledgment list (nudgeAcknowledgment): its bell
+ *     row names no actor, so POST /api/push/notify finds no row from its
+ *     writer until 20261160 (the notification rails migration) stamps one —
+ *     worded "until … is applied" so it stays true after the paste;
+ *   - (ruling R2) the read-&-understood and sign-off requests a door opens
+ *     for MANY documents in one action — the library / folder policy save
+ *     (setAckPolicy), the library's multi-file upload, the bulk status
+ *     editor (BulkEditModal), a split, a set rev-up (setRevUp) and the
+ *     output-template filing run: each passes `notifyPush: false`, so one
+ *     action never sends a push request per document. A single-document
+ *     door pushes.
+ *  The intake link's auto-publish is no longer here: its roster is pushed
+ *  through the door's server sender (OS-16, ruling R4). Pinned in
+ *  lib/__tests__/pushOptIn.test.ts and the census in
+ *  lib/__tests__/n17PushRosters.test.ts. */
+export const PUSH_NOT_SENT_YET: readonly ClassifiedKind[] = Object.freeze([] as ClassifiedKind[]);
 export const PUSH_NOT_YET_NOTE =
-  "Not sent to devices yet: mentions and assignments on requests, read-and-understood requests, and sign-off requests from a review roster. The bell and email still bring them.";
+  "Not sent to devices: the daily reminders about acknowledgments and sign-offs still outstanding; a reminder re-sent from the acknowledgment list, until the notification rails migration is applied; and read-and-understood and sign-off requests opened by one action across many documents — a policy set on a whole library or folder, a multi-file upload, a bulk status edit, a split, a set rev-up or a template filing run. The bell and email still bring them.";
 
 export const PUSH_PRIVACY_NOTE =
   "The notification says only what kind of thing happened — never a document number, a title, a reason or a person's name — so nothing sensitive shows on a lock screen. Open it to see the details.";

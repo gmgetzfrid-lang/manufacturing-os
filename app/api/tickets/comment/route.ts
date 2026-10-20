@@ -428,4 +428,28 @@ async function fanOut(params: {
     const { error: mailErr } = await supabaseAdmin.from("email_notifications").insert(emailRows);
     if (mailErr) console.error("[ticket-comment] emails were not queued (comment committed):", mailErr.message);
   }
+
+  // OS-14 (notifications N17): the mention reaches the push channel — after
+  // the bell and email legs, only when the bell insert landed (never for a
+  // refused or rail-rejected row), only for the mentioned members told in
+  // full. The sender (lib/push/sendPush.ts) re-checks the bell row,
+  // push_enabled, membership and the device, and never throws; it runs after
+  // the response (next/server after()), so the comment never waits on it.
+  // N17 merge (DEC-90, the integrator's ruling R1): the commenter is the
+  // writer (`writerUid`), so DEC-108's per-writer cap (PUSH_WRITER_CAP per
+  // PUSH_WRITER_WINDOW_MS, one writer to one person) bounds a burst of
+  // mentions; past it the bell row and email still land, unpushed.
+  const mentioned = bellErr ? [] : audience.filter((uid) => mentionSet.has(uid));
+  if (mentioned.length > 0) {
+    try {
+      after(async () => {
+        // loaded here, not at module scope: the sender (web-push, the service
+        // role) is needed only once there is something to push
+        const { sendPushSafe } = await import("@/lib/push/sendPush");
+        await sendPushSafe({ orgId: ticket.orgId, kind: "ticket_mention", resourceId: ticketId, recipients: mentioned, writerUid: actorUid });
+      });
+    } catch (e) {
+      console.warn("[ticket-comment] the mention push was not scheduled (comment, bell and email unaffected):", (e as Error)?.message ?? e);
+    }
+  }
 }

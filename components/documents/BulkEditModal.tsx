@@ -206,6 +206,9 @@ export default function BulkEditModal({
           const outcome: StatusIssueOutcome = await changeDocumentStatus({
             orgId: doc.orgId || library.orgId, documentId: doc.id, toStatus: newValue, door: "bulk",
             actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null, patch,
+            // notifications N17 (R2, DEC-90): one bulk edit, many documents —
+            // the rosters it opens keep their bell rows and emails, no push
+            notifyPush: false,
           });
           const label = doc.documentNumber || doc.title || doc.id;
           // Written, but not issued by THIS write (P17 integrator fix): the row
