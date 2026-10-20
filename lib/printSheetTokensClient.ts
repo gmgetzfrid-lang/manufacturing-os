@@ -98,16 +98,24 @@ export async function mintSheetTokens(input: {
 /** Tell the server which sheets left in the PDF: every other token of the
  *  print is voided ('not_printed'); an EMPTY list voids the whole print
  *  ('print_aborted' — nothing was downloaded). Never throws: an unsettled
- *  print keeps every token live, which is what a downloaded pack needs. */
+ *  print keeps every token live, which is what a downloaded pack needs.
+ *  PS-P10 (PHYS-19 c3): a work-package pack passes its cover's
+ *  work_package_prints id (`coverPrintId`) so the server links the token
+ *  print to it by key; a pack without a cover passes none and the request is
+ *  exactly as before. */
 export async function settleSheetTokens(input: {
   orgId: string;
   printId: string;
   printedDocumentIds: string[];
+  coverPrintId?: string | null;
 }): Promise<boolean> {
   try {
     const token = await bearer();
     if (!token) return false;
-    const res = await postTokenRoute(token, { action: "settle", orgId: input.orgId, printId: input.printId, printed: input.printedDocumentIds });
+    const res = await postTokenRoute(token, {
+      action: "settle", orgId: input.orgId, printId: input.printId, printed: input.printedDocumentIds,
+      ...(input.coverPrintId ? { coverPrintId: input.coverPrintId } : {}),
+    });
     if (!res.ok) {
       console.warn("[print-sheet-tokens] print not settled:", res.status);
       return false;
@@ -116,5 +124,38 @@ export async function settleSheetTokens(input: {
   } catch (e) {
     console.warn("[print-sheet-tokens] print not settled:", (e as Error)?.message);
     return false;
+  }
+}
+
+/** What a controller's recall of a printed pack came to (public-surfaces
+ *  PS-P10; intelligence DACL-8 residual (c)). */
+export type SheetPrintRecallResult =
+  | { ok: true; voided: number; alreadyVoid: number }
+  | { ok: false; unavailable: boolean; status: number; error: string };
+
+/** Recall a printed work-package pack by its cover's print id: every live
+ *  sheet token of that print is voided ('recalled'), so each of its sheets
+ *  scans "PRINT CANCELLED — DO NOT USE" (red, never green). Admin / Document
+ *  Control only (the server checks the role collection); the reason is
+ *  required and is written to the audit row first. Never throws. */
+export async function recallSheetPrint(input: {
+  orgId: string;
+  coverPrintId: string;
+  reason: string;
+}): Promise<SheetPrintRecallResult> {
+  try {
+    const token = await bearer();
+    if (!token) return { ok: false, unavailable: false, status: 401, error: "You are signed out — sign in and try again." };
+    const res = await postTokenRoute(token, { action: "void", orgId: input.orgId, coverPrintId: input.coverPrintId, reason: input.reason });
+    const body = res.body as { recalled?: boolean; voided?: number; alreadyVoid?: number; available?: boolean; error?: string } | null;
+    if (res.ok && body?.recalled === true) return { ok: true, voided: body.voided ?? 0, alreadyVoid: body.alreadyVoid ?? 0 };
+    return {
+      ok: false,
+      unavailable: body?.available === false,
+      status: res.status,
+      error: body?.error ?? `The recall was not recorded (HTTP ${res.status}) — nothing was changed.`,
+    };
+  } catch (e) {
+    return { ok: false, unavailable: false, status: 0, error: `The recall could not be sent (${(e as Error)?.message || "network"}) — nothing was changed.` };
   }
 }

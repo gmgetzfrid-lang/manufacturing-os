@@ -562,8 +562,10 @@ async function resolveToHttpUrl(raw: string): Promise<string> {
 
 /** PS-P9 (intelligence DACL-8 c2): the per-print sheet tokens of one build —
  *  minted before the first sheet is stamped, settled once the download is
- *  triggered. */
-interface SheetTokenPrint { minted: MintedSheetTokens | null; downloaded: boolean }
+ *  triggered. PS-P10 (PHYS-19 c3): `coverPrintId` — the cover's
+ *  work_package_prints id, when the caller's cover recorded one — rides on
+ *  that settle so the server links the token print to it by key. */
+interface SheetTokenPrint { minted: MintedSheetTokens | null; downloaded: boolean; coverPrintId?: string | null }
 
 /** PS-P9 (intelligence DACL-8 criterion 2, rulings under DEC-90): every
  *  sheet's QR names it by a per-print token the server mints for this build
@@ -575,7 +577,7 @@ interface SheetTokenPrint { minted: MintedSheetTokens | null; downloaded: boolea
  *  of sheets that did not make it into the PDF are voided ('not_printed') —
  *  a voided token's scan reads stale, never green. */
 export async function buildAndDownloadDocPack(input: Parameters<typeof buildAndDownloadDocPackOnce>[1]): Promise<DocPackResult> {
-  const tokenPrint: SheetTokenPrint = { minted: null, downloaded: false };
+  const tokenPrint: SheetTokenPrint = { minted: null, downloaded: false, coverPrintId: null };
   try {
     return await buildAndDownloadDocPackOnce(tokenPrint, input);
   } catch (e) {
@@ -600,8 +602,16 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
    *  failed to fetch. The returned document is PREPENDED. A throw here
    *  aborts the print with nothing downloaded and no pins moved.
    *  VFY-19: it also receives every sheet THIS build left out, with its
-   *  code, so the snapshot can record what the paper does not hold. */
-  buildCoverAfter?: (included: PackSheetRef[], skipped: PackSkip[]) => Promise<PDFDocument | null>;
+   *  code, so the snapshot can record what the paper does not hold.
+   *  PS-P10 (PHYS-19 c3): a cover that records a print snapshot passes its
+   *  id to `cover.linkPrint` — the post-download settle then carries it, so
+   *  the pack's sheet tokens link to the cover's print by key (checked by the
+   *  server). A cover that does not call it leaves the link NULL. */
+  buildCoverAfter?: (
+    included: PackSheetRef[],
+    skipped: PackSkip[],
+    cover: { linkPrint: (coverPrintId: string) => void },
+  ) => Promise<PDFDocument | null>;
   /** PKG-6: runs after the download has been triggered — the place for
    *  state that must only ever assert an EXISTING print (pin refresh).
    *  Must not throw: the paper is already in the user's hands, so the
@@ -838,7 +848,9 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
   // caller records while building it — cannot describe a sheet that isn't
   // in the PDF.
   if (input.buildCoverAfter) {
-    const cover = await input.buildCoverAfter([...includedSheets], [...skipped]);
+    const cover = await input.buildCoverAfter([...includedSheets], [...skipped], {
+      linkPrint: (coverPrintId: string) => { tokenPrint.coverPrintId = coverPrintId; },
+    });
     if (cover) {
       const coverPages = await merged.copyPages(cover, cover.getPageIndices());
       coverPages.forEach((p, i) => merged.insertPage(i, p));
@@ -876,7 +888,12 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
     // PS-P9 merge): nothing waits on it — an unsettled print keeps every
     // token live, which is what a downloaded pack needs. Never throws.
     if (tokenPrint.minted) {
-      void settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: includedSheets.map((s) => s.documentId) });
+      void settleSheetTokens({
+        orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: includedSheets.map((s) => s.documentId),
+        // PS-P10: the cover's print id, when this pack's cover recorded one
+        // (the abort path above never sends it: no cover lists an empty pack).
+        coverPrintId: tokenPrint.coverPrintId ?? null,
+      });
     }
   }
 
