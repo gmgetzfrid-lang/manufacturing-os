@@ -1308,7 +1308,7 @@ Paste and deploy order: either order is safe, and `20261183` and `20261197` are 
 
 - **Severity:** LOW
 - **Severity note:** as first filed here; graded HIGH where it now lives (document-control `DIST-17`, raised by the integrator at the N16 merge).
-- **Status:** OPEN *(closes by pointer when document-control `DIST-17` is RESOLVED — the integrator at the N16 merge kept this record OPEN rather than inventing a status outside the corpus vocabulary)* — the same leak is document-control [`DIST-17`](../document-control/05-distribution.md#dist-17), opened by N16 fix pass 2 under the integrator's ruling at the N16 merge (`DEC-31`, 2026-10-14). That record carries the owner, the severity, the reproduction and the done-whens; this one stays only so the number keeps pointing somewhere, and is not counted in this report.
+- **Status:** RESOLVED *(2026-10-20, by pointer: document-control `DIST-17` is RESOLVED — document-control Round G, P27. Until then the integrator at the N16 merge kept this record OPEN rather than inventing a status outside the corpus vocabulary.)* — the same leak is document-control [`DIST-17`](../document-control/05-distribution.md#dist-17), opened by N16 fix pass 2 under the integrator's ruling at the N16 merge (`DEC-31`, 2026-10-14). That record carries the owner, the severity, the reproduction and the done-whens; this one stays only so the number keeps pointing somewhere, and is not counted in this report.
 - **Assigned:** ~~document-control — the transmittal register's area (`audit-reports/document-control/06-transmittals.md`, the `TRX-*` findings). The integrator names the package when it routes this.~~ Assigned (2026-10-14, the integrator at the N16 merge): document-control P27 SHARE REMAINDERS, as `DIST-17`. Opened by notifications N16's fix pass under `DEC-31` (the remainder of `NEDGE-22`'s transmittal leg); notifications does not own `transmittals_select` or the register page.
 - **Verification:** CONFIRMED by reading the code at `ddc3678` + N16.
 - **Independently verified:** raised by the N16 reviewer (2026-10-14); opened by the N16 fix pass after reading the policy and the register; not yet challenged by a second party.
@@ -1323,5 +1323,14 @@ Paste and deploy order: either order is safe, and `20261183` and `20261197` are 
 - [ ] A test: a member outside a listed document's ACL does not read its number or title through the register's read; a member inside does (REGRESSION).
 
 **Closer:** ~~document-control (the integrator routes it)~~ document-control P27 SHARE REMAINDERS, through `DIST-17` (re-filed there by the integrator's ruling at the N16 merge, 2026-10-14; N16 fix pass 2 also found the cover sheet prints a live link's portal URL and QR for every member, so the as-sent files are reachable too — recorded on `DIST-17`). Notifications needs nothing further: the bell row and email already name no document such a member may not discover (`NEDGE-22`).
+
+
+**Resolution (2026-10-20, document-control Round G).** Closed by pointer to document-control [`DIST-17`](../document-control/05-distribution.md#dist-17), RESOLVED by P27 SHARE REMAINDERS. The register is now read through `app/api/transmittal/register/route.ts` (the server, active members only), and each row is redacted for its viewer by `lib/transmittals.ts` `redactTransmittalForViewer`, using the document read predicate (`readableControlledDocIds` over `canReadNode`, the I-12 predicate). A member who may not read a listed document sees it as "Restricted document" on the register and its cover sheet — never its number, title or revision — and the transmittal's subject and notes are withheld with it. Its sender and the controllers keep the full record, and the portal link goes only to someone who may read every item.
+
+**Done-when.**
+1. ✓ The register and its cover sheet show an item's number and title only to a member who may read that document (the sender and controllers keep the full record — `DEC-43`).
+2. ✓ Tests: `lib/__tests__/dcRoundGP27TransmittalRegister.test.ts` ("a Viewer outside the P&ID's ACL: the item restricted …"; "REGRESSION: a member who may read EVERY item reads the transmittal exactly as stored") and `dcRoundGP27RegisterRendered.test.ts` (the rendered register never shows the restricted number or title).
+
+**Scope / residual.** This record's done-whens name the register. The REST read of `transmittals` and the other browser readers still carry every item to every active member. That is document-control `DIST-18` (HIGH, opened by P27), not this record.
 
 ---
