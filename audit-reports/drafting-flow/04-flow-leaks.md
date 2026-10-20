@@ -424,6 +424,8 @@ The query was run in the DF-P0 fix pass on a throwaway Postgres 16 against 12 sy
 
 *Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90), on the residual the fix pass raised (paper printed before DF-P10 of a real (b) row reads "current" again once R2 stops counting member-writable lines):* the residual is accepted only until `20261222`'s paste-back. Its (b) count sizes it: 0 closes it by record; any other number activates drafting-flow **DF-P15 DELIVERABLE PAGE WIRING**'s snapshot limb — a guard-protected, paste-time server record of each label a row issued twice, so that paper answers "cannot confirm" while no member-written line can add to it. Neither direction is left to a member's forgeable history line.
 
+*Cross-note (2026-10-20, drafting-flow Round G, DF-P15 DELIVERABLE PAGE WIRING): the snapshot limb is NOT built — its condition has not come back.* The integrator's ruling above activates it only if `20261222`'s paste-back reports a (b) count that is not 0; that paste-back has not been reported (`MIGRATION-PASTE-ORDER.md` row 175, PASTE pending). Nothing changes here until it is: a (b) count of 0 closes the residual by record; any other number activates the paste-time server snapshot (a guard-protected column naming each label a row issued twice, so pre-DF-P10 paper of a (b) row answers "cannot confirm", with no member-writable line able to add to it). **Waiting on:** `20261222`'s paste-back (the operator). **Owner once it comes back:** DF-P15's successor in drafting-flow — the integrator assigns at that time (migration number allocated then; DF-P15 was reserved none for it). `LEAK-7` stays RESOLVED (PASTE pending) as ruled.
+
 ---
 
 ## LEAK-8 · `submit_final` is not required to carry a deliverable
