@@ -3,8 +3,10 @@
 //   SM-5 / EDGE-2 / PHYS-2  20261221: ticket_update_guard re-created from its
 //            NEWEST body (found by scanning; lineDiff-pinned here) refuses a
 //            client-appended "issued Rev N" line and stamps the history trust
-//            index; the verdict trusts an issue line only at or after it — and
-//            reads exactly as before without it (regression).
+//            index (cleared by a shed, re-stamped past a restore); the verdict
+//            trusts an issue line only at or after it — and keeps DF-P10's
+//            trust boundary without it (regression), the three DF-P12
+//            demotions that need no index aside (pinned, each fail-safe).
 //   SM-5 dw3 / LEAK-7 (b)  the QR names the FILE (?a=): a print is told
 //            apart by identity; a label issued twice cannot be confirmed by
 //            label alone. Never greener.
@@ -29,7 +31,7 @@ import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { PDFDocument } from "pdf-lib";
 import {
-  ticketVerdict, ticketVerifyUrl, provenIssueFromHistory, provenSentBackAfterIssue, issueInForce, issuedMoreThanOnce, TICKET_ATTACHMENT_ID_RE,
+  ticketVerdict, ticketVerifyUrl, ticketFactsState, provenIssueFromHistory, provenSentBackAfterIssue, issueInForce, issuedMoreThanOnce, TICKET_ATTACHMENT_ID_RE,
 } from "@/lib/verifyTicketVerdict";
 import { ticketCopyPlan, ticketCopyStanding, recordTicketCopy, isMissingTicketCopyColumn } from "@/lib/ticketDeliverableCopy";
 import { computeTransition } from "@/lib/ticketTransitions";
@@ -165,14 +167,15 @@ describe("20261221 — ticket_update_guard re-created from its NEWEST earlier bo
     expect(onlyInA).toEqual([]);
     expect(code(onlyInB)).toEqual([
       "  v_guarded_from_in INT := NEW.history_guarded_from;",
-      "  IF OLD.history_guarded_from IS NULL AND NEW.history_guarded_from IS NULL",
-      "     AND NOT (OLD.archived_at IS NOT NULL AND NEW.archived_at IS NOT NULL) THEN",
-      "    NEW.history_guarded_from := CASE",
-      "      WHEN OLD.archived_at IS NOT NULL THEN",
-      "        CASE WHEN jsonb_typeof(NEW.history) = 'array' THEN jsonb_array_length(NEW.history) ELSE 0 END",
-      "      ELSE",
-      "        CASE WHEN jsonb_typeof(OLD.history) = 'array' THEN jsonb_array_length(OLD.history) ELSE 0 END",
-      "    END;",
+      // the restore (archived → live) re-stamps unconditionally, past everything it wrote (review fix 2)
+      "  IF OLD.archived_at IS NOT NULL AND NEW.archived_at IS NULL THEN",
+      "    NEW.history_guarded_from := CASE WHEN jsonb_typeof(NEW.history) = 'array' THEN jsonb_array_length(NEW.history) ELSE 0 END;",
+      // the shed (live → archived) clears it: a stub proves nothing
+      "  ELSIF OLD.archived_at IS NULL AND NEW.archived_at IS NOT NULL THEN",
+      "    NEW.history_guarded_from := NULL;",
+      // a live row's first write after the paste stamps it once
+      "  ELSIF OLD.archived_at IS NULL AND OLD.history_guarded_from IS NULL AND NEW.history_guarded_from IS NULL THEN",
+      "    NEW.history_guarded_from := CASE WHEN jsonb_typeof(OLD.history) = 'array' THEN jsonb_array_length(OLD.history) ELSE 0 END;",
       "  IF v_guarded_from_in IS DISTINCT FROM OLD.history_guarded_from THEN v_bad := array_append(v_bad, 'history_guarded_from'); END IF;",
       "      IF COALESCE(v_entry->>'action', '') ~* 'issued Rev [[:digit:]]' THEN",
       "        RAISE EXCEPTION 'tickets: an \"issued Rev\" history entry is written only by the request workflow';",
@@ -189,13 +192,15 @@ describe("20261221 — ticket_update_guard re-created from its NEWEST earlier bo
     };
     let t = next;
     t = cut(t, "  v_guarded_from_in INT := NEW.history_guarded_from;\n", "  v_guarded_from_in INT := NEW.history_guarded_from;\n");
-    t = cut(t, "  -- DF-P12 (drafting-flow SM-5 / EDGE-2, 20261221): history_guarded_from is\n", "    END;\n  END IF;\n\n");
+    t = cut(t, "  -- DF-P12 (drafting-flow SM-5 / EDGE-2, 20261221): history_guarded_from is\n", "jsonb_array_length(OLD.history) ELSE 0 END;\n  END IF;\n\n");
     t = cut(t, "  -- DF-P12 (drafting-flow SM-5 / EDGE-2, 20261221): the history trust index\n", "'history_guarded_from'); END IF;\n");
     t = cut(t, "      -- DF-P12 (drafting-flow SM-5 / EDGE-2 / PHYS-2, 20261221): an \"issued\n", "a revision-round history entry is written only by the request workflow';\n      END IF;\n");
     expect(t).toBe(live);
     // placements: the stamp precedes every early return; the limb sits in the append loop after "must name you"
     expect(next.indexOf("NEW.history_guarded_from := CASE")).toBeLessThan(next.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;"));
     expect(next.indexOf("NEW.history_guarded_from := CASE")).toBeLessThan(next.indexOf("app.ticket_departure"));
+    // the restore's re-stamp is the FIRST branch: it never depends on what the stub carried
+    expect(next.indexOf("IF OLD.archived_at IS NOT NULL AND NEW.archived_at IS NULL THEN")).toBeLessThan(next.indexOf("ELSIF OLD.archived_at IS NULL AND OLD.history_guarded_from IS NULL"));
     expect(next.indexOf("issued Rev [[:digit:]]")).toBeGreaterThan(next.indexOf("a history entry you add must name you"));
     expect(next.indexOf("IF v_entry ? 'revisionRound' THEN")).toBeGreaterThan(next.indexOf("issued Rev [[:digit:]]"));
     expect(next.indexOf("IF v_entry ? 'revisionRound' THEN")).toBeLessThan(next.indexOf("END LOOP;"));
@@ -207,7 +212,7 @@ describe("20261221 — ticket_update_guard re-created from its NEWEST earlier bo
     expect(M).toContain("CREATE TRIGGER trg_ticket_update_guard\n  BEFORE UPDATE ON tickets\n  FOR EACH ROW EXECUTE FUNCTION ticket_update_guard();");
     expect(M).toContain("REVOKE ALL ON FUNCTION ticket_update_guard() FROM PUBLIC, anon, authenticated, service_role;");
   });
-  it("FOLDER SCAN: the NEWEST ticket_update_guard in the sequence keeps both limbs and the index stamp (a later re-creation that drops them must drop the index too)", () => {
+  it("FOLDER SCAN: the NEWEST ticket_update_guard in the sequence keeps both limbs, the index stamp and the restore re-stamp (a later re-creation that drops them must drop the index too)", () => {
     // A re-creation numbered after 20261221 that started from an older body
     // (20261208) would leave tickets.history_guarded_from vouching for lines
     // nobody guarded: provenIssueFromHistory would read a member's appended
@@ -218,6 +223,8 @@ describe("20261221 — ticket_update_guard re-created from its NEWEST earlier bo
     expect(body, newest).toContain("IF v_entry ? 'revisionRound' THEN");
     expect(body, newest).toContain("NEW.history_guarded_from := CASE");
     expect(body, newest).toContain("array_append(v_bad, 'history_guarded_from')");
+    // …and the restore re-stamp: a restore writes history from an uploaded bundle, so it must start the index past it
+    expect(body, newest).toContain("IF OLD.archived_at IS NOT NULL AND NEW.archived_at IS NULL THEN\n    NEW.history_guarded_from := CASE WHEN jsonb_typeof(NEW.history) = 'array' THEN jsonb_array_length(NEW.history) ELSE 0 END;");
   });
   it("the limb is never narrower than the readers: every text the readers read as an issue line is refused", () => {
     const READER = /\bissued Rev (\d+)\b/;
@@ -260,11 +267,11 @@ describe("20261221 — ticket_update_guard re-created from its NEWEST earlier bo
 // ═════════════════════════════════════════════════════════════════════════════
 describe("20261222 — the LEAK-7 (a) repair: counts first, one UPDATE, one result set", () => {
   const M = mig("20261222_df_roundG_leak7_reopened_label_repair.sql");
-  it("inventory before the transaction (counts only: (a), left alone, (a′), (b), (c)); one UPDATE limited to (a) rows; ONE final SELECT", () => {
+  it("inventory before the transaction (counts only: (a), left alone, (a′), (b), (c), Finals waiting on the old cycle); one UPDATE limited to (a) rows; ONE final SELECT", () => {
     expect(M.indexOf("CREATE TEMP TABLE df_round_g_222_before")).toBeLessThan(M.indexOf("\nBEGIN;\n"));
     expect(oneFinalSelect(M)).toBe(1);
     const inv = between(M, "CREATE TEMP TABLE df_round_g_222_before", "\nBEGIN;");
-    expect((inv.match(/'inventory \(before apply\): /g) ?? []).length).toBe(5);
+    expect((inv.match(/'inventory \(before apply\): /g) ?? []).length).toBe(6);
     expect(inv).not.toMatch(/SELECT\s+t\.(id|title|history|requester_name)\b/);
     const tx = between(M, "\nBEGIN;\n", "\nCOMMIT;\n");
     expect((stripComments(tx).match(/\bUPDATE\b/g) ?? []).length).toBe(1);
@@ -273,6 +280,16 @@ describe("20261222 — the LEAK-7 (a) repair: counts first, one UPDATE, one resu
     expect(tx).toContain("revision_count  = GREATEST(COALESCE(t.revision_count, 0), t.deliverable_rev::int)");
     expect(tx).toContain("deliverable_rev = NULL");
     expect(tx).toContain("draft_iteration = 0");
+    // review fix 2: a Final waiting on the OLD cycle (rev null, revCycle = the old count) moves with the count —
+    // only where the count moves, only that shape; stampIssuedFinals then stamps it at the next issue
+    expect(tx).toContain("WHEN jsonb_typeof(t.attachments) = 'array' AND COALESCE(t.revision_count, 0) < t.deliverable_rev::int THEN");
+    expect(tx).toContain("WHEN f.e->>'type' = 'Final' AND jsonb_typeof(f.e->'rev') = 'null'");
+    expect(tx).toContain("AND f.e->'revCycle' = to_jsonb(COALESCE(t.revision_count, 0))");
+    // no cast of a JSON value or of a label the WHERE has not yet proven digits-only (a casting error would abort the paste)
+    expect(M).not.toContain("(f.e->>'revCycle')::");
+    expect(between(M, "SELECT 6, ", "\nBEGIN;")).toContain("< CASE WHEN t.deliverable_rev ~ '^[0-9]{1,6}$' THEN t.deliverable_rev::int END");
+    expect(tx).toContain("THEN jsonb_set(f.e, '{revCycle}', to_jsonb(t.deliverable_rev::int))");
+    expect(tx).toContain("END ORDER BY f.ord), '[]'::jsonb)");
     // the repair line is never read as an issue line, by the readers or the guard
     const line = between(tx, "'action', '", "',");
     expect(/\bissued Rev (\d+)\b/.test(line)).toBe(false);
@@ -359,13 +376,35 @@ describe("REGRESSION — a legitimately issued, current deliverable scans curren
       expect(plan.footerNotice).toBe("This file is KE-1 deliverable Rev 1 — not a controlled document revision — scan the QR to confirm it is still the latest.");
     }
   });
-  it("a row with no trust index reads EXACTLY as before 20261221 (the pre-paste reading is DF-P10's, pinned by verifyTicketVerdict.test.ts)", () => {
+  it("a row with no trust index keeps DF-P10's trust boundary (the pre-paste reading, pinned by verifyTicketVerdict.test.ts) — the three DF-P12 demotions that need no index aside (next test)", () => {
     const reclosed = { status: "CLOSED", deliverable_rev: null, history: [issued(1), issued(2), { action: "Reopen Ticket" }, { action: "Force Close (Admin)" }], revision_count: 2 };
     expect(ticketVerdict(reclosed, "2").verdict).toBe("unknown");
     expect(ticketVerdict({ ...reclosed, history_guarded_from: null }, "2").verdict).toBe("unknown");
     // issue 3 (DF-P10's recorded residual): a forged line under a review label still supersedes a real issue when nothing is proven
     const issue3 = { status: "PENDING_REVIEW", deliverable_rev: "3A", revision_count: 2, history: [issued(1), { action: "Reject Final" }, { action: "Submitted for review — Rev 2A" }, { action: "Reject" }, { action: "Submitted for review — Rev 3A" }, forged(2)] };
     expect(ticketVerdict(issue3, "1").verdict).toBe("superseded");
+  });
+  it("review fix 2 — the three DF-P12 demotions that act with NO index, from the deploy (recorded on SM-5, DEC-90's Landed line, DEC-44 (DF-P12)): each turns green or amber into 'cannot confirm', never red, never green", () => {
+    // (1) item 2 (a): CLOSED on issued label N with revision_count >= N — the package was sent back after the issue
+    const rejectedClosed = { status: "CLOSED", deliverable_rev: "1", revision_count: 1, history: [issued(1), { action: "Submit Final" }, { action: "Reject Final (Re-Open)", revisionRound: 1 }, { action: "Force Close (Admin)" }] };
+    expect(ticketVerdict(rejectedClosed, "1").verdict).toBe("unknown");
+    expect(ticketVerdict({ ...rejectedClosed, revision_count: 0 }, "1").verdict).toBe("current"); // a normal close stays green
+    // (2) the printed file's identity: a QR naming a file the ticket does not confirm
+    const live = { status: "PENDING_IFC", deliverable_rev: "1", revision_count: 0, history: [issued(1)], attachments: [{ id: "f-1", type: "Final", rev: "1" }] };
+    expect(ticketVerdict(live, "1", "f-x").verdict).toBe("unknown");
+    expect(ticketVerdict(live, "1", "f-1").verdict).toBe("current");
+    // (3) a label the history issues twice counts every line within revision_count + 1, proven or not: a duplicate
+    //     a member appended BEFORE the paste (the guard admitted it then) greys out every print of a legitimately
+    //     current Rev 1 that names no confirmed file — all paper printed before DF-P12 (SM-5 residual, item 4)
+    const closedNormally = { status: "CLOSED", deliverable_rev: "1", revision_count: 0, history: [issued(1), { action: "Submit Final" }, { action: "Close Ticket" }] };
+    expect(ticketVerdict(closedNormally, "1").verdict).toBe("current");
+    const withForgedDuplicate = { ...closedNormally, history: [...closedNormally.history, forged(1)] };
+    expect(ticketVerdict(withForgedDuplicate, "1").verdict).toBe("unknown");
+    expect(ticketVerdict({ ...withForgedDuplicate, history_guarded_from: null }, "1").verdict).toBe("unknown");
+    // a print naming the file the ticket confirms is still told apart (a new print, since DF-P12)
+    expect(ticketVerdict({ ...withForgedDuplicate, attachments: [{ id: "f-1", type: "Final", rev: "1" }] }, "1", "f-1").verdict).toBe("current");
+    // none of them makes a red answer anything else: an older print is still superseded
+    expect(ticketVerdict({ ...rejectedClosed, deliverable_rev: "2", revision_count: 2, history: [issued(1), issued(2)] }, "1").verdict).toBe("superseded");
   });
 });
 
@@ -849,5 +888,19 @@ describe("the /verify-ticket page — forwards the file's id; a request that nev
     expect(p).toContain("{headlineFor(result, ui)}</h1>");
     expect(p).toContain("This request was withdrawn after Rev ${r.latestIssuedRev} was issued.");
     expect(p).toContain("for example a question answered without a drawing");
+  });
+  it("review fix 2 — the facts card agrees with the headline: 'Not issued' for a withdrawn answer naming no issue (an RFI answered on a review label), 'Withdrawn' after an issue", () => {
+    // the page builds the card from ticketFactsState with the API's answer (latestIssuedRev included)
+    expect(p).toContain("ticketFactsState({ ...result, verdict: ui === VERDICT_UI.unknown ? \"unknown\" : result.verdict })");
+    const rfi = ticketVerdict({ status: "CLOSED", deliverable_rev: "1A", revision_count: 0, history: [{ action: "Submitted for review — Rev 1A" }, { action: "Answer RFI & Close" }] }, "1A");
+    expect(rfi).toMatchObject({ verdict: "withdrawn", latestIssuedRev: null });
+    expect(ticketFactsState(rfi)).toEqual({ label: "Request", value: "Not issued" });
+    const canceledNever = ticketVerdict({ status: "CANCELED", deliverable_rev: null, revision_count: 0, history: [] }, "1");
+    expect(ticketFactsState(canceledNever)).toEqual({ label: "Request", value: "Not issued" });
+    const canceledAfter = ticketVerdict({ status: "CANCELED", deliverable_rev: "1", revision_count: 0, history: [issued(1)] }, "1");
+    expect(canceledAfter).toMatchObject({ verdict: "withdrawn", latestIssuedRev: "1" });
+    expect(ticketFactsState(canceledAfter)).toEqual({ label: "Request", value: "Withdrawn" });
+    // every other state is unchanged
+    expect(ticketFactsState({ verdict: "unknown", currentRev: null, latestIssuedRev: null, inReview: false })).toEqual({ label: "Revision status", value: "Cannot confirm" });
   });
 });

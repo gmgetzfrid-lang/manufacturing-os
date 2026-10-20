@@ -94,7 +94,9 @@
 // refuses a client-appended "issued Rev N" entry, and the row records from
 // which index of its history on every such line is the workflow's own
 // (tickets.history_guarded_from, stamped by the guard at the row's first write
-// after the paste). An issue line at or after that index is PROVEN
+// after the paste, cleared by the archive shed, and re-stamped past
+// everything a restore writes — a restore's history comes from an uploaded
+// bundle, so it proves nothing). An issue line at or after that index is PROVEN
 // (provenIssueFromHistory). Every real issue is a higher number than every
 // real issue before it (lib/ticketTransitions.ts issueLabelFor re-cycles a
 // label the history already issued), so once a ticket has a proven issue it
@@ -105,8 +107,15 @@
 // the server provably wrote it) — for a CLOSED row with no label only when
 // its revision_count shows the reopen as the one cycle bump since that issue
 // (revision_count N for issue N). A ticket with no proven issue — every
-// ticket before the paste, or one whose issues all predate it — reads exactly
-// as before (a database without the column answers as before the paste).
+// ticket before the paste, one whose issues all predate it, and one restored
+// from the archive — keeps DF-P10's trust boundary (a database without the
+// column proves nothing). Three DF-P12 rules below need no index and act on
+// every row from the deploy, each only turning a green or amber answer into
+// "cannot confirm": the CLOSED issued-label rule (item 2 (a)), the printed
+// file's identity (?a=), and a label the history issues twice. The last
+// counts every line within revision_count + 1, proven or not, so a duplicate
+// "issued Rev N" a member appended before the paste greys out every print of
+// a current Rev N that names no confirmed file (DEC-44 (DF-P12) item 4).
 //
 // A package sent back after its issue (DEC-44 (DF-P12) item 2): the
 // requester's reject_final returns an issued package (FINAL_DRAFT →
@@ -511,9 +520,12 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string, pri
 
 /** The right-hand cell of the landing page's facts card (EDGE-2 done-when 2):
  *  the coarse state the verdict carries, never a label that contradicts the
- *  headline — a withdrawn or unconfirmable copy shows no "Latest issue". */
+ *  headline — a withdrawn or unconfirmable copy shows no "Latest issue", and
+ *  a withdrawn answer naming no issue says "Not issued", as the page's
+ *  NOT ISSUED headline does (DEC-44 (DF-P12) item 3: an RFI answered on a
+ *  review label was never given, so nothing was withdrawn). */
 export function ticketFactsState(r: Pick<TicketVerdictResult, "verdict" | "currentRev" | "latestIssuedRev" | "inReview">): { label: string; value: string } {
-  if (r.verdict === "withdrawn") return { label: "Request", value: "Withdrawn" };
+  if (r.verdict === "withdrawn") return { label: "Request", value: r.latestIssuedRev ? "Withdrawn" : "Not issued" };
   if (r.verdict === "unknown") return { label: "Revision status", value: "Cannot confirm" };
   if (r.inReview) {
     const inReviewRev = ticketRevInReview(r);

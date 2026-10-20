@@ -26,16 +26,24 @@
 --             writes one either.
 --         (b) tickets.history_guarded_from — the index in `history` from
 --             which every "issued Rev N" line is the workflow's own. Stamped
---             once by the guard, on the row's first write after this paste,
---             with the history length the row had before that write (an
---             archived stub: the length its restore puts back), ahead of
---             every early return. Workflow-owned: a client write of it is
+--             by the guard, ahead of every early return: once, on a live
+--             row's first write after this paste, with the history length the
+--             row had before that write; CLEARED by the shed (live →
+--             archived — the stub's history goes to the archive bundle); and
+--             RE-STAMPED by every restore (archived → live) at the full
+--             length the restore writes, whatever the row carried — the
+--             restore writes history from an admin-uploaded archive bundle
+--             (app/api/admin/ticket-shed/restore, which checks only the
+--             attachment bytes against the bundle's manifest), so nothing
+--             restored is proven. Workflow-owned: a client write of it is
 --             refused. /api/verify-ticket reads it (lib/verifyTicketVerdict.ts
 --             provenIssueFromHistory): an issue line at or after the index is
 --             proven, and the integrator's DEC-90 rulings that answer "cannot
 --             confirm" because a history line might be forged are lifted for
 --             a ticket whose last issue is proven. A ticket with no proven
---             issue reads exactly as before this paste.
+--             issue keeps DF-P10's trust boundary (the DF-P12 demotions that
+--             act on every row, with or without the index, are listed in
+--             lib/verifyTicketVerdict.ts; each only turns an answer grey).
 --   (2) ticket_history_guard_reset() (new; SECURITY INVOKER, search_path
 --       pinned) and trg_ticket_history_guard_reset BEFORE INSERT: a ticket row
 --       born by INSERT proves nothing about its history (a restore, any
@@ -46,7 +54,9 @@
 -- (DEC-90, fail-safe: history the server did not write is never trusted), and
 -- nothing on the line tells it apart from an approval's. From the paste on, a
 -- client cannot write one, so the lines a row gains after its first write
--- under this guard are the server's. Every real issue is a higher number than
+-- under this guard are the server's — save a restore's, which come from an
+-- uploaded bundle and so start the index again past everything restored.
+-- Every real issue is a higher number than
 -- every real issue before it (lib/ticketTransitions.ts issueLabelFor re-cycles
 -- a label the history already issued), so once a ticket has a proven issue,
 -- an older line claiming a higher number is provably not an approval's.
@@ -54,8 +64,10 @@
 -- PASTE / DEPLOY ORDER. Paste AFTER 20261208 (its first statement refuses
 -- otherwise, changing nothing). Either order with the DF-P12 deploy: the
 -- DF-P12 app reads history_guarded_from and, without the column (42703 /
--- PGRST204), reads the ticket exactly as today — the verdict keeps today's
--- behaviour until the paste. The app before DF-P12 never selects the column.
+-- PGRST204), proves no issue line — it keeps DF-P10's trust boundary until
+-- the paste (the DF-P12 demotions that need no index act from the deploy:
+-- they only turn an answer grey). The app before DF-P12 never selects the
+-- column.
 -- No browser path appends an "issued Rev" line or a `revisionRound` marker
 -- (the workflow route writes both as the service role; the one browser
 -- history writer, lib/projects.ts convertTicketToProject, appends "Converted
@@ -109,7 +121,7 @@ SELECT 3, 'inventory (before apply): SM-5 — tickets whose history carries an "
                       LATERAL regexp_matches(COALESCE(h.e->>'action', ''), '[[:<:]]issued Rev ([0-9]+)[[:>:]]') AS m(g)
                 WHERE m.g[1]::numeric > COALESCE(t.revision_count, 0) + 1)
 UNION ALL
-SELECT 4, 'inventory (before apply): archived tickets (their history is in the archive bundle; a restore stamps the index over everything it puts back)',
+SELECT 4, 'inventory (before apply): archived tickets (their history is in the archive bundle; every restore re-stamps the index over everything it puts back)',
        COUNT(*)::text
   FROM tickets WHERE archived_at IS NOT NULL;
 
@@ -128,7 +140,7 @@ BEGIN
 END
 $$;
 COMMENT ON COLUMN tickets.history_guarded_from IS
-  'drafting-flow SM-5 / EDGE-2 (20261221): the index in history from which every "issued Rev N" line is the request workflow''s own (ticket_update_guard refuses a client-appended one from this paste on). Stamped by the guard on the row''s first update after the paste; NULL = nothing proven (never updated since, or born by INSERT). Workflow-owned.';
+  'drafting-flow SM-5 / EDGE-2 (20261221): the index in history from which every "issued Rev N" line is the request workflow''s own (ticket_update_guard refuses a client-appended one from this paste on). Stamped by the guard on a live row''s first update after the paste, cleared by the archive shed, re-stamped at the full restored length by every restore; NULL = nothing proven (never updated since, archived, or born by INSERT). Workflow-owned.';
 
 -- ── 2. ticket_update_guard — re-created from 20261208 (lineDiff-pinned) ─────
 CREATE OR REPLACE FUNCTION ticket_update_guard()
@@ -145,19 +157,20 @@ BEGIN
   -- workflow's own. From this paste a client cannot append one (refused
   -- below), so every entry from the row's history length at its first
   -- write after the paste onward was written by the service role (or the
-  -- paste owner). Stamped once, here, ahead of every early return. An
-  -- archived stub's history is in its archive bundle: a write that leaves
-  -- the row archived stamps nothing, and the restore that puts the history
-  -- back stamps its full length — everything restored predates the guard.
-  -- A non-array history counts as empty.
-  IF OLD.history_guarded_from IS NULL AND NEW.history_guarded_from IS NULL
-     AND NOT (OLD.archived_at IS NOT NULL AND NEW.archived_at IS NOT NULL) THEN
-    NEW.history_guarded_from := CASE
-      WHEN OLD.archived_at IS NOT NULL THEN
-        CASE WHEN jsonb_typeof(NEW.history) = 'array' THEN jsonb_array_length(NEW.history) ELSE 0 END
-      ELSE
-        CASE WHEN jsonb_typeof(OLD.history) = 'array' THEN jsonb_array_length(OLD.history) ELSE 0 END
-    END;
+  -- paste owner). Stamped here, ahead of every early return. An archived
+  -- stub's history is in its archive bundle: the shed (live → archived)
+  -- clears the index and a write that leaves the row archived stamps
+  -- nothing. The restore (archived → live) re-stamps it at the full
+  -- restored length, whatever the row carried: it writes history from an
+  -- admin-uploaded bundle this trigger never saw (only the attachment bytes
+  -- are checked against the bundle's manifest), so nothing restored is
+  -- proven. A non-array history counts as empty.
+  IF OLD.archived_at IS NOT NULL AND NEW.archived_at IS NULL THEN
+    NEW.history_guarded_from := CASE WHEN jsonb_typeof(NEW.history) = 'array' THEN jsonb_array_length(NEW.history) ELSE 0 END;
+  ELSIF OLD.archived_at IS NULL AND NEW.archived_at IS NOT NULL THEN
+    NEW.history_guarded_from := NULL;
+  ELSIF OLD.archived_at IS NULL AND OLD.history_guarded_from IS NULL AND NEW.history_guarded_from IS NULL THEN
+    NEW.history_guarded_from := CASE WHEN jsonb_typeof(OLD.history) = 'array' THEN jsonb_array_length(OLD.history) ELSE 0 END;
   END IF;
 
   -- The workflow-action route (service role) is the transition authority.
@@ -349,7 +362,7 @@ SELECT 'SM-5: tickets.history_guarded_from exists (integer, never negative)' AS 
                      WHERE conname = 'tickets_history_guarded_from_nonnegative' AND conrelid = 'public.tickets'::regclass AND contype = 'c')) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'ticket_update_guard: refuses a client-appended "issued Rev" line or revisionRound marker, stamps and owns history_guarded_from; library_id, outcome, the departure pass and the last_modified rule kept; SECURITY DEFINER, search_path pinned, trigger enabled',
+SELECT 'ticket_update_guard: refuses a client-appended "issued Rev" line or revisionRound marker, stamps and owns history_guarded_from (cleared by a shed, re-stamped by every restore); library_id, outcome, the departure pass and the last_modified rule kept; SECURITY DEFINER, search_path pinned, trigger enabled',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_trigger tg ON tg.tgfoid = p.oid
                 WHERE p.proname = 'ticket_update_guard' AND p.prosecdef
                   AND p.proconfig @> ARRAY['search_path=public']
@@ -357,6 +370,8 @@ SELECT 'ticket_update_guard: refuses a client-appended "issued Rev" line or revi
                   AND p.prosrc LIKE '%IF COALESCE(v_entry->>''action'', '''') ~* ''issued Rev [[:digit:]]'' THEN%'
                   AND p.prosrc LIKE '%IF v_entry ? ''revisionRound'' THEN%'
                   AND p.prosrc LIKE '%NEW.history_guarded_from := CASE%'
+                  AND p.prosrc LIKE '%IF OLD.archived_at IS NOT NULL AND NEW.archived_at IS NULL THEN%'
+                  AND p.prosrc LIKE '%ELSIF OLD.archived_at IS NULL AND NEW.archived_at IS NOT NULL THEN%'
                   AND p.prosrc LIKE '%v_bad := array_append(v_bad, ''history_guarded_from'');%'
                   AND p.prosrc LIKE '%v_bad := array_append(v_bad, ''library_id'');%'
                   AND p.prosrc LIKE '%array_append(v_bad, ''outcome''); END IF;%'

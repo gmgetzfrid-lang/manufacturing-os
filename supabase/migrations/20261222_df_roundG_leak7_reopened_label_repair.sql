@@ -20,6 +20,17 @@
 --   kept, so no number is skipped), with one history line saying so and
 --   last_modified stamped (an open page's next action meets a fresh token).
 --   Rev N stays the last issue on record: its history line is untouched.
+--   A Final attached while the row sat in that state (attach_file is offered
+--   at every live status) was recorded `rev: null` with the cycle it joined
+--   in (`revCycle`, lib/ticketTransitions.ts joiningFileFields) — the OLD
+--   count. The next issue stamps only the Finals of the cycle it closes
+--   (stampIssuedFinals, the count before the issue), so where the count moves
+--   such a Final's `revCycle` moves with it, from the old count to the new
+--   one: it joined the new cycle, as it would have under today's reopen, and
+--   the next issue stamps it. A Final of an earlier, rejected cycle (another
+--   revCycle), a labelled file, and a file recorded before per-file
+--   revisions (no `rev` key) are left exactly as they are; nothing else in
+--   the attachments changes. Where the count is kept, nothing moves.
 --
 --   NOT repaired, counted (the inventory below):
 --     (a′) a row of (a) that has since submitted a new draft carries a review
@@ -28,10 +39,12 @@
 --          that label; it reads "cannot confirm" until its next approval,
 --          which re-cycles to a new number (SM-5, DF-P10).
 --     (b)  a history that issues the same Rev N twice — two packages already
---          share the label; counters cannot tell their prints apart. Since
---          DF-P12 a print carrying the file's identity (?a=) is told apart, and
---          an old print of a twice-issued label answers "cannot confirm",
---          never green (lib/verifyTicketVerdict.ts).
+--          share the label; counters cannot tell their prints apart, and
+--          neither can the file's identity (?a=): both packages' Finals
+--          predate per-file revisions, so a new print carries no revision
+--          (DF-P10's no-rev rule) and older paper names only the label (the
+--          issued-twice rule) — every print answers "cannot confirm", never
+--          green (lib/verifyTicketVerdict.ts).
 --     (c)  an archived ticket carrying an issued label: its history is in the
 --          archive bundle (a repeat there is unobservable from the database).
 --     A row whose label is longer than six digits is left alone (it cannot be
@@ -42,8 +55,9 @@
 -- and after the paste works the same for a repaired row: it reads as a ticket
 -- reopened under DEC-15 — a print of Rev N answers revision_in_progress (as
 -- the (a) row did since DF-P10), older prints superseded, and the next
--- approval issues Rev N+1 (before the paste the re-cycle reached the same
--- number with a note).
+-- approval issues Rev N+1 and stamps the Finals attached while the row sat
+-- in the (a) state (before the paste the re-cycle reached the same number
+-- with a note, and stamped them at the old count).
 --
 -- Not a widening. Runs as the paste's owner (auth.uid() IS NULL: the guard
 -- passes it). Re-runnable: a second paste finds no (a) row and changes
@@ -96,16 +110,42 @@ SELECT 5, 'inventory (before apply): LEAK-7 / SM-5 (c) — archived tickets carr
        COUNT(*)::text
   FROM tickets
  WHERE archived_at IS NOT NULL
-   AND deliverable_rev ~ '^[0-9]+$';
+   AND deliverable_rev ~ '^[0-9]+$'
+UNION ALL
+SELECT 6, 'inventory (before apply): (a) rows whose count moves and that carry a Final waiting on the old cycle (rev null, revCycle = the count) — its revCycle moves to the new cycle with the count',
+       COUNT(*)::text
+  FROM tickets t
+ WHERE t.status IN ('PENDING_REVIEW', 'PENDING_FINAL_APPROVAL')
+   AND t.deliverable_rev ~ '^[0-9]{1,6}$'
+   AND t.archived_at IS NULL
+   AND (t.history IS NULL OR jsonb_typeof(t.history) = 'array')
+   AND COALESCE(t.revision_count, 0) < CASE WHEN t.deliverable_rev ~ '^[0-9]{1,6}$' THEN t.deliverable_rev::int END
+   AND jsonb_typeof(t.attachments) = 'array'
+   AND EXISTS (SELECT 1 FROM jsonb_array_elements(t.attachments) AS f(e)
+                WHERE f.e->>'type' = 'Final' AND jsonb_typeof(f.e->'rev') = 'null'
+                  AND f.e->'revCycle' = to_jsonb(COALESCE(t.revision_count, 0)));
 
 BEGIN;
 
 -- ── the repair: what today's reopen_ticket does, once, for each (a) row ─────
+-- (every right-hand side reads the row as it was: t.revision_count is the old count)
 UPDATE tickets t
    SET revision_count  = GREATEST(COALESCE(t.revision_count, 0), t.deliverable_rev::int),
        deliverable_rev = NULL,
        draft_iteration = 0,
        last_modified   = NOW(),
+       -- a Final waiting on the old cycle joins the new one with the count
+       attachments     = CASE
+                           WHEN jsonb_typeof(t.attachments) = 'array' AND COALESCE(t.revision_count, 0) < t.deliverable_rev::int THEN
+                             (SELECT COALESCE(jsonb_agg(CASE
+                                       WHEN f.e->>'type' = 'Final' AND jsonb_typeof(f.e->'rev') = 'null'
+                                        AND f.e->'revCycle' = to_jsonb(COALESCE(t.revision_count, 0))
+                                       THEN jsonb_set(f.e, '{revCycle}', to_jsonb(t.deliverable_rev::int))
+                                       ELSE f.e
+                                     END ORDER BY f.ord), '[]'::jsonb)
+                                FROM jsonb_array_elements(t.attachments) WITH ORDINALITY AS f(e, ord))
+                           ELSE t.attachments
+                         END,
        history         = COALESCE(t.history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
                            'action', 'Revision cycle restarted (data repair)',
                            'user', 'system',

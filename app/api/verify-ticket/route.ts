@@ -33,7 +33,9 @@
 // `attachments` is selected only for such a QR. `history_guarded_from`
 // (20261221) is read for the verdict — an "issued Rev N" line at or after it
 // is the workflow's own — and never returned; before that paste the column is
-// absent (42703 / PGRST204) and the ticket is read exactly as before.
+// absent (42703 / PGRST204) and the ticket is read again without it: nothing
+// is proven (DF-P10's trust boundary; the DF-P12 demotions that need no index
+// still apply — lib/verifyTicketVerdict.ts).
 //
 // The door (public-surfaces PS-VERIFY; the verdict above is drafting-flow's):
 // every answered scan leaves a verify_scans row and counts toward a generous

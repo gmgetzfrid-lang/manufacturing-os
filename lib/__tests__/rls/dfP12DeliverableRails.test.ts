@@ -8,11 +8,14 @@
 //             revision-round marker (DEC-44 (DF-P12) item 2's evidence); every legitimate client write
 //             still lands; the service role still writes the issue line; the
 //             history trust index (history_guarded_from) is stamped once, by
-//             the guard, and is never a client's to write; an INSERT clears it.
+//             the guard, and is never a client's to write; an INSERT clears it;
+//             a shed clears it and every restore re-stamps it past everything
+//             it wrote (review fix 2: a restore bundle proves nothing).
 //   20261222  the LEAK-7 (a) repair: a pre-Round-E reopened row under review
 //             with an issued label gets what reopen_ticket does now; (a′),
 //             normal and archived rows are untouched; a re-paste changes
-//             nothing.
+//             nothing; a Final attached in the (a) state moves to the new
+//             cycle with the count (review fix 2), so the next issue stamps it.
 //   20261223  download_audits.ticket_id / attachment_id: a member records
 //             their own ticket copy naming the file; the insert-own policy is
 //             unchanged (no row in another member's name, no UPDATE / DELETE);
@@ -25,6 +28,9 @@ import { randomUUID } from "node:crypto";
 import { admin, asCaller, mosDb, seedOrg, selectAs, skipReason, type Caller, type SeededMember } from "./dbKit";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
+import { provenIssueFromHistory, ticketVerdict } from "@/lib/verifyTicketVerdict";
+import { stampIssuedFinals } from "@/lib/ticketTransitions";
+import type { TicketAttachment } from "@/types/schema";
 
 const skip = skipReason();
 const db = REPLAY_DB;
@@ -146,10 +152,70 @@ describe.skipIf(skip !== null)("DF-P12 — issue lines are the workflow's, the t
     expect(read(id, "history_guarded_from")).toBe("2"); // both restored lines predate the guard
   });
 
-  it("a shed commit (live → archived) stamps the pre-shed length, so a later restore proves none of the restored lines", () => {
-    const id = ticket({ status: "'CLOSED'" });
-    expect(asCaller(db, SERVICE, `UPDATE tickets SET history = '[]'::jsonb, archived_at = now(), archive_id = 'arch-2' WHERE id = '${id}'`)).toEqual({ ok: true, rows: 1 });
+  it("a shed commit (live → archived) clears the index — a stub proves nothing — whether or not the row had been stamped", () => {
+    const fresh = ticket({ status: "'CLOSED'" });
+    expect(asCaller(db, SERVICE, `UPDATE tickets SET history = '[]'::jsonb, archived_at = now(), archive_id = 'arch-2' WHERE id = '${fresh}'`)).toEqual({ ok: true, rows: 1 });
+    expect(read(fresh, "history_guarded_from")).toBe("");
+    const stamped = ticket({ status: "'CLOSED'" });
+    expect(asCaller(db, SERVICE, `UPDATE tickets SET priority = 1 WHERE id = '${stamped}'`)).toEqual({ ok: true, rows: 1 });
+    expect(read(stamped, "history_guarded_from")).toBe("1");
+    expect(asCaller(db, SERVICE, `UPDATE tickets SET history = '[]'::jsonb, archived_at = now(), archive_id = 'arch-2b' WHERE id = '${stamped}'`)).toEqual({ ok: true, rows: 1 });
+    expect(read(stamped, "history_guarded_from")).toBe("");
+  });
+
+  it("review fix 2 — a restore proves nothing it wrote: issued after the paste (proven), sent back and force-closed, shed, then restored from a doctored bundle (the round marker dropped, an extra issue line) → the index is the restored length, no line is proven, and the scan reads as an unproven ticket", () => {
+    const sub1A = { action: "Submitted for review — Rev 1A", user: "d@harness.test" };
+    const id = ticket({ status: "'PENDING_REVIEW'", deliverable_rev: "'1A'", revision_count: "0", history: `'${JSON.stringify([sub1A])}'::jsonb` });
+    const svc = (sql: string) => expect(asCaller(db, SERVICE, sql)).toEqual({ ok: true, rows: 1 });
+    // the workflow issues Rev 1 after the paste — stamped at the length before that write: the issue line is proven
+    const issue1 = { action: "Approve (Issue for Construction) — issued Rev 1", user: "eng@harness.test" };
+    svc(`UPDATE tickets SET status = 'PENDING_IFC', deliverable_rev = '1', history = history || '${JSON.stringify([issue1])}'::jsonb WHERE id = '${id}'`);
     expect(read(id, "history_guarded_from")).toBe("1");
+    // submit_final, reject_final (round 1), 2A submitted, Force Close on 2A
+    const rest = [
+      { action: "Submit Final", user: "d@harness.test" },
+      { action: "Reject Final (Re-Open)", user: "r@harness.test", revisionRound: 1 },
+      { action: "Submitted for review — Rev 2A", user: "d@harness.test" },
+      { action: "Force Close (Admin)", user: "a@harness.test" },
+    ];
+    svc(`UPDATE tickets SET status = 'CLOSED', deliverable_rev = '2A', revision_count = 1, history = history || '${JSON.stringify(rest)}'::jsonb WHERE id = '${id}'`);
+    const facts = () => ({
+      status: read(id, "status"), deliverable_rev: read(id, "deliverable_rev"), revision_count: Number(read(id, "revision_count")),
+      history: JSON.parse(read(id, "history::text")) as unknown[], history_guarded_from: read(id, "history_guarded_from") === "" ? null : Number(read(id, "history_guarded_from")),
+    });
+    // live: the rejected package's Rev 1 cannot be confirmed (DEC-44 (DF-P12) item 2 (c))
+    expect(ticketVerdict(facts(), "1").verdict).toBe("unknown");
+    // shed: the stub carries no history and no index
+    svc(`UPDATE tickets SET history = '[]'::jsonb, archived_at = now(), archive_id = 'arch-3' WHERE id = '${id}'`);
+    expect(read(id, "history_guarded_from")).toBe("");
+    // restore from a doctored bundle: the round marker removed, an extra issue line appended
+    const doctored = [sub1A, issue1, rest[0], { action: rest[1].action, user: rest[1].user }, rest[2], rest[3], { action: "Approve — issued Rev 1", user: "eng@harness.test" }];
+    svc(`UPDATE tickets SET history = '${JSON.stringify(doctored).replace(/'/g, "''")}'::jsonb, archived_at = NULL, archive_id = NULL WHERE id = '${id}'`);
+    expect(read(id, "history_guarded_from")).toBe(String(doctored.length));
+    const restored = facts();
+    expect(provenIssueFromHistory(restored.history, restored.history_guarded_from, restored.revision_count, restored.deliverable_rev)).toBeNull();
+    // nothing the restore wrote is trusted: the answer is exactly the unproven ticket's (DF-P10's reading). Here
+    // "cannot confirm" — the bundle's extra line makes label 1 issued twice (LEAK-7 (b)); without it the unproven
+    // ticket reads the base still-green path DEC-44 (DF-P12) item 2 records (DEC-29), never a doctored proof.
+    expect(ticketVerdict(restored, "1")).toEqual(ticketVerdict({ ...restored, history_guarded_from: null }, "1"));
+    expect(ticketVerdict(restored, "1").verdict).toBe("unknown");
+    // the workflow's next line after the restore is past the index: the index is never moved back
+    svc(`UPDATE tickets SET history = history || '[{"action":"note","user":"system"}]'::jsonb WHERE id = '${id}'`);
+    expect(read(id, "history_guarded_from")).toBe(String(doctored.length));
+  });
+
+  it("review fix 2 — the restore re-stamps whatever the stub carried (an index left on a stub is never kept through a restore)", () => {
+    const id = ticket({ status: "'CLOSED'", archived_at: "now()", history: "'[]'::jsonb" });
+    // a stub carrying an index (written by the service role while archived) — the restore does not keep it
+    expect(asCaller(db, SERVICE, `UPDATE tickets SET history_guarded_from = 0 WHERE id = '${id}'`)).toEqual({ ok: true, rows: 1 });
+    expect(read(id, "history_guarded_from")).toBe("0");
+    const restored = JSON.stringify([{ action: "Approve — issued Rev 1", user: "e@x" }, { action: "Approve — issued Rev 2", user: "e@x" }, { action: "Reopen Ticket", user: "r@x" }]);
+    expect(asCaller(db, SERVICE, `UPDATE tickets SET history = '${restored}'::jsonb, archived_at = NULL, archive_id = NULL WHERE id = '${id}'`)).toEqual({ ok: true, rows: 1 });
+    expect(read(id, "history_guarded_from")).toBe("3");
+    // a restore of a stub with a non-array history counts it as empty
+    const odd = ticket({ status: "'CLOSED'", archived_at: "now()", history: "'[]'::jsonb" });
+    expect(asCaller(db, SERVICE, `UPDATE tickets SET history = '{}'::jsonb, archived_at = NULL WHERE id = '${odd}'`)).toEqual({ ok: true, rows: 1 });
+    expect(read(odd, "history_guarded_from")).toBe("0");
   });
 
   // ── 20261222 ────────────────────────────────────────────────────────────────
@@ -188,6 +254,38 @@ describe.skipIf(skip !== null)("DF-P12 — issue lines are the workflow's, the t
     expect(second.ok, second.error ?? "").toBe(true);
     expect(read(a, "jsonb_array_length(history)")).toBe("3"); // still exactly one repair line
     expect(read(a, "revision_count")).toBe("1");
+  });
+
+  it("LEAK-7 (a) repair, review fix 2: a Final attached while the row sat in the (a) state joins the new cycle with the count — the next issue stamps it, as under today's reopen; nothing else in the attachments moves", () => {
+    const issued1 = `'[{"action":"Approve (Issue for Construction) — issued Rev 2","user":"e@x"},{"action":"Reopen Ticket","user":"r@x"}]'::jsonb`;
+    const files = [
+      { id: "f-a", type: "Final", url: "k/a.pdf", rev: null, revCycle: 1 }, // attached in the (a) state (count 1)
+      { id: "f-old", type: "Final", url: "k/o.pdf", rev: null, revCycle: 0 }, // a Final of an earlier, rejected cycle
+      { id: "f-legacy", type: "Final", url: "k/l.pdf" }, // recorded before per-file revisions (no rev key)
+      { id: "f-2", type: "Final", url: "k/2.pdf", rev: "2" }, // the issued file
+      { id: "d-1", type: "Draft", url: "k/d.pdf", rev: null, revCycle: 1 }, // not a Final
+    ];
+    const att = `'${JSON.stringify(files)}'::jsonb`;
+    const moved = ticket({ status: "'PENDING_REVIEW'", deliverable_rev: "'2'", revision_count: "1", history: issued1, attachments: att });
+    const kept = ticket({ status: "'PENDING_REVIEW'", deliverable_rev: "'2'", revision_count: "2", history: issued1, attachments: att }); // count already at N: nothing moves
+    const file = join(process.cwd(), "supabase", "migrations", "20261222_df_roundG_leak7_reopened_label_repair.sql");
+    const { conn } = mosDb();
+    const r = runPsql(conn!, db, conn!.superuser, { file, stopOnError: true });
+    expect(r.ok, r.error ?? "").toBe(true);
+    expect(r.stdout.split("\n").filter((l) => /\|f\|$/.test(l))).toEqual([]);
+    const after = (id: string) => JSON.parse(read(id, "attachments::text")) as TicketAttachment[];
+    expect(read(moved, "revision_count")).toBe("2");
+    const m2 = after(moved);
+    expect(m2).toEqual([{ ...files[0], revCycle: 2 }, files[1], files[2], files[3], files[4]]);
+    // the next approval (re-cycled to Rev 3 at count 2) stamps the Final attached in the (a) state — and nothing else
+    const stamped = stampIssuedFinals(m2, "3", 2);
+    expect(stamped.map((a) => [a.id, "rev" in a ? a.rev : "no-key"])).toEqual([["f-a", "3"], ["f-old", null], ["f-legacy", "no-key"], ["f-2", "2"], ["d-1", null]]);
+    expect(read(kept, "revision_count")).toBe("2");
+    expect(after(kept)).toEqual(files);
+    // a re-paste moves nothing more
+    const again = runPsql(conn!, db, conn!.superuser, { file, stopOnError: true });
+    expect(again.ok, again.error ?? "").toBe(true);
+    expect(after(moved)).toEqual(m2);
   });
 
   // ── 20261223 ────────────────────────────────────────────────────────────────
