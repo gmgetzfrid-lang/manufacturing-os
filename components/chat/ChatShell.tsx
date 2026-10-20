@@ -298,9 +298,16 @@ export default function ChatShell() {
   });
 
   // ── The turn ──
-  const send = useCallback(async (question: string, opts: { focus?: string[]; inputs?: string; approved?: string[]; retry?: boolean } = {}) => {
+  const send = useCallback(async (question: string, opts: {
+    focus?: string[]; inputs?: string; approved?: string[]; retry?: boolean;
+    answerMode?: "answer" | "compliance" | "explore";
+  } = {}) => {
     const q = question.trim();
     if (!orgId || !uid || !q || streaming) return;
+    if (attachments.some((a) => !a.att && !a.error)) {
+      showToast({ type: "info", title: "Wait for the attachment to finish uploading, then ask again." });
+      return;
+    }
     if (scope !== "tools" && !libraryId) { showToast({ type: "error", title: "Pick a library first." }); return; }
     const atts = attachments.filter((a) => a.att).map((a) => a.att as ChatAttachment);
 
@@ -333,6 +340,7 @@ export default function ChatShell() {
       await askTurn({
         orgId, scope, libraryId: scope === "tools" ? null : libraryId, threadId, question: q,
         focus: opts.focus, inputs: opts.inputs, approved: opts.approved, attachments: atts,
+        ...(opts.answerMode ? { answerMode: opts.answerMode } : {}),
       }, (ev) => {
         if (controller.signal.aborted) return;
         switch (ev.t) {
@@ -432,6 +440,18 @@ export default function ChatShell() {
     }
     overloadRetried.current = false;
   }, [orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router]);
+
+  // ── Asked from the library page: "?ask=" runs the question as soon as the
+  //    library it was asked of is selected. Once — the URL is rewritten to
+  //    the new thread when it lands, and the ref stops a re-run meanwhile.
+  const askParam = searchParams.get("ask");
+  const askedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!askParam || askedRef.current === askParam) return;
+    if (!orgId || !uid || streaming || active || !libraryFilterId || draftLibraryId !== libraryFilterId) return;
+    askedRef.current = askParam;
+    void send(askParam);
+  }, [askParam, orgId, uid, streaming, active, libraryFilterId, draftLibraryId, send]);
 
   const stop = () => {
     abortRef.current?.abort();
@@ -600,6 +620,8 @@ export default function ChatShell() {
               onConfirm={confirmAction}
               actions={actions[m.id] ?? { approved: [], outcomes: {} }}
               onRetry={(question) => void send(question)}
+              onRethink={(question, answerMode) => void send(question, answerMode ? { answerMode } : {})}
+              onAttach={addFiles}
               onRated={onRated}
             />
           )}

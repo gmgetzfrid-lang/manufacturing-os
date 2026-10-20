@@ -522,6 +522,14 @@ function AskEntry({ orgId, libraryId, readyDocs, docsTotal }: {
     return () => { cancelled = true; };
   }, [orgId, libraryId]);
   const askHref = `/assistant?library=${libraryId}`;
+  const router = useRouter();
+  const [q, setQ] = useState("");
+  const ask = (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = q.trim();
+    if (!text) return;
+    router.push(`/assistant?library=${libraryId}&ask=${encodeURIComponent(text.slice(0, 2000))}`);
+  };
   return (
     <div className="rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-gradient-to-br from-orange-50/70 to-[var(--color-surface)] dark:from-orange-950/20 dark:to-[var(--color-surface)] p-5 mb-6">
       <div className="flex items-center gap-3 flex-wrap">
@@ -541,9 +549,20 @@ function AskEntry({ orgId, libraryId, readyDocs, docsTotal }: {
         </div>
         <Link href={askHref}
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-orange-600 text-white text-xs font-black hover:bg-orange-700 transition-colors">
-          <MessageSquare className="w-4 h-4" /> Open the chat <ArrowRight className="w-3.5 h-3.5" />
+          <MessageSquare className="w-4 h-4" /> All conversations <ArrowRight className="w-3.5 h-3.5" />
         </Link>
       </div>
+      {/* Ask right here — the question opens in the chat already running,
+          instead of a door you have to walk through first. */}
+      <form onSubmit={ask} className="mt-4 flex items-center gap-2">
+        <input id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0}
+          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library — e.g. \"Can I use seam-welded 304 pipe?\""}
+          className="flex-1 min-w-0 h-11 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-orange-400 disabled:opacity-60" />
+        <button type="submit" disabled={readyDocs === 0 || !q.trim()}
+          className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl bg-orange-600 text-white text-sm font-black hover:bg-orange-700 disabled:opacity-40 transition-colors">
+          Ask <ArrowRight className="w-4 h-4" />
+        </button>
+      </form>
       {readyDocs === 0 && (
         <p className="mt-3 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
           {docsTotal > 0

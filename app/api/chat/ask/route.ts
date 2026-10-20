@@ -232,7 +232,7 @@ export async function POST(req: NextRequest) {
             body: {
               orgId, libraryId: threadLibrary, question,
               mode: threadScope === "internet" ? "internet" : "library",
-              focus: body.focus, inputs: body.inputs,
+              focus: body.focus, inputs: body.inputs, answerMode: body.answerMode,
               history: priorTurns.slice(-4), threadId, pinned,
             },
             emit, extraSystem, userImages,

@@ -126,7 +126,7 @@ export interface ActionState {
 }
 
 export function AssistantTurn({
-  m, isLast, onCite, onOpenDoc, onOpenTag, onClarify, onNeed, onConfirm, actions, onRetry, onRated,
+  m, isLast, onCite, onOpenDoc, onOpenTag, onClarify, onNeed, onConfirm, actions, onRetry, onRated, onRethink, onAttach,
 }: {
   m: ChatMessage;
   isLast: boolean;
@@ -135,6 +135,10 @@ export function AssistantTurn({
   onOpenTag: (documentId: string, page: number, tag: string, documentName: string) => void;
   onClarify: (question: string, focus: string[]) => void;
   onNeed: (question: string, values: string, focus?: string[], priorInputs?: string) => void;
+  /** Re-ask the same question, optionally reshaped as another answer mode. */
+  onRethink: (question: string, answerMode?: "answer" | "compliance" | "explore") => void;
+  /** Add files to the next question (the "settle this" drop zone). */
+  onAttach: (files: File[]) => void;
   onConfirm: (m: ChatMessage, a: PendingAction) => void;
   actions: ActionState;
   onRetry: (question: string) => void;
@@ -215,7 +219,9 @@ export function AssistantTurn({
         onCite={onCite} onOpenDoc={onOpenDoc} onOpenTag={onOpenTag}
         onFollowup={isLast && question && !replayed
           ? (value) => onNeed(question, value, undefined, (m.payload as { inputs?: string } | null)?.inputs)
-          : undefined} />
+          : undefined}
+        onRethink={question && !replayed ? (mode) => onRethink(question, mode) : undefined}
+        onAttach={onAttach} />
       {answer.questionId && !replayed && (
         <RatedFeedback questionId={answer.questionId} onRated={onRated} />
       )}

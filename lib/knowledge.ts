@@ -141,6 +141,9 @@ export interface KnowledgeAnswer {
   answeringFor?: string[];
   /** The one question whose answer would change or finish this answer. */
   followup?: { question: string; options: string[] };
+  /** The shape this answer took: direct answer, compliance check, or
+   *  exploration — the model's pick unless the asker chose one. */
+  answerMode?: "answer" | "compliance" | "explore";
   /** Structured, clickable equipment register — attached when the question
    *  asks for equipment lists/tables. Deterministic data, never model
    *  output; every sheet reference opens the drawing with the tag ringed. */

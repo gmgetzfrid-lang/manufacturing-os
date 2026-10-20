@@ -12,7 +12,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   BookOpen, Sparkles, Send, FileText, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Eye,
-  ThumbsUp, ThumbsDown, X, Waypoints, Loader2,
+  ThumbsUp, ThumbsDown, X, Waypoints, Loader2, Mail, Printer, Upload, RefreshCw,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
@@ -23,6 +23,7 @@ import {
 } from "@/lib/knowledgeText";
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
+import { buildAnswerExport, printableDocument } from "@/lib/answerExport";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
@@ -88,6 +89,9 @@ const VERDICT_STYLE: Record<Verdict, { label: string; cls: string }> = {
   conditional: { label: "Yes, with conditions", cls: "bg-amber-500 text-white dark:bg-amber-600" },
   no: { label: "No", cls: "bg-rose-600 text-white" },
   unsettled: { label: "Not settled", cls: "bg-slate-600 text-white dark:bg-slate-500" },
+  complies: { label: "Complies", cls: "bg-emerald-600 text-white" },
+  fails: { label: "Does not comply", cls: "bg-rose-600 text-white" },
+  undetermined: { label: "Can't determine", cls: "bg-slate-600 text-white dark:bg-slate-500" },
 };
 
 /** The verdict as a badge — the yes/no lands before a single word is read. */
@@ -840,6 +844,9 @@ const VERDICT_BOX: Record<Verdict | "none", string> = {
   conditional: "bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800",
   no: "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800",
   unsettled: "bg-slate-50 dark:bg-slate-900/40 border-slate-300 dark:border-slate-700",
+  complies: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800",
+  fails: "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800",
+  undetermined: "bg-slate-50 dark:bg-slate-900/40 border-slate-300 dark:border-slate-700",
   none: "bg-orange-50/70 dark:bg-orange-950/20 border-orange-200 dark:border-orange-900",
 };
 
@@ -920,12 +927,141 @@ function PartHead({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Copy for email (formatted HTML + a plain-text fallback, so it pastes
+ *  into Outlook or Gmail looking like the card, proof included) and Print
+ *  (the same content on a clean page). */
+function ExportButtons({ question, answer }: { question: string; answer: KnowledgeAnswer }) {
+  const [state, setState] = useState<"idle" | "copied" | "plain" | "failed">("idle");
+  const flash = (s: typeof state) => { setState(s); setTimeout(() => setState("idle"), 1800); };
+  const copy = async () => {
+    const exp = buildAnswerExport(question, answer);
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([exp.html], { type: "text/html" }),
+        "text/plain": new Blob([exp.text], { type: "text/plain" }),
+      })]);
+      flash("copied");
+    } catch {
+      try { await navigator.clipboard.writeText(exp.text); flash("plain"); } catch { flash("failed"); }
+    }
+  };
+  const print = () => {
+    const w = window.open("", "_blank");
+    if (!w) { flash("failed"); return; }
+    w.document.write(printableDocument(question, buildAnswerExport(question, answer)));
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 250);
+  };
+  const btn = "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-orange-400 transition-colors";
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <button type="button" onClick={() => void copy()} className={btn} title="Copy the answer and its proof, formatted, for an email">
+        {state === "copied" || state === "plain" ? <Check className="w-3 h-3 text-emerald-600" /> : <Mail className="w-3 h-3" />}
+        {state === "copied" ? "Copied — paste into email" : state === "plain" ? "Copied as text" : state === "failed" ? "Copy blocked" : "Copy for email"}
+      </button>
+      <button type="button" onClick={print} className={btn} title="Print or save as PDF">
+        <Printer className="w-3 h-3" /> Print
+      </button>
+    </div>
+  );
+}
+
+/** "I can settle this if you give me…" — what's missing, why, where the
+ *  standards point to it, and a place to drop it. Dropped files ride with
+ *  the next question; Rethink re-asks with them. */
+function SettleBox({ items, inline, onAttach, onRethink }: {
+  items: AnswerBlock[];
+  inline: (text: string) => React.ReactNode;
+  onAttach?: (files: File[]) => void;
+  onRethink?: () => void;
+}) {
+  const [added, setAdded] = useState<string[]>([]);
+  const [over, setOver] = useState(false);
+  const pick = React.useRef<HTMLInputElement>(null);
+  const take = (list: FileList | null) => {
+    const files = list ? [...list] : [];
+    if (files.length === 0 || !onAttach) return;
+    onAttach(files);
+    setAdded((a) => [...a, ...files.map((f) => f.name)]);
+  };
+  const best = items.filter((b) => /^\*{0,2}best answer/i.test(b.text));
+  const needs = items.filter((b) => b.type !== "label" && !best.includes(b));
+  return (
+    <div className="rounded-xl border border-slate-300 dark:border-slate-700 bg-[var(--color-surface)] px-4 py-3.5 space-y-2.5">
+      <div className="text-[14px] font-bold text-[var(--color-text)]">I can settle this if you give me:</div>
+      <ul className="space-y-1.5">
+        {needs.map((b, i) => (
+          <li key={i} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 items-start text-[14px] leading-relaxed text-[var(--color-text)]">
+            <span className="mt-2 w-1.5 h-1.5 rounded-full bg-slate-500" />
+            <span>{inline(b.text)}</span>
+          </li>
+        ))}
+      </ul>
+      {best.map((b, i) => (
+        <div key={i} className="text-[13.5px] leading-relaxed text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-2">{inline(b.text)}</div>
+      ))}
+      {onAttach && (
+        <div
+          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files); }}
+          onClick={() => pick.current?.click()}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick.current?.click(); } }}
+          role="button" tabIndex={0}
+          className={`rounded-lg border-2 border-dashed px-3 py-3 text-center cursor-pointer transition-colors ${over
+            ? "border-orange-500 bg-orange-50 dark:bg-orange-950/30"
+            : "border-[var(--color-border)] hover:border-orange-400"}`}>
+          <input ref={pick} id="settle-drop" type="file" multiple hidden
+            accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+            onChange={(e) => { take(e.target.files); e.target.value = ""; }} />
+          <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
+            <Upload className="w-3.5 h-3.5 text-orange-600" /> Drop the document here — or a photo of the page
+          </div>
+          <div className="text-[11.5px] text-[var(--color-text-muted)]">
+            {added.length > 0 ? `Added: ${added.join(", ")} — it goes with the rethink` : "PDF or image · it's read for this question, not added to the library"}
+          </div>
+        </div>
+      )}
+      {onRethink && (
+        <button type="button" onClick={onRethink}
+          className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-1.5 rounded-md bg-orange-600 text-white hover:bg-orange-700 transition-colors">
+          <RefreshCw className="w-3.5 h-3.5" /> {added.length > 0 ? "Rethink with what I added" : "Rethink the answer"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+const MODES: Array<{ id: "answer" | "compliance" | "explore"; label: string; hint: string }> = [
+  { id: "answer", label: "Direct answer", hint: "The answer and its proof, nothing extra" },
+  { id: "compliance", label: "Compliance check", hint: "Does what was done meet the standard? Findings with quoted proof, and a note you can send" },
+  { id: "explore", label: "Explore / design review", hint: "Broader — related rules and what to consider" },
+];
+
+/** Under every answer: reshape it if it isn't what was needed. */
+function RethinkBar({ mode, onRethink }: { mode: string; onRethink: (m: "answer" | "compliance" | "explore") => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[12px] text-[var(--color-text-muted)] mr-0.5">Not what you needed? Rethink as</span>
+      {MODES.map((m) => (
+        <button key={m.id} type="button" onClick={() => onRethink(m.id)} title={m.hint}
+          className={`text-[12px] font-bold px-2.5 py-1 rounded-md border transition-colors ${mode === m.id
+            ? "border-orange-400 bg-orange-50 dark:bg-orange-950/30 text-orange-800 dark:text-orange-200"
+            : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400"}`}>
+          {mode === m.id ? "✓ " : ""}{m.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** The full answer, laid out answer-first: what the AI understood, the
  *  verdict, the short chain of why, what to check before acting, the one
  *  question that would finish it, and everything else collapsed — with the
  *  ranked proof trail beside it (below it on narrow screens). A cite tap
  *  jumps to its proof card instead of opening a floating popup. */
-export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, onFollowup, showQuestion = true }: {
+export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, onFollowup, onRethink, onAttach, showQuestion = true }: {
   question: string;
   answer: KnowledgeAnswer;
   /** The chat shell shows the question as its own bubble — no echo there. */
@@ -938,8 +1074,13 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
   /** Latest turn only: re-ask this question with a value the user supplied
    *  (a corrected chip or the answer to the one question). */
   onFollowup?: (value: string) => void;
+  /** Re-ask this question, optionally reshaped as another answer mode. */
+  onRethink?: (mode?: "answer" | "compliance" | "explore") => void;
+  /** Add files to the next question (the "settle this" drop zone). */
+  onAttach?: (files: File[]) => void;
 }) {
-  const parts = useMemo(() => structureAnswer(parseAnswerBlocks(answer.answer)), [answer.answer]);
+  const mode = answer.answerMode ?? "answer";
+  const parts = useMemo(() => structureAnswer(parseAnswerBlocks(answer.answer), answer.answerMode ?? null), [answer.answer, answer.answerMode]);
   const heroV = parts.hero !== null ? splitVerdict(parts.hero) : null;
   const docLinkCtx = useMemo(
     () => ({ links: answer.mentionedDocs ?? [], open: onOpenDoc ?? null }),
@@ -1101,24 +1242,53 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 {heroV?.verdict
                   ? <VerdictBadge verdict={heroV.verdict} />
                   : <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">Answer</span>}
-                <CopyButton text={answer.answer} label="Copy answer" />
+                <ExportButtons question={question} answer={answer} />
               </div>
               <div className="mt-1 text-[16.5px] font-semibold leading-snug text-[var(--color-text)]">
                 {heroV ? inline(heroV.text) : <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />}
               </div>
             </div>
 
+            {heroV && parts.settle.length > 0 && (
+              <SettleBox items={parts.settle} inline={inline} onAttach={onAttach}
+                onRethink={onRethink ? () => onRethink(mode) : undefined} />
+            )}
+
             {heroV && parts.why.length > 0 && (
               <div>
-                <PartHead>Why</PartHead>
+                <PartHead>{mode === "compliance" ? "Findings" : "Why"}</PartHead>
                 <div className="space-y-2.5">{renderWhy(parts.why)}</div>
               </div>
             )}
 
+            {heroV && parts.trail.length > 0 && (
+              <details className="group rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2">
+                <summary className="cursor-pointer list-none flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-text)]">
+                  <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
+                  Engineering trail — the full chain, step by step
+                  <span className="font-mono text-[10.5px] font-normal text-[var(--color-text-faint)]">{parts.trail.filter((b) => b.type !== "label").length} steps</span>
+                </summary>
+                <div className="mt-2.5 space-y-2.5">{renderWhy(parts.trail)}</div>
+              </details>
+            )}
+
             {heroV && parts.before.length > 0 && (
               <div>
-                <PartHead>Before you act</PartHead>
+                <PartHead>{mode === "compliance" ? "Required corrections" : "Before you act"}</PartHead>
                 <div className="space-y-1.5">{renderBefore(parts.before)}</div>
+              </div>
+            )}
+
+            {heroV && parts.dontMiss.length > 0 && (
+              <div className="rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50/60 dark:bg-rose-950/20 px-3 py-2.5">
+                <div className="flex items-center gap-1.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-rose-700 dark:text-rose-300 mb-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Don&apos;t miss
+                </div>
+                <div className="space-y-1.5">
+                  {parts.dontMiss.filter((b) => b.type !== "label").map((b, i) => (
+                    <div key={i} className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1138,6 +1308,8 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               </details>
             )}
 
+            {onRethink && answer.mode !== "internet" && <RethinkBar mode={mode} onRethink={onRethink} />}
+
             <div className="pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-muted)]">
               {canShape && shapeOrgId && shapeUid && (
                 <button onClick={() => setShaping(true)}
@@ -1151,7 +1323,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
               <span>·</span>
               {/* Version beacon: which renderer produced this card. */}
-              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt8</span>
+              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt9</span>
             </div>
           </div>
 

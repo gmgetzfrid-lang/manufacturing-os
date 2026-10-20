@@ -494,16 +494,16 @@ export function highlightQuote(quote: string, terms: string[]): Array<{ text: st
 // words that prove the claim — so the page viewer marks one sentence, not a
 // 1,600-character chunk the reader still has to hunt through.
 
-export type Verdict = "yes" | "conditional" | "no" | "unsettled";
+export type Verdict = "yes" | "conditional" | "no" | "unsettled" | "complies" | "fails" | "undetermined";
 
 /** Uppercase only: "No welding is permitted…" is an answer, not a verdict. */
-const VERDICT_RE = /^\s*\**\s*(YES,?\s+WITH\s+CONDITIONS|NOT\s+SETTLED|YES|NO)\b\**\s*(?:[—–:-]+\s*|\.\s+|$)/;
+const VERDICT_RE = /^\s*\**\s*(YES,?\s+WITH\s+CONDITIONS|NOT\s+SETTLED|DOES\s+NOT\s+COMPLY|COMPLIES|CAN'?T\s+DETERMINE|CANNOT\s+DETERMINE|YES|NO)\b\**\s*(?:[—–:-]+\s*|\.\s+|$)/;
 
 /** Capitals always count; any case counts when a dash follows ("Yes, with
  *  conditions — …"), which an ordinary sentence never has. */
 function matchVerdict(hero: string): RegExpMatchArray | null {
   return hero.match(VERDICT_RE)
-    ?? hero.match(/^\s*\**\s*(yes,?\s+with\s+conditions|not\s+settled|yes|no)\**\s*[—–]\s*/i);
+    ?? hero.match(/^\s*\**\s*(yes,?\s+with\s+conditions|not\s+settled|does\s+not\s+comply|complies|can'?t\s+determine|cannot\s+determine|yes|no)\**\s*[—–]\s*/i);
 }
 
 /** Split a leading verdict word off the Answer line. */
@@ -512,7 +512,11 @@ export function splitVerdict(hero: string): { verdict: Verdict | null; text: str
   if (!m) return { verdict: null, text: hero };
   const word = m[1].replace(/\s+/g, " ").toUpperCase();
   const verdict: Verdict = word.startsWith("YES") ? (/CONDITIONS/.test(word) ? "conditional" : "yes")
-    : word === "NO" ? "no" : "unsettled";
+    : word === "NO" ? "no"
+    : word === "COMPLIES" ? "complies"
+    : word.startsWith("DOES NOT") ? "fails"
+    : /DETERMINE/.test(word) ? "undetermined"
+    : "unsettled";
   return { verdict, text: hero.slice(m[0].length).trim() };
 }
 
@@ -551,15 +555,21 @@ export function extractEvidenceBlock(answer: string): { answer: string; spans: E
  *  to be about ("Answering for") and the one question that would finish it —
  *  pulled out of the prose into fields the UI renders as chips and an ask
  *  box. Removed from the text either way. */
+export type AnswerMode = "answer" | "compliance" | "explore";
+
 export function extractAnswerMeta(answer: string): {
   answer: string;
   answeringFor: string[];
   followup: { question: string; options: string[] } | null;
+  mode: AnswerMode | null;
 } {
   let answeringFor: string[] = [];
   let followup: { question: string; options: string[] } | null = null;
+  let mode: AnswerMode | null = null;
   const kept: string[] = [];
   for (const raw of answer.split("\n")) {
+    const md = raw.trim().match(/^\*{0,2}Mode:?\*{0,2}:?\s*\**\s*(answer|compliance|explore)\b/i);
+    if (md && !mode) { mode = md[1].toLowerCase() as AnswerMode; continue; }
     const af = raw.trim().match(/^\*{0,2}Answering for:?\*{0,2}:?\s*(.+)$/i);
     if (af && answeringFor.length === 0) {
       answeringFor = af[1].replace(/\*\*/g, "").split(/\s*[·•|]\s*/).map((s) => s.trim())
@@ -575,7 +585,7 @@ export function extractAnswerMeta(answer: string): {
     }
     kept.push(raw);
   }
-  return { answer: kept.join("\n").trim(), answeringFor, followup };
+  return { answer: kept.join("\n").trim(), answeringFor, followup, mode };
 }
 
 /** "line class: not given" — a fact the answer depends on that the asker
@@ -586,6 +596,12 @@ export function isMissingFact(chip: string): boolean {
 
 export interface StructuredAnswer {
   hero: string | null;
+  /** What would settle an unsettled answer, and the best reading meanwhile. */
+  settle: AnswerBlock[];
+  /** The full provision-by-provision chain — the forwardable proof. */
+  trail: AnswerBlock[];
+  /** Safety-critical or outcome-changing items the user didn't ask about. */
+  dontMiss: AnswerBlock[];
   /** The chain to the answer: numbered steps, with group headings. */
   why: AnswerBlock[];
   /** Conditions, approvals, hold points, verifications — the checklist. */
@@ -596,6 +612,10 @@ export interface StructuredAnswer {
 
 const MAX_WHY = 4;
 const MAX_BEFORE = 5;
+const MAX_DONT_MISS = 2;
+const SETTLE_LABEL = /^(to settle this|i can settle this|what would settle)/i;
+const TRAIL_LABEL = /^(engineering trail|full trail|proof chain|engineering logic)/i;
+const DONT_MISS_LABEL = /^(don'?t miss|do not miss)/i;
 const BEFORE_LABEL = /^(before you (act|install|use|proceed|start)|check|checks|verify|verification|hold points?|conditions?|what to check)\b/i;
 const MORE_LABEL = /^(more|further|to go further|related|background|also|technical query|tq|draft|notes?|reference)\b/i;
 const WHY_LABEL = /^(why|basis|key points|reasoning|how this was decided)\b/i;
@@ -605,19 +625,22 @@ const WHY_LABEL = /^(why|basis|key points|reasoning|how this was decided)\b/i;
  *  "### Preheat" groups stay under Why). "!" imperatives always land in the
  *  checklist, and Check: lines too — the reader acts on them. Older answers
  *  ("Basis", "Check", "To go further I need") map onto the same parts. */
-export function structureAnswer(blocks: AnswerBlock[]): StructuredAnswer {
-  const out: StructuredAnswer = { hero: null, why: [], before: [], more: [] };
-  let part: "why" | "before" | "more" = "why";
+export function structureAnswer(blocks: AnswerBlock[], mode: AnswerMode | null = null): StructuredAnswer {
+  const out: StructuredAnswer = { hero: null, settle: [], why: [], trail: [], before: [], dontMiss: [], more: [] };
+  let part: "settle" | "why" | "trail" | "before" | "dontMiss" | "more" = "why";
   for (const b of blocks) {
     if (b.type === "hero" && out.hero === null) { out.hero = b.text; continue; }
     if (b.type === "label") {
       if (WHY_LABEL.test(b.text)) { part = "why"; continue; }
+      if (SETTLE_LABEL.test(b.text)) { part = "settle"; continue; }
+      if (TRAIL_LABEL.test(b.text)) { part = "trail"; continue; }
+      if (DONT_MISS_LABEL.test(b.text)) { part = "dontMiss"; continue; }
       if (BEFORE_LABEL.test(b.text)) { part = "before"; continue; }
       if (MORE_LABEL.test(b.text)) { part = "more"; out.more.push(b); continue; }
       out[part].push(b);
       continue;
     }
-    if (b.type === "important") { out.before.push(b); continue; }
+    if (b.type === "important") { (part === "dontMiss" ? out.dontMiss : out.before).push(b); continue; }
     if (/^\*{0,2}Check:?\*{0,2}/i.test(b.text)) {
       out.before.push({ type: "bullet", text: b.text.replace(/^\*{0,2}Check:?\*{0,2}\s*/i, "") });
       continue;
@@ -638,10 +661,12 @@ export function structureAnswer(blocks: AnswerBlock[]): StructuredAnswer {
   // Overflow moves under More instead of vanishing. A requirements-list
   // answer — Why grouped under headings — is exempt: there, completeness
   // is the point. "!" MUSTs are never moved.
+  const maxWhy = mode === "explore" ? 8 : MAX_WHY;
+  const maxDontMiss = mode === "explore" ? 5 : MAX_DONT_MISS;
   if (!out.why.some((b) => b.type === "label")) {
     const steps = out.why.filter((b) => b.type === "bullet");
-    if (steps.length > MAX_WHY) {
-      const extra = new Set(steps.slice(MAX_WHY));
+    if (steps.length > maxWhy) {
+      const extra = new Set(steps.slice(maxWhy));
       out.more = [{ type: "label", text: "More of the reasoning" }, ...out.why.filter((b) => extra.has(b)), ...out.more];
       out.why = out.why.filter((b) => !extra.has(b));
     }
@@ -652,9 +677,15 @@ export function structureAnswer(blocks: AnswerBlock[]): StructuredAnswer {
     out.more = [...out.more, { type: "label", text: "More checks" }, ...out.before.filter((b) => extra.has(b))];
     out.before = out.before.filter((b) => !extra.has(b));
   }
+  if (out.dontMiss.length > maxDontMiss) {
+    out.more = [...out.more, { type: "label", text: "Also worth knowing" }, ...out.dontMiss.slice(maxDontMiss)];
+    out.dontMiss = out.dontMiss.slice(0, maxDontMiss);
+  }
   out.why = dropEmptyLabels(out.why);
   out.before = dropEmptyLabels(out.before);
   out.more = dropEmptyLabels(out.more);
+  out.trail = dropEmptyLabels(out.trail).slice(0, 14);
+  out.settle = dropEmptyLabels(out.settle);
   return out;
 }
 

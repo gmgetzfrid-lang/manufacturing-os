@@ -61,7 +61,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   const body = input.body as {
     orgId?: string; libraryId?: string; question?: string; mode?: string;
     focus?: unknown; inputs?: unknown;
-    history?: unknown; threadId?: unknown;
+    history?: unknown; threadId?: unknown; answerMode?: unknown;
   };
   const orgId = String(body.orgId ?? "").trim();
   const libraryId = String(body.libraryId ?? "").trim();
@@ -79,6 +79,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   // "internet": the provider's live web tool (or model knowledge where the
   // provider has none) — clearly labeled, never mixed with library citations.
   const mode = body.mode === "internet" ? "internet" : "library";
+  // How the answer is shaped. Unset = the model picks from the question;
+  // set when the asker taps "Rethink as…" under an answer.
+  const answerMode = body.answerMode === "compliance" || body.answerMode === "explore" || body.answerMode === "answer"
+    ? body.answerMode : null;
   // Prior turns of THIS conversation — what makes "what about 1 inch?"
   // answerable. Capped hard: 4 turns, answers truncated, because the
   // passages must stay the star of the context window.
@@ -1642,6 +1646,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "You are the reference-library assistant for an industrial facility's document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
       "OUTPUT FORMAT — follow it exactly, sections in this order, no preamble, no restating the question:\n" +
+      "**Mode:** answer | compliance | explore — one word, the shape you chose (see ANSWER MODES).\n" +
       "**Answering for:** what you understood the question to be about, as 2-5 short facts joined " +
       "by \" · \" — the item/material, the governing document, and any condition the answer turns " +
       "on (e.g. \"304 stainless · welded pipe · EP 5-2-1 · line class: not given\"). A fact the " +
@@ -1664,10 +1669,22 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "select from EP 11-3-7 Table 2 by operating temperature and pipe size [n]\"). An Answer that " +
       "only names documents to go read is a WRONG answer. Answer the question asked, about the " +
       "item asked — not a neighboring topic.\n" +
+      "**To settle this:** (ONLY when the verdict is NOT SETTLED / CAN'T DETERMINE, or the answer " +
+      "hinges on a document or value that isn't here)\n" +
+      "- **<document, table, or value>** — why it settles the question, quoting where the loaded " +
+      "standards point to it (\"EP 5-2-1 §2.0 invokes **ASME B31.3**; its **Table A-1B** gives the " +
+      "joint factor for welded A312 [n]\"). One bullet per item, most decisive first, at most 4.\n" +
+      "- **Best answer with what I have:** the most likely outcome and why, in one sentence.\n" +
       "**Why:**\n" +
       "- 1-4 bullets: the chain of provisions that leads to the Answer, one claim each, with its " +
       "[n] and the section/table name (e.g. \"Table 1 sends austenitic steels to Table 4 [66]\"). " +
       "Checklist questions may use more bullets, grouped under short \"### \" headings.\n" +
+      "**Engineering trail:**\n" +
+      "- the FULL chain an engineer would walk, one provision per bullet, in order: " +
+      "\"**<document §/table>** → what it says → what it means for this case [n]\" (e.g. \"**EP " +
+      "5-2-1 Table 1** → austenitic Cr-Ni steel → use Table 4 [94]\"). 3-10 steps. Include the steps " +
+      "that rule things OUT, and end on the deciding step. This is the proof the reader forwards — " +
+      "every step cites. Shown collapsed under Why.\n" +
       "**Before you act:**\n" +
       "- the checklist: ONLY conditions, approvals, hold points, and verifications that could change " +
       "the outcome, each a short imperative with its [n] (\"Confirm the line class in EP 5-2-3 " +
@@ -1676,6 +1693,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "the reader never has to guess. Whenever a value comes from a table, include what to verify on " +
       "the printed page — PDF table extraction jumbles numbers. A line starting \"! \" marks a " +
       "safety-critical MUST. Leave the section out when there is nothing.\n" +
+      "**Don't miss:** (optional) at most 2 bullets — ONLY things the user didn't ask about that are " +
+      "safety-critical or would change the outcome (a hold point, a prohibited combination, a " +
+      "service condition that voids the answer). Everything else that's merely related goes under " +
+      "More, never here.\n" +
       "**One question:** (optional, one line) the ONE question whose answer would change or finish " +
       "the answer, then \" | options: a; b; c\" when there are natural choices. Leave it out when " +
       "nothing missing would change the answer.\n" +
@@ -1739,6 +1760,21 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "A312 → use it; if it says seamless only → it is a deviation: request Owner's Engineer " +
       "approval\"), and a ready-to-send deviation request or technical query under **More:**. " +
       "Never leave the user with \"confirm with the Owner's Engineer\" and nothing to send.\n\n" +
+      "ANSWER MODES:\n" +
+      "- answer: the default — the direct answer to what was asked, as above.\n" +
+      "- compliance: the user describes work done or planned (\"they fabricated…\", \"we installed…\", " +
+      "\"does this meet…\") and needs to know if it meets the standard. The Answer line starts with " +
+      "COMPLIES — / DOES NOT COMPLY — / CAN'T DETERMINE —. Each Why bullet is one finding: " +
+      "\"**Requirement:** what the standard requires [n] — **Found:** what was done — **Gap:** the " +
+      "difference (or none)\". Before you act lists the corrective actions. Under More, add a short, " +
+      "factual, ready-to-send note to the responsible party stating each requirement, the quoted " +
+      "clause with document/section/page, and the required correction — firm, not personal.\n" +
+      "- explore: the user is brainstorming, designing, or reviewing (\"what should I consider…\", " +
+      "\"design review\"). A verdict is optional; Why may run to 8 bullets; Don't miss may hold up " +
+      "to 5 considerations; still cite everything.\n" +
+      (answerMode
+        ? `THE USER CHOSE MODE: ${answerMode.toUpperCase()} — use it and write **Mode:** ${answerMode}.\n\n`
+        : "Pick the mode from the question; when unsure, use answer.\n\n") +
       "CONSEQUENCES: for substitutions and material changes, name what the change affects " +
       "downstream — design basis (pressure rating, wall thickness, weld joint factor), NDE, " +
       "inspection, records — citing passages, or ending the item with \"(not from your " +
@@ -2039,6 +2075,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       answer, citations, provider, model, mode: "library", missingDocs, partialDocs, questionId, budget: budget(),
       ...(meta.answeringFor.length > 0 ? { answeringFor: meta.answeringFor } : {}),
       ...(meta.followup ? { followup: meta.followup } : {}),
+      answerMode: meta.mode ?? answerMode ?? "answer",
       graphHops: graphHops.map((h) => ({ from: docName.get(h.from) ?? "retrieved document", to: h.to, via: h.via })),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and
