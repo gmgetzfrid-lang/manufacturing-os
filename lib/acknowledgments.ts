@@ -517,13 +517,25 @@ export async function recordAcknowledgment(input: {
 
   const nowIso = new Date().toISOString();
   const patch = { status: "acknowledged", signature_id: sig.id, acknowledged_at: nowIso, updated_at: nowIso };
-  if (input.rosterId) {
-    await supabase.from("document_acknowledgments").update(patch).eq("id", input.rosterId);
-  } else {
-    let q = supabase.from("document_acknowledgments").update(patch)
-      .eq("document_id", input.documentId).eq("assignee_user_id", input.signerUserId).eq("status", "pending");
+  // drafting-flow EVID-11 done-when 1 (DF-P11): the roster write is checked,
+  // as recordReviewSignoff's is (RG-2). Both branches are pinned to the
+  // signer's own still-pending row; a refused or zero-row write (a roster
+  // row voided by a newer revision, a row that is not the signer's) is a
+  // hard error to the signer — never the "Signed" the e-signature alone
+  // would have shown while the roster stayed pending.
+  let q = supabase.from("document_acknowledgments").update(patch)
+    .eq("assignee_user_id", input.signerUserId).eq("status", "pending");
+  if (input.rosterId) q = q.eq("id", input.rosterId);
+  else {
+    q = q.eq("document_id", input.documentId);
     if (input.documentVersionId) q = q.eq("document_version_id", input.documentVersionId);
-    await q;
+  }
+  const { data: rosterRows, error: rosterErr } = await q.select("id");
+  if (rosterErr) {
+    throw new Error(`Your signature was recorded, but your acknowledgment could not be marked on the roster (${rosterErr.message}). Tell Document Control — the roster still shows you as pending.`);
+  }
+  if (!rosterRows || rosterRows.length === 0) {
+    throw new Error("Your signature was recorded, but there was no pending acknowledgment of yours to mark — it may have been replaced by a newer revision. Reload and acknowledge the current revision; the roster still shows the old row as it was.");
   }
   await maybeNotifyComplete(input.orgId, input.documentId, input.documentVersionId ?? null, input.signerUserId, input.signerName);
 }

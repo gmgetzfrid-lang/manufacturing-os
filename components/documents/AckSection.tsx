@@ -11,6 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
+import { appAlert } from "@/components/providers/DialogProvider";
 import type { SigningCredential } from "@/lib/eSignatures";
 import AckPill from "@/components/documents/AckPill";
 import {
@@ -92,6 +93,11 @@ export default function AckSection({ doc, orgId, canManage }: {
         reauth: reauth ?? null,
       });
       setSigning(false);
+      await load();
+    } catch (e) {
+      // EVID-11 (DF-P11): a roster write that did not land is said to the
+      // signer (the ceremony does not await onSign, so nothing else would).
+      await appAlert({ message: (e as Error)?.message || "Your acknowledgment could not be recorded.", tone: "danger" });
       await load();
     } finally { setBusy(false); }
   };
