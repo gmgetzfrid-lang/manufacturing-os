@@ -60,12 +60,24 @@ describe("buildAnswerExport", () => {
     ],
   };
   const exp = buildAnswerExport("Did they install the right pipe?", answer);
+  const at = (needle: string) => { const i = exp.html.indexOf(needle); expect(i).toBeGreaterThan(-1); return i; };
 
-  it("leads with the verdict and keeps the proof, decisive first, with the exact words marked", () => {
-    expect(exp.html.indexOf("DOES NOT COMPLY")).toBeLessThan(exp.html.indexOf("Proof"));
-    expect(exp.html.indexOf("1S4 is seamless only")).toBeLessThan(exp.html.indexOf("EP-5-2-1 · 14.0 TABLES"));
-    expect(exp.html).toContain('<b style="background:#fef08a">ASTM A312 TP304 Seamless</b>');
-    expect(exp.html).toContain("Engineering trail");
+  it("puts the verdict banner first and the deciding proof right under the answer", () => {
+    expect(at("DOES NOT COMPLY")).toBeLessThan(at("THE REQUIREMENT — QUOTED"));
+    expect(at("THE REQUIREMENT — QUOTED")).toBeLessThan(at("1S4 is seamless only"));
+    expect(at("1S4 is seamless only")).toBeLessThan(at("TO SETTLE THIS"));
+    expect(at("ENGINEERING TRAIL")).toBeLessThan(at("SUPPORTING PASSAGES"));
+    expect(at("SUPPORTING PASSAGES")).toBeLessThan(at("EP-5-2-1 · p.17"));
+  });
+
+  it("marks the deciding words and tags each quote with document and page", () => {
+    expect(exp.html).toContain(">ASTM A312 TP304 Seamless</span>");
+    expect(exp.html).toContain("[3] EP-5-2-3 · p.40");
+  });
+
+  it("is table-based with inline styles only (what Outlook and Gmail keep)", () => {
+    expect(exp.html.startsWith("<table")).toBe(true);
+    expect(exp.html).not.toMatch(/<style|class=|display:flex/);
   });
 
   it("escapes HTML and renders markup, not raw asterisks", () => {
@@ -73,13 +85,14 @@ describe("buildAnswerExport", () => {
     expect(e.html).not.toContain("<script>");
     expect(e.html).toContain("<b>bold</b>");
     expect(e.html).not.toMatch(/\*\*/);
-    expect(e.html).toContain(">1, 3</sup>");
+    expect(e.html).toContain(">[1, 3]</sup>");
   });
 
   it("has a readable plain-text version for clients that drop HTML", () => {
     expect(exp.text).toMatch(/^QUESTION: Did they install the right pipe\?/);
     expect(exp.text).toContain("DOES NOT COMPLY — line class 1S4 calls for seamless A312 only");
-    expect(exp.text).toContain('[3] 1S4 is seamless only — EP-5-2-3 · p.40');
+    expect(exp.text.indexOf("THE PROOF")).toBeLessThan(exp.text.indexOf("TO SETTLE THIS"));
+    expect(exp.text).toContain("[3] 1S4 is seamless only — EP-5-2-3 · p.40");
     expect(exp.text).toContain('"ASTM A312 TP304 Seamless"');
   });
 });

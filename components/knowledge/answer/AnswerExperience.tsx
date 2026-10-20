@@ -930,7 +930,7 @@ function PartHead({ children }: { children: React.ReactNode }) {
 /** Copy for email (formatted HTML + a plain-text fallback, so it pastes
  *  into Outlook or Gmail looking like the card, proof included) and Print
  *  (the same content on a clean page). */
-function ExportButtons({ question, answer }: { question: string; answer: KnowledgeAnswer }) {
+function ExportButtons({ question, answer, large = false }: { question: string; answer: KnowledgeAnswer; large?: boolean }) {
   const [state, setState] = useState<"idle" | "copied" | "plain" | "failed">("idle");
   const flash = (s: typeof state) => { setState(s); setTimeout(() => setState("idle"), 1800); };
   const copy = async () => {
@@ -953,15 +953,21 @@ function ExportButtons({ question, answer }: { question: string; answer: Knowled
     w.focus();
     setTimeout(() => w.print(), 250);
   };
-  const btn = "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-orange-400 transition-colors";
+  const primary = large
+    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors"
+    : "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-orange-400 transition-colors";
+  const secondary = large
+    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 rounded-lg border border-[var(--color-border-strong,var(--color-border))] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400 transition-colors"
+    : primary;
+  const icon = large ? "w-4 h-4" : "w-3 h-3";
   return (
     <div className="flex items-center gap-1.5 shrink-0">
-      <button type="button" onClick={() => void copy()} className={btn} title="Copy the answer and its proof, formatted, for an email">
-        {state === "copied" || state === "plain" ? <Check className="w-3 h-3 text-emerald-600" /> : <Mail className="w-3 h-3" />}
+      <button type="button" onClick={() => void copy()} className={primary} title="Copy the answer and its proof, formatted, ready to paste into an email">
+        {state === "copied" || state === "plain" ? <Check className={icon} /> : <Mail className={icon} />}
         {state === "copied" ? "Copied — paste into email" : state === "plain" ? "Copied as text" : state === "failed" ? "Copy blocked" : "Copy for email"}
       </button>
-      <button type="button" onClick={print} className={btn} title="Print or save as PDF">
-        <Printer className="w-3 h-3" /> Print
+      <button type="button" onClick={print} className={secondary} title="Print, or choose Save as PDF in the print dialog">
+        <Printer className={icon} /> {large ? "Print / save PDF" : "Print"}
       </button>
     </div>
   );
@@ -1233,6 +1239,15 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         <div className="grid @min-[760px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
           {/* ── The answer column ── */}
           <div className="min-w-0 p-4 sm:p-5 space-y-5">
+            {/* Header bar: what kind of answer this is, and the one place to
+                send it — always visible at the top, never hunted for. */}
+            <div className="flex items-center justify-between gap-2 flex-wrap pb-3 border-b border-[var(--color-border)]">
+              <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                {MODES.find((m) => m.id === mode)?.label ?? "Direct answer"}
+              </span>
+              <ExportButtons question={question} answer={answer} large />
+            </div>
+
             {(answer.answeringFor ?? []).length > 0 && (
               <AnsweringFor chips={answer.answeringFor!} onCorrect={onFollowup} />
             )}
@@ -1242,7 +1257,6 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 {heroV?.verdict
                   ? <VerdictBadge verdict={heroV.verdict} />
                   : <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">Answer</span>}
-                <ExportButtons question={question} answer={answer} />
               </div>
               <div className="mt-1 text-[16.5px] font-semibold leading-snug text-[var(--color-text)]">
                 {heroV ? inline(heroV.text) : <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />}
@@ -1323,7 +1337,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
               <span>·</span>
               {/* Version beacon: which renderer produced this card. */}
-              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt9</span>
+              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt10</span>
             </div>
           </div>
 
