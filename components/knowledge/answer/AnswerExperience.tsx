@@ -1079,7 +1079,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
       )}
 
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden animate-rise">
-        <div className="grid @min-[720px]:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className="grid @min-[760px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
           {/* ── The answer column ── */}
           <div className="min-w-0 p-4 sm:p-5 space-y-5">
             {(answer.answeringFor ?? []).length > 0 && (
@@ -1146,7 +1146,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           </div>
 
           {/* ── The proof trail ── */}
-          <aside className="min-w-0 p-4 sm:p-5 border-t @min-[720px]:border-t-0 @min-[720px]:border-l border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+          <aside className="min-w-0 p-4 sm:p-5 border-t @min-[760px]:border-t-0 @min-[760px]:border-l border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
             <div className="flex items-baseline justify-between gap-2 mb-3">
               <h3 className="text-[15px] font-black text-[var(--color-text)]">Proof</h3>
               <span className="font-mono text-[10px] text-[var(--color-text-faint)]">tap a number in the answer to jump here</span>

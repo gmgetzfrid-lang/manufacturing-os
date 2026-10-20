@@ -1704,8 +1704,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "\"**Evidence:**\" followed by one line per cited passage, most decisive first, in this exact " +
       "shape:\n" +
       "- [n] decides — <what it proves, 10 words max> — \"<words copied from passage n>\"\n" +
-      "The role is one of: decides (settles the answer), limits (a condition, exception, approval, " +
-      "or a rule shown NOT to apply), context (supporting only). The quoted words must be copied " +
+      "The role is one of: decides (the passage itself states the rule your Answer line gives — a " +
+      "passage that only points to another document, or covers a different item, is NOT decides), " +
+      "limits (a condition, exception, approval, or a rule shown NOT to apply), context (supporting " +
+      "only). Most answers have 1-3 decides passages. The quoted words must be copied " +
       "character-for-character from passage n — they are used to highlight that exact sentence " +
       "on the page — and must be the SHORTEST span that proves the claim (one sentence or one " +
       "table row, 5-30 words), never a whole paragraph. Every [n] used in the answer gets exactly " +

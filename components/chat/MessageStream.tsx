@@ -99,7 +99,9 @@ export default function MessageStream({
   return (
     <div className="relative flex-1 min-h-0">
       <div ref={scrollerRef} onScroll={onScroll} data-chat-scroller className="h-full overflow-y-auto px-4 sm:px-6">
-        <div className="mx-auto max-w-3xl pt-4 pb-6">
+        {/* Wide enough for the answer + proof columns side by side; the
+            question bubble and prose still cap themselves narrower. */}
+        <div className="mx-auto max-w-5xl pt-4 pb-6">
           {empty ? (
             <div className="pt-[12vh] text-center animate-rise">
               <div className="mx-auto w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-lg">
