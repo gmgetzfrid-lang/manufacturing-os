@@ -447,8 +447,8 @@ describe("the answer surface marks what the route now says", () => {
   it("GOV-9: a vision-derived quote is marked 'AI transcription of this page' on its source card", () => {
     expect(page).toMatch(/c\.source === "vision" && \(\s*<span data-citation-source="vision"[\s\S]*?AI transcription of this page/);
   });
-  it("PR-9: an answer with unverified arithmetic carries the label — and (I-25) so does one whose result the page withheld", () => {
-    expect(page).toMatch(/\(answer\.arithmetic === "unverified" \|\| shown\.withheld > 0\) && \(\s*<span data-arithmetic="unverified"[\s\S]*?Unverified arithmetic — check every step/);
+  it("PR-9: an answer with unverified arithmetic carries the label — and (I-25) so does one whose result the page withheld, or one the server withheld that is reopened or replayed (no arithmetic flag on its memory turn)", () => {
+    expect(page).toMatch(/\(answer\.arithmetic === "unverified" \|\| shown\.withheld > 0 \|\| answerText\.includes\(RESULT_WITHHELD\)\) && \(\s*<span data-arithmetic="unverified"[\s\S]*?Unverified arithmetic — check every step/);
   });
   it("PR-9 option (b) (I-25): the answer surface shows the withheld text everywhere — never the model's computed number", () => {
     // Every library answer is shown through withholdModelResults, so an

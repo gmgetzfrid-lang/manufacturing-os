@@ -924,8 +924,10 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
               </span>
             )}
             {/* PR-9: model arithmetic nothing re-derived is labelled as such,
-                and (I-25) the number it computed is withheld. */}
-            {(answer.arithmetic === "unverified" || shown.withheld > 0) && (
+                and (I-25) the number it computed is withheld — the label also
+                shows on a reopened or replayed answer the server withheld
+                (its memory turn carries no arithmetic flag). */}
+            {(answer.arithmetic === "unverified" || shown.withheld > 0 || answerText.includes(RESULT_WITHHELD)) && (
               <span data-arithmetic="unverified"
                 title="The AI worked these numbers itself and nothing in the app re-derived them, so the result it computed is not shown — compute it from the formula and the cited inputs, and check every substitution and unit against the cited pages."
                 className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-950/20">
