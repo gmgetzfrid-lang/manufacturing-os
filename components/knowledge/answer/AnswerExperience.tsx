@@ -25,6 +25,7 @@ import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
 import { buildAnswerExport, printableDocument } from "@/lib/answerExport";
 import FormFillModal from "@/components/knowledge/answer/FormFillModal";
+import { copyText } from "@/lib/clipboard";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
@@ -317,7 +318,8 @@ function CopyChip({ value }: { value: string }) {
     <button
       type="button"
       onClick={() => {
-        void navigator.clipboard.writeText(value).then(() => {
+        void copyText(value).then((ok) => {
+          if (!ok) return;
           setCopied(true);
           setTimeout(() => setCopied(false), 1200);
         });
@@ -667,12 +669,12 @@ export function NeedCard({ prompt, onProvide }: {
 }
 
 export function CopyButton({ text, label, onDark }: { text: string; label: string; onDark?: boolean }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<boolean | "failed">(false);
   return (
     <button
       onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
+        void copyText(text).then((ok) => {
+          setCopied(ok ? true : "failed");
           setTimeout(() => setCopied(false), 1600);
         });
       }}
@@ -680,7 +682,7 @@ export function CopyButton({ text, label, onDark }: { text: string; label: strin
       className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border transition-colors ${onDark
         ? "border-white/25 text-slate-300 hover:text-white hover:bg-white/10"
         : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-      {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />} {copied ? "Copied" : label}
+      {copied === true ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />} {copied === true ? "Copied" : copied === "failed" ? "Copy blocked" : label}
     </button>
   );
 }
@@ -954,7 +956,7 @@ function ExportButtons({ question, answer, large = false }: { question: string; 
       })]);
       flash("copied");
     } catch {
-      try { await navigator.clipboard.writeText(exp.text); flash("plain"); } catch { flash("failed"); }
+      flash((await copyText(exp.text)) ? "plain" : "failed");
     }
   };
   const print = () => {

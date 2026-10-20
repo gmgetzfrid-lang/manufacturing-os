@@ -16,6 +16,7 @@ import {
   draftLibraryForm, downloadLibraryForm,
   type DraftedForm, type DraftedFormField, type KnowledgeCitation,
 } from "@/lib/knowledge";
+import { copyText } from "@/lib/clipboard";
 
 export default function FormFillModal({ orgId, documentId, formName, question, answer, citations, goal, onClose }: {
   orgId: string;
@@ -58,10 +59,10 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
     catch (e) { setError((e as Error).message); }
     finally { setBusy(null); }
   };
-  const copyText = async () => {
+  const copyAll = async () => {
     if (!draft) return;
     const text = [`${draft.form.title}`, "", ...draft.form.fields.map((f) => `${f.label}:\n${values[f.name] || "(to be completed)"}\n`)].join("\n");
-    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch { /* clipboard blocked */ }
+    if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 1600); }
   };
 
   return (
@@ -108,7 +109,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
       <ModalFooter>
         <span className="mr-auto text-[11px] text-[var(--color-text-muted)]">Review every field before you submit — you own what&apos;s on this form.</span>
         {draft && (
-          <button type="button" onClick={() => void copyText()}
+          <button type="button" onClick={() => void copyAll()}
             className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400">
             {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy as text"}
           </button>
