@@ -51,7 +51,7 @@ import TicketCopyRecallPanel from '@/components/requests/TicketCopyRecallPanel';
 import { canPutFirstRevisionInContainer } from '@/lib/revisions';
 import { publicOrigin } from '@/lib/publicOrigin';
 import { ticketCopyPlan, recordTicketCopy, type TicketCopyLiveFacts } from '@/lib/ticketDeliverableCopy';
-import { ticketFileCopyPath, takeTicketCopy, BROWSER_PATH_NOTE, type TicketCopyContext, type TicketCopyRequestChannel } from '@/lib/ticketCopyRequest';
+import { ticketFileCopyPath, takeTicketCopy, BROWSER_PATH_NOTE, NON_PDF_PRINT_NOTE, type TicketCopyContext, type TicketCopyRequestChannel } from '@/lib/ticketCopyRequest';
 import { logAuditAction } from '@/lib/audit';
 // Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
 // of which the request-detail page needs until the user actually opens markup.
@@ -803,8 +803,15 @@ const FileViewerModal = ({
     });
   };
 
+  // DF-P15 fix: only a PDF prints from the server's stream. A hidden frame
+  // handed a non-PDF blob (application/octet-stream) makes the browser
+  // DOWNLOAD it rather than print it — so an image or other non-PDF file
+  // prints by the browser path (loaded from the file itself, recorded from
+  // the tab, as before DF-P15), and the viewer says so. Its download still
+  // goes through the server.
+  const printViaServer = viaServer && fileIsPdf;
   const handlePrint = async () => {
-    if (!viaServer) return browserPrint();
+    if (!printViaServer) return browserPrint();
     const out = await serverCopy("print");
     if (out.kind === 'declined') return;
     if (out.kind === 'browser') {
@@ -1031,13 +1038,14 @@ const FileViewerModal = ({
         
         {/* EVID-16 done-when 2 (DF-P15): a file that keeps the browser path says so,
             and an unstamped server preview is marked. */}
-        {!archived && (serverNote || copyPath?.kind === 'browser' || previewStamped === false) && (
+        {!archived && (serverNote || copyPath?.kind === 'browser' || previewStamped === false || (viaServer && !printViaServer && file.type !== 'Draft')) && (
           <div role="note" className="px-6 py-2 bg-amber-900/60 border-b border-amber-700 text-amber-100 text-xs relative z-50">
             {previewStamped === false
               ? 'Unstamped preview: the watermark / QR stamp could not be applied to this file, so this is the original. Treat it as uncontrolled.'
               : serverNote
                 ? `The server could not issue this file (${serverNote}). Its copies are stamped and recorded from your browser.`
-                : copyPath?.kind === 'browser' ? BROWSER_PATH_NOTE[copyPath.reason] : null}
+                : copyPath?.kind === 'browser' ? BROWSER_PATH_NOTE[copyPath.reason]
+                  : NON_PDF_PRINT_NOTE}
           </div>
         )}
 
@@ -1578,6 +1586,9 @@ export default function TicketDetailView() {
   // After the publish landed (or opened a review draft), record it on the
   // ticket through the server, which verifies the version row is this
   // request's deliverable before writing anything.
+  // DF-P15 fix: the toast says what the register holds — the hand-back
+  // route's own answer (metadata.deliverable.filed_as_draft) decides it, so a
+  // new document filed as a Draft is never announced as an issued revision.
   const recordHandback = async (versionId: string, revisionLabel: string) => {
     if (!ticket?.id) return;
     try {
@@ -1591,7 +1602,10 @@ export default function TicketDetailView() {
       const out = await res.json().catch(() => ({} as Record<string, unknown>)) as { error?: string; warning?: string; metadata?: Record<string, unknown>; history?: Ticket['history'] };
       if (!res.ok) throw new Error(out.error || 'Could not record the publish on the request');
       setTicket((t) => (t ? { ...t, metadata: out.metadata ?? t.metadata, history: out.history ?? t.history } : t));
-      showToast({ type: 'success', title: `Rev ${revisionLabel} recorded on the request`, message: out.warning ?? 'The deliverable is in the register and the request knows it.' });
+      const filedAsDraft = (out.metadata?.deliverable as { filed_as_draft?: unknown } | undefined)?.filed_as_draft === true;
+      showToast(filedAsDraft
+        ? { type: 'success', title: 'Filed as a Draft document on the request', message: out.warning ?? 'The deliverable is in the register as a Draft — not issued — and the request knows it.' }
+        : { type: 'success', title: `Rev ${revisionLabel} recorded on the request`, message: out.warning ?? 'The deliverable is in the register and the request knows it.' });
     } catch (e) {
       showToast({ type: 'error', title: 'Published, but not recorded on the request', message: (e as Error).message });
     }

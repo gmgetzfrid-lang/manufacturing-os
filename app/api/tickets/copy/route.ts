@@ -59,6 +59,20 @@
 // download's (the bytes did reach the browser). A file the server cannot
 // issue (a legacy absolute URL, a key outside the ticket's storage) keeps the
 // page's browser path, which says so.
+//
+// Size (DF-P15 fix — the transmittal portal's TRX-5 rule): the response is a
+// STREAMED body handed out in 1 MiB chunks, never one buffered body — the
+// platform caps a buffered function response at ~4.5 MB
+// (app/api/transmittal/route.ts, app/api/admin/restore/begin/route.ts), and a
+// multi-sheet drawing PDF is routinely larger. A file up to
+// COPY_STAMP_MAX_BYTES is held once in memory, stamped (a PDF) and streamed.
+// A larger one is never held whole: its byte stream is OPENED (its first
+// bytes read, which say whether it is a PDF) before anything is recorded, so
+// a storage failure records nothing; it is then issued UNSTAMPED through the
+// same 422 `unstampable` question as any file the stamp cannot take, and its
+// record carries the reason (`unstampedReason`), as every unstamped copy's
+// does. A non-PDF is served as application/octet-stream (never a stored
+// content type: a "view" is inline, and the page only previews PDFs).
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -74,7 +88,55 @@ import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
 import { isStagedKeyOf } from "@/lib/ticketCreate";
 import type { TicketAttachment } from "@/types/schema";
 
-export const maxDuration = 60;
+export const runtime = "nodejs";
+// The copy is streamed through the function, so the function lives while the
+// browser drains it (the transmittal portal's budget for the same transfer).
+export const maxDuration = 300;
+
+/** Above this the server does not stamp (and never holds the file whole):
+ *  pdf-lib keeps the parsed document and writes a second copy. The
+ *  transmittal portal's bound (PORTAL_STAMP_MAX_BYTES). */
+const COPY_STAMP_MAX_BYTES = 64 * 1024 * 1024;
+/** The streamed body's chunk size. */
+const STREAM_CHUNK_BYTES = 1024 * 1024;
+
+/** A streamed body over bytes already in memory — handed out a chunk at a
+ *  time, so the response is never one buffered body. */
+function chunkedStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  let offset = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset >= bytes.length) { controller.close(); return; }
+      const end = Math.min(offset + STREAM_CHUNK_BYTES, bytes.length);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+  });
+}
+
+/** Open a storage byte stream: read its first chunk (it says whether the
+ *  file is a PDF) and hand back a stream that replays it, then the rest. */
+async function openPeeked(stream: ReadableStream<Uint8Array>): Promise<{ head: Uint8Array; body: ReadableStream<Uint8Array> }> {
+  const reader = stream.getReader();
+  const first = await reader.read();
+  const head = first.done || !first.value ? new Uint8Array(0) : first.value;
+  let replayed = false;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!replayed) {
+        replayed = true;
+        if (first.done) { controller.close(); return; }
+        controller.enqueue(head);
+        return;
+      }
+      const next = await reader.read();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    cancel(reason) { return reader.cancel(reason); },
+  });
+  return { head, body };
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TICKET_COLUMNS = "id, org_id, ticket_id, status, deliverable_rev, history, revision_count, attachments, archived_at, requester_id, assigned_drafter_id, assigned_engineer_id, watchers";
@@ -222,13 +284,28 @@ export async function POST(req: NextRequest) {
     return json({ error: "confirm", message: plan.confirmMessage, standing: plan.standing }, 409);
   }
 
-  // 4. The bytes, bucket → server, stamped here.
-  let source: Uint8Array;
+  // 4. The bytes, bucket → server, stamped here. A file over the stamping
+  // bound is never held whole: its stream is opened (first bytes read) here,
+  // BEFORE the record, and piped through after it (see the header).
+  let source: Uint8Array | null = null;
+  let piped: ReadableStream<Uint8Array> | null = null;
+  let head: Uint8Array;
+  let size: number | null = null;
   try {
     const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
-    const bytes = await obj.Body?.transformToByteArray();
-    if (!bytes) throw new Error("empty object body");
-    source = bytes;
+    if (!obj.Body) throw new Error("empty object body");
+    size = typeof obj.ContentLength === "number" ? obj.ContentLength : null;
+    if (size !== null && size > COPY_STAMP_MAX_BYTES) {
+      const body = obj.Body as { transformToWebStream?: () => ReadableStream<Uint8Array> };
+      const stream = body.transformToWebStream?.();
+      if (!stream) throw new Error("no streamable body");
+      ({ head, body: piped } = await openPeeked(stream));
+    } else {
+      const bytes = await obj.Body.transformToByteArray();
+      if (!bytes) throw new Error("empty object body");
+      source = bytes;
+      head = bytes;
+    }
   } catch (e) {
     const err = e as { name?: string; $metadata?: { httpStatusCode?: number }; message?: string };
     if (err?.name === "NoSuchKey" || err?.name === "NotFound" || err?.$metadata?.httpStatusCode === 404) {
@@ -241,10 +318,15 @@ export async function POST(req: NextRequest) {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + (file.type === "Draft" ? 72 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000));
   const email = caller.email ?? (member as { email?: string | null }).email ?? null;
-  let out: Uint8Array = source;
+  const sourceIsPdf = isPdfBytes(head);
+  let out: Uint8Array | null = source;
   let stamped = false;
-  let stampProblem: string | null = isPdfBytes(source) ? null : "the file is not a PDF";
-  if (!stampProblem) {
+  let stampProblem: string | null = !sourceIsPdf
+    ? "the file is not a PDF"
+    : piped
+      ? `the file is ${Math.ceil((size ?? 0) / (1024 * 1024))} MB, over the ${COPY_STAMP_MAX_BYTES / (1024 * 1024)} MB the server stamps`
+      : null;
+  if (!stampProblem && source) {
     try {
       const pdfDoc = await PDFDocument.load(source);
       await applyStampToPdfDoc(pdfDoc, {
@@ -263,6 +345,7 @@ export async function POST(req: NextRequest) {
     }
   }
   if (!stamped && body.acceptUnstamped !== true) {
+    await piped?.cancel().catch(() => {});
     return json({
       error: "unstampable",
       message: `The watermark / QR stamp could not be applied to this file (${stampProblem}). Take the UNSTAMPED copy anyway? It will be recorded as unstamped — treat it as uncontrolled and do not distribute it.`,
@@ -271,6 +354,12 @@ export async function POST(req: NextRequest) {
 
   // 5. The record, BEFORE a byte leaves. Refused → nothing is issued.
   const roles = (member as { role?: string | null }).role ?? null;
+  // An unstamped copy's record says why it left unstamped (an oversize file
+  // included — the transmittal portal records the same reason).
+  const unstampedReason = stamped ? null : stampProblem;
+  const audit: typeof serverAudit = unstampedReason
+    ? (entry) => serverAudit({ ...entry, details: { ...(entry.details ?? {}), unstampedReason } })
+    : serverAudit;
   // EVID-16 dw2 (DF-P15): a preview is a VIEW of the file on the ticket's
   // audit trail — no distribution row (a viewer is not a copy holder).
   const rec = view
@@ -290,9 +379,10 @@ export async function POST(req: NextRequest) {
           fileName: file.name,
           rev: typeof file.rev === "string" ? file.rev : null,
           watermark: stamped ? plan.watermark : "UNSTAMPED (stamping failed)",
+          ...(unstampedReason ? { unstampedReason } : {}),
         },
       }).then((a) => (a.ok ? { recorded: true, error: null } : { recorded: false, error: `the audit trail refused it (${a.error || "no reason given"})` }))
-    : await recordTicketCopy(supabaseAdmin, serverAudit, {
+    : await recordTicketCopy(supabaseAdmin, audit, {
     orgId: t.org_id,
     userId: caller.id,
     userEmail: email,
@@ -306,6 +396,7 @@ export async function POST(req: NextRequest) {
     expiresAt,
   });
   if (!rec.recorded) {
+    await piped?.cancel().catch(() => {});
     console.error(`[tickets/copy] the copy of ${attachmentId} on ${t.id} was NOT issued — its record was refused: ${rec.error}`);
     return json({ error: "unrecorded", message: `${view ? "This preview was not served" : "This copy was not issued"}: ${rec.error}. Try again in a moment, or tell Document Control.` }, 503);
   }
@@ -313,9 +404,10 @@ export async function POST(req: NextRequest) {
   const safe = (s: string) => s.replace(/[^\w.\-]+/g, "_");
   const base = safe(file.name || "ticket-file").replace(/\.pdf$/i, "");
   const filename = stamped ? `${base}${plan.rev ? `_Rev${safe(plan.rev)}` : ""}.pdf` : safe(file.name || "ticket-file");
-  return new NextResponse(Buffer.from(out), {
+  // A streamed body either way — never one buffered response (see the header).
+  return new NextResponse(piped ?? chunkedStream(out ?? new Uint8Array()), {
     headers: {
-      "Content-Type": stamped || isPdfBytes(source) ? "application/pdf" : "application/octet-stream",
+      "Content-Type": stamped || sourceIsPdf ? "application/pdf" : "application/octet-stream",
       "Content-Disposition": `${view ? "inline" : "attachment"}; filename="${filename}"`,
       "Cache-Control": "no-store",
       "X-Ticket-Copy-Stamped": stamped ? "1" : "0",

@@ -378,7 +378,7 @@ after.
 ## DCW-7 · `unit` is the only locator, and it is free text
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Assigned:** drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS (the 'Publish as a new document in <library>' offer on a library-only close, with a provable link: `createDocumentWithFile` in `lib/revisions.ts` gains an optional `relatedTicketId` recorded on the creation audit row — additive, every caller unchanged) — by the integrator at the DF-P4 merge, 2026-10-14 (DEC-31).
 - **Assigned:** drafting-flow DF-P9 TICKET-PAGE (the assign modal sends the triage `unit`; the server half landed with DF-P4) — restated by the integrator at the DF-P4 merge, 2026-10-14 (DEC-31).
 - **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-when 3: mount `LibraryPicker` in the assign modal with `currentLibraryId` and send `libraryId`) — restated by the integrator at the DF-P4 merge, 2026-10-14 (DEC-31). 20261208 PASTE pending (paste guide row 163).
@@ -436,14 +436,14 @@ the unconfigured case is visibly a setup gap rather than a free-text field.
 
 *Assigned (2026-10-20, the integrator at the DF-P12 merge):* the last limb → drafting-flow **DF-P15 DELIVERABLE PAGE WIRING** (with `DCW-4`'s page half); DF-P12 merged without it.
 
-**Resolution (2026-10-20, drafting-flow Round G).** DF-P15 DELIVERABLE PAGE WIRING — the last limb, as assigned at the DF-P12 merge: the "Publish as a new document in <library>" offer is `DCW-4`'s page half, built here (`app/(protected)/requests/[id]/page.tsx` `canOfferNewDocument` / `openNewDocument`, `components/requests/PublishNewDocumentModal.tsx` → `createDocumentWithFile({ …, relatedTicketId })`, recorded through `/api/tickets/handback` — see `DCW-4`'s Partial of this date for the code and tests). A request located by its library (`DCW-1`) can now put its deliverable into that library from the request itself.
+**Partial (2026-10-20, drafting-flow Round G).** DF-P15 DELIVERABLE PAGE WIRING — the last limb, as assigned at the DF-P12 merge: the "Publish as a new document in <library>" offer is `DCW-4`'s page half, built here (`app/(protected)/requests/[id]/page.tsx` `canOfferNewDocument` / `openNewDocument`, `components/requests/PublishNewDocumentModal.tsx` → `createDocumentWithFile({ …, relatedTicketId })`, recorded through `/api/tickets/handback` — see `DCW-4`'s Partial of this date for the code and tests). A request located by its library (`DCW-1`) can now put its deliverable into that library from the request itself.
 
 **Done-when.**
 - ✓ `unit` resolves against the org's codebook (or configured list) where one exists — at intake (DF-P2) and at triage (DF-P4 / DF-P9), unchanged.
 - ◐ → by decision: "the unconfigured case is visibly a setup gap rather than a free-text field" — visibly a setup gap ✓ (DF-P2); the free-text box itself is KEPT by `DEC-101` item 1 (a requester who knows the unit can say it, and nothing is lost when no list exists; reversible in one line), restated by the integrator at the DF-P9 and DF-P12 merges as the box that "stays by DEC-101 item 1". Not done as worded, by recorded decision — DEC-29: this line does not claim it.
 - ✓ The DF-P12 / DF-P15 limb: the offer exists, shown only to someone who may publish into the library.
 
-**Scope / residual.** None in code. The free-text box is the user's to remove (`DEC-101` item 1); the source-less, library-less request is `DCW-4`'s residual (owner: the integrator's ruling).
+**Scope / residual.** Stays OPEN (DF-P15 fix pass, on review): one done-when line is not met as worded, so the Status does not claim RESOLVED (DEC-29 — a record never claims more than the code does). Nothing is owed in code by DF-P15. The remaining criterion ("rather than a free-text field") → owner: **the user's `DEC-101` item 1 decision** (remove the free-text box), or **the integrator**, a `DEC-90` ruling that amends the criterion to "visibly a setup gap, the box kept by `DEC-101` item 1" — either closes this finding by record. The source-less, library-less request is `DCW-4`'s residual (owner: the integrator's ruling).
 
 ---
 

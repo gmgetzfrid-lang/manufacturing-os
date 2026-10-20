@@ -50,7 +50,7 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
-import { ticketFileCopyPath, requestTicketCopy, takeTicketCopy, filenameFromDisposition, BROWSER_PATH_NOTE } from "@/lib/ticketCopyRequest";
+import { ticketFileCopyPath, requestTicketCopy, takeTicketCopy, filenameFromDisposition, BROWSER_PATH_NOTE, NON_PDF_PRINT_NOTE } from "@/lib/ticketCopyRequest";
 import TicketCopyRecallPanel from "@/components/requests/TicketCopyRecallPanel";
 import PublishNewDocumentModal from "@/components/requests/PublishNewDocumentModal";
 
@@ -162,6 +162,27 @@ describe("EVID-16 done-when 2 — the server copy, its questions asked once each
     expect(confirm).not.toHaveBeenCalled();
     expect(f.calls[0].body).toEqual({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true, acceptUnstamped: true });
   });
+  it("DF-P15 fix — a PLATFORM failure with no JSON body (413 / 500 / 502 / 504: the host refusing or timing out the function) → the browser path, said; the route's own JSON 502 is still a refusal", async () => {
+    for (const status of [413, 500, 502, 504]) {
+      const f = fakeFetch([() => new Response("<html>Request Entity Too Large</html>", { status, headers: { "content-type": "text/html" } })]);
+      const out = await takeTicketCopy({ ...base, channel: "print", confirm: async () => true, fetchImpl: f.impl });
+      expect(out, String(status)).toEqual({ kind: "browser", message: `the server could not deliver it (HTTP ${status})` });
+      expect(f.calls).toHaveLength(1);
+    }
+    const empty = await requestTicketCopy({ ...base, channel: "download", token: "t" }, async () => new Response(null, { status: 504 }));
+    expect(empty.kind).toBe("not_server");
+    // the route answering (JSON) is not a platform failure: said, nothing copied
+    const routeSaid = await requestTicketCopy({ ...base, channel: "download", token: "t" },
+      async () => new Response(JSON.stringify({ error: "The file could not be read from storage right now — try again in a moment" }), { status: 502 }));
+    expect(routeSaid).toMatchObject({ kind: "refused", status: 502 });
+    // a non-JSON 503 / 401 is not on the platform list
+    expect((await requestTicketCopy({ ...base, channel: "download", token: "t" }, async () => new Response("x", { status: 503 }))).kind).toBe("refused");
+  });
+  it("DF-P15 fix — bytes cut off in transit (the body fails to read) → the browser path, said; requestTicketCopy never throws", async () => {
+    const broken = new ReadableStream<Uint8Array>({ pull(c) { c.error(new Error("socket hang up")); } });
+    const out = await requestTicketCopy({ ...base, channel: "download", token: "t" }, async () => new Response(broken, { status: 200 }));
+    expect(out).toEqual({ kind: "not_server", message: "the copy was cut off in transit (socket hang up)" });
+  });
   it("the file name comes from Content-Disposition, else the fallback", () => {
     expect(filenameFromDisposition('inline; filename="a_Rev2.pdf"', "x")).toBe("a_Rev2.pdf");
     expect(filenameFromDisposition(null, "x.pdf")).toBe("x.pdf");
@@ -174,7 +195,10 @@ describe("EVID-16 done-when 2 — the page's FileViewerModal is wired to the ser
   const modal = page.slice(page.indexOf("const FileViewerModal = ("), page.indexOf("<DownloadComplianceModal"));
   it("print and download dispatch: a server-path file goes through takeTicketCopy, a browser-path file through the unchanged browser path", () => {
     expect(modal).toContain("const copyPath = file ? ticketFileCopyPath(file, { ...(copyContext ?? {}), ticketRowId: ticketRowId ?? null }) : null;");
-    expect(modal).toContain("if (!viaServer) return browserPrint();");
+    // DF-P15 fix: only a PDF prints from the server's stream (a hidden frame downloads an octet-stream blob)
+    expect(modal).toContain("const printViaServer = viaServer && fileIsPdf;");
+    expect(modal).toContain("if (!printViaServer) return browserPrint();");
+    expect(modal).not.toContain("if (!viaServer) return browserPrint();");
     expect(modal).toContain("if (!viaServer) return browserDownload();");
     expect(modal).toContain('const out = await serverCopy("print");');
     expect(modal).toContain('const out = await serverCopy("download");');
@@ -192,8 +216,18 @@ describe("EVID-16 done-when 2 — the page's FileViewerModal is wired to the ser
     expect(modal).toContain("getSignedUrlForPath(file.url, undefined, { inline: true })");
   });
   it("a browser-path file says so, and an unstamped preview is marked", () => {
-    expect(page).toContain("copyPath?.kind === 'browser' ? BROWSER_PATH_NOTE[copyPath.reason] : null");
+    expect(page).toContain("copyPath?.kind === 'browser' ? BROWSER_PATH_NOTE[copyPath.reason]\n                  : NON_PDF_PRINT_NOTE}");
     expect(page).toContain("Unstamped preview: the watermark / QR stamp could not be applied to this file");
+  });
+  it("DF-P15 fix — a non-PDF server-path file prints by the browser path (as before DF-P15) and the viewer says so; its download still goes through the server", () => {
+    expect(page).toContain("(viaServer && !printViaServer && file.type !== 'Draft')");
+    expect(NON_PDF_PRINT_NOTE).toMatch(/^This file is not a PDF, so it cannot carry the watermark \/ QR stamp: a print of it is loaded from the file itself and recorded from your browser\./);
+    // the download dispatch is unchanged: a server-path non-PDF still downloads through the route
+    expect(modal).toContain("if (!viaServer) return browserDownload();");
+    // the browser print of a non-PDF loads the file itself into the frame once the stamp fails, and records from the tab
+    const browserPart = modal.slice(modal.indexOf("const browserPrint = async"), modal.indexOf("const handleDownloadClick"));
+    expect(browserPart).toContain("let printUrl = sourceUrl;");
+    expect(browserPart).toContain('await recordCopy("print", stamped, plan.watermark,');
   });
   it("the browser path never re-stamps the server's stamped preview — it signs the raw file afresh", () => {
     expect(modal).toContain("(previewStamped === null ? resolvedUrl : null) || (/^https?:\\/\\//i.test(file.url) ? file.url : await getSignedUrlForPath(file.url));");
@@ -325,5 +359,15 @@ describe("DCW-4 — 'Publish as a new document in <library>'", () => {
     expect(page).toContain("if (!newDocLibraryId || !ticketOrgId || !uid || activeRole === null) { setCanPublishNew(false); setTargetLibraryName(null); return; }");
     expect(page).toContain("const canOfferNewDocument = !!newDocLibraryId && canPublishNew && !ticket.archivedAt && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published';");
     expect(page).toContain("await recordHandback(r.versionId, '0');");
+  });
+  it("DF-P15 fix — the hand-back toast says what the register holds: a new document filed as a Draft is never announced as an issued Rev 0", () => {
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    const fn = page.slice(page.indexOf("const recordHandback = async"), page.indexOf("// --- 2. SAFE SCROLL ---"));
+    expect(fn).toContain("const filedAsDraft = (out.metadata?.deliverable as { filed_as_draft?: unknown } | undefined)?.filed_as_draft === true;");
+    expect(fn).toContain("title: 'Filed as a Draft document on the request'");
+    expect(fn).toContain("The deliverable is in the register as a Draft — not issued — and the request knows it.");
+    // the Rev toast is the other branch only
+    expect(fn.indexOf("filedAsDraft\n        ? {")).toBeGreaterThan(-1);
+    expect(fn.indexOf("title: `Rev ${revisionLabel} recorded on the request`")).toBeGreaterThan(fn.indexOf("title: 'Filed as a Draft document on the request'"));
   });
 });

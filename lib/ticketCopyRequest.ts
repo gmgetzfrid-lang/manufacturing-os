@@ -16,16 +16,26 @@
 //     the viewer says so: a legacy absolute-URL file (the route never fetches
 //     a URL a row names), a library file named at filing (a Source reference
 //     — a register key, not this request's storage), and a file the ticket
-//     does not name once by a well-formed id. Every print and download that
-//     worked before therefore still works for the same people.
+//     does not name once by a well-formed id. A PRINT of a file that is not
+//     a PDF keeps the browser path too (the page's handlePrint — a hidden
+//     frame prints a PDF or an image loaded from the file itself, never an
+//     application/octet-stream blob, which the browser would download). With
+//     the route's streamed body and the fallbacks below, every print and
+//     download that worked before still works for the same people.
 //   * The route's answers (requestTicketCopy): the bytes; 409 `confirm` (a
 //     superseded, withdrawn or in-progress file — asked, then retried with
 //     `acknowledged`); 422 `unstampable` (asked, then retried with
 //     `acceptUnstamped`, the copy recorded as unstamped); a refusal that says
 //     the server cannot issue THIS file (409 `legacy_file`, 409 "not stored
 //     under this request", 404 "not on this request", 400) → the browser path,
-//     said; anything else (401, 404, 409 `archived`, 503 `unrecorded`, 502 …)
-//     is said in words and nothing is copied.
+//     said; so is a PLATFORM failure that carries no JSON body (413 / 500 /
+//     502 / 504 — the host refusing or timing out the function, not the
+//     route answering) and a copy whose bytes were cut off in transit: the
+//     user still gets the file, stamped and recorded from the tab (DF-P15
+//     fix; the route streams its body, so a large file no longer meets the
+//     host's buffered-response cap — this is the fallback if anything else
+//     does). Anything else (401, 404, 409 `archived`, 503 `unrecorded`, a
+//     JSON 502 …) is said in words and nothing is copied.
 //   * takeTicketCopy runs the questions in order. A preview ("view") asks
 //     none: the stamp says the file's standing, and an unstampable file is
 //     shown unstamped and recorded as such (the viewer marks it).
@@ -47,6 +57,11 @@ export const BROWSER_PATH_NOTE: Record<TicketCopyBrowserReason, string> = {
   outside_request: "This file is kept outside this request's storage (a library file named when the request was filed), so its copies are stamped and recorded from your browser.",
   unaddressable: "This file is not named once on this request, so the server cannot issue it: its copies are stamped and recorded from your browser.",
 };
+
+/** What the viewer says about a non-PDF file the server issues: its print
+ *  keeps the browser path (a hidden frame cannot print a downloaded blob). */
+export const NON_PDF_PRINT_NOTE =
+  "This file is not a PDF, so it cannot carry the watermark / QR stamp: a print of it is loaded from the file itself and recorded from your browser. Its download is issued and recorded by the server, marked unstamped.";
 
 export interface TicketCopyContext {
   /** The ticket's row id (the route's ticketId). */
@@ -92,6 +107,10 @@ export function filenameFromDisposition(header: string | null | undefined, fallb
   return m?.[1] || fallback;
 }
 
+/** Statuses the HOST answers (no JSON body) when it refuses or times out the
+ *  function — a too-large response, a crash, a gateway timeout. */
+const PLATFORM_FAILURE_STATUSES = new Set([413, 500, 502, 504]);
+
 type FetchLike = (input: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<Response>;
 
 /** One call to POST /api/tickets/copy, its answer classified. Never throws. */
@@ -124,7 +143,12 @@ export async function requestTicketCopy(
     return { kind: "refused", status: 0, message: `The copy could not be requested (${(e as Error)?.message || "network error"}). Try again in a moment.` };
   }
   if (res.ok) {
-    const blob = await res.blob();
+    let blob: Blob;
+    try {
+      blob = await res.blob();
+    } catch (e) {
+      return { kind: "not_server", message: `the copy was cut off in transit (${(e as Error)?.message || "connection closed"})` };
+    }
     return {
       kind: "file",
       blob,
@@ -132,7 +156,13 @@ export async function requestTicketCopy(
       stamped: res.headers.get("x-ticket-copy-stamped") === "1",
     };
   }
-  const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+  const parsed = (await res.json().catch(() => null)) as { error?: string; message?: string } | null;
+  if ((parsed === null || typeof parsed !== "object") && PLATFORM_FAILURE_STATUSES.has(res.status)) {
+    // The host refused or timed out the function (no JSON body: not the
+    // route's answer) — the browser path, said.
+    return { kind: "not_server", message: `the server could not deliver it (HTTP ${res.status})` };
+  }
+  const body = parsed && typeof parsed === "object" ? parsed : {};
   const message = body.message || body.error || `The copy was refused (HTTP ${res.status}).`;
   if (res.status === 409 && body.error === "confirm") return { kind: "confirm", message };
   if (res.status === 422 && body.error === "unstampable") return { kind: "unstampable", message };
