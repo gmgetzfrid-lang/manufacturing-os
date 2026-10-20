@@ -373,6 +373,40 @@ async function audit(ref: string, row: Record<string, unknown>): Promise<void> {
   if (error) console.error(`[intake/upload] ref=${ref} audit ${String(row.action)} failed: ${error.message}`);
 }
 
+/** How long the intake door waits for the unit decode before it answers
+ *  (the decode is best-effort; the document already exists). */
+const INTAKE_UNIT_DECODE_TIMEOUT_MS = 8_000;
+
+/** GAP-314 (intelligence I-26): decode a document the door just created.
+ *  Never throws. A decode that wrote a code, cleared one or left one without
+ *  a code is recorded as one UNIT_CODE_DECODE row (via "intake", as
+ *  /api/documents/unit-code records a browser door's); a decode with no
+ *  opinion (no codebook format, or 20261138 not pasted) records nothing; one
+ *  that could not run is logged — the next unit-identity run, or I-11's
+ *  staleness count on /admin/scope, finds the document. */
+async function decodeCreatedDocument(ref: string, orgId: string, documentId: string, contactEmail: string | null): Promise<void> {
+  try {
+    const { decodeDocumentUnitCodes } = await import("@/lib/unitCodeDecode");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const decoded = await Promise.race([
+      decodeDocumentUnitCodes({ orgId, documentIds: [documentId] }),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), INTAKE_UNIT_DECODE_TIMEOUT_MS); }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    if (!decoded) { console.error(`[intake/upload] ref=${ref} unit decode of ${documentId} did not finish within ${INTAKE_UNIT_DECODE_TIMEOUT_MS / 1000}s`); return; }
+    if (decoded.notApplied || decoded.noOpinion) return;
+    const recorded = decoded.results.filter((r) => r.outcome !== "unchanged" && r.outcome !== "not_found" && r.outcome !== "no_opinion");
+    if (recorded.length === 0) return;
+    await audit(ref, {
+      action: "UNIT_CODE_DECODE",
+      resource_type: "org", resource_id: orgId,
+      org_id: orgId, user_id: null, user_email: contactEmail,
+      details: { via: "intake", documents: recorded.map((r) => ({ id: r.documentId, outcome: r.outcome, unitCode: r.unitCode, reason: r.reason })) },
+    });
+  } catch (e) {
+    console.error(`[intake/upload] ref=${ref} unit decode of ${documentId} did not run: ${(e as Error)?.message ?? String(e)}`);
+  }
+}
+
 async function bumpUse(ref: string, linkId: string, bytes: number): Promise<void> {
   const first = await supabaseAdmin.rpc("bump_intake_use", { p_link: linkId, p_bytes: bytes });
   if (!first?.error) return;
@@ -1995,6 +2029,11 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       ));
     }
     if (refErr) console.error(`[intake/upload] ref=${ref} project reference for ${createdDocId} not written: ${refErr.message}`);
+    // GAP-314 (intelligence I-26): the unit decode at create time — the
+    // codebook's own planner over the stored number, through the backfill's
+    // guarded writes (lib/unitCodeDecode.ts, service role). Best-effort and
+    // bounded: it never fails or holds back the submission that landed.
+    await decodeCreatedDocument(ref, orgId, createdDocId, contactEmail);
   }
 
   // ── Notify the project team + audit ──

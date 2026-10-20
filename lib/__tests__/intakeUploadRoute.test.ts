@@ -277,6 +277,11 @@ vi.mock("@/lib/postPublish", () => ({
   runPostPublishSideEffects: vi.fn(async (input: Row) => { db.pipeline.push({ input, boundToServiceRole: scopedToAdmin() }); }),
 }));
 vi.mock("@/lib/intents", () => ({ listLiveIntents: vi.fn(async () => [{ userId: "intent-holder" }]) }));
+// GAP-314 (intelligence I-26): the unit decode at create time. Every case
+// answers "no opinion" (an org without a codebook number format) unless it
+// says otherwise — the door's behaviour before the decode, exactly.
+const unitDecode = vi.hoisted(() => ({ fn: vi.fn() }));
+vi.mock("@/lib/unitCodeDecode", () => ({ decodeDocumentUnitCodes: unitDecode.fn }));
 
 import { POST } from "@/app/api/intake/upload/route";
 
@@ -325,7 +330,7 @@ function upload(fields: Record<string, string>, file: { bytes: Uint8Array; name:
 const published = () => db.rpcCalls.find((c) => c.fn === "publish_revision");
 const docWrites = () => db.writes.filter((w) => w.table === "documents" || w.table === "document_versions" || w.table === "cost_documents");
 
-beforeEach(() => resetDb());
+beforeEach(() => { resetDb(); unitDecode.fn.mockReset(); unitDecode.fn.mockImplementation(async () => ({ notApplied: false, noOpinion: true, results: [] })); });
 function resetDb() {
   db.tables = {}; db.writes = []; db.errors = {}; db.rpcCalls = []; db.r2Puts = []; db.r2Deletes = []; db.emits = []; db.pipeline = [];
   db.doorSeen = []; db.doorInner = []; db.doorRestrictive = []; db.doorWroteAs = [];
@@ -1316,6 +1321,45 @@ describe("what the door files where", () => {
     db.tables.project_documents = [];
     await upload({ docId: D1, revLabel: "C" });
     expect(db.tables.project_documents).toEqual([]);
+  });
+  it("GAP-314 (I-26): a document the door CREATES is unit-decoded at create time, by id, and a decode that wrote is recorded via 'intake'; a revision is not decoded", async () => {
+    seed({ doc: null });
+    unitDecode.fn.mockImplementationOnce(async (input: { orgId: string; documentIds: string[] }) => ({
+      notApplied: false,
+      results: [{ documentId: input.documentIds[0], unitCode: "025", outcome: "decoded", reason: null }],
+    }));
+    const res = await upload({ title: "Skid GA", docNumber: "025-PID-0201" });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(unitDecode.fn).toHaveBeenCalledWith({ orgId: ORG, documentIds: [body.documentId] });
+    expect(db.tables.audit_logs.find((a) => a.action === "UNIT_CODE_DECODE")).toMatchObject({
+      org_id: ORG, user_id: null, user_email: "v@vendor.test",
+      details: { via: "intake", documents: [{ id: body.documentId, outcome: "decoded", unitCode: "025", reason: null }] },
+    });
+    // a revision of an existing document is not a create — nothing is decoded
+    unitDecode.fn.mockClear();
+    seed({ link: { assigned_doc_ids: [D1] }, doc: { authored_by_link_id: null } });
+    await upload({ docId: D1, revLabel: "C" });
+    expect(unitDecode.fn).not.toHaveBeenCalled();
+  });
+  it("GAP-314 (I-26): the decode never fails the submission — one that throws, has no opinion, is not pasted or changes nothing records nothing and the door answers 200 as before", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (const answer of [
+      () => { throw new Error("codebook unreadable"); },
+      async () => ({ notApplied: false, noOpinion: true, results: [] }),
+      async () => ({ notApplied: true, results: [{ documentId: "x", unitCode: null, outcome: "not_decoded", reason: "r" }] }),
+      async (i: { documentIds: string[] }) => ({ notApplied: false, results: [{ documentId: i.documentIds[0], unitCode: null, outcome: "unchanged", reason: null }] }),
+    ]) {
+      resetDb(); seed({ doc: null });
+      unitDecode.fn.mockImplementationOnce(answer as never);
+      const res = await upload({ title: "Skid GA" });
+      expect(res.status).toBe(200);
+      expect((await res.json()).documentId).toBeTruthy();
+      expect((db.tables.audit_logs ?? []).find((a) => a.action === "UNIT_CODE_DECODE")).toBeUndefined();
+      expect(db.tables.project_documents).toHaveLength(1);
+    }
+    expect(spy.mock.calls.some((c) => /unit decode of .* did not run: codebook unreadable/.test(String(c[0])))).toBe(true);
+    spy.mockRestore();
   });
 });
 

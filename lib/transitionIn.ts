@@ -24,6 +24,7 @@ import { normalizeTag } from "@/lib/assets";
 import { submitTicketCreate, queueNotNotifiedLine } from "@/lib/ticketCreateClient";
 import { clipToLimit, MAX_DESCRIPTION, MAX_TITLE } from "@/lib/ticketCreate";
 import { completeUniquenessKey, numberIsTheKey, uniquenessTuple } from "@/lib/intakeLinks";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 /** Global variant of the entity-tag pattern (lib/notes.ts keeps the
  *  single-match one): FE-201, P-101A, PSV-1002 … The trailing lookahead
@@ -598,7 +599,16 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     }).then(() => undefined, () => undefined);
   }
 
-  return { ok: true, ...(note ? { note } : {}), ...(equipmentNote ? { equipmentNote } : {}) };
+  // GAP-314 (intelligence I-26): an adoption that RENUMBERS the sheet drops
+  // its unit decode (20261138) — ask the server to decode the stored number
+  // now, after the move landed. Best-effort and bounded
+  // (lib/unitCodeClient.ts never throws): a decode that did not run is said
+  // with the adoption's note, never as "not adopted". An adoption that keeps
+  // the number keeps its decode — nothing is asked.
+  const unitNote = newNumber ? (await requestUnitCodeDecode(input.orgId, [input.docId], "renumber")).note : null;
+  const notes = [note, unitNote ? `${newNumber}: ${unitNote}` : null].filter(Boolean).join(" ");
+
+  return { ok: true, ...(notes ? { note: notes } : {}), ...(equipmentNote ? { equipmentNote } : {}) };
 }
 
 /** The adoption's equipment links are the controller's assertion (intelligence

@@ -78,6 +78,11 @@ vi.mock("@/lib/supabase", () => {
   };
 });
 
+// GAP-314 (intelligence I-26): the renumber's unit decode — answers "nothing
+// to report" unless a case says otherwise.
+const unitDecode = vi.hoisted(() => ({ fn: vi.fn(async () => ({ results: [] as unknown[], note: null as string | null })) }));
+vi.mock("@/lib/unitCodeClient", () => ({ requestUnitCodeDecode: unitDecode.fn }));
+
 import {
   extractCandidateTags, likeExact, sameNumber, scanTransitionImpact, listTransitionCandidates, adoptDocument,
   blockingNumberCollision, candidateInReview, candidateReviewNote, pendingDraftRetired, RETIRED_PENDING_NOTE,
@@ -260,6 +265,25 @@ describe("INTK-3 / INTK-5 / SAF-12 — adoption re-checks at the click", () => {
     const ok = await adopt("D-25-3000");
     expect(ok).toEqual({ ok: true });
     expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-dest", document_number: "D-25-3000", uniqueness_key: "d-25-3000" });
+  });
+  it("GAP-314 (I-26): an adoption that renumbers asks for the unit decode AFTER the move, by id; one that keeps its number asks nothing; a decode that did not run is the adoption's note, never a refusal", async () => {
+    unitDecode.fn.mockClear();
+    seedAdopt();
+    expect(await adopt()).toEqual({ ok: true });
+    expect(unitDecode.fn).not.toHaveBeenCalled();
+    seedAdopt();
+    unitDecode.fn.mockImplementationOnce(async () => {
+      // the move landed before the decode is asked for
+      expect(db.tables.documents[0]).toMatchObject({ document_number: "D-25-3000", library_id: "lib-dest" });
+      return { results: [], note: null };
+    });
+    expect(await adopt("D-25-3000")).toEqual({ ok: true });
+    expect(unitDecode.fn).toHaveBeenCalledWith("o1", ["sheet1"], "renumber");
+    seedAdopt();
+    unitDecode.fn.mockImplementationOnce(async () => ({ results: [], note: "The unit code was not decoded (HTTP 500) — the next unit-identity run on Operational scope will place it." }));
+    const res = await adopt("D-25-3001");
+    expect(res.ok).toBe(true);
+    expect(res.note).toBe("D-25-3001: The unit code was not decoded (HTTP 500) — the next unit-identity run on Operational scope will place it.");
   });
   it("a multi-sheet library (['documentNumber','sheet']): two same-numbered sheets with no sheet value are BOTH adopted, unkeyed, and the operator is told what to set (INTK-5)", async () => {
     seedAdopt({ id: "sheet1", document_number: "P-100", title: "P&ID sheet 1", metadata: {} }, [
