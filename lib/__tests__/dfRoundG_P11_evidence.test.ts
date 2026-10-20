@@ -150,13 +150,15 @@ describe("EVID-10 / EVID-4 — the document evidence pack", () => {
     db.tables.document_acknowledgments = [{ id: "k1", document_id: "d1", assignee_name: "Field Op", status: "acknowledged", acknowledged_at: "2026-10-03T00:00:00Z" }];
     db.tables.distribution_acks = [{ id: "da1", document_id: "d1", recipient_email: "op@x", rev_label: "4", requested_at: "2026-10-02T00:00:00Z", acknowledged_at: null }];
     db.tables.download_audits = [{ id: "dl1", document_id: "d1", user_email: "op@x", created_at: "2026-10-02T00:00:00Z", source: "app" }];
-    db.tables.tickets = [{ id: "t1", ticket_id: "REQ-7", title: "Add valve", status: "CLOSED", assigned_engineer_name: "E. Eng", engineer_approved_at: "2026-09-30T00:00:00Z" }];
+    db.tables.tickets = [{ id: "t1", ticket_id: "REQ-7", title: "Add valve", status: "CLOSED", assigned_engineer_name: "E. Eng", engineer_approved_at: "2026-09-30T00:00:00Z",
+      history: [{ action: "ENGINEER_APPROVED_FINAL", user: "E. Eng", role: "Engineer-3", date: "2026-09-30T00:00:00Z", details: "Final approved" }] }];
+    db.tables.e_signatures.push({ id: "s3", resource_type: "ticket", resource_id: "t1", intent: "Approved", statement: "Request final approved", signer_name: "E. Eng", signed_at: "2026-09-30T00:00:00Z" });
   };
 
   it("gathers every record of people's acts — signatures by document AND by version, rosters, confirmations, copies, the request", async () => {
     seed();
     const d = await gatherEvidence("d1");
-    expect(d.signatures?.map((s) => s.id)).toEqual(["s1", "s2"]);
+    expect(d.signatures?.map((s) => s.id)).toEqual(["s3", "s1", "s2"]);
     expect(d.signoffs).toHaveLength(1);
     expect(d.acknowledgments).toHaveLength(1);
     expect(d.distributionAcks).toHaveLength(1);
@@ -164,7 +166,10 @@ describe("EVID-10 / EVID-4 — the document evidence pack", () => {
     expect(d.tickets?.map((t) => t.ticket_id)).toEqual(["REQ-7"]);
     expect(d.unread).toEqual([]);
     const html = renderEvidenceHtml(d);
-    for (const label of ["Electronic signatures (2)", "Review sign-offs (1)", "Read-and-understood acknowledgments (1)", "Distribution confirmations (1)", "Issued copies (1)", "Originating drafting requests (1)"]) {
+    expect(html).toContain("Originating request history (1)");
+    expect(html).toContain("ENGINEER_APPROVED_FINAL");
+    expect(html).toContain("Request final approved");
+    for (const label of ["Electronic signatures (3)", "Review sign-offs (1)", "Read-and-understood acknowledgments (1)", "Distribution confirmations (1)", "Issued copies (1)", "Originating drafting requests (1)"]) {
       expect(html, label).toContain(label);
     }
     expect(html).toContain("NOT CONFIRMED");

@@ -51,6 +51,7 @@ export const EVIDENCE_SECTIONS = {
   distributionAcks: "distribution confirmations",
   downloads: "issued copies",
   tickets: "originating drafting requests",
+  ticketHistory: "originating request history",
   audit: "audit trail",
 } as const;
 
@@ -108,10 +109,17 @@ export async function gatherEvidence(documentId: string, orgId?: string): Promis
   let tickets: Array<Record<string, unknown>> = [];
   if (ticketIds.length) {
     const { data, error } = await supabase.from("tickets")
-      .select("id, ticket_id, title, status, requester_name, assigned_drafter_name, assigned_engineer_name, engineer_review_requested_at, engineer_approved_at, closed_at")
+      .select("id, ticket_id, title, status, requester_name, assigned_drafter_name, assigned_engineer_name, engineer_review_requested_at, engineer_approved_at, closed_at, history")
       .in("id", ticketIds);
-    if (error) unread.push(EVIDENCE_SECTIONS.tickets);
+    if (error) unread.push(EVIDENCE_SECTIONS.tickets, EVIDENCE_SECTIONS.ticketHistory);
     else tickets = (data as Array<Record<string, unknown>>) ?? [];
+    // …and any signature bound to the request itself.
+    if (!sigFailed) {
+      const r = await readEveryRow((f, t) => supabase.from("e_signatures").select("*").eq("resource_type", "ticket").in("resource_id", ticketIds)
+        .order("signed_at", { ascending: true }).order("id", { ascending: true }).range(f, t));
+      if (r.failed) { sigFailed = true; if (!unread.includes(EVIDENCE_SECTIONS.signatures)) unread.push(EVIDENCE_SECTIONS.signatures); }
+      for (const row of r.rows) signatures.set(String(row.id), row);
+    }
   }
 
   return {
@@ -234,6 +242,13 @@ export function renderEvidenceHtml(data: EvidenceData): string {
       `<b>${esc(r.ticket_id || "—")}</b> ${esc(r.title || "")}`, esc(r.status || "—"), esc(r.requester_name || "—"),
       esc(r.assigned_drafter_name || "—"),
       r.engineer_approved_at ? `${date(r.engineer_approved_at)} <span class="muted">by ${esc(r.assigned_engineer_name || "—")}</span>` : "—",
+    ]),
+    // EVID-10 done-when 2: the request's approval history, as its own trail.
+    actSection(EVIDENCE_SECTIONS.ticketHistory, data.tickets === undefined ? undefined : data.tickets.flatMap((t) =>
+      (Array.isArray(t.history) ? (t.history as Array<Record<string, unknown>>) : []).map((h) => ({ ...h, ticket_id: t.ticket_id }))),
+    ["Request", "When", "Action", "By", "Details"], (h) => [
+      esc(h.ticket_id || "—"), date(h.date), `<b>${esc(h.action || "—")}</b>`,
+      `${esc(h.user || "—")}${h.role ? ` <span class="muted">(${esc(h.role)})</span>` : ""}`, esc(h.details || ""),
     ]),
   ].join("\n");
   const gathered = data.signatures !== undefined;
