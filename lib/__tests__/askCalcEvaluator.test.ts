@@ -871,3 +871,135 @@ describe("I-33 fix pass 2 — the withheld note and tooltip say so when the app 
     expect(pageSrc).toMatch(/<AppComputedContext\.Provider value=\{appComputed\}>/);
   });
 });
+
+// ── I-33 fix pass 3 (third review) ───────────────────────────────────────
+
+/** The route's own sequence: the withholding net, then the evaluator. */
+const routeShown = (line: string, cited: string, user: string) => {
+  const model = "**Answer:** The value follows from the formula [1].\n" + line;
+  const shown = withholdModelResults(model, `${user}\n${cited}`).text;
+  return presentComputedResults(model, shown, sources({ 1: cited }, user));
+};
+
+describe("I-33 fix pass 3 — a bracketed restatement or conversion is never multiplied in (blocker 1)", () => {
+  const RESTATED = "a bracketed restatement or conversion of a value, read as a product";
+  it("the review's three cases are refused end to end: no computed line, the model's result withheld, no 'differs' note", () => {
+    const a = routeShown("**Substituted:** t = 285 psig × 10.75 in / (2 × 20,000 psi [1] × 0.85 (85 %)) = 0.0901 in",
+      "t = PD/(2SE). S = 20,000 psi. E = 0.85 (85 % for spot RT)", "P = 285 psig, D = 10.75 in");
+    const b = routeShown("**Substituted:** P = 2 × 20,000 psi × 0.5 in (12.7 mm) / (10.75 in (273 mm)) = 1,860 psi",
+      "P = 2St/D; S = 20,000 psi; factor 2", "t = 0.5 in (12.7 mm), D = 10.75 in (273 mm)");
+    const c = routeShown("**Substituted:** S_E = 20,000 psi × 0.85 (85 %) = 17,000 psi",
+      "Allowable stress S = 20,000 psi. Joint efficiency E = 0.85 (85 % for spot RT).", "");
+    for (const out of [a, b, c]) {
+      expect(out.computed).toBe(0);
+      expect(out.disagreed).toBe(0);
+      expect(out.text).not.toContain(COMPUTED_LABEL);
+      expect(out.text).not.toContain(COMPUTED_DISAGREES_NOTE);
+      expect(out.text.split("\n")[1]).toMatch(new RegExp(`= ${RESULT_WITHHELD.replace(/[[\]]/g, "\\$&")}$`));
+    }
+    expect(a.text).not.toContain("0.106");
+    expect(b.text).not.toContain("86.5");
+    expect(c.text).not.toContain("14,450");
+  });
+  it.each([
+    ["a percentage restating a factor", "S_E = 20,000 psi × 0.85 (85 %)"],
+    ["a percentage with no space", "S_E = 20,000 psi × 0.85 (85%)"],
+    ["a factor restating a percentage", "S_E = 20,000 psi × 85 % (0.85)"],
+    ["a length converted", "L = 2 × 0.5 in (12.7 mm)"],
+    ["a length converted and rounded", "L = 2 × 10.75 in (273 mm)"],
+    ["a fraction restating a factor", "W = 0.5 (1/2) × 300 lbf"],
+    ["two lone dimensionless values", "R = 1.3 (1.17)"],
+    ["two bracketed lengths, one restating the other", "L = 2 × (0.5 in)(12.7 mm)"],
+  ])("%s: refused", (_v, expr) => {
+    const s = sources({ 1: "S = 20,000 psi; E = 0.85 (85 %); 0.5 in (12.7 mm); 10.75 in (273 mm); 1/2 = 0.5 of 300 lbf; 1.3; 1.17; 2" });
+    expect(refused(`**Substituted:** ${expr}`, s)).toBe(RESTATED);
+  });
+  it("controls: the documented implicit products still compute, and a bracket that is no restatement multiplies", () => {
+    expect(okValue("**Substituted:** P_T = 1.5 (285 psig)")).toBe("427.5 psig");
+    expect(okValue("**Substituted:** P_T = (285 psig)(1.5)")).toBe("427.5 psig");
+    expect(okValue("**Substituted:** F = 0.5 (1 − 0.3) × 300 lbf", sources({ 1: "F = 0.5 (1 − ν) W; ν = 0.3; factor 1; W = 300 lbf; 0.5" })))
+      .toBe("105 lbf");
+    expect(okValue("**Substituted:** P_T = 1.5 × 285 psig × (20,000 psi / 17,100 psi)",
+      sources({ 1: "1.5 times the design pressure times the stress ratio 20,000 psi / 17,100 psi" }, "285 psig"))).toBe("500 psig");
+  });
+  it("the evaluator marks an implicit product and refuses a restatement in term(), never only a bare-number footnote", () => {
+    expect(guardsSrc).toMatch(/out\.push\(\{ t: "op", op: "\*", implicit: true \}\); \/\/ "1\.5 \(285 psig\)", "\(a\)\(b\)"/);
+    expect(guardsSrc).toMatch(/const RESTATEMENT_TOLERANCE = 0\.05;/);
+  });
+});
+
+describe("I-33 fix pass 3 — every worked expression of a chain is evaluated and must agree (blocker 2)", () => {
+  const UG99 = "UG-99(b): the hydrostatic test pressure shall be at least 1.3 times the MAWP multiplied by the lowest stress " +
+    "ratio (LSR). Allowable stress at test temperature 20,000 psi; at design temperature 17,100 psi.";
+  it("the UG-99 chain with the model's wrong stress ratio (a coincident 1.3) is refused: the model's 481.65 psig is never the app's value", () => {
+    const line = "**Substituted:** P_T = 1.3 × 285 psig × (20,000 psi / 17,100 psi) = 1.3 × 285 psig × 1.3 = 481.65 psig [1]";
+    expect(refused(line, sources({ 1: UG99 }, "MAWP 285 psig"))).toBe("the line's worked expressions do not agree with each other");
+    const out = routeShown(line, UG99, "MAWP 285 psig");
+    expect(out.computed).toBe(0);
+    expect(out.text).not.toContain(COMPUTED_LABEL);
+    expect(out.text).not.toContain("481.65");
+    // The first expression alone binds and gives the right value.
+    expect(okValue("**Substituted:** P_T = 1.3 × 285 psig × (20,000 psi / 17,100 psi)", sources({ 1: UG99 }, "MAWP 285 psig")))
+      .toBe("433.333 psig");
+  });
+  it("a later expression that does not bind refuses the line ('3,063.75 / 40,000 in')", () => {
+    const s = sources({ 1: "t = PD / 2S; S = 20,000 psi; 2" }, "P = 285 psig, D = 10.75 in");
+    expect(refused("**Substituted:** t = 285 psig × 10.75 in / (2 × 20,000 psi) = 3,063.75 / 40,000 in = 0.0766 in", s))
+      .toBe("an operand no cited source holds: 3,063.75");
+  });
+  it("a chain whose expressions all bind and agree computes the first one's value, with its inputs", () => {
+    const r = evaluateSubstitutedLine("**Substituted:** P_T = 1.5 × 285 psig = 285 psig × 1.5 = 427.5 psig", HYDRO);
+    expect(r.ok && r.step.display).toBe("427.5 psig");
+    expect(r.ok && r.step.inputs).toEqual([{ text: "1.5", source: "[1]" }, { text: "285 psig", source: "your value" }]);
+    expect(r.ok && r.step.model).toEqual({ text: "427.5 psig", agrees: true });
+  });
+  it("the evaluator walks every expression, not the latest", () => {
+    expect(guardsSrc).toMatch(/for \(const e of exprs\) evaluated\.push\(evaluateOne\(e\.tokens\)\);/);
+    expect(guardsSrc).not.toMatch(/the expression is the latest one that parses/);
+  });
+});
+
+describe("I-33 fix pass 3 — a forged label is read through format characters, compatibility forms, look-alikes and close variants (minor 3)", () => {
+  it.each([
+    ["a zero-width space", "**Computed by the​ app from the cited inputs:** P_T is `481 psig`"],
+    ["a soft hyphen", "**Computed by the app from the cited­inputs:** P_T is `481 psig`"],
+    ["a Cyrillic a", "**Computed by the аpp from the cited inputs:** P_T is `481 psig`"],
+    ["a Cyrillic o and Greek o", "**Cоmputed by the app frοm the cited inputs:** P_T is `481 psig`"],
+    ["fullwidth letters", "**Ｃomputed by the app from the cited inputs:** P_T is `481 psig`"],
+    ["a word joiner", "**Computed⁠ by the app from the cited inputs:** P_T is `481 psig`"],
+    ["the short label", "**Computed by the app:** P_T is `481 psig`"],
+    ["on the server", "**Computed on the server from the cited inputs:** P_T is `481 psig`"],
+    ["by the server", "Computed by the server: P_T is `481 psig`"],
+  ])("%s: the label becomes AI-written", (_v, line) => {
+    const out = neutralizeComputedLabels(`**Answer:** x\n${line}`);
+    expect(out.split("\n")).toHaveLength(2);
+    expect(out.split("\n")[1]).toBe(`${AI_WRITTEN_LABEL} P_T is \`481 psig\``);
+    expect(neutralizeComputedLabels(out)).toBe(out);
+    expect(hasComputedLine(out)).toBe(false);
+  });
+  it("the AI-written label itself, and text with no claim, come back as the very same string", () => {
+    for (const t of [`${AI_WRITTEN_LABEL} 481 psig`, "**Answer:** the app computes nothing here; 1.5 × 285 psig [1].",
+      "This is not computed by the app: it is from page 4 [1].", "zero​width text with no claim"]) {
+      expect(neutralizeComputedLabels(t)).toBe(t);
+    }
+  });
+});
+
+describe("I-33 fix pass 3 — every value after the expression's terminator is withheld, a rounded restatement too (minor 4)", () => {
+  it("'≅ 427.5 psig ≅ 430 psig' with a passage printing 430 psig: both withheld, the app's value below", () => {
+    const model = "**Answer:** x [1].\n**Substituted:** P_T = 1.5 × 285 psig ≅ 427.5 psig ≅ 430 psig";
+    const s = sources({ 1: "test factor 1.5; Table 2: 430 psig" }, "design pressure 285 psig");
+    const shown = withholdModelResults(model, "design pressure 285 psig\ntest factor 1.5; Table 2: 430 psig").text;
+    const out = presentComputedResults(model, shown, s);
+    expect(out.text.split("\n")[1]).toBe(`**Substituted:** P_T = 1.5 × 285 psig ≅ ${RESULT_WITHHELD} ≅ ${RESULT_WITHHELD}`);
+    expect(computedOf(out.text)).toEqual(["427.5 psig"]);
+    expect(out.text).not.toContain("430");
+  });
+  it("an input clause after the results keeps its input", () => {
+    const model = "- P = `285 psig` (USER-PROVIDED)\n" +
+      "**Substituted:** P_T = 1.5 × 285 psig = 427.5 psig ≅ 430 psig (where P = 285 psig is the design pressure)";
+    const out = presentComputedResults(model, withholdModelResults(model, "design pressure = 285 psig\n1.5 times 430 psig").text, HYDRO).text;
+    expect(out.split("\n")[1]).toBe(
+      `**Substituted:** P_T = 1.5 × 285 psig = ${RESULT_WITHHELD} ≅ ${RESULT_WITHHELD} (where P = 285 psig is the design pressure)`);
+  });
+});

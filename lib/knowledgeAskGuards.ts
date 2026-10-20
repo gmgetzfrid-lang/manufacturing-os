@@ -798,8 +798,11 @@ export function withholdModelResults(answer: string, grounding?: string): { text
 // result's dimension. Anything it cannot do — parse the whole expression,
 // bind an operand, reconcile a unit, a zero divisor, a non-finite result, an
 // ambiguous "a / b × c", a model result written in a unit it cannot read or
-// in another dimension (I-33 fix pass 2), a bracket nesting or a line past
-// its bounds — adds nothing, and the withholding stands. It never
+// in another dimension (I-33 fix pass 2), an implicit product that reads as
+// a bracketed restatement or conversion of the value before it ("0.85 (85
+// %)", "0.5 in (12.7 mm)"), a chain whose worked expressions do not all bind
+// and agree (I-33 fix pass 3), a bracket nesting or a line past its bounds —
+// adds nothing, and the withholding stands. It never
 // un-withholds a model number: the model's own result on the line stays
 // withheld (also after a terminator the net does not read, "≅ 427.5 psig"), and where it differs
 // from the server's value by more than COMPUTED_TOLERANCE the answer says so
@@ -984,7 +987,7 @@ function readNumber(s: string, i: number): { value: number; end: number } | null
 
 type EvalToken =
   | { t: "num"; value: number; unit: UnitSpec | null; unitText: string; text: string; cites: number[] }
-  | { t: "op"; op: "+" | "-" | "*" | "/" | "^" }
+  | { t: "op"; op: "+" | "-" | "*" | "/" | "^"; implicit?: true }
   | { t: "("; } | { t: ")" };
 
 const MUL_GLYPHS = "×*·⋅∙✕✖⨯•∗";
@@ -1019,7 +1022,7 @@ function tokenizeExpression(s: string): EvalToken[] | null {
       if (!n) return null;
       const unit = readUnit(s, n.end);
       const end = unit ? unit.end : n.end;
-      if (out[out.length - 1]?.t === ")") out.push({ t: "op", op: "*" }); // ")2": implicit
+      if (out[out.length - 1]?.t === ")") out.push({ t: "op", op: "*", implicit: true }); // ")2": implicit
       out.push({
         t: "num", value: n.value, unit: unit ? unit.def : null,
         unitText: unit ? s.slice(n.end, unit.end).trim() : "", text: s.slice(i, end).trim(), cites: [],
@@ -1034,7 +1037,10 @@ function tokenizeExpression(s: string): EvalToken[] | null {
       // "20,000 psi (2)" — so the line is refused (ambiguous), never guessed
       // to be a product.
       if (prevEndsOperand() && FOOTNOTE_MARK.test(s.slice(i))) return null;
-      if (prevEndsOperand()) out.push({ t: "op", op: "*" }); // "1.5 (285 psig)", "(a)(b)"
+      // (I-33 fix pass 3) An implicit product is marked: the evaluator
+      // refuses one that is a bracketed restatement or conversion of the
+      // value before it ("0.85 (85 %)", "0.5 in (12.7 mm)", "0.5 (1/2)").
+      if (prevEndsOperand()) out.push({ t: "op", op: "*", implicit: true }); // "1.5 (285 psig)", "(a)(b)"
       out.push({ t: "(" });
       i++;
       continue;
@@ -1078,10 +1084,22 @@ type Quantity = { v: number; dim: Dim; ref: PressureRef };
 class EvalRefusal extends Error {}
 const refuse = (why: string): never => { throw new EvalRefusal(why); };
 
+/** (I-33 fix pass 3) How close two factors of one dimension must be for an
+ *  implicit product between them to be read as a restatement or conversion
+ *  of one value ("10.75 in (273 mm)" agrees to 0.02 %; "0.5 in (13 mm)",
+ *  rounded harder, to 2.4 %), never a product. */
+const RESTATEMENT_TOLERANCE = 0.05;
+
 /** The recursive-descent evaluator over the tokens:
  *    expr   := term (("+" | "-") term)*
  *    term   := unary (("*" | "/") unary)*   — a "/" is the term's LAST
- *              operator: "a / b × c" and "a / (b)(c)" are ambiguous, refused
+ *              operator: "a / b × c" and "a / (b)(c)" are ambiguous, refused;
+ *              an IMPLICIT product ("a (b)", "(a)(b)") is refused when it
+ *              reads as a bracketed restatement or conversion of the factor
+ *              before it (I-33 fix pass 3): either factor a lone percentage
+ *              ("0.85 (85 %)"), both lone values of one dimension ("0.5 in
+ *              (12.7 mm)", "1.3 (1.17)"), or both of one dimension within
+ *              RESTATEMENT_TOLERANCE ("0.5 (1/2)")
  *    unary  := ("-" | "+") unary | power
  *    power  := primary ("^" unary)?         — the exponent dimensionless, an
  *              integer from -4 to 4 when the base carries a unit
@@ -1122,14 +1140,37 @@ function evaluateTokens(tokens: EvalToken[], operand: (tok: Extract<EvalToken, {
     }
     return left;
   };
+  // The lone value a factor is, when it is one number (bare or bracketed:
+  // "0.85", "(85 %)"), else null.
+  const loneValue = (from: number, to: number): Extract<EvalToken, { t: "num" }> | null => {
+    const span = tokens.slice(from, to);
+    const n = span.length === 1 ? span[0] : span.length === 3 && span[0].t === "(" && span[2].t === ")" ? span[1] : null;
+    return n && n.t === "num" ? n : null;
+  };
+  const isPercent = (n: Extract<EvalToken, { t: "num" }> | null) =>
+    n !== null && n.unit !== null && n.unit.scale === 0.01 && dimEq(n.unit.dim, DIM_NONE);
   const term = (): Quantity => {
+    let from = pos;
     let left = unary();
+    let factor = { q: left, from, to: pos };
     let divided = false;
     for (let tok = peek(); tok?.t === "op" && (tok.op === "*" || tok.op === "/"); tok = peek()) {
       if (divided) refuse("an ambiguous division: a / b × c");
       pos++;
       ops++;
+      from = pos;
       const right = unary();
+      if (tok.implicit) {
+        const a = loneValue(factor.from, factor.to);
+        const b = loneValue(from, pos);
+        const sameDim = dimEq(factor.q.dim, right.dim);
+        const close = sameDim && Math.abs(factor.q.v - right.v)
+          <= RESTATEMENT_TOLERANCE * Math.max(Math.abs(factor.q.v), Math.abs(right.v));
+        if (isPercent(a) || isPercent(b) || (sameDim && a !== null && b !== null) || close) {
+          refuse("a bracketed restatement or conversion of a value, read as a product");
+        }
+      }
+      factor = { q: right, from, to: pos };
       if (tok.op === "/") {
         divided = true;
         if (right.v === 0) refuse("a division by zero");
@@ -1324,36 +1365,44 @@ export function evaluateSubstitutedLine(
   if (!label) return fail("no Substituted label");
   const from = label.index + label[0].length;
   const segments = splitSegments(text.slice(from));
-  // Walk the segments: the expression is the latest one that parses as a
-  // worked formula (an operator in it); a lone value right after it — its
-  // terminator not inside an input clause — is the model's own result.
-  let expr: { tokens: EvalToken[]; k: number; cut: boolean } | null = null;
+  // Walk the segments: the worked expressions are the run of segments that
+  // parse as a worked formula (an operator in it), from the first; a lone
+  // value right after the last of them — its terminator not inside an input
+  // clause — is the model's own result. (I-33 fix pass 3) EVERY expression
+  // of the run is evaluated, each operand of each bound, and they must agree
+  // ("1.3 × 285 psig × (20,000 psi / 17,100 psi) = 1.3 × 285 psig × 1.3":
+  // the model's own intermediate, a coincident "1.3" in the passage, never
+  // becomes the app's value), or the line is refused.
+  const exprs: Array<{ tokens: EvalToken[]; k: number; cut: boolean }> = [];
   let result: { k: number } | null = null;
   for (let k = 0; k < segments.length; k++) {
     const seg = segments[k].text;
-    if (expr && expr.k === k - 1 && !expr.cut && opensLoneResult(seg)) { result = { k }; break; }
+    const last = exprs[exprs.length - 1];
+    if (last && last.k === k - 1 && !last.cut && opensLoneResult(seg)) { result = { k }; break; }
     const clause = EVAL_CLAUSE.exec(seg);
     const candidate = (clause ? seg.slice(0, clause.index) : seg).replace(/[\s.,;:]+$/, "");
     const tokens = candidate.trim() === "" ? null : tokenizeExpression(candidate);
     if (tokens && tokens.some((tk) => tk.t === "op") && tokens.some((tk) => tk.t === "num")) {
-      expr = { tokens, k, cut: clause !== null };
-    } else if (expr) {
+      exprs.push({ tokens, k, cut: clause !== null });
+    } else if (last) {
       break;
     }
   }
   const resultStart = result ? from + segments[result.k].start : -1;
   if (result) {
-    // The result runs to the end of its segment, or to an input clause in it
-    // ("= 427.5 psig (where P = 285 psig …)": the clause's input stays).
-    const seg = segments[result.k].text;
-    const clause = EVAL_CLAUSE.exec(seg);
-    resultEnd = resultStart + (clause ? clause.index : seg.length);
+    // (I-33 fix pass 3) The result runs to the end of the line, or to an
+    // input clause after it ("= 427.5 psig (where P = 285 psig …)": the
+    // clause's input stays) — every value after the expression's terminator,
+    // a rounded restatement after a second terminator too ("≅ 427.5 psig ≅
+    // 430 psig").
+    const rest = text.slice(resultStart);
+    const clause = EVAL_CLAUSE.exec(rest);
+    resultEnd = resultStart + (clause ? clause.index : rest.length);
   }
-  if (!expr) return fail("no worked expression on the line", resultStart);
-  const exprTokens = expr.tokens;
+  if (exprs.length === 0) return fail("no worked expression on the line", resultStart);
   // The symbol the line computes: the left-hand side's first identifier,
   // past a step label ("Step 2: P_T", "P_T at 100 °F", "t per Eq. 3").
-  const lhs = expr.k > 0 ? segments[0].text.trim() : "";
+  const lhs = exprs[0].k > 0 ? segments[0].text.trim() : "";
   const symbol = /^(?:step\s+\d+\s*:\s*)?([A-Za-zΑ-Ωα-ω][\w′'’]{0,15})(?![\w′'’])/i.exec(lhs)?.[1] ?? null;
   const valuesOf = (t: string) => {
     let v = cache.get(t);
@@ -1364,51 +1413,66 @@ export function evaluateSubstitutedLine(
     }
     return v;
   };
-  const inputs: Array<{ text: string; source: string }> = [];
-  const displayCandidates: Array<{ dim: Dim; scale: number; ref: PressureRef; text: string }> = [];
-  const refs = new Set<PressureRef>();
-  const operand = (tok: Extract<EvalToken, { t: "num" }>): Quantity => {
-    const def = tok.unit ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
-    if (def.temp) refuse("a temperature (a scale with an offset is never worked)");
-    const q: Quantity = { v: tok.value * def.scale, dim: def.dim, ref: def.ref };
-    if (dimEq(def.dim, DIM_PRESSURE) && def.ref !== "") refs.add(def.ref);
-    const same = (s: { si: number; dim: Dim | null; ref: PressureRef }) =>
-      s.dim !== null && dimEq(s.dim, q.dim) && Math.abs(s.si - q.v) <= BIND_EPSILON * Math.max(Math.abs(s.si), Math.abs(q.v))
-      && (q.ref === "a") === (s.ref === "a");
-    let source: string | null = null;
-    // An operand with its own citation binds only in the source it names
-    // (or the asker's own values, which no [n] names); one without, in any
-    // cited source or the asker's values.
-    const pools: Array<[string, string]> = [
-      ...(tok.cites.length > 0
-        ? tok.cites.map((n) => [`[${n}]`, sources.cited.get(n) ?? ""] as [string, string])
-        : [...sources.cited.entries()].map(([n, t]) => [`[${n}]`, t] as [string, string])),
-      ["your value", sources.user],
-    ];
-    if (tok.cites.some((n) => !sources.cited.has(n))) refuse("an operand citing a source the answer was not given");
-    for (const [name, t] of pools) {
-      if (t && valuesOf(t).some((s) => !s.temp && same(s))) { source = name; break; }
-    }
-    if (source === null && tok.cites.length === 0 && earlier.some((e) => same({ si: e.v, dim: e.dim, ref: e.ref }))) {
-      source = "an earlier step the app computed";
-    }
-    if (source === null) refuse(`an operand no cited source holds: ${tok.text}`);
-    inputs.push({ text: tok.text, source: source! });
-    if (!dimEq(def.dim, DIM_NONE) && tok.unitText !== "") {
-      displayCandidates.push({ dim: def.dim, scale: def.scale, ref: def.ref, text: tok.unitText });
-    }
-    return q;
+  // One expression, evaluated with every operand bound; its inputs and the
+  // units its operands carry are its own.
+  const evaluateOne = (tokens: EvalToken[]) => {
+    const inputs: Array<{ text: string; source: string }> = [];
+    const displayCandidates: Array<{ dim: Dim; scale: number; ref: PressureRef; text: string }> = [];
+    const refs = new Set<PressureRef>();
+    const operand = (tok: Extract<EvalToken, { t: "num" }>): Quantity => {
+      const def = tok.unit ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
+      if (def.temp) refuse("a temperature (a scale with an offset is never worked)");
+      const q: Quantity = { v: tok.value * def.scale, dim: def.dim, ref: def.ref };
+      if (dimEq(def.dim, DIM_PRESSURE) && def.ref !== "") refs.add(def.ref);
+      const same = (s: { si: number; dim: Dim | null; ref: PressureRef }) =>
+        s.dim !== null && dimEq(s.dim, q.dim) && Math.abs(s.si - q.v) <= BIND_EPSILON * Math.max(Math.abs(s.si), Math.abs(q.v))
+        && (q.ref === "a") === (s.ref === "a");
+      let source: string | null = null;
+      // An operand with its own citation binds only in the source it names
+      // (or the asker's own values, which no [n] names); one without, in any
+      // cited source or the asker's values.
+      const pools: Array<[string, string]> = [
+        ...(tok.cites.length > 0
+          ? tok.cites.map((n) => [`[${n}]`, sources.cited.get(n) ?? ""] as [string, string])
+          : [...sources.cited.entries()].map(([n, t]) => [`[${n}]`, t] as [string, string])),
+        ["your value", sources.user],
+      ];
+      if (tok.cites.some((n) => !sources.cited.has(n))) refuse("an operand citing a source the answer was not given");
+      for (const [name, t] of pools) {
+        if (t && valuesOf(t).some((s) => !s.temp && same(s))) { source = name; break; }
+      }
+      if (source === null && tok.cites.length === 0 && earlier.some((e) => same({ si: e.v, dim: e.dim, ref: e.ref }))) {
+        source = "an earlier step the app computed";
+      }
+      if (source === null) refuse(`an operand no cited source holds: ${tok.text}`);
+      inputs.push({ text: tok.text, source: source! });
+      if (!dimEq(def.dim, DIM_NONE) && tok.unitText !== "") {
+        displayCandidates.push({ dim: def.dim, scale: def.scale, ref: def.ref, text: tok.unitText });
+      }
+      return q;
+    };
+    const { q, mixedSum } = evaluateTokens(tokens, operand);
+    if (refs.has("g") && refs.has("a")) refuse("gauge and absolute pressure in one expression");
+    if (dimEq(q.dim, DIM_PRESSURE) && mixedSum) refuse("a pressure summed across gauge, absolute or plain units");
+    return { q, inputs, displayCandidates };
   };
-  let evaluated: { q: Quantity; mixedSum: boolean };
+  const evaluated: Array<ReturnType<typeof evaluateOne>> = [];
   try {
-    evaluated = evaluateTokens(exprTokens, operand);
+    for (const e of exprs) evaluated.push(evaluateOne(e.tokens));
   } catch (e) {
     if (e instanceof EvalRefusal) return fail(e.message, resultStart);
     throw e;
   }
-  const { q, mixedSum } = evaluated;
-  if (refs.has("g") && refs.has("a")) return fail("gauge and absolute pressure in one expression", resultStart);
-  if (dimEq(q.dim, DIM_PRESSURE) && mixedSum) return fail("a pressure summed across gauge, absolute or plain units", resultStart);
+  // The first expression carries the value, its inputs and its unit; every
+  // later one in the chain must agree with it, in one dimension and pressure
+  // reference, within COMPUTED_TOLERANCE.
+  const { q, inputs, displayCandidates } = evaluated[0];
+  for (const other of evaluated.slice(1)) {
+    const o = other.q;
+    const agrees = dimEq(o.dim, q.dim) && (o.ref === q.ref || o.ref === "" || q.ref === "")
+      && (q.v === 0 ? o.v === 0 : Math.abs(o.v - q.v) <= COMPUTED_TOLERANCE * Math.abs(q.v));
+    if (!agrees) return fail("the line's worked expressions do not agree with each other", resultStart);
+  }
   let value = q.v;
   let unit = "";
   if (!dimEq(q.dim, DIM_NONE)) {
@@ -1478,13 +1542,47 @@ const isComputedLine = (line: string): boolean =>
 /** (I-33 fix pass) What the computed label, or the note, says when the
  *  MODEL wrote it: a line the model wrote never carries the app's label. */
 export const AI_WRITTEN_LABEL = "AI-written, not computed by the app:";
+/** (I-33 fix pass 3) Any claim to be a computation by the app or the
+ *  server — the exact label or a close variant ("Computed by the app:",
+ *  "Computed on the server from the cited inputs:") — read on a folded copy
+ *  of the line (foldForLabel). Never the "not computed by the app" of
+ *  AI_WRITTEN_LABEL itself, so neutralizing stays idempotent. */
 const FORGED_LABEL =
-  /(?:\*\*)?\s*computed\s+by\s+the\s+app\s+from\s+the\s+cited\s+inputs(?:\s*\*\*)?(?:\s*:)?(?:\s*\*\*)?\s*/gi;
+  /(?:\*\*)?\s*(?<!\bnot\s{1,3})computed\s+(?:by|on)\s+(?:the\s+)?(?:app|server)\b(?:\s+from\s+the\s+cited\s*inputs)?(?:\s*\*\*)?(?:\s*:)?(?:\s*\*\*)?\s*/gi;
 const FORGED_NOTE = /differs\s+from\s+the\s+app['’]s\s+value/i;
+/** Latin look-alikes (Cyrillic, Greek) a forged label could be spelt with. */
+const LABEL_CONFUSABLES: Record<string, string> = {
+  "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "і": "i", "ѕ": "s", "ԁ": "d", "һ": "h",
+  "ј": "j", "ԛ": "q", "ԝ": "w", "ո": "n", "ս": "u", "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H",
+  "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X", "І": "I", "Ѕ": "S", "Ј": "J",
+  "α": "a", "ο": "o", "ρ": "p", "ε": "e", "ι": "i", "κ": "k", "ν": "v", "υ": "u", "τ": "t", "Α": "A", "Β": "B",
+  "Ε": "E", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X",
+};
+/** (I-33 fix pass 3) A copy of `line` a forged label is read on: format
+ *  characters (zero-width space, soft hyphen, joiners: \p{Cf}) dropped,
+ *  each character NFKC-normalised and Cyrillic / Greek look-alikes folded to
+ *  Latin — with, for each code unit of the copy, the index in `line` it came
+ *  from (and one past the end), so a match maps back to the original span. */
+function foldForLabel(line: string): { text: string; at: number[] } {
+  let text = "";
+  const at: number[] = [];
+  for (let i = 0; i < line.length;) {
+    const ch = String.fromCodePoint(line.codePointAt(i)!);
+    const piece = /\p{Cf}/u.test(ch) ? "" : [...ch.normalize("NFKC")].map((c) => LABEL_CONFUSABLES[c] ?? c).join("");
+    for (let j = 0; j < piece.length; j++) at.push(i);
+    text += piece;
+    i += ch.length;
+  }
+  at.push(line.length);
+  return { text, at };
+}
 
 /** (I-33 fix pass) The model's own text with every claim to be the app's
  *  computation taken out of it: wherever it writes the computed label
- *  (bold or not, any case) the label becomes AI_WRITTEN_LABEL, and a line
+ *  (bold or not, any case; I-33 fix pass 3: or a close variant — "Computed
+ *  by the app:", "Computed on the server …" — and through a zero-width or
+ *  soft-hyphen character, a compatibility form or a Cyrillic / Greek
+ *  look-alike letter) the label becomes AI_WRITTEN_LABEL, and a line
  *  that carries the evaluator's "differs from the app's value" note is
  *  marked as AI-written — so only presentComputedResults ever writes the
  *  label the page marks, and a passage that injects it (or a model that
@@ -1494,12 +1592,26 @@ const FORGED_NOTE = /differs\s+from\s+the\s+app['’]s\s+value/i;
  *  returned byte for byte". Line for line (no line is added or removed),
  *  idempotent, and text without either comes back as the very same string. */
 export function neutralizeComputedLabels(text: string): string {
+  const folded = foldForLabel(text).text;
   FORGED_LABEL.lastIndex = 0;
-  if (!FORGED_LABEL.test(text) && !FORGED_NOTE.test(text)) return text;
+  if (!FORGED_LABEL.test(folded) && !FORGED_NOTE.test(folded)) return text;
   return text.split("\n").map((line) => {
-    let out = line.replace(FORGED_LABEL, (m: string, at: number, whole: string) =>
-      `${/^\s/.test(m) ? " " : ""}${AI_WRITTEN_LABEL}${at + m.length < whole.length ? " " : ""}`);
-    if (FORGED_NOTE.test(out) && !out.startsWith(AI_WRITTEN_LABEL)) out = `${AI_WRITTEN_LABEL} ${out}`;
+    // (I-33 fix pass 3) Read on the folded copy; each match replaces its
+    // span of the original line (the format characters inside it go too).
+    const f = foldForLabel(line);
+    let out = "";
+    let last = 0;
+    FORGED_LABEL.lastIndex = 0;
+    for (let m = FORGED_LABEL.exec(f.text); m !== null; m = FORGED_LABEL.exec(f.text)) {
+      if (m[0] === "") { FORGED_LABEL.lastIndex++; continue; }
+      const start = f.at[m.index];
+      const end = f.at[m.index + m[0].length];
+      out += line.slice(last, start) +
+        `${/^\s/.test(m[0]) ? " " : ""}${AI_WRITTEN_LABEL}${m.index + m[0].length < f.text.length ? " " : ""}`;
+      last = end;
+    }
+    out += line.slice(last);
+    if (FORGED_NOTE.test(foldForLabel(out).text) && !out.startsWith(AI_WRITTEN_LABEL)) out = `${AI_WRITTEN_LABEL} ${out}`;
     return out;
   }).join("\n");
 }
@@ -1551,7 +1663,9 @@ export function presentComputedResults(modelAnswer: string, shownAnswer: string,
     if (++evaluatedLines > EVAL_MAX_LINES) break;
     const outcome = evaluateSubstitutedLine(raw[i], sources, earlier, cache);
     // The model's own result on this line stays withheld, whatever the net
-    // read: every value after its terminator.
+    // read: every value after the expression's terminator, to the end of
+    // the line or an input clause (I-33 fix pass 3: a rounded restatement
+    // after a second terminator too).
     if (outcome.ok ? outcome.step.resultStart >= 0 : outcome.resultStart >= 0) {
       // (Read for its structure only: a marker stands as a one-digit
       // value of the same length, so the positions hold.)
