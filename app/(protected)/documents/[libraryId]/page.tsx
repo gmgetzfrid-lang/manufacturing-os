@@ -342,7 +342,7 @@ export default function LibraryExplorerPage() {
   const [loadingUpload, setLoadingUpload] = useState(false);
   // Per-batch progress: a bulk upload that shows nothing for two minutes is
   // indistinguishable from one that has died.
-  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number; phase?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Good news, shown the same way errors now are (in a banner, on screen).
   const [notice, setNotice] = useState<string | null>(null);
@@ -533,9 +533,11 @@ export default function LibraryExplorerPage() {
         if (now - last > 120) { last = now; setReadingDrop(n); }
       });
       if (hasDirectories) {
+        readingCancelledRef.current = false;
+        readingStartRef.current = Date.now();
         setReadingDrop(0);
         void promise
-          .then((pathed) => handleUploadPathedFiles(pathed))
+          .then((pathed) => { if (!readingCancelledRef.current) handleUploadPathedFiles(pathed); })
           .catch((err) => {
             setError(err instanceof FolderUploadLimitError
               ? err.message
@@ -604,7 +606,7 @@ export default function LibraryExplorerPage() {
     idByKey: Map<string, string>;
     chainByFolderId: Map<string, AccessControl[]>;
   }
-  const ensureFolderPlan = async (plan: FolderPlan): Promise<EnsuredFolderPlan> => {
+  const ensureFolderPlan = async (plan: FolderPlan, onProgress?: (done: number, total: number) => void): Promise<EnsuredFolderPlan> => {
     const idByKey = new Map<string, string>();
     const chainByFolderId = new Map<string, AccessControl[]>();
     if (!activeOrgId || !uid || !library) return { idByKey, chainByFolderId };
@@ -628,7 +630,9 @@ export default function LibraryExplorerPage() {
       }
       return baseChain;
     };
-    for (const node of plan.folders) {
+    const createdIds: string[] = [];
+    let made = 0;
+    const makeNode = async (node: FolderPlan["folders"][number]) => {
       const parentCollectionId = node.parentKey
         ? idByKey.get(node.parentKey) ?? (currentFolderId ?? null)
         : (currentFolderId ?? null);
@@ -636,7 +640,7 @@ export default function LibraryExplorerPage() {
       if (reuse) {
         idByKey.set(node.key, reuse);
         chainByFolderId.set(reuse, chainOf(reuse));
-        continue;
+        return;
       }
       const newAcl = library.defaultNewAcl
         ?? (library.folderSecurity === "Granular"
@@ -661,11 +665,29 @@ export default function LibraryExplorerPage() {
           .update({ acl_index: aclIndex ?? null }).eq("id", newId);
         if (idxErr) throw new Error(`Couldn't apply permissions to the new folder "${node.name}": ${idxErr.message}`);
       }
-      nudgeEstateResolver(activeOrgId, { folderIds: [newId] });
+      createdIds.push(newId);
       chainByFolderId.set(newId, myChain);
       register(parentCollectionId, node.name, newId);
       idByKey.set(node.key, newId);
+    };
+    // Level by level (a folder needs its parent's id), but every folder on
+    // a level is created in parallel — a 100-folder tree used to be 100+
+    // round trips in a row before the first file moved.
+    const levels = new Map<number, Array<FolderPlan["folders"][number]>>();
+    for (const n of plan.folders) {
+      const l = levels.get(n.depth);
+      if (l) l.push(n); else levels.set(n.depth, [n]);
     }
+    for (const depth of [...levels.keys()].sort((a, b) => a - b)) {
+      const queue = [...levels.get(depth)!];
+      await Promise.all(Array.from({ length: Math.min(6, queue.length) }, async () => {
+        for (let n = queue.shift(); n; n = queue.shift()) {
+          await makeNode(n);
+          onProgress?.(++made, plan.folders.length);
+        }
+      }));
+    }
+    if (createdIds.length) nudgeEstateResolver(activeOrgId, { folderIds: createdIds });
     return { idByKey, chainByFolderId };
   };
   // Survives a partial-failure retry so a second Upload click reuses the
@@ -1295,6 +1317,8 @@ export default function LibraryExplorerPage() {
   const [folderStaged, setFolderStaged] = useState(false);
   // Files found so far while a dropped folder is being read (null = idle).
   const [readingDrop, setReadingDrop] = useState<number | null>(null);
+  const readingCancelledRef = useRef(false);
+  const readingStartRef = useRef(0);
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   // Folders waiting on the delete window (one, or every selected tile).
   const [deleteFolders, setDeleteFolders] = useState<Array<{ id: string; name: string }> | null>(null);
@@ -2553,7 +2577,9 @@ export default function LibraryExplorerPage() {
         const plan = buildFolderPlan(pathed);
         // A retry after partial failure reuses the already-built tree.
         if (!uploadFolderPlanRef.current) {
-          uploadFolderPlanRef.current = await ensureFolderPlan(plan);
+          setUploadProgress({ done: 0, total: plan.folders.length, phase: "Creating folders" });
+          uploadFolderPlanRef.current = await ensureFolderPlan(plan,
+            (done, total) => setUploadProgress({ done, total, phase: "Creating folders" }));
         }
         ensured = uploadFolderPlanRef.current;
         foldersCreatedNote = `Folder structure preserved (${plan.folders.length} folder${plan.folders.length === 1 ? "" : "s"} in the tree).`;
@@ -2579,6 +2605,7 @@ export default function LibraryExplorerPage() {
       // same folder again therefore FILLS IN what's missing instead of adding
       // a second copy of everything.
       const existingKeys = new Set<string>();
+      setUploadProgress({ done: 0, total: 0, phase: "Checking what's already in the library" });
       {
         const targets = [...new Set(items.map((it) => targetFolderFor(it.file)))];
         const ids = targets.filter((t): t is string => !!t);
@@ -3925,15 +3952,6 @@ export default function LibraryExplorerPage() {
               onKeyDown={handleExplorerKeyDown}
             >
               {/* Drag overlay */}
-              {readingDrop !== null && (
-                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[var(--color-surface)]/90">
-                  <Loader2 className="w-9 h-9 text-blue-600 animate-spin mb-3" />
-                  <p className="text-lg font-bold text-[var(--color-text)]">Reading your folder…</p>
-                  <p className="text-sm text-[var(--color-text-muted)] mt-1">
-                    {readingDrop.toLocaleString()} file{readingDrop === 1 ? "" : "s"} found so far — the upload window opens as soon as it&apos;s done
-                  </p>
-                </div>
-              )}
               {isDragOver && (
                 <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-blue-50/95 pointer-events-none">
                   <div className="w-20 h-20 rounded-2xl bg-blue-100 border-2 border-blue-400 border-dashed flex items-center justify-center mb-4">
@@ -4936,6 +4954,25 @@ export default function LibraryExplorerPage() {
         orgId={activeOrgId ?? undefined}
       />
 
+              {readingDrop !== null && (
+                // FIXED, not absolute: in a tall library the centre of the
+                // file area can be far below the screen, which made this read
+                // as a frozen page.
+                <div className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px] p-4">
+                  <div className="w-full max-w-sm rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-5 text-center">
+                    <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-3" />
+                    <p className="text-base font-black text-[var(--color-text)]">Reading your folder…</p>
+                    <p className="text-sm text-[var(--color-text)] mt-1">
+                      <b>{readingDrop.toLocaleString()}</b> file{readingDrop === 1 ? "" : "s"} found
+                    </p>
+                    <ReadingHint startedAt={readingStartRef.current} />
+                    <button onClick={() => { readingCancelledRef.current = true; setReadingDrop(null); }}
+                      className="mt-3 px-3 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
       {showDuplicates && activeOrgId && (
         <DuplicateUploadsModal
           orgId={activeOrgId}
@@ -5332,6 +5369,30 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Elapsed time while a dropped folder is read, and — when it's slow — the
+ *  usual reason: cloud-only files (OneDrive / SharePoint "Files On-Demand")
+ *  that Windows must download before the browser can hand them over. */
+function ReadingHint({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const secs = Math.max(0, Math.round((now - startedAt) / 1000));
+  return (
+    <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+      <div>{secs}s — the upload window opens as soon as every file is found.</div>
+      {secs >= 15 && (
+        <div className="mt-2 text-left rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2.5 py-2 text-amber-900 dark:text-amber-200">
+          Taking a while? If this folder is in OneDrive or SharePoint, files that are &quot;online-only&quot; have to download to
+          your computer first. Right-click the folder → <b>Always keep on this device</b>, wait for it to sync, then drop it again —
+          or use <b>Upload → A whole folder…</b>.
+        </div>
+      )}
     </div>
   );
 }

@@ -84,7 +84,7 @@ interface MetadataStagingModalProps {
     pathOf: (f: File) => string[] | undefined;
   };
   /** Live transfer count while submitting. */
-  progress?: { done: number; total: number } | null;
+  progress?: { done: number; total: number; phase?: string } | null;
 }
 
 const DEFAULT_STATUS_OPTIONS = ["Draft", "In Review", "Issued", "IFC", "Superseded"];
@@ -151,6 +151,9 @@ export default function MetadataStagingModal({
   const [error, setError] = useState<string | null>(null);
   // After a partial run: what happened, in the window (not behind it).
   const [outcome, setOutcome] = useState<string | null>(null);
+  // A 1,000-row grid of inputs takes seconds to draw; the first 200 are
+  // enough to review, the rest are a click away (bulk-apply covers all).
+  const [showAllRows, setShowAllRows] = useState(false);
   const [failedWhy, setFailedWhy] = useState<Array<{ file: File; reason: string }>>([]);
   // Held for the life of one submit so Stop can abort the transfers that are
   // actually on the wire, not merely stop rendering a spinner over them.
@@ -769,7 +772,7 @@ export default function MetadataStagingModal({
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
-              {items.map((it) => {
+              {(showAllRows ? items : items.slice(0, 200)).map((it) => {
                 const rowErrors = validation.filter((e) => e.rowId === it.id);
                 const errFor = (field: string) => rowErrors.find((e) => e.field === field)?.msg;
                 return (
@@ -899,6 +902,15 @@ export default function MetadataStagingModal({
                   </tr>
                 );
               })}
+              {!showAllRows && items.length > 200 && (
+                <tr>
+                  <td colSpan={99} className="text-center py-3">
+                    <button onClick={() => setShowAllRows(true)} className="text-xs font-bold text-blue-600 hover:underline">
+                      Showing 200 of {items.length.toLocaleString()} — show all (slower)
+                    </button>
+                  </td>
+                </tr>
+              )}
               {items.length === 0 && (
                 <tr>
                   <td
@@ -950,7 +962,16 @@ export default function MetadataStagingModal({
         )}
         <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
           <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 min-w-0">
-            {submitting && progress ? (
+            {submitting && progress?.phase ? (
+              <span className="font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                {progress.phase}{progress.total > 0 ? ` — ${progress.done} of ${progress.total}` : "…"}
+              </span>
+            ) : submitting && !progress ? (
+              <span className="font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Getting ready…
+              </span>
+            ) : submitting && progress ? (
               <>
                 <span className="font-bold text-[var(--color-text)]">Uploading {progress.done} of {progress.total}…</span>
                 <span className="w-32 h-1.5 rounded-full bg-[var(--color-border)] overflow-hidden">
