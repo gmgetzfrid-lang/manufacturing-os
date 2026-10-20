@@ -74,7 +74,10 @@ function entryFile(entry: FsFileEntry): Promise<File> {
   return new Promise((resolve, reject) => entry.file(resolve, reject));
 }
 
-async function walkEntry(entry: FsEntry, path: string[], out: PathedFile[]): Promise<void> {
+/** Walks a dropped tree. Siblings are read IN PARALLEL — a big tree read
+ *  one entry at a time took long enough to look broken. `onFound` reports
+ *  the running count so the screen can say what's happening. */
+async function walkEntry(entry: FsEntry, path: string[], out: PathedFile[], onFound?: (n: number) => void): Promise<void> {
   if (out.length >= MAX_FOLDER_UPLOAD_FILES) {
     throw new FolderUploadLimitError(
       `That drop contains more than ${MAX_FOLDER_UPLOAD_FILES} files. Upload it in smaller batches.`);
@@ -85,20 +88,31 @@ async function walkEntry(entry: FsEntry, path: string[], out: PathedFile[]): Pro
   if (entry.isFile) {
     if (isJunkFile(entry.name)) return;
     const file = await entryFile(entry as FsFileEntry);
+    if (out.length >= MAX_FOLDER_UPLOAD_FILES) {
+      throw new FolderUploadLimitError(
+        `That drop contains more than ${MAX_FOLDER_UPLOAD_FILES} files. Upload it in smaller batches.`);
+    }
     out.push({ file, relPath: path });
+    onFound?.(out.length);
     return;
   }
   if (entry.isDirectory) {
     const children = await readAllEntries(entry as FsDirEntry);
-    for (const child of children) {
-      await walkEntry(child, [...path, entry.name], out);
-    }
+    const sub = [...path, entry.name];
+    await Promise.all(children.map((child) => walkEntry(child, sub, out, onFound)));
   }
+}
+
+/** Stable order for display: by folder path, then name. */
+function byPath(a: PathedFile, b: PathedFile): number {
+  const pa = a.relPath.join("/"), pb = b.relPath.join("/");
+  return pa === pb ? a.file.name.localeCompare(b.file.name, undefined, { numeric: true })
+    : pa.localeCompare(pb, undefined, { numeric: true });
 }
 
 /** Call SYNCHRONOUSLY inside the drop handler to capture entries (the
  *  DataTransferItemList is dead after the event), then await the result. */
-export function collectDroppedFiles(items: DataTransferItemList): {
+export function collectDroppedFiles(items: DataTransferItemList, onFound?: (n: number) => void): {
   hasDirectories: boolean;
   promise: Promise<PathedFile[]>;
 } {
@@ -125,8 +139,8 @@ export function collectDroppedFiles(items: DataTransferItemList): {
       }
       out.push({ file: f, relPath: [] });
     }
-    for (const entry of entries) await walkEntry(entry, [], out);
-    return out;
+    await Promise.all(entries.map((entry) => walkEntry(entry, [], out, onFound)));
+    return out.sort(byPath);
   })();
   return { hasDirectories, promise };
 }

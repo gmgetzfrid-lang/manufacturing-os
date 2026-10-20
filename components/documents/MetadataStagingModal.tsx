@@ -103,13 +103,17 @@ export default function MetadataStagingModal({
     return { folders: all.size, top: [...top.entries()].sort((a, b) => a[0].localeCompare(b[0])), loose };
   }, [folderUpload, files]);
   const detailed = !folderUpload || showDetails;
+  // Big batches skip the browser-side extras below (they read every file in
+  // full before you've clicked anything); the upload fingerprints each file
+  // as it sends it instead, so nothing is lost.
+  const heavyBatch = files.length > 150;
   // ── Same bytes already here? ──────────────────────────────────────
   // Hashed in the browser while the person reviews; nothing waits on it.
   const [hashes, setHashes] = useState<Map<File, string>>(new Map());
   const [copies, setCopies] = useState<Map<string, ExistingCopy[]>>(new Map());
   const [checking, setChecking] = useState(false);
   useEffect(() => {
-    if (!isOpen || files.length === 0) { setHashes(new Map()); setCopies(new Map()); return; }
+    if (!isOpen || files.length === 0 || heavyBatch) { setHashes(new Map()); setCopies(new Map()); setChecking(false); return; }
     let live = true;
     setChecking(true);
     (async () => {
@@ -124,7 +128,7 @@ export default function MetadataStagingModal({
       if (live) { setCopies(found); setChecking(false); }
     })().catch(() => { if (live) setChecking(false); });
     return () => { live = false; };
-  }, [isOpen, files, orgId]);
+  }, [isOpen, files, orgId, heavyBatch]);
 
   const [fixingUniqueness, setFixingUniqueness] = useState(false);
   const [items, setItems] = useState<StagedItem[]>([]);
@@ -226,6 +230,7 @@ export default function MetadataStagingModal({
       // drawings means N whole files in memory and N pdf.js parses on this
       // thread — run that alongside a batch that is already transferring and
       // both crawl. Skip; the filename parse still fills these rows.
+      if (next.length > 40) return; // a folder of hundreds: filenames are enough
       const { isUploading } = await import("@/lib/uploadActivity");
       if (cancel.signal.aborted || isUploading()) return;
       const { readTitleBlock } = await import("@/lib/titleBlock");

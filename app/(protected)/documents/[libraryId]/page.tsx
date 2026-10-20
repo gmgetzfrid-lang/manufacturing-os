@@ -48,6 +48,7 @@ import PillCell from "@/components/documents/PillCell";
 import FolderRail from "@/components/documents/FolderRail";
 import PathBar from "@/components/documents/PathBar";
 import FolderDeleteModal, { type FolderDeleteResult } from "@/components/documents/FolderDeleteModal";
+import { hashFile } from "@/lib/duplicateFiles";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
@@ -516,15 +517,23 @@ export default function LibraryExplorerPage() {
     // dead once the handler returns. Dropped FOLDERS are traversed and their
     // subtree recreated; plain files take the classic path.
     if (e.dataTransfer.items?.length) {
-      const { hasDirectories, promise } = collectDroppedFiles(e.dataTransfer.items);
+      // Reading a big tree takes a moment — say so at once, with a running
+      // count, instead of a screen that looks frozen.
+      let last = 0;
+      const { hasDirectories, promise } = collectDroppedFiles(e.dataTransfer.items, (n) => {
+        const now = Date.now();
+        if (now - last > 120) { last = now; setReadingDrop(n); }
+      });
       if (hasDirectories) {
+        setReadingDrop(0);
         void promise
           .then((pathed) => handleUploadPathedFiles(pathed))
           .catch((err) => {
             setError(err instanceof FolderUploadLimitError
               ? err.message
-              : "Couldn't read the dropped folder. Try the Upload folder button instead.");
-          });
+              : "Couldn't read the dropped folder. Try Upload → A whole folder instead.");
+          })
+          .finally(() => setReadingDrop(null));
         return;
       }
       // Plain-file drop: the classic path handles it; the traversal promise
@@ -1276,6 +1285,9 @@ export default function LibraryExplorerPage() {
   // True while the staged batch is a folder tree (the staging window leads
   // with "upload as-is" instead of a row per file).
   const [folderStaged, setFolderStaged] = useState(false);
+  // Files found so far while a dropped folder is being read (null = idle).
+  const [readingDrop, setReadingDrop] = useState<number | null>(null);
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   // Folders waiting on the delete window (one, or every selected tile).
   const [deleteFolders, setDeleteFolders] = useState<Array<{ id: string; name: string }> | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState<{ done: number; total: number } | null>(null);
@@ -2463,7 +2475,7 @@ export default function LibraryExplorerPage() {
   //
   // 2. Files run through R2 + DB in parallel (concurrency = 4) so
   //    8 files don't take 8× one-file time.
-  const UPLOAD_CONCURRENCY = 4;
+  const UPLOAD_CONCURRENCY = 6;
   const handleStagedUpload = async (items: StagedItem[], signal?: AbortSignal) => {
     // Every document that lands is handed to the estate resolver once the
     // upload is done — unit, project and equipment links from its name,
@@ -2590,10 +2602,14 @@ export default function LibraryExplorerPage() {
           folderPath: [...folderPath, ...subPath],
           filename: file.name,
         });
+        // Fingerprint alongside the transfer when the staging window skipped
+        // it (big batches) — duplicates and the estate still match on it.
+        const hashing = item.fileHash ? Promise.resolve(item.fileHash) : hashFile(file);
         const uploadResult = await uploadToPath(file, storagePath, {
           contentType: file.type || undefined,
           signal,
         });
+        const fileHash = await hashing;
 
         const now = new Date().toISOString();
         const title = item.title.trim() || baseName(file.name);
@@ -2645,7 +2661,7 @@ export default function LibraryExplorerPage() {
           size: uploadResult.size,
           // The key every copy is known by: duplicate warnings, the read
           // copy and the estate all match on it.
-          file_hash: item.fileHash ?? null,
+          file_hash: fileHash ?? null,
           created_by: uid,
           created_by_name: userEmail || uid,
           created_at: now,
@@ -2665,22 +2681,26 @@ export default function LibraryExplorerPage() {
       const failures: Array<{ name: string; reason: string }> = [];
       let stoppedAt = -1;
       setUploadProgress({ done: 0, total: resolved.length });
-      for (let i = 0; i < resolved.length; i += UPLOAD_CONCURRENCY) {
-        // The user pressed Stop or closed the modal. Don't start work nobody
-        // is waiting for; the files already in flight abort on their own.
-        if (signal?.aborted) { stoppedAt = i; break; }
-        const chunk = resolved.slice(i, i + UPLOAD_CONCURRENCY);
-        const results = await Promise.allSettled(chunk.map(uploadOne));
-        results.forEach((r, j) => {
-          if (r.status === "rejected") {
-            failures.push({
-              name: chunk[j].item.file.name,
-              reason: (r.reason as Error)?.message ?? "unknown error",
-            });
+      // A pool, not fixed chunks: each worker takes the next file the moment
+      // its last one lands, so one slow file never idles the other lanes.
+      let nextIdx = 0;
+      let finished = 0;
+      const worker = async () => {
+        for (;;) {
+          // The user pressed Stop or closed the modal. Don't start work
+          // nobody is waiting for; files already in flight abort on their own.
+          if (signal?.aborted) { if (stoppedAt < 0) stoppedAt = nextIdx; return; }
+          const idx = nextIdx++;
+          if (idx >= resolved.length) return;
+          try { await uploadOne(resolved[idx]); }
+          catch (err) {
+            failures.push({ name: resolved[idx].item.file.name, reason: (err as Error)?.message ?? "unknown error" });
           }
-        });
-        setUploadProgress({ done: Math.min(i + chunk.length, resolved.length), total: resolved.length });
-      }
+          finished++;
+          setUploadProgress({ done: finished, total: resolved.length });
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, resolved.length) }, worker));
       // stoppedAt is the index of the first chunk we never started, which is
       // exactly the number of files that did get an attempt.
       const attempted = stoppedAt >= 0 ? stoppedAt : resolved.length;
@@ -3436,27 +3456,52 @@ export default function LibraryExplorerPage() {
           <WatchButton orgId={activeOrgId} userId={uid} resourceType="library" resourceId={libraryId} size="sm" />
         )}
 
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="h-7 px-2 rounded-md hover:bg-[var(--color-surface-2)] flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
-          title="Upload files"
-        >
-          <UploadCloud className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Upload files</span>
-        </button>
-
-        {/* Upload a whole FOLDER — its subfolder tree is recreated here.
-            (Dropping a folder from the OS onto the file area does the same.) */}
-        {isController && (
+        {/* ONE Upload button, two choices: the browser's file picker can't
+            pick a folder, so "Upload files" alone left no way to send a
+            whole folder except dragging it. */}
+        <div className="relative">
           <button
-            onClick={() => folderInputRef.current?.click()}
-            className="h-7 px-2 rounded-md hover:bg-[var(--color-surface-2)] flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
-            title="Upload a whole folder as-is — every subfolder and file keeps its place"
+            onClick={() => setUploadMenuOpen((v) => !v)}
+            className="h-7 px-2.5 rounded-md bg-slate-900 text-white hover:bg-slate-800 flex items-center gap-1 text-xs font-bold transition-colors"
+            title="Upload files or a whole folder"
+            aria-haspopup="menu"
+            aria-expanded={uploadMenuOpen}
           >
-            <FolderUp className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Upload folder</span>
+            <UploadCloud className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Upload</span>
+            <ChevronDown className="w-3 h-3 opacity-70" />
           </button>
-        )}
+          {uploadMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setUploadMenuOpen(false)} />
+              <div role="menu" className="absolute right-0 top-full mt-1 w-64 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-40 overflow-hidden">
+                <button role="menuitem"
+                  onClick={() => { setUploadMenuOpen(false); fileInputRef.current?.click(); }}
+                  className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5">
+                  <UploadCloud className="w-4 h-4 mt-0.5 text-blue-600 shrink-0" />
+                  <span>
+                    <span className="block text-xs font-bold">Files…</span>
+                    <span className="block text-[10px] text-[var(--color-text-muted)]">Pick one or many files</span>
+                  </span>
+                </button>
+                <button role="menuitem"
+                  onClick={() => { setUploadMenuOpen(false); folderInputRef.current?.click(); }}
+                  className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5 border-t border-[var(--color-border)]">
+                  <FolderUp className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />
+                  <span>
+                    <span className="block text-xs font-bold">A whole folder…</span>
+                    <span className="block text-[10px] text-[var(--color-text-muted)]">
+                      {isController ? "Every subfolder and file keeps its place" : "Its files are added here (folders need Doc Control)"}
+                    </span>
+                  </span>
+                </button>
+                <div className="px-3 py-2 text-[10px] text-[var(--color-text-faint)] border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/60">
+                  Or drag files or folders anywhere onto this page.
+                </div>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* New folder is a FIRST-CLASS action, right beside Upload — creating
             structure is as basic as adding files; it must never hide in an
@@ -3765,6 +3810,15 @@ export default function LibraryExplorerPage() {
               onKeyDown={handleExplorerKeyDown}
             >
               {/* Drag overlay */}
+              {readingDrop !== null && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[var(--color-surface)]/90">
+                  <Loader2 className="w-9 h-9 text-blue-600 animate-spin mb-3" />
+                  <p className="text-lg font-bold text-[var(--color-text)]">Reading your folder…</p>
+                  <p className="text-sm text-[var(--color-text-muted)] mt-1">
+                    {readingDrop.toLocaleString()} file{readingDrop === 1 ? "" : "s"} found so far — the upload window opens as soon as it&apos;s done
+                  </p>
+                </div>
+              )}
               {isDragOver && (
                 <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-blue-50/95 pointer-events-none">
                   <div className="w-20 h-20 rounded-2xl bg-blue-100 border-2 border-blue-400 border-dashed flex items-center justify-center mb-4">
@@ -4001,6 +4055,12 @@ export default function LibraryExplorerPage() {
                         className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-colors shadow-sm"
                       >
                         <UploadCloud className="w-4 h-4" /> Upload Files
+                      </button>
+                      <button
+                        onClick={() => folderInputRef.current?.click()}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)] rounded-xl text-sm font-bold hover:bg-[var(--color-surface-2)] transition-colors"
+                      >
+                        <FolderUp className="w-4 h-4" /> Upload a Folder
                       </button>
                       {isController && (
                         <button
