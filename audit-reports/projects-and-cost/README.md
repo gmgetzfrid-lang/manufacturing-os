@@ -22,7 +22,7 @@ The project model and its server behaviour, scheduling and the critical path, th
 
 ## Findings
 
-**78 findings** — 2 CRITICAL, 22 HIGH, 39 MEDIUM, 15 LOW.
+**79 findings** — 2 CRITICAL, 22 HIGH, 39 MEDIUM, 16 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
@@ -30,7 +30,7 @@ The project model and its server behaviour, scheduling and the critical path, th
 | 02 | [Scheduling — dependencies, critical path, import](./02-scheduling.md) | 14 |  |
 | 03 | [The quality program — checklists, turnover, punch](./03-quality.md) | 15 | `QUAL-14` and `QUAL-15` opened by projects Round G package J2b, 2026-10-01 (`QUAL-14` re-graded LOW → MEDIUM at its integration) |
 | 04 | [Cost, change orders & bid tabulation](./04-cost-and-bids.md) | 15 |  |
-| 05 | [External intake & the contractor door](./05-intake-door.md) | 19 | `INTK-15` and `INTK-16` opened by projects Round G package J1, 2026-09-30; `INTK-17` opened by projects Round G package J13, 2026-10-01; `INTK-18` opened by the integrator at the J10b merge, 2026-10-02; `INTK-19` (LOW) opened by intelligence Round G I-17, 2026-10-14 |
+| 05 | [External intake & the contractor door](./05-intake-door.md) | 20 | `INTK-15` and `INTK-16` opened by projects Round G package J1, 2026-09-30; `INTK-17` opened by projects Round G package J13, 2026-10-01; `INTK-18` opened by the integrator at the J10b merge, 2026-10-02; `INTK-19` (LOW) opened by intelligence Round G I-17, 2026-10-14; `INTK-20` (LOW) opened by intelligence Round G I-28, 2026-10-14, ruled WONTFIX by the integrator at the I-28 merge, 2026-10-20 (DEC-90) |
 
 Every report except the critic was **adversarially verified** — a second agent
 read the cited code and tried to refute each finding. Across the whole run, 333
