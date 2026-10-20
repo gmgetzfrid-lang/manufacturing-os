@@ -1,4 +1,5 @@
 // GET /api/verify?doc=<uuid>&v=<uuid>
+// GET /api/verify?t=<sheet token>   (a printed pack's sheet — PS-P9)
 //
 // The endpoint behind the QR code stamped on every uncontrolled copy.
 // UNAUTHENTICATED by design: a contractor in the field scans a paper print
@@ -24,6 +25,18 @@
 // calendar (effectiveStatusFor → effectiveTodayISO, VFY-4 / REV-9) — the
 // document's workspace zone when its Admin set one, else the deployment's
 // (VFY-15: workspaceEffectiveDateTimeZone).
+//
+// PS-P9 (intelligence DACL-8 criterion 2, rulings under DEC-90): a printed
+// pack's sheet QR names its sheet by a per-print token the server minted at
+// print time (print_sheet_tokens, 20261237 — only its SHA-256 is stored).
+// ?t= resolves it to (document, version, print) and the verdict is answered
+// for THAT print, through exactly the path a ?doc=&v= QR takes; a token
+// whose print was voided (the pack never left, or the sheet was not in the
+// PDF) reads `print_voided` — red, never green — unless a stop-work or a
+// retirement says more. A token answer discloses nothing a ?doc=&v= answer
+// would not (lib/verifyDisclosure: no number or title for a restricted
+// document). Every QR printed before PS-P9 — doc-only and ?v= — is answered
+// exactly as before.
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -34,6 +47,8 @@ import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from
 import { recordVerifyScan } from "@/lib/verifyScanLog";
 import type { DocVerdict } from "@/lib/verifyPresent";
 import { RESTRICTED_DOCUMENT_LABEL, verifyMayNameDocument } from "@/lib/verifyDisclosure";
+import { isSheetToken } from "@/lib/printSheetTokens";
+import { hashSheetToken, isMissingSheetTokenTable } from "@/lib/printSheetTokensServer";
 
 // A revision verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -65,23 +80,62 @@ interface DocRow {
 interface PrintedVersionRow { revision_label: string | null; created_at: string | null; record_id: string | null }
 interface CurrentVersionRow { created_at?: string | null; effective_date?: string | null }
 interface HoldReasonRow { reason: string | null }
+interface SheetTokenRow { print_id: string; document_id: string; version_id: string; minted_at: string | null; voided_at: string | null }
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
     return verifyJson({ error: "Verification unavailable" }, 503);
   }
-  const docId = req.nextUrl.searchParams.get("doc") ?? "";
-  const versionId = req.nextUrl.searchParams.get("v") ?? "";
+  let docId = req.nextUrl.searchParams.get("doc") ?? "";
+  let versionId = req.nextUrl.searchParams.get("v") ?? "";
+  const sheetToken = req.nextUrl.searchParams.get("t");
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
   const ip = clientIp(req);
   const userAgent = req.headers.get("user-agent");
   // The scan row keeps WHICH revision's paper was scanned (the ?v= version
   // id), so two prints of the same document stay distinguishable (VFY-12).
+  // A token scan keeps its print id — two prints of one version stay
+  // distinguishable too (PS-P9).
+  let printedRef: string | null = null;
   const scan = (verdict: string) =>
-    recordVerifyScan(sb, { endpoint: "verify", targetId: docId, printedRef: versionId || null, verdict, ip, userAgent });
+    recordVerifyScan(sb, { endpoint: "verify", targetId: docId || null, printedRef: printedRef ?? (versionId || null), verdict, ip, userAgent });
 
   const rate = await checkVerifyRate(sb, { ip });
   if (rate.limited) return verifyRateLimitedResponse(rate);
+
+  // PS-P9: a sheet token names (document, version, print). A token QR
+  // carries nothing else; one that also names a document or version must
+  // name the token's own (a mixed code is unknown, never answered for the
+  // other one).
+  let sheet: SheetTokenRow | null = null;
+  if (sheetToken !== null) {
+    if (!isSheetToken(sheetToken)) {
+      docId = "";
+      await scan("invalid");
+      return verifyJson({ error: "Invalid code" }, 400);
+    }
+    const { data: tokData, error: tokErr } = await sb
+      .from("print_sheet_tokens")
+      .select("print_id, document_id, version_id, minted_at, voided_at")
+      .eq("token_hash", hashSheetToken(sheetToken))
+      .maybeSingle();
+    if (tokErr && !isMissingSheetTokenTable(tokErr)) {
+      // An unreadable token is never "unknown" and never green.
+      await scan("error");
+      return verifyJson({ error: "Verification unavailable — try again" }, 503);
+    }
+    // No row — or no table (20261237 not pasted: no token can exist yet).
+    const row = tokErr ? null : (tokData as SheetTokenRow | null);
+    if (!row || (docId && docId.toLowerCase() !== row.document_id) || (versionId && versionId.toLowerCase() !== row.version_id)) {
+      if (!row) docId = "";
+      await scan("unknown");
+      return verifyJson({ error: "Unknown code" }, 404);
+    }
+    sheet = row;
+    docId = row.document_id;
+    versionId = row.version_id;
+    printedRef = row.print_id;
+  }
 
   if (!UUID_RE.test(docId) || (versionId && !UUID_RE.test(versionId))) {
     await scan("invalid");
@@ -202,6 +256,9 @@ export async function GET(req: NextRequest) {
   else if (standing === "retired") verdict = "retired";
   else if (standing === "draft") verdict = "draft";
   else if (standing === "not_issued") verdict = "not_issued";
+  // PS-P9: this print's paper never left (the pack was not completed, or
+  // this sheet was not in the PDF) — stale, never green.
+  else if (sheet?.voided_at) verdict = "print_voided";
   // VFY-3: a QR with no ?v= cannot say WHICH revision the paper is —
   // "cannot confirm", never green.
   else if (!versionId) verdict = "unverifiable";
@@ -243,5 +300,8 @@ export async function GET(req: NextRequest) {
     verdict,
     isCurrent: verdict === "current",
     checkedAt: new Date().toISOString(),
+    // PS-P9: only on a token answer — when THIS print was made (not its
+    // revision's issue date, which printedAt keeps) and whether it was voided.
+    ...(sheet ? { sheetPrint: { printedAt: sheet.minted_at ?? null, voided: !!sheet.voided_at } } : {}),
   });
 }

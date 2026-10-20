@@ -87,7 +87,12 @@ const excluded = new Set<string>(Object.keys(EXPORT_EXCLUDED_TABLES));
  *  AO-P4's in the 2026-10-07 wave). The integrator writes the decision and
  *  removes the table from here in the same merge — the test after the gap
  *  check fails once both say it, so the entry cannot outlive its merge. */
-const DECISION_AT_MERGE: Record<string, string> = {};
+const DECISION_AT_MERGE: Record<string, string> = {
+  // public-surfaces PS-P9 — proposed EXPORT_EXCLUDED_TABLES entry, written by
+  // the integrator at merge (lib/exportTables.ts is not this package's).
+  print_sheet_tokens:
+    "the per-print sheet tokens (SHA-256 of each printed sheet QR's bearer token, the print run, the document + version printed; 20261237) — service-role only, never client-readable, a bearer-derived column (token_hash); proposed EXCLUDED: a pack sheet printed before a restore then answers 'Unknown code' (never green) until it is re-printed, and every pre-PS-P9 QR (doc-only, ?v=, a cover's ?print=) is unaffected",
+};
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
 // not in the pattern — file_key / template_file_key / builtin_key are storage

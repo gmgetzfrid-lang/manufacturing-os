@@ -10,11 +10,17 @@
 // the "current" verdict — an Issued / Locked document, not held, whose QR
 // names the version printed and that version is the current one, in force
 // (VFY-1 / VFY-3 / VFY-9). The document's status is shown in every branch.
+//
+// /verify/[token] — a printed pack's sheet QR names its sheet by a per-print
+// token (PS-P9; 32 base64url characters, never UUID-shaped): the page asks
+// /api/verify?t=<token>, which answers for that print. A UUID here is a
+// document id, answered exactly as before.
 
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, OctagonAlert, RefreshCw } from "lucide-react";
 import { presentDocVerdict, type DocVerifyResult } from "@/lib/verifyPresent";
+import { verifyQueryFor } from "@/lib/printSheetTokens";
 
 export default function VerifyPage() {
   const params = useParams<{ docId: string }>();
@@ -29,8 +35,7 @@ export default function VerifyPage() {
     setLoading(true);
     setError(null);
     try {
-      const qs = new URLSearchParams({ doc: params.docId });
-      if (versionId) qs.set("v", versionId);
+      const qs = verifyQueryFor(params.docId, versionId);
       const res = await fetch(`/api/verify?${qs.toString()}`, { cache: "no-store" });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -124,6 +129,13 @@ export default function VerifyPage() {
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Document status</span>
                 <span className="font-bold text-slate-800">{result.docStatus ?? "Not recorded"}{result.onHold ? " · on hold" : ""}</span>
               </div>
+              {/* PS-P9: a token-named sheet says when THIS print was made. */}
+              {result.sheetPrint && (
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Printed</span>
+                  <span className="font-bold text-slate-800">{fmt(result.sheetPrint.printedAt)}{result.sheetPrint.voided ? " · print cancelled" : ""}</span>
+                </div>
+              )}
               {view.advice && (
                 <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 leading-relaxed">
                   {view.advice}
