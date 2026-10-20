@@ -28,7 +28,9 @@ const JUNK_FILES = new Set([".ds_store", "thumbs.db", "desktop.ini"]);
 
 export function isJunkFile(name: string): boolean {
   const n = name.toLowerCase();
-  return JUNK_FILES.has(n) || n.startsWith("._");
+  // .lnk / .url: Windows shortcuts — pointers to files elsewhere on that PC,
+  // meaningless (and unopenable) once uploaded.
+  return JUNK_FILES.has(n) || n.startsWith("._") || n.endsWith(".lnk") || n.endsWith(".url");
 }
 
 /** Hard caps so a dropped drive root fails loudly instead of hanging. */

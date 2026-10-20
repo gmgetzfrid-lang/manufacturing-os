@@ -13,7 +13,7 @@ import { Copy, Loader2, Trash2, X, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { deleteDocuments } from "@/lib/libraryCollections";
 
-interface Row { id: string; name: string | null; collection_id: string | null; created_at: string; size: string | null; document_number: string | null }
+interface Row { id: string; name: string | null; collection_id: string | null; created_at: string; size: string | null; document_number: string | null; current_version_id: string | null; original: string | null }
 interface Group { key: string; name: string; folderId: string | null; keep: Row; extras: Row[] }
 
 export default function DuplicateUploadsModal({
@@ -26,6 +26,7 @@ export default function DuplicateUploadsModal({
   onDeleted: (ids: string[]) => void;
 }) {
   const [groups, setGroups] = useState<Group[] | null>(null);
+  const [empty, setEmpty] = useState<Row[]>([]);
   const [scanned, setScanned] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [running, setRunning] = useState<{ done: number; total: number } | null>(null);
@@ -37,7 +38,7 @@ export default function DuplicateUploadsModal({
       const rows: Row[] = [];
       for (let from = 0; from < 50000; from += 1000) {
         const { data, error } = await supabase.from("documents")
-          .select("id, name, collection_id, created_at, document_number, size:metadata->>size_bytes")
+          .select("id, name, collection_id, created_at, document_number, current_version_id, size:metadata->>size_bytes, original:metadata->>original_name")
           .eq("org_id", orgId).eq("library_id", libraryId)
           .order("created_at", { ascending: true }).order("id")
           .range(from, from + 999);
@@ -49,9 +50,13 @@ export default function DuplicateUploadsModal({
       }
       // Same folder + same file name + same byte size = the same file sent
       // again. Oldest first, so the first upload is the one kept.
+      // Uploads whose file never attached (the revision save failed) — an
+      // entry with nothing to open. Handled separately from duplicates.
+      const empty = rows.filter((r) => !r.current_version_id && r.original);
+      const emptyIds = new Set(empty.map((r) => r.id));
       const byKey = new Map<string, Row[]>();
       for (const r of rows) {
-        if (!r.name) continue;
+        if (!r.name || emptyIds.has(r.id)) continue;
         const key = `${r.collection_id ?? "root"}|${r.name.toLowerCase()}|${r.size ?? "?"}`;
         const list = byKey.get(key);
         if (list) list.push(r); else byKey.set(key, [r]);
@@ -62,22 +67,25 @@ export default function DuplicateUploadsModal({
         out.push({ key, name: list[0].name!, folderId: list[0].collection_id, keep: list[0], extras: list.slice(1) });
       }
       out.sort((a, b) => b.extras.length - a.extras.length || a.name.localeCompare(b.name));
-      if (live) setGroups(out);
+      if (live) { setGroups(out); setEmpty(empty); }
     })().catch((e) => { if (live) setLoadError((e as Error).message); });
     return () => { live = false; };
   }, [orgId, libraryId]);
 
-  const extras = (groups ?? []).flatMap((g) => g.extras.map((r) => r.id));
+  const dupIds = (groups ?? []).flatMap((g) => g.extras.map((r) => r.id));
+  const extras = [...dupIds, ...empty.map((r) => r.id)];
   const files = groups?.length ?? 0;
+  const nothing = files === 0 && empty.length === 0;
 
   const removeExtras = async () => {
     setRunning({ done: 0, total: extras.length });
     try {
       const r = await deleteDocuments(orgId, extras, (done) => setRunning({ done, total: extras.length }));
       onDeleted(r.deleted);
-      setResult(`Removed ${r.deleted.length.toLocaleString()} extra cop${r.deleted.length === 1 ? "y" : "ies"}. The first upload of each file is kept.`
+      setResult(`Removed ${r.deleted.length.toLocaleString()} entr${r.deleted.length === 1 ? "y" : "ies"} (extra copies and entries with no file). The first good upload of each file is kept.`
         + (r.held.length ? ` ${r.held.length} under a legal hold were left alone.` : ""));
       setGroups([]);
+      setEmpty([]);
     } catch (e) {
       setLoadError((e as Error).message);
     } finally {
@@ -92,9 +100,9 @@ export default function DuplicateUploadsModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-3">
           <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-950/40"><Copy className="w-5 h-5 text-amber-700 dark:text-amber-400" /></div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">Duplicate uploads</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Clean up uploads</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
-              Files uploaded more than once into the same folder — same name, same size.
+              Files uploaded more than once into the same folder, and entries whose file never attached.
             </div>
           </div>
           <button onClick={onClose} disabled={!!running} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
@@ -111,17 +119,25 @@ export default function DuplicateUploadsModal({
             <p className="text-sm text-[var(--color-text-muted)] flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" /> Checking {scanned.toLocaleString()} documents…
             </p>
-          ) : files === 0 ? (
+          ) : nothing ? (
             <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4" /> No duplicates — every file in this library was uploaded once.
+              <CheckCircle2 className="w-4 h-4" /> All clean — no duplicate uploads and no entries missing their file.
             </p>
           ) : (
             <>
+              {empty.length > 0 && (
+                <p className="text-sm text-[var(--color-text)] mb-2">
+                  <b className="text-rose-700 dark:text-rose-400">{empty.length.toLocaleString()} entr{empty.length === 1 ? "y has" : "ies have"} no file</b> — an
+                  upload created the entry but its file never attached. There&apos;s nothing to open in them.
+                </p>
+              )}
+              {files > 0 && (
               <p className="text-sm text-[var(--color-text)]">
                 <b>{files.toLocaleString()} file{files === 1 ? " was" : "s were"}</b> uploaded more than once, making{" "}
-                <b className="text-amber-700 dark:text-amber-400">{extras.length.toLocaleString()} extra cop{extras.length === 1 ? "y" : "ies"}</b>.
+                <b className="text-amber-700 dark:text-amber-400">{dupIds.length.toLocaleString()} extra cop{dupIds.length === 1 ? "y" : "ies"}</b>.
               </p>
-              <ul className="mt-3 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-xs max-h-72 overflow-auto">
+              )}
+              {files > 0 && <ul className="mt-3 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-xs max-h-72 overflow-auto">
                 {groups.slice(0, 200).map((g) => (
                   <li key={g.key} className="px-3 py-2 flex items-center gap-2 min-w-0">
                     <span className="min-w-0 flex-1">
@@ -132,9 +148,9 @@ export default function DuplicateUploadsModal({
                   </li>
                 ))}
                 {groups.length > 200 && <li className="px-3 py-2 text-[var(--color-text-faint)]">+{groups.length - 200} more files</li>}
-              </ul>
+              </ul>}
               <p className="mt-3 text-[11px] text-[var(--color-text-muted)]">
-                The first upload of each file is kept; the later copies (the ones numbered -2, -3…) are permanently deleted.
+                The first good upload of each file is kept; the later copies (numbered -2, -3…) and the entries with no file are permanently deleted.
               </p>
             </>
           )}
@@ -148,13 +164,13 @@ export default function DuplicateUploadsModal({
           )}
           <button onClick={onClose} disabled={!!running}
             className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
-            {result || files === 0 ? "Close" : "Cancel"}
+            {result || nothing ? "Close" : "Cancel"}
           </button>
-          {!result && files > 0 && (
+          {!result && !nothing && (
             <button onClick={() => void removeExtras()} disabled={!!running}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50">
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              Delete {extras.length.toLocaleString()} extra cop{extras.length === 1 ? "y" : "ies"}
+              Clean up {extras.length.toLocaleString()} entr{extras.length === 1 ? "y" : "ies"}
             </button>
           )}
         </div>

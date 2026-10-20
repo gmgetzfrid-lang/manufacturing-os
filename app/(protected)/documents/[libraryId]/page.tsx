@@ -349,6 +349,9 @@ export default function LibraryExplorerPage() {
   const [showDuplicates, setShowDuplicates] = useState(false);
   // Files from the current staged batch that already landed.
   const landedFilesRef = useRef<WeakSet<File>>(new WeakSet());
+  // Set when the database refuses browser-side revision inserts (a row-rule
+  // loop); uploads then save each revision through /api/documents/attach-version.
+  const versionsViaServerRef = useRef(false);
 
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   // The convention watchdog: after an upload or a new folder, what looks
@@ -2609,22 +2612,23 @@ export default function LibraryExplorerPage() {
       {
         const targets = [...new Set(items.map((it) => targetFolderFor(it.file)))];
         const ids = targets.filter((t): t is string => !!t);
-        const readFolderDocs = async (apply: (q: ReturnType<typeof baseQ>) => ReturnType<typeof baseQ>) => {
+        // Only documents that actually HAVE a file count — an entry whose
+        // upload never attached its file must not cause the real file to
+        // be skipped.
+        const readFolderDocs = async (folderIds: string[] | null) => {
           for (let from = 0; from < 20000; from += 1000) {
-            const { data } = await apply(baseQ()).range(from, from + 999);
+            let q = supabase.from("documents").select("collection_id, name, size:metadata->>size_bytes")
+              .eq("org_id", activeOrgId).eq("library_id", libraryId).not("current_version_id", "is", null);
+            q = folderIds ? q.in("collection_id", folderIds) : q.is("collection_id", null);
+            const { data } = await q.order("id").range(from, from + 999);
             for (const r of (data ?? []) as Array<{ collection_id: string | null; name: string | null; size: string | null }>) {
               if (r.name) existingKeys.add(`${r.collection_id ?? "root"}|${r.name.toLowerCase()}|${r.size ?? "?"}`);
             }
             if ((data ?? []).length < 1000) break;
           }
         };
-        const baseQ = () => supabase.from("documents").select("collection_id, name, size:metadata->>size_bytes")
-          .eq("org_id", activeOrgId).eq("library_id", libraryId).order("id");
-        for (let i = 0; i < ids.length; i += 100) {
-          const chunk = ids.slice(i, i + 100);
-          await readFolderDocs((q) => q.in("collection_id", chunk));
-        }
-        if (targets.includes(null)) await readFolderDocs((q) => q.is("collection_id", null));
+        for (let i = 0; i < ids.length; i += 100) await readFolderDocs(ids.slice(i, i + 100));
+        if (targets.includes(null)) await readFolderDocs(null);
       }
       const alreadyHere: File[] = [];
       items = items.filter((it) => {
@@ -2741,9 +2745,9 @@ export default function LibraryExplorerPage() {
 
         if (docErr || !newDoc) throw new Error(docErr?.message || "Failed to create document record");
 
-        const { data: newVersion, error: verErr } = await supabase.from("document_versions").insert({
+        const versionRow = {
           org_id: activeOrgId,
-          record_id: newDoc.id,
+          record_id: newDoc.id as string,
           revision_label: item.rev.trim() || "0",
           file_url: uploadResult.url,
           file_type: file.type || "application/octet-stream",
@@ -2754,7 +2758,36 @@ export default function LibraryExplorerPage() {
           created_by: uid,
           created_by_name: userEmail || uid,
           created_at: now,
-        }).select("id").single();
+        };
+        let newVersion: { id: string } | null = null;
+        let verErr: { message: string } | null = null;
+        if (!versionsViaServerRef.current) {
+          const r = await supabase.from("document_versions").insert(versionRow).select("id").single();
+          newVersion = r.data as { id: string } | null;
+          verErr = r.error;
+          // A database row-rule loop refuses every browser insert. Switch
+          // this and every later file to the server route for the session.
+          if (verErr && (/infinite recursion/i.test(verErr.message) || (r.error as { code?: string } | null)?.code === "42P17")) {
+            versionsViaServerRef.current = true;
+          }
+        }
+        if (versionsViaServerRef.current && !newVersion) {
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const res = await fetch("/api/documents/attach-version", {
+              method: "POST",
+              headers: { "content-type": "application/json", authorization: `Bearer ${session?.access_token ?? ""}` },
+              body: JSON.stringify({
+                orgId: activeOrgId, documentId: newDoc.id, revisionLabel: versionRow.revision_label,
+                fileUrl: versionRow.file_url, fileType: versionRow.file_type, size: versionRow.size,
+                fileHash: versionRow.file_hash,
+              }),
+            });
+            const out = (await res.json().catch(() => null)) as { versionId?: string; error?: string } | null;
+            if (res.ok && out?.versionId) { newVersion = { id: out.versionId }; verErr = null; }
+            else verErr = { message: out?.error ?? `HTTP ${res.status}` };
+          } catch (e) { verErr = { message: (e as Error).message }; }
+        }
 
         if (verErr || !newVersion) {
           // Don't leave a document with no file behind — a retry would add a
@@ -2763,7 +2796,9 @@ export default function LibraryExplorerPage() {
           throw new Error(verErr?.message || "Failed to create document version");
         }
 
-        await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+        if (!versionsViaServerRef.current) {
+          await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
+        }
         createdDocIds.push(newDoc.id as string);
         landedFiles.push(file);
         landedFilesRef.current.add(file);
@@ -3652,7 +3687,7 @@ export default function LibraryExplorerPage() {
                     onClick={() => { setActionsMenuOpen(false); setShowDuplicates(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                   >
-                    <Copy className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Find duplicate uploads…
+                    <Copy className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Clean up uploads (duplicates, missing files)…
                   </button>
                 )}
                 {isController && (
