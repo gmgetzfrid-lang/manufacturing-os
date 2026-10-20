@@ -34,8 +34,18 @@
 // item as "Restricted document" (never its number, title or revision), and
 // no subject or notes (free text that may name it). The portal token — the
 // link and QR the cover sheet prints — is handed only to someone who may
-// read EVERY item; otherwise the sheet prints without it and says why. The
-// REST read of the row is not narrowed here (DIST-18).
+// read EVERY item; otherwise the sheet prints without it and says why.
+//
+// DIST-18 limb (a) (document-control P29; DEC-90 R2): every OTHER browser
+// reader of transmittals reads through the same route and redaction too —
+// the Inspector's trail (listTransmittalsForDocument), getTransmittal, global
+// search (searchTransmittalsForViewer) and the project evidence pack
+// (listTransmittalsForProject) — and the browser's own write paths (create,
+// the issue's draft read and read-back) read back an explicit column list
+// that never names portal_token (TRANSMITTAL_CLIENT_COLUMNS). So no browser
+// read needs the token, and 20261231 takes SELECT on portal_token away from
+// client roles. The REST read of the other columns (the items included) is
+// narrowed at the database by DIST-18 limb (b), after intelligence I-30.
 //
 // The data layer is resilient: if the `transmittals` table hasn't been
 // migrated yet, calls throw a friendly "run the migration" message instead of
@@ -325,6 +335,14 @@ export function portalLinkState(
   if (t.portalRevokedAt) return "revoked";
   if (t.portalExpiresAt && Date.parse(t.portalExpiresAt) <= now) return "expired";
   return "live";
+}
+
+/** DIST-18 (limb a): does this transmittal carry a portal link at all —
+ *  whether or not this viewer was handed the token? A row the register
+ *  served says so (`viewer.portalWithheld`); the browser never reads the
+ *  token column itself (20261231). */
+export function hasPortalLink(t: Pick<Transmittal, "portalToken" | "viewer">): boolean {
+  return !!t.portalToken || !!t.viewer?.portalWithheld;
 }
 
 /** DIST-17: how a restricted item is named to a viewer who may not read it. */
@@ -691,7 +709,9 @@ export async function sendTransmittalEmail(t: Transmittal, _actor: TransmittalAc
   const to = t.recipientEmail?.trim();
   if (!to) return { sent: false, reason: "no recipient email on the transmittal" };
   if (t.status === "voided") return { sent: false, reason: "the transmittal is voided" };
-  if (!t.portalToken) return { sent: false, reason: "the transmittal has no portal link (the database predates 20260910)" };
+  // DIST-18 (limb a): the browser never holds the token itself — the register
+  // says whether one exists (hasPortalLink); the route reads it server-side.
+  if (!hasPortalLink(t)) return { sent: false, reason: "the transmittal has no portal link (the database predates 20260910)" };
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return { sent: false, reason: "not signed in" };
@@ -744,6 +764,22 @@ function isMissingTable(error: { code?: string; message?: string } | null | unde
 function isMissingColumn(error: { code?: string; message?: string } | null | undefined): boolean {
   if (!error) return false;
   return error.code === "42703" || error.code === "PGRST204";
+}
+
+/** DIST-18 (limb a): the columns the browser reads back from its OWN writes
+ *  (the create, the issue's draft read and the issue's read-back) — every
+ *  column the table has had since 20260717, so the list answers on any
+ *  database that has the table, and never `portal_token`, which client roles
+ *  may not SELECT once 20261231 is pasted (a `select("*")` would then be
+ *  refused with 42501). The columns later migrations added are read through
+ *  the register route, which reads the row with the service role. */
+export const TRANSMITTAL_CLIENT_COLUMNS =
+  "id, org_id, project_id, seq, number, subject, recipient_name, recipient_company, recipient_email, purpose, status, notes, items, " +
+  "created_by, created_by_name, issued_at, acknowledged_at, acknowledged_by_name, created_at, updated_at";
+
+/** The register route's answer for a database without the table. */
+export class TransmittalsNotMigratedError extends Error {
+  constructor() { super(MIGRATION_HINT); this.name = "TransmittalsNotMigratedError"; }
 }
 
 function toItem(it: Record<string, unknown>): TransmittalItem {
@@ -856,20 +892,42 @@ export function portalLinkAvailable(): boolean {
 /** Every transmittal that carries a given document — the "who did we send
  *  this to?" answer from the document's side. JSONB containment on items.
  *  TRX-9: a FAILED read throws (only a missing table answers "none"), so the
- *  Inspector can say the trail could not be read instead of showing nothing. */
+ *  Inspector can say the trail could not be read instead of showing nothing.
+ *  DIST-18 (limb a): read through the register route, so each row is what
+ *  the register shows this viewer (redactTransmittalForViewer) — the same 50
+ *  newest rows, never a browser SELECT carrying every item and the token. */
 export async function listTransmittalsForDocument(orgId: string, documentId: string): Promise<Transmittal[]> {
-  const { data, error } = await supabase
-    .from("transmittals")
-    .select("*")
-    .eq("org_id", orgId)
-    .contains("items", JSON.stringify([{ documentId }]))
-    .order("seq", { ascending: false })
-    .limit(50);
-  if (error) {
-    if (isMissingTable(error)) return [];
-    throw new Error(`Couldn't read the transmittal trail: ${error.message}`);
+  try {
+    return await readRegister(orgId, { documentId });
+  } catch (e) {
+    if (e instanceof TransmittalsNotMigratedError) return [];
+    throw new Error(`Couldn't read the transmittal trail: ${(e as Error)?.message ?? String(e)}`);
   }
-  return (data ?? []).map((r) => rowToTransmittal(r as Record<string, unknown>));
+}
+
+/** DIST-18 (limb a): the project evidence pack's transmittals — the
+ *  project's rows, oldest first, 500 at most, as the register shows them to
+ *  this viewer. A database without the table answers none (as before). */
+export async function listTransmittalsForProject(orgId: string, projectId: string): Promise<Transmittal[]> {
+  try {
+    return await readRegister(orgId, { projectId });
+  } catch (e) {
+    if (e instanceof TransmittalsNotMigratedError) return [];
+    throw e;
+  }
+}
+
+/** DIST-18 (limb a): global search's transmittal hits — number, subject,
+ *  recipient name or company matching `q`, newest first, at most `limit` —
+ *  as the register shows them to this viewer: a subject the register
+ *  withholds is neither returned nor matched. Search never fails the
+ *  palette: any refusal answers none, as the browser read did. */
+export async function searchTransmittalsForViewer(orgId: string, q: string, limit: number): Promise<Transmittal[]> {
+  try {
+    return await readRegister(orgId, { q, limit });
+  } catch {
+    return [];
+  }
 }
 
 export interface CreateTransmittalInput {
@@ -914,11 +972,12 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
         created_by: input.actorUserId,
         created_by_name: input.actorName || null,
       })
-      .select("*")
+      // DIST-18 (limb a): never portal_token (a fresh draft carries none).
+      .select(TRANSMITTAL_CLIENT_COLUMNS)
       .single();
 
     if (!error && data) {
-      const t = rowToTransmittal(data as Record<string, unknown>);
+      const t = rowToTransmittal(data as unknown as Record<string, unknown>);
       await logAuditAction({
         action: "TRANSMITTAL_CREATED",
         resourceId: t.id,
@@ -945,18 +1004,28 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
  *  member every item and the portal token (the database half, DIST-18).
  *  `id` asks for one transmittal. The same 1,000 newest rows, newest first,
  *  as the register read before. A refusal throws its sentence; a database
- *  without the table answers the migration hint, as before. */
-async function readRegister(orgId: string, id?: string): Promise<Transmittal[]> {
+ *  without the table answers the migration hint, as before.
+ *  DIST-18 (limb a): the other browser readers ask the same route for their
+ *  own slice — `documentId` (the Inspector's trail: rows listing it, 50
+ *  newest), `projectId` (the evidence pack: the project's rows, oldest
+ *  first, 500), `q` + `limit` (global search). */
+type RegisterSlice = { id?: string; documentId?: string; projectId?: string; q?: string; limit?: number };
+async function readRegister(orgId: string, slice: string | RegisterSlice = {}): Promise<Transmittal[]> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Not signed in — sign in again to load the transmittal register.");
+  const want: RegisterSlice = typeof slice === "string" ? { id: slice } : slice;
   const qs = new URLSearchParams({ orgId });
-  if (id) qs.set("id", id);
+  if (want.id) qs.set("id", want.id);
+  if (want.documentId) qs.set("documentId", want.documentId);
+  if (want.projectId) qs.set("projectId", want.projectId);
+  if (want.q !== undefined) qs.set("q", want.q);
+  if (want.limit !== undefined) qs.set("limit", String(want.limit));
   const res = await fetch(`/api/transmittal/register?${qs.toString()}`, {
     headers: { Authorization: `Bearer ${session.access_token}` },
   });
   const body = (await res.json().catch(() => ({}))) as { transmittals?: Transmittal[]; error?: string; missingTable?: boolean };
   if (!res.ok) {
-    if (body.missingTable) throw new Error(MIGRATION_HINT);
+    if (body.missingTable) throw new TransmittalsNotMigratedError();
     throw new Error(body.error || `The transmittal register could not be loaded (HTTP ${res.status}).`);
   }
   return Array.isArray(body.transmittals) ? body.transmittals : [];
@@ -979,27 +1048,35 @@ export async function transmittalForViewer(t: Transmittal): Promise<Transmittal>
   } catch (e) {
     console.warn("[transmittals] the register could not decide this viewer's cover sheet — the portal link is withheld", (e as Error)?.message);
   }
+  // DIST-18 (limb a): a row the browser read back from its own write carries
+  // no token column, so an issued or acknowledged row is taken to carry a
+  // link (minted at issue since 20260910) — withheld and said, never "none".
+  const linked = hasPortalLink(t) || t.status === "issued" || t.status === "acknowledged";
   return {
     ...t,
     portalToken: null,
     viewer: {
       restrictedItems: 0,
-      portalWithheld: !!t.portalToken,
-      portalWithheldReason: t.portalToken ? "unchecked" : null,
+      portalWithheld: linked,
+      portalWithheldReason: linked ? "unchecked" : null,
       accessUnchecked: true,
     },
   };
 }
 
-export async function getTransmittal(id: string): Promise<Transmittal | null> {
-  const row = await getTransmittalRow(id);
-  return row ? rowToTransmittal(row) : null;
+/** One transmittal as the register shows it to this viewer (DIST-18 limb
+ *  (a): through the route, never a browser SELECT), or null. */
+export async function getTransmittal(id: string, orgId: string): Promise<Transmittal | null> {
+  const [row] = await readRegister(orgId, { id });
+  return row ?? null;
 }
 
 /** The row as stored — its `items` JSON untouched (TRX-15: the issue writes
- *  the draft's own items back, marked, never a re-mapped copy). */
+ *  the draft's own items back, marked, never a re-mapped copy). The issue's
+ *  own read of the draft (DIST-18 limb (a): an explicit column list — never
+ *  portal_token, which a draft does not carry). */
 async function getTransmittalRow(id: string): Promise<Record<string, unknown> | null> {
-  const { data, error } = await supabase.from("transmittals").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await supabase.from("transmittals").select(TRANSMITTAL_CLIENT_COLUMNS).eq("id", id).maybeSingle();
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   return (data as Record<string, unknown> | null) ?? null;
 }
@@ -1397,7 +1474,9 @@ export type IssuePhase = "checking" | "issuing";
 
 /** TRX-10: everything the issue flow needs to tell the person truthfully. */
 export interface IssueOutcome {
-  /** The row as the database left it — portal token, snapshot and all. */
+  /** The row as the database left it — snapshot and all — as the register
+   *  shows it to this viewer (DIST-18 limb (a): the portal token only for
+   *  someone who may read every item; `viewer` says whether a link exists). */
   transmittal: Transmittal;
   email: TransmittalEmailOutcome;
   /** "missing" = issued without a recipient portal (pre-20260910 database). */
@@ -1499,8 +1578,11 @@ export async function issueTransmittal(
     .eq("id", id)
     .eq("status", "draft");
   if (bound && readAt) write = write.eq("updated_at", readAt);
+  // DIST-18 (limb a): the read-back names its columns — never portal_token,
+  // which the database mints in this very UPDATE and client roles may not
+  // SELECT once 20261231 is pasted (RETURNING * would be refused, 42501).
   const { data, error } = await write
-    .select("*")
+    .select(TRANSMITTAL_CLIENT_COLUMNS)
     .maybeSingle();
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   if (!data) {
@@ -1513,7 +1595,7 @@ export async function issueTransmittal(
     }
     throw new Error(`${draft.number} was not issued — it is no longer a draft, or you do not hold transmit authority ("Issue transmittals") for every document on it.`);
   }
-  const t = rowToTransmittal(data as Record<string, unknown>);
+  const t = rowToTransmittal(data as unknown as Record<string, unknown>);
   const { error: auditError } = await logAuditAction({
     action: "TRANSMITTAL_ISSUED",
     resourceId: t.id,
@@ -1532,8 +1614,12 @@ export async function issueTransmittal(
   // the documents' owners and the libraries' followers hear it. Started, not
   // awaited: the issue is done, and a notice never fails or delays it.
   void notifyTransmittalIssued(t, actor);
-  const email = await sendTransmittalEmail(t, actor);
-  return { transmittal: t, email, portal: t.portalToken ? "ready" : "missing", auditError };
+  // DIST-18 (limb a): the issued row as the register shows it to this viewer
+  // (the token only for someone who may read every item; whether a link
+  // exists, for anyone) — the email, the toast and the cover sheet use it.
+  const shown = await transmittalForViewer(t);
+  const email = await sendTransmittalEmail(shown, actor);
+  return { transmittal: shown, email, portal: hasPortalLink(shown) ? "ready" : "missing", auditError };
 }
 
 /** PROD-12 dw2 (notifications Round G, N9): the internal notice of an issue.

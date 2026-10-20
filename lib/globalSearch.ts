@@ -195,21 +195,21 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
 
 // ─── per-resource helpers ────────────────────────────────────────────
 
-// Resilient: if the transmittals table isn't migrated yet, the query
-// resolves with data:null → we return [] and search is unaffected.
+// Resilient: if the transmittals table isn't migrated yet (or the read is
+// refused), it answers [] and search is unaffected.
+// DIST-18 (limb a, document-control P29): read through the transmittal
+// register route (lib/transmittals searchTransmittalsForViewer →
+// app/api/transmittal/register?q=…), so each hit is what the register shows
+// this viewer — a subject withheld from them is neither shown nor matched —
+// never a browser SELECT of the table.
 async function searchTransmittals(
   orgId: string,
   q: string,
   limit: number,
 ): Promise<Array<{ id: string; number: string; subject: string | null; recipient_name: string | null; status: string }>> {
-  const { data } = await supabase
-    .from("transmittals")
-    .select("id, number, subject, recipient_name, status")
-    .eq("org_id", orgId)
-    .or(`number.ilike.%${escape(q)}%,subject.ilike.%${escape(q)}%,recipient_name.ilike.%${escape(q)}%,recipient_company.ilike.%${escape(q)}%`)
-    .order("seq", { ascending: false })
-    .limit(limit);
-  return ((data || []) as Array<{ id: string; number: string; subject: string | null; recipient_name: string | null; status: string }>);
+  const { searchTransmittalsForViewer } = await import("@/lib/transmittals");
+  const rows = await searchTransmittalsForViewer(orgId, q, limit);
+  return rows.map((t) => ({ id: t.id, number: t.number, subject: t.subject ?? null, recipient_name: t.recipientName ?? null, status: t.status }));
 }
 
 async function searchProjects(

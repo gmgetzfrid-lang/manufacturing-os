@@ -74,7 +74,7 @@ import {
   itemIssueBlocker, isTransmittalIssuable, legalHoldNotice, mayTransmit, portalLinkState, portalRowRefusal,
   portalKeyAllowed, hashPrefix, itemAsSentLabel, receiptEvidence, renderTransmittalSheet, rowToTransmittal,
   transmittalPortalUrl, portalOriginConfigured, TRANSMIT_CAPABILITY, mayDeleteDraft, fileSizeLabel,
-  DRAFT_DELETE_GUARD_ROLES, assertItemsIssuable, portalLinkAvailable, openTransmittalSheet, type Transmittal,
+  DRAFT_DELETE_GUARD_ROLES, assertItemsIssuable, portalLinkAvailable, openTransmittalSheet, TRANSMITTAL_CLIENT_COLUMNS, type Transmittal,
 } from "@/lib/transmittals";
 import { recipientOrigin } from "@/lib/publicOrigin";
 import { CAPABILITY_DEFS } from "@/lib/capabilityPolicy";
@@ -262,11 +262,18 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
     expect(db.audits).toEqual([]);
   });
 
-  it("a confirmed issue returns the DB row (portal token + snapshot), audits once, and reports the email's real outcome", async () => {
-    db.handlers["browser:transmittals"] = (ops) => has(ops, "update")
-      ? { data: { ...draftRow, status: "issued", issued_at: "2026-10-01T00:00:00Z", portal_token: "tok", portal_expires_at: "2026-12-30T00:00:00Z", items: [{ documentId: "d1", number: "P-1", versionId: "v1", fileHash: "abc", statusAsSent: "Issued" }] }, error: null }
-      : { data: draftRow, error: null };
-    vi.stubGlobal("fetch", withCheck(() => new Response(JSON.stringify({ ok: false, sent: false, reason: "this deployment has no public site URL" }), { status: 200 })));
+  // document-control P29 (DIST-18 limb a): the issue's read-back names its
+  // columns (never portal_token — 20261231 takes it from client roles), and
+  // the outcome is the issued row as the register serves it to the issuer.
+  const issuedRow = { ...draftRow, status: "issued", issued_at: "2026-10-01T00:00:00Z", items: [{ documentId: "d1", number: "P-1", versionId: "v1", fileHash: "abc", statusAsSent: "Issued" }] };
+  const registerRow = (over: Record<string, unknown> = {}) => ({ ...rowToTransmittal({ ...issuedRow, portal_token: "tok", portal_expires_at: "2026-12-30T00:00:00Z" }), viewer: { restrictedItems: 0, portalWithheld: false, portalWithheldReason: null, accessUnchecked: false }, ...over });
+  const isRegister = (u: string) => u.startsWith("/api/transmittal/register?");
+
+  it("a confirmed issue returns the DB row (snapshot) as the register serves it (token included for an issuer who may read every item), audits once, and reports the email's real outcome", async () => {
+    db.handlers["browser:transmittals"] = (ops) => has(ops, "update") ? { data: issuedRow, error: null } : { data: draftRow, error: null };
+    vi.stubGlobal("fetch", withCheck((u) => isRegister(u)
+      ? new Response(JSON.stringify({ transmittals: [registerRow()] }), { status: 200 })
+      : new Response(JSON.stringify({ ok: false, sent: false, reason: "this deployment has no public site URL" }), { status: 200 })));
     const out = await issueTransmittal("t1", actor);
     expect(out.transmittal.portalToken).toBe("tok");
     expect(out.transmittal.items[0].fileHash).toBe("abc");
@@ -276,18 +283,38 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
     // the client never sends a portal token any more — the database mints it
     const upd = db.calls.find((c) => c.table === "transmittals" && has(c.ops, "update"))!;
     expect(arg(upd.ops, "update")![0]).not.toHaveProperty("portal_token");
+    // … and never reads it back: the draft read and the read-back name their columns
+    for (const c of db.calls.filter((x) => x.client === "browser" && x.table === "transmittals")) {
+      expect(arg(c.ops, "select")![0]).toBe(TRANSMITTAL_CLIENT_COLUMNS);
+    }
+    expect(TRANSMITTAL_CLIENT_COLUMNS).not.toMatch(/portal_token|\*/);
+  });
+
+  it("an issuer the register withholds the token from still has the link emailed to the recipient (the route reads it server-side) and is told the link is ready", async () => {
+    db.handlers["browser:transmittals"] = (ops) => has(ops, "update") ? { data: issuedRow, error: null } : { data: draftRow, error: null };
+    const f = withCheck((u) => isRegister(u)
+      ? new Response(JSON.stringify({ transmittals: [registerRow({ portalToken: null, viewer: { restrictedItems: 1, portalWithheld: true, portalWithheldReason: "restricted", accessUnchecked: false } })] }), { status: 200 })
+      : new Response(JSON.stringify({ ok: true, sent: true }), { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    const out = await issueTransmittal("t1", actor);
+    expect(out.transmittal.portalToken).toBeNull();
+    expect(out.portal).toBe("ready");
+    expect(out.email).toEqual({ sent: true, reason: null });
+    expect(f.mock.calls.map(([u]) => String(u))).toContain("/api/transmittal/send-email");
   });
 
   it("a row with no portal token reports portal: missing (pre-20260910), and no email is attempted", async () => {
     db.handlers["browser:transmittals"] = (ops) => has(ops, "update") ? { data: { ...draftRow, status: "issued" }, error: null } : { data: draftRow, error: null };
-    const f = withCheck(() => new Response("{}", { status: 200 }));
+    const f = withCheck((u) => isRegister(u)
+      ? new Response(JSON.stringify({ transmittals: [registerRow({ portalToken: null })] }), { status: 200 })
+      : new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", f);
     const out = await issueTransmittal("t1", actor);
     expect(out.portal).toBe("missing");
     expect(out.email.sent).toBe(false);
     expect(out.email.reason).toMatch(/predates 20260910/);
-    // no email attempted (the only call is TRX-16's issue-time stamp check, P15)
-    expect(f.mock.calls.filter(([u]) => String(u) !== "/api/transmittal/stamp-check")).toEqual([]);
+    // no email attempted (the only calls are TRX-16's issue-time stamp check, P15, and the register's view of the row)
+    expect(f.mock.calls.filter(([u]) => String(u) !== "/api/transmittal/stamp-check" && !isRegister(String(u)))).toEqual([]);
   });
 
   it("the composer prints the cover sheet from the outcome's row, not a synthesized object", () => {
@@ -555,10 +582,14 @@ describe("TRX-14 / XEDGE-5 — the portal URL is built on the public origin, nev
 // ─── TRX-9: the per-document trail ─────────────────────────────────────────
 describe("TRX-9 — the transmittal trail says when it could not be read", () => {
   it("listTransmittalsForDocument throws on a real error and answers [] only for a missing table", async () => {
-    db.handlers["browser:transmittals"] = () => ({ data: null, error: { code: "42501", message: "permission denied" } });
+    // document-control P29 (DIST-18 limb a): the trail is read through the
+    // register route; its refusals are the trail's.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "permission denied" }), { status: 500 })));
     await expect(listTransmittalsForDocument(ORG, "d1")).rejects.toThrow(/Couldn't read the transmittal trail: permission denied/);
-    db.handlers["browser:transmittals"] = () => ({ data: null, error: { code: "42P01", message: "relation transmittals does not exist" } });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "x", missingTable: true }), { status: 404 })));
     expect(await listTransmittalsForDocument(ORG, "d1")).toEqual([]);
+    vi.unstubAllGlobals();
+    expect(db.calls.filter((c) => c.client === "browser" && c.table === "transmittals")).toEqual([]);
   });
   it("the Inspector's distribution pill marks the issued count unknown on a failed read and still shows the acks counts", () => {
     const panel = src("components/documents/InspectorPanel.tsx");

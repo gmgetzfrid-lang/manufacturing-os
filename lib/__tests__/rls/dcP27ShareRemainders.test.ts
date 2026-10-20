@@ -13,9 +13,11 @@
 //    re-paste answers every probe true.
 // 2. document-control DIST-17's DATABASE half, pinned as it stands (OPEN —
 //    DIST-18): transmittals_select (20260910) still admits every active member
-//    to the whole row, items and portal_token included. The register and its
-//    cover sheet are filtered on the server (app/api/transmittal/register);
-//    the REST read is not, until DIST-18's owner lands the database half.
+//    to the row's items. The register and its cover sheet are filtered on the
+//    server (app/api/transmittal/register); the REST read of the items is not,
+//    until DIST-18 limb (b) (after intelligence I-30). Its token half flipped
+//    at document-control P29 (DIST-18 limb (a), 20261231): portal_token is no
+//    longer readable by client roles (lib/__tests__/rls/dcP29TransmittalTokenColumn.test.ts).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -194,8 +196,9 @@ describe.skipIf(skip !== null)("DIST-17's database half, pinned as it stands —
     expect(selectAs(db, m.engineer.caller, `SELECT count(*) FROM documents WHERE id = '${docId}'`)).toEqual(["1"]);
   });
 
-  it("… but OPEN (DIST-18): the REST read of transmittals still hands that Viewer the item's number and the portal token — the database half is not narrowed by P27 (the register and the cover sheet are filtered on the server)", () => {
-    expect(selectAs(db, m.viewer.caller, `SELECT items->0->>'number', portal_token IS NOT NULL FROM transmittals WHERE id = '${tr}'`)).toEqual(["PID-4412|t"]);
+  it("… but OPEN (DIST-18 limb (b)): the REST read of transmittals still hands that Viewer the item's number — the items are not narrowed by P27 or P29 (the register and the cover sheet are filtered on the server); the portal token is refused since 20261231 (DIST-18 limb (a), P29)", () => {
+    expect(selectAs(db, m.viewer.caller, `SELECT items->0->>'number' FROM transmittals WHERE id = '${tr}'`)).toEqual(["PID-4412"]);
+    expect(asCaller(db, m.viewer.caller, `SELECT portal_token IS NOT NULL FROM transmittals WHERE id = '${tr}'`)).toMatchObject({ ok: false, code: "42501" });
     // the policy itself is 20260910's, unchanged
     expect(admin(db, "SELECT count(*) FROM pg_policies WHERE tablename = 'transmittals' AND cmd = 'SELECT'")).toBe("1");
   });

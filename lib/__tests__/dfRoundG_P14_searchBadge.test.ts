@@ -33,6 +33,15 @@ vi.mock("@/lib/supabase", () => {
   return { supabase: { from: (t: string) => chain(t) } };
 });
 
+// document-control P29 (DIST-18 limb a): transmittal hits come through the
+// register route (lib/transmittals searchTransmittalsForViewer), not the
+// browser client — the stand-in answers the same rows as the register would.
+vi.mock("@/lib/transmittals", () => ({
+  searchTransmittalsForViewer: vi.fn(async () => h.transmittals.map((r) => ({
+    id: r.id, number: r.number, subject: r.subject ?? null, recipientName: r.recipient_name ?? null, status: r.status,
+  }))),
+}));
+
 import { globalSearch } from "@/lib/globalSearch";
 
 const RAW = /\b(PENDING_ASSIGNMENT|PENDING_ENG_TEAM|DRAFTING|REVISION_REQ|PENDING_REVIEW|PENDING_FINAL_APPROVAL|PENDING_IFC|FINAL_DRAFT|CLOSED|CANCELED)\b/;

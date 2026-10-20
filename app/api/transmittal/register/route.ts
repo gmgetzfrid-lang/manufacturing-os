@@ -2,6 +2,14 @@
 // register, read by the server and filtered for the signed-in viewer.
 //
 //   GET ?orgId=<org>[&id=<transmittal>]  → { transmittals: Transmittal[] }
+//   DIST-18 limb (a) (document-control P29) — the other browser readers'
+//   slices, each through the same redaction (one slice per request):
+//     &documentId=<doc>   the Inspector's trail: rows listing it, 50 newest
+//     &projectId=<proj>   the project evidence pack: oldest first, 500
+//     &q=<text>[&limit=n] global search: number / subject / recipient name /
+//                         company matching, newest first, n (default 5, at
+//                         most 50) — a subject withheld from this viewer is
+//                         neither returned nor matched
 //
 // Until P27 the register (/transmittals) read every transmittal of the org
 // with the member's browser client (transmittals_select, 20260910: any active
@@ -27,7 +35,10 @@
 // be read leaves the decision undecided — the sender and controllers keep
 // their full rows, everyone else's items are withheld and no token is handed
 // out but to a controller, each row saying so (`viewer.accessUnchecked`).
-// The REST read of the table itself is not narrowed here (DIST-18).
+// The REST read of the table's other columns is not narrowed here (DIST-18
+// limb (b), after intelligence I-30); portal_token is no longer readable by
+// client roles at all once 20261231 is pasted (DIST-18 limb (a)) — this
+// route reads it with the service role and hands it out under ruling 2.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -39,6 +50,18 @@ import { redactTransmittalForViewer, rowToTransmittal } from "@/lib/transmittals
 export const runtime = "nodejs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** DIST-18 (limb a): global search's slice — how many hits it asks for by
+ *  default, the most it may ask for, and how many candidates the server
+ *  reads so a viewer whose subject matches are withheld still gets hits. */
+const SEARCH_DEFAULT_LIMIT = 5;
+const SEARCH_MAX_LIMIT = 50;
+const SEARCH_CANDIDATES = 50;
+
+/** The browser's own search escaping (lib/globalSearch.ts before DIST-18):
+ *  `%`, `_` and `,` are literal in the pattern. */
+function escapeSearch(q: string): string {
+  return q.replace(/[%_,]/g, "\\$&");
+}
 const MIGRATION_HINT =
   "Transmittals aren't set up yet — run supabase/migrations/20260717_transmittals.sql, then reload.";
 
@@ -52,10 +75,21 @@ export async function GET(req: NextRequest) {
   const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authErr || !user) return bad("Unauthorized", 401);
 
-  const orgId = (req.nextUrl.searchParams.get("orgId") ?? "").trim();
-  const id = (req.nextUrl.searchParams.get("id") ?? "").trim();
+  const params = req.nextUrl.searchParams;
+  const orgId = (params.get("orgId") ?? "").trim();
+  const id = (params.get("id") ?? "").trim();
+  const documentId = (params.get("documentId") ?? "").trim();
+  const projectId = (params.get("projectId") ?? "").trim();
+  const q = params.has("q") ? (params.get("q") ?? "").trim() : null;
   if (!UUID_RE.test(orgId)) return bad("orgId is required", 400);
   if (id && !UUID_RE.test(id)) return bad("id must be a transmittal id", 400);
+  if (documentId && !UUID_RE.test(documentId)) return bad("documentId must be a document id", 400);
+  if (projectId && !UUID_RE.test(projectId)) return bad("projectId must be a project id", 400);
+  if (q !== null && (q.length < 2 || q.length > 200)) return bad("q must be 2 to 200 characters", 400);
+  if ([id, documentId, projectId, q ?? ""].filter((v) => v.length > 0).length > 1) return bad("Ask for one slice at a time: id, documentId, projectId or q.", 400);
+  const rawLimit = params.get("limit");
+  const searchLimit = rawLimit === null ? SEARCH_DEFAULT_LIMIT : Number(rawLimit);
+  if (q !== null && !(Number.isInteger(searchLimit) && searchLimit >= 1 && searchLimit <= SEARCH_MAX_LIMIT)) return bad(`limit must be 1 to ${SEARCH_MAX_LIMIT}`, 400);
 
   let principal: Awaited<ReturnType<typeof loadPrincipal>>;
   try {
@@ -66,9 +100,29 @@ export async function GET(req: NextRequest) {
   }
   if (!principal) return bad("Not a member of this workspace.", 403);
 
-  let q = supabaseAdmin.from("transmittals").select("*").eq("org_id", orgId);
-  if (id) q = q.eq("id", id);
-  const { data, error } = await q.order("seq", { ascending: false }).limit(1000);
+  let read = supabaseAdmin.from("transmittals").select("*").eq("org_id", orgId);
+  let ascending = false;
+  let cap = 1000;
+  if (id) read = read.eq("id", id);
+  if (documentId) {
+    // listTransmittalsForDocument's read, as the browser made it before DIST-18.
+    read = read.contains("items", JSON.stringify([{ documentId }]));
+    cap = 50;
+  }
+  if (projectId) {
+    // gatherProjectEvidence's read, as the browser made it before DIST-18.
+    read = read.eq("project_id", projectId);
+    ascending = true;
+    cap = 500;
+  }
+  if (q !== null) {
+    // searchTransmittals' read (lib/globalSearch.ts before DIST-18), bounded
+    // to this org by the eq above whatever the pattern holds.
+    const pat = escapeSearch(q);
+    read = read.or(`number.ilike.%${pat}%,subject.ilike.%${pat}%,recipient_name.ilike.%${pat}%,recipient_company.ilike.%${pat}%`);
+    cap = Math.max(searchLimit, SEARCH_CANDIDATES);
+  }
+  const { data, error } = await read.order("seq", { ascending }).limit(cap);
   if (error) {
     const missing = error.code === "42P01" || /relation .*transmittals.* does not exist/i.test(error.message ?? "");
     if (missing) return bad(MIGRATION_HINT, 404, { missingTable: true });
@@ -92,5 +146,13 @@ export async function GET(req: NextRequest) {
   }
 
   const who = { uid: user.id, isController: principal.isController };
-  return NextResponse.json({ transmittals: rows.map((t) => redactTransmittalForViewer(t, who, readable)) });
+  const shown = rows.map((t) => redactTransmittalForViewer(t, who, readable));
+  if (q === null) return NextResponse.json({ transmittals: shown });
+  // DIST-18 (limb a): a row the register shows without its subject is a hit
+  // only on what it does show — a withheld subject is never an oracle.
+  const needle = q.toLowerCase();
+  const has = (v: string | null | undefined) => !!v && v.toLowerCase().includes(needle);
+  const hits = shown.filter((t, i) => t.subject !== null || rows[i].subject == null
+    || has(t.number) || has(t.recipientName) || has(t.recipientCompany));
+  return NextResponse.json({ transmittals: hits.slice(0, searchLimit) });
 }
