@@ -303,10 +303,12 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
       customColumns: allColumns,
       readAccess,
       // ALOG-13 (I-31): the upload / admin role columns (writeAccess /
-      // adminAccess) are not written — those roles live in the ACL rules
+      // adminAccess) are not carried — those roles live in the ACL rules
       // below, which every reader of this library's access evaluates (the
       // legacy rung that reads the columns never applies to a library whose
-      // ACL says something, and this ACL always does).
+      // ACL says something, and this ACL always does). A new library leaves
+      // the columns unset; an edit's save derives them from these rules
+      // (lib/libraryAccess wizardListColumnsFromAcl) until that rung goes.
       visibleTo,
       folderSecurity: "Inherited",
       defaultNewVisibility: newNodeVisibility,

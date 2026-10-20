@@ -11,6 +11,7 @@ import { LibraryConfig, type AccessControl } from "@/types/schema";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { setOwner as assignLibraryOwner } from "@/lib/ownership";
 import { buildAclIndex, mergeWizardLibraryAcl } from "@/lib/acl";
+import { wizardListColumnsFromAcl } from "@/lib/libraryAccess";
 import type { LibraryDeleteImpact } from "@/lib/libraryDeleteImpact";
 import { postLibraryDelete } from "@/lib/libraryDeleteClient";
 
@@ -121,10 +122,11 @@ export default function LibraryAdminPage() {
       const dbConfig = {
         name: config.name, type: config.type, description: config.description,
         custom_columns: config.customColumns ?? [],
-        // ALOG-13 (I-31): write_access / admin_access are no longer written —
-        // the wizard's upload and admin roles are ACL rules (mergedAcl). An
-        // edited library keeps the values it had; nothing reads them for a
-        // library whose ACL says something (lib/libraryAccess legacyLibraryAcl).
+        // ALOG-13 (I-31): write_access / admin_access are not in the shared
+        // payload — the wizard's upload and admin roles are ACL rules
+        // (mergedAcl), so a NEW library leaves them unset. An EDIT writes them
+        // (below, from the wizard's own ACL) until the legacy fallback rung is
+        // deleted: it still reads them if the ACL is later cleared.
         read_access: config.readAccess ?? "ALL", visible_to: config.visibleTo ?? [],
         folder_security: config.folderSecurity, default_new_visibility: config.defaultNewVisibility,
         default_new_acl: config.defaultNewAcl ?? null, acl: mergedAcl,
@@ -132,9 +134,13 @@ export default function LibraryAdminPage() {
       };
 
       if (editingLib) {
+        // ALOG-13 (I-31 second review fix): the edit keeps write_access /
+        // admin_access in step with the wizard's own ACL (its upload / admin
+        // rules — the lists it wrote to the columns before I-31).
+        const editLists = wizardListColumnsFromAcl(config.acl);
         const { error } = await supabase
           .from("libraries")
-          .update({ ...dbConfig, updated_at: now, updated_by: uid })
+          .update({ ...dbConfig, ...editLists, updated_at: now, updated_by: uid })
           .eq("id", editingLib.id!);
         if (error) throw error;
 
@@ -152,7 +158,7 @@ export default function LibraryAdminPage() {
         // next openEdit feeds this row back into the merge, and caching the
         // unmerged ACL would clobber every drawer grant on the second save.
         setLibraries((prev) =>
-          prev.map((l) => l.id === editingLib.id ? ({ ...l, ...config, acl: mergedAcl ?? undefined, orgId: l.orgId ?? activeOrgId } as LibraryConfig) : l)
+          prev.map((l) => l.id === editingLib.id ? ({ ...l, ...config, writeAccess: editLists.write_access, adminAccess: editLists.admin_access, acl: mergedAcl ?? undefined, orgId: l.orgId ?? activeOrgId } as LibraryConfig) : l)
         );
       } else {
         const { data: newLib, error } = await supabase

@@ -21,8 +21,11 @@
 //     Migration 20261228 writes those lists into each such library's ACL,
 //     after which no library takes the fallback.
 // The library wizard writes the ACL (its view, upload and admin roles are
-// rules) together with read_access / visible_to; it no longer writes
-// write_access / admin_access, and neither does the Save-As createLibrary.
+// rules) together with read_access / visible_to; on a NEW library it no
+// longer writes write_access / admin_access (nor does the Save-As
+// createLibrary), and on an EDIT it keeps them in step with its own ACL
+// rules until the fallback is deleted (it still reads them if the ACL is
+// later cleared).
 // No policy or trigger decides access by the lists; the library
 // sensitive-column guard only refuses a change to them from someone without
 // authority.

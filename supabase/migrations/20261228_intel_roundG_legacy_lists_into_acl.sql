@@ -56,9 +56,12 @@
 -- Everyone case) and a library whose ACL already says something are not
 -- touched. Proven member by member on PostgreSQL 16
 -- (lib/__tests__/rls/intelI31LegacyListsAcl.test.ts) for every reader that
--- takes the rung — the library page, its card, content reads (the AI seam,
--- the bytes door), publish and the drawer's authority: the app's answer
--- before the paste, its answer after, and the database's answer agree.
+-- takes the rung — the library page's per-row decision, its card, content
+-- reads (the AI seam, the bytes door), publish and the drawer's authority:
+-- the app's answer before the paste equals its answer after. Two answers DO
+-- move, and neither is ruled yet (DACL-13): the raw-ACL readers just below,
+-- at the paste; and the database's LISTING of private / hidden rows, at the
+-- first acl_index rebuild after it (WHAT WIDENS AFTER THE PASTE).
 --
 -- WHAT DOES CHANGE AT THE PASTE (said, not hidden). Readers that decide on
 -- the RAW libraries.acl and never took the legacy rung answer differently
@@ -79,18 +82,28 @@
 -- Each of these is the lists' own answer (DEC-90 R1), so the change closes a
 -- disclosure rather than opening one; it is opened as intelligence DACL-13
 -- (owner proposed: drafting-flow, for the integrator's ruling — accept at
--- the paste, or move the triage readers onto the rung in a deploy first).
+-- the paste, or move the triage readers onto the rung in a deploy first;
+-- the paste waits for that ruling — PASTE FACTS).
 --
--- WHAT CONVERGES LATER (said, not hidden). Folders, documents and document
--- sets carry a chain-resolved acl_index the APP builds (the drawer's save,
--- the folder-move rebuild, the nightly maintenance rebuild — DEC-10). This
--- file does not touch them. At the next rebuild they take the library's rung,
--- so the database returns a PRIVATE or HIDDEN row in a written library to the
--- roles its lists name (node_visible's allow branch) — the answer the app's
--- doors (the AI seam, the bytes door) already give those roles today. That is
--- the one database answer that moves; inventory row 12 counts the rows it can
--- touch (documents, folders and document sets). A NORMAL row stays open at
--- the database until intelligence I-30 (DEC-90 R5), as today.
+-- WHAT WIDENS AFTER THE PASTE (said, not hidden — NOT YET ACCEPTED: put to
+-- the integrator under DACL-13). Folders, documents and document sets carry
+-- a chain-resolved acl_index the APP builds (the drawer's save, the
+-- folder-move rebuild, the nightly maintenance rebuild — DEC-10). This file
+-- does not touch them. Within ONE nightly acl_index rebuild after the paste
+-- (lib/aclIndexRebuild — automatic, no one has to act) they take the
+-- library's rung, so the database returns a PRIVATE or HIDDEN row in a
+-- written library to the roles its lists name (node_visible's allow branch).
+-- The app's content doors (the AI seam, the bytes door) already give those
+-- roles that row's content today, but the library page LISTS rows from the
+-- database, and so do database-backed searches: from that rebuild on, every
+-- member holding a listed role sees those private / hidden documents,
+-- folders and document sets listed, which before the paste only controllers,
+-- the owner and explicit grantees did (16 (member, row) pairs on the PG16
+-- fixture). Inventory row 12 counts the rows it can touch. That is a
+-- disclosure widening DEC-90's I-31 ruling (1) (before = after, hidden /
+-- private included) did not accept; the integrator accepts it explicitly or
+-- it is not pasted. A NORMAL row stays open at the database until
+-- intelligence I-30 (DEC-90 R5), as today.
 --
 -- NOT DONE HERE. No RESTRICTIVE policy on libraries (DEC-90 R6). node_visible,
 -- acl_index_denies and the deny binding are not touched (intelligence I-30).
@@ -98,7 +111,8 @@
 --
 -- APP BEFORE AND AFTER THE PASTE. Before: the app's fallback rung decides
 -- each legacy library (I-12). After: the ACL decides it, with the same answer
--- for every reader that takes the rung (the raw-ACL readers above excepted).
+-- for every reader that takes the rung (the raw-ACL readers above excepted,
+-- and the private / hidden listing at the first rebuild after it).
 -- No column, function or table is added, so no 42703 / 42883 / 42P01 /
 -- PGRST202 / PGRST204 / PGRST205 can arise from it. Idempotent: a re-paste
 -- finds no legacy library and writes nothing.
@@ -122,6 +136,15 @@
 --   app's legacy rung: pasted on an app older than I-12 this file would also
 --   close those libraries' contents to members outside the lists at the
 --   paste instead of at the deploy — the change R1 ruled.)
+--   RULING — HARD PREREQUISITE: DO NOT PASTE until the integrator has ruled
+--   on DACL-13 (both of its questions: the raw-ACL ticket readers that change
+--   at the paste, and the private / hidden listing that widens at the first
+--   acl_index rebuild after it). Under (b), the drafting-flow change
+--   (offerableLibraries / LibraryPicker / workflow-action on
+--   effectiveLibraryAclFromRow with LIBRARY_RUNG_COLUMNS) deploys first —
+--   it cannot be done after the paste. Under (a), the paste row names the
+--   readers. The listing widening is accepted in the paste row by name, or
+--   the file is not pasted.
 --   ONE RESULT SET: probes first (ok true on a correct paste), then the
 --   counts-only inventory captured before the transaction and the counts of
 --   what the transaction wrote.

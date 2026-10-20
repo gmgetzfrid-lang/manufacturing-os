@@ -25,7 +25,10 @@
 // legacyLibraryAcl returns for it (same roles, same order, same visibility,
 // discover / read / download), so after that paste the ACL says something on
 // every such row and effectiveLibraryAcl returns it — the same object — with
-// no change to anyone's answer. legacyLibraryAcl stays as the FALLBACK
+// no change for any reader that takes the rung (the raw-ACL ticket readers
+// excepted, and the database's listing of private / hidden rows at the first
+// acl_index rebuild after the paste — both put to the integrator as
+// intelligence DACL-13, which the paste waits for). legacyLibraryAcl stays as the FALLBACK
 // (DEC-90's I-31 ruling (2)): before the paste it decides every legacy
 // library, after it none, and it still binds a library whose ACL is later
 // saved with nothing in it while its lists restrict. Its deletion (and the
@@ -108,8 +111,9 @@ export function legacyLibraryAcl(lib: LibraryAccessFields): AccessControl | unde
 const WIZARD_UPLOAD_ACTIONS: readonly PermissionAction[] = ["upload", "createFolder", "editMetadata", "write", "download", "read", "discover"];
 
 /** ALOG-13 (I-31): the roles the library wizard's upload picker opens with
- *  on an edit. The wizard no longer writes libraries.write_access (nothing
- *  reads it for a library whose ACL the wizard writes), so the picker is
+ *  on an edit. The wizard no longer writes libraries.write_access on a NEW
+ *  library (nothing reads it for one whose ACL the wizard writes; an edit
+ *  keeps it in step — wizardListColumnsFromAcl), so the picker is
  *  seeded from what the wizard DID write: the role subjects of the ACL's
  *  allow rules carrying exactly the wizard's upload actions, with no expiry
  *  (a drawer-made rule — another action set, or an expiry — is not the
@@ -122,17 +126,40 @@ const WIZARD_UPLOAD_ACTIONS: readonly PermissionAction[] = ["upload", "createFol
  *  array). */
 export function wizardUploadRolesSeed(lib: { acl?: AccessControl | null; writeAccess?: Role[] | null } | null | undefined): Role[] | undefined {
   if (!lib) return undefined;
-  const rules = Array.isArray(lib.acl?.rules) ? lib.acl!.rules : [];
-  const fromAcl: Role[] = [];
+  const fromAcl = wizardRoleSubjects(lib.acl, WIZARD_UPLOAD_ACTIONS);
+  if (fromAcl.length > 0) return fromAcl;
+  return lib.writeAccess ?? undefined;
+}
+
+/** The actions the library wizard grants its admin roles (LibraryWizard
+ *  handleSubmit) — one allow rule per role, exactly these. */
+const WIZARD_ADMIN_ACTIONS: readonly PermissionAction[] = ["admin", "managePermissions"];
+
+function wizardRoleSubjects(acl: AccessControl | null | undefined, actions: readonly PermissionAction[]): Role[] {
+  const rules = Array.isArray(acl?.rules) ? acl!.rules : [];
+  const out: Role[] = [];
   for (const r of rules) {
     if (!r || r.effect !== "allow" || r.subject?.type !== "role" || typeof r.subject.id !== "string") continue;
     if (r.expiresAt != null) continue;
     const acts = Array.isArray(r.actions) ? r.actions : [];
-    const exact = acts.length === WIZARD_UPLOAD_ACTIONS.length && WIZARD_UPLOAD_ACTIONS.every((a) => acts.includes(a));
-    if (exact && !fromAcl.includes(r.subject.id as Role)) fromAcl.push(r.subject.id as Role);
+    const exact = acts.length === actions.length && actions.every((a) => acts.includes(a));
+    if (exact && !out.includes(r.subject.id as Role)) out.push(r.subject.id as Role);
   }
-  if (fromAcl.length > 0) return fromAcl;
-  return lib.writeAccess ?? undefined;
+  return out;
+}
+
+/** ALOG-13 (I-31 second review fix): the write_access / admin_access a wizard
+ *  EDIT writes, derived from the wizard's own ACL (pass the wizard's form
+ *  ACL, not the drawer-merged one): the role subjects of its upload rules and
+ *  of its admin rules — the same lists, in the same order, the wizard wrote
+ *  to the columns before I-31 (one array fed both). A new library does not
+ *  write them (nothing reads them for it: its ACL always says something, and
+ *  a NULL column is no role). An edited library keeps them in step with the
+ *  ACL until legacyLibraryAcl is deleted, because that fallback still reads
+ *  them if the ACL is later saved with nothing in it — a frozen pre-I-31
+ *  value there would hand a role the wizard since removed its read back. */
+export function wizardListColumnsFromAcl(acl: AccessControl | null | undefined): { write_access: Role[]; admin_access: Role[] } {
+  return { write_access: wizardRoleSubjects(acl, WIZARD_UPLOAD_ACTIONS), admin_access: wizardRoleSubjects(acl, WIZARD_ADMIN_ACTIONS) };
 }
 
 /** The library rung the explorer evaluates under (see the header). */
