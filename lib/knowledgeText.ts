@@ -619,6 +619,42 @@ export function extractAnswerMeta(answer: string): {
   return { answer: kept.join("\n").trim(), answeringFor, followup, mode, goal, useThis };
 }
 
+/** "B31 — EP-5-5-1.pdf" → "EP 5-5-1": the designation a reader would write,
+ *  else the file name without its extension. */
+export function docDesignation(documentName: string): string {
+  const name = documentName.replace(/\.pdf$/i, "").trim();
+  const m = name.match(/\b([A-Z]{1,6})[- ]?(\d+(?:[-.]\d+)+[A-Z]?)\b/);
+  return m ? `${m[1]} ${m[2]}` : name;
+}
+
+/** The clause a quoted sentence sits under: the last clause number printed
+ *  before it in the passage ("6.2.3 Slip-on flanges…"), else the number of
+ *  the section heading in force. null when neither has one. */
+export function clauseFor(quote: string, highlight: string | null | undefined, section: string | null | undefined): string | null {
+  const at = highlight ? quote.indexOf(highlight) : -1;
+  const before = at >= 0 ? quote.slice(0, at + Math.min(12, highlight!.length)) : quote.slice(0, 40);
+  let last: string | null = null;
+  // A clause number is printed before capitalised text ("6.2.3 Slip-on…");
+  // a value ("CE of 0.43 per…") isn't, so it can't pose as one.
+  for (const m of before.matchAll(/(?:^|[\s(])(\d{1,2}(?:\.\d{1,3}){1,4})\.?(?=\s+[A-Z(])/g)) last = m[1];
+  if (last) return last;
+  const sec = section?.match(/^\s*(?:SECTION\s+)?(\d{1,2}(?:\.\d{1,3}){0,4})\b/i);
+  return sec ? sec[1] : null;
+}
+
+/** A quote you can paste anywhere and still trace: designation, clause,
+ *  the exact words, page. Web sources carry their title and address. */
+export function referencedQuote(c: {
+  documentName?: string; section?: string | null; page?: number; quote?: string; highlight?: string;
+  url?: string; title?: string;
+}): string {
+  const words = (c.highlight ?? c.quote ?? "").replace(/\s+/g, " ").trim();
+  if (c.url) return `"${words}" — ${c.title ?? c.url}, ${c.url}`;
+  const doc = docDesignation(c.documentName ?? "Document");
+  const clause = clauseFor(c.quote ?? "", c.highlight, c.section);
+  return `${doc}${clause ? ` §${clause}` : ""}: "${words}"${c.page ? ` (p.${c.page})` : ""}`;
+}
+
 /** Does this line carry its provenance — a [n] citation, or an explicit
  *  "you said / you told me / per your …" for a fact the user supplied? */
 export function hasSource(text: string): boolean {

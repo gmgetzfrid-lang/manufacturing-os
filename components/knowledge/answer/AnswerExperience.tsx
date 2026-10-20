@@ -18,7 +18,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import {
-  hasSource, parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
+  referencedQuote, hasSource, parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
   structureAnswer, isMissingFact, extractAnswerMeta, type AnswerBlock, type Verdict,
 } from "@/lib/knowledgeText";
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
@@ -734,7 +734,7 @@ export function SourceCard({ citation, onOpen, delay }: {
               className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
               <ExternalLink className="w-3 h-3" /> View highlighted page
             </button>
-            {c.quote && <CopyButton text={c.quote} label="Copy quote" />}
+            {c.quote && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
             {c.tier && c.libraryName && (
               <span className="ml-auto text-[9px] text-[var(--color-text-muted)] font-bold">{c.libraryName}</span>
             )}
@@ -782,7 +782,7 @@ function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
               className="inline-flex items-center gap-1.5 font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400 transition-colors">
               <Eye className="w-3 h-3 text-orange-600" /> Open p.{c.page}{c.highlight ? " at these words" : ""}
             </button>
-            {(c.highlight || c.quote) && <CopyButton text={c.highlight ?? c.quote ?? ""} label="Copy quote" />}
+            {(c.highlight || c.quote) && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
             {!c.highlight && c.quote && (
               <span className="text-[var(--color-text-faint)]">whole passage — no exact words given</span>
             )}
@@ -1520,10 +1520,13 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                           &ldquo;{c.quote}&rdquo;
                         </blockquote>
                       )}
-                      <a href={c.url} target="_blank" rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-sky-400">
-                        <ExternalLink className="w-3 h-3 text-sky-600" /> Open the page
-                      </a>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <a href={c.url} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-sky-400">
+                          <ExternalLink className="w-3 h-3 text-sky-600" /> Open the page
+                        </a>
+                        {c.quote && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
+                      </div>
                     </div>
                   );
                 })}

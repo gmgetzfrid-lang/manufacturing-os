@@ -6,7 +6,7 @@ import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
   parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
-  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow, extractAnswerMeta, structureAnswer, isMissingFact, enforceDocumentsOnly, hasSource,
+  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow, extractAnswerMeta, structureAnswer, isMissingFact, enforceDocumentsOnly, hasSource, referencedQuote, clauseFor,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -843,5 +843,34 @@ describe("hasSource", () => {
     expect(hasSource("§4.3 prohibits slip-ons on fittings [12].")).toBe(true);
     expect(hasSource("You said the line is in sour service.")).toBe(true);
     expect(hasSource("The fillet weld sits in the fitting's high-stress transition.")).toBe(false);
+  });
+});
+
+describe("referencedQuote", () => {
+  it("prefixes the designation and the clause the sentence sits under, and adds the page", () => {
+    const quote = "6.2 Flanges 6.2.1 Weld neck flanges shall be used for Class 600. 6.2.3 Slip-on flanges shall not be directly welded to pipe fittings (e.g., welding elbows and tees).";
+    expect(referencedQuote({
+      documentName: "B31 — EP-5-5-1.pdf", section: "6.2 Flanges", page: 9, quote,
+      highlight: "Slip-on flanges shall not be directly welded to pipe fittings (e.g., welding elbows and tees)",
+    })).toBe('EP 5-5-1 §6.2.3: "Slip-on flanges shall not be directly welded to pipe fittings (e.g., welding elbows and tees)" (p.9)');
+  });
+
+  it("falls back to the section heading's number, then to no clause", () => {
+    expect(referencedQuote({ documentName: "EP-5-2-1", section: "6.4 Special Requirements", page: 11, quote: "pipe may be prone to corrosion", highlight: "prone to corrosion" }))
+      .toBe('EP 5-2-1 §6.4: "prone to corrosion" (p.11)');
+    expect(referencedQuote({ documentName: "Hydrotest Checklist.pdf", page: 2, quote: "Vent all high points." }))
+      .toBe('Hydrotest Checklist: "Vent all high points." (p.2)');
+  });
+
+  it("cites a web source by title and address", () => {
+    expect(referencedQuote({ url: "https://asme.org/a", title: "ASME A", quote: "Slip-ons need straight pipe." }))
+      .toBe('"Slip-ons need straight pipe." — ASME A, https://asme.org/a');
+  });
+});
+
+describe("clauseFor", () => {
+  it("doesn't mistake a value for a clause number", () => {
+    const quote = "6.4.5 SAW pipe may be used. 4) X42 PSL2 shall have a maximum CE of 0.43 per SR18 and a yield of 50,000 psi.";
+    expect(clauseFor(quote, "maximum CE of 0.43 per SR18", "6.4 Special Requirements")).toBe("6.4.5");
   });
 });
