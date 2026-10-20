@@ -25,11 +25,25 @@
 // TRX-3 / TRX-8: each document shows its status and effective date AS SENT
 // and the fingerprint (SHA-256) and size of the file issued. TRX-4: a revoked
 // or expired link says so, distinctly from a voided transmittal.
+//
+// DIST-17 (document-control P27; the integrator's ruling 3 under DEC-90): a
+// signed-in member of the issuing workspace who opens this link is recorded
+// as themselves, never as the outside recipient. When this browser holds a
+// session the snapshot GET carries its bearer token; for a member the route
+// answers `member` with a short-lived ticket naming them, which every file
+// address then carries (`&member=`), and the page says downloads are recorded
+// in their name. A member who IS the recipient (their address is the
+// recipient's) is recorded in their name too, and their downloads and
+// receipt count as the recipient's; any other member cannot acknowledge
+// receipt on the recipient's behalf. With no session — the outside recipient
+// — the page works exactly as before; a session the server could not check
+// says so and asks to try again.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  FileText, Loader2, AlertTriangle, CheckCircle2, Download, Building2, PenLine,
+  FileText, Loader2, AlertTriangle, CheckCircle2, Download, Building2, PenLine, UserCheck,
 } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 interface PortalItem {
   documentId: string; number: string; title: string | null; rev: string | null;
@@ -50,7 +64,42 @@ interface PortalData {
   recipientName: string | null; recipientCompany: string | null;
   portalExpiresAt?: string | null;
   items: PortalItem[];
+  /** DIST-17 (ruling 3): present only when a signed-in member of the issuing
+   *  workspace opened the link — `ticket` names them on each download; a
+   *  null ticket means the server could not name them, so nothing is
+   *  downloaded for them (never recorded as the recipient's). `asRecipient`:
+   *  they are this transmittal's recipient (or no longer hold a seat), so
+   *  their downloads and receipt count as the recipient's. */
+  member?: { email: string | null; ticket: string | null; asRecipient?: boolean };
 }
+
+/** DIST-17 (ruling 3): this browser's session, if any — the bearer token the
+ *  snapshot GET carries so a member of the issuing workspace is recorded as
+ *  themselves. None (the outside recipient): no header, exactly as before. */
+async function sessionHeaders(): Promise<Record<string, string>> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
+/** DIST-17 (ruling 3): a ticket older than this is renewed (a quiet re-read
+ *  of the snapshot) before a download — half its 30-minute life. */
+const MEMBER_TICKET_RENEW_MS = 15 * 60 * 1000;
+/** DIST-17 (P27 review): while a member's visible fallback link is on screen,
+ *  how often the page checks whether its ticket is due for renewal. */
+const MEMBER_TICKET_CHECK_MS = 60 * 1000;
+
+/** DIST-17 (ruling 3): the sentence for a member the server could not name. */
+const MEMBER_UNNAMED = "You are signed in as a member of the issuing workspace, but your download could not be recorded in your name, so it was not started. Reload the page and try again.";
+
+/** DIST-17 (ruling 3): the server could not check this browser's sign-in. */
+const MEMBER_CHECK_FAILED = "We could not check your sign-in for this page just now, so it was not opened (a member of the issuing workspace is recorded in their own name). Try again in a moment.";
+
+/** DIST-17 (ruling 3): a member of the issuing workspace who is not the recipient. */
+const MEMBER_CANNOT_ACKNOWLEDGE = "You are signed in as a member of the issuing workspace, not as this transmittal's recipient, so you cannot acknowledge receipt on their behalf. The recipient acknowledges from this link; a receipt given another way is recorded from the transmittal register.";
 
 /** The issued file's size, as the record shows it. */
 function sizeLabel(bytes: number | null | undefined): string | null {
@@ -70,6 +119,8 @@ function downloadError(status: number, body: { error?: string; reason?: string }
   if (code === "expired") return "This link has expired — contact the issuer for a fresh one.";
   if (code === "voided") return "This transmittal was voided by the issuer.";
   if (code === "unrecorded") return "The download could not be recorded on the issuer's distribution record, so the file was not released. Try again shortly.";
+  // DIST-17 (ruling 3): a member's download that could not be recorded in their name.
+  if (code === "member_unverified") return "Your sign-in check for this page has expired, so the download was not started (it is recorded in your name, as a member of the issuing workspace). Reload the page and try again.";
   if (code === "unstampable") {
     return body?.reason === "oversize"
       ? "This PDF is too large for the portal to mark as an UNCONTROLLED copy, so it was not released — an unmarked drawing cannot be told from a controlled one once it is printed. The issuer has been told; ask them to send it another way (or split into smaller files)."
@@ -104,8 +155,9 @@ const DOWNLOAD_SETTLE_MS = 8000;
 
 /** The route address a file is saved from — the hidden frame's, and the
  *  visible fallback link's (TRX-15). */
-function fileHref(token: string, docId: string): string {
-  return `/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}&nav=1`;
+function fileHref(token: string, docId: string, memberTicket?: string | null): string {
+  const member = memberTicket ? `&member=${encodeURIComponent(memberTicket)}` : "";
+  return `/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}&nav=1${member}`;
 }
 /** A download frame is kept this long — past the route's 300 s budget. */
 const DOWNLOAD_FRAME_TTL_MS = 10 * 60 * 1000;
@@ -129,7 +181,7 @@ function unmarkedLine(i: Pick<PortalItem, "releasedUnmarked" | "unmarkedReason">
 
 export default function TransmittalPortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
-  const [state, setState] = useState<"loading" | "ok" | "voided" | "revoked" | "expired" | "notfound" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ok" | "voided" | "revoked" | "expired" | "notfound" | "membercheck" | "error">("loading");
   const [data, setData] = useState<PortalData | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [ackName, setAckName] = useState("");
@@ -141,22 +193,26 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   const [started, setStarted] = useState<Set<string>>(() => new Set());
   const frames = useRef<HTMLIFrameElement[]>([]);
   useEffect(() => () => { for (const f of frames.current) f.remove(); frames.current = []; }, []);
+  // DIST-17 (ruling 3): when the member's ticket was last handed out.
+  const ticketAt = useRef<number>(0);
 
   // `recheck` (TRX-15): the quiet re-read after a download — not an open on
   // the usage trail, and a failure leaves the page as it is.
   const refresh = useCallback(async (opts?: { recheck?: boolean }): Promise<PortalData | null> => {
     try {
-      const res = await fetch(`/api/transmittal?token=${encodeURIComponent(token)}${opts?.recheck ? "&recheck=1" : ""}`);
+      const res = await fetch(`/api/transmittal?token=${encodeURIComponent(token)}${opts?.recheck ? "&recheck=1" : ""}`, { headers: await sessionHeaders() });
       if (!res.ok) {
         if (opts?.recheck) return null;
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         setState(body?.error === "voided" ? "voided"
           : body?.error === "revoked" ? "revoked"
           : body?.error === "expired" ? "expired"
+          : body?.error === "member_check_failed" ? "membercheck"
           : res.status === 404 ? "notfound" : "error");
         return null;
       }
       const next = (await res.json()) as PortalData;
+      if (next.member) ticketAt.current = Date.now();
       setData(next);
       setState("ok");
       return next;
@@ -171,7 +227,16 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   // saves the stream straight to disk (Content-Disposition: attachment) —
   // nothing is read into this page's memory. A hidden frame does the
   // navigation so the portal stays on screen; only a refusal renders in it.
-  const download = (docId: string, number: string) => {
+  const download = async (docId: string, number: string) => {
+    // DIST-17 (ruling 3): a signed-in member downloads in their own name —
+    // with a ticket renewed when it is old, and never without one.
+    let ticket: string | null = null;
+    if (data?.member) {
+      let current = data;
+      if (Date.now() - ticketAt.current > MEMBER_TICKET_RENEW_MS) current = (await refresh({ recheck: true })) ?? current;
+      ticket = current.member?.ticket ?? null;
+      if (!ticket) { setMsg({ tone: "err", text: MEMBER_UNNAMED }); return; }
+    }
     setDownloading(docId); setMsg(null);
     setStarted((prev) => (prev.has(docId) ? prev : new Set(prev).add(docId)));
     const frame = document.createElement("iframe");
@@ -189,7 +254,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         frames.current = frames.current.filter((f) => f !== frame);
       }
     });
-    frame.src = fileHref(token, docId);
+    frame.src = fileHref(token, docId, ticket);
     document.body.appendChild(frame);
     frames.current.push(frame);
     window.setTimeout(() => {
@@ -219,17 +284,62 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
     }, DOWNLOAD_FRAME_TTL_MS);
   };
 
+  // DIST-17 (P27 review): the visible "did not start?" link renews the
+  // member's ticket exactly as download() does. While it is on screen for a
+  // member, the snapshot is re-read quietly once the ticket is older than
+  // MEMBER_TICKET_RENEW_MS (and on returning to the tab), so the address it
+  // carries — opened by any means — is a fresh one; a click on a link whose
+  // ticket is still old renews it first, then opens the file with the fresh
+  // ticket. The recipient (no member) is untouched: no timer, the plain link.
+  const hasMember = !!data?.member;
+  const hasFallback = started.size > 0;
+  useEffect(() => {
+    if (!hasMember || !hasFallback) return;
+    const renewIfOld = () => {
+      if (Date.now() - ticketAt.current > MEMBER_TICKET_RENEW_MS) void refresh({ recheck: true });
+    };
+    const id = window.setInterval(renewIfOld, MEMBER_TICKET_CHECK_MS);
+    const onVisible = () => { if (document.visibilityState === "visible") renewIfOld(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", onVisible); };
+  }, [hasMember, hasFallback, refresh]);
+
+  const openFallback = (e: React.MouseEvent<HTMLAnchorElement>, docId: string) => {
+    if (!data?.member) return; // the recipient: the plain link, as before
+    if (data.member.ticket && Date.now() - ticketAt.current <= MEMBER_TICKET_RENEW_MS) return; // fresh: the link as rendered
+    e.preventDefault();
+    // Opened now, inside the click, so the browser keeps it; pointed at the
+    // file once the ticket is renewed.
+    const w = window.open("", "_blank");
+    if (w) { try { w.opener = null; } catch { /* cross-origin: nothing to clear */ } }
+    void refresh({ recheck: true }).then((fresh) => {
+      const ticket = (fresh ?? data).member?.ticket ?? null;
+      if (!ticket) { w?.close(); setMsg({ tone: "err", text: MEMBER_UNNAMED }); return; }
+      const href = fileHref(token, docId, ticket);
+      if (w) w.location.href = href;
+      else window.location.assign(href);
+    });
+  };
+
   const acknowledge = async () => {
     if (!ackName.trim()) { setMsg({ tone: "err", text: "Enter your name to acknowledge receipt." }); return; }
     setAckBusy(true); setMsg(null);
     try {
+      // DIST-17 (ruling 3): the receipt POST carries this browser's session
+      // too, so a member of the issuing workspace is never recorded as the
+      // recipient acknowledging.
       const res = await fetch("/api/transmittal", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(await sessionHeaders()) },
         body: JSON.stringify({ token, name: ackName.trim(), note: ackNote.trim() || undefined }),
       });
       const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (!res.ok || !body?.ok) throw new Error(body?.error === "revoked" || body?.error === "expired" ? downloadError(res.status, body) : body?.error || `HTTP ${res.status}`);
+      if (!res.ok || !body?.ok) {
+        throw new Error(body?.error === "revoked" || body?.error === "expired" ? downloadError(res.status, body)
+          : body?.error === "member_cannot_acknowledge" ? MEMBER_CANNOT_ACKNOWLEDGE
+          : body?.error === "member_check_failed" ? MEMBER_CHECK_FAILED
+          : body?.error || `HTTP ${res.status}`);
+      }
       setMsg({ tone: "ok", text: "Receipt recorded — thank you. The issuer has been notified." });
       await refresh();
     } catch (e) {
@@ -249,11 +359,14 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
       : state === "revoked" ? "The issuer has revoked this link. The transmittal itself still stands — contact them if you need access again."
       : state === "expired" ? "This link has expired. The transmittal itself still stands — contact the issuer for a fresh link."
       : state === "notfound" ? "This link doesn't exist — it may have been mistyped."
+      : state === "membercheck" ? MEMBER_CHECK_FAILED
       : "Something went wrong opening this transmittal. Try again shortly.";
     return <Shell><div className="p-8 text-center"><AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" /><p className="text-sm text-slate-500">{text}</p></div></Shell>;
   }
 
   const acknowledged = data.status === "acknowledged";
+  // DIST-17 (ruling 3): a member of the issuing workspace who is not the recipient.
+  const memberNotRecipient = !!data.member && !data.member.asRecipient;
 
   return (
     <Shell>
@@ -275,7 +388,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
             <div className="mt-2">
               {acknowledged
                 ? <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> Acknowledged</span>
-                : <span className="text-[11px] font-black text-amber-700">Awaiting your acknowledgment</span>}
+                : <span className="text-[11px] font-black text-amber-700">{memberNotRecipient ? "Awaiting the recipient\u2019s acknowledgment" : "Awaiting your acknowledgment"}</span>}
             </div>
           </div>
         </div>
@@ -289,6 +402,18 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
       <div className="p-6 space-y-5">
         {msg && (
           <div className={`rounded-xl border px-3 py-2.5 text-xs font-bold ${msg.tone === "ok" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-rose-300 bg-rose-50 text-rose-700"}`}>{msg.text}</div>
+        )}
+
+        {data.member && (
+          <div data-testid="portal-member-notice" className="rounded-xl border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 px-3 py-2.5 text-xs text-blue-800 dark:text-blue-300 flex items-start gap-2">
+            <UserCheck className="w-4 h-4 mt-0.5 shrink-0" />
+            <div>
+              {data.member.asRecipient
+                ? <>You are signed in{data.member.email ? <> as <b>{data.member.email}</b></> : null}, this transmittal&apos;s recipient. Downloads from this page are recorded in your name and count as the recipient&apos;s.</>
+                : <>You are signed in{data.member.email ? <> as <b>{data.member.email}</b></> : null}, a member of {data.orgName ?? "the issuing workspace"}. Downloads from this page are recorded in your name, not as the recipient&apos;s, and you cannot acknowledge receipt on the recipient&apos;s behalf.</>}
+              {!data.member.ticket ? <> {MEMBER_UNNAMED}</> : null}
+            </div>
+          </div>
         )}
 
         {/* Document list with downloads */}
@@ -319,9 +444,11 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                     // a top-level navigation always reaches the browser's own
                     // download handling.
                     <a
-                      href={fileHref(token, i.documentId)}
+                      href={fileHref(token, i.documentId, data.member?.ticket ?? null)}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={(e) => openFallback(e, i.documentId)}
+                      data-testid="portal-fallback-link"
                       className="mt-0.5 inline-block text-[10px] font-bold text-blue-700 underline"
                     >
                       Download didn&apos;t start? Open the file directly
@@ -334,7 +461,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                   )}
                 </div>
                 <button
-                  onClick={() => download(i.documentId, i.number)}
+                  onClick={() => void download(i.documentId, i.number)}
                   disabled={downloading === i.documentId}
                   className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[11px] font-black hover:opacity-85 disabled:opacity-50 transition-opacity"
                 >
@@ -363,6 +490,10 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               {data.acknowledgedByName ? <>By <b>{data.acknowledgedByName}</b></> : "Recorded"}
               {data.acknowledgedAt ? <> on {new Date(data.acknowledgedAt).toLocaleString()}</> : null}. This confirmation is part of the permanent record.
             </div>
+          </div>
+        ) : memberNotRecipient ? (
+          <div data-testid="portal-member-no-ack" className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 px-4 py-3 text-xs text-slate-600 dark:text-slate-400">
+            {MEMBER_CANNOT_ACKNOWLEDGE}
           </div>
         ) : (
           <div className="rounded-xl border-2 border-orange-300 bg-orange-50/60 dark:bg-orange-950/30 dark:border-orange-800 p-4">

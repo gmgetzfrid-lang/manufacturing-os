@@ -102,7 +102,8 @@ describe("ALOG-14 remainder — every snapshot row is checked against its enforc
     expect(row("Download / print (stamped when uncontrolled)").cond).toContain("A private draft is its creator's alone (and the controllers').");
     expect(src("lib/permissions.ts")).toMatch(/return canReadNode\(\{ \.\.\.params, actions: \["read", "download"\] \}\);/);
     expect(row("Download / print (stamped when uncontrolled)").cond).toContain("over that chain on any visibility");
-    expect(src("app/api/storage/download-url/route.ts")).toMatch(/canServeContent\(contentCheck\)/);
+    // The bytes door's gate moved verbatim to lib/documentKeyGate.ts (DEC-90 ruling (4), I-29 merge).
+    expect(src("lib/documentKeyGate.ts")).toMatch(/canServeContent\(contentCheck\)/);
     expect(src("lib/downloads.ts")).toContain("export class AcknowledgmentRequiredError extends Error");
   });
 

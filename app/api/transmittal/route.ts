@@ -52,6 +52,33 @@
 // page never holds it in memory; in that mode a refusal is plain text (it
 // renders inside the frame, where the page reads it back).
 //
+// DIST-17 (document-control P27; the integrator's ruling 3 under DEC-90): the
+// portal token used by a SIGNED-IN MEMBER of the issuing workspace records the
+// download as that member, never as the outside recipient. The portal page
+// sends the member's bearer token on its snapshot GET; a member of the
+// transmittal's workspace is then handed a short-lived ticket naming them
+// (lib/portalMemberTicket.ts), which the page adds to each file address
+// (`&member=`). Their pull is a download_audits row with THEIR user_id and
+// email (transmittal_id kept), the issuer's trail row names them
+// (`downloadedBy`), and it bumps neither the recipient's usage trail nor the
+// issuer's unstamped-copy notice (both are about the recipient) — unless the
+// member IS the recipient (their address is the transmittal's recipient
+// address) or holds no seat (a former or invited member, now the outside
+// party): their pull is still recorded under their own uid, and it counts as
+// the recipient's (the open, the download, the issuer told of an unmarked
+// PDF). A ticket that does not verify refuses the download (401
+// `member_unverified`); a membership that cannot be read, or an auth service
+// that cannot answer, refuses the snapshot (503); a bearer the auth service
+// REJECTS (expired, revoked, malformed) is no session — the recipient's path,
+// as before P27. A member of the issuing workspace who is not the recipient
+// cannot acknowledge receipt on the recipient's behalf (403
+// `member_cannot_acknowledge`). Attribution is COOPERATIVE: the page attaches
+// the ticket, and a file request without one — from anyone holding the
+// token, a signed-in member who edits it out included — is recorded as the
+// recipient's (document-control DIST-18: the token reachable only by full
+// readers). With no bearer — the outside recipient — everything below is
+// exactly as before.
+//
 // TRX-9: every portal pull is a download_audits row BEFORE the bytes leave —
 // user_id NULL, transmittal_id set, the served version_id, source
 // "transmittal_portal" (DEC-44 §1) — so stale-copy recall sees the external
@@ -72,6 +99,7 @@ import { effectiveStatusFor, workspaceEffectiveDateTimeZone } from "@/lib/effect
 import { isPdfFile } from "@/lib/verifyVerdict";
 import { notifyWithReason } from "@/lib/inAppNotifications";
 import { tellIssuerOfReceipt } from "@/lib/transmittalReceiptNotice";
+import { readPortalMemberTicket, signPortalMemberTicket } from "@/lib/portalMemberTicket";
 
 export const runtime = "nodejs";
 // The download is streamed through the function, so the function lives while
@@ -156,6 +184,90 @@ async function loadByToken(token: string) {
     .eq("portal_token", token)
     .maybeSingle();
   return (data as Record<string, unknown> | null) ?? null;
+}
+
+/** DIST-17 (ruling 3): a signed-in member of the transmittal's workspace.
+ *  `asRecipient`: they are the transmittal's recipient (their address is the
+ *  recipient's) or hold no seat (not active or suspended — a former or
+ *  invited member, now the outside party) — their pull is still recorded
+ *  under their uid, but it counts as the recipient's (the open, the
+ *  download, the issuer's unstamped-copy notice, the receipt). */
+type PortalMember = { uid: string; email: string | null; asRecipient: boolean };
+
+/** Membership statuses that hold a seat in the workspace — "a member" in
+ *  ruling 3. Any other status (pending, removed, …) is not a member today. */
+const SEATED_MEMBER_STATUSES = new Set(["active", "suspended"]);
+
+const sameAddress = (a: unknown, b: unknown): boolean =>
+  typeof a === "string" && typeof b === "string" && a.trim() !== "" && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** The auth service's answers that mean the TOKEN is invalid (malformed,
+ *  expired, revoked, its session or user gone) — never a busy or slow
+ *  service. */
+const BEARER_REJECTED_STATUSES: ReadonlySet<number> = new Set([400, 401, 403]);
+const BEARER_REJECTED_CODES: ReadonlySet<string> = new Set([
+  "bad_jwt", "session_not_found", "user_not_found", "no_authorization", "session_expired",
+]);
+/** An auth-service answer that REJECTS the bearer (400 / 401 / 403, or the
+ *  SDK's code for an invalid token where it is exposed) — as opposed to one
+ *  it could not give. A rejected bearer is no session. Everything else — a
+ *  rate limit (429), a timeout (408), any other 4xx, a 5xx, a transport
+ *  failure, no status at all — is "could not answer": the caller fails
+ *  closed (503 member_check_failed), never treating a possible member as the
+ *  recipient. */
+function bearerRejected(error: unknown): boolean {
+  const e = error as { status?: unknown; code?: unknown } | null;
+  const status = e?.status;
+  if (status === 429 || status === 408) return false;
+  if (typeof e?.code === "string" && BEARER_REJECTED_CODES.has(e.code)) return true;
+  return typeof status === "number" && BEARER_REJECTED_STATUSES.has(status);
+}
+
+/** DIST-17 (ruling 3): who is behind a snapshot GET (or a receipt POST). No
+ *  bearer → null (the outside recipient, exactly as before), and a bearer the
+ *  auth service rejects (expired, revoked, malformed: bearerRejected) is no
+ *  bearer. A bearer
+ *  naming someone with a membership row in the transmittal's workspace →
+ *  that member, with whether they count as the recipient. A bearer naming
+ *  someone outside it → null (a recipient who happens to hold an account).
+ *  "unknown" when the auth service could not answer, or the membership could
+ *  not be read — the caller refuses rather than treat a possible member as
+ *  the recipient. */
+async function portalSignedInMember(req: NextRequest, t: Record<string, unknown>): Promise<PortalMember | null | "unknown"> {
+  const h = req.headers.get("authorization");
+  if (!h?.startsWith("Bearer ")) return null;
+  let uid: string;
+  let authEmail: string | null;
+  try {
+    const { data, error } = await supabaseAdmin.auth.getUser(h.slice(7));
+    if (error) return bearerRejected(error) ? null : "unknown";
+    if (!data?.user) return "unknown";
+    uid = data.user.id;
+    authEmail = data.user.email ?? null;
+  } catch {
+    return "unknown";
+  }
+  const { data: m, error } = await supabaseAdmin
+    .from("org_members").select("email, status").eq("org_id", t.org_id as string).eq("uid", uid).maybeSingle();
+  if (error) return "unknown";
+  if (!m) return null;
+  const row = m as { email?: string | null; status?: string | null };
+  const email = (row.email ?? null) || authEmail || null;
+  const seated = SEATED_MEMBER_STATUSES.has(String(row.status ?? "active"));
+  const asRecipient = !seated || sameAddress(row.email, t.recipient_email) || sameAddress(authEmail, t.recipient_email);
+  return { uid, email, asRecipient };
+}
+
+/** DIST-17 (ruling 3): the member's address for their download record —
+ *  best-effort (the uid is the record; a failed read leaves the address
+ *  empty, never the recipient's). */
+async function portalMemberEmail(orgId: string, uid: string): Promise<string | null> {
+  try {
+    const { data } = await supabaseAdmin.from("org_members").select("email").eq("org_id", orgId).eq("uid", uid).maybeSingle();
+    return ((data as { email?: string | null } | null)?.email ?? null) || null;
+  } catch {
+    return null;
+  }
 }
 
 type Item = {
@@ -288,17 +400,24 @@ async function readPaged<T>(
  *  fails (or is cut short) sets `readFailed`: a document it did not flag is
  *  then UNKNOWN (`releasedUnmarked: null` — the page's standing note covers
  *  it), never "nothing says so" (false). */
-async function unmarkedCopiesOut(transmittalId: string): Promise<{
+async function unmarkedCopiesOut(transmittalId: string, viewerUid: string | null = null): Promise<{
   copies: Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>; readFailed: boolean;
 }> {
   const out = new Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>();
-  const pulls = await readPaged<{ document_id?: string | null }>((from, to) => supabaseAdmin
-    .from("download_audits").select("document_id")
+  // DIST-17 (ruling 3): a member's pull is theirs, not the recipient's — the
+  // page counts the recipient's copies (user_id NULL, and — from the trail —
+  // a member who is the recipient) and, for a member viewing it, that
+  // member's own; never another member's.
+  const pulls = await readPaged<{ document_id?: string | null; user_id?: string | null }>((from, to) => supabaseAdmin
+    .from("download_audits").select("document_id, user_id")
     .eq("transmittal_id", transmittalId)
     .eq("source", "transmittal_portal_unstamped")
     .order("id", { ascending: true })
     .range(from, to));
-  for (const p of pulls.rows) if (p.document_id) out.set(String(p.document_id), null);
+  for (const p of pulls.rows) {
+    if (p.user_id && p.user_id !== viewerUid) continue;
+    if (p.document_id) out.set(String(p.document_id), null);
+  }
   const trail = await readPaged<{ details?: Record<string, unknown> | null }>((from, to) => supabaseAdmin
     .from("audit_logs").select("details")
     .eq("action", "TRANSMITTAL_PORTAL_DOWNLOAD")
@@ -309,6 +428,8 @@ async function unmarkedCopiesOut(transmittalId: string): Promise<{
   for (const row of trail.rows) {
     const d = row.details ?? {};
     if (d.stamped !== false || typeof d.documentId !== "string") continue;
+    // A member who is the recipient pulled the recipient's copy.
+    if (typeof d.downloadedBy === "string" && d.downloadedBy !== viewerUid && d.memberIsRecipient !== true) continue;
     const why = d.unstampedReason;
     const reason = why === "not_pdf" || why === "oversize" || why === "stamp_failed" ? why : null;
     out.set(d.documentId, reason ?? out.get(d.documentId) ?? null);
@@ -461,6 +582,22 @@ export async function GET(req: NextRequest) {
   const orgId = t.org_id as string;
 
   if (fileDoc) {
+    // DIST-17 (ruling 3): a pull the page made for a signed-in member carries
+    // their ticket; one that does not verify is refused — never recorded as
+    // the recipient's.
+    // A member who is the recipient (or holds no seat) is still recorded as
+    // themselves, but their pull counts as the recipient's (`asRecipient`,
+    // decided on the snapshot and carried inside the ticket's MAC).
+    const memberTicket = req.nextUrl.searchParams.get("member");
+    let member: PortalMember | null = null;
+    if (memberTicket !== null) {
+      const named = readPortalMemberTicket(String(t.id), memberTicket);
+      if (!named) return refuse({ error: "member_unverified" }, 401);
+      member = { uid: named.uid, email: await portalMemberEmail(orgId, named.uid), asRecipient: named.asRecipient };
+    }
+    // Whether this pull is the recipient's: no ticket, or a member who is the recipient.
+    const recipientPull = !member || member.asRecipient;
+    const byMember = member ? { downloadedBy: member.uid, downloadedByMember: true, ...(member.asRecipient ? { memberIsRecipient: true } : {}) } : {};
     const item = items.find((i) => i.documentId === fileDoc);
     if (!item) return refuse({ error: "That document is not on this transmittal." }, 403);
     const file = await fileKeyForItem(item, orgId, (t.issued_at as string | null) ?? null);
@@ -481,11 +618,14 @@ export async function GET(req: NextRequest) {
       const { error: trailErr } = await supabaseAdmin.from("audit_logs").insert({
         action: "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED",
         resource_type: "transmittal", resource_id: String(t.id),
-        org_id: orgId, user_id: (t.created_by as string | null) ?? null,
-        details: { number: t.number, documentId: fileDoc, versionId: file.versionId, reason, detail, maxStampBytes: PORTAL_STAMP_MAX_BYTES },
+        org_id: orgId, user_id: member?.uid ?? (t.created_by as string | null) ?? null,
+        details: { number: t.number, documentId: fileDoc, versionId: file.versionId, reason, detail, maxStampBytes: PORTAL_STAMP_MAX_BYTES, ...byMember },
       });
       if (trailErr) console.error("[transmittal portal] the unstampable refusal could not be put on the issuer's trail", trailErr.message);
-      await tellIssuerUnstampable(t, item, reason, "refused");
+      // The issuer's notice is about the RECIPIENT (and deduped once per
+      // document): a member's refusal does not send it — unless the member
+      // is the recipient.
+      if (recipientPull) await tellIssuerUnstampable(t, item, reason, "refused");
       return refuse({ error: "unstampable", reason }, 422);
     };
 
@@ -528,8 +668,8 @@ export async function GET(req: NextRequest) {
       await supabaseAdmin.from("audit_logs").insert({
         action: "TRANSMITTAL_PORTAL_INTEGRITY_REFUSED",
         resource_type: "transmittal", resource_id: String(t.id),
-        org_id: orgId, user_id: (t.created_by as string | null) ?? null,
-        details: { number: t.number, documentId: fileDoc, versionId: file.versionId, recordedSha256: recorded, servedSha256 },
+        org_id: orgId, user_id: member?.uid ?? (t.created_by as string | null) ?? null,
+        details: { number: t.number, documentId: fileDoc, versionId: file.versionId, recordedSha256: recorded, servedSha256, ...byMember },
       }).then(() => undefined, () => undefined);
       return refuse({ error: "This file no longer matches the one recorded when the transmittal was issued, so it was not released. Contact the issuer." }, 409);
     }
@@ -591,27 +731,29 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // TRX-9: the distribution record, BEFORE the bytes leave.
+    // TRX-9: the distribution record, BEFORE the bytes leave. DIST-17
+    // (ruling 3): a member's pull is recorded as that member.
     const base = {
       org_id: orgId,
       document_id: fileDoc,
       version_id: file.versionId,
-      user_email: (t.recipient_email as string | null) ?? null,
+      user_email: member ? member.email : (t.recipient_email as string | null) ?? null,
       created_at: new Date().toISOString(),
       expires_at: (t.portal_expires_at as string | null) ?? null,
       watermark_policy_id: null,
     };
     let { error: recordError } = await supabaseAdmin.from("download_audits").insert({
       ...base,
-      user_id: null,
+      user_id: member?.uid ?? null,
       source: stamped ? "transmittal_portal" : "transmittal_portal_unstamped",
       transmittal_id: t.id,
     });
-    if (recordError && missingRecordColumn(recordError) && t.created_by) {
-      console.error("[transmittal portal] DEPLOY ORDER: download_audits lacks the 20261068 columns (transmittal_id / source) — apply 20261068; recording this pull in the pre-20261068 shape (attributed to the issuer)", {
+    const olderShapeUser = member?.uid ?? (t.created_by as string | null) ?? null;
+    if (recordError && missingRecordColumn(recordError) && olderShapeUser) {
+      console.error(`[transmittal portal] DEPLOY ORDER: download_audits lacks the 20261068 columns (transmittal_id / source) — apply 20261068; recording this pull in the pre-20261068 shape (attributed to ${member ? "the member who pulled it" : "the issuer"})`, {
         transmittal: t.id, document: fileDoc, version: file.versionId, message: recordError.message,
       });
-      ({ error: recordError } = await supabaseAdmin.from("download_audits").insert({ ...base, user_id: t.created_by }));
+      ({ error: recordError } = await supabaseAdmin.from("download_audits").insert({ ...base, user_id: olderShapeUser }));
     }
     if (recordError) {
       piped?.release();
@@ -626,17 +768,21 @@ export async function GET(req: NextRequest) {
     await supabaseAdmin.from("audit_logs").insert({
       action: "TRANSMITTAL_PORTAL_DOWNLOAD",
       resource_type: "transmittal", resource_id: String(t.id),
-      org_id: orgId, user_id: (t.created_by as string | null) ?? null,
-      user_email: (t.recipient_email as string | null) ?? null,
+      org_id: orgId, user_id: member?.uid ?? (t.created_by as string | null) ?? null,
+      user_email: member ? member.email : (t.recipient_email as string | null) ?? null,
       details: {
         number: t.number, documentId: fileDoc, docNumber: item.number, rev, versionId: file.versionId,
         issuedBy: t.created_by ?? null, stamped, unstampedReason, servedSha256, hashVerified: !!recorded,
         ...(stamped && stampMapped.length > 0 ? { stampMapped } : {}),
+        ...byMember,
       },
     }).then(() => undefined, () => undefined);
-    await bumpUse(String(t.id), "download");
+    // DIST-17 (ruling 3): the usage trail and the unstamped-copy notice are
+    // the RECIPIENT's — a member's pull bumps neither, unless the member is
+    // the recipient (or holds no seat).
+    if (recipientPull) await bumpUse(String(t.id), "download");
     // TRX-15: a PDF that left without the marking is never a silent one.
-    if (unstampedReason === "oversize" || unstampedReason === "stamp_failed") {
+    if (recipientPull && (unstampedReason === "oversize" || unstampedReason === "stamp_failed")) {
       await tellIssuerUnstampable(t, item, unstampedReason, "released");
     }
 
@@ -655,13 +801,19 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // DIST-17 (ruling 3): a signed-in member of the issuing workspace views
+  // (and downloads) as themselves — their open is not the recipient's,
+  // unless they are the recipient (or hold no seat).
+  const viewer = await portalSignedInMember(req, t);
+  if (viewer === "unknown") return NextResponse.json({ error: "member_check_failed" }, { status: 503 });
+
   // The snapshot the portal renders — nothing beyond this transmittal.
   const { data: org } = await supabaseAdmin.from("orgs").select("name").eq("id", orgId).maybeSingle();
   // TRX-15: the page re-reads the snapshot after a download (`&recheck=1`)
   // to learn whether the copy left unmarked — that re-read is not an open,
   // but only within minutes of the portal's last recorded use
   // (`isPortalRecheck`); any other GET, flagged or not, is counted.
-  if (!isPortalRecheck(req.nextUrl.searchParams.get("recheck"), t.portal_last_used_at)) await bumpUse(String(t.id), "open");
+  if ((!viewer || viewer.asRecipient) && !isPortalRecheck(req.nextUrl.searchParams.get("recheck"), t.portal_last_used_at)) await bumpUse(String(t.id), "open");
   // TRX-15: the page saves a file without reading the response, so it can no
   // longer see the X-Transmittal-Stamped header — it says up front which
   // pinned files leave without the UNCONTROLLED marking: a file that is not a
@@ -683,7 +835,7 @@ export async function GET(req: NextRequest) {
       fileByVersion.set(String(v.id), { file_url: v.file_url ?? null, file_type: v.file_type ?? null, size: typeof v.size === "number" ? v.size : null });
     }
   }
-  const { copies: copiesOut, readFailed: copiesUnread } = await unmarkedCopiesOut(String(t.id));
+  const { copies: copiesOut, readFailed: copiesUnread } = await unmarkedCopiesOut(String(t.id), viewer?.uid ?? null);
   const fromFile = (i: Item): "not_pdf" | "oversize" | null | undefined => {
     const f = fileByVersion.get(String(i.versionId ?? i.version_id ?? ""));
     if (!f?.file_url) return undefined; // unknown
@@ -723,6 +875,11 @@ export async function GET(req: NextRequest) {
     recipientName: t.recipient_name,
     recipientCompany: t.recipient_company,
     portalExpiresAt: (t.portal_expires_at as string | null) ?? null,
+    // DIST-17 (ruling 3): present only for a signed-in member of the issuing
+    // workspace — the page adds `ticket` to each file address; a null ticket
+    // (no signing key) means the page must not download for them at all.
+    // `asRecipient`: they are this transmittal's recipient (or hold no seat).
+    ...(viewer ? { member: { email: viewer.email, asRecipient: viewer.asRecipient, ticket: signPortalMemberTicket(String(t.id), viewer.uid, Date.now(), viewer.asRecipient) } } : {}),
     items: items.map((i) => {
       const flag = unmarked(i);
       return {
@@ -762,11 +919,23 @@ export async function POST(req: NextRequest) {
   if (refusal?.error === "expired") return NextResponse.json({ error: "expired" }, { status: 410 });
   if (t.status !== "issued") return bad("This transmittal isn't in an acknowledgeable state.", 409);
 
+  // DIST-17 (ruling 3): the receipt is the RECIPIENT's. The page sends this
+  // browser's session; a signed-in member of the issuing workspace who is not
+  // the recipient cannot acknowledge on their behalf (the register's own
+  // "record receipt" is the issuer's door for a receipt given another way). A
+  // member who IS the recipient (or holds no seat) acknowledges, and the
+  // record names them (`recordedBy`). A session that cannot be checked
+  // refuses, as the snapshot does.
+  const viewer = await portalSignedInMember(req, t);
+  if (viewer === "unknown") return NextResponse.json({ error: "member_check_failed" }, { status: 503 });
+  if (viewer && !viewer.asRecipient) return NextResponse.json({ error: "member_cannot_acknowledge" }, { status: 403 });
+
   const now = new Date().toISOString();
   const meta = {
     ip: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     userAgent: req.headers.get("user-agent")?.slice(0, 200) ?? null,
     note: String(body.note ?? "").trim().slice(0, 500) || null,
+    ...(viewer ? { recordedBy: viewer.uid, recordedByEmail: viewer.email } : {}),
   };
   const { data: updated, error } = await supabaseAdmin
     .from("transmittals")
@@ -787,7 +956,7 @@ export async function POST(req: NextRequest) {
   await supabaseAdmin.from("audit_logs").insert({
     action: "TRANSMITTAL_ACKNOWLEDGED",
     resource_type: "transmittal", resource_id: String(t.id),
-    org_id: t.org_id, user_id: null, user_email: (t.recipient_email as string | null) ?? null,
+    org_id: t.org_id, user_id: viewer ? viewer.uid : null, user_email: viewer ? viewer.email : (t.recipient_email as string | null) ?? null,
     details: { number: t.number, acknowledgedBy: name, via: "portal", ...meta },
   }).then(() => undefined, () => undefined);
 

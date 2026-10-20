@@ -24,6 +24,13 @@
 //   * RECORD: creating and revoking a share writes an audit_logs row — a
 //     checked write: if it is refused the link change still stands, and the
 //     caller is handed `auditWarning` to say so (never a silent success).
+//     DACL-4 criterion 3 (document-control P27): once 20261227 is pasted the
+//     DATABASE writes SHARE_LINK_CREATED for every share a signed-in caller
+//     inserts — this door and a direct PostgREST insert alike — in the same
+//     transaction as the share; createShareLink asks
+//     isShareCreationRecordedByDatabase() before its insert and then writes
+//     no row of its own (one row per share, never two). Before the paste it
+//     writes the row itself, exactly as before.
 // A share always serves the CURRENT issued revision — there is no pinning.
 
 import { supabase } from "@/lib/supabase";
@@ -250,6 +257,27 @@ export const SHARE_EXPIRY_REFUSED =
   `This link was not created: a share link must expire within ${SHARE_MAX_DAYS} days of being created, measured on the server's clock. If this computer's clock is set well ahead, correct it and try again.`;
 const isExpiryRefusal = (e: { message?: string }) => /must expire within 90 days of its creation/.test(e.message ?? "");
 
+/** DACL-4 criterion 3 (document-control P27): does the database write
+ *  SHARE_LINK_CREATED for every share a signed-in caller inserts? True once
+ *  20261227's AFTER INSERT trigger is bound and enabled
+ *  (document_share_creation_recorded_by_database) — the ONE writer of that
+ *  record: createShareLink then writes none of its own. Missing (PGRST202 /
+ *  42883: a database before 20261227), false, or any error: the door writes
+ *  the record itself, as before 20261227 (a failed probe on a database that
+ *  has the trigger means two rows, never none). Asked just BEFORE each
+ *  insert and never cached, so a paste mid-session takes effect at once (a
+ *  paste between the probe and the insert: two rows). The pattern of
+ *  lib/revisions.ts isStatusIssueRecordedByDatabase (P23, DEC-104). */
+export async function isShareCreationRecordedByDatabase(): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc("document_share_creation_recorded_by_database");
+    if (error) return false;
+    return data === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function createShareLink(input: {
   orgId: string;
   documentId: string;
@@ -262,6 +290,9 @@ export async function createShareLink(input: {
   if (!expiry.ok) throw new Error(expiry.reason);
   const refusal = await describeShareRefusal(input.documentId);
   if (refusal) throw new Error(refusal);
+  // DACL-4 c3: asked BEFORE the insert — true means the database writes the
+  // share's SHARE_LINK_CREATED in the insert's own transaction.
+  const recordedByDatabase = await isShareCreationRecordedByDatabase();
   const { data, error } = await supabase.from("document_shares").insert({
     token: randomToken(),
     org_id: input.orgId,
@@ -279,6 +310,9 @@ export async function createShareLink(input: {
     );
   }
   const share = rowToShare(data as Record<string, unknown>);
+  // DACL-4 c3: the insert succeeded, so the database's record was written
+  // with it (a refused record refuses the share) — the door writes none.
+  if (recordedByDatabase) return { ...share, auditWarning: null };
   const { error: auditError } = await logAuditAction({
     action: "SHARE_LINK_CREATED",
     resourceId: input.documentId,

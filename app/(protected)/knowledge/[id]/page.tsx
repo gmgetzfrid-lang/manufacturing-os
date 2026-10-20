@@ -55,19 +55,27 @@ import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
 
 interface ViewerTarget {
-  fileKey: string;
+  /** A direct upload's key; `null` for a source-linked mirror, which the
+   *  viewer opens by `documentId` through the server (KACL-5 / KACL-7 — the
+   *  browser never holds a mirror's storage key). */
+  fileKey: string | null;
   page: number;
   quote: string | null;
   title: string;
   section?: string | null;
   /** Drawings: the sheet and the tags to point at on it. */
   documentId?: string;
+  /** A mirror's source revision (non-secret): the viewer's per-mount URL
+   *  memory key (DEC-90 ruling (2) at the I-29 merge). */
+  sourceVersionId?: string | null;
+  sourceRev?: string | null;
   tags?: string[];
   /** The answer's full evidence trail — 2+ entries grow the viewer's
    *  Previous/Next source carousel. */
   sources?: Array<{
-    fileKey: string; page: number; quote: string | null; title: string;
+    fileKey: string | null; page: number; quote: string | null; title: string;
     section?: string | null; documentId?: string; tags?: string[]; n?: number;
+    sourceVersionId?: string | null; sourceRev?: string | null;
   }>;
   sourceIndex?: number;
 }
@@ -1314,6 +1322,8 @@ export default function KnowledgeLibraryPage() {
           title: x.documentName ?? d.name,
           section: x.section ?? null,
           documentId: d.id,
+          sourceVersionId: d.sourceVersionId ?? null,
+          sourceRev: d.sourceRev,
           tags: x.tags,
           n: x.n,
         } : null;
@@ -1332,16 +1342,23 @@ export default function KnowledgeLibraryPage() {
       title: c.documentName ?? doc.name,
       section: c.section ?? null,
       documentId: doc.id,
+      sourceVersionId: doc.sourceVersionId ?? null,
+      sourceRev: doc.sourceRev,
       tags: c.tags,
       ...(sources.length > 1 ? { sources, sourceIndex } : {}),
     });
   }, [docs, answer, thread, showToast]);
 
-  // Show-me chips: open a document the answer NAMED. The server sends the
-  // fileKey with each mention, so this works even for docs in linked
+  // Show-me chips: open a document the answer NAMED. The server sends an
+  // upload's fileKey with each mention, and a source-linked mirror's id with
+  // a null key (KACL-7 criterion 3 — the viewer opens it through
+  // /api/knowledge/mirror-url), so this works even for docs in linked
   // libraries that this page's own docs list doesn't hold.
   const openMentionedDoc = useCallback((d: DocLink) => {
-    setViewer({ fileKey: d.fileKey, page: d.page, quote: null, title: d.name, section: null, documentId: d.id });
+    setViewer({
+      fileKey: d.fileKey ?? null, page: d.page, quote: null, title: d.name, section: null, documentId: d.id,
+      sourceVersionId: d.sourceVersionId ?? null, sourceRev: d.sourceRev ?? null,
+    });
   }, []);
 
   // ── Deep link straight to a page: ?doc=<id>&page=<n>&quote=<text> ───────
@@ -1367,6 +1384,8 @@ export default function KnowledgeLibraryPage() {
       quote: searchParams.get("quote"),
       title: doc.name,
       documentId: doc.id,
+      sourceVersionId: doc.sourceVersionId ?? null,
+      sourceRev: doc.sourceRev,
     });
   }, [searchParams, docs]);
 
@@ -2087,6 +2106,7 @@ export default function KnowledgeLibraryPage() {
                   fileKey: doc.fileKey, page, quote: null,
                   title: documentName || doc.name, section: null,
                   documentId, tags: [tag],
+                  sourceVersionId: doc.sourceVersionId ?? null, sourceRev: doc.sourceRev,
                 });
               }} />
               {answer.questionId ? (
@@ -2402,6 +2422,8 @@ export default function KnowledgeLibraryPage() {
           section={viewer.section}
           orgId={activeOrgId ?? undefined}
           documentId={viewer.documentId}
+          sourceVersionId={viewer.sourceVersionId}
+          sourceRev={viewer.sourceRev}
           tags={viewer.tags}
           sources={viewer.sources}
           initialIndex={viewer.sourceIndex}
