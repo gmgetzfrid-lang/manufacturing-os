@@ -613,8 +613,9 @@ Tests: `lib/__tests__/setupNavigatorIdentity.test.ts` (E-22 filed under 20 with 
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** the next package that edits `components/graph/GraphShapeWizard.tsx` (proposed: intelligence I-26 BRIDGE REMAINDERS, which owns the Bridge's other hand-offs) — opened 2026-10-20 by intelligence Round G, I-15, as the remainder of `AREA-2` (DEC-31).
+- **Assigned:** intelligence I-32 PROVENANCE VIEW AND WIZARD ADOPT (allocated by the integrator at the I-15 merge) — the shape wizard's adopt on 23505 (`components/graph/GraphShapeWizard.tsx`), with `GAP-303` acceptance 1. Ruled by the integrator at the I-15 merge, 2026-10-20 (DEC-90; DEC-31); opened 2026-10-20 by intelligence Round G, I-15, as the remainder of `AREA-2`. *(Was: the next package that edits `components/graph/GraphShapeWizard.tsx` — proposed: intelligence I-26 BRIDGE REMAINDERS.)*
 - **Verification:** CONFIRMED
+- **Independently verified:** — (`author`: opened 2026-10-20 by intelligence Round G I-15 as the remainder of `AREA-2`, from its fix pass; not yet challenged by a second party).
 - **Locations:** `components/graph/GraphShapeWizard.tsx:150-154`
 
 **Mechanism.** `AREA-2`'s fix pass handed two 23505 doors to the graph's owner: the graph's Connect (closed by I-15) and the shape wizard's link writer. The wizard inserts a manual `document_assets` row and treats `23505` as success (`if (e && e.code !== "23505") throw …`). On a pair the equipment sweep already relates (a 'drawing' row, which a person cannot write), the person's accepted link is never written: the row stays the machine's, and a later Dismiss of the drawing's reading — or "It left the sheet" — removes the link the person meant to keep.

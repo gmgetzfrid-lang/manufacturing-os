@@ -34,7 +34,7 @@ import type { Row } from "./helpers/graphFakeDb";
 const st = vi.hoisted(() => ({
   users: {} as Record<string, string>,              // token → uid
   principals: {} as Record<string, unknown>,          // uid → principal (null: not a member)
-  principalThrows: false,
+  principalThrows: false as boolean | Error,
   clients: {} as Record<string, unknown>,             // token → the caller's RLS-bound client
   predicate: null as null | ((ids: string[]) => Set<string>),
   predicateThrows: null as Error | null,
@@ -65,7 +65,7 @@ vi.mock("@/lib/knowledgeAccess", async (orig) => {
   return {
     ...actual,
     loadPrincipal: vi.fn(async (_orgId: string, uid: string) => {
-      if (st.principalThrows) throw new actual.PrincipalUnreadableError("membership", "timeout");
+      if (st.principalThrows) throw st.principalThrows === true ? new actual.PrincipalUnreadableError("membership", "timeout") : st.principalThrows;
       return (st.principals[uid] ?? null) as Awaited<ReturnType<typeof actual.loadPrincipal>>;
     }),
     readableControlledDocIds: vi.fn(async (p: { isController: boolean }, ids: string[]) => {
@@ -298,6 +298,33 @@ describe("GAP-313 — fails closed, and never one payload across callers", () =>
     expect(res.status).toBe(400);
     res = await ask("tc", "");
     expect(res.status).toBe(400);
+  });
+
+  it("any OTHER throw loading the principal fails closed too: 503 accessUnchecked with the route's sentence, private and uncached, no map (integrator fix pass)", async () => {
+    st.principalThrows = new TypeError("fetch failed");
+    const res = await ask("tm");
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    const body = await read(res);
+    expect(body.graph).toBeUndefined();
+    expect(body.accessUnchecked).toBe(true);
+    expect(body.error).toMatch(/document access couldn't be checked just now, so the map is not drawn/);
+    expect(body.error).not.toContain("fetch failed");
+    // Regression: the PrincipalUnreadableError answer is unchanged, and now
+    // carries the headers as it always did.
+    st.principalThrows = true;
+    const res2 = await ask("tm");
+    expect(res2.status).toBe(503);
+    expect(res2.headers.get("cache-control")).toBe("private, no-store");
+    const body2 = await read(res2);
+    expect(body2.error).toBe(PRINCIPAL_UNREADABLE);
+    expect(body2.accessUnchecked).toBe(true);
+    // And the page reads either 503 as "access unchecked": nothing drawn.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: body.error, accessUnchecked: true }), { status: 503 }));
+    const err = await fetchOrgGraph(ORG).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GraphLoadError);
+    expect((err as GraphLoadError).accessUnchecked).toBe(true);
+    fetchSpy.mockRestore();
   });
 
   it("a required read failing is the client assembly's own error (500, the same sentence) — never a smaller map", async () => {

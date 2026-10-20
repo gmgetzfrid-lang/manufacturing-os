@@ -310,6 +310,11 @@ function GraphPageInner() {
         if (!alive) return;
         // A failed load keeps no word about a snapshot of a map not drawn.
         setSnapshotNote(null);
+        // Nor the last load's proposal ghosts (another scope's, or an older
+        // read's): the proposals ride in this payload, so none were read —
+        // and the GM-7 note says why rather than showing "none".
+        setProposals([]);
+        setProposalRead({ total: null, capped: false, error: "the map could not be loaded, so proposals were not read" });
         // Fails closed (GAP-313): a map whose access could not be checked is
         // not drawn, and the snapshot is not painted again.
         if (e instanceof GraphLoadError && e.accessUnchecked) {

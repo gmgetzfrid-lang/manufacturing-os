@@ -92,7 +92,12 @@ export async function GET(req: NextRequest) {
     principal = await loadPrincipal(orgId, user.id);
   } catch (e) {
     if (e instanceof PrincipalUnreadableError) return bad(PRINCIPAL_UNREADABLE, 503, { accessUnchecked: true });
-    throw e;
+    // Any other throw (integrator fix pass): the caller's access was not
+    // decided either, so it fails closed the same way — 503, accessUnchecked,
+    // private and uncached, with the route's sentence — never a bare 500
+    // without the headers.
+    console.error("[api/graph] the caller's access could not be loaded:", (e as Error)?.message ?? String(e), { orgId });
+    return bad(GRAPH_ACCESS_UNCHECKED, 503, { accessUnchecked: true });
   }
   if (!principal) return bad("Not a member of this workspace", 403);
   const caller = callerScopedClient(req);

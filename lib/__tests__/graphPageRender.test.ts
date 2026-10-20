@@ -1640,3 +1640,64 @@ describe("GAP-313 (fix pass) — a map too large to send is said plainly", () =>
     expect(host.querySelector('[data-testid="snapshot-skipped"]')).toBeNull();
   });
 });
+
+describe("GM-7 / GAP-313 (integrator fix pass) — a failed load leaves no proposal ghosts from an earlier load", () => {
+  const pair = { documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" };
+  const scopeTo = async (value: string) => {
+    const select = host.querySelector('select[aria-label="Scope the map to one unit"]') as HTMLSelectElement;
+    await act(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await flush();
+  };
+
+  it("regression: a successful load draws its proposal ghosts and says nothing about them", async () => {
+    g.proposals = { pairs: [pair], total: 1, capped: false, error: null };
+    window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showLibraryEdges: true }));
+    await render(page());
+    expect(last().edges).toContainEqual({ a: "doc:d1", b: "doc:d2", type: "proposed" });
+    expect(host.querySelector('[data-testid="proposals-chip"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="proposals-error"]')).toBeNull();
+  });
+
+  it("a failed load over a painted snapshot keeps no ghost from the last load — the top bar counts none", async () => {
+    const { GraphLoadError } = await import("@/lib/orgGraph");
+    g.proposals = { pairs: [pair], total: 1, capped: false, error: null };
+    window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showLibraryEdges: true }));
+    await render(page());
+    expect(last().edges).toContainEqual({ a: "doc:d1", b: "doc:d2", type: "proposed" });
+    expect(text()).toContain(" · 1 proposed");
+    // The unit's map has a snapshot from an earlier visit; its load fails.
+    window.sessionStorage.setItem("org-graph-o1-unit:20", JSON.stringify(baseGraph()));
+    g.loadError = new GraphLoadError("statement timeout", 500);
+    await scopeTo("unit:20");
+    expect(g.build[g.build.length - 1]).toEqual(["o1", { scope: { kind: "unit", code: "20" } }]);
+    // Said as before; the snapshot is kept for the next visit (as before)...
+    expect(text()).toContain("statement timeout");
+    expect(window.sessionStorage.getItem("org-graph-o1-unit:20")).toBeTruthy();
+    // ...and the painted snapshot's counts carry no proposal from the whole
+    // org's load (the base kept them: "· 1 proposed" over the unit's map).
+    expect(text()).toMatch(/\d+ nodes · \d+ links/);
+    expect(text()).not.toContain("proposed");
+    expect(host.querySelector('[data-testid="proposals-chip"]')).toBeNull();
+  });
+
+  it("a failed scope change with no snapshot draws nothing and keeps no ghost or count from the whole org's load", async () => {
+    const { GraphLoadError } = await import("@/lib/orgGraph");
+    g.proposals = { pairs: [pair], total: 9000, capped: true, error: null };
+    window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showLibraryEdges: true }));
+    await render(page());
+    expect(host.querySelector('[data-testid="proposals-capped"]')).toBeTruthy();
+    g.loadError = new GraphLoadError("statement timeout", 500);
+    await scopeTo("unit:20");
+    expect(text()).toContain("statement timeout");
+    expect(host.querySelector('[data-testid="map2d"]')).toBeNull();
+    expect(host.querySelector('[data-testid="proposals-chip"]')).toBeNull();
+    expect(host.querySelector('[data-testid="proposals-capped"]')).toBeNull();
+    expect(text()).not.toContain("9,000");
+    expect(text()).not.toContain("proposed");
+    // Scoping back with a good load draws the ghosts again — nothing sticks.
+    g.loadError = null;
+    await scopeTo("");
+    expect(last().edges).toContainEqual({ a: "doc:d1", b: "doc:d2", type: "proposed" });
+    expect(host.querySelector('[data-testid="proposals-error"]')).toBeNull();
+  });
+});
