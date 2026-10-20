@@ -9,6 +9,15 @@
 // `related_ticket_id = ticket` (the provenance 20261049 writes). Anything else
 // is refused.
 //
+// drafting-flow DCW-4 (DF-P15): a request with NO source document but a
+// target library (GAP-105) hands back through "Publish as a new document in
+// <library>" — createDocumentWithFile({ …, relatedTicketId }), the new-
+// document path, which records the ticket on the new document's first
+// version. This route accepts that version too: in the ticket's org,
+// carrying `related_ticket_id = ticket`, of a document that is in the
+// ticket's library (in its org). A request with a source document is
+// unchanged: only a version of that document is accepted.
+//
 // Body: { ticketId, versionId }
 
 import { NextRequest, NextResponse } from "next/server";
@@ -46,38 +55,71 @@ export async function POST(req: NextRequest) {
   if (!member) return bad("Forbidden: not an active member of this workspace", 403);
 
   const src = parseSourceDocument(ticket.metadata);
-  if (!src?.id) return bad("This request was not raised against a controlled document", 400);
+  // DCW-4 (DF-P15): no source document — the ticket's library is the target.
+  const libraryId = !src?.id ? (ticket.libraryId ?? null) : null;
+  if (!src?.id && !libraryId) return bad("This request was not raised against a controlled document and names no target library", 400);
 
-  // The proof: a version row of the SOURCE document, in this org, carrying this
-  // ticket as its provenance. The publish path wrote it; nothing here can.
-  const { data: version } = await supabaseAdmin
+  // The proof: a version row of the SOURCE document (or, for a library-only
+  // request, of a document in its library), in this org, carrying this ticket
+  // as its provenance. The publish path wrote it; nothing here can.
+  const { data: version, error: versionErr } = await supabaseAdmin
     .from("document_versions")
     .select("id, org_id, record_id, revision_label, related_ticket_id, review_state, created_by")
     .eq("id", versionId).maybeSingle();
+  if (versionErr && libraryId) return bad("The document register could not be read to confirm the deliverable — try again in a moment", 503);
   const v = version as {
     id: string; org_id: string | null; record_id: string; revision_label: string;
     related_ticket_id: string | null; review_state: string | null; created_by: string | null;
   } | null;
-  if (!v || v.org_id !== ticket.orgId || v.record_id !== src.id || v.related_ticket_id !== ticketId) {
+  if (!v || v.org_id !== ticket.orgId || v.related_ticket_id !== ticketId || (src?.id ? v.record_id !== src.id : false)) {
     return bad("That revision is not this request's deliverable", 409);
+  }
+  // A library-only request: the version's document must be in the ticket's
+  // library, in its org, and its number names it on the request.
+  let newDoc: { id: string; document_number: string | null; status: string | null } | null = null;
+  if (libraryId) {
+    const { data: docRow, error: docErr } = await supabaseAdmin
+      .from("documents").select("id, document_number, status, library_id, org_id")
+      .eq("id", v.record_id).maybeSingle();
+    if (docErr) return bad("The document register could not be read to confirm the deliverable — try again in a moment", 503);
+    const d = docRow as { id: string; document_number: string | null; status: string | null; library_id: string | null; org_id: string | null } | null;
+    if (!d || d.org_id !== ticket.orgId || d.library_id !== libraryId) {
+      return bad("That revision is not this request's deliverable", 409);
+    }
+    newDoc = { id: d.id, document_number: d.document_number, status: d.status };
   }
 
   const now = new Date().toISOString();
   const callerEmail = (member.email as string | null) || caller.email || "Unknown";
   const inReview = v.review_state === "in_review";
+  const documentId = src?.id ?? v.record_id;
   const metadata = publishedDeliverable(ticket.metadata, {
-    versionId: v.id, revisionLabel: v.revision_label, documentId: src.id, publishedBy: caller.id, now,
+    versionId: v.id, revisionLabel: v.revision_label, documentId, publishedBy: caller.id, now,
   });
   if (inReview) (metadata.deliverable as Record<string, unknown>).in_review = true;
-  const docLabel = src.documentNumber || "the source document";
+  // DCW-4 (DF-P15): a new document filed as a Draft is in the register but
+  // not issued — said on the request, never "published" bare.
+  const filedAsDraft = !!newDoc && newDoc.status === "Draft";
+  if (newDoc) {
+    (metadata.deliverable as Record<string, unknown>).library_id = libraryId;
+    (metadata.deliverable as Record<string, unknown>).new_document = true;
+    if (filedAsDraft) (metadata.deliverable as Record<string, unknown>).filed_as_draft = true;
+  }
+  const docLabel = src?.documentNumber || newDoc?.document_number || (src?.id ? "the source document" : "the new document");
   const entry: TicketHistoryEntry = {
-    action: inReview ? "Deliverable submitted for document review" : "Deliverable published to the register",
+    action: inReview
+      ? "Deliverable submitted for document review"
+      : filedAsDraft ? "Deliverable filed in the register as a Draft" : "Deliverable published to the register",
     user: callerEmail,
     role: (member.role as TicketHistoryEntry["role"]) ?? undefined,
     date: now,
     details: inReview
       ? `Draft ${v.revision_label} of ${docLabel} opened for reviewer sign-off from this request's Final deliverable.`
-      : `Rev ${v.revision_label} of ${docLabel} — published from this request's Final deliverable.`,
+      : newDoc
+        ? filedAsDraft
+          ? `${docLabel} created as a new document (Draft, not issued) from this request's Final deliverable.`
+          : `${docLabel} Rev ${v.revision_label} — published as a new document from this request's Final deliverable.`
+        : `Rev ${v.revision_label} of ${docLabel} — published from this request's Final deliverable.`,
   };
   const history = [...(ticket.history ?? []), entry];
 
@@ -100,7 +142,7 @@ export async function POST(req: NextRequest) {
     user_id: caller.id,
     user_email: callerEmail,
     user_role: (member.role as string | null) ?? null,
-    details: { versionId: v.id, revisionLabel: v.revision_label, documentId: src.id, documentNumber: src.documentNumber ?? null, inReview },
+    details: { versionId: v.id, revisionLabel: v.revision_label, documentId, documentNumber: src?.documentNumber ?? newDoc?.document_number ?? null, inReview, ...(newDoc ? { newDocument: true, libraryId, initialStatus: newDoc.status } : {}) },
   });
   if (auditErr) return NextResponse.json({ ok: true, metadata, history, warning: `Recorded, but the audit row failed: ${auditErr.message}` });
 
@@ -120,7 +162,9 @@ export async function POST(req: NextRequest) {
       .filter((u): u is string => typeof u === "string" && u.length > 0);
     await runWithServerClient(supabaseAdmin, () => emit({
       orgId: ticket.orgId, category: "status", kind: "ticket_status",
-      title: inReview ? `${ticket.ticketId}: deliverable submitted for document review` : `${ticket.ticketId}: deliverable published as Rev ${v.revision_label}`,
+      title: inReview
+        ? `${ticket.ticketId}: deliverable submitted for document review`
+        : filedAsDraft ? `${ticket.ticketId}: deliverable filed as a Draft document` : `${ticket.ticketId}: deliverable published as Rev ${v.revision_label}`,
       body: entry.details,
       link: `/requests/${ticketId}`,
       resource: { type: "ticket", id: ticketId },

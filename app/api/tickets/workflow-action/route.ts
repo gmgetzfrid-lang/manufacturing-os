@@ -29,6 +29,7 @@ import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS } from "@/lib/ticketLibrary";
+import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
 import type { Principal } from "@/lib/permissions";
 
 // POST /api/tickets/workflow-action
@@ -163,8 +164,9 @@ function formatBytes(n: number | undefined): string | undefined {
  * and is a plain key, the slot's type rule holds (an issued package is typed
  * Final; a redline is a Reference; an attached file one of the four types),
  * and the object is in storage — or already listed on the ticket. Who
- * uploaded it, when, its size (from storage when it answers) and status are
- * stamped here; the client's claims about them are not kept.
+ * uploaded it, when, its size (from storage when it answers), its status and
+ * its id (SM-15: a server-minted UUID) are stamped here; the client's claims
+ * about them are not kept.
  */
 async function vetTicketAttachment(
   a: TicketAttachment,
@@ -211,9 +213,15 @@ async function vetTicketAttachment(
   }
   const status: TicketAttachment["status"] =
     ctx.slot === "attachment" ? (type === "Source" ? "submitted" : "staged") : "submitted";
+  // SM-15 (DF-P15): the entry this route appends is a NEW attachment, so its
+  // id is minted here, always — never the client's. A client id equal to a
+  // file already on the ticket (the current Final's, say) made that id appear
+  // twice, and every `?a=` print of the real file then scanned "cannot
+  // confirm" and the server copy route refused it. Every attachment already
+  // on the ticket keeps its id; nothing here rewrites one.
   const attachment = {
     ...a,
-    id: typeof a.id === "string" && a.id ? a.id : crypto.randomUUID(),
+    id: crypto.randomUUID(),
     name,
     url,
     type,
@@ -720,6 +728,27 @@ export async function POST(req: NextRequest) {
     const line = hist?.[hist.length - 1];
     if (line) line.details = `${line.details ? `${line.details} ` : ""}[How it ended: ${OUTCOME_LABEL[outcomeReason.category]} — ${outcomeReason.label}]`;
   }
+  // SM-16 (DF-P15): a reopen means the request has not ended, so the reason
+  // it ended for goes with its outcome — `metadata.outcome_reason` is removed
+  // on the same compare-and-set write that nulls `tickets.outcome`
+  // (computeTransition), and the reopen's history line keeps what it was.
+  // Without this the old reason rode along to however the request ended next.
+  if (action.action === "reopen_ticket") {
+    const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(meta, "outcome_reason")) {
+      const old = meta.outcome_reason as { label?: unknown; category?: unknown } | null | undefined;
+      const rest = { ...meta };
+      delete rest.outcome_reason;
+      updates.metadata = rest;
+      const oldLabel = typeof old?.label === "string" && old.label.trim() ? old.label.trim() : null;
+      if (oldLabel) {
+        const cat = isTicketOutcome(old?.category) ? `${OUTCOME_LABEL[old.category]} — ` : "";
+        const hist = updates.history as TicketHistoryEntry[] | undefined;
+        const line = hist?.[hist.length - 1];
+        if (line) line.details = `${line.details ? `${line.details} ` : ""}[The reason it had ended, cleared by the reopen: ${cat}${oldLabel}]`;
+      }
+    }
+  }
   let recipients = transitionRecipients;
 
   // WF-19 / LEAK-1 (DF-P3): a ticket ENTERING a routed status tells that
@@ -771,6 +800,31 @@ export async function POST(req: NextRequest) {
           .from("document_versions").select("id")
           .eq("id", recordedState.version_id).eq("org_id", ticket.orgId)
           .eq("record_id", closeSrc.id).eq("related_ticket_id", body.ticketId)
+          .maybeSingle();
+        if (backingErr) {
+          console.error(`[workflow-action] register read failed while closing ticket ${body.ticketId}: ${backingErr.message}`);
+          return NextResponse.json(
+            { error: "The document register could not be read to confirm this request's published deliverable, so the request was not closed. Try again in a moment.", code: "register_unreadable" },
+            { status: 503 },
+          );
+        }
+        unbackedPublish = !backing;
+      }
+    } else if (!closeSrc?.id && ticket.libraryId && recordedState?.state === "published") {
+      // DCW-4 (DF-P15): a library-only request now records a publication too
+      // ("Publish as a new document in <library>", /api/tickets/handback) —
+      // and the close believes it on the same terms: a version in this org,
+      // of the document the record names, carrying this ticket as its
+      // provenance. Same read rules as above (a failed read is a 503 with
+      // nothing written; a non-UUID id is unbacked with no read).
+      const recordedDoc = String(recordedState.document_id ?? "");
+      if (!UUID_RE.test(String(recordedState.version_id)) || !UUID_RE.test(recordedDoc)) {
+        unbackedPublish = true;
+      } else {
+        const { data: backing, error: backingErr } = await supabaseAdmin
+          .from("document_versions").select("id")
+          .eq("id", recordedState.version_id).eq("org_id", ticket.orgId)
+          .eq("record_id", recordedDoc).eq("related_ticket_id", body.ticketId)
           .maybeSingle();
         if (backingErr) {
           console.error(`[workflow-action] register read failed while closing ticket ${body.ticketId}: ${backingErr.message}`);
@@ -942,7 +996,7 @@ export async function POST(req: NextRequest) {
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
           updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
         }
-      } else if (!src?.id && ticket.libraryId && recorded?.state !== "published") {
+      } else if (!src?.id && ticket.libraryId && (recorded?.state !== "published" || unbackedPublish)) {
         // DCW-4 (DF-P4): a request with no source document but a target
         // library (GAP-105) that closes without its deliverable in that
         // library is said too — the register visibly knows it does not have
@@ -952,13 +1006,26 @@ export async function POST(req: NextRequest) {
         // watcher, so a hidden / private library — or one whose ACL carries
         // any rule — is "the target library" (libraryLabelForTicket), never
         // its name.
+        // intelligence DACL-10 remainder (DF-P15, the I-31 merge's
+        // assignment): the label reads the library's EFFECTIVE ACL — the
+        // rung's columns (LIBRARY_RUNG_COLUMNS) through libraryChoiceFromRow,
+        // as the triage check above does (DACL-13 R1) — so its answer is the
+        // same before and after 20261228 writes a legacy library's role lists
+        // into its ACL: an open legacy library keeps its name, a restricted
+        // one is "the target library" on both sides. A label only, never an
+        // access decision.
         const { data: libRow } = await supabaseAdmin
-          .from("libraries").select("name, visibility, acl").eq("id", ticket.libraryId).eq("org_id", ticket.orgId).maybeSingle();
-        const libLabel = libraryLabelForTicket(libRow as { name?: string | null; visibility?: string | null; acl?: unknown } | null);
-        const merged = noteDeliverableNotInLibrary(ticket.metadata, { libraryId: ticket.libraryId });
+          .from("libraries").select(`id, name, ${LIBRARY_RUNG_COLUMNS}`).eq("id", ticket.libraryId).eq("org_id", ticket.orgId).maybeSingle();
+        const libLabel = libraryLabelForTicket(libRow ? libraryChoiceFromRow(libRow as unknown as Record<string, unknown>) : null);
+        // DCW-4 (DF-P15): a "published" record the register does not back is
+        // replaced, visibly, as for a request with a source document.
+        const libBase = unbackedPublish ? { ...(ticket.metadata ?? {}), deliverable: undefined } : ticket.metadata;
+        const merged = noteDeliverableNotInLibrary(libBase, { libraryId: ticket.libraryId });
         if (merged) {
           updates.metadata = merged;
-          handbackNote = `Closed without a register document: the deliverable was not published into ${libLabel}.`;
+          handbackNote = unbackedPublish
+            ? `Closed without a register document: the recorded publication could not be matched to a document in ${libLabel}. The deliverable is treated as not published.`
+            : `Closed without a register document: the deliverable was not published into ${libLabel}.`;
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
           updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
         }
@@ -1215,6 +1282,36 @@ export async function POST(req: NextRequest) {
     console.error("[workflow-action] fan-out failed (transition committed):", e);
   }
 
+  // public-surfaces PHYS-18 (DF-P15): an issue supersedes the copies people
+  // took of the earlier package. The ticket arm of the stale-copy recall
+  // (lib/staleCopies.ts getTicketCopyRecall / nudgeStaleTicketHolders, DF-P12)
+  // tells every member holding an outdated copy who has not since taken the
+  // current one, and puts the recall on the ticket's audit trail
+  // (`source: "auto"`, as a document's publish recalls). Best-effort and
+  // AFTER the response: the issue has landed, and nothing here can fail it.
+  if (APPROVING_ACTIONS.has(action.action) && typeof updates.deliverable_rev === "string" && updates.deliverable_rev) {
+    const recallInput = {
+      ticket: {
+        id: body.ticketId,
+        orgId: ticket.orgId,
+        status: String(newStatus),
+        deliverableRev: updates.deliverable_rev as string,
+        history: (updates.history as unknown) ?? ticket.history,
+        revisionCount: ((updates.revision_count as number | undefined) ?? ticket.revisionCount) ?? null,
+        historyGuardedFrom: (row as { history_guarded_from?: number | null }).history_guarded_from ?? null,
+        attachments: (updates.attachments as unknown) ?? ticket.attachments,
+      },
+      ticketNumber: ticket.ticketId ?? null,
+      actorUserId: caller.id,
+      actorName: callerEmail,
+    };
+    try {
+      after(() => recallSupersededTicketCopies(recallInput));
+    } catch (e) {
+      console.warn(`[workflow-action] the copy recall for ticket ${body.ticketId} could not be scheduled (the issue stands):`, e);
+    }
+  }
+
   // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
   // EDIT INTENT on the source document — visible on the coordination surfaces
   // and feeding overlap advisories, WITHOUT taking a lock (intent decays on
@@ -1348,6 +1445,44 @@ export async function POST(req: NextRequest) {
     ok: true, status: newStatus, ...(holdOutcome ?? {}),
     ...(libraryNotStored && !holdOutcome ? { warning: "The request moved on, but its library could not be recorded yet (database update 20261208 is not applied)." } : {}),
   });
+}
+
+/** PHYS-18 (DF-P15): the recall of superseded ticket copies at an issue —
+ *  run after the response, bound to the service role for this request only
+ *  (lib/serverClientScope.ts: lib/staleCopies writes its audit row and its
+ *  notices through the shared client, which in a route is the anon key).
+ *  Never throws: a failure is logged and the issue stands. A record that
+ *  could not be read (before 20261223, or a failed read) is recorded as such
+ *  and tells nobody (nudgeStaleTicketHolders' `unavailable` rule). */
+async function recallSupersededTicketCopies(input: {
+  ticket: { id: string; orgId: string; status: string; deliverableRev: string; history: unknown; revisionCount: number | null; historyGuardedFrom: number | null; attachments: unknown };
+  ticketNumber: string | null;
+  actorUserId: string;
+  actorName: string;
+}): Promise<number> {
+  try {
+    const [{ getTicketCopyRecall, nudgeStaleTicketHolders }, { runWithServerClient }] = await Promise.all([
+      import("@/lib/staleCopies"), import("@/lib/serverClientScope"),
+    ]);
+    return await runWithServerClient(supabaseAdmin, async () => {
+      const recall = await getTicketCopyRecall(input.ticket, supabaseAdmin as unknown as Parameters<typeof getTicketCopyRecall>[1]);
+      if (!recall.unavailable && recall.holders.length === 0) return 0;
+      return nudgeStaleTicketHolders({
+        orgId: input.ticket.orgId,
+        ticketId: input.ticket.id,
+        ticketNumber: input.ticketNumber,
+        latestIssuedRev: recall.latestIssuedRev,
+        holders: recall.holders,
+        actorUserId: input.actorUserId,
+        actorName: input.actorName,
+        source: "auto",
+        unavailable: recall.unavailable,
+      });
+    });
+  } catch (e) {
+    console.warn(`[workflow-action] the copy recall for ticket ${input.ticket.id} failed (the issue stands):`, (e as Error)?.message ?? e);
+    return 0;
+  }
 }
 
 async function fanOut(params: {
