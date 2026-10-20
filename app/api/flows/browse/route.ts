@@ -19,6 +19,7 @@ import {
   PrincipalUnreadableError, PRINCIPAL_UNREADABLE,
 } from "@/lib/knowledgeAccess";
 import { aiReadability } from "@/lib/aiBoundary";
+import { readHeldBackIds, HELD_BACK_UNREADABLE } from "@/lib/heldBackIds";
 import {
   assembleFlowsBrowse, sourceCoverage, isCovered, type FlowsBrowseInputs,
 } from "@/lib/flowsBrowse";
@@ -128,14 +129,13 @@ export async function GET(req: NextRequest) {
   const dcDocs: FlowsBrowseInputs["dcDocs"] = [];
   const currentVersionByDoc = new Map<string, string>();
   {
-    const aiExcluded = new Set<string>();
-    for (let from = 0; from < 20_000; from += 1000) {
-      const { data } = await supabaseAdmin
-        .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true)
-        .order("id").range(from, from + 999);
-      for (const r of (data ?? []) as Array<{ id: string }>) aiExcluded.add(r.id);
-      if ((data ?? []).length < 1000) break;
-    }
+    // KACL-9 residual (I-29): the held-back read is CHECKED — an errored read
+    // withholds the map (503, never every held-back document shown as
+    // AI-readable); a database without the column holds nothing back, as the
+    // knowledge sync reads it (lib/heldBackIds).
+    const held = await readHeldBackIds(orgId);
+    if (!held.ok) return bad(HELD_BACK_UNREADABLE, 503);
+    const aiExcluded = held.ids;
     // Paged with a stable order — a flat cap returns an ARBITRARY slice
     // past its limit, and this tree's whole promise is that no document
     // silently vanishes from it.
