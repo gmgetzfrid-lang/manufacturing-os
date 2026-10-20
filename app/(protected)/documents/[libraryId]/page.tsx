@@ -50,6 +50,7 @@ import FolderRail from "@/components/documents/FolderRail";
 import PathBar from "@/components/documents/PathBar";
 import FolderDeleteModal, { type FolderDeleteResult } from "@/components/documents/FolderDeleteModal";
 import { hashFile } from "@/lib/duplicateFiles";
+import { folderUrlAction } from "@/lib/folderUrlSync";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
@@ -1475,9 +1476,25 @@ export default function LibraryExplorerPage() {
   // back-button history, and the no-op guard prevents an update loop with the
   // readers (which depend on searchParams).
   const urlSyncMounted = useRef(false);
+  // The folder this writer last saw in STATE. It tells the two directions
+  // apart: state moved (a click, Up) → write the URL; the URL moved (Back /
+  // Forward) → leave it, the reader above brings state along. Without this,
+  // Back made the writer push the old folder straight back, the reader
+  // followed, and the two flipped the list between folders forever.
+  const writerFolderRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!urlSyncMounted.current) { urlSyncMounted.current = true; return; }
+    if (!urlSyncMounted.current) {
+      urlSyncMounted.current = true;
+      writerFolderRef.current = currentFolderId ?? null;
+      return;
+    }
     if (deepLinkPending.current) return; // a deep link is still resolving — leave the URL alone
+    const urlFolder = searchParams.get("folderId") ?? null;
+    const action = folderUrlAction(writerFolderRef.current, currentFolderId ?? null, urlFolder);
+    writerFolderRef.current = currentFolderId ?? null;
+    // The address bar moved first (Back / Forward, or our own push still
+    // landing) — not ours to overwrite; the reader brings state along.
+    if (action === "leave") return;
     const sp = new URLSearchParams(searchParams.toString());
     sp.delete("doc"); sp.delete("fs"); sp.delete("book");
     if (selectedDoc?.id) {
@@ -1486,7 +1503,7 @@ export default function LibraryExplorerPage() {
     } else if (showMultiView && openBookId) {
       sp.set("book", openBookId);
     }
-    const folderChanged = (searchParams.get("folderId") ?? null) !== (currentFolderId ?? null);
+    const folderChanged = action === "push";
     if (currentFolderId) sp.set("folderId", currentFolderId); else sp.delete("folderId");
     const next = sp.toString();
     if (next !== searchParams.toString()) {
