@@ -136,6 +136,11 @@ export interface KnowledgeAnswer {
    *  question's answer across several distinct aspects and asks which to
    *  cover. Re-ask with `focus` to get the actual answer. */
   clarification?: { question: string; options: string[] };
+  /** What the AI understood the question to be about — rendered as chips
+   *  the asker can correct. "x: not given" marks a missing input. */
+  answeringFor?: string[];
+  /** The one question whose answer would change or finish this answer. */
+  followup?: { question: string; options: string[] };
   /** Structured, clickable equipment register — attached when the question
    *  asks for equipment lists/tables. Deterministic data, never model
    *  output; every sheet reference opens the drawing with the tag ringed. */

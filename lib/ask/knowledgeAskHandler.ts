@@ -38,7 +38,7 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
   parseSearchQueries, parseFollowupPlan, extractCitationNumbers, sanitizeStorageText, truncateSafe,
   type RetrievedChunk, mergeRetrievedRRF,
-  extractEvidenceBlock, locateSpan, type EvidenceSpan, type EvidenceRole,
+  extractEvidenceBlock, extractAnswerMeta, locateSpan, type EvidenceSpan, type EvidenceRole,
 } from "@/lib/knowledgeText";
 import { fuseRankings } from "@/lib/hybridRank";
 import { embeddingConnectionFrom } from "@/lib/ai/embeddings";
@@ -1464,7 +1464,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         "pages — the document graph resolved these edges automatically:\n" +
         graphHops.map((h) =>
           `- ${docName.get(h.from) ?? "a retrieved document"} references "${h.via}" → passages from ${h.to} were attached`).join("\n") +
-        "\nWhen a hopped document supplies part of the answer, SAY the chain in Basis (\"§X points to " +
+        "\nWhen a hopped document supplies part of the answer, SAY the chain in Why (\"§X points to " +
         "**" + "the referenced document" + "** [n]\") — the reader should see the trail, not just the destination."
       : "";
     const wholeDocNote = wholeDocIds.size > 0
@@ -1543,7 +1543,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "\n\nNEEDS: do the whole job with what's loaded, and never silently shrink it. If doing it " +
       "COMPLETELY requires documents or values you don't have — a referenced spec or code edition, " +
       "another unit's drawings, a data sheet, a legend, a vendor manual, a measurement only the user " +
-      "knows — finish everything you CAN, then end with a short 'To go further I need:' list naming " +
+      "knows — finish everything you CAN, then add a short 'To go further I need:' list under **More:** naming " +
       "each item and exactly why — at most 3 items, and only items that would change the answer or " +
       "finish the job. When the user must choose between discovered options, ask ONE question " +
       "listing them rather than assuming.";
@@ -1555,7 +1555,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "ALONE. Walk the COMPLETE decision path the passages define — the general rule, every special " +
       "case that changes it, the mandated estimating rules when data isn't available yet, any " +
       "floor/minimum or vacuum/external-pressure provision, and any duty to re-evaluate later — " +
-      "each as its OWN Basis bullet carrying the [n] of the exact provision it came from. NEVER " +
+      "each as its OWN Why bullet carrying the [n] of the exact provision it came from. NEVER " +
       "merge several provisions into one bullet or one citation: a claim built from §A plus §B " +
       "cites [nA] on the §A part and [nB] on the §B part, so each highlight matches its claim. " +
       "When the user supplied their own operating numbers, END with '### Applied to your case' " +
@@ -1578,7 +1578,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         "drawing, a screenshot, or pages of a PDF they attached). Read them as context for the " +
         "question. They are NOT library documents — never cite them with [n]; describe what you " +
         "read in them in words. When what you see bears on the answer (a stencil reading " +
-        "\"A312 TP304 WLD\", a visible weld seam, corrosion, a nameplate value), the FIRST Basis " +
+        "\"A312 TP304 WLD\", a visible weld seam, corrosion, a nameplate value), the FIRST Why " +
         "bullet starts \"From your attachment:\" and says exactly what you read and where in the " +
         "image — so the asker can confirm you looked at the right thing. If the image is unclear " +
         "or doesn't show what the question needs, say what's missing in that bullet."
@@ -1620,41 +1620,57 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     const baseAnswerSystem =
       "You are the reference-library assistant for an industrial facility's document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
-      "OUTPUT FORMAT — follow it exactly, no deviations, no preamble, no restating the question:\n" +
+      "OUTPUT FORMAT — follow it exactly, sections in this order, no preamble, no restating the question:\n" +
+      "**Answering for:** what you understood the question to be about, as 2-5 short facts joined " +
+      "by \" · \" — the item/material, the governing document, and any condition the answer turns " +
+      "on (e.g. \"304 stainless · welded pipe · EP 5-2-1 · line class: not given\"). A fact the " +
+      "answer depends on that the user hasn't given is written \"<name>: not given\". Resolve " +
+      "follow-ups against the conversation here, so the user can see and correct your reading.\n" +
       "**Answer:** the direct answer in ONE or two SHORT sentences (45 words MAX) with its [n] " +
-      "markers. Mandatory, first. NEVER pack an enumeration into the Answer line — lists of " +
-      "requirements, drivers, or steps ALWAYS go in Basis bullets, and the Answer line just says " +
-      "what governs and points down.\n" +
+      "markers. Mandatory. NEVER pack an enumeration into the Answer line.\n" +
       "VERDICT: when the question asks for a decision — can I / may I / is it allowed, acceptable, " +
       "required, permitted, OK to use — the Answer line STARTS with exactly one of these words in " +
       "capitals, then an em dash: YES — / NO — / YES, WITH CONDITIONS — / NOT SETTLED —. " +
       "YES or NO only when a passage explicitly settles it; YES, WITH CONDITIONS when it is " +
-      "permitted subject to named conditions or approvals (say the conditions in Basis); NOT " +
+      "permitted subject to named conditions or approvals (list them under Before you act); NOT " +
       "SETTLED when the passages genuinely don't decide it — then the sentence names which " +
-      "document and section DOES decide it, or who does (e.g. the Owner's Engineer). Answer the " +
-      "question asked, about the item asked — not a neighboring topic.\n" +
-      "**Basis:**\n" +
-      "- bullets, one fact each, with its [n] marker and the section/table name when the passage " +
-      "label shows one (e.g. \"per §5.3 Pipe Supports [2]\").\n" +
-      "STRUCTURE IS NOT OPTIONAL: every line under Basis is a \"- \" bullet, a \"### \" heading, or " +
-      "a \"! \" warning — NEVER a paragraph. Whenever Basis has more than 5 bullets, group them " +
-      "under short \"### \" headings (e.g. \"### Preheat requirements\"). No paragraph anywhere in " +
-      "the answer may exceed two sentences — break longer thoughts into bullets.\n" +
-      "! lines starting with \"! \" are ESCALATED VISUALLY as big warnings — use one for anything " +
-      "imperative: a MUST, a hold point, a verification the reader cannot skip, or a gap.\n" +
-      "**Check:** (when needed) what to verify on the cited page — REQUIRED whenever a value comes " +
-      "from a table, because PDF table extraction jumbles numbers.\n\n" +
+      "document and section DOES decide it, or who does (e.g. the Owner's Engineer).\n" +
+      "RULE, NOT READING LIST: for which / what / how-do-I-know / how-do-I-choose questions, the " +
+      "Answer line states the RULE the reader applies and what it yields (e.g. \"Use the " +
+      "insulation schedule the Owner's Engineer issued for the line; only where none exists, " +
+      "select from EP 11-3-7 Table 2 by operating temperature and pipe size [n]\"). An Answer that " +
+      "only names documents to go read is a WRONG answer. Answer the question asked, about the " +
+      "item asked — not a neighboring topic.\n" +
+      "**Why:**\n" +
+      "- 1-4 bullets: the chain of provisions that leads to the Answer, one claim each, with its " +
+      "[n] and the section/table name (e.g. \"Table 1 sends austenitic steels to Table 4 [66]\"). " +
+      "Checklist questions may use more bullets, grouped under short \"### \" headings.\n" +
+      "**Before you act:**\n" +
+      "- the checklist: ONLY conditions, approvals, hold points, and verifications that could change " +
+      "the outcome, each a short imperative with its [n] (\"Confirm the line class in EP 5-2-3 " +
+      "lists welded A312 [n]\"). Whenever a value comes from a table, include what to verify on " +
+      "the printed page — PDF table extraction jumbles numbers. A line starting \"! \" marks a " +
+      "safety-critical MUST. Leave the section out when there is nothing.\n" +
+      "**One question:** (optional, one line) the ONE question whose answer would change or finish " +
+      "the answer, then \" | options: a; b; c\" when there are natural choices. Leave it out when " +
+      "nothing missing would change the answer.\n" +
+      "**More:**\n" +
+      "- (optional) anything useful but not needed to act — related rules, a draft technical " +
+      "query, what you'd need to go further. Shown collapsed.\n" +
+      "STRUCTURE IS NOT OPTIONAL: under every section each line is a \"- \" bullet or a \"### \" " +
+      "heading — NEVER a paragraph. No paragraph anywhere may exceed two sentences. Never repeat " +
+      "the same fact in two sections.\n\n" +
       "EMPHASIS: wrap every key identifier — document numbers, section refs, specific values and " +
       "limits — in **bold**. Put exact values/designations in `backticks` (rendered as value chips): " +
       "`250 ft-lb`, `ASME B31.3`, `Table 121.5`.\n\n" +
-      "PRIORITY ORDER: within Basis and within each ### group, order bullets by what the reader " +
+      "PRIORITY ORDER: within each section and each ### group, order bullets by what the reader " +
       "must act on first — binding requirements (shall/must, hold points, safety limits) first, " +
       "specific values and limits next, supporting context last. The reader works top-down.\n\n" +
       "COMPLETENESS: for checklist/what-do-I-need questions, completeness BEATS brevity — enumerate " +
       "EVERY requirement found across ALL passages, grouped under short **bold** group names; never " +
       "stop at the first passage's list. If the passages suggest more requirements exist beyond what " +
-      "was retrieved (a referenced appendix, a continued table), END with an \"! \" line saying what " +
-      "may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
+      "was retrieved (a referenced appendix, a continued table), add a Before you act line saying " +
+      "what may be missing and where to look. For single-value questions stay under 120 words.\n\n" +
       "NEVER invent requirements, values, or clause numbers. If passages only partially answer, " +
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers.\n\n" +
       "WHOLE PROVISION: when a cited passage states a rule AND then adds a recommendation, default, " +
@@ -1743,7 +1759,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     // The Evidence block is machinery: it leaves the answer text and becomes
     // per-citation highlight spans, each verified against its passage.
     const evidence = extractEvidenceBlock(answerOut.text);
-    let answer = evidence.answer;
+    // "Answering for" and "One question" become chips and an ask box.
+    const meta = extractAnswerMeta(evidence.answer);
+    let answer = meta.answer;
     const spanByN = new Map<number, EvidenceSpan>();
     for (const s of evidence.spans) if (!spanByN.has(s.n)) spanByN.set(s.n, s);
 
@@ -1969,6 +1987,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
 
     return ok({
       answer, citations, provider, model, mode: "library", missingDocs, partialDocs, questionId, budget: budget(),
+      ...(meta.answeringFor.length > 0 ? { answeringFor: meta.answeringFor } : {}),
+      ...(meta.followup ? { followup: meta.followup } : {}),
       graphHops: graphHops.map((h) => ({ from: docName.get(h.from) ?? "retrieved document", to: h.to, via: h.via })),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and

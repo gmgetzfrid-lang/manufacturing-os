@@ -540,6 +540,96 @@ export function extractEvidenceBlock(answer: string): { answer: string; spans: E
   return { answer: lines.slice(0, start).join("\n").trimEnd(), spans };
 }
 
+/** The two meta lines of an answer — what the model understood the question
+ *  to be about ("Answering for") and the one question that would finish it —
+ *  pulled out of the prose into fields the UI renders as chips and an ask
+ *  box. Removed from the text either way. */
+export function extractAnswerMeta(answer: string): {
+  answer: string;
+  answeringFor: string[];
+  followup: { question: string; options: string[] } | null;
+} {
+  let answeringFor: string[] = [];
+  let followup: { question: string; options: string[] } | null = null;
+  const kept: string[] = [];
+  for (const raw of answer.split("\n")) {
+    const af = raw.trim().match(/^\*{0,2}Answering for:?\*{0,2}:?\s*(.+)$/i);
+    if (af && answeringFor.length === 0) {
+      answeringFor = af[1].replace(/\*\*/g, "").split(/\s*[·•|]\s*/).map((s) => s.trim())
+        .filter((s) => s.length > 0 && s.length <= 80).slice(0, 6);
+      continue;
+    }
+    const oq = raw.trim().match(/^\*{0,2}One question:?\*{0,2}:?\s*(.+)$/i);
+    if (oq && !followup) {
+      const [q, opts] = oq[1].replace(/\*\*/g, "").split(/\s*\|\s*options?:\s*/i);
+      const options = (opts ?? "").split(/\s*;\s*/).map((s) => s.trim()).filter(Boolean).slice(0, 5);
+      if (q.trim()) followup = { question: q.trim().slice(0, 240), options };
+      continue;
+    }
+    kept.push(raw);
+  }
+  return { answer: kept.join("\n").trim(), answeringFor, followup };
+}
+
+/** "line class: not given" — a fact the answer depends on that the asker
+ *  hasn't supplied. Rendered as a dashed chip that invites the value. */
+export function isMissingFact(chip: string): boolean {
+  return /:\s*(?:not given|unknown|not stated|\?)\s*$/i.test(chip);
+}
+
+export interface StructuredAnswer {
+  hero: string | null;
+  /** The chain to the answer: numbered steps, with group headings. */
+  why: AnswerBlock[];
+  /** Conditions, approvals, hold points, verifications — the checklist. */
+  before: AnswerBlock[];
+  /** Everything useful but not needed to act — shown collapsed. */
+  more: AnswerBlock[];
+}
+
+const BEFORE_LABEL = /^(before you (act|install|use|proceed|start)|check|checks|verify|verification|hold points?|conditions?|what to check)\b/i;
+const MORE_LABEL = /^(more|further|to go further|related|background|also|technical query|tq|draft|notes?|reference)\b/i;
+const WHY_LABEL = /^(why|basis|key points|reasoning|how this was decided)\b/i;
+
+/** Sort parsed blocks into the answer's four parts. Labels name the part;
+ *  any other heading is a group INSIDE the current part (a checklist answer's
+ *  "### Preheat" groups stay under Why). "!" imperatives always land in the
+ *  checklist, and Check: lines too — the reader acts on them. Older answers
+ *  ("Basis", "Check", "To go further I need") map onto the same parts. */
+export function structureAnswer(blocks: AnswerBlock[]): StructuredAnswer {
+  const out: StructuredAnswer = { hero: null, why: [], before: [], more: [] };
+  let part: "why" | "before" | "more" = "why";
+  for (const b of blocks) {
+    if (b.type === "hero" && out.hero === null) { out.hero = b.text; continue; }
+    if (b.type === "label") {
+      if (WHY_LABEL.test(b.text)) { part = "why"; continue; }
+      if (BEFORE_LABEL.test(b.text)) { part = "before"; continue; }
+      if (MORE_LABEL.test(b.text)) { part = "more"; out.more.push(b); continue; }
+      out[part].push(b);
+      continue;
+    }
+    if (b.type === "important") { out.before.push(b); continue; }
+    if (/^\*{0,2}Check:?\*{0,2}/i.test(b.text)) {
+      out.before.push({ type: "bullet", text: b.text.replace(/^\*{0,2}Check:?\*{0,2}\s*/i, "") });
+      continue;
+    }
+    // Filler the model sometimes leaves behind.
+    if (/^(details|see) (below|above)\.?$/i.test(b.text.trim())) continue;
+    out[part].push(b);
+  }
+  // A Why bullet that only repeats a checklist imperative is noise.
+  const norm = (t: string) => t.toLowerCase().replace(/\[\d{1,3}\]|\*\*|[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+  const imperatives = new Set(out.before.map((b) => norm(b.text)));
+  out.why = out.why.filter((b) => b.type !== "bullet" || !imperatives.has(norm(b.text)));
+  // A group heading left with nothing under it goes.
+  const dropEmptyLabels = (list: AnswerBlock[]) =>
+    list.filter((b, i) => b.type !== "label" || (list[i + 1] && list[i + 1].type !== "label"));
+  out.why = dropEmptyLabels(out.why);
+  out.before = dropEmptyLabels(out.before);
+  out.more = dropEmptyLabels(out.more);
+  return out;
+}
+
 /** Lowercased, whitespace-collapsed, quote/dash-unified copy of `s`, with a
  *  map from each normalized index back to the original index. */
 function normalizeWithMap(s: string): { norm: string; map: number[] } {

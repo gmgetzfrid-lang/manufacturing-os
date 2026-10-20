@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import {
   parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
-  type AnswerBlock, type Verdict,
+  structureAnswer, isMissingFact, type AnswerBlock, type Verdict,
 } from "@/lib/knowledgeText";
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
@@ -720,24 +720,29 @@ export function SourceCard({ citation, onOpen, delay }: {
 }
 
 /** One piece of proof: what it proves, where it lives, and the exact words —
- *  marked — with the page one tap away. */
-function ProofItem({ c, onOpen, startOpen }: {
+ *  marked — with the page one tap away. A cite tap in the answer opens and
+ *  flashes the matching card. */
+function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
   c: KnowledgeCitation;
   onOpen: (c: KnowledgeCitation) => void;
-  startOpen: boolean;
+  open: boolean;
+  onToggle: () => void;
+  flash: boolean;
+  domId: string;
 }) {
-  const [open, setOpen] = useState(startOpen);
   const doc = (c.documentName ?? "Document").replace(/\.pdf$/i, "");
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <button onClick={() => setOpen((o) => !o)}
+    <div id={domId}
+      className={`rounded-xl border bg-[var(--color-surface)] overflow-hidden scroll-mt-24 transition-shadow duration-300 ${flash
+        ? "border-orange-500 shadow-[0_0_0_3px_rgba(249,115,22,0.25)]"
+        : "border-[var(--color-border)]"}`}>
+      <button onClick={onToggle} aria-expanded={open}
         className="w-full px-3 py-2.5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 text-left hover:bg-[var(--color-surface-2)]/50 transition-colors">
-        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-orange-600 text-white text-[10px] font-black flex items-center justify-center">{c.n}</span>
+        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
         <span className="min-w-0">
-          <span className="block text-[13px] font-black text-[var(--color-text)] leading-snug">{c.claim || doc}</span>
-          <span className="block text-[10px] font-bold text-[var(--color-text-muted)] truncate">
-            {c.claim ? `${doc} · ` : ""}{c.section ? `${c.section.slice(0, 40)} · ` : ""}p.{c.page}
-            {c.tier ? ` · ${c.tier === "governing" ? "governing" : "reference"}` : ""}
+          <span className="block text-[13px] font-bold text-[var(--color-text)] leading-snug">{c.claim || doc}</span>
+          <span className="block mt-0.5 font-mono text-[10px] text-[var(--color-text-muted)] truncate">
+            {c.claim ? `${doc} · ` : ""}{c.section ? `${c.section.slice(0, 36)} · ` : ""}p.{c.page}
           </span>
         </span>
         <ChevronDown className={`mt-1 w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-180" : ""}`} />
@@ -745,13 +750,16 @@ function ProofItem({ c, onOpen, startOpen }: {
       {open && (
         <div className="px-3 pb-3 space-y-2">
           <ProofQuote c={c}
-            className="border-l-2 border-orange-400 pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-56 overflow-y-auto" />
-          <div className="flex items-center gap-2 flex-wrap">
+            className="border-l-[3px] border-[var(--color-border)] bg-[var(--color-surface-2)]/50 rounded-r-md pl-3 pr-2 py-1.5 text-[12.5px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-56 overflow-y-auto" />
+          <div className="flex items-center gap-2 flex-wrap text-[11px]">
             <button onClick={() => onOpen(c)}
-              className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
-              <Eye className="w-3 h-3" /> Open p.{c.page} — {c.highlight ? "exact words marked" : "passage highlighted"}
+              className="inline-flex items-center gap-1.5 font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400 transition-colors">
+              <Eye className="w-3 h-3 text-orange-600" /> Open p.{c.page}{c.highlight ? " at these words" : ""}
             </button>
             {(c.highlight || c.quote) && <CopyButton text={c.highlight ?? c.quote ?? ""} label="Copy quote" />}
+            {!c.highlight && c.quote && (
+              <span className="text-[var(--color-text-faint)]">whole passage — no exact words given</span>
+            )}
           </div>
         </div>
       )}
@@ -760,49 +768,154 @@ function ProofItem({ c, onOpen, startOpen }: {
 }
 
 /** The evidence trail, ranked by what each passage does for the answer:
- *  what decides it, what limits it, and the rest — collapsed. Used when the
- *  answer tagged its evidence; older answers keep the by-document list. */
-function ProofTrail({ citations, onOpen }: {
+ *  what decides it, what rules a restriction out or limits it, and the rest
+ *  collapsed. Answers saved before evidence roles existed show one plain
+ *  "Sources" tier in the order the answer used them. */
+function ProofTrail({ citations, onOpen, openSet, onToggle, onShowRelated, showRelated, flashN, idPrefix }: {
   citations: KnowledgeCitation[];
   onOpen: (c: KnowledgeCitation) => void;
+  openSet: Set<number>;
+  onToggle: (n: number) => void;
+  showRelated: boolean;
+  onShowRelated: (v: boolean) => void;
+  flashN: number | null;
+  idPrefix: string;
 }) {
-  const decides = citations.filter((c) => c.role === "decides");
-  const limits = citations.filter((c) => c.role === "limits");
-  const related = citations.filter((c) => c.role !== "decides" && c.role !== "limits");
-  const [showRelated, setShowRelated] = useState(false);
-  const tier = (label: string, dot: string, items: KnowledgeCitation[], openFirst: number) => items.length > 0 && (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
-        <span className={`w-2 h-2 rounded-full ${dot}`} />{label}
-      </div>
-      {items.map((c, i) => <ProofItem key={c.n} c={c} onOpen={onOpen} startOpen={i < openFirst} />)}
+  const hasRoles = citations.some((c) => c.role);
+  const decides = hasRoles ? citations.filter((c) => c.role === "decides") : [];
+  const limits = hasRoles ? citations.filter((c) => c.role === "limits") : [];
+  const related = hasRoles ? citations.filter((c) => c.role !== "decides" && c.role !== "limits") : [];
+  const item = (c: KnowledgeCitation) => (
+    <ProofItem key={c.n} c={c} onOpen={onOpen} open={openSet.has(c.n)} onToggle={() => onToggle(c.n)}
+      flash={flashN === c.n} domId={`${idPrefix}-${c.n}`} />
+  );
+  const tierHead = (label: string, dot: string, count: number) => (
+    <div className="flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+      <span className={`w-2 h-2 rounded-full ${dot}`} />{label}
+      <span className="text-[var(--color-text-faint)]">{count}</span>
     </div>
   );
+  if (citations.length === 0) {
+    return <p className="text-xs text-[var(--color-text-muted)]">No library passages were cited for this answer.</p>;
+  }
   return (
-    <div className="space-y-3 animate-rise">
-      <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
-        Proof — what decides the answer first
-      </div>
-      {tier("Decides the answer", "bg-emerald-500", decides, 3)}
-      {tier("Conditions & limits", "bg-amber-500", limits, 2)}
+    <div className="space-y-4">
+      {!hasRoles && (
+        <div className="space-y-2">{tierHead("Sources", "bg-orange-500", citations.length)}{citations.map(item)}</div>
+      )}
+      {decides.length > 0 && (
+        <div className="space-y-2">{tierHead("Decides the answer", "bg-emerald-500", decides.length)}{decides.map(item)}</div>
+      )}
+      {limits.length > 0 && (
+        <div className="space-y-2">{tierHead("Conditions & limits", "bg-amber-500", limits.length)}{limits.map(item)}</div>
+      )}
       {related.length > 0 && (
-        <div className="space-y-1.5">
-          <button onClick={() => setShowRelated((v) => !v)}
-            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+        <div className="space-y-2">
+          <button onClick={() => onShowRelated(!showRelated)} aria-expanded={showRelated}
+            className="w-full flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
             <span className="w-2 h-2 rounded-full bg-slate-400" />
-            Related ({related.length})
-            <ChevronDown className={`w-3 h-3 transition-transform ${showRelated ? "rotate-180" : ""}`} />
+            {decides.length + limits.length > 0 ? "Related, not needed for the answer" : "Sources"}
+            <span className="text-[var(--color-text-faint)]">{related.length}</span>
+            <ChevronDown className={`ml-auto w-3.5 h-3.5 transition-transform ${showRelated ? "rotate-180" : ""}`} />
           </button>
-          {showRelated && related.map((c) => <ProofItem key={c.n} c={c} onOpen={onOpen} startOpen={false} />)}
+          {showRelated && related.map(item)}
         </div>
       )}
     </div>
   );
 }
 
-/** The full answer experience: question echo → hero answer card → basis →
- *  check callout → source cards. Cards, air, hierarchy — never a wall. */
-export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, showQuestion = true }: {
+const VERDICT_BOX: Record<Verdict | "none", string> = {
+  yes: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800",
+  conditional: "bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800",
+  no: "bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800",
+  unsettled: "bg-slate-50 dark:bg-slate-900/40 border-slate-300 dark:border-slate-700",
+  none: "bg-orange-50/70 dark:bg-orange-950/20 border-orange-200 dark:border-orange-900",
+};
+
+/** "Answering for" — the AI's reading of the question, as chips. A dashed
+ *  chip is an input the answer depends on that nobody gave. On the latest
+ *  turn any chip can be corrected: the correction re-asks with it as a
+ *  given, so the user fixes the reading instead of re-typing the question. */
+function AnsweringFor({ chips, onCorrect }: { chips: string[]; onCorrect?: (value: string) => void }) {
+  const [editing, setEditing] = useState<number | null>(null);
+  const [value, setValue] = useState("");
+  const start = (i: number) => {
+    if (!onCorrect) return;
+    setEditing(i);
+    setValue(isMissingFact(chips[i]) ? chips[i].replace(/:\s*[^:]*$/, ": ") : chips[i]);
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-[var(--color-text-muted)] mr-0.5">Answering for</span>
+      {chips.map((chip, i) => editing === i ? (
+        <form key={i} className="inline-flex items-center gap-1"
+          onSubmit={(e) => { e.preventDefault(); if (value.trim()) { onCorrect?.(value.trim()); setEditing(null); } }}>
+          <input id={`af-${i}`} autoFocus value={value} onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") setEditing(null); }}
+            className="text-[12px] px-2 py-0.5 rounded-full border border-orange-400 bg-[var(--color-surface)] text-[var(--color-text)] w-48 focus:outline-none" />
+          <button type="submit" className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-600 text-white">Re-ask</button>
+        </form>
+      ) : (
+        <button key={i} type="button" onClick={() => start(i)} disabled={!onCorrect}
+          title={onCorrect ? (isMissingFact(chip) ? "Add this and re-ask" : "Correct this and re-ask") : undefined}
+          className={`inline-flex items-center gap-1 text-[12px] px-2.5 py-0.5 rounded-full border transition-colors ${isMissingFact(chip)
+            ? "border-dashed border-amber-500 text-amber-700 dark:text-amber-300"
+            : "border-[var(--color-border)] bg-[var(--color-surface-2)]/60 text-[var(--color-text)]"} ${onCorrect ? "hover:border-orange-400 cursor-pointer" : "cursor-default"}`}>
+          {chip}
+          {onCorrect && <span className="text-[10px] text-[var(--color-text-faint)]">{isMissingFact(chip) ? "+" : "✎"}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The one question that would finish the answer — asked AFTER the answer,
+ *  never instead of it. Tap an option or type a value; it re-asks with it. */
+function OneQuestion({ followup, onAnswer }: {
+  followup: { question: string; options: string[] };
+  onAnswer?: (value: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <div className="rounded-lg border border-dashed border-amber-500/80 px-3.5 py-3 space-y-2">
+      <div className="text-[13.5px] text-[var(--color-text)]"><b>One thing would finish this:</b> {followup.question}</div>
+      {onAnswer && (
+        <form className="flex flex-wrap items-center gap-1.5"
+          onSubmit={(e) => { e.preventDefault(); if (value.trim()) onAnswer(`${followup.question} → ${value.trim()}`); }}>
+          {followup.options.map((o) => (
+            <button key={o} type="button" onClick={() => onAnswer(`${followup.question} → ${o}`)}
+              className="text-[12.5px] px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400">
+              {o}
+            </button>
+          ))}
+          <input id="one-question" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Type the answer"
+            className="text-[12.5px] px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] w-44 focus:outline-none focus:border-orange-400" />
+          <button type="submit" disabled={!value.trim()}
+            className="text-[12.5px] font-bold px-2.5 py-1 rounded-md bg-orange-600 text-white disabled:opacity-40">
+            Finish the answer
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+/** Section heading inside the answer column. */
+function PartHead({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-2">
+      {children}
+    </div>
+  );
+}
+
+/** The full answer, laid out answer-first: what the AI understood, the
+ *  verdict, the short chain of why, what to check before acting, the one
+ *  question that would finish it, and everything else collapsed — with the
+ *  ranked proof trail beside it (below it on narrow screens). A cite tap
+ *  jumps to its proof card instead of opening a floating popup. */
+export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, onFollowup, showQuestion = true }: {
   question: string;
   answer: KnowledgeAnswer;
   /** The chat shell shows the question as its own bubble — no echo there. */
@@ -812,18 +925,12 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
   onOpenTag?: (documentId: string, page: number, tag: string, documentName: string) => void;
   /** Open a document the answer names (show-me chips). */
   onOpenDoc?: (d: DocLink) => void;
+  /** Latest turn only: re-ask this question with a value the user supplied
+   *  (a corrected chip or the answer to the one question). */
+  onFollowup?: (value: string) => void;
 }) {
-  const blocks = parseAnswerBlocks(answer.answer);
-  const hero = blocks.find((b) => b.type === "hero");
-  const heroV = hero ? splitVerdict(hero.text) : null;
-  const rest = blocks.filter((b) => b !== hero);
-  // Imperatives (! lines) stay visible even collapsed — never hide a MUST or
-  // a hold point behind a button.
-  const importantBlocks = rest.filter((b) => b.type === "important");
-  const detailBlocks = rest.filter((b) => b.type !== "important");
-  // The sectioned detail IS the answer for checklist questions — it shows
-  // by default; the button collapses it for readers who only want the hero.
-  const [elaborated, setElaborated] = useState(true);
+  const parts = useMemo(() => structureAnswer(parseAnswerBlocks(answer.answer)), [answer.answer]);
+  const heroV = parts.hero !== null ? splitVerdict(parts.hero) : null;
   const docLinkCtx = useMemo(
     () => ({ links: answer.mentionedDocs ?? [], open: onOpenDoc ?? null }),
     [answer.mentionedDocs, onOpenDoc],
@@ -834,8 +941,48 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
   const canShape = shapeRole === "Admin" || shapeRole === "DocCtrl";
   const [shaping, setShaping] = useState(false);
   const [proof, setProof] = useState<ProofState | null>(null);
-  const proofCtx = useMemo(() => ({
+  const libraryCitations = useMemo(() => answer.citations.filter((c) => !c.url), [answer.citations]);
+  const hasRoles = libraryCitations.some((c) => c.role);
+
+  // ── The proof trail's state lives here so a cite tap can drive it ──
+  const idPrefix = `proof-${(answer.questionId ?? question).replace(/[^A-Za-z0-9]/g, "").slice(0, 24) || "a"}`;
+  const [openSet, setOpenSet] = useState<Set<number>>(() => {
+    const s = new Set<number>();
+    const lead = hasRoles
+      ? [...libraryCitations.filter((c) => c.role === "decides").slice(0, 3), ...libraryCitations.filter((c) => c.role === "limits").slice(0, 2)]
+      : libraryCitations.slice(0, 2);
+    for (const c of lead) s.add(c.n);
+    return s;
+  });
+  const [showRelated, setShowRelated] = useState(false);
+  const [flashN, setFlashN] = useState<number | null>(null);
+  const toggle = (n: number) => setOpenSet((prev) => {
+    const next = new Set(prev);
+    if (next.has(n)) next.delete(n); else next.add(n);
+    return next;
+  });
+  useEffect(() => {
+    if (flashN === null) return;
+    const t = setTimeout(() => setFlashN(null), 1600);
+    return () => clearTimeout(t);
+  }, [flashN]);
+
+  const proofCtx = {
     show: (c: KnowledgeCitation, context: string, anchor: DOMRect) => {
+      // A cited library passage: open its proof card in the trail and bring
+      // it into view. Anything else gets the floating proof card.
+      if (!c.url && libraryCitations.some((x) => x.n === c.n)) {
+        setOpenSet((prev) => new Set(prev).add(c.n));
+        if (hasRoles && c.role !== "decides" && c.role !== "limits") setShowRelated(true);
+        setFlashN(c.n);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          document.getElementById(`${idPrefix}-${c.n}`)?.scrollIntoView({
+            behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+            block: "center",
+          });
+        }));
+        return;
+      }
       const w = Math.min(PROOF_W, window.innerWidth - 24);
       const up = anchor.bottom > window.innerHeight - 340;
       setProof({
@@ -846,53 +993,50 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         up,
       });
     },
-  }), []);
-  const libraryCitations = answer.citations.filter((c) => !c.url);
+  };
 
-  // PRIORITY ORDER, everywhere. The order the ANSWER cites things is the
-  // order the reader needs them — not citation-number order, which is just
-  // retrieval order. The direct answer's own sources surface first as
-  // named-document buttons in the hero; the source pile below groups by
-  // document, most-load-bearing document first, collapsed past the top.
-  const citeByN = new Map(libraryCitations.map((c) => [c.n, c]));
-  const answerOrder = extractCitationNumbers(answer.answer);
-  const heroSources = (() => {
-    if (!hero) return [] as KnowledgeCitation[];
-    const seen = new Set<string>();
-    const out: KnowledgeCitation[] = [];
-    // The run-on explosion can move every [n] out of the headline into the
-    // Key-points bullets — which silently ERASED the Sources strip. The
-    // strip must survive that: fall back to the answer's first-used
-    // citations whenever the headline itself carries none.
-    const heroNs = extractCitationNumbers(hero.text);
-    for (const n of (heroNs.length > 0 ? heroNs : answerOrder)) {
-      const c = citeByN.get(n);
-      const key = c?.documentName ?? "";
-      if (c && !seen.has(key)) { seen.add(key); out.push(c); }
-      if (out.length >= 4) break;
+  const inline = (text: string) => <InlineAnswer text={text} citations={answer.citations} onCite={onCite} />;
+  // Why: numbered steps; headings become small group labels.
+  const renderWhy = (blocks: AnswerBlock[]) => {
+    let n = 0;
+    return blocks.map((b, i) => {
+      if (b.type === "label") {
+        return <div key={i} className="pt-1 text-[12px] font-bold text-[var(--color-text-muted)]">{b.text}</div>;
+      }
+      if (b.type === "bullet") {
+        n += 1;
+        return (
+          <div key={i} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-start">
+            <span className="mt-0.5 w-6 h-6 rounded-full border border-[var(--color-border)] font-mono text-[11px] text-[var(--color-text-muted)] flex items-center justify-center">{n}</span>
+            <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
+          </div>
+        );
+      }
+      return <p key={i} className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</p>;
+    });
+  };
+  // Before you act: a checklist; "!" lines are the MUSTs and look it.
+  const renderBefore = (blocks: AnswerBlock[]) => blocks.map((b, i) => {
+    if (b.type === "label") {
+      return <div key={i} className="pt-1 text-[12px] font-bold text-[var(--color-text-muted)]">{b.text}</div>;
     }
-    return out;
-  })();
-  const sourceGroups = (() => {
-    const rank = new Map<number, number>();
-    answerOrder.forEach((n, i) => rank.set(n, i));
-    const byDoc = new Map<string, KnowledgeCitation[]>();
-    for (const c of libraryCitations) {
-      const key = c.documentName ?? "Document";
-      byDoc.set(key, [...(byDoc.get(key) ?? []), c]);
+    if (b.type === "important") {
+      return (
+        <div key={i} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start rounded-md bg-amber-50 dark:bg-amber-950/30 px-2 py-1.5">
+          <AlertTriangle className="mt-0.5 w-4 h-4 text-amber-600" />
+          <div className="text-[14px] font-semibold leading-relaxed text-amber-950 dark:text-amber-100">{inline(b.text)}</div>
+        </div>
+      );
     }
-    const groups = [...byDoc.entries()].map(([doc, cites]) => ({
-      doc,
-      cites: [...cites].sort((a, b) =>
-        (rank.get(a.n) ?? 9999) - (rank.get(b.n) ?? 9999)),
-      first: Math.min(...cites.map((c) => rank.get(c.n) ?? 9999)),
-    }));
-    groups.sort((a, b) => a.first - b.first);
-    return groups;
-  })();
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
-  const [allSources, setAllSources] = useState(false);
-  const visibleGroups = allSources ? sourceGroups : sourceGroups.slice(0, 4);
+    return (
+      <div key={i} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start px-2">
+        <span className="mt-1 w-3.5 h-3.5 rounded-[3px] border-[1.5px] border-[var(--color-text-muted)]" />
+        <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
+      </div>
+    );
+  });
+
+  const verdictKey: Verdict | "none" = heroV?.verdict ?? "none";
 
   return (
     <DocLinkContext.Provider value={docLinkCtx}>
@@ -915,16 +1059,14 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         onClose={() => setShaping(false)}
       />
     )}
-    <div className={`${showQuestion ? "mt-4" : ""} space-y-3`}>
+    <div className={`${showQuestion ? "mt-4" : ""} space-y-3 @container`}>
       {showQuestion && (
         <div className="text-[11px] text-[var(--color-text-muted)] animate-rise">
           You asked: <i>&ldquo;{question}&rdquo;</i>
         </div>
       )}
 
-      {/* A REPLAYED answer must never masquerade as a fresh run. The subtle
-          "memory · past answer" footer was missed for days while a stale
-          record kept answering a repeated question — say it loudly. */}
+      {/* A REPLAYED answer must never masquerade as a fresh run. */}
       {answer.provider === "memory" && (
         <div className="rounded-xl border-2 border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 px-3.5 py-2.5 text-[11px] font-bold text-violet-800 dark:text-violet-300 flex items-center gap-2">
           <History className="w-4 h-4 shrink-0" />
@@ -936,100 +1078,82 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         </div>
       )}
 
-      {/* Hero answer card */}
-      <div className="rounded-2xl border-2 border-orange-400 dark:border-orange-700 bg-[var(--color-surface)] shadow-lg overflow-hidden animate-pop">
-        {/* Living top rule: a slow sheen drifts along the gradient — quiet
-            proof the page is alive. Disabled for reduced-motion users. */}
-        <div
-          className="h-1.5 bg-gradient-to-r from-orange-500 via-amber-400 to-orange-500 motion-safe:animate-[shimmer_6s_linear_infinite]"
-          style={{ backgroundSize: "200% 100%" }}
-        />
-        {/* THE ANSWER — a light frosted band with an orange spine. The dark
-            plaque read as a harsh speedbump (design review); separation now
-            comes from tone + the accent border, not a black block. */}
-        <div className={hero
-          ? "px-4 sm:px-5 py-4 border-l-4 border-orange-500 bg-[var(--color-surface-2)]/60 backdrop-blur-sm"
-          : "px-4 sm:px-5 pt-4"}>
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-orange-600">
-              <span aria-hidden className="relative flex w-1.5 h-1.5">
-                <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-60" style={{ animationDuration: "2.4s" }} />
-                <span className="relative inline-flex rounded-full w-1.5 h-1.5 bg-orange-500" />
-              </span>
-              Answer
-            </div>
-            <CopyButton text={answer.answer} label="Copy answer" />
-          </div>
-          {hero && heroV ? (
-            <>
-              {heroV.verdict && <div><VerdictBadge verdict={heroV.verdict} /></div>}
-              <div className="text-[17px] font-black text-[var(--color-text)] leading-relaxed">
-                <InlineAnswer text={heroV.text} citations={answer.citations} onCite={onCite} />
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden animate-rise">
+        <div className="grid @min-[720px]:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+          {/* ── The answer column ── */}
+          <div className="min-w-0 p-4 sm:p-5 space-y-5">
+            {(answer.answeringFor ?? []).length > 0 && (
+              <AnsweringFor chips={answer.answeringFor!} onCorrect={onFollowup} />
+            )}
+
+            <div className={`rounded-xl border px-4 py-3.5 ${VERDICT_BOX[verdictKey]}`}>
+              <div className="flex items-start justify-between gap-2">
+                {heroV?.verdict
+                  ? <VerdictBadge verdict={heroV.verdict} />
+                  : <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">Answer</span>}
+                <CopyButton text={answer.answer} label="Copy answer" />
               </div>
-            </>
-          ) : (
-            <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
-          )}
+              <div className="mt-1 text-[16.5px] font-semibold leading-snug text-[var(--color-text)]">
+                {heroV ? inline(heroV.text) : <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />}
+              </div>
+            </div>
 
-          {/* THE documents behind the direct answer — real buttons that open
-              the real paper. The reader's first question after any answer is
-              "says who?" — this answers it above the fold. */}
-          {heroSources.length > 0 && (
-            <div className="mt-3.5 flex items-center gap-1.5 flex-wrap">
-              <span className="text-[9px] font-black uppercase tracking-[0.18em] text-[var(--color-text-muted)] w-full sm:w-auto">Sources · tap to open</span>
-              {heroSources.map((c) => (
-                <button key={c.n} onClick={() => onCite(c)}
-                  className="inline-flex items-center gap-1.5 text-[11px] font-black px-2.5 py-1.5 rounded-lg bg-[var(--color-surface)] border border-orange-300 dark:border-orange-800 text-[var(--color-text)] shadow-sm hover:bg-orange-50 dark:hover:bg-orange-950/30 hover:border-orange-500 active:scale-[0.98] transition-all">
-                  <Eye className="w-3.5 h-3.5 text-orange-600" />
-                  {(c.documentName ?? "Document").replace(/\.pdf$/i, "")}
-                  <span className="font-bold text-orange-600">p.{c.page}</span>
+            {heroV && parts.why.length > 0 && (
+              <div>
+                <PartHead>Why</PartHead>
+                <div className="space-y-2.5">{renderWhy(parts.why)}</div>
+              </div>
+            )}
+
+            {heroV && parts.before.length > 0 && (
+              <div>
+                <PartHead>Before you act</PartHead>
+                <div className="space-y-1.5">{renderBefore(parts.before)}</div>
+              </div>
+            )}
+
+            {answer.followup && (
+              <OneQuestion followup={answer.followup} onAnswer={onFollowup} />
+            )}
+
+            {heroV && parts.more.length > 0 && (
+              <details className="group border-t border-[var(--color-border)] pt-3">
+                <summary className="cursor-pointer list-none flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                  <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
+                  More — related rules, drafts, what would go further
+                </summary>
+                <div className="mt-2">
+                  <SectionedBlocks key={answer.answer} blocks={parts.more} citations={answer.citations} onCite={onCite} />
+                </div>
+              </details>
+            )}
+
+            <div className="pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-muted)]">
+              {canShape && shapeOrgId && shapeUid && (
+                <button onClick={() => setShaping(true)}
+                  title="AI proposes how this answer attributes to the org graph — you curate, it writes"
+                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] hover:border-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition-colors">
+                  <Waypoints className="w-3 h-3" /> Shape the graph
                 </button>
-              ))}
+              )}
+              <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
+              <span>·</span>
+              <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
+              <span>·</span>
+              {/* Version beacon: which renderer produced this card. */}
+              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt7</span>
             </div>
-          )}
-        </div>
-        <div className="px-4 sm:px-5 pb-4 pt-3">
-
-          {/* Imperatives always visible — safety never hides behind a click */}
-          {hero && importantBlocks.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {importantBlocks.map((b, i) => (
-                <ImportantCallout key={i} text={b.text} citations={answer.citations} onCite={onCite} />
-              ))}
-            </div>
-          )}
-
-          {/* The reasoning waits for "Elaborate" — unnecessary until it isn't */}
-          {hero && detailBlocks.length > 0 && elaborated && (
-            <div className="mt-4 animate-rise">
-              <SectionedBlocks key={answer.answer} blocks={detailBlocks} citations={answer.citations} onCite={onCite} />
-            </div>
-          )}
-
-          <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-muted)]">
-            {hero && detailBlocks.length > 0 && (
-              <button onClick={() => setElaborated((e) => !e)}
-                className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-lg border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 hover:bg-orange-500/10 transition-colors">
-                <ChevronDown className={`w-3 h-3 transition-transform ${elaborated ? "rotate-180" : ""}`} />
-                {elaborated ? "Hide detail" : "Show detail"}
-              </button>
-            )}
-            {canShape && shapeOrgId && shapeUid && (
-              <button onClick={() => setShaping(true)}
-                title="AI proposes how this answer attributes to the org graph — you curate, it writes"
-                className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1.5 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-500/10 transition-colors">
-                <Waypoints className="w-3 h-3" /> Shape the graph
-              </button>
-            )}
-            <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
-            <span>·</span>
-            <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below</span>
-            <span>·</span>
-            {/* Version beacon: which renderer produced this card. If a report
-                of bad formatting comes without this tag on screen, the tab is
-                serving pre-fmt6 code — a fact, not a guess. */}
-            <span className="font-black text-orange-600/70" title="Answer renderer version">fmt6</span>
           </div>
+
+          {/* ── The proof trail ── */}
+          <aside className="min-w-0 p-4 sm:p-5 border-t @min-[720px]:border-t-0 @min-[720px]:border-l border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
+            <div className="flex items-baseline justify-between gap-2 mb-3">
+              <h3 className="text-[15px] font-black text-[var(--color-text)]">Proof</h3>
+              <span className="font-mono text-[10px] text-[var(--color-text-faint)]">tap a number in the answer to jump here</span>
+            </div>
+            <ProofTrail citations={libraryCitations} onOpen={onCite} openSet={openSet} onToggle={toggle}
+              showRelated={showRelated} onShowRelated={setShowRelated} flashN={flashN} idPrefix={idPrefix} />
+          </aside>
         </div>
       </div>
 
@@ -1038,8 +1162,6 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
       {answer.equipmentTable && onOpenTag && (
         <EquipmentTablePanel table={answer.equipmentTable} onOpenTag={onOpenTag} />
       )}
-
-      <CiteCoachMark />
 
       {/* You-need-this-book cards: referenced documents no library holds */}
       {(answer.missingDocs ?? []).length > 0 && (
@@ -1060,64 +1182,6 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
             add {answer.missingDocs!.length === 1 ? "it" : "them"} to a linked library or pull the physical copy.
           </p>
         </div>
-      )}
-
-      {/* Sources, GROUPED BY DOCUMENT and ordered by how load-bearing each
-          document is for THIS answer (first use wins). A 60-citation answer
-          used to render 60 equal flat cards — a pile nobody could
-          prioritize. Now: the top documents lead, each group opens on tap,
-          and the long tail waits behind "Show all". */}
-      {libraryCitations.some((c) => c.role) && (
-        <ProofTrail citations={libraryCitations} onOpen={onCite} />
-      )}
-      {!libraryCitations.some((c) => c.role) && sourceGroups.length > 0 && (
-        <>
-          <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
-            Sources — most load-bearing documents first; tap a document to see its passages
-          </div>
-          <div className="space-y-1.5">
-            {visibleGroups.map((g) => {
-              const open = openGroups.has(g.doc);
-              return (
-                <div key={g.doc} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-                  <button
-                    onClick={() => setOpenGroups((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(g.doc)) next.delete(g.doc); else next.add(g.doc);
-                      return next;
-                    })}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] transition-colors">
-                    <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-                    <FileText className="w-3.5 h-3.5 text-orange-600 shrink-0" />
-                    <span className="text-xs font-black text-[var(--color-text)] truncate">{g.doc}</span>
-                    <span className="ml-auto shrink-0 text-[10px] font-black px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/50 text-orange-800 dark:text-orange-300">
-                      {g.cites.length} passage{g.cites.length === 1 ? "" : "s"}
-                    </span>
-                  </button>
-                  {open && (
-                    <div className="px-2 pb-2 space-y-1.5 border-t border-[var(--color-border)]">
-                      {g.cites.map((c, i) => (
-                        <SourceCard key={c.n} citation={c} onOpen={onCite} delay={i * 30} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {sourceGroups.length > visibleGroups.length && (
-            <button onClick={() => setAllSources(true)}
-              className="text-[11px] font-black px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
-              Show all {sourceGroups.length} documents ({libraryCitations.length} passages)
-            </button>
-          )}
-          {allSources && sourceGroups.length > 4 && (
-            <button onClick={() => { setAllSources(false); setOpenGroups(new Set()); }}
-              className="text-[11px] font-black px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
-              Show fewer
-            </button>
-          )}
-        </>
       )}
     </div>
     </ProofContext.Provider>
@@ -1158,32 +1222,6 @@ export function AnswerFeedback({ questionId, onRated }: {
       <button onClick={() => void rate(-1)} className={btn(state === -1)} title="Wrong or missed the point">
         <ThumbsDown className="w-3.5 h-3.5" />
       </button>
-    </div>
-  );
-}
-
-/** One-time coach mark: nobody clicked the orange numbers because nothing
- *  said they were buttons. Says it once, dismisses forever. Hydration-safe
- *  via useSyncExternalStore (server snapshot: hidden). */
-const subscribeNever = () => () => {};
-const citeHintUnseen = () => {
-  try { return !window.localStorage.getItem("kl-cite-hint-seen"); } catch { return false; }
-};
-function CiteCoachMark() {
-  const unseen = React.useSyncExternalStore(subscribeNever, citeHintUnseen, () => false);
-  const [dismissed, setDismissed] = useState(false);
-  if (!unseen || dismissed) return null;
-  const dismiss = () => {
-    setDismissed(true);
-    try { window.localStorage.setItem("kl-cite-hint-seen", "1"); } catch { /* ignore */ }
-  };
-  return (
-    <div className="flex items-center gap-2.5 rounded-xl border-2 border-dashed border-orange-400 bg-orange-50 dark:bg-orange-950/30 px-3.5 py-2.5 animate-rise">
-      <span className="shrink-0 w-6 h-6 rounded-md bg-orange-600 text-white text-[11px] font-black flex items-center justify-center animate-pulse">1</span>
-      <p className="text-xs font-bold text-orange-900 dark:text-orange-200 flex-1">
-        The orange numbers are buttons — tap one to open the PDF at that exact page with the passage highlighted.
-      </p>
-      <button onClick={dismiss} className="shrink-0 text-[10px] font-black text-orange-700 dark:text-orange-300 hover:underline">Got it</button>
     </div>
   );
 }

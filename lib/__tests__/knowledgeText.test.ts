@@ -6,7 +6,7 @@ import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
   parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
-  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow,
+  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow, extractAnswerMeta, structureAnswer, isMissingFact,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -696,5 +696,65 @@ describe("parseAnswerBlocks — long markdown headings", () => {
   it("turns a long ### heading into a label, without its citation", () => {
     const blocks = parseAnswerBlocks("**Answer:** See below [2].\n### Table 1 — Applicable SEMI Programs at Equity Engineering Sites (EP 19-1-1, p.4) [2]\n- Row [2]");
     expect(blocks[1]).toEqual({ type: "label", text: "Table 1 — Applicable SEMI Programs at Equity Engineering Sites (EP 19-1-1, p.4)" });
+  });
+});
+
+describe("extractAnswerMeta", () => {
+  const raw = [
+    "**Answering for:** 304 stainless · welded pipe · EP 5-2-1 · line class: not given",
+    "**Answer:** YES, WITH CONDITIONS — Table 4 lists welded A312 304 [70].",
+    "**Why:**",
+    "- Table 1 sends austenitic steels to Table 4 [66].",
+    "**One question:** Which line class is it? | options: 1S1; 3S2",
+  ].join("\n");
+
+  it("pulls the chips and the one question out of the text", () => {
+    const m = extractAnswerMeta(raw);
+    expect(m.answeringFor).toEqual(["304 stainless", "welded pipe", "EP 5-2-1", "line class: not given"]);
+    expect(m.followup).toEqual({ question: "Which line class is it?", options: ["1S1", "3S2"] });
+    expect(m.answer.startsWith("**Answer:**")).toBe(true);
+    expect(m.answer).not.toMatch(/Answering for|One question/);
+  });
+
+  it("keeps the hero first so the answer still parses", () => {
+    expect(parseAnswerBlocks(extractAnswerMeta(raw).answer)[0].type).toBe("hero");
+  });
+
+  it("marks missing facts", () => {
+    expect(isMissingFact("line class: not given")).toBe(true);
+    expect(isMissingFact("EP 5-2-1")).toBe(false);
+  });
+});
+
+describe("structureAnswer", () => {
+  it("sorts sections into why / before / more and keeps groups inside Why", () => {
+    const s = structureAnswer(parseAnswerBlocks([
+      "**Answer:** Use the Owner's Engineer insulation schedule [38].",
+      "**Why:**",
+      "### Where the rule lives",
+      "- §9.0 makes the schedule govern [38].",
+      "**Before you act:**",
+      "- Confirm the schedule revision [38].",
+      "! Steam traps shall NOT be insulated [19].",
+      "**More:**",
+      "- EP 11-3-2 covers application details [41].",
+    ].join("\n")));
+    expect(s.hero).toBe("Use the Owner's Engineer insulation schedule [38].");
+    expect(s.why.map((b) => b.type)).toEqual(["label", "bullet"]);
+    expect(s.before.map((b) => b.type)).toEqual(["bullet", "important"]);
+    expect(s.more.some((b) => b.text.includes("EP 11-3-2"))).toBe(true);
+  });
+
+  it("maps older Basis/Check answers and drops repeats and filler", () => {
+    const s = structureAnswer(parseAnswerBlocks([
+      "**Answer:** Steam piping shall be insulated [19].",
+      "! Steam piping, including flanges, shall be insulated [19].",
+      "**Key points:**",
+      "- Steam piping, including flanges, shall be insulated [19].",
+      "- Details below.",
+      "**Check:** verify the thickness table on p.4 [23].",
+    ].join("\n")));
+    expect(s.why).toEqual([]);
+    expect(s.before.map((b) => b.type)).toEqual(["important", "bullet"]);
   });
 });

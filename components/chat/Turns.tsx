@@ -212,7 +212,10 @@ export function AssistantTurn({
         </div>
       )}
       <AnswerExperience question={question} answer={answer} showQuestion={false}
-        onCite={onCite} onOpenDoc={onOpenDoc} onOpenTag={onOpenTag} />
+        onCite={onCite} onOpenDoc={onOpenDoc} onOpenTag={onOpenTag}
+        onFollowup={isLast && question && !replayed
+          ? (value) => onNeed(question, value, undefined, (m.payload as { inputs?: string } | null)?.inputs)
+          : undefined} />
       {answer.questionId && !replayed && (
         <RatedFeedback questionId={answer.questionId} onRated={onRated} />
       )}
