@@ -524,10 +524,11 @@ describe("ROUTE-12 fix pass — the queue page (rendered)", () => {
     const n = s.reads.length;
     s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
     s.failReads = [n + 1];
-    await act(async () => { listener.cb({}); }); // read A: will fail, late
+    await act(async () => { listener.cb({}); }); // read A (realtime): will fail, late
     s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
-    await act(async () => { listener.cb({}); }); // read B: fresh, at once
-    await flush();
+    // read B: an explicit Refresh (realtime events are coalesced behind A since
+    // fix pass 2; an explicit read is not), fresh, at once
+    await click(host!.querySelector("button[title='Refresh Data']"));
     expect(host!.textContent).toMatch(/3 Total Records/);
     await act(async () => { releaseA(); });
     await flush();
@@ -542,15 +543,80 @@ describe("ROUTE-12 fix pass — the queue page (rendered)", () => {
     let releaseA: () => void = () => undefined;
     const n = s.reads.length;
     s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
-    await act(async () => { listener.cb({}); }); // read A: succeeds with the old list, late
+    await act(async () => { listener.cb({}); }); // read A (realtime): succeeds with the old list, late
     s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
     s.failReads = [n + 2];
-    await act(async () => { listener.cb({}); }); // read B: fails at once
-    await flush();
+    await click(host!.querySelector("button[title='Refresh Data']")); // read B (explicit): fails at once
     expect(q("[data-testid=requests-read-failed]")?.textContent).toMatch(/could not be refreshed/);
     await act(async () => { releaseA(); });
     await flush();
     expect(q("[data-testid=requests-read-failed]")?.textContent).toMatch(/could not be refreshed/);
+  });
+
+  it("REVIEW FIX PASS 2: a burst of tickets events during a read is coalesced — five events cost at most two reads, and the trailing read lands the latest list", async () => {
+    s.tickets = [row("t1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null }), row("t2", { status: "DRAFTING" })];
+    await mount();
+    expect(host!.textContent).toMatch(/2 Total Records/);
+    const listener = s.channels.find((c) => c.cfg.event === "*")!;
+    const n = s.reads.length;
+    let releaseA: () => void = () => undefined;
+    s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
+    await act(async () => { listener.cb({}); }); // read A starts and waits
+    s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
+    for (let i = 0; i < 4; i++) await act(async () => { listener.cb({}); }); // four more events, during A
+    await flush();
+    expect(s.reads.length).toBe(n + 1); // only A so far: the four only marked the list dirty
+    await act(async () => { releaseA(); });
+    await flush();
+    expect(s.reads.length).toBe(n + 2); // ONE trailing read for all four
+    expect(host!.textContent).toMatch(/3 Total Records/);
+    // quiet again: one event, one read
+    await act(async () => { listener.cb({}); });
+    await flush();
+    expect(s.reads.length).toBe(n + 3);
+  });
+
+  describe("REVIEW FIX PASS 2: Export CSV never writes an unread or short list as the queue", () => {
+    /** Click the header's Export CSV and return the file name it would save (null: nothing saved). */
+    async function exportName(): Promise<string | null> {
+      let name: string | null = null;
+      const had = Object.prototype.hasOwnProperty.call(URL, "createObjectURL");
+      Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: () => "blob:test" });
+      const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { name = this.getAttribute("download"); });
+      try {
+        const btn = q<HTMLButtonElement>("[data-testid=requests-export-csv]");
+        expect(btn).toBeTruthy();
+        await act(async () => { btn!.click(); });
+      } finally {
+        clickSpy.mockRestore();
+        if (!had) delete (URL as unknown as Record<string, unknown>).createObjectURL;
+      }
+      return name;
+    }
+    it("the list could not be read: Export CSV is disabled and saves nothing", async () => {
+      s.tickets = [row("t1", { status: "DRAFTING" })];
+      s.failWhen = () => true;
+      await mount();
+      expect(q("[data-testid=requests-read-failed]")).toBeTruthy();
+      const btn = q<HTMLButtonElement>("[data-testid=requests-export-csv]");
+      expect(btn?.disabled).toBe(true);
+      expect(btn?.getAttribute("title")).toMatch(/could not be read/);
+      expect(await exportName()).toBeNull();
+    });
+    it("a short list (N of M): the file's name says so", async () => {
+      s.tickets = [row("t1", { status: "DRAFTING" }), row("t2", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null })];
+      s.countBonus = 1;
+      await mount();
+      expect(q("[data-testid=requests-read-short]")).toBeTruthy();
+      expect(q<HTMLButtonElement>("[data-testid=requests-export-csv]")?.disabled).toBe(false);
+      expect(await exportName()).toMatch(/^drafting_export_.+_partial_2_of_3\.csv$/);
+    });
+    it("a whole list: enabled, and the name is as before", async () => {
+      s.tickets = [row("t1", { status: "DRAFTING" })];
+      await mount();
+      const name = await exportName();
+      expect(name).toMatch(/^drafting_export_[^_]+\.csv$/);
+    });
   });
 
   it("the header's Refresh Data re-reads the list (it only spun before)", async () => {

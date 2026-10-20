@@ -500,12 +500,34 @@ export default function RequestPortal() {
       }
     };
 
-    fetchTickets();
+    // ROUTE-12 review fix pass 2: realtime re-reads are COALESCED. A read of
+    // the whole scope is several select('*') pages; one tickets event each
+    // (a bulk close of 20 requests is 20 events) used to start that many
+    // overlapping reads per open tab. While a read started here is in
+    // flight, further events only mark the list dirty; when it settles, ONE
+    // trailing read runs if anything arrived meanwhile — so a burst costs at
+    // most two reads. Explicit reads (Try again, Refresh, a stale-row
+    // re-read) go straight to fetchTickets; readSeqRef still applies only
+    // the latest answer.
+    let readInFlight = false;
+    let dirty = false;
+    const coalescedRead = async (): Promise<void> => {
+      readInFlight = true;
+      try { await fetchTickets(); } finally { readInFlight = false; }
+      if (dirty && alive) { dirty = false; await coalescedRead(); }
+    };
+    const onTicketsEvent = () => {
+      if (!alive) return;
+      if (readInFlight) { dirty = true; return; }
+      void coalescedRead();
+    };
+
+    void coalescedRead();
     refetchTicketsRef.current = () => { if (alive) void fetchTickets(); };
     const channel = supabase
       .channel(`tickets-portal-${activeOrgId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
-        () => { if (alive) fetchTickets(); })
+        () => { onTicketsEvent(); })
       // notifications RT-4 (DF-P9): Supabase does not filter DELETE events,
       // so the org-filtered listener above never hears one. This unfiltered
       // companion (the attention feed's pattern, DEC-105 §4) hears every
@@ -828,6 +850,9 @@ export default function RequestPortal() {
   };
 
   const handleExportCSV = () => {
+    // ROUTE-12 review fix pass 2: a list that could not be read is never
+    // exported as the queue (the buttons are disabled too).
+    if (listFault && !listLoaded) return;
     const headers = ['ID', 'Title', 'Unit', 'Status', 'Type', 'Requester', 'Drafter', 'Created', 'Modified'];
     const rows = filteredTickets.map(t => [
       t.ticketId,
@@ -848,7 +873,10 @@ export default function RequestPortal() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `drafting_export_${new Date().toISOString()}.csv`);
+    // ROUTE-12 review fix pass 2: a list that holds fewer than its scope's
+    // requests says so in the file's name ("N of M"), as the banner does.
+    const partial = listShort ? `_partial_${listShort.shown}_of_${listShort.total ?? 'uncounted'}` : '';
+    link.setAttribute('download', `drafting_export_${new Date().toISOString()}${partial}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1162,7 +1190,13 @@ export default function RequestPortal() {
               <button onClick={handleRefresh} className={`p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-orange-600 transition-all ${refreshing ? 'animate-spin' : ''}`} title="Refresh Data">
                 <RefreshCw className="w-5 h-5" />
               </button>
-              <button onClick={handleExportCSV} className="flex items-center px-4 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all">
+              <button
+                onClick={handleExportCSV}
+                disabled={listUnread}
+                title={listUnread ? 'The request list could not be read — there is nothing to export' : undefined}
+                data-testid="requests-export-csv"
+                className="flex items-center px-4 py-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 <Download className="w-4 h-4 mr-2 text-[var(--color-text-faint)]" />
                 Export CSV
               </button>
@@ -1336,7 +1370,7 @@ export default function RequestPortal() {
               )}
             </div>
             <div className="flex items-center space-x-2">
-              <button onClick={handleExportCSV} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100"><Download className="w-4 h-4 mr-2" /> Export</button>
+              <button onClick={handleExportCSV} disabled={listUnread} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100"><Download className="w-4 h-4 mr-2" /> Export</button>
               <button onClick={handleBulkUrgencyToggle} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Zap className="w-4 h-4 mr-2" /> Mark Urgent</button>
               {!policyFault && <button onClick={handleBulkArchive} className="flex items-center px-3 py-1.5 bg-[var(--color-surface)] border border-orange-300 text-orange-700 rounded-lg text-sm font-bold hover:bg-orange-100" disabled={processingBulk}><Archive className="w-4 h-4 mr-2" /> Archive</button>}
               <button onClick={() => setSelectedTicketIds(new Set())} className="p-1.5 text-orange-600 hover:text-orange-800"><X className="w-5 h-5" /></button>

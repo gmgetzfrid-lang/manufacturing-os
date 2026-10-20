@@ -64,7 +64,12 @@ vi.mock("@/lib/supabase", () => {
             const answer = serveStatusRead(calls);
             return (resolve: (v: unknown) => void) => resolve(answer);
           }
-          const data = table === "tickets" && sel.startsWith("id, ticket_id") ? h.tickets : [];
+          // The widget's recent-requests list: PostgREST honours .limit(n), so the
+          // stand-in does too (2,400 rows rendered as links made the count test
+          // slow enough to time out on a loaded machine).
+          const limit = calls.find((c) => c.m === "limit")?.a[0] as number | undefined;
+          const all = table === "tickets" && sel.startsWith("id, ticket_id") ? h.tickets : [];
+          const data = typeof limit === "number" ? all.slice(0, limit) : all;
           return (resolve: (v: unknown) => void) => resolve({ data, error: null, count: data.length });
         }
         return (...a: unknown[]) => { calls.push({ m: prop, a }); return new Proxy({}, hnd); };
@@ -92,9 +97,15 @@ vi.mock("@/components/cockpit/DailyBrief", () => ({ DailyBrief: stub }));
 vi.mock("@/components/cockpit/QuickLaunch", () => ({ QuickLaunch: stub }));
 vi.mock("@/components/cockpit/AttentionFeed", () => ({ AttentionFeed: stub }));
 vi.mock("@/components/cockpit/CommandDeck", () => ({ CommandDeck: stub, roleFocus: () => null, exportInboxCsv: vi.fn(), formatAgo: () => "" }));
+vi.mock("@/components/cockpit/MyDeskPanel", () => ({ default: stub }));
+vi.mock("@/components/onboarding/SetupChecklist", () => ({ default: stub }));
+vi.mock("@/components/navigation/ViewTabs", () => ({ default: stub, HOME_VIEWS: [] }));
+vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 
 import { WIDGET_CATALOG } from "@/components/dashboard/widgets";
 import AnalyticsPage from "@/app/(protected)/admin/analytics/page";
+import InboxPage from "@/app/(protected)/inbox/page";
+import { loadInbox } from "@/lib/inbox";
 import type { DashboardWidget } from "@/lib/dashboard/types";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -199,7 +210,7 @@ describe("UI-7 — the Drafting Requests widget reads the shared labels (no thir
     expect(h.statusReads).toBe(3);
     expect(host.querySelector("[data-testid=drafting-open-count-partial]")).toBeNull();
     expect(host.querySelector("[data-testid=drafting-open-count-fault]")).toBeNull();
-  });
+  }, 30_000);
   it("ROUTE-12 fix pass: a server whose max-rows (250) is below the page: still every open request", async () => {
     h.maxRows = 250;
     h.tickets = Array.from({ length: 700 }, (_, i) => ({ id: `t${String(i).padStart(4, "0")}`, status: "DRAFTING", last_modified: `2026-10-${String(1 + (i % 9)).padStart(2, "0")}T00:00:00.000Z` }));
@@ -244,5 +255,31 @@ describe("UI-7 — /admin/analytics: a member's ticket-list chip says the shared
     expect(text).toContain("Issued — awaiting acknowledgement");
     expect(text).toContain("Closed");
     expect(text).not.toMatch(RAW);
+  });
+});
+
+// ─── /inbox (review fix pass 2) ───────────────────────────────────────────────
+
+describe("UI-7 — /inbox: the Assigned / Unread / Watching lists' chip says the shared label", () => {
+  it("rendered: every request's chip is ticketStatusLabel(status); a missing status reads '—'", async () => {
+    const tk = (id: string, status: string | undefined) => ({ id, ticketId: `REQ-${id}`, title: `Pump ${id}`, status, lastModified: "2026-10-01T00:00:00.000Z" });
+    const empty = {
+      ticketsAssigned: [tk("a1", "PENDING_REVIEW"), tk("a2", "FINAL_DRAFT")],
+      ticketsUnread: [tk("u1", "PENDING_ASSIGNMENT")],
+      ticketsWatching: [tk("w1", "PENDING_IFC"), tk("w2", undefined)],
+      myCheckouts: [], myOpenHolds: [], markupRequestsToMe: [], milestonesUpcoming: [], milestonesOverdue: [],
+      myStaleCheckouts: [], transmittalsAwaitingAck: [], acknowledgmentsPendingOnMe: [], reviewsPendingOnMe: [],
+      accessRecertsDue: [], reviewCyclesDueOnMe: [], distributionAcksPendingOnMe: [], unreadNotificationCount: 0,
+    };
+    vi.mocked(loadInbox).mockResolvedValue(empty as unknown as Awaited<ReturnType<typeof loadInbox>>);
+    await act(async () => { root.render(React.createElement(InboxPage)); });
+    await flush();
+    const chipOf = (id: string) => host.querySelector(`a[href='/requests/${id}']`)?.nextElementSibling?.textContent;
+    expect(chipOf("a1")).toBe("In review");
+    expect(chipOf("a2")).toBe("Issued — awaiting acknowledgement");
+    expect(chipOf("u1")).toBe("Awaiting drafter");
+    expect(chipOf("w1")).toBe("Ready to issue (IFC)");
+    expect(chipOf("w2")).toBe("—");
+    expect(host.textContent).not.toMatch(RAW);
   });
 });
