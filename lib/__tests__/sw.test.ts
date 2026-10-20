@@ -1029,15 +1029,19 @@ describe("lib/swSession — the page's side of the contract", () => {
     ]) {
       const s = src(p);
       expect(s, p).toMatch(/from "@\/lib\/swSession"|from '@\/lib\/swSession'/);
-      expect(s, p).toMatch(/clearServiceWorkerSession\(\)/);
-      // the worker is told BEFORE the session is torn down at every site
-      const signOuts = [...s.matchAll(/supabase\.auth\.signOut\(\)/g)].map((m) => m.index ?? 0);
-      expect(signOuts.length, p).toBeGreaterThan(0);
-      for (const at of signOuts) {
-        const before = s.slice(Math.max(0, at - 400), at);
-        expect(before, `${p}: sign-out at ${at} not preceded by clearServiceWorkerSession()`).toMatch(/clearServiceWorkerSession\(\)/);
-      }
+      // OS-15 (notifications N17): every site signs out through the ONE helper,
+      // which posts SIGN_OUT first (the worker is told BEFORE the session is
+      // torn down), then releases this browser's push registration, then
+      // signs out — no site calls supabase.auth.signOut() itself any more
+      expect(s, p).toMatch(/signOutOfThisBrowser\(supabase\)/);
+      expect(s, p).not.toMatch(/supabase\.auth\.signOut\(/);
     }
+    // the helper's own order: SIGN_OUT, then the push release, then signOut()
+    const helper = src("lib/swSession.ts");
+    const body = helper.slice(helper.indexOf("export async function signOutOfThisBrowser("));
+    expect(body.indexOf("clearServiceWorkerSession(")).toBeGreaterThan(0);
+    expect(body.indexOf("clearServiceWorkerSession(")).toBeLessThan(body.indexOf("releaseThisBrowserPush("));
+    expect(body.indexOf("releaseThisBrowserPush(")).toBeLessThan(body.indexOf("client.auth.signOut()"));
     const layout = src("app/(protected)/layout.tsx");
     expect(layout).toMatch(/announceServiceWorkerSession\(uid\)/);
     // no other sign-out site exists to miss (the signatures route's probe client is server-side)

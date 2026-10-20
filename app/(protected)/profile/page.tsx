@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
-import { clearServiceWorkerSession } from "@/lib/swSession";
+import { signOutOfThisBrowser } from "@/lib/swSession";
 import { useRouter } from "next/navigation";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
@@ -77,9 +77,10 @@ export default function ProfilePage() {
   const handleSignOut = async () => {
     setPreferMicrosoft(false);
     // XEDGE-6: the service worker's device-wide cache must not outlive this
-    // session — tell it BEFORE the session is torn down (best-effort).
-    void clearServiceWorkerSession();
-    await supabase.auth.signOut();
+    // session — tell it BEFORE the session is torn down (best-effort). OS-15:
+    // and this browser stops being pushed for this person (bounded, never
+    // blocking) — lib/swSession.ts signOutOfThisBrowser.
+    await signOutOfThisBrowser(supabase);
     router.push("/");
   };
 
