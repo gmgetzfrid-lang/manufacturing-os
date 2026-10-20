@@ -46,16 +46,40 @@
 -- legacy library, after it none. Its deletion is the integrator's, after this
 -- file's paste-back reads 0 such libraries (DEC-31).
 --
--- NO ONE'S ACCESS CHANGES AT THE PASTE. After it, lib/acl aclSaysSomething is
--- true for every written row (a rule, or a private / hidden visibility), so
--- legacyLibraryAcl returns undefined and effectiveLibraryAcl returns the ACL —
--- the same object it synthesized before. Controllers (DEC-43) and the
+-- NO ONE'S ACCESS THROUGH THE LIBRARY RUNG CHANGES AT THE PASTE (on an app
+-- carrying the I-31 deploy — PASTE FACTS). After it, lib/acl aclSaysSomething
+-- is true for every written row (a rule, or a private / hidden visibility),
+-- so legacyLibraryAcl returns undefined and effectiveLibraryAcl returns the
+-- ACL — the same object it synthesized before. Controllers (DEC-43) and the
 -- library's owner keep their short-circuits; a deeper folder or document
 -- grant still merges in; a library whose read_access is "ALL" or NULL (the
 -- Everyone case) and a library whose ACL already says something are not
 -- touched. Proven member by member on PostgreSQL 16
--- (lib/__tests__/rls/intelI31LegacyListsAcl.test.ts): the app's answer before
--- the paste, its answer after, and the database's answer agree.
+-- (lib/__tests__/rls/intelI31LegacyListsAcl.test.ts) for every reader that
+-- takes the rung — the library page, its card, content reads (the AI seam,
+-- the bytes door), publish and the drawer's authority: the app's answer
+-- before the paste, its answer after, and the database's answer agree.
+--
+-- WHAT DOES CHANGE AT THE PASTE (said, not hidden). Readers that decide on
+-- the RAW libraries.acl and never took the legacy rung answer differently
+-- once the ACL carries it — they move from "open to every member" to the
+-- lists' answer:
+--   * the ticket triage library picker (components/requests/LibraryPicker →
+--     lib/ticketLibrary offerableLibraries) and its server check
+--     (app/api/tickets/workflow-action, assign / request_eng_review): a
+--     triager who is not a controller, not the owner and holds no role in
+--     the lists is no longer offered a written library, and a request naming
+--     it is refused 400 ("That library is not one of this workspace's") —
+--     inventory rows 13 / 14 bound the (library, member) pairs and members;
+--   * the ticket history's and close notice's library label
+--     (libraryLabelForTicket): a written library is named "the target
+--     library" instead of by its name;
+--   * the View-as simulator and the access-recertification report show the
+--     rung's grants (they become accurate).
+-- Each of these is the lists' own answer (DEC-90 R1), so the change closes a
+-- disclosure rather than opening one; it is opened as intelligence DACL-13
+-- (owner proposed: drafting-flow, for the integrator's ruling — accept at
+-- the paste, or move the triage readers onto the rung in a deploy first).
 --
 -- WHAT CONVERGES LATER (said, not hidden). Folders, documents and document
 -- sets carry a chain-resolved acl_index the APP builds (the drawer's save,
@@ -65,20 +89,16 @@
 -- roles its lists name (node_visible's allow branch) — the answer the app's
 -- doors (the AI seam, the bytes door) already give those roles today. That is
 -- the one database answer that moves; inventory row 12 counts the rows it can
--- touch. A NORMAL row stays open at the database until intelligence I-30
--- (DEC-90 R5), as today. Raw-ACL readers that did not take the legacy rung
--- converge at the paste: the ticket library picker and its server check
--- (lib/ticketLibrary offerableLibraries — a member outside the lists is no
--- longer offered the library), the ticket history's library label
--- (libraryLabelForTicket — "the target library"), the View-as simulator and
--- the access-recertification report (both now show the rung's grants).
+-- touch (documents, folders and document sets). A NORMAL row stays open at
+-- the database until intelligence I-30 (DEC-90 R5), as today.
 --
 -- NOT DONE HERE. No RESTRICTIVE policy on libraries (DEC-90 R6). node_visible,
 -- acl_index_denies and the deny binding are not touched (intelligence I-30).
 -- No function, policy or trigger is created or re-created.
 --
 -- APP BEFORE AND AFTER THE PASTE. Before: the app's fallback rung decides
--- each legacy library (I-12). After: the ACL decides it, with the same answer.
+-- each legacy library (I-12). After: the ACL decides it, with the same answer
+-- for every reader that takes the rung (the raw-ACL readers above excepted).
 -- No column, function or table is added, so no 42703 / 42883 / 42P01 /
 -- PGRST202 / PGRST204 / PGRST205 can arise from it. Idempotent: a re-paste
 -- finds no legacy library and writes nothing.
@@ -89,19 +109,26 @@
 --   with 20261212 (read its DACL-10 rows first if not yet pasted: they are the
 --   "before" picture of the libraries this file writes; pasted after this
 --   file they read 0) and with 20261224.
---   DEPLOY: paste with or after the I-12 deploy (the app's legacy rung); then
---   nothing anyone reads changes at the paste. Either order with the I-31
---   deploy (the wizard and createLibrary stop writing write_access /
---   admin_access — no reader of an existing library's access depends on it).
---   Pasted on an app older than I-12 it would close those libraries' contents
---   to members outside the lists at the paste instead of at the deploy — the
---   change R1 ruled.
+--   DEPLOY — HARD PREREQUISITE: deploy I-31 FIRST, then paste. The I-31
+--   deploy carries the library page's controller-first canPublish
+--   (app/(protected)/documents/[libraryId]/page.tsx: isControllerPrincipal
+--   before canPublishViaIndex). On an older app the page answers publish
+--   from canPublishViaIndex(library.aclIndex) whenever the index is
+--   non-null, and that evaluator has no controller short-circuit: the
+--   read-only rung index this file writes (and the nightly rebuild rewrites
+--   from the new ACL anyway) grants Admin / DocCtrl nothing, so a paste on a
+--   pre-I-31 app HIDES Publish / Revert from controllers on every written
+--   library's page until the I-31 deploy lands. (I-31 includes I-12, the
+--   app's legacy rung: pasted on an app older than I-12 this file would also
+--   close those libraries' contents to members outside the lists at the
+--   paste instead of at the deploy — the change R1 ruled.)
 --   ONE RESULT SET: probes first (ok true on a correct paste), then the
 --   counts-only inventory captured before the transaction and the counts of
 --   what the transaction wrote.
 --
 -- ROLLBACK (by hand; restores what each library had, from this file's audit
--- rows — the app answers the same either way, the fallback rung returning):
+-- rows — the rung's readers answer the same either way, the fallback rung
+-- returning; the raw-ACL readers above return to "open to every member"):
 --   UPDATE libraries l SET acl = a.details->'before'->'acl',
 --          acl_index = a.details->'before'->'acl_index'
 --     FROM audit_logs a
@@ -215,11 +242,13 @@ UNION ALL
 SELECT 11, 'before: folders in the libraries this paste writes', COUNT(*)
   FROM collections c JOIN intel_i31_20261228_rung r ON r.id = c.library_id WHERE r.to_write
 UNION ALL
-SELECT 12, 'before: private / hidden documents and folders in them — at the next acl_index rebuild the database returns each to the roles the lists name (the app''s AI seam and bytes door already let those roles read them); nothing else moves at the database',
+SELECT 12, 'before: private / hidden documents, folders and document sets in them — at the next acl_index rebuild the database returns each to the roles the lists name (the app''s AI seam and bytes door already let those roles read them); nothing else moves at the database',
        (SELECT COUNT(*) FROM documents d JOIN intel_i31_20261228_rung r ON r.id = d.library_id
          WHERE r.to_write AND r.role_count > 0 AND d.visibility IN ('private', 'hidden'))
      + (SELECT COUNT(*) FROM collections c JOIN intel_i31_20261228_rung r ON r.id = c.library_id
          WHERE r.to_write AND r.role_count > 0 AND c.visibility IN ('private', 'hidden'))
+     + (SELECT COUNT(*) FROM document_sets s JOIN intel_i31_20261228_rung r ON r.id = s.library_id
+         WHERE r.to_write AND r.role_count > 0 AND s.visibility IN ('private', 'hidden'))
 UNION ALL
 SELECT 13, 'before: (library, member) pairs the lists leave out (active, non-controller, not the owner, no role in any list) — refused by the app today and after the paste alike (a deeper grant still admits them)',
        COUNT(*) FROM intel_i31_20261228_rung r JOIN org_members m ON m.org_id = r.org_id AND m.status = 'active'
@@ -283,7 +312,7 @@ WITH written AS (
          jsonb_build_object('before', jsonb_build_object('acl', w.before_acl, 'acl_index', w.before_index),
                             'after', jsonb_build_object('acl', w.after_acl, 'acl_index', w.after_index),
                             'reason', 'legacy_lists_into_acl', 'migration', '20261228',
-                            'note', 'The library''s read_access / visible_to / write_access / admin_access lists written into its ACL as the rung the app already evaluated for it; no one''s access changed.'),
+                            'note', 'The library''s read_access / visible_to / write_access / admin_access lists written into its ACL as the rung the app already evaluated for it; every reader that takes the rung answers as before.'),
          jsonb_build_object('actor_kind', 'system')
     FROM written w
   RETURNING 1

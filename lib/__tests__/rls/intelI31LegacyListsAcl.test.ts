@@ -145,7 +145,7 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
 
   beforeAll(() => {
     admin("postgres", `CREATE DATABASE ${scratch} TEMPLATE ${REPLAY_DB}`);
-    admin(scratch, "SET session_replication_role = replica; DELETE FROM documents; DELETE FROM collections; DELETE FROM libraries;");
+    admin(scratch, "SET session_replication_role = replica; DELETE FROM documents; DELETE FROM collections; DELETE FROM document_sets; DELETE FROM libraries;");
     const s = seedOrg(scratch, {
       admin: { role: "Admin" }, addCtrl: { role: "Viewer", roles: ["DocCtrl"] },
       hr: { role: "HR" }, engineer: { role: "Engineer" }, supervisor: { role: "Supervisor" },
@@ -201,6 +201,15 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
     const folderAcl = { inherit: true, visibility: "normal", rules: [rule({ type: "role", id: "Vendor" }, "discover", "read")] } as AccessControl;
     admin(scratch, `INSERT INTO collections (id, org_id, library_id, name, visibility, acl) VALUES ('${folderId}', '${orgId}', '${libId.L_deeper_folder_grant}', 'Vendor folder', 'normal', '${JSON.stringify(folderAcl)}'::jsonb)`);
     addDoc("L_deeper_folder_grant", "private_in_vendor_folder", "private", privateAcl, folderAcl, folderId);
+    // Document sets (inventory row 12 counts the private / hidden ones in a
+    // written library whose lists name a role — the rebuild folds the
+    // library's rung into each set's index, lib/aclIndexRebuild): A private
+    // and F hidden are counted; C hidden (no role), J private (not written)
+    // and B normal are not.
+    for (const [lib, vis] of [["A_null_hr_write_engineer_owned", "private"], ["F_duplicates_and_garbage", "hidden"],
+                              ["C_no_role", "hidden"], ["J_acl_says_something", "private"], ["B_zero_rule_hr_visible_supervisor", "normal"]] as const) {
+      admin(scratch, `INSERT INTO document_sets (id, org_id, library_id, title, visibility) VALUES ('${randomUUID()}', '${orgId}', '${libId[lib]}', 'Probe set', '${vis}')`);
+    }
 
     Object.assign(before, allRows(scratch));
   });
@@ -237,7 +246,7 @@ describe.skipIf(skip !== null)("20261228 — a legacy library's lists into its A
     expect(inv(first, "before: libraries whose read_access is \"ALL\" or NULL")).toBe("3");
     expect(inv(first, "before: documents filed in the libraries this paste writes")).toBe("16");
     expect(inv(first, "before: folders in the libraries this paste writes")).toBe("1");
-    expect(inv(first, "before: private / hidden documents and folders in them")).toBe("6");
+    expect(inv(first, "before: private / hidden documents, folders and document sets in them")).toBe("8");
     expect(inv(first, "before: (library, member) pairs the lists leave out")).toBe("30");
     expect(inv(first, "before: of those pairs, distinct members")).toBe("6");
     expect(inv(first, "this paste: libraries written")).toBe("7");

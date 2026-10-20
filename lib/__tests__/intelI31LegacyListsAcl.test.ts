@@ -15,8 +15,12 @@
 //   3. The app before and after the paste (pure TypeScript, every reader
 //      that decides on a library's ACL): writing the rung into acl /
 //      acl_index changes no answer for anyone — the library page, the card,
-//      the content read predicate, publish, the drawer's authority — and the
-//      raw-ACL readers that did not take the rung converge on it.
+//      the content read predicate, publish, the drawer's authority. The
+//      raw-ACL readers that did not take the rung (the ticket triage picker,
+//      its server check, the ticket label) DO change at the paste — pinned
+//      here and said in the header and the records (DACL-13).
+//   1b. The paste order the header states: the I-31 deploy (controller-first
+//      canPublish) is a hard prerequisite of the paste.
 //   4. ALOG-13: the wizard's upload picker seed (wizardUploadRolesSeed), and
 //      neither library writer names write_access / admin_access any more.
 
@@ -257,7 +261,7 @@ describe("I-31 — the app's answer before the paste equals its answer after, fo
     }
   });
 
-  it("the raw-ACL readers that did not take the legacy rung converge on it at the paste (recorded): the ticket picker and its label", () => {
+  it("the raw-ACL readers that did not take the legacy rung CHANGE at the paste (said in the header and opened as DACL-13): the ticket picker, its server check and its label", () => {
     const row = LEGACY_ROWS.nullAclOwned;
     const after = pasted(row);
     const choice = (r: Record<string, unknown>) => ({ id: String(r.id), name: "HR records", visibility: (r.visibility as string) ?? null, acl: (r.acl ?? null) as AccessControl | null, ownerUserId: (r.owner_user_id as string | null) ?? null });
@@ -270,6 +274,28 @@ describe("I-31 — the app's answer before the paste equals its answer after, fo
     // the ticket history names a library only when it is open to every member: after the paste it is not
     expect(libraryLabelForTicket({ name: "HR records", visibility: "normal", acl: row.acl })).toBe("HR records");
     expect(libraryLabelForTicket({ name: "HR records", visibility: "normal", acl: after.acl })).toBe("the target library");
+  });
+
+  it("the header does not claim the paste changes nothing: it names the raw-ACL readers whose answer changes and points at DACL-13", () => {
+    const header = SQL.slice(0, SQL.indexOf("CREATE OR REPLACE TEMP VIEW"));
+    expect(header).not.toMatch(/NO ONE'S ACCESS CHANGES AT THE PASTE\./);
+    expect(header).toMatch(/WHAT DOES CHANGE AT THE PASTE/);
+    for (const reader of ["offerableLibraries", "app/api/tickets/workflow-action", "libraryLabelForTicket", "View-as simulator"]) expect(header, reader).toContain(reader);
+    expect(header).toMatch(/inventory rows 13 \/ 14/);
+    expect(header).toMatch(/DACL-13/);
+    const record = src("audit-reports/intelligence/06-document-acl-leaks.md");
+    expect(record).toMatch(/<a id="dacl-13"><\/a>/);
+    expect(record).not.toMatch(/No one's answer changes at the paste \(proved\)/);
+  });
+
+  it("paste order: the I-31 deploy is a hard prerequisite (a pre-I-31 library page would hide Publish from controllers once the rung's index is written)", () => {
+    const facts = SQL.slice(SQL.indexOf("-- PASTE FACTS."), SQL.indexOf("-- ROLLBACK"));
+    expect(facts).toMatch(/DEPLOY — HARD PREREQUISITE: deploy I-31 FIRST, then paste\./);
+    expect(facts).toMatch(/HIDES Publish \/ Revert from controllers/);
+    expect(SQL).not.toMatch(/Either order with the I-31\s+--\s+deploy/);
+    for (const rec of ["audit-reports/intelligence/06-document-acl-leaks.md", "audit-reports/DECISIONS.md"]) {
+      expect(src(rec), rec).not.toMatch(/either order with the I-31 deploy/i);
+    }
   });
 });
 
