@@ -1,6 +1,6 @@
 # 20 · Every prompt, read as a contract
 
-**12 findings** — 1 HIGH · 11 MEDIUM.
+**13 findings** — 1 HIGH · 11 MEDIUM · 1 LOW.
 
 Where the instruction, the UI's promise, and the code's validation diverge.
 
@@ -443,7 +443,7 @@ Tests: `lib/__tests__/flowsRead.test.ts` ("parseFlowReply — PR-8 …"), `lib/_
 ## PR-9 · The calculation protocol asks the model to do engineering arithmetic; nothing in the codebase ever checks it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** user decision first (done-when 2, `DEC-83` item 6: re-derive the arithmetic server-side, or stop presenting the computed number), recorded in the intelligence plan's userHeld; the package is named once the user decides — by the integrator, 2026-10-02 (at the I-03 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`). *Ratified option (b) by the integrator under the user's delegation, 2026-10-07 (DEC-90): a model's arithmetic is unvalidated software, and a plant safety number (a hydrotest pressure, a rating) must come from a validated calculation checked by a competent person (NIST AI RMF human oversight; calculation-validation practice), so the answer stops presenting the model's computed result and shows the formula and the cited inputs; a deterministic evaluator is the later path (intelligence I-25).*
 - **Assigned:** intelligence I-25 ASK ARITHMETIC — by the integrator, 2026-10-07 (DEC-90; fleet plan `audit-reports/fleet-plans/intelligence.json`, I-25).
 - **Verification:** SUSPECTED
@@ -483,6 +483,44 @@ Tests: `askRouteHonesty.test.ts` "PR-9 — model arithmetic is marked unverified
 
 **Integrator note (2026-10-07, DEC-90 A17).** *Ratified option (b) by the integrator under the user's delegation, 2026-10-07 (DEC-90): a model's arithmetic is unvalidated software, and a plant safety number (a hydrotest pressure, a rating) must come from a validated calculation checked by a competent person (NIST AI RMF human oversight; calculation-validation practice), so the answer stops presenting the model's computed result and shows the formula and the cited inputs; a deterministic evaluator is the later path (intelligence I-25).* Status stays OPEN until I-25 lands. Done-when 2 then holds **as written** ("either the substitution step is re-evaluated server-side from the transcribed formula and inputs, or the product stops presenting model arithmetic as a deliverable" — its second branch), and the finding can be RESOLVED on I-25's record. I-25's scope: `app/api/knowledge/ask/route.ts` (`calcProtocol`: stop at the substituted expression, or withhold the result when `answerHasComputation` marks one), `lib/knowledgeAskGuards.ts`, and the answer surface (`app/(protected)/knowledge/[id]/page.tsx`): the formula and each cited input are shown, the model's number is not. The engineer computes from the formula and inputs shown, each cited; a later deterministic evaluator may bring a number back, labelled "computed by the app from the cited inputs". I-25 runs after I-12 and I-22, which also edit the ask route. DEC-83 item 6 is updated; `userHeld.PR-9` is removed.
 
+
+**Resolution (2026-10-20, intelligence Round G).** Done-when 2 is met by its second branch, as `DEC-90` A17 ratified (option (b)): the product stops presenting model arithmetic as a deliverable. The ask route never shows a number the model computed. The answer keeps the formula and each cited input, and `[result withheld]` stands where the model's result was. Reproduced on HEAD `708dde2` first: a worked substitution ("P_T = 1.5 × `285 psig` = `427.5 psig` [1]", with "the hydrotest pressure is **`427.5 psig`**" in the Answer line) reached the asker and the row with the number in both places, labelled only. The four reproductions below fail against `708dde2`'s route and pass now.
+- **The rule** (`lib/knowledgeAskGuards.ts` `withholdModelResults`, `RESULT_WITHHELD`, `RESULT_WITHHELD_NOTE`). It is pure, so the route and the page apply the same rule. Three things count as the model's number:
+  - (a) on a line, the value a chain of numbers and operators runs straight into. This is I-03's `CALC_CHAIN` grammar, with an operand now allowed a citation after it ("1.5 × `285 psig` [2] = 427.5 psig", a shape I-03's detector missed; `answerHasComputation` now catches it too). A "= / ≈ / →" value restating the result right after it also counts ("≈ **430 psig**"), as does the value of a chain that opens the next one ("2 × 3 = 6 × 4 = 24").
+  - (b) that value written anywhere else in the answer, in its own unit. A result with no unit counts in any unit, unless it is a small whole number: "Class 150" is not the "= 150 lb" just worked, and a "= 1" ratio is withheld where it is worked but no other "1" is.
+  - (c) on the server, in the **Answer:** line and in "### Applied to your case", any value with a unit or a decimal point that the question, the user's values and the passages' text do not hold. This is where a result is stated, so a number from nowhere there is one the model made. It is the fail-safe for arithmetic the detector cannot place (prose such as "times the factor gives `427.5 psig`"). The detector withholds rather than shows.
+
+  Value markup that wraps a value exactly ("`427.5 psig`", "**`…`**") is withheld with it, so no bold or chip is left half-open. Citation markers, identifiers ("ASME B31.3", "§345.4.2", "V-101", dates, "Table A-1"), sizes ("3/4 in", "NPS 1-1/2") and the other values are untouched. When something is withheld, the answer gains one "! " line saying why and what to do. A lookup (nothing withheld) comes back as the very same string, and the rule run on its own output changes nothing.
+- **The route** (`app/api/knowledge/ask/route.ts`). `calcProtocol` (:2342) now asks the model to transcribe the formula, list each input with its source, substitute and STOP at the substituted expression: "'**Substituted:** <symbol> = <the formula with every value and its unit in place>' — do NOT evaluate, simplify or round it, and state no resulting number anywhere in the answer". `decisionPathProtocol`'s "Applied to your case" walks to "the substituted expression of its final step — never a computed number" (:2334). The arithmetic decision moved up to the model's own text, right after the `**Need:**` screen and before the route's notes are appended (:2720). When it is set, the answer is withheld there with the grounding (:2723), so the response, the stored row, the conversation history the next turn reads, and the page all carry the withheld text. Citations, value and designation chips, tags, the equipment table, follow-ups, `questionId`, metering and the proven-ground exclusion run as before. The answer is not streamed (the route returns it whole), so there is no streaming path to change. A substituted expression with no result (`**Substituted:**`) is marked `arithmetic: "unverified"` (`answerHasComputation`), so the label stays when the model follows the protocol.
+- **The answer surface** (`app/(protected)/knowledge/[id]/page.tsx`). `AnswerExperience` shows every library answer through `withholdModelResults` without grounding (:709): rules (a) and (b). An answer saved before this package therefore shows no computed number either: a reopened conversation, a replayed record (the "asked before" card), a restored session thread. The copy button and the graph-shaping wizard get the withheld text too. `[result withheld]` renders as its own dashed mark with a title, never as a value chip (:246). The "Unverified arithmetic — check every step" label is kept and also shows when the page itself withheld something (:928). Its title now says the result is not shown and that the engineer computes it from the formula and the cited inputs. The internet answer (no calculation protocol) is rendered as before.
+
+Tests (`lib/__tests__/askRouteHonesty.test.ts` "PR-9 (I-25) — the ask route never presents a number the model computed …"):
+- Reproductions, each failing against `708dde2`'s route:
+  - "reproduction → fix: a worked substitution reaches the asker as formula and inputs, with no result — on the response and the row" (the exact answer text, the label, citations unchanged, the row equal to the response);
+  - "a mixed answer (a lookup and a computation) withholds only the computed number";
+  - "fail-safe: arithmetic in prose the detector cannot place …";
+  - "the calculation protocol stops at the substituted expression and states no resulting number".
+- Controls:
+  - "REGRESSION: a lookup answer — values, '=' and fractions, no computation — is returned and stored byte-for-byte, unlabelled";
+  - "an answer that follows the protocol — the substituted expression, no result — is shown as written and keeps the label";
+  - "a '**Need:**' reply is never touched".
+- Pure-rule cases: "withholdModelResults — the pure rule". These cover the lookup identity, restatements and next chains, balanced markup, the citation-after-operand shape, unit-matched repeats with identifiers and a small ratio left alone, idempotence, a pre-I-25 row withheld without grounding, the grounding pass's two places, and speed.
+- `lib/__tests__/askRouteUnits.test.ts`: the label pin follows the new condition, and "PR-9 option (b) (I-25): the answer surface shows the withheld text everywhere …" pins that only the internet branch and the memo read `answer.answer`, plus the marker rendering.
+- The existing REGRESSION pin ("an ordinary question answers exactly as before") and every I-03 PR-9 case pass unchanged, and so does `askRouteAcl.test.ts` (proven ground).
+
+No migration: the row's `answer` column holds the withheld text, and `context.arithmetic` is as I-03 wrote it.
+
+**Done-when.**
+1. ✓ (I-03) Marked in the payload and on the row as unverified arithmetic, and rendered with that label. The label now also covers a substituted expression and an answer the page withholds.
+2. ✓ Second branch, as written: "the product stops presenting model arithmetic as a deliverable". The model is told to stop at the substituted expression. A result it writes anyway is withheld before the answer is sent, saved or shown (rules (a)–(c)), and the page withholds results in answers saved before this package. The formula and each cited input are shown. The first branch (a server-side evaluator) is not built; `DEC-90` A17 names it the later path.
+3. ✓ (I-03) Excluded from proven ground, unchanged.
+
+**Scope / residual.** RESOLVED on done-when 2's second branch. The detector is a pattern over the answer text, and these remainders are filed as `PR-13` below:
+- a result stated only in prose OUTSIDE the Answer line and "Applied to your case" (a Basis bullet "1.5 times 285 gives 428") is not withheld; the protocol tells the model not to write one, and the label stays;
+- on the page, an answer saved before this package has no grounding, so only (a) and (b) apply to it;
+- the internet answer, which has no calculation protocol and is labelled "NOT from your controlled documents", is not withheld.
+
+Over-withholding is the fail-safe direction. An input value read from a page image, if written in the Answer line or "Applied to your case", is withheld there; it stays in the Basis bullets, where the protocol lists inputs. A lookup value that equals a computed result in its unit is withheld too.
 ---
 
 <a id="pr-10"></a>
@@ -644,5 +682,30 @@ Tests: `lib/__tests__/aiGateCensus.test.ts` ("flows/read is GATED …": no direc
 1. ✓ flows/read calls `governedAiCall` with its images; both stale comments are deleted.
 2. ✓ templates/generate (I-05: 428). knowledge/locate checks the agreement before its first provider call and answers 200 with the agreement fields, by the decision recorded above, rather than the criterion's 428.
 3. ✓ (I-05) The census.
+
+---
+
+<a id="pr-13"></a>
+
+## PR-13 · Model arithmetic the withholding cannot place: a result in prose outside the Answer line, a pre-I-25 row's prose result, and the internet answer
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** unassigned — filed by intelligence Round G, I-25 (2026-10-20), as the remainder of `PR-9` (DEC-31). The integrator plans it with the deterministic-evaluator path `DEC-90` A17 names.
+- **Verification:** CONFIRMED (by the rule's own scope)
+- **Locations:** `lib/knowledgeAskGuards.ts` (`withholdModelResults`), `app/api/knowledge/ask/route.ts:714` (the internet answer), `app/(protected)/knowledge/[id]/page.tsx:709`
+
+**Mechanism.** `withholdModelResults` withholds three things: the value a substitution chain runs into, that value wherever it recurs in its unit, and (on the server only) an ungrounded value in the **Answer:** line or "Applied to your case". It cannot withhold:
+- a result written only in prose elsewhere ("- 1.5 times 285 gives 428 psig" in a Basis bullet);
+- a rounding that differs from the worked value and sits away from it;
+- an answer saved before I-25, re-shown by the page, whose result is in prose (the page has no grounding to compare against).
+
+The internet answer (`mode: "internet"`) never runs `answerHasComputation` or the withholding. It has no calculation protocol and is labelled "NOT from your controlled documents".
+
+**Failure scenario.** A model that ignores the protocol and writes "Basis: … times 1.5 gives 428 psig" with no "=" shows 428 psig. The "Unverified arithmetic" label stays only when the answer is otherwise flagged (user values, an Applied section, a chain, a substituted expression).
+
+**Done when.**
+- [ ] a deterministic evaluator re-derives the substituted expression from the cited inputs and shows its own number, labelled "computed by the app from the cited inputs", OR the withholding is extended to prose results outside the Answer line and "Applied to your case" with the same fail-safe (withhold when unsure)
+- [ ] a decision on whether internet answers get the same withholding (`DEC-90` scope)
 
 ---
