@@ -83,9 +83,12 @@ const state = vi.hoisted(() => ({
   downloadReadError: null as { message: string; code?: string } | null,
   // DIST-17 (document-control P27, ruling 3): who a bearer names, and the
   // membership rows the route reads for it (by uid)
-  authUser: null as { id: string } | null,
+  authUser: null as { id: string; email?: string | null } | null,
   authThrows: false,
-  members: {} as Record<string, { email: string | null } | null>,
+  // DIST-17 fix pass: the auth service's answer when it rejects or cannot
+  // answer (a 4xx is a rejection; a 5xx or a transport failure is not)
+  authError: null as { message: string; status?: number } | null,
+  members: {} as Record<string, { email: string | null; status?: string } | null>,
   memberReadError: null as { message: string } | null,
 }));
 
@@ -189,7 +192,8 @@ vi.mock("@/lib/supabaseAdmin", () => ({
     auth: {
       getUser: async () => {
         if (state.authThrows) throw new Error("auth down");
-        return { data: { user: state.authUser }, error: state.authUser ? null : { message: "invalid JWT" } };
+        if (state.authError) return { data: { user: null }, error: state.authError };
+        return { data: { user: state.authUser }, error: state.authUser ? null : { message: "invalid JWT", status: 401 } };
       },
     },
   },
@@ -288,6 +292,7 @@ beforeEach(async () => {
   state.downloadReadError = null;
   state.authUser = null;
   state.authThrows = false;
+  state.authError = null;
   state.members = {};
   state.memberReadError = null;
 });
@@ -1256,9 +1261,30 @@ describe("DIST-17 ruling 3 — a signed-in member's portal pull is recorded as t
     expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "open" } }]);
   });
 
-  it("a session that cannot be CHECKED (an invalid token, the auth service down, the membership unreadable) is refused (503) — never treated as the recipient", async () => {
-    state.authUser = null;
+  it("a session the auth service REJECTS (expired, revoked, malformed: a 4xx) is no session — the recipient's path, as before P27; one it cannot ANSWER (a 5xx, a transport failure, a throw) or a membership that cannot be read is refused (503) — never treated as the recipient", async () => {
+    // rejected: the recipient's portal, the open counted
+    for (const status of [401, 403, 400]) {
+      state.rpcs = [];
+      state.authError = { message: status === 401 ? "invalid JWT: token is expired" : "session_not_found", status };
+      const res = await as(bearer);
+      expect(res.status, String(status)).toBe(200);
+      expect(await res.json()).not.toHaveProperty("member");
+      expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "open" } }]);
+    }
+    state.authError = null;
+    state.authUser = null; // the mock's 401
+    expect((await as(bearer)).status).toBe(200);
+    // not answered: refused
+    state.rpcs = [];
+    for (const status of [503, 500, 0]) {
+      state.authError = { message: "upstream", status };
+      const res = await as(bearer);
+      expect(res.status, String(status)).toBe(503);
+      expect(await res.json()).toEqual({ error: "member_check_failed" });
+    }
+    state.authError = { message: "fetch failed" }; // no status
     expect((await as(bearer)).status).toBe(503);
+    state.authError = null;
     state.authThrows = true;
     expect((await as(bearer)).status).toBe(503);
     state.authThrows = false;
@@ -1269,6 +1295,116 @@ describe("DIST-17 ruling 3 — a signed-in member's portal pull is recorded as t
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: "member_check_failed" });
     expect(state.rpcs).toEqual([]);
+  });
+
+  it("a member who IS the recipient (their membership address is the recipient's, any case): recorded under their own uid, and the open and the download count as the recipient's", async () => {
+    state.authUser = { id: MEMBER };
+    state.members[MEMBER] = { email: "Jane@BuildCo.com", status: "active" };
+    const snap = await as(bearer);
+    const body = (await snap.json()) as { member?: { email: string | null; ticket: string | null; asRecipient?: boolean } };
+    expect(body.member).toMatchObject({ email: "Jane@BuildCo.com", asRecipient: true });
+    expect(ticketMod.readPortalMemberTicket(TID, body.member?.ticket)).toEqual({ uid: MEMBER, asRecipient: true });
+    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "open" } }]);
+    state.rpcs = [];
+    expect((await as({}, DOC, { member: body.member!.ticket!, nav: "1" })).status).toBe(200);
+    expect(state.downloads[0]).toMatchObject({ user_id: MEMBER, transmittal_id: TID, source: "transmittal_portal" });
+    expect(state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD")!.details).toMatchObject({ downloadedBy: MEMBER, downloadedByMember: true, memberIsRecipient: true });
+    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "download" } }]);
+  });
+
+  it("the recipient decided by the account's own address when the membership row has none; a suspended member with another address is still a member (not the recipient)", async () => {
+    state.authUser = { id: MEMBER, email: "jane@buildco.com" };
+    state.members[MEMBER] = { email: null, status: "active" };
+    const a = (await (await as(bearer)).json()) as { member?: { asRecipient?: boolean; email: string | null } };
+    expect(a.member).toMatchObject({ asRecipient: true, email: "jane@buildco.com" });
+    state.rpcs = [];
+    state.authUser = { id: MEMBER, email: "viewer@plant.example" };
+    state.members[MEMBER] = { email: "viewer@plant.example", status: "suspended" };
+    const b = (await (await as(bearer)).json()) as { member?: { asRecipient?: boolean } };
+    expect(b.member?.asRecipient).toBe(false);
+    expect(state.rpcs).toEqual([]);
+  });
+
+  it("a former member (removed) or an invited one, now holding the link, counts as the recipient — recorded under their uid", async () => {
+    for (const status of ["removed", "pending"]) {
+      state.rpcs = [];
+      state.authUser = { id: MEMBER, email: "former@plant.example" };
+      state.members[MEMBER] = { email: "former@plant.example", status };
+      const body = (await (await as(bearer)).json()) as { member?: { asRecipient?: boolean; ticket: string | null } };
+      expect(body.member?.asRecipient, status).toBe(true);
+      expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "open" } }]);
+      expect(ticketMod.readPortalMemberTicket(TID, body.member?.ticket)).toEqual({ uid: MEMBER, asRecipient: true });
+    }
+  });
+
+  it("TRX-15 — a member who is the recipient pulls a PDF the stamper refuses: released unstamped under their uid, the download counted, and the ISSUER IS TOLD; the recipient's own page (no session) shows that copy as one from their link", async () => {
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async () => { throw new Error("Input document to `PDFDocument.load` is encrypted."); });
+    try {
+      state.issuerEmail = "issuer@plant.example";
+      state.members[MEMBER] = { email: "jane@buildco.com", status: "active" };
+      const ticket = ticketMod.signPortalMemberTicket(TID, MEMBER, Date.now(), true)!;
+      expect((await as({}, DOC, { member: ticket, nav: "1" })).status).toBe(200);
+      expect(state.downloads[0]).toMatchObject({ user_id: MEMBER, source: "transmittal_portal_unstamped" });
+      expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "download" } }]);
+      expect(state.notifications).toHaveLength(1);
+      expect(state.notifications[0]).toMatchObject({ resource_id: TID });
+      const recipient = (await (await get()).json()) as { items: Array<{ releasedUnmarked: boolean | null; unmarkedReason: string | null }> };
+      expect(recipient.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: "stamp_failed" });
+    } finally {
+      vi.mocked(applyStampToPdfDoc).mockReset();
+      vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); return { mapped: [] }; });
+    }
+  });
+
+  it("TRX-15 — an armed item refused to a member who is the recipient tells the issuer (the refusal is the recipient's); refused to any other member it does not", async () => {
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async () => { throw new Error("encrypted"); });
+    try {
+      state.transmittal!.items = [{ documentId: DOC, number: "P-101", rev: "3", versionId: VER, stampable: true }];
+      state.members[MEMBER] = { email: "viewer@plant.example", status: "active" };
+      const asMember = ticketMod.signPortalMemberTicket(TID, MEMBER, Date.now(), false)!;
+      expect((await as({}, DOC, { member: asMember, nav: "1" })).status).toBe(422);
+      expect(state.notifications).toEqual([]);
+      const asRecipient = ticketMod.signPortalMemberTicket(TID, MEMBER, Date.now(), true)!;
+      expect((await as({}, DOC, { member: asRecipient, nav: "1" })).status).toBe(422);
+      expect(state.notifications).toHaveLength(1);
+      expect(state.downloads).toEqual([]);
+    } finally {
+      vi.mocked(applyStampToPdfDoc).mockReset();
+      vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); return { mapped: [] }; });
+    }
+  });
+
+  it("the receipt (POST): a member of the issuing workspace who is not the recipient cannot acknowledge on their behalf (403) — nothing written; a member who IS the recipient acknowledges and the record names them; a session that cannot be checked refuses (503); a rejected bearer is the recipient, as before", async () => {
+    const postAs = (headers: Record<string, string>) => POST(new NextRequest("https://app/api/transmittal", {
+      method: "POST", body: JSON.stringify({ token: TOKEN, name: "Jane Doe" }), headers: { "content-type": "application/json", ...headers },
+    }));
+    state.authUser = { id: MEMBER, email: "viewer@plant.example" };
+    state.members[MEMBER] = { email: "viewer@plant.example", status: "active" };
+    const refused = await postAs(bearer);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "member_cannot_acknowledge" });
+    expect(state.updates).toEqual([]);
+    expect(state.audits).toEqual([]);
+
+    state.authError = { message: "upstream", status: 503 };
+    const unknown = await postAs(bearer);
+    expect(unknown.status).toBe(503);
+    expect(await unknown.json()).toEqual({ error: "member_check_failed" });
+    expect(state.updates).toEqual([]);
+
+    state.authError = { message: "invalid JWT", status: 401 };
+    expect((await postAs(bearer)).status).toBe(200);
+    expect(state.updates[0].acknowledged_meta).not.toHaveProperty("recordedBy");
+    expect(state.audits.find((a) => a.action === "TRANSMITTAL_ACKNOWLEDGED")).toMatchObject({ user_id: null, user_email: "jane@buildco.com" });
+
+    state.updates = []; state.audits = [];
+    state.authError = null;
+    state.members[MEMBER] = { email: "jane@buildco.com", status: "active" };
+    const ok = await postAs(bearer);
+    expect(ok.status).toBe(200);
+    expect(state.updates[0]).toMatchObject({ status: "acknowledged", acknowledged_by_name: "Jane Doe", acknowledged_via: "portal" });
+    expect(state.updates[0].acknowledged_meta).toMatchObject({ recordedBy: MEMBER, recordedByEmail: "jane@buildco.com" });
+    expect(state.audits.find((a) => a.action === "TRANSMITTAL_ACKNOWLEDGED")).toMatchObject({ user_id: MEMBER, user_email: "jane@buildco.com" });
   });
 
   it("a member's copy that left unmarked is theirs: the recipient's page does not show it as a copy from their link; the member's own page does — and no recipient-worded notice goes to the issuer", async () => {
@@ -1299,6 +1435,14 @@ describe("DIST-17 ruling 3 — a signed-in member's portal pull is recorded as t
     expect(page).toMatch(/if \(data\?\.member\) \{[\s\S]{0,300}?if \(Date\.now\(\) - ticketAt\.current > MEMBER_TICKET_RENEW_MS\)[\s\S]{0,200}?if \(!ticket\) \{ setMsg\(\{ tone: "err", text: MEMBER_UNNAMED \}\); return; \}/);
     expect(page).toContain('data-testid="portal-member-notice"');
     expect(page).toContain('if (code === "member_unverified")');
+    // fix pass: the receipt POST carries the session; a member who is not the
+    // recipient is shown why they cannot acknowledge instead of the form; a
+    // sign-in the server could not check asks to try again
+    expect(page).toContain('headers: { "content-type": "application/json", ...(await sessionHeaders()) },');
+    expect(page).toContain('data-testid="portal-member-no-ack"');
+    expect(page).toContain(': body?.error === "member_check_failed" ? "membercheck"');
+    expect(page).toContain(': state === "membercheck" ? MEMBER_CHECK_FAILED');
+    expect(page).toContain(': body?.error === "member_cannot_acknowledge" ? MEMBER_CANNOT_ACKNOWLEDGE');
   });
 });
 
@@ -1308,15 +1452,23 @@ describe("DIST-17 ruling 3 — lib/portalMemberTicket", () => {
   afterEach(() => { vi.unstubAllEnvs(); });
   it("round-trips for its transmittal only, expires, refuses a tampered or far-future ticket, and makes none without a key", async () => {
     vi.stubEnv("PORTAL_MEMBER_TICKET_SECRET", "k1");
-    const { signPortalMemberTicket, verifyPortalMemberTicket, PORTAL_MEMBER_TICKET_TTL_MS } = await import("@/lib/portalMemberTicket");
+    const { signPortalMemberTicket, verifyPortalMemberTicket, readPortalMemberTicket, PORTAL_MEMBER_TICKET_TTL_MS } = await import("@/lib/portalMemberTicket");
     const now = Date.UTC(2026, 9, 14, 12);
     const t = signPortalMemberTicket(TID, UID, now)!;
     expect(verifyPortalMemberTicket(TID, t, now + 1000)).toBe(UID);
     expect(verifyPortalMemberTicket("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", t, now)).toBeNull();
     expect(verifyPortalMemberTicket(TID, t, now + PORTAL_MEMBER_TICKET_TTL_MS + 1)).toBeNull();
-    const [u, exp, mac] = t.split(".");
-    expect(verifyPortalMemberTicket(TID, `${u}.${Number(exp) + 1}.${mac}`, now)).toBeNull();
-    expect(verifyPortalMemberTicket(TID, `${u}.${now + 10 * PORTAL_MEMBER_TICKET_TTL_MS}.${mac}`, now)).toBeNull();
+    const [u, exp, role, mac] = t.split(".");
+    expect(role).toBe("m");
+    expect(verifyPortalMemberTicket(TID, `${u}.${Number(exp) + 1}.${role}.${mac}`, now)).toBeNull();
+    expect(verifyPortalMemberTicket(TID, `${u}.${now + 10 * PORTAL_MEMBER_TICKET_TTL_MS}.${role}.${mac}`, now)).toBeNull();
+    // the recipient verdict is inside the MAC: a member cannot promote their ticket
+    expect(readPortalMemberTicket(TID, t, now)).toEqual({ uid: UID, asRecipient: false });
+    expect(readPortalMemberTicket(TID, `${u}.${exp}.r.${mac}`, now)).toBeNull();
+    expect(verifyPortalMemberTicket(TID, `${u}.${exp}.${mac}`, now)).toBeNull(); // the three-part shape is not a ticket
+    const r = signPortalMemberTicket(TID, UID, now, true)!;
+    expect(readPortalMemberTicket(TID, r, now)).toEqual({ uid: UID, asRecipient: true });
+    expect(verifyPortalMemberTicket(TID, r, now)).toBe(UID);
     expect(verifyPortalMemberTicket(TID, null, now)).toBeNull();
     vi.stubEnv("PORTAL_MEMBER_TICKET_SECRET", "k2");
     expect(verifyPortalMemberTicket(TID, t, now)).toBeNull();

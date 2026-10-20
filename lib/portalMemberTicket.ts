@@ -16,8 +16,21 @@
 // A ticket that does not verify (forged, for another transmittal, expired)
 // refuses the download rather than record it as the recipient's.
 //
+// DIST-17 fix pass: a member who IS the transmittal's recipient (their
+// address is the recipient's) or who no longer holds a seat (a former or
+// invited member, now the outside party) is still recorded under their own
+// uid, but their pull counts as the recipient's on the usage trail and the
+// issuer's unstamped-copy notice — the ticket carries that verdict (`r`),
+// decided by the route on the snapshot, inside the MAC.
+//
+// Attribution is COOPERATIVE: the page attaches the ticket. A file request
+// without one — from anyone holding the token, a member who edits it out
+// included — is recorded as the recipient's (document-control DIST-18 makes
+// the token reachable only by full readers).
+//
 // The ticket is an HMAC (under a fixed label, so it is useless anywhere
-// else) of the transmittal id, the member's uid and an expiry. It grants
+// else) of the transmittal id, the member's uid, the recipient verdict and an
+// expiry. It grants
 // nothing: the portal token is still the whole credential for the bytes —
 // the ticket only says whose pull it is. The key: PORTAL_MEMBER_TICKET_SECRET
 // when set, else the service-role key (always present where the route runs)
@@ -41,32 +54,46 @@ function secret(): string | null {
   return s || null;
 }
 
-function mac(key: string, transmittalId: string, uid: string, exp: number): string {
-  return createHmac("sha256", key).update(`${LABEL}${transmittalId.toLowerCase()}\n${uid.toLowerCase()}\n${exp}`, "utf8").digest("base64url");
+/** Whether the named member's pull counts as the recipient's (`r`) or only
+ *  as theirs (`m`). */
+type Role = "m" | "r";
+
+function mac(key: string, transmittalId: string, uid: string, exp: number, role: Role): string {
+  return createHmac("sha256", key).update(`${LABEL}${transmittalId.toLowerCase()}\n${uid.toLowerCase()}\n${role}\n${exp}`, "utf8").digest("base64url");
 }
 
 /** The ticket naming `uid` for downloads from `transmittalId`'s portal, or
- *  null (not ids, or no key configured). Shape: `<uid>.<exp>.<mac>`. */
-export function signPortalMemberTicket(transmittalId: string, uid: string, now: number = Date.now()): string | null {
+ *  null (not ids, or no key configured). `asRecipient`: the member is the
+ *  transmittal's recipient (or holds no seat), so their pull also counts as
+ *  the recipient's. Shape: `<uid>.<exp>.<m|r>.<mac>`. */
+export function signPortalMemberTicket(transmittalId: string, uid: string, now: number = Date.now(), asRecipient: boolean = false): string | null {
   const key = secret();
   if (!key || !UUID_RE.test(transmittalId ?? "") || !UUID_RE.test(uid ?? "")) return null;
   const exp = now + PORTAL_MEMBER_TICKET_TTL_MS;
-  return `${uid.toLowerCase()}.${exp}.${mac(key, transmittalId, uid, exp)}`;
+  const role: Role = asRecipient ? "r" : "m";
+  return `${uid.toLowerCase()}.${exp}.${role}.${mac(key, transmittalId, uid, exp, role)}`;
 }
 
-/** The member a ticket names for `transmittalId`, or null when it does not
- *  verify — forged, for another transmittal, expired, malformed, or no key
+/** What a ticket says for `transmittalId` — the member and whether their
+ *  pull counts as the recipient's — or null when it does not verify:
+ *  forged, for another transmittal, expired, malformed, or no key
  *  configured. Constant-time on the MAC. */
-export function verifyPortalMemberTicket(transmittalId: string, ticket: string | null | undefined, now: number = Date.now()): string | null {
+export function readPortalMemberTicket(transmittalId: string, ticket: string | null | undefined, now: number = Date.now()): { uid: string; asRecipient: boolean } | null {
   const key = secret();
   if (!key || !ticket || !UUID_RE.test(transmittalId ?? "")) return null;
   const parts = String(ticket).split(".");
-  if (parts.length !== 3) return null;
-  const [uid, expRaw, given] = parts;
-  if (!UUID_RE.test(uid) || !/^\d{1,16}$/.test(expRaw)) return null;
+  if (parts.length !== 4) return null;
+  const [uid, expRaw, role, given] = parts;
+  if (!UUID_RE.test(uid) || !/^\d{1,16}$/.test(expRaw) || (role !== "m" && role !== "r")) return null;
   const exp = Number(expRaw);
   if (!Number.isFinite(exp) || exp <= now || exp > now + PORTAL_MEMBER_TICKET_TTL_MS) return null;
-  const want = Buffer.from(mac(key, transmittalId, uid, exp), "utf8");
+  const want = Buffer.from(mac(key, transmittalId, uid, exp, role), "utf8");
   const got = Buffer.from(given, "utf8");
-  return want.length === got.length && timingSafeEqual(want, got) ? uid : null;
+  return want.length === got.length && timingSafeEqual(want, got) ? { uid, asRecipient: role === "r" } : null;
+}
+
+/** The member a ticket names for `transmittalId`, or null when it does not
+ *  verify (readPortalMemberTicket). */
+export function verifyPortalMemberTicket(transmittalId: string, ticket: string | null | undefined, now: number = Date.now()): string | null {
+  return readPortalMemberTicket(transmittalId, ticket, now)?.uid ?? null;
 }

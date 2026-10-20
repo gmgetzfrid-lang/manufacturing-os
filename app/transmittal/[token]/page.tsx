@@ -32,8 +32,12 @@
 // session the snapshot GET carries its bearer token; for a member the route
 // answers `member` with a short-lived ticket naming them, which every file
 // address then carries (`&member=`), and the page says downloads are recorded
-// in their name. With no session — the outside recipient — the page works
-// exactly as before.
+// in their name. A member who IS the recipient (their address is the
+// recipient's) is recorded in their name too, and their downloads and
+// receipt count as the recipient's; any other member cannot acknowledge
+// receipt on the recipient's behalf. With no session — the outside recipient
+// — the page works exactly as before; a session the server could not check
+// says so and asks to try again.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -63,8 +67,10 @@ interface PortalData {
   /** DIST-17 (ruling 3): present only when a signed-in member of the issuing
    *  workspace opened the link — `ticket` names them on each download; a
    *  null ticket means the server could not name them, so nothing is
-   *  downloaded for them (never recorded as the recipient's). */
-  member?: { email: string | null; ticket: string | null };
+   *  downloaded for them (never recorded as the recipient's). `asRecipient`:
+   *  they are this transmittal's recipient (or no longer hold a seat), so
+   *  their downloads and receipt count as the recipient's. */
+  member?: { email: string | null; ticket: string | null; asRecipient?: boolean };
 }
 
 /** DIST-17 (ruling 3): this browser's session, if any — the bearer token the
@@ -85,6 +91,12 @@ const MEMBER_TICKET_RENEW_MS = 15 * 60 * 1000;
 
 /** DIST-17 (ruling 3): the sentence for a member the server could not name. */
 const MEMBER_UNNAMED = "You are signed in as a member of the issuing workspace, but your download could not be recorded in your name, so it was not started. Reload the page and try again.";
+
+/** DIST-17 (ruling 3): the server could not check this browser's sign-in. */
+const MEMBER_CHECK_FAILED = "We could not check your sign-in for this page just now, so it was not opened (a member of the issuing workspace is recorded in their own name). Try again in a moment.";
+
+/** DIST-17 (ruling 3): a member of the issuing workspace who is not the recipient. */
+const MEMBER_CANNOT_ACKNOWLEDGE = "You are signed in as a member of the issuing workspace, not as this transmittal's recipient, so you cannot acknowledge receipt on their behalf. The recipient acknowledges from this link; a receipt given another way is recorded from the transmittal register.";
 
 /** The issued file's size, as the record shows it. */
 function sizeLabel(bytes: number | null | undefined): string | null {
@@ -166,7 +178,7 @@ function unmarkedLine(i: Pick<PortalItem, "releasedUnmarked" | "unmarkedReason">
 
 export default function TransmittalPortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
-  const [state, setState] = useState<"loading" | "ok" | "voided" | "revoked" | "expired" | "notfound" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ok" | "voided" | "revoked" | "expired" | "notfound" | "membercheck" | "error">("loading");
   const [data, setData] = useState<PortalData | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [ackName, setAckName] = useState("");
@@ -192,6 +204,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         setState(body?.error === "voided" ? "voided"
           : body?.error === "revoked" ? "revoked"
           : body?.error === "expired" ? "expired"
+          : body?.error === "member_check_failed" ? "membercheck"
           : res.status === 404 ? "notfound" : "error");
         return null;
       }
@@ -272,13 +285,21 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
     if (!ackName.trim()) { setMsg({ tone: "err", text: "Enter your name to acknowledge receipt." }); return; }
     setAckBusy(true); setMsg(null);
     try {
+      // DIST-17 (ruling 3): the receipt POST carries this browser's session
+      // too, so a member of the issuing workspace is never recorded as the
+      // recipient acknowledging.
       const res = await fetch("/api/transmittal", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(await sessionHeaders()) },
         body: JSON.stringify({ token, name: ackName.trim(), note: ackNote.trim() || undefined }),
       });
       const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (!res.ok || !body?.ok) throw new Error(body?.error === "revoked" || body?.error === "expired" ? downloadError(res.status, body) : body?.error || `HTTP ${res.status}`);
+      if (!res.ok || !body?.ok) {
+        throw new Error(body?.error === "revoked" || body?.error === "expired" ? downloadError(res.status, body)
+          : body?.error === "member_cannot_acknowledge" ? MEMBER_CANNOT_ACKNOWLEDGE
+          : body?.error === "member_check_failed" ? MEMBER_CHECK_FAILED
+          : body?.error || `HTTP ${res.status}`);
+      }
       setMsg({ tone: "ok", text: "Receipt recorded — thank you. The issuer has been notified." });
       await refresh();
     } catch (e) {
@@ -298,11 +319,14 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
       : state === "revoked" ? "The issuer has revoked this link. The transmittal itself still stands — contact them if you need access again."
       : state === "expired" ? "This link has expired. The transmittal itself still stands — contact the issuer for a fresh link."
       : state === "notfound" ? "This link doesn't exist — it may have been mistyped."
+      : state === "membercheck" ? MEMBER_CHECK_FAILED
       : "Something went wrong opening this transmittal. Try again shortly.";
     return <Shell><div className="p-8 text-center"><AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" /><p className="text-sm text-slate-500">{text}</p></div></Shell>;
   }
 
   const acknowledged = data.status === "acknowledged";
+  // DIST-17 (ruling 3): a member of the issuing workspace who is not the recipient.
+  const memberNotRecipient = !!data.member && !data.member.asRecipient;
 
   return (
     <Shell>
@@ -324,7 +348,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
             <div className="mt-2">
               {acknowledged
                 ? <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> Acknowledged</span>
-                : <span className="text-[11px] font-black text-amber-700">Awaiting your acknowledgment</span>}
+                : <span className="text-[11px] font-black text-amber-700">{memberNotRecipient ? "Awaiting the recipient\u2019s acknowledgment" : "Awaiting your acknowledgment"}</span>}
             </div>
           </div>
         </div>
@@ -344,7 +368,9 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
           <div data-testid="portal-member-notice" className="rounded-xl border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 px-3 py-2.5 text-xs text-blue-800 dark:text-blue-300 flex items-start gap-2">
             <UserCheck className="w-4 h-4 mt-0.5 shrink-0" />
             <div>
-              You are signed in{data.member.email ? <> as <b>{data.member.email}</b></> : null}, a member of {data.orgName ?? "the issuing workspace"}. Downloads from this page are recorded in your name, not as the recipient&apos;s.
+              {data.member.asRecipient
+                ? <>You are signed in{data.member.email ? <> as <b>{data.member.email}</b></> : null}, this transmittal&apos;s recipient. Downloads from this page are recorded in your name and count as the recipient&apos;s.</>
+                : <>You are signed in{data.member.email ? <> as <b>{data.member.email}</b></> : null}, a member of {data.orgName ?? "the issuing workspace"}. Downloads from this page are recorded in your name, not as the recipient&apos;s, and you cannot acknowledge receipt on the recipient&apos;s behalf.</>}
               {!data.member.ticket ? <> {MEMBER_UNNAMED}</> : null}
             </div>
           </div>
@@ -422,6 +448,10 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               {data.acknowledgedByName ? <>By <b>{data.acknowledgedByName}</b></> : "Recorded"}
               {data.acknowledgedAt ? <> on {new Date(data.acknowledgedAt).toLocaleString()}</> : null}. This confirmation is part of the permanent record.
             </div>
+          </div>
+        ) : memberNotRecipient ? (
+          <div data-testid="portal-member-no-ack" className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 px-4 py-3 text-xs text-slate-600 dark:text-slate-400">
+            {MEMBER_CANNOT_ACKNOWLEDGE}
           </div>
         ) : (
           <div className="rounded-xl border-2 border-orange-300 bg-orange-50/60 dark:bg-orange-950/30 dark:border-orange-800 p-4">
