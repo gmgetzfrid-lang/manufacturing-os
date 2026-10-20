@@ -17,8 +17,8 @@
 --      and authenticated: SERVICE ROLE ONLY — written by
 --      /api/print-sheet-tokens (mint / settle) after it has checked the
 --      caller's session and membership, read by /api/verify. Never
---      client-writable (the verify_scans / intake_attempts shape, 20261134 /
---      20261105).
+--      client-writable (the shape of the scan log and the intake rate window,
+--      20261134 / 20261105).
 --      Foreign keys: the org, the document and the version, each ON DELETE
 --      CASCADE — a token whose document or version is gone answers
 --      "Unknown code" (404, never green), exactly as a ?v= QR naming a
