@@ -35,6 +35,9 @@ const state = vi.hoisted(() => ({
   afterCbs: [] as Array<() => unknown>,
   afterThrows: false,
   pushRejects: false,
+  bellClock: 0,
+  bellTick: 0,
+  webPushSent: [] as string[],
 }));
 
 const at = (r: Row, k: string): unknown => {
@@ -50,14 +53,23 @@ function chain(table: string) {
   let method: string | null = null;
   let payload: unknown = null;
   let head = false;
-  const rows = () => (state.rows[table] ?? []).filter((r) => filters.every((f) => f(r)));
+  let orderBy: [string, boolean] | null = null;
+  const rows = () => {
+    const hit = (state.rows[table] ?? []).filter((r) => filters.every((f) => f(r)));
+    if (!orderBy) return hit;
+    const [col, asc] = orderBy;
+    return [...hit].sort((a, b) => String(a[col] ?? "").localeCompare(String(b[col] ?? "")) * (asc ? 1 : -1));
+  };
   const errOf = () => state.errors[`${table}.${method ?? "select"}`]?.shift() ?? null;
   const settle = () => {
     const err = errOf();
     if (err) return { data: null, error: err };
     if (method === "insert") {
       const list = (Array.isArray(payload) ? payload : [payload]) as Row[];
-      const landed = list.map((r) => ({ id: `${table}-${++state.seq}`, ...r }));
+      // a bell row is dated as the database dates it (created_at DEFAULT
+      // now()), one second apart, so the real sender (R1's cap pin) reads
+      // each landed row as recent and newer than the last one it pushed
+      const landed = list.map((r) => ({ id: `${table}-${++state.seq}`, ...(table === "notifications" && r.created_at == null ? { created_at: new Date(state.bellClock + 1000 * ++state.bellTick).toISOString() } : {}), ...r }));
       state.rows[table] = [...(state.rows[table] ?? []), ...landed];
       return { data: landed, error: null };
     }
@@ -77,6 +89,7 @@ function chain(table: string) {
         state.calls.push({ table, method: prop, args });
         if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
         if (["insert", "update", "upsert", "delete"].includes(prop) && method === null) { method = prop; payload = args[0]; }
+        if (prop === "order") orderBy = [String(args[0]), (args[1] as { ascending?: boolean } | undefined)?.ascending !== false];
         if (prop === "eq") filters.push((r) => at(r, String(args[0])) === args[1]);
         if (prop === "in") { const s = new Set(args[1] as unknown[]); filters.push((r) => s.has(at(r, String(args[0])))); }
         if (prop === "is") filters.push((r) => (args[1] === null ? at(r, String(args[0])) == null : at(r, String(args[0])) === args[1]));
@@ -163,6 +176,16 @@ vi.mock("@/lib/push/sendPush", () => ({
     return { eligible: 0, attempted: 0, sent: 0, pruned: 0, capped: 0 };
   }),
 }));
+// R1 (the integrator at the N17 merge): the cap pin runs the REAL sender
+// (vi.importActual) behind the spy; web-push is the push service stand-in.
+vi.mock("web-push", () => {
+  const api = {
+    setVapidDetails: vi.fn(),
+    sendNotification: vi.fn(async (sub: { endpoint: string }) => { state.webPushSent.push(sub.endpoint); return { statusCode: 201, body: "", headers: {} }; }),
+    generateVAPIDKeys: vi.fn(),
+  };
+  return { default: api, ...api };
+});
 vi.mock("@/lib/r2", () => ({
   r2: { send: vi.fn(async () => ({ ContentLength: 1048576, ETag: '"etag-1"' })) },
   R2_BUCKET: "test-bucket",
@@ -194,7 +217,7 @@ const inserted = (table: string) => state.calls.filter((c) => c.table === table 
   .flatMap((c) => (Array.isArray(c.args[0]) ? c.args[0] : [c.args[0]]) as Row[]);
 const bellRows = () => inserted("notifications").map((r) => ({ user: r.user_id as string, kind: r.kind as string })).sort((a, b) => a.user.localeCompare(b.user));
 const mailUsers = () => inserted("email_notifications").map((r) => r.to_user_id as string).sort();
-const pushes = () => state.calls.filter((c) => c.table === "push").map((c) => c.args[0] as { orgId: string; kind: string; resourceId: string; recipients: string[] });
+const pushes = () => state.calls.filter((c) => c.table === "push").map((c) => c.args[0] as { orgId: string; kind: string; resourceId: string; recipients: string[]; writerUid?: string | null });
 const indexOf = (table: string, method: string) => state.calls.findIndex((c) => c.table === table && c.method === method);
 /** Runs every after() callback the request scheduled (as next/server does once the response is sent). */
 const afterRun = async () => { for (const cb of state.afterCbs.splice(0)) await cb(); };
@@ -205,6 +228,7 @@ beforeEach(() => {
   __resetCapabilityPolicyCache();
   state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.seq = 0;
   state.afterCbs = []; state.afterThrows = false; state.pushRejects = false;
+  state.bellClock = Date.now() - 90_000; state.bellTick = 0; state.webPushSent = [];
   vi.mocked(sendPushSafe).mockClear();
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
@@ -237,7 +261,7 @@ describe("OS-14 — a mention on a request reaches the push channel after its be
     // nothing pushed before the response: the push is an after() callback
     expect(pushes()).toEqual([]);
     await afterRun();
-    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_mention", resourceId: "t1", recipients: [DRAFTER] }]);
+    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_mention", resourceId: "t1", recipients: [DRAFTER], writerUid: REQ }]);
     expect(indexOf("notifications", "insert")).toBeLessThan(indexOf("push", "sendPushSafe"));
     expect(indexOf("email_notifications", "insert")).toBeLessThan(indexOf("push", "sendPushSafe"));
   });
@@ -299,7 +323,7 @@ describe("OS-14 — an assignment reaches the push channel after its bell rows (
     await afterRun();
     const p = pushes();
     expect(p).toHaveLength(1);
-    expect(p[0]).toMatchObject({ orgId: ORG, kind: "ticket_assigned", resourceId: "t1" });
+    expect(p[0]).toMatchObject({ orgId: ORG, kind: "ticket_assigned", resourceId: "t1", writerUid: ADMIN });
     // the assignee, whose bell row landed
     expect(p[0].recipients).toEqual([DRAFTER2]);
     expect(bells.map((b) => b.user)).toEqual([DRAFTER2]);
@@ -316,7 +340,7 @@ describe("OS-14 — an assignment reaches the push channel after its bell rows (
     expect(bellRows()).toEqual([DRAFTER2, REQ, W_ACTIVE].sort().map((user) => ({ user, kind: "ticket_assigned" })));
     expect(mailUsers()).toEqual([DRAFTER2, REQ, W_ACTIVE].sort());
     await afterRun();
-    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_assigned", resourceId: "t1", recipients: [DRAFTER2] }]);
+    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_assigned", resourceId: "t1", recipients: [DRAFTER2], writerUid: ADMIN }]);
     // the assignee was read from the committed ticket, scoped to its org
     const read = state.calls.findIndex((c) => c.table === "tickets" && c.method === "select" && c.args[0] === "assigned_drafter_id");
     expect(read).toBeGreaterThan(indexOf("notifications", "insert"));
@@ -333,7 +357,7 @@ describe("OS-14 — an assignment reaches the push channel after its bell rows (
     expect(bells.map((b) => b.user)).toEqual(expect.arrayContaining([DRAFTER2, REQ, W_ACTIVE]));
     const mails = mailUsers();
     await afterRun();
-    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_assigned", resourceId: "t1", recipients: [DRAFTER2] }]);
+    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_assigned", resourceId: "t1", recipients: [DRAFTER2], writerUid: ADMIN }]);
     expect(bellRows()).toEqual(bells);
     expect(mailUsers()).toEqual(mails);
   });
@@ -398,5 +422,65 @@ describe("OS-14 — an assignment reaches the push channel after its bell rows (
     expect(res.status).toBe(200);
     expect(bellRows().map((b) => b.user)).toContain(DRAFTER2);
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/the assignment push was not scheduled/), "after() outside a request");
+  });
+});
+
+describe("R1 (the integrator at the N17 merge, DEC-90) — the ticket routes' pushes name their writer, so DEC-108's per-writer cap bounds a burst", () => {
+  const VAPID = { VAPID_PUBLIC_KEY: "pub-key", VAPID_PRIVATE_KEY: "priv-key", VAPID_SUBJECT: "mailto:ops@example.com" };
+  afterEach(() => { for (const k of Object.keys(VAPID)) delete process.env[k]; });
+
+  it("6 mentions of one member by one writer: pushes 1-5 go out, the 6th is NOT pushed (capped) — and every one of the 6 bell rows and emails lands exactly as before", async () => {
+    const real = await vi.importActual<typeof import("@/lib/push/sendPush")>("@/lib/push/sendPush");
+    Object.assign(process.env, VAPID);
+    real.__resetPushLogOnceForTests();
+    const { PUSH_WRITER_CAP } = real;
+    expect(PUSH_WRITER_CAP).toBe(5);
+    seedMembers();
+    state.rows.tickets = [ticketRow()];
+    state.rows.push_subscriptions = [{
+      id: "dev-1", user_id: DRAFTER, endpoint: "https://fcm.googleapis.com/fcm/send/dee-phone", p256dh: "p", auth: "k",
+      last_reminded_at: null, created_at: new Date(Date.now() - 1000).toISOString(),
+    }];
+    state.user = { id: REQ };
+    const outcomes: Array<{ sent: number; capped: number }> = [];
+    for (let i = 1; i <= 6; i += 1) {
+      vi.mocked(sendPushSafe).mockImplementationOnce(async (input) => {
+        state.calls.push({ table: "push", method: "sendPushSafe", args: [input] });
+        const out = await real.sendPushSafe(input);
+        outcomes.push(out);
+        return out;
+      });
+      const res = await commentPost(req("/api/tickets/comment", { ticketId: "t1", text: `${MENTION} (${i})` }));
+      expect(res.status).toBe(200);
+      await afterRun();
+    }
+    // every push names the commenter as its writer
+    expect(pushes()).toHaveLength(6);
+    expect(pushes().every((p) => p.writerUid === REQ && p.kind === "ticket_mention" && p.recipients.join() === DRAFTER)).toBe(true);
+    // 1-5 pushed to the device, the 6th capped
+    expect(outcomes.map((o) => o.sent)).toEqual([1, 1, 1, 1, 1, 0]);
+    expect(outcomes.map((o) => o.capped)).toEqual([0, 0, 0, 0, 0, 1]);
+    expect(state.webPushSent).toHaveLength(5);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/over the per-writer push cap/));
+    // REGRESSION: the 6th mention's bell row and email are exactly as the first's (and as before N17)
+    const bells = inserted("notifications");
+    expect(bells.filter((r) => r.user_id === DRAFTER && r.kind === "ticket_mention")).toHaveLength(6);
+    expect(bells.filter((r) => r.user_id === W_ACTIVE && r.kind === "ticket_comment")).toHaveLength(6);
+    const strip = (r: Row) => { const { body: _b, link: _l, created_at: _c, id: _i, metadata: _m, ...rest } = r; return rest; };
+    const dee = bells.filter((r) => r.user_id === DRAFTER);
+    expect(strip(dee[5])).toEqual(strip(dee[0]));
+    expect(mailUsers()).toEqual([...Array(6).fill(DRAFTER), ...Array(6).fill(W_ACTIVE)].sort());
+    const mails = inserted("email_notifications").filter((r) => r.to_user_id === DRAFTER);
+    expect(mails.map((m) => m.subject)).toEqual(Array(6).fill(mails[0].subject));
+    expect(mails.every((m) => m.event_type === "comment_mention")).toBe(true);
+  });
+
+  it("the assignment push names the actor as its writer (the same cap applies to a burst of assignments)", async () => {
+    seedMembers();
+    state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, watchers: [] })];
+    state.user = { id: ADMIN };
+    expect((await workflowAction(req("/api/tickets/workflow-action", { ticketId: "t1", actionType: "assign", assignment: { id: DRAFTER2, name: "d" } }))).status).toBe(200);
+    await afterRun();
+    expect(pushes()).toEqual([{ orgId: ORG, kind: "ticket_assigned", resourceId: "t1", recipients: [DRAFTER2], writerUid: ADMIN }]);
   });
 });

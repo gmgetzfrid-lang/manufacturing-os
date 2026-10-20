@@ -21,7 +21,7 @@ import { loadScanRetryPlan } from "@/lib/complianceNotify";
 // OS-14 (notifications N17): the roster's requests reach the push channel
 // after their bell rows land — emit()'s own leg (the daily scan's reminders
 // do not: the cron only prunes, DEC-108 §6).
-import { pushAfterBellRows, type PushSendInput } from "@/lib/notify/dispatch";
+import { pushAfterBellRows, type PushSendInput, type PushSender } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { resolveEffectiveOwner, effectiveOwnerForDocument, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
@@ -29,9 +29,11 @@ import type { AckPolicy } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
 
 /** The push leg never touches the roster's own outcome (DEC-90: a push
- *  failure never fails the action or its bell rows). */
-const pushLandedRows = (input: PushSendInput): Promise<void> =>
-  Promise.resolve().then(() => pushAfterBellRows(input)).catch(() => undefined);
+ *  failure never fails the action or its bell rows). `serverPush`: the
+ *  server caller's sender (OS-16 — the intake door's auto-publish); none in
+ *  the browser, where the leg is the fire-and-forget POST /api/push/notify. */
+const pushLandedRows = (input: PushSendInput, serverPush?: PushSender): Promise<void> =>
+  Promise.resolve().then(() => pushAfterBellRows(input, serverPush)).catch(() => undefined);
 
 type Level = "library" | "collection" | "document";
 interface PolicyCols { ack_policy?: AckPolicy | null }
@@ -346,12 +348,20 @@ interface DocForAck {
  *  the stale-revision void, the no-policy void and the roster insert — as the
  *  error the write answered; without it the behaviour is unchanged.
  *  OS-14 (notifications N17): `notifyPush: false` skips the push leg only —
- *  the bell rows, the roster and the audit are unchanged. The bulk
- *  library / folder policy save passes it, so one save over N issued
- *  documents never fans out N fire-and-forget POST /api/push/notify. */
+ *  the bell rows, the roster and the audit are unchanged. The integrator's
+ *  rule at the N17 merge (DEC-90, R2): a door that opens rosters for MANY
+ *  documents in one action passes it — the library / folder policy save
+ *  (setAckPolicy), the library's multi-file upload, the bulk status editor,
+ *  a split, a set rev-up, the output-template filing run — so one action
+ *  never fans out one push request per document; a single-document door
+ *  keeps pushing. Pinned by the census in lib/__tests__/n17PushRosters.test.ts.
+ *  OS-16 (the integrator at the N17 merge, R4): `serverPush` — a SERVER
+ *  caller's sender (the intake door's auto-publish passes sendPushSafe with
+ *  its actor as the writer), threaded to pushAfterBellRows; without it a
+ *  server recompute pushes nothing (the maintenance cron passes none). */
 export async function recomputeDocumentAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null; notifyNew?: boolean;
-  writeErrors?: string[]; notifyPush?: boolean;
+  writeErrors?: string[]; notifyPush?: boolean; serverPush?: PushSender;
 }): Promise<void> {
   const { data: docRow } = await supabase
     .from("documents")
@@ -430,7 +440,7 @@ export async function recomputeDocumentAck(input: {
         // OS-14: only the assignees whose bell row landed; never awaited
         // past the request itself (the browser leg is fire-and-forget)
         if (input.notifyPush !== false) {
-          await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: doc.id, recipients: asked.filter((_, i) => landed[i] === true).map((a) => a.uid) });
+          await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: doc.id, recipients: asked.filter((_, i) => landed[i] === true).map((a) => a.uid) }, input.serverPush);
         }
       }
       await logAuditAction({
@@ -464,13 +474,19 @@ export async function recomputeDocumentAck(input: {
  *  REV-15: `writeErrors`, when given, collects each roster write's error
  *  (recomputeDocumentAck) and, when the recompute threw part-way, that error
  *  (which this function still swallows); without it the behaviour is
- *  unchanged (logged only). */
+ *  unchanged (logged only).
+ *  `notifyPush` / `serverPush`: passed to recomputeDocumentAck as given
+ *  (the N17 merge's R2 / R4 — see there). */
 export async function onDocumentIssuedAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null;
-  writeErrors?: string[];
+  writeErrors?: string[]; notifyPush?: boolean; serverPush?: PushSender;
 }): Promise<void> {
   try {
-    await recomputeDocumentAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName, writeErrors: input.writeErrors });
+    await recomputeDocumentAck({
+      orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName, writeErrors: input.writeErrors,
+      ...(input.notifyPush === false ? { notifyPush: false } : {}),
+      ...(input.serverPush ? { serverPush: input.serverPush } : {}),
+    });
   } catch (e) {
     console.warn("[ack] onDocumentIssued failed", e);
     input.writeErrors?.push(`opening the acknowledgment roster stopped on an error (${(e as Error)?.message ?? String(e)})`);

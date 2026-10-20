@@ -1567,7 +1567,9 @@ async function fanOut(params: {
   // the actor from the audience, so it pushes nobody. A failed read pushes
   // nobody (fail-safe). The sender (lib/push/sendPush.ts) re-checks the bell
   // row, push_enabled, membership and the device, and never throws; it runs
-  // after the response (next/server after()).
+  // after the response (next/server after()). N17 merge (DEC-90, the
+  // integrator's ruling R1): the actor is the writer (`writerUid`), so
+  // DEC-108's per-writer cap bounds a burst; the bell row and email stand.
   if (cls.inAppKind === "ticket_assigned" && !bellErr) {
     try {
       after(async () => {
@@ -1583,7 +1585,7 @@ async function fanOut(params: {
         // loaded here, not at module scope: the sender (web-push, the service
         // role) is needed only once there is something to push
         const { sendPushSafe } = await import("@/lib/push/sendPush");
-        await sendPushSafe({ orgId: ticket.orgId, kind: "ticket_assigned", resourceId: ticketId, recipients: assignees });
+        await sendPushSafe({ orgId: ticket.orgId, kind: "ticket_assigned", resourceId: ticketId, recipients: assignees, writerUid: actorUid });
       });
     } catch (e) {
       console.warn("[workflow-action] the assignment push was not scheduled (transition, bell and email unaffected):", (e as Error)?.message ?? e);

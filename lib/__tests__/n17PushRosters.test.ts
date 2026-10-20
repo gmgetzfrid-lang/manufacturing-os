@@ -21,8 +21,15 @@
 //
 // Fail-safe (DEC-90): a refused row is never pushed; a push leg that throws
 // never fails the roster, its rows or its audit; every bell row as before.
+//
+// The integrator's rule R2 at the N17 merge (DEC-90): a door that opens
+// rosters for MANY documents in one action passes `notifyPush: false` (bell
+// and email only); a single-document door keeps pushing. The census at the
+// end pins it over every caller of the roster openers.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { newFakeDb, makeFakeSupabase, type FakeDb } from "./helpers/fakeSupabase";
 
 const state = vi.hoisted(() => ({
@@ -218,5 +225,115 @@ describe("OS-14 — the sign-off roster's requests reach the push leg after thei
     expect(T("documents")[0].pending_version_id).toBe("v2A");
     expect(state.audited.map((a) => a.action)).toContain("REVIEW_REQUESTED");
     expect(state.audited.map((a) => a.action)).not.toContain("REVIEW_ROSTER_FAILED");
+  });
+});
+
+describe("R2 (the integrator at the N17 merge, DEC-90) — one rule everywhere: a door that opens rosters for many documents in one action sends bell and email only", () => {
+  it("openReviewRoster with notifyPush: false (a set rev-up's submission) writes every roster row and bell row as before and sends no push request", async () => {
+    seedDraft();
+    await openReviewRoster({ ...rosterInput(), notifyPush: false });
+    expect(T("document_review_signoffs").map((r) => r.reviewer_user_id).sort()).toEqual(["rev1", "rev2"]);
+    expect(notified().filter((n) => n.kind === "review_requested").map((n) => n.user).sort()).toEqual(["rev1", "rev2"]);
+    expect(state.audited.find((a) => a.action === "REVIEW_REQUESTED")).toBeTruthy();
+    expect(pushed()).toEqual([]);
+  });
+
+  it("recomputeDocumentAck with notifyPush: false: the roster and bell rows as before, no push; with a server sender, the sender is handed to the push leg (OS-16)", async () => {
+    seedIssuedDocument();
+    await recomputeDocumentAck({ orgId: ORG, documentId: "d1", actorId: "ctl1", actorName: "Cass", notifyPush: false });
+    expect(notified()).toHaveLength(3);
+    expect(pushed()).toEqual([]);
+    // a server sender (R4) reaches pushAfterBellRows as its second argument
+    state.db = newFakeDb(); state.log = [];
+    seedIssuedDocument();
+    const sender = vi.fn(async () => undefined);
+    const { pushAfterBellRows } = await import("@/lib/notify/dispatch");
+    vi.mocked(pushAfterBellRows).mockClear();
+    await recomputeDocumentAck({ orgId: ORG, documentId: "d1", actorId: "ctl1", actorName: "Cass", serverPush: sender });
+    expect(vi.mocked(pushAfterBellRows)).toHaveBeenCalledWith({ orgId: ORG, kind: "ack_requested", resourceId: "d1", recipients: ["u1", "u2", "u3"] }, sender);
+  });
+
+  it("census: every caller of a roster opener is classified — the multi-document doors pass notifyPush: false, the single-document doors push, the helpers relay what they were given; a NEW caller fails here until it is classified", () => {
+    const root = process.cwd();
+    const files: string[] = [];
+    const walk = (d: string) => {
+      for (const n of readdirSync(d)) {
+        const p = join(d, n);
+        if (statSync(p).isDirectory()) { if (n !== "node_modules" && n !== "__tests__" && !n.startsWith(".")) walk(p); }
+        else if (/\.tsx?$/.test(n) && !n.endsWith(".d.ts")) files.push(p);
+      }
+    };
+    for (const d of ["app", "components", "lib", "hooks"]) walk(join(root, d));
+    // the functions that open (or lead to) a read-&-understood or sign-off roster
+    const OPENERS = [
+      "recomputeDocumentAck", "onDocumentIssuedAck", "startIssuedDocumentClocks", "startClocksForIssuedDocuments",
+      "createDocumentWithFile", "recordStatusIssue", "changeDocumentStatus", "runPostPublishSideEffects",
+      "revUpDocument", "submitForReview", "openReviewRoster",
+    ];
+    const callRe = new RegExp(`(?<!function\\s)(?<![\\w.])(${OPENERS.join("|")})\\(`, "g");
+    const stripComments = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`])\/\/[^\n]*/g, "$1");
+    const argsAt = (t: string, open: number) => {
+      let depth = 0;
+      for (let i = open; i < t.length; i += 1) {
+        if (t[i] === "(") depth += 1;
+        else if (t[i] === ")") { depth -= 1; if (depth === 0) return t.slice(open, i + 1); }
+      }
+      return t.slice(open);
+    };
+    type Kind = "multi" | "single" | "relay";
+    const found: string[] = [];
+    for (const f of files) {
+      const text = stripComments(readFileSync(f, "utf8"));
+      const rel = relative(root, f).split("\\").join("/");
+      for (const m of text.matchAll(callRe)) {
+        const args = argsAt(text, (m.index ?? 0) + m[1].length);
+        let kind: Kind;
+        if (/notifyPush === false \? \{ notifyPush: false \}|opts\?\.notifyPush === false/.test(args)) kind = "relay";
+        else if (/(?<!\?\s*\{\s*)notifyPush:\s*false\b/.test(args)) kind = "multi";
+        else if (args === "(common)" && /const common = \{[\s\S]*?\bnotifyPush: false,[\s\S]*?\};/.test(text)) kind = "multi";
+        else {
+          expect(args, `${rel} ${m[1]}: a caller names notifyPush only as false (multi) or as a relay`).not.toMatch(/notifyPush/);
+          kind = "single";
+        }
+        found.push(`${rel} | ${m[1]} | ${kind}`);
+      }
+    }
+    // Each door, classified once (the record: audit-reports/notifications/07-os-notifications-and-nudges.md OS-14, R2)
+    const DOORS: Array<[file: string, callee: string, kind: Kind, door: string]> = [
+      // multi-document doors — bell and email only
+      ["lib/acknowledgments.ts", "recomputeDocumentAck", "multi", "setAckPolicy at library / folder level (every issued document it covers)"],
+      ["app/(protected)/documents/[libraryId]/page.tsx", "startIssuedDocumentClocks", "multi", "the library's multi-file upload (uploadOne, per staged file)"],
+      ["components/documents/BulkEditModal.tsx", "changeDocumentStatus", "multi", "the bulk status editor"],
+      ["lib/documentLifecycle/split.ts", "startClocksForIssuedDocuments", "multi", "a split (every new sheet)"],
+      ["lib/documentLifecycle/setRevUp.ts", "revUpDocument", "multi", "a set rev-up (each sheet published)"],
+      ["lib/documentLifecycle/setRevUp.ts", "submitForReview", "multi", "a set rev-up (each sheet sent to sign-off)"],
+      ["lib/outputTemplates.ts", "createDocumentWithFile", "multi", "the output-template filing run (Drafts today: no roster)"],
+      // single-document doors — push
+      ["lib/acknowledgments.ts", "recomputeDocumentAck", "single", "setAckPolicy at document level"],
+      ["app/(protected)/documents/[libraryId]/page.tsx", "changeDocumentStatus", "single", "the document's metadata save"],
+      ["components/documents/DocumentLinkPicker.tsx", "createDocumentWithFile", "single", "a document created from the link picker"],
+      ["lib/documentLifecycle/merge.ts", "startClocksForIssuedDocuments", "single", "a merge's one created target"],
+      ["lib/documentLifecycle/merge.ts", "revUpDocument", "single", "a merge's extended target"],
+      ["components/documents/RevUpModal.tsx", "revUpDocument", "single", "a rev-up"],
+      ["components/documents/RevUpModal.tsx", "submitForReview", "single", "a submission for sign-off"],
+      ["components/projects/IntakePanel.tsx", "openReviewRoster", "single", "an intake submission sent to its reviewers"],
+      ["lib/revisions.ts", "recordStatusIssue", "single", "an un-archive into an issue status"],
+      ["lib/revisions.ts", "runPostPublishSideEffects", "single", "a revert"],
+      ["lib/reviewControl.ts", "runPostPublishSideEffects", "single", "a reviewed revision finalized"],
+      ["app/api/intake/upload/route.ts", "runPostPublishSideEffects", "single", "the intake link's auto-publish (server sender — OS-16)"],
+      // helpers — relay the caller's notifyPush
+      ["lib/acknowledgments.ts", "recomputeDocumentAck", "relay", "onDocumentIssuedAck"],
+      ["lib/revisions.ts", "onDocumentIssuedAck", "relay", "startIssuedDocumentClocks"],
+      ["lib/postPublish.ts", "onDocumentIssuedAck", "relay", "runPostPublishSideEffects"],
+      ["lib/revisions.ts", "startIssuedDocumentClocks", "relay", "createDocumentWithFile"],
+      ["lib/revisions.ts", "startIssuedDocumentClocks", "relay", "recordStatusIssue"],
+      ["lib/documentLifecycle/common.ts", "startIssuedDocumentClocks", "relay", "startClocksForIssuedDocuments"],
+      ["lib/revisions.ts", "recordStatusIssue", "relay", "changeDocumentStatus"],
+      ["lib/revisions.ts", "runPostPublishSideEffects", "relay", "revUpDocument"],
+      ["lib/revisions.ts", "openReviewRoster", "relay", "submitForReview"],
+    ];
+    expect(found.sort()).toEqual(DOORS.map(([f, c, k]) => `${f} | ${c} | ${k}`).sort());
+    // the intake door hands the pipeline its server sender, with the actor as the writer (R4)
+    expect(readFileSync(join(root, "app/api/intake/upload/route.ts"), "utf8")).toMatch(/serverPush: afterResponsePush\(link\.created_by \? String\(link\.created_by\) : null, "intake\/upload"\)/);
   });
 });

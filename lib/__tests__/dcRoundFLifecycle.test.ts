@@ -1818,11 +1818,12 @@ describe("REV-15 — split / merge sheets and the bulk upload start the review c
     // the helper is the only caller of the two clock functions in lib/revisions.ts
     const helper = rev.slice(rev.indexOf("export async function startIssuedDocumentClocks"), rev.indexOf("export async function startIssuedDocumentClocks") + 900);
     expect(helper).toMatch(/await onDocumentIssued\(\{ orgId: input\.orgId, documentId: input\.documentId, userId: input\.actorUserId, userName: input\.actorName, writeErrors \}\);/);
-    expect(helper).toMatch(/await onDocumentIssuedAck\(\{ orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorUserId, actorName: input\.actorName, writeErrors \}\);/);
+    // notifications N17 merge (DEC-90, R2): the helper also relays a multi-document door's notifyPush: false
+    expect(helper).toMatch(/await onDocumentIssuedAck\(\{ orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorUserId, actorName: input\.actorName, writeErrors, \.\.\.\(input\.notifyPush === false \? \{ notifyPush: false \} : \{\}\) \}\);/);
     expect(helper).toMatch(/return writeErrors;/);
     expect(rev.match(/await onDocumentIssued\(/g)).toHaveLength(1);
     expect(rev.match(/await onDocumentIssuedAck\(/g)).toHaveLength(1);
-    expect(rev).toMatch(/if \(input\.status === "Issued"\) \{\s*\/\/ REV-15[^\n]*\n\s*await startIssuedDocumentClocks\(\{ orgId: input\.orgId, documentId, actorUserId: input\.actorUserId, actorName: input\.actorEmail \}\);/);
+    expect(rev).toMatch(/if \(input\.status === "Issued"\) \{\s*\/\/ REV-15[^\n]*\n\s*await startIssuedDocumentClocks\(\{ orgId: input\.orgId, documentId, actorUserId: input\.actorUserId, actorName: input\.actorEmail, \.\.\.\(input\.notifyPush === false \? \{ notifyPush: false \} : \{\}\) \}\);/);
     for (const f of ["lib/documentLifecycle/split.ts", "lib/documentLifecycle/merge.ts", "lib/documentLifecycle/common.ts"]) {
       expect(src(f), f).not.toMatch(/onDocumentIssued(Ack)?\(/);
     }
@@ -1843,7 +1844,8 @@ describe("REV-15 — split / merge sheets and the bulk upload start the review c
     expect(at("if (ptrErr || !promoted || promoted.length === 0) {")).toBeGreaterThan(ptr);
     // the clocks follow the checked write; the creation record follows them and
     // carries the decision AND what of the clocks did not start (REV-15 done-when 1)
-    const clocks = at("const writeErrors = await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });");
+    // notifications N17 merge (DEC-90, R2): the multi-file upload opens its rosters with notifyPush: false (bell and email only)
+    const clocks = at("const writeErrors = await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null, notifyPush: false });");
     const rec = at('action: "DOCUMENT_CREATED",');
     expect(body).toMatch(/initialStatus: status, reviewPolicyMode: gate\?\.mode \?\? null, reviewPolicy: gate\?\.recorded \?\? null,/);
     expect(clocks).toBeGreaterThan(ptr);

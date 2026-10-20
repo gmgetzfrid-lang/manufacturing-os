@@ -62,7 +62,10 @@ export const PUSH_DECLINE_KEY = "push-optin-declined";
  *     lib/notify/dispatch.ts pushAfterBellRows). Its re-send from the roster
  *     panel (nudgeAcknowledgment) takes the same leg, but its reminder row
  *     names no actor, so /api/push/notify cannot push it until 20261160
- *     stamps the writer — the line does not promise it;
+ *     stamps the writer — the line does not promise it, and PUSH_NOT_YET_NOTE
+ *     says so (the integrator's ruling R3 at the N17 merge, DEC-90). The
+ *     intake link's auto-publish opens this roster on the server and pushes
+ *     it through the door's server sender (OS-16, ruling R4);
  *   - review_requested: a change proposed at check-in, sent to the document's
  *     owner (components/documents/CheckInPanel.tsx), and (OS-14) a draft's
  *     sign-off request from its review roster (lib/reviewControl.ts
@@ -89,16 +92,28 @@ export const PUSH_WHAT_IS_SENT: readonly string[] = Object.freeze(PUSH_SENT_TODA
 /** The push-worthy kinds no producer pushes yet — none since OS-14 closed
  *  (notifications N17) — and the sentence the card says about what still
  *  reaches only the bell and email, so nobody relies on a device
- *  notification that never comes: the daily scan's reminders (the
- *  maintenance cron never pushes — DEC-108 §6) and the read-and-understood
- *  request opened when a file arriving through a project's intake link is
- *  published (a server writer: app/api/intake/upload → lib/postPublish.ts →
- *  lib/acknowledgments.ts, with no push sender — OS-16), and the requests a
- *  library- or folder-level policy save opens (setAckPolicy skips the push
- *  leg there, so one save never sends a push request per document). */
+ *  notification that never comes:
+ *   - the daily scan's reminders (the maintenance cron never pushes —
+ *     DEC-108 §6);
+ *   - (ruling R3, the integrator at the N17 merge, DEC-90) a reminder
+ *     re-sent from the acknowledgment list (nudgeAcknowledgment): its bell
+ *     row names no actor, so POST /api/push/notify finds no row from its
+ *     writer until 20261160 (the notification rails migration) stamps one —
+ *     worded "until … is applied" so it stays true after the paste;
+ *   - (ruling R2) the read-&-understood and sign-off requests a door opens
+ *     for MANY documents in one action — the library / folder policy save
+ *     (setAckPolicy), the library's multi-file upload, the bulk status
+ *     editor (BulkEditModal), a split, a set rev-up (setRevUp) and the
+ *     output-template filing run: each passes `notifyPush: false`, so one
+ *     action never sends a push request per document. A single-document
+ *     door pushes.
+ *  The intake link's auto-publish is no longer here: its roster is pushed
+ *  through the door's server sender (OS-16, ruling R4). Pinned in
+ *  lib/__tests__/pushOptIn.test.ts and the census in
+ *  lib/__tests__/n17PushRosters.test.ts. */
 export const PUSH_NOT_SENT_YET: readonly ClassifiedKind[] = Object.freeze([] as ClassifiedKind[]);
 export const PUSH_NOT_YET_NOTE =
-  "Not sent to devices: the daily reminders about acknowledgments and sign-offs still outstanding, and read-and-understood requests opened by a policy set on a whole library or folder, or for a revision published straight from a project's intake link. The bell and email still bring them.";
+  "Not sent to devices: the daily reminders about acknowledgments and sign-offs still outstanding; a reminder re-sent from the acknowledgment list, until the notification rails migration is applied; and read-and-understood and sign-off requests opened by one action across many documents — a policy set on a whole library or folder, a multi-file upload, a bulk status edit, a split, a set rev-up or a template filing run. The bell and email still bring them.";
 
 export const PUSH_PRIVACY_NOTE =
   "The notification says only what kind of thing happened — never a document number, a title, a reason or a person's name — so nothing sensitive shows on a lock screen. Open it to see the details.";

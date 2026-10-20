@@ -57,7 +57,10 @@
 //   * A browser's request is capped per writer: past PUSH_WRITER_CAP push-
 //     worthy rows from one member to one person in PUSH_WRITER_WINDOW_MS,
 //     the bell keeps them and no more pushes go (the 20261160 caps bound the
-//     rows themselves).
+//     rows themselves). Since the N17 merge (DEC-90, R1 / R4) a server
+//     producer with an actor names it as `writerUid` too — the ticket routes'
+//     fan-out and the intake door's roster sender — so the same cap bounds a
+//     burst on the server path.
 //   * Only to a push service (fix pass — the review's blocker): a device row
 //     whose endpoint is not on a browser push service's own host
 //     (lib/push/endpoints.ts pushEndpointAllowed) is never sent to and is
@@ -88,7 +91,9 @@
 // Who calls this (fix pass — the review's major 2): POST /api/push/notify
 // (the browser half of emit()'s push leg), and a server caller of emit()
 // that is allowed to push, by passing `serverPush: pushFromServer` in its
-// EmitInput. Loading this module changes nothing else: it registers no
+// EmitInput. Since notifications N17, also the server producers outside
+// emit(): the ticket routes' fan-out (in an after() callback) and the
+// intake door's read-&-understood roster (lib/push/afterResponsePush.ts). Loading this module changes nothing else: it registers no
 // global sender, so whether a server emit pushes never depends on which
 // modules a long-lived process happens to have loaded.
 // lib/notify/dispatch.ts is bundled for the browser and never imports

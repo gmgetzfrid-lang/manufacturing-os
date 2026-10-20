@@ -208,6 +208,26 @@ describe("OS-3 — the permission prompt is reached only by a deliberate click, 
     expect(PUSH_NOT_YET_NOTE).toMatch(/a policy set on a whole library or folder/);
   });
 
+  it("the integrator's rulings at the N17 merge (DEC-90): R3 — the note says a reminder re-sent from the acknowledgment list is not pushed, worded to stay true once 20261160 is applied; R2 — it names every multi-document door; R4 — the intake link's auto-publish is no longer in it", () => {
+    // R3: verbatim clause; conditioned on the migration ("until … is applied"),
+    // never "yet" / "today" — true before the paste and after it
+    expect(PUSH_NOT_YET_NOTE).toContain("a reminder re-sent from the acknowledgment list, until the notification rails migration is applied");
+    expect(PUSH_NOT_YET_NOTE).not.toMatch(/\byet\b|\btoday\b/);
+    // the reminder's bell row is not changed by the ruling: it still names no actor
+    const ack = readFileSync(join(process.cwd(), "lib/acknowledgments.ts"), "utf8");
+    const nudge = ack.slice(ack.search(/\bfunction nudgeAcknowledgment\(/), ack.indexOf("\n}\n", ack.search(/\bfunction nudgeAcknowledgment\(/)));
+    expect(nudge).toMatch(/title: `Reminder — acknowledge \$\{label\}/);
+    expect(nudge).not.toMatch(/actorUserId/);
+    // R2: one rule — every door that opens rosters for many documents in one action is named
+    for (const door of ["a policy set on a whole library or folder", "a multi-file upload", "a bulk status edit", "a split", "a set rev-up", "a template filing run"]) {
+      expect(PUSH_NOT_YET_NOTE, door).toContain(door);
+    }
+    expect(PUSH_NOT_YET_NOTE).toMatch(/read-and-understood and sign-off requests opened by one action across many documents/);
+    // R4 (OS-16 resolved): the intake link's roster is pushed now — the note no longer excludes it
+    expect(PUSH_NOT_YET_NOTE).not.toMatch(/intake/);
+    expect(PUSH_NOT_YET_NOTE).toMatch(/The bell and email still bring them\.$/);
+  });
+
   it("major 3: the card's two lists split the push-worthy set exactly — each listed kind has a producer that reaches the push leg (an emit(), or since OS-14 a writer outside emit() that pushes after its bell rows), and each 'not yet' kind has none", () => {
     const pushWorthy = NOTIFICATION_KINDS.filter((k) => (KIND_META[k] as { pushWorthy?: boolean }).pushWorthy).sort();
     const today = PUSH_SENT_TODAY.map((l) => l.pushKind);

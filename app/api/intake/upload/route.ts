@@ -132,6 +132,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { afterResponsePush } from "@/lib/push/afterResponsePush";
 import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -1836,6 +1837,15 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
           // role; without it the sweep would take the browser path
           // (/api/links/invalidate with a session) and not run here.
           serviceClient: supabaseAdmin,
+          // OS-16 (the integrator's ruling R4 at the N17 merge, DEC-90): the
+          // read-&-understood roster this publish opens is pushed to the
+          // recipients whose bell row landed, exactly as a browser publish's
+          // roster is — through the server sender, with the link's creator
+          // (the roster's actor) as the writer, so DEC-108's per-writer cap
+          // applies. Scheduled with next/server after(), so the upload never
+          // waits on a push service; the bell rows and emails are unchanged,
+          // and a push that fails, or cannot be scheduled, is logged only.
+          serverPush: afterResponsePush(link.created_by ? String(link.created_by) : null, "intake/upload"),
         });
       });
     } catch (e) {

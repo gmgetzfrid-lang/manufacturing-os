@@ -296,6 +296,10 @@ export async function fileDocumentsToLibrary(input: {
         actorUserId: input.actorUserId,
         actorEmail: input.actorEmail,
         decodeUnitCode: false,
+        // notifications N17 (R2, DEC-90): one filing run, many documents —
+        // a roster it opened would send bell and email only (it files
+        // Drafts today, which open none)
+        notifyPush: false,
       });
       if (created?.documentId) filedIds.push(created.documentId);
       filed++;

@@ -495,6 +495,11 @@ export async function openReviewRoster(input: {
   orgId: string; documentId: string; libraryId: string; versionId: string;
   revisionLabel: string; contentHash: string | null; control: ReviewControl;
   actorId?: string | null; actorName?: string | null;
+  /** notifications N17 (the integrator's rule R2, DEC-90): false from a door
+   *  that opens rosters for MANY documents in one action (the set rev-up's
+   *  submissions) — the sign-off requests keep their bell rows and emails
+   *  and skip only the push leg. A single submission omits it. */
+  notifyPush?: boolean;
 }): Promise<void> {
   // The author is the version's created_by (the submitter); fall back to the
   // actor when the row is unreadable rather than letting the author through.
@@ -592,7 +597,9 @@ export async function openReviewRoster(input: {
     ));
     // OS-14: only the reviewers whose bell row landed (the browser leg is
     // fire-and-forget; a push failure never fails the roster)
-    await pushLandedRows({ orgId: input.orgId, kind: "review_requested", resourceId: input.documentId, recipients: asked.filter((_, i) => landed[i] === true).map((r) => r.uid) });
+    if (input.notifyPush !== false) {
+      await pushLandedRows({ orgId: input.orgId, kind: "review_requested", resourceId: input.documentId, recipients: asked.filter((_, i) => landed[i] === true).map((r) => r.uid) });
+    }
     await logAuditAction({
       action: "REVIEW_REQUESTED", resourceType: "document", resourceId: input.documentId,
       orgId: input.orgId, userId: input.actorId ?? "",

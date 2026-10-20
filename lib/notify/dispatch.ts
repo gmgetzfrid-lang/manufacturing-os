@@ -693,9 +693,13 @@ async function deliver(input: EmitInput, recipients: string[], opts: { push: boo
 const DEFAULT_CHANNELS: NotifChannel[] = ["inapp", "email", "push"];
 
 /** One emit's push request: who to push about which bell row. The sender
- *  (lib/push/sendPush.ts) re-checks every condition itself. `writerUid` is
- *  set by POST /api/push/notify only — the signed-in member who wrote the
- *  bell rows; the server path leaves it unset. */
+ *  (lib/push/sendPush.ts) re-checks every condition itself. `writerUid`: the
+ *  member who wrote the bell rows — set by POST /api/push/notify (the
+ *  signed-in member) and, since the integrator's rulings at the N17 merge
+ *  (DEC-90, R1 / R4), by the server producers outside emit() that have an
+ *  actor (the ticket routes' fan-out, the intake door's roster sender —
+ *  lib/push/afterResponsePush.ts), so DEC-108's per-writer cap applies to
+ *  them too. A server emit() leaves it unset. */
 export interface PushSendInput {
   orgId: string;
   kind: NotificationKind;

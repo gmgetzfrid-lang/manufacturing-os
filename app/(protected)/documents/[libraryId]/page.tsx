@@ -2664,9 +2664,12 @@ export default function LibraryExplorerPage() {
         // a start that threw (caught here, as split / merge catch it) and every
         // write error the helper reports. The document stands either way.
         const clockProblems: string[] = [];
+        // notifications N17 (R2, DEC-90): the multi-file upload is one action
+        // over many documents — the rosters it opens keep their bell rows and
+        // emails and send no push (notifyPush: false)
         if (issues) {
           try {
-            const writeErrors = await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });
+            const writeErrors = await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null, notifyPush: false });
             clockProblems.push(...writeErrors);
           } catch (e) {
             clockProblems.push(`the start failed (${(e as Error)?.message ?? String(e)})`);

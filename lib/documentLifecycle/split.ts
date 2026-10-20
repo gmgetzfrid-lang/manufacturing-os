@@ -262,9 +262,11 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   //     clock and read-&-understood roster start now (the call
   //     createDocumentWithFile makes), after the saga, so nobody is asked to
   //     acknowledge a sheet a rollback archived.
+  //     notifications N17 (R2, DEC-90): one split, many sheets — their
+  //     rosters keep their bell rows and emails and send no push.
   const complianceClockWarnings = await startClocksForIssuedDocuments(newDocumentIds, actor, {
     event: "CREATED_FROM_SPLIT", details: { sourceDocId: sourceId },
-  });
+  }, { notifyPush: false });
 
   // 4c. GAP-314: each new sheet's unit code, decoded from its stored number
   //     (best-effort — never a rollback; what did not run is reported).
