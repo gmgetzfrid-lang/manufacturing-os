@@ -71,7 +71,7 @@ import {
   publicDoorClientIp, publicDoorVerdict, recordPublicDoorAttempt, PUBLIC_DOOR_MAX_PER_HOUR, UNKNOWN_CLIENT_IP,
   PUBLIC_DOOR_UNCHECKED_MESSAGE, REQUEST_ACCESS_ACKNOWLEDGEMENT,
 } from "@/lib/publicDoorLimiter";
-import { ACCESS_REQUEST_AUDIENCE } from "@/lib/accessRequestOutcome";
+import { ACCESS_REQUEST_AUDIENCE, requestAccessTiming } from "@/lib/accessRequestOutcome";
 import { EXPORT_EXCLUDED_TABLES } from "@/lib/exportTables";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -91,6 +91,9 @@ const callsOn = (table: string, method?: string) => st.calls.filter((c) => c.tab
 
 let warn: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
+  // ORG-24's response floor (600 ms on every answer) is pinned in
+  // aoRoundGP5FixPass.test.ts; this suite tests the door's other behaviour
+  requestAccessTiming.floorMs = 0;
   st.queues = {};
   st.calls = [];
   st.createUser = { data: { user: { id: "uid-new" } }, error: null };

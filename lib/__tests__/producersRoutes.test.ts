@@ -150,13 +150,16 @@ import { POST as createUser } from "@/app/api/admin/create-user/route";
 import { REQUEST_ACCESS_ACKNOWLEDGEMENT } from "@/lib/publicDoorLimiter";
 import {
   renderAccessRequestOutcome, ACCESS_REQUEST_AUDIENCE, ACCESS_REQUEST_NOTICES_PER_ORG_HOUR, ADDRESS_MAX,
-  noticeSafeName, wellFormedAddress,
+  noticeSafeName, wellFormedAddress, requestAccessTiming,
 } from "@/lib/accessRequestOutcome";
 
 const ORG = "org1";
 const member = (uid: string, roles: string[], status = "active") => ({ id: `m-${uid}`, org_id: ORG, uid, role: roles[0], roles, status, email: `${uid}@acme.test` });
 
 beforeEach(() => {
+  // ORG-24's response floor (600 ms on every answer) is pinned in
+  // aoRoundGP5FixPass.test.ts; this suite tests the door's other behaviour
+  requestAccessTiming.floorMs = 0;
   s.db = newFakeDb();
   s.caller = { id: "admin1", email: "admin1@acme.test" };
   s.bells = [];

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
+import { normalizeEmail, applyEmailLookup, findOrgByTypedName } from "@/lib/identity";
 import { publicDoorClientIp, publicDoorVerdict, recordPublicDoorAttempt } from "@/lib/publicDoorLimiter";
 
 const TRIAL_DAYS = 60;
@@ -43,12 +43,11 @@ export async function POST(req: NextRequest) {
     // the per-IP window, not just successful signups.
     await recordPublicDoorAttempt(supabaseAdmin, ip, String(email), "attempt");
 
-    // 1. Check if org name already exists (case-insensitive)
-    const { data: existingOrg } = await supabaseAdmin
-      .from("orgs")
-      .select("id, name")
-      .ilike("name", trimmedOrgName)
-      .maybeSingle();
+    // 1. Check if org name already exists (case-insensitive). The typed name
+    // is matched literally, never as a pattern (the integrator's ruling 1 at
+    // the AO-P5 merge, DEC-90): "Acm%" is not "Acme". lib/identity.ts
+    // findOrgByTypedName.
+    const existingOrg = await findOrgByTypedName(supabaseAdmin, trimmedOrgName);
 
     if (existingOrg) {
       // ORG-8: the name is taken — a real need to say so (the person must

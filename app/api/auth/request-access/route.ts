@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
+import { normalizeEmail, applyEmailLookup, findOrgByTypedName } from "@/lib/identity";
 import { notifyMany, notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { queueEmail } from "@/lib/notifications";
 import { resolveRoleRecipients } from "@/lib/notify/recipients";
@@ -11,7 +11,7 @@ import {
 } from "@/lib/publicDoorLimiter";
 import {
   ACCESS_REQUEST_AUDIENCE, ACCESS_REQUEST_BURST_RESOURCE_TYPE, ACCESS_REQUEST_NOTICES_PER_ORG_HOUR,
-  noticeSafeName, wellFormedAddress,
+  noticeSafeName, wellFormedAddress, holdUntilFloor,
 } from "@/lib/accessRequestOutcome";
 
 // This public, unauthenticated endpoint was the one door in the auth pair with
@@ -29,6 +29,23 @@ import {
 // exists or what its registered casing is. Only answers that say nothing
 // about the name differ: missing fields (400), the window (429 / 503), and a
 // server fault while recording (500, without the database's words).
+//
+// ORG-24 (the integrator's ruling 3 at the AO-P5 merge, 2026-10-20, DEC-90):
+// nor does the TIME. The three outcomes do the same five awaited round trips
+// (the window's count, the attempt row, the name lookup, the duplicate
+// lookup, and the insert or a same-shaped head count in its place), the
+// Admins' notice is sent after the response (next/server after()), and every
+// answer waits out REQUEST_ACCESS_MIN_RESPONSE_MS from the moment the request
+// arrived (lib/accessRequestOutcome.ts, which states why 600 ms).
+//
+// The typed workspace name is matched literally, never as a pattern
+// (ruling 1, same merge): "%", "*" or "_cme refining" files nothing and
+// tells nobody (lib/identity.ts findOrgByTypedName).
+
+/** The duplicate lookup's org id when no workspace has the name: a valid
+ *  uuid no workspace holds, so the "no such workspace" path runs the same
+ *  query as the other two and finds nothing (ORG-24). */
+const NO_WORKSPACE_ID = "00000000-0000-0000-0000-000000000000";
 
 function acknowledged(): NextResponse {
   return NextResponse.json({ ok: true, message: REQUEST_ACCESS_ACKNOWLEDGEMENT });
@@ -216,7 +233,29 @@ async function notifyAccessRequest(input: {
   }
 }
 
+/** Runs the Admins' notice after the response is sent (ORG-24). Outside a
+ *  request scope — never on a deployed route — after() cannot schedule, so
+ *  the notice runs before answering instead, as it did before ORG-24
+ *  (logged): a request is never left unannounced. */
+async function noticeAfterResponse(task: () => Promise<void>): Promise<void> {
+  try {
+    after(task);
+  } catch (e) {
+    console.warn(`[request-access] the notice could not be scheduled after the response (${(e as Error)?.message ?? e}) — sending it before answering`);
+    await task();
+  }
+}
+
 export async function POST(req: NextRequest) {
+  // ORG-24: every answer — the acknowledgement and every refusal — waits out
+  // the same floor from this moment.
+  const startedAt = Date.now();
+  const res = await answer(req);
+  await holdUntilFloor(startedAt);
+  return res;
+}
+
+async function answer(req: NextRequest): Promise<NextResponse> {
   const ip = publicDoorClientIp(req);
   try {
     const door = await publicDoorVerdict(supabaseAdmin, ip, "access requests");
@@ -238,30 +277,34 @@ export async function POST(req: NextRequest) {
     // limit rather than being free.
     await recordPublicDoorAttempt(supabaseAdmin, ip, email, "request-access");
 
-    // 1. Find the organization (case-insensitive)
-    const { data: org } = await supabaseAdmin
-      .from("orgs")
-      .select("id, name")
-      .ilike("name", String(orgName).trim())
-      .maybeSingle();
-
-    // ORG-8: no such workspace gets the same answer as a recorded request.
-    if (!org) return acknowledged();
-
-    const orgId = (org as { id: string; name: string }).id;
-    const orgRealName = (org as { id: string; name: string }).name;
+    // 1. Find the organization: the stored name, any letter case, matched
+    // literally (ruling 1 — never a pattern).
+    const org = await findOrgByTypedName(supabaseAdmin, String(orgName));
 
     // 2. Check for duplicate pending request — case-insensitively (IDENT-3),
     // and refuse on a failed lookup rather than reading it as "no pending
-    // request" and stacking a duplicate row.
+    // request" and stacking a duplicate row. ORG-24: run for "no such
+    // workspace" too (against an id no workspace holds), so all three
+    // outcomes await the same reads.
     const { data: existingReqs, error: dupCheckError } = await applyEmailLookup(
       supabaseAdmin.from("access_requests").select("id, status"),
       "email",
       email
     )
-      .eq("org_id", orgId)
+      .eq("org_id", org?.id ?? NO_WORKSPACE_ID)
       .eq("status", "pending")
       .limit(1);
+
+    // ORG-8: no such workspace gets the same answer as a recorded request;
+    // ORG-24: after the same fifth round trip the insert would have been.
+    if (!org) {
+      await requestsToOrgLastHour(NO_WORKSPACE_ID);
+      return acknowledged();
+    }
+
+    const orgId = org.id;
+    const orgRealName = org.name;
+
     if (dupCheckError) {
       return NextResponse.json(
         { error: "Couldn't submit your request — please try again." },
@@ -271,8 +314,11 @@ export async function POST(req: NextRequest) {
     const existingReq = existingReqs?.[0] ?? null;
 
     // ORG-8: a request already waiting gets the same answer too — nothing is
-    // stacked, nobody is told twice.
-    if (existingReq) return acknowledged();
+    // stacked, nobody is told twice. ORG-24: after the same fifth round trip.
+    if (existingReq) {
+      await requestsToOrgLastHour(orgId);
+      return acknowledged();
+    }
 
     // 3. Insert request linked to the org
     const { data: inserted, error: insertError } = await supabaseAdmin.from("access_requests").insert({
@@ -289,11 +335,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Couldn't submit your request — please try again." }, { status: 500 });
     }
 
-    // 4. Tell the people who can answer it (PROD-2).
-    await notifyAccessRequest({
-      orgId, orgName: orgRealName, displayName: String(displayName), email,
-      requestId: ((inserted as { id?: string } | null)?.id) ?? null,
-    });
+    // 4. Tell the people who can answer it (PROD-2) — after the response
+    // (ORG-24), so the answer does not wait on the Admin roster, the per-org
+    // count, the bell rows or the email queue. notifyAccessRequest never
+    // throws.
+    const requestId = ((inserted as { id?: string } | null)?.id) ?? null;
+    await noticeAfterResponse(() => notifyAccessRequest({
+      orgId, orgName: orgRealName, displayName: String(displayName), email, requestId,
+    }));
 
     return acknowledged();
   } catch (err: unknown) {

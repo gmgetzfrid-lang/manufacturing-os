@@ -115,6 +115,7 @@ vi.mock("@/components/providers/RoleContext", () => ({
 
 import {
   subscriptionEnforced, lapsedWorkspaceMessage, assertOrgHasAccess, enforceOrgAccess, orgAccessVerdict,
+  resetWouldRefuseLogForTests,
 } from "@/lib/serverAuth";
 import { POST as uploadUrl } from "@/app/api/storage/upload-url/route";
 import { POST as multipart } from "@/app/api/storage/multipart/route";
@@ -146,6 +147,9 @@ beforeEach(() => {
   s.reads = [];
   s.signed = 0;
   s.r2Sent = [];
+  // the switch-off line is written once per workspace per hour (ruling 2 at
+  // the AO-P5 merge): each test starts with a fresh throttle
+  resetWouldRefuseLogForTests();
   warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 afterEach(() => {

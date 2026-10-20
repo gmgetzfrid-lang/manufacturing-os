@@ -626,7 +626,13 @@ request-access/route.ts:19-24 — `if (!org) { return NextResponse.json({ error:
 - [x] The short-org-name rejection in signup records an attempt before returning ✓.
 - [x] The anon INSERT policy on access_requests is removed so PostgREST cannot be used to bypass the route ✓ — by `20261023` §3 (EGRESS-5, **LIVE**, MIGRATION-PASTE-ORDER.md row 25); the route writes as the service role. `20261238` (P5, **PASTE pending**) re-asserts the drop (a no-op where 20261023 ran) and probes "no INSERT / ALL policy on access_requests".
 
-**Scope / residual.** Signup must still say a name is taken (the person picks another or asks to join), so that one answer remains — an org-existence answer at the same shared per-IP window (8 an hour per address), no longer handing out the registered casing. It is accepted, not open: DEC-90 ruling (4) collapses the request door's oracle and keeps signup's "name taken" because the product cannot mint two workspaces of one name without it; owner of any later change (for example a name-availability answer only after an emailed confirmation): the integrator. The door's response time still differs between a name that exists (insert + notice) and one that does not — a timing side channel, opened as `ORG-24` (LOW). A fault while recording (500) is reachable only when the workspace exists; an attacker cannot cause one.
+**Integrator's fix pass at the merge (2026-10-20).** Ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90):
+- **The typed name is matched literally at both doors, never as a pattern** (review issue 1). Both doors handed the typed text to `ilike` as the pattern, so "%" or "_cme refining" matched "Acme Refining" — a request was filed with, and its Admins told about, a workspace whose name was never typed — and signup answered "Acm%" with "name taken" because "Acme" exists. Now both call `lib/identity.ts:108` `findOrgByTypedName`: `\`, `%` and `_` are escaped (`likeLiteral`, `:78`, the `emailLikePattern` rule) so `ilike` compares the literal text case-insensitively; a name holding `*` (PostgREST rewrites it to `%`, with no escape) is sent with each `*` as a one-character `_` — which only narrows the read to same-length names — and a row is kept only when its name equals the typed text, case-insensitively, compared in code; so "R*Tech" finds "r*tech" and never "RxTech". `request-access/route.ts:282`, `signup/route.ts:50`. Every exact name, typed in any letter case with surrounding whitespace, matches exactly as before (pinned).
+- **The timing channel is closed in the same package**: `ORG-24` RESOLVED (its record) — the notice after the response, the same five awaited round trips for all three outcomes, a 600 ms floor on every answer. The acknowledgement now leaves `route.ts` from `answer()` (`:258`) through `POST` (`:249`).
+
+Tests: `lib/__tests__/aoRoundGP5FixPass.test.ts` "ruling 1 — …" over an orgs table evaluated as PostgREST + PostgreSQL would (`*` → `%`, ILIKE with `\` escapes): request-access with "%", "*", "_cme refining", "acme%", "Acme Refinin_", "*Refining", "%cme r*" files no `access_requests` row, schedules no notice, tells nobody and answers the same acknowledgement; signup "Acm%" is not refused for "Acme" (200, created); "acme refining " still finds "Acme Refining" (409, the typed name); "Acme Refining", "acme refining", "  ACME REFINING  " and a tab/newline-wrapped mixed case each record the request for that workspace; a real name holding `_` / `%` matches itself only; a `*` name exactly and never as a wildcard. Removing the escape fails eight of them.
+
+**Scope / residual.** Signup must still say a name is taken (the person picks another or asks to join), so that one answer remains — an org-existence answer at the same shared per-IP window (8 an hour per address), no longer handing out the registered casing. It is accepted, not open: DEC-90 ruling (4) collapses the request door's oracle and keeps signup's "name taken" because the product cannot mint two workspaces of one name without it; owner of any later change (for example a name-availability answer only after an emailed confirmation): the integrator. The door's response time differed between a name that exists (insert + notice) and one that does not — a timing side channel, opened as `ORG-24` (LOW) and resolved at the AO-P5 merge (above). A fault while recording (500) is reachable only when the workspace exists; an attacker cannot cause one.
 
 ---
 
@@ -635,7 +641,7 @@ request-access/route.ts:19-24 — `if (!org) { return NextResponse.json({ error:
 ## ORG-9 · Subscription/trial enforcement is inert at all three layers, and orgs UPDATE is column-unrestricted so any Admin can self-grant 'active' or hijack another tenant's Stripe identity
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-10-20, admin-and-org Round G P5; limb (c) closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): `org_has_active_subscription` kept as documented, unwired scaffolding; the contractor intake door's call is tracked on `BILL-10` Done-when 2 alone)
 - **Verification:** CONFIRMED
 - **Locations:** `components/subscription/SubscriptionGate.tsx:3-8, 46-48`, `lib/serverAuth.ts:78-100`, `supabase/migrations/20260713_document_publish_guard.sql:90-107`, `supabase/schema.sql:1042-1045`, `app/api/stripe/webhook/route.ts:138-146`, `supabase/migrations/20260601_billing.sql:31`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All five sub-claims verified, including both claims of absence. MEDIUM is fair: enforcement being off is a deliberate, commented choice, so the self-grant has no effect today, but the customer-id column being tenant-writable makes another tenant's webhook resolution attacker-influenced.
@@ -694,7 +700,9 @@ On PostgreSQL 16, before either paste, an Admin's member session updated its own
 - (b) `assertOrgHasAccess`: wired — `create-user` (SURF-15), `/api/storage/upload-url` (org-prefixed keys), `/api/storage/multipart` (create), each through `enforceOrgAccess` (off: logged only; on: 402 with a sentence). *(Review fix: `create-user` used to call `assertOrgHasAccess` and read `process.env.SUBSCRIPTION_ENFORCE` itself — a second spelling of the switch; it now calls `enforceOrgAccess(supabaseAdmin, orgId, "create-user")`, pinned in `sweepRoundA3.test.ts` and exercised in `createUserRoute.test.ts`.)* The contractor intake door (`app/api/intake/upload/**`) is not wired — held by intelligence I-26 in parallel; owner in `BILL-10`'s Partial.
 - (c) `org_has_active_subscription` (20260713): neither wired nor deleted. The integrator's ruling allows the RLS limb only if it cannot regress an active workspace, and it could (the database cannot see the server's switch; a missed webhook would refuse an active workspace's writes), so it is not wired; its own comment says "NOT wired to any blocking policy yet", which is true, so there is no false claim to delete. Done-when 3 as written is therefore not met for (c): the integrator rules whether (c) is dropped (one `DROP FUNCTION` in a later migration; no caller) or kept as documented scaffolding.
 
-**Done-when 3.** [ ] Not met as written — (a) and (b) wired except the intake door; (c) neither wired nor deleted (above). Owners: the intake-door limb as in `BILL-10`; (c) the integrator.
+**Ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90).** (c) is **kept by decision** (no `DROP FUNCTION`): it is unwired scaffolding whose own comment already says it is "NOT wired to any blocking policy yet", so it claims no enforcement, and dropping it buys nothing while a later database-side lockout may want it. That closes limb (c) by ruling. The contractor intake door is not an ORG-9 enforcement point of its own — (b), `assertOrgHasAccess`, is wired and called — and the remaining route that should call it is tracked once, on `BILL-10` Done-when 2 (owner: the integrator, at the later of the AO-P5 and I-26 merges).
+
+**Done-when 3.** [x] Met — (a) wired (the strip asks the server); (b) wired (`create-user`, `upload-url`, `multipart` create, through `enforceOrgAccess`); (c) kept by decision under the ruling above, its comment claiming nothing; no comment claiming enforcement remains. *(At the P5 review fix this read "[ ] Not met as written … (c) the integrator"; the ruling closed it.)*
 
 ---
 
@@ -804,7 +812,7 @@ ThemeProvider.tsx:183 — `const applyOrgPalette = useCallback((p: Palette | nul
 ## ORG-12 · prune_signup_attempts() has no caller — the housekeeping the migration describes does not exist, and no cron slot is available to add one
 
 - **Severity:** LOW
-- **Status:** RESOLVED
+- **Status:** RESOLVED (code) — database half pending 20261238 (ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): the status stays exactly this until `20261238` is pasted and its result rows come back all true)
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261010_signup_rate_limit.sql:34-40`, `app/api/auth/signup/route.ts:31-34`, `app/api/cron/maintenance/route.ts:286-291`, `vercel.json`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The no-caller claim is true. The severity is not: the row is tiny, signup_attempts is service-role-only with no policies, the hot query is index-covered (signup_attempts_ip_time_idx), and nothing breaks — this is unbounded growth of a housekeeping table. The secondary claim 'no cron slot is available' is also overstated: /api/cron/maintenance already exists as a daily slot and the RPC could be added inside it without a new vercel.json entry.
@@ -859,6 +867,8 @@ The obvious fix is constrained: a third vercel.json cron entry fails deployment 
 - [x] signup_attempts is reviewed against the data-portability export contract ✓ — excluded, with the reason corrected to what it holds.
 
 **Pending migration:** `supabase/migrations/20261238_ao_roundG_signup_attempts_housekeeping.sql` (PASTE; after 20261010; either order with the P5 deploy). The cron step needs no paste.
+
+**Status, explicitly (ruled by the integrator at the AO-P5 merge, 2026-10-20, DEC-90).** RESOLVED (code) — database half pending 20261238. The code half (the cron step, the retention stated in code, the export reason) is done and needs no paste; the database half (the function's COMMENT, its `search_path`, EXECUTE narrowed to service_role, the table comment, the re-asserted anon-INSERT drop) exists only once `20261238` is pasted. The record moves to plain RESOLVED when the paste's result rows come back all `ok = true`.
 
 **Scope / residual.** None for this finding. Pasting 20261010 itself (row 9, "ASK") is the operator's: until then the doors run without a per-IP window (logged) and the prune is a no-op.
 
@@ -1365,8 +1375,8 @@ Tests: `lib/__tests__/aoRoundGP13Principal.test.ts` — reproduced (the empty re
 
 - **Severity:** LOW
 - **Severity rationale:** The author's estimate. ORG-8's oracle is closed in the status code and the body; what remains is a timing difference an attacker must measure through network jitter, bounded by the shared per-IP window (8 attempts an hour per address) and by the per-org notice cap.
-- **Status:** OPEN
-- **Assigned:** — Owner: the integrator, to route (admin-and-org; the file is `app/api/auth/request-access/route.ts`). Opened 2026-10-20 by admin-and-org Round G P5 as the DEC-31 remainder of `ORG-8`.
+- **Status:** RESOLVED (2026-10-20, ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90) — fixed in the same package at its merge rather than left open; within the stated bound below)
+- **Assigned:** — Opened 2026-10-20 by admin-and-org Round G P5 as the DEC-31 remainder of `ORG-8`; fixed by the integrator's fix pass at the AO-P5 merge.
 - **Verification:** CONFIRMED (by reading, on `7f92269` + P5)
 - **Locations:** `app/api/auth/request-access/route.ts:249` (no workspace → answers at once), `:252-298` (a workspace → a duplicate read, an insert, and `notifyAccessRequest` — the Admin roster, the per-org count, a bell insert and the email queue — all awaited before the same answer)
 - **Related:** `ORG-8` (resolved), `PROD-2`, `PROD-15`
@@ -1378,5 +1388,19 @@ Tests: `lib/__tests__/aoRoundGP13Principal.test.ts` — reproduced (the empty re
 **Done when.**
 - The answer's timing does not depend on whether the workspace exists: the notice runs after the response (`after()` from `next/server`, or the request is queued for the cron), and the no-workspace path does equivalent work or waits a comparable, randomised interval.
 - A test pins that the response is sent before the notice and that the duplicate / recorded / unknown paths do the same awaited work.
+
+**Resolution (2026-10-20, admin-and-org Round G — the integrator's fix pass at the AO-P5 merge).** Ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): fix the channel rather than leave it open — the same awaited work shape for all three outcomes where practical, and a fixed minimum response time on every path.
+
+- **The notice runs after the response.** `app/api/auth/request-access/route.ts:343` hands `notifyAccessRequest` to `noticeAfterResponse` (`:240`), which schedules it with `after()` from `next/server`; the answer no longer waits on the Admin roster, the per-org count, the bell rows or the email queue. Outside a request scope (never on a deployed route) `after()` cannot schedule; the notice then runs before answering, as before, and the log says so — a request is never left unannounced.
+- **The three outcomes do the same five awaited round trips:** the window's count, the attempt row, the workspace lookup, the duplicate lookup — run for "no such workspace" too, against a uuid no workspace holds (`NO_WORKSPACE_ID`, `:48`, `:294`) — and then the request insert (recorded) or, in its place, a same-shaped one-call head count on `access_requests` (unknown `:301`, already asked). The insert stays awaited on purpose: a failed write still answers 500 so the person knows to retry (no regression).
+- **A floor on every answer.** `POST` (`:249`) records the arrival time and, whatever `answer()` returns — the acknowledgement, 400, 429, 503 or 500 — waits until `REQUEST_ACCESS_MIN_RESPONSE_MS` (`lib/accessRequestOutcome.ts:131`, **600 ms**) has passed (`holdUntilFloor`, `:141`). Why 600 ms: the awaited path is five sequential service-role round trips; the tests drive it at a pessimistic 80 ms per round trip (400 ms for every outcome), and every answer still lands at exactly 600 ms.
+
+**Tests.** `lib/__tests__/aoRoundGP5FixPass.test.ts` "ruling 3 — ORG-24 …" (fake time, 80 ms per round trip): unknown / duplicate / recorded give the identical status and body, none answers before 599 ms and all three at exactly 600 ms; the awaited sequence is the same four reads plus the insert or the head count; nothing is told while answering and only the recorded request schedules a notice, which, run, reaches the Admins by bell and email; the floor holds on every path (missing fields, window spent, window uncountable, a recording fault, each outcome at zero latency — all at 600 ms); a source pin that `after()` carries the notice and the floor wraps the whole handler. The suites that exercise the door's other behaviour (`producersRoutes`, `requestAccessRoute`, `aoRoundGP5PublicDoors`) set the floor to 0 through the `requestAccessTiming` seam.
+
+**Done-when.**
+- [x] The answer's timing does not depend on whether the workspace exists ✓ — the notice runs after the response (`after()`), the no-workspace path does the same work (the same reads and a same-shaped fifth round trip), and every answer waits out the 600 ms floor.
+- [x] A test pins that the response is sent before the notice and that the duplicate / recorded / unknown paths do the same awaited work ✓ (above).
+
+**Scope / residual (the stated bound).** The floor equalises the answers only while the five round trips finish inside 600 ms: a database slower than about 120 ms per round trip would exceed it, and the recorded path's insert could then differ from the head count in its place. A recording fault (the duplicate lookup or the insert failing, 500) can only happen for a real workspace; it is a fault the caller cannot induce and says nothing about the name. The per-IP window (8 an hour) and the per-org notice cap still bound any probing.
 
 ---

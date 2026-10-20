@@ -52,6 +52,7 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 
 import { POST } from "@/app/api/auth/request-access/route";
 import { REQUEST_ACCESS_ACKNOWLEDGEMENT } from "@/lib/publicDoorLimiter";
+import { requestAccessTiming } from "@/lib/accessRequestOutcome";
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/auth/request-access", {
@@ -68,6 +69,9 @@ function accessInserts() {
 }
 
 beforeEach(() => {
+  // ORG-24's response floor (600 ms on every answer) is pinned in
+  // aoRoundGP5FixPass.test.ts; this suite tests the door's other behaviour
+  requestAccessTiming.floorMs = 0;
   mockState.queues = {
     orgs: [{ data: { id: "org-1", name: "Acme Refining" } }],
   };

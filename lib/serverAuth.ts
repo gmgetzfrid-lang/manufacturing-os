@@ -179,12 +179,46 @@ export async function assertOrgHasAccess(
   return { error: lapsedWorkspaceMessage(info), status: 402 };
 }
 
+/** How often the switch-off "would refuse" line is written per workspace,
+ *  per server process (the integrator's ruling 2 at the AO-P5 merge,
+ *  2026-10-20, DEC-90): once an hour, so a lapsed workspace uploading a
+ *  thousand files writes one line, not a thousand. */
+export const WOULD_REFUSE_LOG_TTL_MS = 3600_000;
+
+/** org id → when its last "would refuse" line was written, and how many
+ *  would-refuse calls were not logged since (said on the next line). */
+const wouldRefuseLog = new Map<string, { loggedAt: number; suppressed: number }>();
+
+/** Clears the per-org log throttle. For the tests only. */
+export function resetWouldRefuseLogForTests(): void {
+  wouldRefuseLog.clear();
+}
+
+function logWouldRefuse(where: string, orgId: string, sentence: string): void {
+  const now = Date.now();
+  const last = wouldRefuseLog.get(orgId);
+  if (last && now - last.loggedAt < WOULD_REFUSE_LOG_TTL_MS) {
+    last.suppressed += 1;
+    return;
+  }
+  // Bound the map: entries past their hour carry nothing worth keeping.
+  if (wouldRefuseLog.size >= 10_000) {
+    for (const [k, v] of wouldRefuseLog) if (now - v.loggedAt >= WOULD_REFUSE_LOG_TTL_MS) wouldRefuseLog.delete(k);
+  }
+  const quiet = last && last.suppressed > 0
+    ? ` (${last.suppressed} more would-refuse call(s) for this workspace were not logged since the last line)`
+    : "";
+  wouldRefuseLog.set(orgId, { loggedAt: now, suppressed: 0 });
+  console.warn(`[${where}] subscription gate would refuse org ${orgId} (SUBSCRIPTION_ENFORCE off): ${sentence}${quiet}`);
+}
+
 /**
  * The one call a route that mints a seat or new stored bytes makes (DEC-18).
  * Switch off: never refuses — a lapsed workspace's would-be refusal is logged
- * (`[where] subscription gate would refuse …`) so the operator can see the
- * blast radius before switching it on. Switch on: answers the 402 the route
- * returns as it is.
+ * (`[where] subscription gate would refuse …`, at most once per workspace per
+ * hour per server process, the next line counting the calls not logged) so
+ * the operator can see the blast radius before switching it on. Switch on:
+ * answers the 402 the route returns as it is (nothing is throttled).
  */
 export async function enforceOrgAccess(
   admin: SupabaseClient,
@@ -194,7 +228,7 @@ export async function enforceOrgAccess(
   const gate = await assertOrgHasAccess(admin, orgId);
   if (!gate) return null;
   if (subscriptionEnforced()) return gate;
-  console.warn(`[${where}] subscription gate would refuse org ${orgId} (SUBSCRIPTION_ENFORCE off): ${gate.error}`);
+  logWouldRefuse(where, orgId, gate.error);
   return null;
 }
 

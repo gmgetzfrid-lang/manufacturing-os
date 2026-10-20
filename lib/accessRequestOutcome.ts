@@ -108,6 +108,41 @@ export const ACCESS_REQUEST_NOTICES_PER_ORG_HOUR = 5;
  *  request (clearAccessRequestNotices) does not clear it. */
 export const ACCESS_REQUEST_BURST_RESOURCE_TYPE = "org";
 
+// ── ORG-24: the request door answers in the same time whatever the name ────
+//
+// The integrator's ruling 3 at the AO-P5 merge, 2026-10-20 (DEC-90): the
+// neutral acknowledgement (ORG-8) must not leak a workspace's existence by
+// how long it takes. /api/auth/request-access therefore (1) does the same
+// five awaited database round trips for "no such workspace", "already
+// asked" and "recorded" — the window's count, the attempt row, the name
+// lookup, the duplicate lookup, and either the request insert or a
+// same-shaped head count in its place; (2) sends the Admins' notice AFTER
+// the response (next/server after()); and (3) answers no sooner than
+// REQUEST_ACCESS_MIN_RESPONSE_MS after it started, on every path (the
+// refusals included).
+//
+// Why 600 ms: the awaited path is five sequential service-role round trips;
+// the tests drive it at a pessimistic 80 ms per round trip (400 ms, every
+// outcome) and every answer still lands at exactly the floor. A database
+// slower than ~120 ms per round trip would exceed the floor and could again
+// differ by the one row write — the bound ORG-24's record states.
+
+/** The request door's minimum response time, in milliseconds (ORG-24). */
+export const REQUEST_ACCESS_MIN_RESPONSE_MS = 600;
+
+/** The floor the request door applies. A mutable seam ONLY so suites that
+ *  exercise the door's other behaviour (the notice, the burst cap) are not
+ *  slowed by it; lib/__tests__/aoRoundGP5FixPass.test.ts pins the real
+ *  value on every path. Production code never writes it. */
+export const requestAccessTiming = { floorMs: REQUEST_ACCESS_MIN_RESPONSE_MS };
+
+/** Waits until `floorMs` have passed since `startedAt` (Date.now() at entry);
+ *  returns at once when they already have. */
+export async function holdUntilFloor(startedAt: number, floorMs: number = requestAccessTiming.floorMs): Promise<void> {
+  const remaining = floorMs - (Date.now() - startedAt);
+  if (remaining > 0) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+}
+
 export type AccessRequestOutcome = "approved" | "declined";
 
 export interface AccessRequestOutcomeInput {
