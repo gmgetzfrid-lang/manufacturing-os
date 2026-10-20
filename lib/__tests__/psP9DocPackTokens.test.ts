@@ -9,15 +9,19 @@
 //     (/verify/<document>?v=<version>) and the pack prints exactly as before;
 //   - settle: after the download the print reports exactly the sheets in the
 //     PDF (a fetch-failed sheet's token is voided); a build that fails before
-//     the download voids the whole print (empty list); no QR at all (no
-//     public origin) mints nothing.
+//     the download voids the whole print (empty list, fired and not awaited);
+//     no QR at all (no public origin) mints nothing;
+//   - timeout: the mint and the settle give up after
+//     SHEET_TOKEN_FETCH_TIMEOUT_MS (a hung mint stamps today's QR).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const state = vi.hoisted(() => ({
   stamps: [] as Array<{ verifyUrl?: string }>,
-  calls: [] as Array<{ url: string; body: Record<string, unknown> | null }>,
-  mint: "ok" as "ok" | "unavailable" | "error" | "throw" | "partial",
+  calls: [] as Array<{ url: string; body: Record<string, unknown> | null; signal: AbortSignal | null }>,
+  mint: "ok" as "ok" | "unavailable" | "error" | "throw" | "partial" | "hang",
+  /** a settle that never answers until its signal aborts */
+  settleHangs: false,
   failUrls: new Set<string>(),
   coverThrows: false,
   origin: "https://app.example.com",
@@ -61,6 +65,7 @@ vi.mock("pdf-lib", () => {
 
 import { supabase } from "@/lib/supabase";
 import { buildAndDownloadDocPack } from "@/lib/docPack";
+import { mintSheetTokens, settleSheetTokens, SHEET_TOKEN_FETCH_TIMEOUT_MS } from "@/lib/printSheetTokensClient";
 
 const tables = (supabase as unknown as { __tables: Record<string, Array<Record<string, unknown>>> }).__tables;
 const D1 = "d1d1d1d1-0000-0000-0000-000000000001";
@@ -75,6 +80,7 @@ beforeEach(() => {
   state.stamps = [];
   state.calls = [];
   state.mint = "ok";
+  state.settleHangs = false;
   state.failUrls = new Set();
   state.coverThrows = false;
   state.origin = "https://app.example.com";
@@ -88,10 +94,15 @@ beforeEach(() => {
     { id: V1, file_url: "https://files/p101.pdf" },
     { id: V2, file_url: "https://files/p102.pdf" },
   ];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string }) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string; signal?: AbortSignal }) => {
     if (String(url) === "/api/print-sheet-tokens") {
       const body = init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
-      state.calls.push({ url: String(url), body });
+      state.calls.push({ url: String(url), body, signal: init?.signal ?? null });
+      const hang = () => new Promise<never>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+      if (body?.action === "settle" && state.settleHangs) return hang();
+      if (body?.action === "mint" && state.mint === "hang") return hang();
       if (body?.action === "settle") return { ok: true, status: 200, json: async () => ({ settled: true }) };
       if (state.mint === "throw") throw new Error("network down");
       if (state.mint === "unavailable") return { ok: true, status: 200, json: async () => ({ available: false }) };
@@ -143,7 +154,54 @@ describe("PS-P9 — a printed pack's sheets are named by their per-print token",
       ...base,
       buildCoverAfter: async () => { throw new Error("The pack was NOT printed: its print record could not be written"); },
     })).rejects.toThrow(/NOT printed/);
-    expect(settles().map((c) => c.body)).toEqual([{ action: "settle", orgId: "org1", printId: PRINT, printed: [] }]);
+    await vi.waitFor(() => expect(settles().map((c) => c.body)).toEqual([{ action: "settle", orgId: "org1", printId: PRINT, printed: [] }]));
+  });
+});
+
+describe("PS-P9 — the print never waits on the token route for long", () => {
+  it("the mint and the settle each carry an abort signal (SHEET_TOKEN_FETCH_TIMEOUT_MS)", async () => {
+    await buildAndDownloadDocPack({ ...base });
+    expect(mints()[0].signal).toBeInstanceOf(AbortSignal);
+    expect(settles()[0].signal).toBeInstanceOf(AbortSignal);
+    expect(SHEET_TOKEN_FETCH_TIMEOUT_MS).toBe(8000);
+  });
+
+  it("a mint that never answers is given up after the timeout: null — the pack stamps today's QR", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      state.mint = "hang";
+      const p = mintSheetTokens({ orgId: "org1", sheets: [{ documentId: D1, versionId: V1 }] });
+      await vi.advanceTimersByTimeAsync(SHEET_TOKEN_FETCH_TIMEOUT_MS - 1);
+      expect(mints()[0].signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await p).toBeNull();
+      expect(mints()[0].signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a settle that never answers is given up after the timeout: false (the print stays unsettled, every token live)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      state.settleHangs = true;
+      const p = settleSheetTokens({ orgId: "org1", printId: PRINT, printedDocumentIds: [D1] });
+      await vi.advanceTimersByTimeAsync(SHEET_TOKEN_FETCH_TIMEOUT_MS);
+      expect(await p).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a failed build throws at once — it does not wait on the abort settle (fired, not awaited)", async () => {
+    state.settleHangs = true;
+    await expect(buildAndDownloadDocPack({
+      ...base,
+      buildCoverAfter: async () => { throw new Error("The pack was NOT printed: its print record could not be written"); },
+    })).rejects.toThrow(/NOT printed/);
+    // the void was still sent, and is still pending when the user sees the error
+    await vi.waitFor(() => expect(settles().map((c) => c.body?.printed)).toEqual([[]]));
+    expect(settles()[0].signal?.aborted).toBe(false);
   });
 });
 

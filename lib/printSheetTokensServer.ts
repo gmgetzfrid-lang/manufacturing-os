@@ -30,5 +30,12 @@ export function isMissingSheetTokenTable(error: { code?: string; message?: strin
   return /print_sheet_tokens/.test(error.message ?? "") && /does not exist|could not find|schema cache/i.test(error.message ?? "");
 }
 
+/** The per-member mint window: at most this many sheets minted by one
+ *  member in the last SHEET_TOKEN_MINT_WINDOW_MS. A mint over it is refused
+ *  (429) and that pack keeps today's QR — the print is never refused. Five
+ *  maximum-size packs an hour; a field crew's normal packs stay far below. */
+export const SHEET_TOKEN_MINT_WINDOW_MAX = 5000;
+export const SHEET_TOKEN_MINT_WINDOW_MS = 60 * 60 * 1000;
+
 /** Why a token's print was voided (the CHECK in 20261237). */
 export type SheetTokenVoidReason = "not_printed" | "print_aborted";

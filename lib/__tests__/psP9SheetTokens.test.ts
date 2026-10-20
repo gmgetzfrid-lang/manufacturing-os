@@ -337,6 +337,11 @@ describe("PS-P9 — 20261237 (DEC-30 one-paste shape; service role only; DRLS-16
     expect(code).toContain("REVOKE ALL ON FUNCTION print_sheet_tokens_guard() FROM PUBLIC, anon, authenticated;");
   });
 
+  it("the mint route's per-member window is indexed (minted_by, minted_at) and probed", () => {
+    expect(code).toContain("CREATE INDEX IF NOT EXISTS print_sheet_tokens_minter_idx ON print_sheet_tokens (minted_by, minted_at);");
+    expect(code).toContain("indexname = 'print_sheet_tokens_minter_idx'");
+  });
+
   it("the void reasons the route writes are exactly the ones the CHECK allows", () => {
     expect(code).toContain("void_reason IN ('not_printed', 'print_aborted')");
     const route = readFileSync(join(process.cwd(), "app/api/print-sheet-tokens/route.ts"), "utf8");

@@ -18,6 +18,36 @@ export interface MintedSheetTokens {
   tokens: Map<string, string>;
 }
 
+/** How long a mint or a settle may take before the print stops waiting for
+ *  it. A mint that times out stamps today's QR (the print is never held on
+ *  the token route — a cold start, a slow read or a stalled field network
+ *  costs the print at most this long); a settle that times out leaves the
+ *  print unsettled, which keeps every token live. */
+export const SHEET_TOKEN_FETCH_TIMEOUT_MS = 8000;
+
+/** POST to the token route under a timeout that covers the response body
+ *  too. Throws on a network error or the timeout (the callers catch). */
+async function postTokenRoute(token: string, payload: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: unknown }> {
+  const ctl = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), SHEET_TOKEN_FETCH_TIMEOUT_MS) : null;
+  try {
+    const res = await fetch("/api/print-sheet-tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+      ...(ctl ? { signal: ctl.signal } : {}),
+    });
+    if (ctl?.signal.aborted) throw new Error("timed out");
+    const body = await Promise.race([
+      res.json().catch(() => null),
+      new Promise<null>((_, reject) => ctl?.signal.addEventListener("abort", () => reject(new Error("timed out")), { once: true })),
+    ]);
+    return { ok: res.ok, status: res.status, body };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function bearer(): Promise<string | null> {
   try {
     const { data } = await supabase.auth.getSession();
@@ -38,12 +68,8 @@ export async function mintSheetTokens(input: {
   try {
     const token = await bearer();
     if (!token) return null;
-    const res = await fetch("/api/print-sheet-tokens", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ action: "mint", orgId: input.orgId, sheets: input.sheets }),
-    });
-    const body = (await res.json().catch(() => null)) as
+    const res = await postTokenRoute(token, { action: "mint", orgId: input.orgId, sheets: input.sheets });
+    const body = res.body as
       | { available?: boolean; printId?: string; tokens?: Record<string, string>; error?: string }
       | null;
     if (!res.ok || !body || body.available !== true || typeof body.printId !== "string" || !body.tokens) {
@@ -75,11 +101,7 @@ export async function settleSheetTokens(input: {
   try {
     const token = await bearer();
     if (!token) return false;
-    const res = await fetch("/api/print-sheet-tokens", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ action: "settle", orgId: input.orgId, printId: input.printId, printed: input.printedDocumentIds }),
-    });
+    const res = await postTokenRoute(token, { action: "settle", orgId: input.orgId, printId: input.printId, printed: input.printedDocumentIds });
     if (!res.ok) {
       console.warn("[print-sheet-tokens] print not settled:", res.status);
       return false;

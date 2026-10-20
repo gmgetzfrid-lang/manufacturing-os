@@ -41,12 +41,17 @@ const state = vi.hoisted(() => ({
   inserts: [] as Array<{ table: string; rows: unknown }>,
   updates: [] as Array<{ table: string; patch: Record<string, unknown>; filters: Array<[string, string, unknown]> }>,
   callerTables: [] as string[],
+  /** the per-member mint window: sheets this member minted in the last hour */
+  windowCount: 0 as number | null,
+  windowError: null as null | { code?: string; message: string },
+  windowReads: [] as Array<{ filters: Array<[string, string, unknown]>; count: unknown }>,
 }));
 
 function chain(table: string, who: "admin" | "caller") {
   const filters: Array<[string, string, unknown]> = [];
   let op: "select" | "insert" | "update" = "select";
   let patch: Record<string, unknown> = {};
+  let selectOpts: { count?: string } | undefined;
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, p: string) {
@@ -68,6 +73,10 @@ function chain(table: string, who: "admin" | "caller") {
             const ids = filters.find((f) => f[0] === "in")?.[2] as string[];
             return resolve({ data: state.versions.filter((v) => ids.includes(v.id)), error: null });
           }
+          if (table === "print_sheet_tokens" && selectOpts?.count) {
+            state.windowReads.push({ filters: [...filters], count: selectOpts.count });
+            return resolve(state.windowError ? { data: null, count: null, error: state.windowError } : { data: [], count: state.windowCount, error: null });
+          }
           if (table === "print_sheet_tokens") {
             return resolve(state.tokenReadError ? { data: null, error: state.tokenReadError } : { data: state.tokenRows, error: null });
           }
@@ -76,9 +85,10 @@ function chain(table: string, who: "admin" | "caller") {
       }
       return (...args: unknown[]) => {
         if (who === "caller" && p === "select") state.callerTables.push(table);
+        if (p === "select") selectOpts = args[1] as { count?: string } | undefined;
         if (p === "insert") { op = "insert"; state.inserts.push({ table, rows: args[0] }); }
         if (p === "update") { op = "update"; patch = args[0] as Record<string, unknown>; }
-        if (p === "eq" || p === "in" || p === "is") filters.push([p, String(args[0]), args[1]]);
+        if (p === "eq" || p === "in" || p === "is" || p === "gte") filters.push([p, String(args[0]), args[1]]);
         return new Proxy(c, h);
       };
     },
@@ -109,6 +119,9 @@ beforeEach(() => {
   state.inserts = [];
   state.updates = [];
   state.callerTables = [];
+  state.windowCount = 0;
+  state.windowError = null;
+  state.windowReads = [];
 });
 
 async function post(body: unknown) {
@@ -166,6 +179,38 @@ describe("PS-P9 mint", () => {
     state.callerError = { message: "boom" };
     expect((await post({ action: "mint", orgId: ORG, sheets: [{ documentId: D1, versionId: V1 }] })).status).toBe(503);
     expect(state.inserts.length).toBe(1);
+  });
+
+  it("the per-member window: a member's sheets minted in the last hour, plus this pack's, stay under the cap — over it the mint is 429 and nothing is written (the pack keeps today's QR)", async () => {
+    const { SHEET_TOKEN_MINT_WINDOW_MAX, SHEET_TOKEN_MINT_WINDOW_MS } = await import("@/lib/printSheetTokensServer");
+    expect(SHEET_TOKEN_MINT_WINDOW_MS).toBe(60 * 60 * 1000);
+    const two = [{ documentId: D1, versionId: V1 }, { documentId: D2, versionId: V2 }];
+    // exactly at the cap is allowed
+    state.windowCount = SHEET_TOKEN_MINT_WINDOW_MAX - 2;
+    const before = Date.now();
+    expect((await post({ action: "mint", orgId: ORG, sheets: two })).status).toBe(200);
+    expect(state.inserts).toHaveLength(1);
+    // the window counted THIS member's mints since an hour ago
+    const read = state.windowReads[0];
+    expect(read.count).toBe("exact");
+    expect(read.filters.find((f) => f[0] === "eq" && f[1] === "minted_by")?.[2]).toBe(UID);
+    const since = Date.parse(String(read.filters.find((f) => f[0] === "gte" && f[1] === "minted_at")?.[2]));
+    expect(since).toBeGreaterThanOrEqual(before - SHEET_TOKEN_MINT_WINDOW_MS - 1000);
+    expect(since).toBeLessThanOrEqual(Date.now() - SHEET_TOKEN_MINT_WINDOW_MS + 1000);
+    // one over is refused
+    state.windowCount = SHEET_TOKEN_MINT_WINDOW_MAX - 1;
+    const res = await post({ action: "mint", orgId: ORG, sheets: two });
+    expect(res.status).toBe(429);
+    expect(((await res.json()) as { error: string }).error).toMatch(/today's QR/);
+    expect(state.inserts).toHaveLength(1);
+  });
+
+  it("the window read: before the paste it is { available: false }; any other failure is a 503 and nothing is written", async () => {
+    state.windowError = { code: "PGRST205", message: "Could not find the table 'public.print_sheet_tokens' in the schema cache" };
+    expect(await (await post({ action: "mint", orgId: ORG, sheets: [{ documentId: D1, versionId: V1 }] })).json()).toEqual({ available: false });
+    state.windowError = { code: "57014", message: "canceling statement due to statement timeout" };
+    expect((await post({ action: "mint", orgId: ORG, sheets: [{ documentId: D1, versionId: V1 }] })).status).toBe(503);
+    expect(state.inserts).toEqual([]);
   });
 
   it("refuses a caller who is not an active member, and a malformed request", async () => {

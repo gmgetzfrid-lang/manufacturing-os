@@ -579,8 +579,10 @@ export async function buildAndDownloadDocPack(input: Parameters<typeof buildAndD
   try {
     return await buildAndDownloadDocPackOnce(tokenPrint, input);
   } catch (e) {
+    // Fired, not awaited: the user sees the failure at once; the void is
+    // best-effort (it never throws, and it gives up after its own timeout).
     if (tokenPrint.minted && !tokenPrint.downloaded) {
-      await settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: [] });
+      void settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: [] });
     }
     throw e;
   }

@@ -1080,23 +1080,34 @@ Done-when, as it stands:
 
 <a id="phys-19"></a>
 
-## PHYS-19 · A copy downloaded on its own, a share copy and a transmittal copy still carry the document UUID in their verify QR — the per-print sheet token covers printed packs only
+## PHYS-19 · The per-print sheet token covers only packs printed through `lib/docPack.ts`: a single download, a markup download, the two other "Print all" packs, a share copy and a transmittal copy still carry the document UUID in their verify QR, and the token table has no retention and no link to the cover's print
 
 - **Severity:** LOW
 - **Status:** OPEN
 - **Assigned:** none — the integrator queues it, or rules it out on `PHYS-4`'s analysis (below). Opened by public-surfaces Round G PS-P9, 2026-10-20 (DEC-31), as the remainder of intelligence `DACL-8` criterion 2 outside the integrator's ruling (1) at the I-12 merge.
 - **Verification:** CONFIRMED by reading the code on PS-P9's branch.
-- **Locations:** `lib/downloads.ts:190-197` (`buildVerifyUrl`), `app/api/share/file/route.ts:124`, `app/api/transmittal/route.ts:683` (the portal copy), `lib/transmittalStampCheck.ts:210` (the issue-time stamp check)
+- **Locations:** `lib/downloads.ts:190-197` (`buildVerifyUrl`), `components/viewers/FullScreenViewer.tsx:1119` (the markup download), `components/assets/FileReferenceModal.tsx:172` (the linked drawings' "Print all", one merged stamped pack), `components/viewers/MultiDocViewer.tsx:774` (the collection book's "Print all", one merged stamped pack), `app/api/share/file/route.ts:124`, `app/api/transmittal/route.ts:683` (the portal copy), `lib/transmittalStampCheck.ts:210` (the issue-time stamp check); the token table's own remainders: `app/api/print-sheet-tokens/route.ts:74` (mint), `lib/docPack.ts:700` (the sheet tokens' print id) beside the cover's `work_package_prints` print id
 - **Independently verified:** — opened 2026-10-20 by PS-P9; not yet challenged by a second party.
 
-**Mechanism.** PS-P9 keys a printed pack's sheet QR to a per-print token the server mints at print time (`print_sheet_tokens`, `20261237`; `/verify/<token>`). The three other stamping paths still build `/verify/<document UUID>?v=<version UUID>`: a single download (`buildVerifyUrl`), an external share copy (`app/api/share/file`) and a transmittal copy (the portal copy, `app/api/transmittal`, and the issue-time stamp check that mirrors it). Their verdicts are correct (`DEC-65`); what they print is the durable document UUID.
+**Mechanism.** PS-P9 keys a pack's sheet QR to a per-print token the server mints at print time (`print_sheet_tokens`, `20261237`; `/verify/<token>`) — but only for packs printed through `lib/docPack.ts` `buildAndDownloadDocPack` (the work-package pack and the asset hub's pack). Every other stamping path still builds `/verify/<document UUID>?v=<version UUID>`:
+- two more multi-sheet packs, each merging many stamped sheets into one PDF: the linked drawings' "Print every linked drawing as ONE stamped (uncontrolled) PDF" (`components/assets/FileReferenceModal.tsx:172`) and the collection book's "Print all" (`components/viewers/MultiDocViewer.tsx:774`);
+- single copies: a single download (`lib/downloads.ts` `buildVerifyUrl`) and the markup download (`components/viewers/FullScreenViewer.tsx:1119`, which builds its own URL rather than calling `buildVerifyUrl`);
+- an external share copy (`app/api/share/file`) and a transmittal copy (the portal copy, `app/api/transmittal`, and the issue-time stamp check that mirrors it).
 
-**Failure scenario.** A contractor receives a single-sheet download or a transmittal copy; its QR carries the document's UUID, which `DACL-8`'s second criterion asked to replace with a per-print key. Nothing is disclosed for a restricted document (`lib/verifyDisclosure`, `VFY-16`), and a scan of it is never green without its printed version.
+Their verdicts are correct (`DEC-65`); what they print is the durable document UUID.
 
-**Note — `PHYS-4`'s rejected alternative.** `PHYS-4` (WONTFIX) records that a per-print token for single sheets "would swap the document UUID for another bearer string on the same paper — it moves the secret without shrinking it". What a token adds is per-print evidence (the scan row names the print) and a void for a print that never left. Whether that is worth a mint on every download, share and transmittal copy is the integrator's to decide.
+Two remainders of the token itself, recorded here so they have an owner (`DEC-31`):
+- **Retention.** Nothing prunes `print_sheet_tokens` (unlike `verify_scans`' 90-day prune). PS-P9's fix pass bounded the growth rate — one member may mint at most 5,000 sheets an hour (`SHEET_TOKEN_MINT_WINDOW_MAX`, `lib/printSheetTokensServer.ts`; counted on the `(minted_by, minted_at)` index in `20261237`; over it the mint is 429 and the pack keeps today's QR) — but not the size. A prune is a product decision, not a cleanup: a pruned token's sheet answers "Unknown code" (never green, but no longer "current").
+- **No link to the cover's print.** A work-package pack has two unrelated print ids: the cover QR's `?print=` (`work_package_prints`, `PKG-2`) and the sheet tokens' `print_id`, which the mint route draws separately. An incident review that starts from a sheet scan (`verify_scans.printed_ref` = the token's print id) cannot join it to the pack's print snapshot except by time and minter.
+
+**Failure scenario.** A crew prints the linked drawings or a collection book with "Print all", or a contractor receives a single-sheet download or a transmittal copy; each sheet's QR carries the document's UUID, which `DACL-8`'s second criterion asked to replace with a per-print key. Nothing is disclosed for a restricted document (`lib/verifyDisclosure`, `VFY-16`), and a scan of it is never green without its printed version. Separately, `print_sheet_tokens` grows with every pack ever printed, and a sheet scan's print id does not lead to its pack's cover snapshot.
+
+**Note — `PHYS-4`'s rejected alternative.** `PHYS-4` (WONTFIX) records that a per-print token for single sheets "would swap the document UUID for another bearer string on the same paper — it moves the secret without shrinking it". What a token adds is per-print evidence (the scan row names the print) and a void for a print that never left. Whether that is worth a mint on every download, share and transmittal copy is the integrator's to decide. The two "Print all" packs are a closer case: they are multi-sheet packs like `buildAndDownloadDocPack`'s, and routing them through `mintSheetTokens` / `settleSheetTokens` (with the same fallback to today's QR) needs no migration.
 
 **Done when.**
 
-- [ ] Either each of these paths stamps a server-minted per-print token (as `lib/docPack.ts` does, falling back to today's QR when it cannot be minted), or the integrator rules the document + version QR sufficient for them and this finding closes WONTFIX on that ruling
+- [ ] Either each of these paths — the two "Print all" packs, the single and markup downloads, the share copy and the transmittal copy — stamps a server-minted per-print token (as `lib/docPack.ts` does, falling back to today's QR when it cannot be minted), or the integrator rules the document + version QR sufficient for them and that limb closes WONTFIX on that ruling
+- [ ] `print_sheet_tokens` has a retention rule (a prune, with what a pruned sheet's scan then answers), or the integrator rules unbounded retention acceptable under the per-member mint window
+- [ ] A work-package pack's sheet tokens can be joined to its cover's print (`work_package_prints`): the mint takes the cover's print id, or the settle stores it on the token rows (a nullable column) — or the integrator rules the time-and-minter join sufficient
 - [ ] Every QR printed before keeps being answered exactly as today
 

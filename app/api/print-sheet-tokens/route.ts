@@ -26,14 +26,24 @@
 //
 // Any active member of the workspace may print a pack (the pack builder has
 // no role gate), so any active member may mint (authorizeOrgRole over every
-// role — the additive collection, never the headline alone).
+// role — the additive collection, never the headline alone). One member may
+// mint at most SHEET_TOKEN_MINT_WINDOW_MAX sheets an hour (counted from the
+// table on (minted_by, minted_at)); over it the mint answers 429 and the pack
+// keeps today's QR.
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { authorizeOrgRole, callerScopedClient } from "@/lib/serverAuth";
 import { ALL_ROLES } from "@/types/schema";
 import { SHEET_TOKEN_MINT_MAX } from "@/lib/printSheetTokens";
-import { hashSheetToken, isMissingSheetTokenTable, newSheetToken, type SheetTokenVoidReason } from "@/lib/printSheetTokensServer";
+import {
+  hashSheetToken,
+  isMissingSheetTokenTable,
+  newSheetToken,
+  SHEET_TOKEN_MINT_WINDOW_MAX,
+  SHEET_TOKEN_MINT_WINDOW_MS,
+  type SheetTokenVoidReason,
+} from "@/lib/printSheetTokensServer";
 
 export const dynamic = "force-dynamic";
 
@@ -99,6 +109,25 @@ export async function POST(req: NextRequest) {
     const printId = randomUUID();
     const tokens: Record<string, string> = {};
     if (eligible.length === 0) return json({ available: true, printId, tokens });
+
+    // The per-member window: a member's mints in the last hour, plus this
+    // one, stay under the cap — or this pack keeps today's QR.
+    const since = new Date(Date.now() - SHEET_TOKEN_MINT_WINDOW_MS).toISOString();
+    const { count: recent, error: windowErr } = await actor.admin
+      .from("print_sheet_tokens")
+      .select("id", { count: "exact" })
+      .eq("minted_by", actor.userId)
+      .gte("minted_at", since)
+      .limit(1);
+    if (windowErr) {
+      if (isMissingSheetTokenTable(windowErr)) return json({ available: false });
+      console.error("[print-sheet-tokens] mint window unreadable — the pack keeps today's QR:", windowErr.message);
+      return json({ error: "Couldn't mint the sheet tokens" }, 503);
+    }
+    if ((recent ?? 0) + eligible.length > SHEET_TOKEN_MINT_WINDOW_MAX) {
+      return json({ error: "Too many sheets minted in the last hour — this pack keeps today's QR" }, 429);
+    }
+
     const rows = eligible.map((s) => {
       const token = newSheetToken();
       tokens[s.documentId] = token;

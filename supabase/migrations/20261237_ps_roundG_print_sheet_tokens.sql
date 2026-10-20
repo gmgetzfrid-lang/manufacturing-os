@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS print_sheet_tokens (
 );
 CREATE INDEX IF NOT EXISTS print_sheet_tokens_print_idx ON print_sheet_tokens (print_id);
 CREATE INDEX IF NOT EXISTS print_sheet_tokens_document_idx ON print_sheet_tokens (document_id);
+-- the mint route's per-member window (sheets minted by one member in the last hour)
+CREATE INDEX IF NOT EXISTS print_sheet_tokens_minter_idx ON print_sheet_tokens (minted_by, minted_at);
 ALTER TABLE print_sheet_tokens ENABLE ROW LEVEL SECURITY;
 -- No policies on purpose: service role only. The default grants Supabase
 -- gives new tables are withdrawn too, so RLS is not the only wall.
@@ -168,9 +170,10 @@ UNION ALL SELECT 6, 'print_sheet_tokens: org, document and version foreign keys,
        (SELECT COUNT(*) FROM pg_constraint
          WHERE conrelid = to_regclass('public.print_sheet_tokens') AND contype = 'f' AND confdeltype = 'c'
            AND confrelid IN (to_regclass('public.orgs'), to_regclass('public.documents'), to_regclass('public.document_versions'))) = 3, NULL
-UNION ALL SELECT 7, 'print_sheet_tokens indexed on (print_id) and (document_id)',
+UNION ALL SELECT 7, 'print_sheet_tokens indexed on (print_id), (document_id) and (minted_by, minted_at)',
        EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'print_sheet_tokens_print_idx')
-       AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'print_sheet_tokens_document_idx'), NULL
+       AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'print_sheet_tokens_document_idx')
+       AND EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'print_sheet_tokens_minter_idx'), NULL
 UNION ALL SELECT 8, 'print_sheet_tokens_guard: SECURITY INVOKER (no definer in this file — DRLS-16), search_path pinned, refuses a changed print fact with 42501',
        COALESCE((SELECT NOT p.prosecdef
                         AND array_to_string(p.proconfig, ',') LIKE '%search_path=public%'
