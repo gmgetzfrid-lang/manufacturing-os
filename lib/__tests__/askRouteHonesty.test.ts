@@ -1161,6 +1161,77 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
     });
   });
 
+  // ── I-25 integrator fix pass (review major): a digit-group separator is any
+  //    gap between a digit and exactly three more ─────────────────────────
+
+  describe("review major (integrator fix pass) — SI digit grouping after ANY digit: a sign hyphen or a digit and space before the group no longer leaves '2 [result withheld]'", () => {
+    function siLibrary() {
+      seed({
+        knowledge_documents: [kdoc("k-en", { name: "EN pressure standard.pdf" })],
+        knowledge_chunks: [
+          kchunk("k-en", "The relief valve set pressure shall not exceed the design pressure. The allowable stress shall be taken as 10 000 kPa. The test factor is 1.43.", { id: "c-1", page: 3, section: "6.2 Stress" }),
+        ],
+      });
+    }
+
+    it.each([
+      ["a space", " "],
+      ["a no-break space", "\u00A0"],
+      ["a narrow no-break space", "\u202F"],
+      ["a thin space", "\u2009"],
+    ])("%s: a marked prose answer ('2 times … 10 000 kPa, so 20 000 kPa') has its result withheld whole on the route, the grounded input shown — response, row and page", async (_label, gap) => {
+      siLibrary();
+      const text = `**Answer:** σ is 2 times the allowable stress of 10${gap}000 kPa [1], so 20${gap}000 kPa.\n**Basis:**\n- S = \`10${gap}000 kPa\` [1]`;
+      h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
+      const body = await (await ask({ question: "What is σ for twice the allowable stress?" })).json();
+      expect(body.answer).toBe(
+        `**Answer:** σ is 2 times the allowable stress of 10${gap}000 kPa [1], so ${RESULT_WITHHELD}.\n**Basis:**\n- S = \`10${gap}000 kPa\` [1]\n\n${RESULT_WITHHELD_NOTE}`);
+      expect(body.answer).not.toMatch(/\b20\s*\[result withheld\]/);
+      expect(body.arithmetic).toBe("unverified");
+      expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
+      expect(withholdModelResults(body.answer)).toEqual({ text: body.answer, withheld: 0 });
+    });
+
+    it.each([
+      ["a space", " "],
+      ["a no-break space", "\u00A0"],
+      ["a narrow no-break space", "\u202F"],
+      ["a thin space", "\u2009"],
+    ])("%s: '2 288 kPa' after a digit and space or a sign hyphen is withheld whole (never '2 [result withheld]'); the user's input written '1 600 kPa' still grounds", async (_label, gap) => {
+      siLibrary();
+      const text =
+        `**Answer:** Test pressure for load case 2 2${gap}288 kPa [1].\n` +
+        `- Vacuum side: -2${gap}288 kPa\n` +
+        `- PS = 1${gap}600 kPa (USER-PROVIDED)\n- Factor 1.43 [1]`;
+      h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
+      const body = await (await ask({ question: "What is the test pressure?", inputs: `PS = 1${gap}600 kPa` })).json();
+      // e9e8c8c showed 'load case 2 2 [result withheld]' and '-2 [result withheld]'.
+      expect(body.answer).toBe(
+        `**Answer:** Test pressure for load case 2 ${RESULT_WITHHELD} [1].\n` +
+        `- Vacuum side: ${RESULT_WITHHELD}\n` +
+        `- PS = 1${gap}600 kPa (USER-PROVIDED)\n- Factor 1.43 [1]\n\n${RESULT_WITHHELD_NOTE}`);
+      expect(body.answer).not.toMatch(/(?:case 2 2|-2)\s*\[result withheld\]/);
+      expect(body.arithmetic).toBe("unverified");
+      expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
+    });
+
+    it("REGRESSION: a lookup answer holding grouped numbers — a range, a sign, a digit before a group, a decimal before three digits — is returned and stored byte-for-byte, unlabelled", async () => {
+      siLibrary();
+      const lookup =
+        "**Answer:** The allowable stress is `10 000 kPa` [1].\n**Basis:**\n" +
+        "- Rated range 1 600–2 288 kPa; vacuum rating -20 000 Pa [1]\n" +
+        "- Item 3 2 288 kPa valves; service life 20\u202F000 h; 1.5 285 psig parts [1]\n" +
+        "- Test factor 1.43 per 6.2 [1]";
+      h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: lookup }];
+      const body = await (await ask({ question: "What is the allowable stress?" })).json();
+      expect(body.answer).toBe(lookup);
+      expect(body.arithmetic).toBeUndefined();
+      expect(rowsOf("knowledge_questions")[0].answer).toBe(lookup);
+      expect(answerHasComputation(lookup, "")).toBe(false);
+      expect(withholdModelResults(lookup)).toEqual({ text: lookup, withheld: 0 });
+    });
+  });
+
   describe("withholdModelResults — the pure rule", () => {
     it("a lookup comes back as the very same string, with nothing withheld — and is never marked arithmetic, so the route runs no grounding pass on it", () => {
       for (const lookup of [
@@ -1354,7 +1425,8 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
       // A row of a rating table ("150 285 260 230") still grounds each of its values.
       expect(withholdModelResults("**Substituted:** P = 1.5 × 260 psig\n- S = 260 psig [1]", "Class 150 285 260 230 psig\nfactor 1.5"))
         .toEqual({ text: "**Substituted:** P = 1.5 × 260 psig\n- S = 260 psig [1]", withheld: 0 });
-      // A decimal, a fraction or a code before a three-digit number is never a group's start.
+      // A decimal, a fraction or a code before a three-digit number: a lookup stays a lookup (since the
+      // integrator fix pass the gap after any digit is a group separator, but no value starts inside one).
       for (const lookup of ["Use 1.5 285 psig rated parts [1]", "Torque 3/4 250 ft-lb bolts [1]", "PN16 000 series valves [1]"]) {
         expect([lookup, answerHasComputation(lookup, "")]).toEqual([lookup, false]);
         expect(withholdModelResults(lookup)).toEqual({ text: lookup, withheld: 0 });

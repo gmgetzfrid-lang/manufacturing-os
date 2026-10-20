@@ -265,7 +265,8 @@ export function answerHasComputation(answer: string, inputs: string): boolean {
 //       "= / ≈ / →" value restating it right after ("= 427.5 psig ≈ 430 psig").
 //       (Fix pass 5) Every line is read through normalizeLine first: a number
 //       written in SI digit groups ("20 000 kPa", with a space, no-break,
-//       narrow no-break or thin space) is one value, "∙ ✕ ✖" are "×", "＝"
+//       narrow no-break or thin space; since the integrator fix pass, a
+//       group after any digit) is one value, "∙ ✕ ✖" are "×", "＝"
 //       is "=" and "≃" is "≈"; a unit may carry "(g)" / "(a)" ("bar(g)") and
 //       a compound unit may open with an engineering token ("lbf/in²");
 //   (d) on a "**Substituted:**" line, every value after the formula's
@@ -306,6 +307,9 @@ export function answerHasComputation(answer: string, inputs: string): boolean {
 // percentage named beside a clause, table or paragraph number ("1.5 times
 // the MAWP per UG-99", "5% of the welds per para 341.4.1") is a lookup.
 // Running it again on its own output changes nothing.
+// This is a best-effort net, not a guarantee (the integrator's ruling at the
+// I-25 merge, DEC-90 A17): the shapes it is known to miss are listed in
+// PR-13, whose owner (intelligence I-33) computes the result itself.
 
 /** What stands where a model-computed number was. */
 export const RESULT_WITHHELD = "[result withheld]";
@@ -428,15 +432,23 @@ const VALUE_SRC = "(?<![\\w§#./\\[-])(" + CALC_NUM + ")(" + CALC_UNIT + ")(?![\
  *  for one, so the value keeps its sign and a withheld value takes it. */
 const SIGN_DASH = /(?<![\d)\]]\s*)[−–](?=\d)/g;
 
-/** (Fix pass 5) A digit-group separator — a space, no-break space (U+00A0),
- *  narrow no-break space (U+202F) or thin space (U+2009) between a group of
- *  one to three digits (or an earlier group) and exactly three more, the SI
- *  way of writing "10 000 kPa" or "2 288 kPa". Read as ",", one character
- *  for one, so the number is one value ("10,000"). A digit run after a
- *  word character, a decimal point, a comma, "/" or "-" is never a group's
- *  start ("PN16 000", "1.5 285", "3/4 100"). */
-const DIGIT_GROUP_GAP =
-  /(?<=(?<![\w.,/-]|\d[ \u00A0\u202F\u2009])\d{1,3}(?:[ \u00A0\u202F\u2009]\d{3})*)[ \u00A0\u202F\u2009](?=\d{3}(?!\d))/g;
+/** (Fix pass 5; integrator fix pass) A digit-group separator — a space,
+ *  no-break space (U+00A0), narrow no-break space (U+202F) or thin space
+ *  (U+2009) between a digit and exactly three more digits that no digit
+ *  follows, the SI way of writing "10 000 kPa" or "2 288 kPa". Read as ",",
+ *  one character for one, so the position map stays valid and the number is
+ *  one value ("10,000"). Any digit before it counts (the integrator's fix
+ *  pass): fix pass 5 also required the run before to start a number, so a
+ *  sign hyphen ("-20 000 kPa") or a digit and space before it ("Item 3 2 288
+ *  kPa") left "2 [result withheld]". Where the run before is no number's
+ *  start the value reading is unchanged: "1.5 285" reads 1.5 and 285,
+ *  "3/4 250" and "PN16 000" read 250 and 000 (VALUE_SRC never starts a value
+ *  inside a decimal, a fraction or a code). Two numbers side by side, the
+ *  second exactly three digits ("150 300 psig", "2500 750"), read as one
+ *  value: on the server rule (c) withholds it whole unless the grounding
+ *  (read every line both ways, withholdModelResults) holds it, and rule (b)
+ *  never matches a result inside it (recorded in PR-13). */
+const DIGIT_GROUP_GAP = /(?<=\d)[ \u00A0\u202F\u2009](?=\d{3}(?!\d))/g;
 /** (Fix pass 5) Glyph variants read as the one the grammar names, one
  *  character for one: "∙ ✕ ✖" as "×", fullwidth "＝" as "=", "≃" as "≈". */
 const GLYPH_VARIANT = /[∙✕✖＝≃]/g;
