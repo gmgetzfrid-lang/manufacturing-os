@@ -1,6 +1,6 @@
 # 06 · State machine & transition integrity
 
-**13 findings** — 2 CRITICAL · 3 HIGH · 8 MEDIUM.
+**16 findings** — 2 CRITICAL · 2 HIGH · 5 MEDIUM · 7 LOW. *(Corrected at the DF-P16 integrator fix pass, 2026-10-20: this line read "13 findings — 2 CRITICAL · 3 HIGH · 8 MEDIUM", stale against the findings below — their own Severity lines, `SM-14`, `SM-15` and `SM-16` included.)*
 
 Whether the flow's own rules can be enforced at all: reachable transitions, concurrency, partial failure, and the actions that skip the gates.
 
@@ -930,6 +930,33 @@ if (action.requiresFile) {
 - [ ] `vetTicketAttachment` mints the id on the server (`crypto.randomUUID()`) for every file that is not already listed on the ticket by its key, or refuses an id that is already on the ticket or outside `TICKET_ATTACHMENT_ID_RE` (`lib/verifyTicketVerdict.ts`)
 - [ ] A route test: an attachment posted with the id of a file already on the ticket does not produce a second attachment carrying that id
 - [ ] `SM-5`'s Resolution and `DEC-110` rationale 4 then say the identity is unique on a ticket
+
+---
+
+<a id="sm-16"></a>
+## SM-16 · A reopen clears a request's outcome but keeps the reason recorded with it, so the old reason rides along to however the request ends next
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** drafting-flow DF-P15 DELIVERABLE PAGE WIRING — by the integrator at the DF-P16 merge, 2026-10-20 (it holds the workflow route next). *Was:* proposed — drafting-flow, the next package that holds `app/api/tickets/workflow-action/route.ts` and `lib/ticketTransitions.ts` (the integrator assigns, `DEC-31`: a remainder is a new id with an owner). Opened by drafting-flow Round G DF-P16's review fix pass, 2026-10-20, from the package reviewer's finding; both files are other packages' in this round, so it is recorded here, not fixed.
+- **Verification:** CONFIRMED by reading (not exercised against a live database).
+- **Independently verified:** — opened 2026-10-20 by DF-P16's review fix pass from the package reviewer's finding; not yet challenged by a second party.
+- **Blast radius:** reporting integrity (the per-reason counts on `/admin/analytics`, the reason shown in the queue's Closed history and in `metadata`)
+- **Locations:**
+  - `lib/ticketTransitions.ts:532-543` — `reopen_ticket`: `updates.outcome = null` ("A reopened request has not ended"), `metadata` untouched
+  - `app/api/tickets/workflow-action/route.ts:975-979` — an accepted reason is merged into `metadata.outcome_reason` only when the action records an outcome; nothing removes it
+  - `lib/ticketOutcome.ts:56-63` — `outcomesFor('close_ticket')` is `TICKET_OUTCOMES`, so a direct caller may close with `withdrawn` (and a configured reason) and then reopen
+- **Related:** drafting-flow `LEAK-9` / `GAP-107`, roles-and-permissions `GAP-13` (acceptance 2's breakdown — guarded, see below), `DEC-103` item 3
+
+**Mechanism.** The reason a request ended for is stored beside the outcome, in `metadata.outcome_reason` {id, label, category}. A reopen starts a new cycle and nulls `tickets.outcome`, but leaves `metadata.outcome_reason` in place. When the request ends again with an outcome that takes no reason (an acknowledged close records `completed`), the row carries the new outcome and the old reason.
+
+**Failure scenario.** An API caller sends `close_ticket` with outcome `withdrawn` and a configured reason ("Requester left the site"); then `reopen_ticket`; the request is acknowledged and closed as `completed`. The row reads outcome `completed`, `metadata.outcome_reason` "Requester left the site" (category `withdrawn`). Anything that reads the reason without checking its category credits a completed request with a withdrawal reason. The UI cannot reach the path today (a cancel ends CANCELED, which cannot be reopened, and the close actions offer no outcome picker). **Guarded at DF-P16's review fix pass:** `components/requests/RequestOutcomes.tsx` `reasonForOutcome` counts a reason only under the outcome it was recorded with, and the analytics breakdown and the queue's Closed history row both use it — so the stale value is no longer credited to a different outcome, but it is still stored, and any future reader sees it. One case remains visible: a reopened request re-ended with no outcome recorded (a force close naming none) is "Not recorded", where the breakdown keeps a stored reason by design (the pre-`20261195` world) — the old reason is listed there as "recorded as Withdrawn".
+
+**Remediation.** On `reopen_ticket`, clear `metadata.outcome_reason` on the same compare-and-set write (keep the old reason in the reopen's history line if it is wanted for the record).
+
+**Done when.**
+- [ ] `reopen_ticket` removes `metadata.outcome_reason` on the same write that nulls `tickets.outcome`, with a route test (close with a reason → reopen → the row carries no `outcome_reason`)
+- [ ] Existing rows: a counts-only inventory of ended or open requests whose `metadata.outcome_reason.category` differs from `tickets.outcome` (no rewrite needed to stop a wrong credit — every reader in the app credits a reason only to the outcome it was recorded with; see the residual below)
 
 ---
 

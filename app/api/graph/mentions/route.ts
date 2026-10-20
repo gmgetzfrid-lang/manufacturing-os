@@ -15,6 +15,7 @@ import {
   backfillOrgMentions, indexDocumentMentions, loadAliasDictionary,
 } from "@/lib/mentionIndexer";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { startMentionRun, finishMentionRun, clearStandingFailure } from "@/lib/mentionRunState";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -56,10 +57,28 @@ export async function POST(req: NextRequest) {
         .select("id, source_document_id")
         .eq("id", body.documentId).eq("org_id", orgId).maybeSingle();
       if (!doc) return bad("Document not found", 404);
-      const result = await indexDocumentMentions(
-        orgId, body.documentId, dictionary,
-        (doc as { source_document_id: string | null }).source_document_id,
-      );
+      // IRLS-16: this build is recorded in the mention index's run state
+      // (source 'map'), as lib/knowledgeIngest.ts rebuildDocumentMentions
+      // records an ingest-time one: the start beside the build, then on
+      // success the standing failure cleared when it is THIS document's and
+      // the end written; on a throw the failure recorded before the route
+      // answers exactly as it did. Every run-state write is logged, never
+      // thrown, and writes nothing while 20261194 is not pasted.
+      const documentId = body.documentId;
+      const started = startMentionRun(supabaseAdmin, orgId, "map", documentId);
+      let result: Awaited<ReturnType<typeof indexDocumentMentions>>;
+      try {
+        result = await indexDocumentMentions(
+          orgId, documentId, dictionary,
+          (doc as { source_document_id: string | null }).source_document_id,
+        );
+      } catch (e) {
+        await finishMentionRun(supabaseAdmin, await started, { outcome: "failed", error: e });
+        throw e;
+      }
+      const run = await started;
+      if (run.standingFailure?.documentId === documentId) await clearStandingFailure(supabaseAdmin, run);
+      await finishMentionRun(supabaseAdmin, run, { outcome: "succeeded" });
       return NextResponse.json({ ...result, documents: 1, incomplete: false });
     }
 

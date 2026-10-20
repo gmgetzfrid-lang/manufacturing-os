@@ -222,7 +222,7 @@ export default function InspectorPanel({
   const [staleUnknown, setStaleUnknown] = useState(false);
   // `issued` is null when the transmittal trail could not be READ (TRX-9) —
   // unknown, never zero; the read-and-understood counts still show.
-  const [distSummary, setDistSummary] = useState<{ issued: number | null; issuedCapped: boolean; ackDone: number; ackTotal: number } | null>(null);
+  const [distSummary, setDistSummary] = useState<{ issued: number | null; issuedCapped: boolean; issuedWithheld: boolean; ackDone: number; ackTotal: number } | null>(null);
   const [holdsRefresh, setHoldsRefresh] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -256,12 +256,18 @@ export default function InspectorPanel({
       // hiding the read-and-understood progress the acks counts still give.
       let issued: number | null = null;
       let issuedCapped = false;
+      // DIST-18 (limb a, final review): a trail the register withholds from
+      // this viewer (they may not read the document) carries only their own
+      // transmittals — the pill says the rest is not shown, never "none".
+      let issuedWithheld = false;
       try {
         const { listTransmittalsForDocument } = await import("@/lib/transmittals");
-        const list = await listTransmittalsForDocument(selectedDoc.orgId, selectedDoc.id);
+        const trail = await listTransmittalsForDocument(selectedDoc.orgId, selectedDoc.id);
+        const list = trail.transmittals;
         // listTransmittalsForDocument caps at 50 rows — an honest pill says so.
         issued = list.filter((t) => t.status === "issued" || t.status === "acknowledged").length;
         issuedCapped = list.length >= 50;
+        issuedWithheld = trail.withheld;
       } catch { issued = null; }
       try {
         let ackDone = 0;
@@ -280,8 +286,8 @@ export default function InspectorPanel({
           ackTotal = total ?? 0;
           ackDone = done ?? 0;
         }
-        if (alive) setDistSummary({ issued, issuedCapped, ackDone, ackTotal });
-      } catch { if (alive) setDistSummary({ issued, issuedCapped, ackDone: 0, ackTotal: 0 }); }
+        if (alive) setDistSummary({ issued, issuedCapped, issuedWithheld, ackDone, ackTotal });
+      } catch { if (alive) setDistSummary({ issued, issuedCapped, issuedWithheld, ackDone: 0, ackTotal: 0 }); }
     })();
     return () => { alive = false; };
   }, [selectedDoc?.id, selectedDoc?.orgId, selectedDoc?.currentVersionId, holdsRefresh]);
@@ -677,12 +683,13 @@ export default function InspectorPanel({
           id="distribution"
           title="Distribution & sharing"
           icon={Send}
-          summary={distSummary && (distSummary.issued === null || distSummary.issued > 0 || distSummary.ackTotal > 0)
+          summary={distSummary && (distSummary.issued === null || distSummary.issued > 0 || distSummary.issuedWithheld || distSummary.ackTotal > 0)
             ? <span
-                title={distSummary.issued === null ? "The transmittal trail could not be read — how many transmittals carried this document is unknown." : undefined}
+                title={distSummary.issued === null ? "The transmittal trail could not be read — how many transmittals carried this document is unknown."
+                  : distSummary.issuedWithheld ? TRAIL_WITHHELD_TITLE : undefined}
                 className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
-                {distSummary.issued === null ? "? issued" : distSummary.issued > 0 ? `${distSummary.issued}${distSummary.issuedCapped ? "+" : ""} issued` : ""}
-                {(distSummary.issued === null || distSummary.issued > 0) && distSummary.ackTotal > 0 ? " · " : ""}
+                {issuedPillText(distSummary)}
+                {(distSummary.issued === null || distSummary.issued > 0 || distSummary.issuedWithheld) && distSummary.ackTotal > 0 ? " · " : ""}
                 {distSummary.ackTotal > 0 ? `${distSummary.ackDone}/${distSummary.ackTotal} confirmed` : ""}
               </span>
             : undefined}
@@ -1164,6 +1171,20 @@ export default function InspectorPanel({
 
 
 // ─── Transmittal trail ────────────────────────────────────────────────────
+// DIST-18 (limb a, final review): what the trail and the distribution pill
+// say when the register withholds the trail (the viewer may not read the
+// document): never "none", never "never transmitted".
+const TRAIL_WITHHELD_TITLE =
+  "You may not read this document, so its transmittal trail is not shown — only the transmittals you sent yourself are listed. This is not \"never transmitted\".";
+
+/** The distribution pill's transmittal count — "? issued" when the trail
+ *  could not be read, "not shown" when the register withheld it. */
+function issuedPillText(d: { issued: number | null; issuedCapped: boolean; issuedWithheld: boolean }): string {
+  if (d.issued === null) return "? issued";
+  if (d.issuedWithheld) return d.issued > 0 ? `${d.issued}${d.issuedCapped ? "+" : ""} issued by you · others not shown` : "transmittals not shown";
+  return d.issued > 0 ? `${d.issued}${d.issuedCapped ? "+" : ""} issued` : "";
+}
+
 // "Which transmittals carried this document?" — the impact question nobody
 // could answer from the document side. Renders nothing when the doc was
 // never transmitted; flags recipients now holding a superseded rev. TRX-9:
@@ -1172,14 +1193,17 @@ export default function InspectorPanel({
 function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; documentId: string; currentRev: string | null }) {
   const [rows, setRows] = React.useState<Array<{ id: string; number: string; rev: string | null; purpose: string | null; status: string; recipient: string; issuedAt: string | null }>>([]);
   const [failed, setFailed] = React.useState<string | null>(null);
+  const [withheld, setWithheld] = React.useState(false);
   React.useEffect(() => {
     let alive = true;
     setFailed(null);
+    setWithheld(false);
     (async () => {
       const { listTransmittalsForDocument } = await import("@/lib/transmittals");
-      const list = await listTransmittalsForDocument(orgId, documentId);
+      const trail = await listTransmittalsForDocument(orgId, documentId);
       if (!alive) return;
-      setRows(list
+      setWithheld(trail.withheld);
+      setRows(trail.transmittals
         .filter((t) => t.status === "issued" || t.status === "acknowledged")
         .map((t) => ({
           id: t.id,
@@ -1191,7 +1215,7 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
           issuedAt: t.issuedAt ?? null,
         })));
     })().catch((e: unknown) => {
-      if (alive) { setRows([]); setFailed((e as Error)?.message || "The transmittal trail could not be read."); }
+      if (alive) { setRows([]); setWithheld(false); setFailed((e as Error)?.message || "The transmittal trail could not be read."); }
     });
     return () => { alive = false; };
   }, [orgId, documentId]);
@@ -1204,10 +1228,26 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
       </div>
     );
   }
+  // DIST-18 (limb a, final review): the register withholds this document's
+  // trail from a viewer who may not read it — only the transmittals they sent
+  // are listed, and the rest is "not shown", never "never transmitted".
+  if (withheld && rows.length === 0) {
+    return (
+      <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2.5 text-[11px] text-[var(--color-text-muted)]" role="status">
+        <div className="text-[10px] font-black uppercase tracking-widest mb-0.5">Transmitted on — not shown</div>
+        {TRAIL_WITHHELD_TITLE}
+      </div>
+    );
+  }
   if (rows.length === 0) return null;
   return (
     <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2.5">
       <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
+      {withheld && (
+        <div className="text-[11px] text-[var(--color-text-muted)] mb-1.5" role="status">
+          Only the transmittals you sent are listed — the rest of this document&apos;s trail is not shown.
+        </div>
+      )}
       <ul className="space-y-1">
         {rows.map((r) => {
           const stale = !!(r.rev && currentRev && r.rev !== currentRev);

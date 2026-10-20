@@ -502,6 +502,13 @@ Tests:
 
 Negative controls: without the `.lte`, the bound case fails and the other 15 pass. With "more than" restored, the page case fails. Line references in this record were remapped to the fix-pass-4 code.
 
+**Resolution (2026-10-20, intelligence Round G) — the residual index.** I-15 GRAPH SERVER ASSEMBLY (assigned at the I-14 merge, 2026-10-07; its route now runs this read, as the caller). Reproduced first (DEC-29) on a throwaway PostgreSQL 16.13 with `proposed_links`, its four indexes and both SELECT policies exactly as `20260807` / `20261126` define them, read as a signed-in member over 9,000 pending rows of ONE run (one `created_at`) plus 9,000 spread rows: the reader's own windows (`lib/linkProposals.ts` `readPendingProposalPairs`, unchanged) each read 9,001 rows inside the run's tie — an Index Scan on `proposed_links_org_status_idx` and an Incremental Sort of the tie — 36,004 rows for its four windows. What landed: `supabase/migrations/20261233_intel_roundG_proposed_links_keyset_index.sql` — `CREATE INDEX IF NOT EXISTS proposed_links_org_status_keyset_idx ON proposed_links (org_id, status, created_at DESC, id DESC)`, nothing else (DEC-30 one paste: counts-only inventory before the transaction, one result set of four probes and four counts; not widening; no re-created object). After it, on the same data, the windows read 1,000 / 2,000 / 3,000 / 4,000 rows (10,000), an Index Scan on the new index with no sort, and return the same ids in the same order (one digest of the ordered ids, before and after). Window k still steps over the k − 1 windows before it: the keyset `or` is a filter, not an index bound, and the reader is unchanged by the integrator's ruling (PostgREST cannot send a row comparison). A re-paste answers the same probes with inventory row 4 = 1; a database without `proposed_links` stops at the inventory, before BEGIN, and changes nothing.
+- Tests: `lib/__tests__/intelRoundGProposedLinksIndexMigration.test.ts` (new, 7: the one-paste shape, counts-only inventory, exactly the one `CREATE INDEX IF NOT EXISTS`, the probes, no model identifier); `lib/__tests__/intelRoundGGraphServerAssembly.test.ts` "GM-7 residual — the reader is unchanged; 20261233 indexes its order"; `npm run test:db` replays it with every other migration.
+
+**Done-when (the residual).** ✓ The index on (org_id, status, created_at DESC, id DESC) ships (`20261233`), the reader's order kept; one migration, DEC-30 counts-only inventory, one paste. The three done-whens above stand as resolved (2026-10-02).
+
+**Scope / residual.** Inside one run's tie each later window still reads the earlier windows' rows (k × 1,000 for window k, at most 10,000 for the four, against 9,001 per window before); bounding that would take a row-comparison cursor PostgREST cannot express, or a server-side read — not owed by this finding. Paste order: any time after `20260807`, before or after the app (the app reads the same rows in the same order either way). The comment above the reader (`lib/linkProposals.ts`, I-08's file, not edited here) still calls the index "GM-7's recorded residual"; the next editor of that file rewords it to name `20261233`.
+
 ---
 
 <a id="gm-8"></a>
@@ -845,7 +852,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-13 block — 8,003 supersessions / cu
 ## GM-14 · knowledge_page_entities — the per-sheet equipment index with x/y positions — is REVOKEd from `authenticated`, and the graph is assembled entirely client-side, so the data the owner's per-sheet question needs is structurally unreachable from the graph
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (limb 2: the doc↔asset edge carries the sheet and its AI-read mark) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260921_drawing_entities.sql:15-38`, `lib/orgGraph.ts:20`, `lib/orgGraph.ts:96-144`, `app/(protected)/graph/page.tsx:115`
@@ -896,5 +903,20 @@ The asset hub shows them as "Also read on (not linked yet)", labelled as proposa
 3. ✗ Not done here. `lib/orgGraph.ts`'s header is I-15's file.
 
 **Scope / residual.** Handed to I-15 (`lib/orgGraph.ts` server entry, GAP-313): carry `sheet_label` / `pages` on the tag edge from the relation, and say in the client builder's header that it sees only `authenticated`-readable tables. The sheet stays on the relation, never a node (GAP-301's do-not).
+
+**Resolution (2026-10-20, intelligence Round G).** I-15 GRAPH SERVER ASSEMBLY — limb 2 (assigned at the I-11 merge, 2026-10-13) and the header. Reproduced first (DEC-29): on `8224f80` `lib/orgGraph.ts:552` / `:683` read `document_assets` as `id, document_id, asset_id` and its header said nothing of what the client entry cannot read. What landed:
+- **The edge carries the sheet.** `lib/orgGraph.ts` reads the relation in tiers (`DA_COL_TIERS`, `:419`: provenance → sheet → the pair, each falling back on 42703 / PGRST204) and puts on the doc ↔ asset edge what its row says (`relationOf`, `:899`): `sheet` (the title block's sheet address, `sheet_label`), `pages`, `assertedBy`, and `aiRead` when the machine's page was read off an AI transcription — labelled "(AI-read, unconfirmed)" by `components/graph/graphTheme.ts` `edgeLabelFor`, the mark the hub, the sweep, ⌘K and the coverage report use. The Bridge writes those columns from `knowledge_page_entities` (I-11), so the per-sheet index reaches the graph through the relation — the sheet stays on the relation, never a node (GAP-301's do-not).
+- **Server-side assembly per caller** is GAP-313's route (`app/api/graph/route.ts`, this package): the same reads under the caller's own RLS plus `readableControlledDocIds`.
+- **The header** (`lib/orgGraph.ts:55-73`, "TWO ENTRIES, ONE ASSEMBLY") says the client entry can only ever see tables `authenticated` may read — never `knowledge_page_entities` or `knowledge_line_traces` — and what the server entry adds.
+- Tests: `lib/__tests__/intelRoundGGraphServerAssembly.test.ts` "GM-14 limb 2 / GAP-303 graph limb — …" (six cases) and GAP-313's payload comparison.
+
+**Done-when.**
+1. ✓ Graph assembly runs server-side with explicit per-caller filtering — under the caller's own RLS (node_visible itself) plus the app's predicate (`readableControlledDocIds`), not under `supabaseAdmin`: the stricter reading of "equivalent to node_visible()". The done-when's other branch also holds: `GET /api/equipment/sheets` supplies the service-role-only per-sheet data per caller (I-11).
+2. ✓ As scoped by the I-11 Partial: the document ↔ asset edge carries its sheet and pages from the relation the Bridge writes from `knowledge_page_entities`; an AI-read sheet is marked.
+3. ✓ The client builder's header documents that it can only ever see `authenticated`-readable tables.
+
+**Scope / residual.** Sheets the entity index holds with no relation yet (the hub's "Also read on (not linked yet)") are not drawn: they are proposals, not links, and drawing them would infer an edge at assembly time ("each edge is a row somewhere", 99-fix-sequencing "Do not"). No new finding: that is the design, recorded on GAP-301.
+
+*Fix pass (2026-10-20, review of I-15).* Done-when 2 was marked ✓ while the sheet and the AI-read mark reached the member only through the path-finder's step list. They now also show in the peek, beside each node a document ↔ equipment link reaches, in `edgeLabelFor`'s words and as the row's hover title (`app/(protected)/graph/page.tsx` `linkNotes`; `components/graph/NodePeek.tsx` `linkNoteOf`); the map itself still marks a machine's reading by colour only (the legend names it). Detail and tests on `GAP-303`'s I-15 Partial (90-gap-register.md). The server assembly behind done-when 1 is now held to a payload budget and compared over the real predicate (`GAP-313`'s fix pass).
 
 ---

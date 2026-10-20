@@ -195,7 +195,9 @@ describe("REV-15 — every other caller of the two helpers passes no sink, so it
   it("lib/postPublish.ts (a rev-up's pipeline) calls both without writeErrors, each in its own best-effort try", () => {
     const pp = src("lib/postPublish.ts");
     expect(pp).toMatch(/try \{\s*\n\s*await onDocumentIssued\(\{ orgId: input\.orgId, documentId: input\.documentId, userId: input\.actorUserId, userName: input\.actorEmail \?\? input\.actorName \}\);\s*\n\s*\} catch \{ \/\* best-effort \*\/ \}/);
-    expect(pp).toMatch(/try \{\s*\n\s*await onDocumentIssuedAck\(\{ orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorUserId, actorName: input\.actorEmail \?\? input\.actorName \}\);\s*\n\s*\} catch \{ \/\* best-effort \*\/ \}/);
+    // notifications N17 merge (DEC-90, R2 / R4): the call also relays the
+    // caller's notifyPush / serverPush — still no writeErrors sink
+    expect(pp).toMatch(/try \{\s*\n\s*await onDocumentIssuedAck\(\{\s*orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorUserId, actorName: input\.actorEmail \?\? input\.actorName,\s*\n\s*\.\.\.\(input\.notifyPush === false \? \{ notifyPush: false \} : \{\}\),\s*\n\s*\.\.\.\(input\.serverPush \? \{ serverPush: input\.serverPush \} : \{\}\),\s*\n\s*\}\);\s*\n\s*\} catch \{ \/\* best-effort \*\/ \}/);
     expect(pp).not.toMatch(/writeErrors/);
   });
   it("the helpers' other internal callers (markReviewed, setReviewPolicy, setAckPolicy) pass no sink either", () => {
@@ -208,10 +210,12 @@ describe("REV-15 — every other caller of the two helpers passes no sink, so it
       "recomputeDocument(id)",                        // setReviewPolicy (library / folder)
     ]);
     const ack = src("lib/acknowledgments.ts");
-    const recomputes = ack.match(/await recomputeDocumentAck\(\{[^}]*\}\)|recomputeDocumentAck\(\{ orgId: input\.orgId, documentId: id[^}]*\}\)/g) ?? [];
-    expect(recomputes.filter((c) => /writeErrors/.test(c))).toEqual([
-      "await recomputeDocumentAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName, writeErrors: input.writeErrors })",
-    ]);
+    // notifications N17 merge (DEC-90, R2 / R4): onDocumentIssuedAck's call
+    // spans lines (it also relays notifyPush / serverPush) — read to its "});"
+    const recomputes = ack.match(/await recomputeDocumentAck\(\{[\s\S]*?\}\);|recomputeDocumentAck\(\{ orgId: input\.orgId, documentId: id[^}]*\}\)/g) ?? [];
+    const withSink = recomputes.filter((c) => /writeErrors/.test(c)).map((c) => c.replace(/\s+/g, " "));
+    expect(withSink).toHaveLength(1);
+    expect(withSink[0]).toMatch(/^await recomputeDocumentAck\(\{ orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorId, actorName: input\.actorName, writeErrors: input\.writeErrors, \.\.\.\(input\.notifyPush === false \? \{ notifyPush: false \} : \{\}\), \.\.\.\(input\.serverPush \? \{ serverPush: input\.serverPush \} : \{\}\), \}\);$/);
     expect(recomputes.length).toBeGreaterThanOrEqual(3);
   });
 });

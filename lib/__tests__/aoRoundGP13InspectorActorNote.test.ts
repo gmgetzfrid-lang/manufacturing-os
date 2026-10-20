@@ -43,7 +43,7 @@ vi.mock("@/lib/supabase", () => {
 });
 vi.mock("@/lib/staleCopies", () => ({ getDocumentRecall: vi.fn(async () => ({ holders: [], capped: false, unavailable: false })) }));
 vi.mock("@/lib/holds", () => ({ listActiveHoldsForDocument: vi.fn(async () => (s.activeHold ? [{ id: "h1" }] : [])) }));
-vi.mock("@/lib/transmittals", () => ({ listTransmittalsForDocument: vi.fn(async () => []) }));
+vi.mock("@/lib/transmittals", () => ({ listTransmittalsForDocument: vi.fn(async () => ({ transmittals: [], withheld: false })) }));
 vi.mock("@/lib/branches", () => ({ listOpenBranchesForDocument: vi.fn(async () => []) }));
 vi.mock("@/lib/ownership", () => ({ effectiveOwnerForDocument: vi.fn(async () => ({ userId: null })), requestDeletion: vi.fn() }));
 vi.mock("@/lib/capabilityPolicy", async (orig) => ({

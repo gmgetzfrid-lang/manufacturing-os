@@ -18,6 +18,7 @@
 // the same rules.
 
 import { canDiscover, type Principal } from "@/lib/permissions";
+import { effectiveLibraryAcl, libraryAccessFieldsFromRow, LIBRARY_RUNG_COLUMNS, type LibraryAccessFields } from "@/lib/libraryAccess";
 import type { AccessControl, NodeVisibility } from "@/types/schema";
 
 /** A PostgREST / Postgres error that says `tickets.library_id` is not there
@@ -47,27 +48,76 @@ export function creationNoticeOwed(
   return m.created_notice_owed === true && !m.created_notice_at;
 }
 
-/** One library as the picker reads it (the columns canDiscover decides on). */
+/** One library as the picker reads it (the columns canDiscover decides on).
+ *  intelligence DACL-13 R1 (I-31 merge, DEC-90): it carries the library's
+ *  role lists as the rung reads them (lib/libraryAccess
+ *  libraryAccessFieldsFromRow), so the library is decided by its EFFECTIVE
+ *  ACL — the legacy rung for a library whose ACL says nothing while its
+ *  lists restrict, else the ACL — the rung every other door takes. Its
+ *  answer is therefore the same before and after migration 20261228 writes
+ *  those lists into the ACL. A row built without the lists (readAccess
+ *  absent) reads as "ALL" (no rung) and is decided by its raw ACL, as
+ *  before; both readers here build it with them (libraryChoiceFromRow over
+ *  LIBRARY_CHOICE_COLUMNS). */
 export interface LibraryChoiceRow {
   id: string;
   name: string | null;
   visibility?: NodeVisibility | string | null;
   acl?: AccessControl | null;
   ownerUserId?: string | null;
+  readAccess?: LibraryAccessFields["readAccess"];
+  visibleTo?: LibraryAccessFields["visibleTo"];
+  writeAccess?: LibraryAccessFields["writeAccess"];
+  adminAccess?: LibraryAccessFields["adminAccess"];
+}
+
+/** The columns the triage picker and the workflow-action route's library
+ *  check select (DACL-13 R1): the id, the name, the owner and the rung's
+ *  columns (lib/libraryAccess LIBRARY_RUNG_COLUMNS — the ACL, the visibility
+ *  and the four role lists). */
+export const LIBRARY_CHOICE_COLUMNS = `id, name, owner_user_id, ${LIBRARY_RUNG_COLUMNS}`;
+
+/** A raw `libraries` row (LIBRARY_CHOICE_COLUMNS) as a LibraryChoiceRow,
+ *  its lists read by lib/libraryAccess's own rules. */
+export function libraryChoiceFromRow(r: Record<string, unknown>): LibraryChoiceRow {
+  const f = libraryAccessFieldsFromRow(r);
+  return {
+    id: String(r.id ?? ""),
+    name: (r.name as string | null | undefined) ?? null,
+    visibility: (r.visibility as string | null | undefined) ?? null,
+    acl: f.acl ?? null,
+    ownerUserId: (r.owner_user_id as string | null | undefined) ?? null,
+    readAccess: f.readAccess, visibleTo: f.visibleTo, writeAccess: f.writeAccess, adminAccess: f.adminAccess,
+  };
+}
+
+/** The library rung a LibraryChoiceRow is decided under (lib/libraryAccess
+ *  effectiveLibraryAcl — what effectiveLibraryAclFromRow returns for the row
+ *  it was read from). */
+export function libraryChoiceAcl(l: Pick<LibraryChoiceRow, "acl" | "visibility" | "readAccess" | "visibleTo" | "writeAccess" | "adminAccess">): AccessControl | undefined {
+  return effectiveLibraryAcl({
+    acl: l.acl ?? null,
+    visibility: (l.visibility as NodeVisibility | null | undefined) ?? null,
+    readAccess: l.readAccess ?? null,
+    visibleTo: l.visibleTo ?? [],
+    writeAccess: l.writeAccess ?? [],
+    adminAccess: l.adminAccess ?? [],
+  });
 }
 
 /** The libraries triage may target: those the CALLER may discover
- *  (lib/permissions canDiscover — controllers, the library's owner, an ACL
- *  that lets them see it; a normal library is open to members). A library
- *  the caller cannot see is never offered. No principal (no role known —
- *  SESS-6) offers nothing. Sorted by name. */
+ *  (lib/permissions canDiscover over the library's EFFECTIVE ACL —
+ *  libraryChoiceAcl, DACL-13 R1 — controllers, the library's owner, an ACL
+ *  that lets them see it; a normal library with no rule is open to
+ *  members). A library the caller cannot see is never offered. No principal
+ *  (no role known — SESS-6) offers nothing. Sorted by name. */
 export function offerableLibraries(rows: readonly LibraryChoiceRow[], principal: Principal | null): Array<{ id: string; name: string }> {
   if (!principal) return [];
   return rows
     .filter((l) => typeof l.id === "string" && l.id.length > 0)
     .filter((l) => canDiscover({
       principal,
-      aclChain: [l.acl ?? undefined],
+      aclChain: [libraryChoiceAcl(l)],
       visibility: ((l.visibility as NodeVisibility | null | undefined) ?? "normal") as NodeVisibility,
       effectiveOwnerUserId: l.ownerUserId ?? null,
     }))
@@ -87,13 +137,20 @@ export function offerableLibraries(rows: readonly LibraryChoiceRow[], principal:
  *  hides it from a role or a team (canDiscover → isDiscoverable), or an
  *  allow list — is not named, since the ticket's readers are not known here.
  *  An ACL that cannot be read as one (not an object, `rules` not a list) is
- *  treated as restrictive. */
+ *  treated as restrictive. DACL-13 R1 (I-31 merge): a row that carries the
+ *  library's role lists (a LibraryChoiceRow from libraryChoiceFromRow) is
+ *  judged on its EFFECTIVE ACL (libraryChoiceAcl), so a legacy-restricted
+ *  library is "the target library" before migration 20261228 as after it; a
+ *  row without the lists is judged on its raw ACL, as before. */
 export const UNNAMED_TARGET_LIBRARY = "the target library";
-export function libraryLabelForTicket(row: { name?: string | null; visibility?: string | null; acl?: unknown } | null | undefined): string {
+export function libraryLabelForTicket(row: ({ name?: string | null; visibility?: string | null; acl?: unknown } & Pick<LibraryChoiceRow, "readAccess" | "visibleTo" | "writeAccess" | "adminAccess">) | null | undefined): string {
   if (!row) return UNNAMED_TARGET_LIBRARY;
   const visibility = (row.visibility ?? "normal") as string;
   if (visibility === "hidden" || visibility === "private") return UNNAMED_TARGET_LIBRARY;
-  if (!aclOpenToEveryMember(row.acl)) return UNNAMED_TARGET_LIBRARY;
+  const acl: unknown = row.readAccess == null
+    ? row.acl
+    : libraryChoiceAcl({ ...row, acl: (row.acl ?? null) as AccessControl | null });
+  if (!aclOpenToEveryMember(acl)) return UNNAMED_TARGET_LIBRARY;
   return (row.name ?? "").trim() || UNNAMED_TARGET_LIBRARY;
 }
 

@@ -126,6 +126,7 @@ describe("DCW-4 (DF-P12) — createDocumentWithFile records the drafting ticket 
       expect(s, f).not.toContain("relatedTicketId");
     }
     const rev = readFileSync(join(process.cwd(), "lib/revisions.ts"), "utf8");
-    expect(rev).toContain("  relatedTicketId?: string | null;\n}): Promise<{ documentId: string; status: CreationStatus; reviewPolicy: string | null; creationAuditError: string | null }> {");
+    // notifications N17 merge (DEC-90, R2): createDocumentWithFile's last input is now the optional notifyPush
+    expect(rev).toMatch(/ {2}relatedTicketId\?: string \| null;\n(?: {2,3}\/?\*[^\n]*\n)+ {2}notifyPush\?: boolean;\n\}\): Promise<\{ documentId: string; status: CreationStatus; reviewPolicy: string \| null; creationAuditError: string \| null \}> \{/);
   });
 });

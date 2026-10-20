@@ -25,20 +25,21 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 272,
+    "findings": 274,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
       "MEDIUM": 150,
-      "LOW": 54
+      "LOW": 56
     },
     "by_status": {
-      "RESOLVED": 239,
-      "OPEN": 26,
+      "RESOLVED": 243,
+      "OPEN": 23,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
+      "RESOLVED (2026-10-20, by the integrator's rulings R1 and R2 at the intelligence I-31 merge, `DEC-90` — R1 built at the merge, R2 accepted; PASTE pending: `20261228`, after the I-31 deploy, no ruling gate)": 1,
       "INVALID": 1
     }
   },
@@ -1908,7 +1909,7 @@
       "id": "AREA-2",
       "title": "Any active member can permanently delete every document↔equipment link in the org, and create new ones, straight from the client",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -5973,6 +5974,28 @@
       "report": "audit-reports/intelligence/12-operating-areas.md"
     },
     {
+      "id": "AREA-12",
+      "title": "The shape wizard's document ↔ equipment link takes a 23505 for \"already linked\" and never adopts the drawing's row",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/graph/GraphShapeWizard.tsx:150-154"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An Admin shapes the graph from an answer and accepts \"PID-1 ↔ P-101\". The sweep had read P-101 off PID-1. The wizard counts the link as made. Months later a reviewer dismisses the sweep's reading of P-101 on PID-1; the link is gone, and nothing recorded that a person had asserted it.",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/12-operating-areas.md"
+    },
+    {
       "id": "BR-7",
       "title": "Code backfill is gated on unit_code being NULL, so an asset that has a unit but no site code never gets one",
       "severity": "LOW",
@@ -6106,6 +6129,36 @@
       "report": "audit-reports/intelligence/06-document-acl-leaks.md"
     },
     {
+      "id": "DACL-13",
+      "title": "The ticket triage library picker, its server check and the ticket label read the raw libraries.acl, not the legacy rung — so they narrow at the 20261228 paste instead of answering as the rest of the app does",
+      "severity": "LOW",
+      "status": "RESOLVED (2026-10-20, by the integrator's rulings R1 and R2 at the intelligence I-31 merge, `DEC-90` — R1 built at the merge, R2 accepted; PASTE pending: `20261228`, after the I-31 deploy, no ruling gate)",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (as first written, `lib/__tests__/intelI31LegacyListsAcl.test.ts` \"the raw-ACL readers that did not take the legacy rung CHANGE at the paste …\": the Vendor was offered a legacy library before the paste and not after, the label switched to \"the target library\"; flipped at the I-31 merge to \"DACL-13 R1: …\", same answer before and after)",
+      "blast_radius": "a triage flow (one target library per affected triager) and a library name in a ticket's history; and (question 2, added at the second review fix pass) the listing of private / hidden rows in written libraries to the roles their lists name — restated at the I-31 merge (R2): every private / hidden row whose `acl_index` is built or rebuilt after the paste, at once on upload, folder create, move or drawer save, existing rows at the latest at the next nightly rebuild",
+      "related": [
+        "DACL-10",
+        "DCW-1",
+        "DEC-90"
+      ],
+      "locations": [
+        "lib/ticketLibrary.ts:114",
+        "lib/ticketLibrary.ts:146",
+        "components/requests/LibraryPicker.tsx:86",
+        "app/api/tickets/workflow-action/route.ts:643",
+        "lib/libraryAccess.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Lead with ticket.manage, holding no role in an \"HR records\" library's lists, routes requests to it at triage today. After the paste the picker no longer offers it and assign / requestengreview naming it answer 400 \"That library is not one of this workspace's\"; the ticket history calls it \"the target library\".",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/06-document-acl-leaks.md"
+    },
+    {
       "id": "FLOW-8",
       "title": "A recycle loop loses one of its two legs: addEdge's dedupe key is order-insensitive, so A→B and B→A collapse to a single drawn edge",
       "severity": "LOW",
@@ -6188,7 +6241,7 @@
       "id": "FLOW-14",
       "title": "The confirmed flow topology feeds nothing but line-drawing — the app's reachability engine is fed by page co-occurrence instead, and every reasoning surface is blind to it",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -6374,7 +6427,7 @@
       "id": "GM-14",
       "title": "knowledge_page_entities — the per-sheet equipment index with x/y positions — is REVOKEd from `authenticated`, and the graph is assembled entirely client-side, so the data the owner's per-sheet question needs is structurally unreachable from the graph",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -6784,7 +6837,7 @@
       "id": "IRLS-16",
       "title": "A per-document mention rebuild is not recorded in the mention index's run state",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

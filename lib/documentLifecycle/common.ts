@@ -241,6 +241,11 @@ export async function startClocksForIssuedDocuments(
   documentIds: string[],
   actor: ActorContext,
   creation?: { event: "CREATED_FROM_SPLIT" | "CREATED_FROM_MERGE"; details?: Record<string, unknown> },
+  /** notifications N17 (the integrator's rule R2, DEC-90): `notifyPush:
+   *  false` from a door that opens rosters for many documents in one action
+   *  (the split) — bell rows and emails unchanged, no push. The merge's one
+   *  created target omits it. */
+  opts?: { notifyPush?: boolean },
 ): Promise<string[]> {
   const warnings: string[] = [];
   for (const documentId of documentIds) {
@@ -248,7 +253,7 @@ export async function startClocksForIssuedDocuments(
     let problems: string[] = [];
     let threw = false;
     try {
-      const writeErrors = await startIssuedDocumentClocks({ orgId: actor.orgId, documentId, actorUserId: actor.actorUserId, actorName: actor.actorEmail ?? null });
+      const writeErrors = await startIssuedDocumentClocks({ orgId: actor.orgId, documentId, actorUserId: actor.actorUserId, actorName: actor.actorEmail ?? null, ...(opts?.notifyPush === false ? { notifyPush: false } : {}) });
       if (writeErrors.length > 0) {
         problems = writeErrors;
         msg = `The review clock / acknowledgment roster of document ${documentId} did not fully start (${writeErrors.join("; ")}); Document Control can set it from the document.`;
