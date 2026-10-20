@@ -12,18 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 129,
+    "findings": 130,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
       "MEDIUM": 79,
-      "LOW": 31
+      "LOW": 32
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 98,
-      "OPEN": 25,
+      "RESOLVED": 101,
+      "OPEN": 23,
       "RESOLVED (2026-10-14, notifications Round G, N10 PUSH — done-when 1 met as narrowed by the integrator, `DEC-90`)": 1,
       "RESOLVED *(2026-10-20, by pointer: document-control `DIST-17` is RESOLVED — document-control Round G, P27. Until then the integrator at the N16 merge kept this record OPEN rather than inventing a status outside the corpus vocabulary.)* — the same leak is document-control [`DIST-17`](../document-control/05-distribution.md#dist-17), opened by N16 fix pass 2 under the integrator's ruling at the N16 merge (`DEC-31`, 2026-10-14). That record carries the owner, the severity, the reproduction and the done-whens; this one stays only so the number keeps pointing somewhere, and is not counted in this report.": 1,
       "RESOLVED (2026-10-13, notifications N15; PASTE pending (both pastes): `20261206` — once BEFORE the N15 deploy and again, REQUIRED, after the next maintenance run following that deploy)": 1
@@ -1304,7 +1304,7 @@
       "id": "OS-14",
       "title": "Four push-worthy kinds are written outside emit() at their main producers, so they never reach the push channel",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from the code on `fleet/N10-push`)",
       "blast_radius": null,
@@ -2942,7 +2942,7 @@
       "id": "OS-15",
       "title": "A shared browser stays subscribed for the person who turned device notifications on after they sign out",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from the code on `fleet/N10-push`)",
       "blast_radius": null,
@@ -2958,6 +2958,31 @@
       ],
       "refuted": false,
       "summary": "On a control-room PC, A signs out at the end of a shift. During the next shift the PC shows \"You're asked to review a document\" for A. The push names no document, reason or person (DEC-108), and opening it lands on the sign-in page. But the next user sees that the departed shift's engineer has a pending review. (Fix pass 4: the title was \"You're asked to sign off a document\" until the fourth revie",
+      "area": "notifications",
+      "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
+    },
+    {
+      "id": "OS-16",
+      "title": "A read-and-understood request opened by a server publish (the intake link's auto-publish) is never pushed",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from the code on `fleet/N17-push-producers`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/intake/upload/route.ts:1825-1826",
+        "lib/postPublish.ts:268",
+        "lib/acknowledgments.ts:443",
+        "lib/notify/dispatch.ts:745"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A contractor uploads through a project's trusted intake link; the revision is published and the read-and-understood roster opens for twelve operators. Their phones stay silent, although the same request opened from the library page would have reached them. (The card says so: PUSHNOTYETNOTE.)",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
     },

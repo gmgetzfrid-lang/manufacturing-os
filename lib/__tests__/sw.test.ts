@@ -35,7 +35,7 @@
 // alone (OFF-3). The page halves — the update toast (OFF-4), the offline copy
 // (OFF-3) and the sign-out purge (OFF-8) — are pinned at the bottom.
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -1029,19 +1029,49 @@ describe("lib/swSession — the page's side of the contract", () => {
     ]) {
       const s = src(p);
       expect(s, p).toMatch(/from "@\/lib\/swSession"|from '@\/lib\/swSession'/);
-      expect(s, p).toMatch(/clearServiceWorkerSession\(\)/);
-      // the worker is told BEFORE the session is torn down at every site
-      const signOuts = [...s.matchAll(/supabase\.auth\.signOut\(\)/g)].map((m) => m.index ?? 0);
-      expect(signOuts.length, p).toBeGreaterThan(0);
-      for (const at of signOuts) {
-        const before = s.slice(Math.max(0, at - 400), at);
-        expect(before, `${p}: sign-out at ${at} not preceded by clearServiceWorkerSession()`).toMatch(/clearServiceWorkerSession\(\)/);
-      }
+      // OS-15 (notifications N17): every site signs out through the ONE helper,
+      // which posts SIGN_OUT first (the worker is told BEFORE the session is
+      // torn down), then releases this browser's push registration, then
+      // signs out — no site calls supabase.auth.signOut() itself any more
+      expect(s, p).toMatch(/signOutOfThisBrowser\(supabase\)/);
+      expect(s, p).not.toMatch(/supabase\.auth\.signOut\(/);
     }
+    // the helper's own order: SIGN_OUT, then the push release, then signOut()
+    const helper = src("lib/swSession.ts");
+    const body = helper.slice(helper.indexOf("export async function signOutOfThisBrowser("));
+    expect(body.indexOf("clearServiceWorkerSession(")).toBeGreaterThan(0);
+    expect(body.indexOf("clearServiceWorkerSession(")).toBeLessThan(body.indexOf("releaseThisBrowserPush("));
+    expect(body.indexOf("releaseThisBrowserPush(")).toBeLessThan(body.indexOf("client.auth.signOut()"));
     const layout = src("app/(protected)/layout.tsx");
     expect(layout).toMatch(/announceServiceWorkerSession\(uid\)/);
     // no other sign-out site exists to miss (the signatures route's probe client is server-side)
     expect(src("app/page.tsx")).not.toMatch(/auth\.signOut\(/);
+  });
+
+  it("OS-15 census: no file in app/, components/, hooks/ or lib/ calls auth.signOut() itself — a NEW sign-out site must go through signOutOfThisBrowser", () => {
+    const root = process.cwd();
+    // the helper itself, and the signatures route's server-side probe client
+    // (a throwaway session, never this browser's)
+    const allowed = new Set(["lib/swSession.ts", "app/api/signatures/sign/route.ts"]);
+    const offenders: string[] = [];
+    let scanned = 0;
+    const walk = (dir: string) => {
+      for (const n of readdirSync(join(root, dir))) {
+        const rel = `${dir}/${n}`;
+        if (statSync(join(root, rel)).isDirectory()) {
+          if (n !== "node_modules" && n !== "__tests__" && !n.startsWith(".")) walk(rel);
+        } else if (/\.(ts|tsx|js|jsx|mjs)$/.test(n)) {
+          scanned++;
+          if (allowed.has(rel)) continue;
+          if (/auth\s*\.\s*signOut\s*\(/.test(readFileSync(join(root, rel), "utf8"))) offenders.push(rel);
+        }
+      }
+    };
+    for (const d of ["app", "components", "hooks", "lib"]) walk(d);
+    expect(scanned).toBeGreaterThan(100);
+    expect(offenders).toEqual([]);
+    // the census is live: both allowed files really do call it
+    for (const f of allowed) expect(readFileSync(join(root, f), "utf8"), f).toMatch(/auth\s*\.\s*signOut\s*\(/);
   });
 });
 

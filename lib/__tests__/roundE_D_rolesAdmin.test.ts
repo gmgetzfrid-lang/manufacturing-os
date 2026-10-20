@@ -524,7 +524,8 @@ describe("DOCACL-3 / DEC-43 — controllers are unscoped by design; a bypass-dec
     expect(canServeContent({ principal: P("Admin"), aclChain: [], ...priv })).toBe(true);
   });
   it("the download route writes CONTROLLER_RESTRICTED_READ best-effort, after the same evaluation, never blocking the rail", () => {
-    const r = src("app/api/storage/download-url/route.ts");
+    // The gate moved verbatim to lib/documentKeyGate.ts (DEC-90 ruling (4), I-29 merge).
+    const r = src("lib/documentKeyGate.ts");
     expect(r).toContain("const allowed = canServeContent(contentCheck);");
     expect(r).toContain("if (allowed && controllerBypassDecided(contentCheck)) {");
     expect(r).toContain('action: "CONTROLLER_RESTRICTED_READ"');

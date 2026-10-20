@@ -67,6 +67,10 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
         changeType,
         mocReference: sharedMocReference,
         orgId, actorUserId, actorEmail, actorRole,
+        // notifications N17 (R2, DEC-90): one set rev-up, many sheets — the
+        // read-&-understood and sign-off rosters it opens keep their bell
+        // rows and emails and send no push
+        notifyPush: false,
       };
       // The set path must honor the SAME pre-publish review gate as a
       // single-sheet rev-up — the audit found it silently bypassed the gate

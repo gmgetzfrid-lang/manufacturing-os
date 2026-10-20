@@ -1090,6 +1090,44 @@ describe("DWG-12 — 'where else' answers with the sheet that IS the number, nev
   });
 });
 
+describe("KACL-7 criterion 3 (intelligence I-29 merge, DEC-90 ruling (3)) — a 'where else' jump never carries a source-linked mirror's key", () => {
+  /** s-3 (the sheet that IS 025-PID-0106) is a mirror of a controlled
+   *  document; s-2 (which carries P-7) is a direct upload. */
+  function mirrorSheet() {
+    locateSheet();
+    Object.assign(rowsOf("knowledge_documents").find((d) => d.id === "s-3")!, {
+      file_key: "orgs/o1/libraries/dc/025-PID-0106-rev-B.pdf", source_document_id: "d-106", source_version_id: "v-106b", source_rev: "B",
+    });
+    db.tables.documents.push({ id: "d-106", org_id: "o1", status: "Issued", archived_at: null, current_version_id: "v-106b", ai_excluded: false });
+    db.tables.knowledge_page_entities.push(ent("s-2", "equipment", "P-7", 3));
+  }
+  it("reproduction → fix: the mirror's jump is its id with a null key (and its revision); its key is nowhere in the answer — an upload's jump keeps its current fields, exactly", async () => {
+    mirrorSheet();
+    const res = await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["025-PID-0106", "P-7"] });
+    const text = await res.text();
+    const body = JSON.parse(text) as { elsewhere: Array<Record<string, unknown>> };
+    expect(body.elsewhere.find((e) => e.tag === "025-PID-0106")).toEqual({
+      tag: "025-PID-0106", documentId: "s-3", documentName: "025-PID-0106.pdf", fileKey: null,
+      page: 2, sameDocument: false, sourceVersionId: "v-106b", sourceRev: "B",
+    });
+    expect(text).not.toContain("025-PID-0106-rev-B.pdf");
+    expect(body.elsewhere.find((e) => e.tag === "P-7")).toEqual({
+      tag: "P-7", documentId: "s-2", documentName: "025-PID-0105.pdf", fileKey: "orgs/o1/knowledge/s-2.pdf",
+      page: 3, sameDocument: false,
+    });
+  });
+  it("regression: a mirror the caller may not read (or the AI may not) is still never suggested", async () => {
+    mirrorSheet();
+    db.tables.documents.find((d) => d.id === "d-106")!.ai_excluded = true;
+    const body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["025-PID-0106"] })).json();
+    expect(body.elsewhere).toEqual([]);
+  });
+  it("the viewer opens a jump by id — a null key through /api/knowledge/mirror-url (source pin)", () => {
+    const viewer = readFileSync(join(process.cwd(), "components/knowledge/CitedPageViewer.tsx"), "utf8");
+    expect(viewer).toMatch(/fileKey: e\.fileKey, title: e\.documentName, documentId: e\.documentId,/);
+  });
+});
+
 // ── review fix pass 2 ───────────────────────────────────────────────────────
 
 describe("DWG-4 — a connector into a sheet with no box numbers read is unpaired, never broken (review fix pass 2)", () => {

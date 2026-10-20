@@ -197,6 +197,11 @@ export type RevUpInput = {
    *  only — written to document_versions.related_ticket_id; since DEC-23 it
    *  waives nothing (a ticket approval never satisfies a document sign-off). */
   relatedTicketId?: string | null;
+  /** notifications N17 (the integrator's rule R2, DEC-90): false when this
+   *  call is one of MANY documents a single action opens rosters for — the
+   *  read-&-understood / sign-off requests keep their bell rows and emails and
+   *  skip only the push leg (lib/acknowledgments.ts recomputeDocumentAck). */
+  notifyPush?: boolean;
 };
 
 export type RevUpResult = {
@@ -806,15 +811,18 @@ export { WORK_IN_PROGRESS_STATUSES, isControlledIssueStatus, isIssueTransition, 
  *  clock exactly as it is (no onDocumentIssued: last_reviewed_at,
  *  next_review_date and the review history untouched) and opens only the
  *  roster — for a status-change issue the retirement stamp cannot place
- *  (recordStatusIssue). Every other caller omits it. */
+ *  (recordStatusIssue). Every other caller omits it.
+ *  notifications N17 (R2, the integrator at the N17 merge): `notifyPush:
+ *  false` — a door opening rosters for many documents in one action — is
+ *  passed to onDocumentIssuedAck; the bell rows and emails are unchanged. */
 export async function startIssuedDocumentClocks(input: {
-  orgId: string; documentId: string; actorUserId: string; actorName?: string | null; reviewClock?: boolean;
+  orgId: string; documentId: string; actorUserId: string; actorName?: string | null; reviewClock?: boolean; notifyPush?: boolean;
 }): Promise<string[]> {
   const writeErrors: string[] = [];
   // Seed the review clock so a new doc picks up any library/folder review cycle.
   if (input.reviewClock !== false) await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorUserId, userName: input.actorName, writeErrors });
   // Open the read-&-understood roster if an ack policy covers this new doc.
-  await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorName, writeErrors });
+  await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorName, writeErrors, ...(input.notifyPush === false ? { notifyPush: false } : {}) });
   return writeErrors;
 }
 
@@ -938,6 +946,11 @@ export async function createDocumentWithFile(input: {
   /** drafting-flow DCW-4: the drafting ticket this new document delivers
    *  (provenance only — see above). */
   relatedTicketId?: string | null;
+  /** notifications N17 (the integrator's rule R2, DEC-90): false when this
+   *  call is one of MANY documents a single action opens rosters for — the
+   *  read-&-understood / sign-off requests keep their bell rows and emails and
+   *  skip only the push leg (lib/acknowledgments.ts recomputeDocumentAck). */
+  notifyPush?: boolean;
 }): Promise<{ documentId: string; status: CreationStatus; reviewPolicy: string | null; creationAuditError: string | null }> {
   const now = new Date().toISOString();
   const docNum = input.documentNumber.trim();
@@ -1070,7 +1083,7 @@ export async function createDocumentWithFile(input: {
   });
   if (input.status === "Issued") {
     // REV-15: the one clock-start path every creation door shares.
-    await startIssuedDocumentClocks({ orgId: input.orgId, documentId, actorUserId: input.actorUserId, actorName: input.actorEmail });
+    await startIssuedDocumentClocks({ orgId: input.orgId, documentId, actorUserId: input.actorUserId, actorName: input.actorEmail, ...(input.notifyPush === false ? { notifyPush: false } : {}) });
   }
   // Seed retention state so a doc created AFTER a library/folder retention
   // policy exists is not invisible to the retention system.
@@ -1574,6 +1587,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       docLabel: String(docLabel),
       newRev: revisionLabel.trim(),
       actorUserId, actorName: actorEmail || actorUserId, actorEmail,
+      ...(input.notifyPush === false ? { notifyPush: false } : {}),
     });
   }
 
@@ -1737,6 +1751,7 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
   await openReviewRoster({
     orgId, documentId: doc.id, libraryId, versionId: insertedRow.id as string,
     revisionLabel: draftLabel, contentHash: fileHash, control, actorId: actorUserId, actorName: actorEmail,
+    ...(input.notifyPush === false ? { notifyPush: false } : {}),
   });
 
   return { versionId: insertedRow.id as string, revisionLabel: draftLabel };
@@ -2888,6 +2903,10 @@ export async function recordStatusIssue(input: {
   /** REV-19 (a) (P23 fix pass): the door's own probe answer, asked before its
    *  write (isStatusIssueRecordedByDatabase); absent, asked here. */
   recordedByDatabase?: boolean;
+  /** notifications N17 (R2): false from a multi-document door (the bulk
+   *  status editor, through changeDocumentStatus) — passed to
+   *  startIssuedDocumentClocks; the bell rows and emails are unchanged. */
+  notifyPush?: boolean;
 }): Promise<StatusIssueOutcome> {
   const complianceClockErrors: string[] = [];
   const entryIntoForce = input.entryIntoForce === true;
@@ -2901,6 +2920,7 @@ export async function recordStatusIssue(input: {
         // No evidence (null), or a first entry into force: the review clock
         // is left as it was; only the roster for this revision is opened.
         reviewClock,
+        ...(input.notifyPush === false ? { notifyPush: false } : {}),
       }));
     } catch (e) {
       complianceClockErrors.push(`the start failed (${(e as Error).message})`);
@@ -3037,6 +3057,10 @@ export async function changeDocumentStatus(input: {
   actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
   /** Other columns written in the same checked UPDATE (a metadata save). */
   patch?: Record<string, unknown>;
+  /** notifications N17 (R2): false from the bulk status editor (one action,
+   *  many documents) — the roster's requests keep their bell rows and
+   *  emails and skip the push leg; the metadata save (one document) omits it. */
+  notifyPush?: boolean;
 }): Promise<StatusIssueOutcome> {
   const before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
   const now = new Date().toISOString();
@@ -3128,6 +3152,7 @@ export async function changeDocumentStatus(input: {
     versionId: before.versionId, rev: before.rev, putBack: before.putBack, door: input.door,
     actorUserId: input.actorUserId, actorEmail: input.actorEmail ?? null, actorRole: input.actorRole ?? null,
     entryIntoForce: before.entryIntoForce, recordedByDatabase,
+    ...(input.notifyPush === false ? { notifyPush: false } : {}),
   });
 }
 

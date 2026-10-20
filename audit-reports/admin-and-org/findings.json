@@ -17,11 +17,11 @@
       "LOW": 18
     },
     "by_status": {
-      "RESOLVED": 57,
+      "RESOLVED": 58,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 integrator fix pass: the three remaining readers carry the actor note — the Resolution at the end of this record; every done-when met, items 1 and 3 and done-when 2's first form still waiting on `20261201`'s paste, as recorded. Before that: OPEN — 2026-10-14, admin-and-org Round G P13: the three named readers now carry the actor note — the P13 Partial below — but done-when 2's labelled form is still not met on three more readers, named there with their owner. Corrected at the P13 fix pass, DEC-29: P13 first set this RESOLVED on \"every reader\". Set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form was not met on three readers — the P7 Partial below)*": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13: the three shed sites and `/admin/storage`'s display — the last of the nine sites; see the Resolution at the end)*": 1,
-      "OPEN": 8,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — pending the `20261219` paste; see the Resolution below)*": 1,
+      "OPEN": 7,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13; the controller / owner shortcut that precedes the gate is opened as `ORG-23`)*": 1
     }
   },
@@ -820,7 +820,7 @@
       "id": "ALOG-13",
       "title": "The permissions console asserts the legacy read/write/admin matrix \"is GONE\" and that nothing depended on it, while /admin/libraries still writes all three columns and the documents home page still filters library cards on two of them",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

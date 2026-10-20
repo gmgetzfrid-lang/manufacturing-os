@@ -20,6 +20,10 @@ import { supabase } from "@/lib/supabase";
 // it does not land (lib/complianceNotify.ts).
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { loadScanRetryPlan } from "@/lib/complianceNotify";
+// OS-14 (notifications N17): the roster's sign-off requests reach the push
+// channel after their bell rows land — emit()'s own leg (the daily scan's
+// reminders do not: the cron only prunes, DEC-108 §6).
+import { pushAfterBellRows, type PushSendInput } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap, type LibraryOwnerCols, type TeamSupervisorLookup } from "@/lib/ownership";
@@ -29,6 +33,11 @@ import { heldRoles, roleFilter } from "@/lib/roleHeld";
 import { loadContainerChain, firstDefinedInChain, folderChainFromMap, type ContainerChain } from "@/lib/containerChain";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { ISSUE_REFUSAL } from "@/lib/issueStatus";
+
+/** The push leg never touches the roster's own outcome (DEC-90: a push
+ *  failure never fails the action or its bell rows). */
+const pushLandedRows = (input: PushSendInput): Promise<void> =>
+  Promise.resolve().then(() => pushAfterBellRows(input)).catch(() => undefined);
 
 type Level = "library" | "collection" | "document";
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter(Boolean)));
@@ -486,6 +495,11 @@ export async function openReviewRoster(input: {
   orgId: string; documentId: string; libraryId: string; versionId: string;
   revisionLabel: string; contentHash: string | null; control: ReviewControl;
   actorId?: string | null; actorName?: string | null;
+  /** notifications N17 (the integrator's rule R2, DEC-90): false from a door
+   *  that opens rosters for MANY documents in one action (the set rev-up's
+   *  submissions) — the sign-off requests keep their bell rows and emails
+   *  and skip only the push leg. A single submission omits it. */
+  notifyPush?: boolean;
 }): Promise<void> {
   // The author is the version's created_by (the submitter); fall back to the
   // actor when the row is unreadable rather than letting the author through.
@@ -569,7 +583,8 @@ export async function openReviewRoster(input: {
       console.warn("[reviewControl] roster insert failed", upsertErr.message);
       await withdrawAndThrow("The reviewer roster could not be saved", upsertErr.message);
     }
-    await Promise.all(primaries.filter((r) => r.uid !== input.actorId).map((r) =>
+    const asked = primaries.filter((r) => r.uid !== input.actorId);
+    const landed = await Promise.all(asked.map((r) =>
       notify({
         orgId: input.orgId, userId: r.uid, kind: "review_requested",
         title: `Review requested: ${input.revisionLabel}`,
@@ -580,6 +595,11 @@ export async function openReviewRoster(input: {
         actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
       })
     ));
+    // OS-14: only the reviewers whose bell row landed (the browser leg is
+    // fire-and-forget; a push failure never fails the roster)
+    if (input.notifyPush !== false) {
+      await pushLandedRows({ orgId: input.orgId, kind: "review_requested", resourceId: input.documentId, recipients: asked.filter((_, i) => landed[i] === true).map((r) => r.uid) });
+    }
     await logAuditAction({
       action: "REVIEW_REQUESTED", resourceType: "document", resourceId: input.documentId,
       orgId: input.orgId, userId: input.actorId ?? "",

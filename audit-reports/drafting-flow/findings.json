@@ -17,16 +17,16 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 152,
+    "findings": 153,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 47,
       "MEDIUM": 65,
-      "LOW": 31
+      "LOW": 32
     },
     "by_status": {
-      "RESOLVED": 70,
+      "RESOLVED": 71,
       "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
       "OPEN": 65,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
@@ -4033,7 +4033,7 @@
       "id": "ROUTE-13",
       "title": "The request queue's default view holds the workspace's whole history: closed requests past the 10,000-row ceiling cannot be reached in the page, and every tickets event re-reads the whole scope",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading and by the rendered tests in `lib/__tests__/dfRoundG_P14_queueRead.test.ts`; not exercised against a live database)",
       "blast_radius": "visibility / performance",
@@ -4239,6 +4239,35 @@
       ],
       "refuted": false,
       "summary": "A participant who may attachfile posts an attachment whose id equals the current Final's id (with a different key under the ticket's prefix). Every ?a= print of the real current deliverable now scans \"cannot confirm\" (the id is named twice), and POST /api/tickets/copy for that file answers 404 \"That file is not on this request\". The failure is fail-safe — grey, never green, and the copy is refused",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/06-state-machine.md"
+    },
+    {
+      "id": "SM-16",
+      "title": "A reopen clears a request's outcome but keeps the reason recorded with it, so the old reason rides along to however the request ends next",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading (not exercised against a live database).",
+      "blast_radius": "reporting integrity (the per-reason counts on `/admin/analytics`, the reason shown in the queue's Closed history and in `metadata`)",
+      "related": [
+        "LEAK-9",
+        "GAP-107",
+        "GAP-13",
+        "DEC-103"
+      ],
+      "locations": [
+        "lib/ticketTransitions.ts:532-543",
+        "app/api/tickets/workflow-action/route.ts:975-979",
+        "lib/ticketOutcome.ts:56-63"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An API caller sends closeticket with outcome withdrawn and a configured reason (\"Requester left the site\"); then reopenticket; the request is acknowledged and closed as completed. The row reads outcome completed, metadata.outcomereason \"Requester left the site\" (category withdrawn). Anything that reads the reason without checking its category credits a completed request with a withdrawal reason. T",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
     }

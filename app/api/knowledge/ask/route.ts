@@ -2891,7 +2891,17 @@ export async function POST(req: NextRequest) {
     // document matters and given no way to open it. Designations in the
     // final answer text are matched against the reachable roster; the client
     // renders each as an open-the-document chip (best cited page, else p.1).
-    const mentionedDocs: Array<{ id: string; name: string; fileKey: string; page: number; mention: string }> = [];
+    // KACL-7 criterion 3 (built at the I-29 merge — the integrator's DEC-90
+    // ruling (3)): a direct upload's chip carries its key exactly as before;
+    // a SOURCE-LINKED mirror's chip carries its id, a null key and its
+    // revision (non-secret), and the viewer opens it through
+    // /api/knowledge/mirror-url — the same door decision on the same key the
+    // browser used to sign, so the same reader opens the same file, and the
+    // mirror's storage key never reaches the browser.
+    type MentionedDoc =
+      | { id: string; name: string; fileKey: string; page: number; mention: string }
+      | { id: string; name: string; fileKey: null; page: number; mention: string; sourceVersionId: string | null; sourceRev: string | null };
+    const mentionedDocs: MentionedDoc[] = [];
     try {
       const bestPage = new Map<string, number>();
       for (const c of citations) {
@@ -2906,10 +2916,17 @@ export async function POST(req: NextRequest) {
         seen.add(key);
         const doc = reachableDocs.find((d) => d.file_key && squashDes(d.name).includes(key));
         if (!doc) continue;
-        mentionedDocs.push({
-          id: doc.id, name: doc.name, fileKey: doc.file_key as string,
-          page: bestPage.get(doc.id) ?? 1, mention: m,
-        });
+        const chipPage = bestPage.get(doc.id) ?? 1;
+        mentionedDocs.push(doc.source_document_id
+          ? {
+              id: doc.id, name: doc.name, fileKey: null,
+              page: chipPage, mention: m,
+              sourceVersionId: doc.source_version_id ?? null, sourceRev: doc.source_rev ?? null,
+            }
+          : {
+              id: doc.id, name: doc.name, fileKey: doc.file_key as string,
+              page: chipPage, mention: m,
+            });
         if (mentionedDocs.length >= 12) break;
       }
     } catch { /* link decoration must never break an answer */ }
