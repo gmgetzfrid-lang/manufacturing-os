@@ -53,16 +53,19 @@
 --   deploy, the old app's browser reads (`select("*")` in the Inspector's
 --   trail, the evidence pack, and the create / issue read-backs) would be
 --   refused with 42501. Needs 20260717 and 20260910 (the table, the
---   portal_token column) AND PASTE AFTER 20261133 AND 20261199 — both add
---   transmittals columns (20261133 the portal lifecycle columns, 20261199
---   stamp_check), and the column grant reaches only the columns that exist
---   when this runs: pasted before 20261133, its columns would reach members
---   with no SELECT, and the revoke (UPDATE … WHERE portal_revoked_at IS
---   NULL, from the member's session) would be refused, 42501. It refuses,
---   changing nothing, without any of the four, naming the missing file — so
---   it inherits 20261199's hold (deploy document-control P24, paste 20261199,
---   then deploy P29, then paste this). Either order with every other pending
---   paste: it re-creates no function, policy or trigger and adds no column.
+--   portal_token column).
+--   PASTE AFTER 20261133 AND 20261199: 20261231 refuses (changing nothing,
+--   naming the missing file) unless the 20261133 columns (portal_expires_at,
+--   portal_revoked_at, portal_revoked_by, portal_last_used_at,
+--   portal_open_count, portal_download_count) and 20261199's stamp_check
+--   exist, so it inherits 20261199's HOLD; deploy the P29 app first. The
+--   whole sequence: deploy document-control P24, paste 20261133 and
+--   20261199, deploy P29, then paste this. Why: the column grant reaches
+--   only the columns that exist when this runs — pasted before 20261133, its
+--   columns would reach members with no SELECT, and the revoke (UPDATE …
+--   WHERE portal_revoked_at IS NULL, from the member's session) would be
+--   refused, 42501. The DO block below checks each of those seven columns
+--   before it revokes anything.
 --   Idempotent: a re-paste answers every probe true.
 --
 -- TOKENS READ BEFORE THE PASTE STAY VALID (not closed by this file):
@@ -225,41 +228,47 @@ COMMENT ON COLUMN transmittals.portal_token IS
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
-SELECT 'transmittals: RLS still on' AS "check",
+-- One sort key (k) runs through the whole union and ONE outer ORDER BY
+-- fixes the order the editor shows: the nine probes, then the ten
+-- inventory rows in their own order (100 + ord).
+SELECT "check", ok, n FROM (
+SELECT 1 AS k, 'transmittals: RLS still on' AS "check",
        COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.transmittals')), false) AS ok,
        NULL::text AS n
-UNION ALL SELECT 'transmittals_select is kept (20260910): one SELECT policy, bound to the caller''s active membership',
+UNION ALL SELECT 2, 'transmittals_select is kept (20260910): one SELECT policy, bound to the caller''s active membership',
        (SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'transmittals' AND cmd = 'SELECT') = 1
        AND EXISTS (SELECT 1 FROM pg_policies
                     WHERE schemaname = 'public' AND tablename = 'transmittals' AND policyname = 'transmittals_select'
                       AND qual LIKE '%org_members%' AND qual LIKE '%auth.uid()%' AND qual LIKE '%active%'), NULL
-UNION ALL SELECT 'authenticated, anon and PUBLIC hold no table-level SELECT on transmittals',
+UNION ALL SELECT 3, 'authenticated, anon and PUBLIC hold no table-level SELECT on transmittals',
        NOT has_table_privilege('authenticated', 'public.transmittals', 'SELECT')
        AND NOT has_table_privilege('anon', 'public.transmittals', 'SELECT')
        AND NOT EXISTS (SELECT 1 FROM pg_class c, aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) a
                         WHERE c.oid = 'public.transmittals'::regclass AND a.grantee = 0 AND a.privilege_type = 'SELECT'), NULL
-UNION ALL SELECT 'authenticated cannot SELECT portal_token (the REST read of the token is refused, 42501)',
+UNION ALL SELECT 4, 'authenticated cannot SELECT portal_token (the REST read of the token is refused, 42501)',
        NOT has_column_privilege('authenticated', 'public.transmittals', 'portal_token', 'SELECT'), NULL
-UNION ALL SELECT 'anon cannot SELECT portal_token',
+UNION ALL SELECT 5, 'anon cannot SELECT portal_token',
        NOT has_column_privilege('anon', 'public.transmittals', 'portal_token', 'SELECT'), NULL
-UNION ALL SELECT 'authenticated can SELECT every other column of transmittals exactly as before this paste (the items, subject, dates, link lifecycle)',
+UNION ALL SELECT 6, 'authenticated can SELECT every other column of transmittals exactly as before this paste (the items, subject, dates, link lifecycle)',
        NOT EXISTS (SELECT 1 FROM pg_attribute
                     WHERE attrelid = 'public.transmittals'::regclass AND attnum > 0 AND NOT attisdropped
                       AND attname <> 'portal_token'
                       AND has_column_privilege('authenticated', 'public.transmittals', attname, 'SELECT')
                           IS DISTINCT FROM ((SELECT b.n FROM _dc_g31_before b WHERE b.ord = 9) = '1')), NULL
-UNION ALL SELECT 'anon can SELECT every other column of transmittals exactly as before this paste (still no row: no policy admits anon)',
+UNION ALL SELECT 7, 'anon can SELECT every other column of transmittals exactly as before this paste (still no row: no policy admits anon)',
        NOT EXISTS (SELECT 1 FROM pg_attribute
                     WHERE attrelid = 'public.transmittals'::regclass AND attnum > 0 AND NOT attisdropped
                       AND attname <> 'portal_token'
                       AND has_column_privilege('anon', 'public.transmittals', attname, 'SELECT')
                           IS DISTINCT FROM ((SELECT b.n FROM _dc_g31_before b WHERE b.ord = 10) = '1')), NULL
-UNION ALL SELECT 'service_role keeps SELECT on the whole table, portal_token included (the portal, the register route, the email / receipt / stamp-check routes)',
+UNION ALL SELECT 8, 'service_role keeps SELECT on the whole table, portal_token included (the portal, the register route, the email / receipt / stamp-check routes)',
        has_table_privilege('service_role', 'public.transmittals', 'SELECT')
        AND has_column_privilege('service_role', 'public.transmittals', 'portal_token', 'SELECT'), NULL
-UNION ALL SELECT 'authenticated''s INSERT / UPDATE / DELETE on transmittals are as they were before this paste (the composer, issue, void, revoke and draft delete are unchanged)',
+UNION ALL SELECT 9, 'authenticated''s INSERT / UPDATE / DELETE on transmittals are as they were before this paste (the composer, issue, void, revoke and draft delete are unchanged)',
        ((CASE WHEN has_table_privilege('authenticated', 'public.transmittals', 'INSERT') THEN '1' ELSE '0' END)
         || (CASE WHEN has_table_privilege('authenticated', 'public.transmittals', 'UPDATE') THEN '1' ELSE '0' END)
         || (CASE WHEN has_table_privilege('authenticated', 'public.transmittals', 'DELETE') THEN '1' ELSE '0' END))
        = (SELECT b.n FROM _dc_g31_before b WHERE b.ord = 8), NULL
-UNION ALL SELECT inventory, NULL, n FROM (SELECT inventory, n FROM _dc_g31_before ORDER BY ord) inv;
+UNION ALL SELECT 100 + b.ord, b.inventory, NULL, b.n FROM _dc_g31_before b
+) v
+ORDER BY k;

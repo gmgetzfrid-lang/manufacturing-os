@@ -889,18 +889,31 @@ export function portalLinkAvailable(): boolean {
   return !!origin;
 }
 
+/** DIST-18 (limb a, final review): a document's transmittal trail as the
+ *  register serves it to this viewer. `withheld` — the document read
+ *  predicate refuses this viewer the document, so `transmittals` holds only
+ *  the ones they sent themselves (shown whole, as the register shows its
+ *  sender) and the rest of the trail is NOT SHOWN: a caller must say so,
+ *  never render it as "none" / "never transmitted". */
+export interface TransmittalTrail {
+  transmittals: Transmittal[];
+  withheld: boolean;
+}
+
 /** Every transmittal that carries a given document — the "who did we send
  *  this to?" answer from the document's side. JSONB containment on items.
  *  TRX-9: a FAILED read throws (only a missing table answers "none"), so the
  *  Inspector can say the trail could not be read instead of showing nothing.
  *  DIST-18 (limb a): read through the register route, so each row is what
  *  the register shows this viewer (redactTransmittalForViewer) — the same 50
- *  newest rows, never a browser SELECT carrying every item and the token. */
-export async function listTransmittalsForDocument(orgId: string, documentId: string): Promise<Transmittal[]> {
+ *  newest rows, never a browser SELECT carrying every item and the token.
+ *  For a document this viewer may not read the route answers only their own
+ *  transmittals and says the trail is withheld (`TransmittalTrail`). */
+export async function listTransmittalsForDocument(orgId: string, documentId: string): Promise<TransmittalTrail> {
   try {
-    return await readRegister(orgId, { documentId });
+    return await readRegisterBody(orgId, { documentId });
   } catch (e) {
-    if (e instanceof TransmittalsNotMigratedError) return [];
+    if (e instanceof TransmittalsNotMigratedError) return { transmittals: [], withheld: false };
     throw new Error(`Couldn't read the transmittal trail: ${(e as Error)?.message ?? String(e)}`);
   }
 }
@@ -1018,6 +1031,12 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
  *  first, 500), `q` + `limit` (global search). */
 type RegisterSlice = { id?: string; documentId?: string; projectId?: string; q?: string; limit?: number };
 async function readRegister(orgId: string, slice: string | RegisterSlice = {}): Promise<Transmittal[]> {
+  return (await readRegisterBody(orgId, slice)).transmittals;
+}
+
+/** readRegister, with the route's word that a documentId trail was withheld
+ *  from this viewer (DIST-18 limb (a), final review). */
+async function readRegisterBody(orgId: string, slice: string | RegisterSlice = {}): Promise<TransmittalTrail> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Not signed in — sign in again to load the transmittal register.");
   const want: RegisterSlice = typeof slice === "string" ? { id: slice } : slice;
@@ -1030,12 +1049,12 @@ async function readRegister(orgId: string, slice: string | RegisterSlice = {}): 
   const res = await fetch(`/api/transmittal/register?${qs.toString()}`, {
     headers: { Authorization: `Bearer ${session.access_token}` },
   });
-  const body = (await res.json().catch(() => ({}))) as { transmittals?: Transmittal[]; error?: string; missingTable?: boolean };
+  const body = (await res.json().catch(() => ({}))) as { transmittals?: Transmittal[]; withheld?: boolean; error?: string; missingTable?: boolean };
   if (!res.ok) {
     if (body.missingTable) throw new TransmittalsNotMigratedError();
     throw new Error(body.error || `The transmittal register could not be loaded (HTTP ${res.status}).`);
   }
-  return Array.isArray(body.transmittals) ? body.transmittals : [];
+  return { transmittals: Array.isArray(body.transmittals) ? body.transmittals : [], withheld: body.withheld === true };
 }
 
 export async function listTransmittals(orgId: string): Promise<Transmittal[]> {

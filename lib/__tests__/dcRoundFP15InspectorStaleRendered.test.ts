@@ -32,7 +32,7 @@ vi.mock("@/lib/supabase", () => {
 });
 vi.mock("@/lib/staleCopies", () => ({ getDocumentRecall: (...a: unknown[]) => s.recall(...a) }));
 vi.mock("@/lib/holds", () => ({ listActiveHoldsForDocument: vi.fn(async () => []) }));
-vi.mock("@/lib/transmittals", () => ({ listTransmittalsForDocument: vi.fn(async () => []) }));
+vi.mock("@/lib/transmittals", () => ({ listTransmittalsForDocument: vi.fn(async () => ({ transmittals: [], withheld: false })) }));
 vi.mock("@/lib/branches", () => ({ listOpenBranchesForDocument: vi.fn(async () => []) }));
 vi.mock("@/lib/ownership", () => ({ effectiveOwnerForDocument: vi.fn(async () => ({ userId: null })), requestDeletion: vi.fn() }));
 // P24 (AUTHZ-15): the panel reads loadCapabilityPolicyEntry and its fault marker.

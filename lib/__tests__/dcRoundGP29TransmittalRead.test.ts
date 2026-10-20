@@ -151,7 +151,7 @@ const principalOf = (over: Row = {}) => ({ uid: "u-viewer", orgId: ORG, role: "V
 const req = (qs: string) => new NextRequest(`https://app/api/transmittal/register?${qs}`, { headers: { authorization: "Bearer jwt" } });
 const served = async (qs: string) => {
   const res = await GET(req(qs));
-  return { status: res.status, body: (await res.json()) as { transmittals?: Transmittal[]; error?: string } };
+  return { status: res.status, body: (await res.json()) as { transmittals?: Transmittal[]; withheld?: boolean; error?: string } };
 };
 
 beforeEach(() => {
@@ -175,8 +175,10 @@ describe("DIST-18 limb (a) — the register route serves each browser reader's s
   it("documentId (the Inspector's trail): the rows listing that document, 50 newest, select * with the service role — a Viewer outside the P&ID's ACL sees it restricted and no token", async () => {
     const { status, body } = await served(`orgId=${ORG}&documentId=${OPEN}`);
     expect(status).toBe(200);
-    expect(s.ops).toEqual(expect.arrayContaining([["select", ["*"]], ["eq", ["org_id", ORG]], ["contains", ["items", JSON.stringify([{ documentId: OPEN }])]], ["order", ["seq", { ascending: false }]], ["limit", [50]]]));
+    expect(s.queries[0]).toEqual(expect.arrayContaining([["select", ["*"]], ["eq", ["org_id", ORG]], ["contains", ["items", JSON.stringify([{ documentId: OPEN }])]], ["order", ["seq", { ascending: false }]], ["limit", [50]]]));
     expect(body.transmittals!.map((t) => t.number)).toEqual(["TR-0007", "TR-0006"]);
+    // REGRESSION: a viewer who may read the document gets the body as before — no `withheld`
+    expect(body.withheld).toBeUndefined();
     const [t7, t6] = body.transmittals!;
     expect(t7.items[0]).toMatchObject({ number: RESTRICTED_DOCUMENT_LABEL, restricted: true });
     expect(t7.items[1]).toMatchObject({ number: "P-101", rev: "B" });
@@ -187,37 +189,91 @@ describe("DIST-18 limb (a) — the register route serves each browser reader's s
     expect(t6.subject).toBe("Pump drawings");
   });
 
-  it("review minor: the documentId slice answers only about a document this viewer may read — never a membership oracle on a private document's id; a decision that cannot be made answers 503, never the rows", async () => {
-    // a Viewer outside the private P&ID's ACL asks about it by id: no row, and no transmittals read at all
+  it("final review (1): for a document the I-12 predicate refuses, the documentId slice answers only the caller's OWN transmittals, flagged withheld — a refused non-sender gets none, flagged withheld; never a membership oracle on a private document's id; a decision that cannot be made answers 503, never the rows", async () => {
+    // a Viewer outside the private P&ID's ACL, who sent none of its transmittals, asks about it by id: no row, flagged withheld
     const asked = await served(`orgId=${ORG}&documentId=${PID}`);
-    expect(asked).toEqual({ status: 200, body: { transmittals: [] } });
-    expect(s.queries).toEqual([]);
-    expect(s.readableCalls).toEqual([{ uid: "u-viewer", ids: [PID] }]);
-    // … a document id that names nothing answers the same as a private one
-    expect((await served(`orgId=${ORG}&documentId=eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee`)).body).toEqual({ transmittals: [] });
-    // REGRESSION: the same Viewer asking about a document they may read gets its trail
-    expect((await served(`orgId=${ORG}&documentId=${OPEN}`)).body.transmittals!.map((t) => t.number)).toEqual(["TR-0007", "TR-0006"]);
+    expect(asked).toEqual({ status: 200, body: { transmittals: [], withheld: true } });
+    // the own read is restricted to created_by = the caller (rows the register already shows them whole)
+    expect(s.queries.some((ops) => ops.some(([n, a]) => n === "eq" && a[0] === "created_by" && a[1] === "u-viewer"))).toBe(true);
+    // … a document id that names nothing answers exactly the same as a private one
+    expect((await served(`orgId=${ORG}&documentId=eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee`)).body).toEqual({ transmittals: [], withheld: true });
+    // REGRESSION: the same Viewer asking about a document they may read gets its trail, not flagged
+    const open = (await served(`orgId=${ORG}&documentId=${OPEN}`)).body;
+    expect(open.transmittals!.map((t) => t.number)).toEqual(["TR-0007", "TR-0006"]);
+    expect(open.withheld).toBeUndefined();
     // REGRESSION: a reader of the P&ID (an Engineer in its ACL) gets the P&ID's trail
     s.readable = new Set([PID]);
-    expect((await served(`orgId=${ORG}&documentId=${PID}`)).body.transmittals!.map((t) => t.number)).toEqual(["TR-0007"]);
-    // REGRESSION: a controller is answered before any read decision (DEC-43)
+    expect((await served(`orgId=${ORG}&documentId=${PID}`)).body).toMatchObject({ transmittals: [expect.objectContaining({ number: "TR-0007" })] });
+    expect((await served(`orgId=${ORG}&documentId=${PID}`)).body.withheld).toBeUndefined();
+    // REGRESSION: a controller is answered before any read decision (DEC-43), one read, never withheld
     s.user = { id: "u-dc" };
     s.principal = principalOf({ uid: "u-dc", role: "DocCtrl", roles: ["DocCtrl"], isController: true });
     s.readable = new Set();
     s.readableCalls = [];
-    expect((await served(`orgId=${ORG}&documentId=${PID}`)).body.transmittals!.map((t) => t.number)).toEqual(["TR-0007"]);
+    s.queries = [];
+    const ctl = (await served(`orgId=${ORG}&documentId=${PID}`)).body;
+    expect(ctl.transmittals!.map((t) => t.number)).toEqual(["TR-0007"]);
+    expect(ctl.withheld).toBeUndefined();
     expect(s.readableCalls).toEqual([]);
+    expect(s.queries).toHaveLength(1);
+    expect(s.queries[0].some(([n, a]) => n === "eq" && a[0] === "created_by")).toBe(false);
     // fail closed: the read decision cannot be made → 503 "try again", no row
     s.user = { id: "u-viewer" };
     s.principal = principalOf();
     s.readableThrows = true;
-    s.queries = [];
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const failed = await served(`orgId=${ORG}&documentId=${OPEN}`);
     warn.mockRestore();
     expect(failed.status).toBe(503);
     expect(failed.body.transmittals).toBeUndefined();
-    expect(s.queries).toEqual([]);
+    expect(failed.body.withheld).toBeUndefined();
+  });
+
+  it("final review (1), the sender: a sender refused the document keeps seeing the transmittals they sent — whole, as the register shows its sender — flagged withheld; another member's transmittal of it is not shown", async () => {
+    s.rows.push(row({ id: "77777777-7777-4777-8777-777777777777", seq: 9, number: "TR-0009", created_by: "u-other", subject: "Someone else's", portal_token: "tok-0009" }));
+    s.user = { id: "u-sender" };
+    s.principal = principalOf({ uid: "u-sender" });
+    s.readable = new Set([OPEN]); // the P&ID's ACL no longer admits its sender
+    const { status, body } = await served(`orgId=${ORG}&documentId=${PID}`);
+    expect(status).toBe(200);
+    expect(body.withheld).toBe(true);
+    expect(body.transmittals!.map((t) => t.number)).toEqual(["TR-0007"]);
+    const [t7] = body.transmittals!;
+    // REGRESSION: what the register shows its sender — every item and the free text …
+    expect(t7.items.map((i) => i.number)).toEqual(["PID-4412", "P-101"]);
+    expect(t7.subject).toBe("Unit 3 HF alkylation relief package");
+    // … and the token only to someone who may read every item (DIST-17 ruling 2), exactly as the register
+    expect(t7.portalToken).toBeNull();
+    expect(t7.viewer).toMatchObject({ restrictedItems: 0, portalWithheld: true, portalWithheldReason: "restricted" });
+    expect(JSON.stringify(body)).not.toMatch(/TR-0009|Someone else|tok-0009/);
+    // REGRESSION: the same sender, once the P&ID's ACL admits them, gets the whole trail, not flagged
+    s.readable = new Set([OPEN, PID]);
+    const whole = (await served(`orgId=${ORG}&documentId=${PID}`)).body;
+    expect(whole.withheld).toBeUndefined();
+    expect(whole.transmittals!.map((t) => [t.number, t.portalToken])).toEqual([["TR-0009", "tok-0009"], ["TR-0007", "tok-secret-0007"]]);
+  });
+
+  it("final review (5): the readable set is computed ONCE per documentId request for a non-controller — one readableControlledDocIds call over [documentId, …every item either slice names]", async () => {
+    await served(`orgId=${ORG}&documentId=${OPEN}`);
+    expect(s.readableCalls).toHaveLength(1);
+    expect(s.readableCalls[0].ids[0]).toBe(OPEN);
+    expect(new Set(s.readableCalls[0].ids)).toEqual(new Set([OPEN, PID]));
+    s.readableCalls = [];
+    await served(`orgId=${ORG}&documentId=${PID}`);
+    expect(s.readableCalls).toHaveLength(1);
+    expect(s.readableCalls[0].ids[0]).toBe(PID);
+    // the sender's case: still one call
+    s.user = { id: "u-sender" };
+    s.principal = principalOf({ uid: "u-sender" });
+    s.readableCalls = [];
+    await served(`orgId=${ORG}&documentId=${PID}`);
+    expect(s.readableCalls).toHaveLength(1);
+    expect(new Set(s.readableCalls[0].ids)).toEqual(new Set([PID, OPEN]));
+    // the other slices: one call each, as before
+    s.readableCalls = [];
+    await served(`orgId=${ORG}&projectId=${PROJ}`);
+    await served(`orgId=${ORG}&q=buildco`);
+    expect(s.readableCalls).toHaveLength(2);
   });
 
   it("REGRESSION per reader: the sender and a controller get every row whole, as the browser read did", async () => {
@@ -329,8 +385,10 @@ describe("DIST-18 limb (a) — the browser readers ask the route, never the tabl
   afterEach(() => { vi.unstubAllGlobals(); });
 
   it("listTransmittalsForDocument (the Inspector's trail) and getTransmittal read the register's view", async () => {
-    const trail = await listTransmittalsForDocument(ORG, OPEN);
+    const answer = await listTransmittalsForDocument(ORG, OPEN);
     expect(String(fetchMock.mock.calls[0][0])).toBe(`/api/transmittal/register?orgId=${ORG}&documentId=${OPEN}`);
+    expect(answer.withheld).toBe(false);
+    const trail = answer.transmittals;
     expect(trail.map((t) => t.number)).toEqual(["TR-0007", "TR-0006"]);
     // the trail's own document is readable: its revision is shown, as before
     expect(trail[0].items.find((i) => i.documentId === OPEN)?.rev).toBe("B");
@@ -339,6 +397,16 @@ describe("DIST-18 limb (a) — the browser readers ask the route, never the tabl
     expect(String(fetchMock.mock.calls[1][0])).toBe(`/api/transmittal/register?orgId=${ORG}&id=${T6}`);
     expect(one?.portalToken).toBe("tok-0006");
     expect(await getTransmittal("55555555-5555-4555-8555-555555555555", ORG)).toBeNull();
+    expect(s.browserReads).not.toContain("transmittals");
+  });
+
+  it("final review (1): listTransmittalsForDocument carries the route's withheld word — a refused non-sender gets none, flagged withheld (the Inspector says 'not shown', never 'none'); a refused sender keeps their own", async () => {
+    expect(await listTransmittalsForDocument(ORG, PID)).toEqual({ transmittals: [], withheld: true });
+    s.user = { id: "u-sender" };
+    s.principal = principalOf({ uid: "u-sender" });
+    const own = await listTransmittalsForDocument(ORG, PID);
+    expect(own.withheld).toBe(true);
+    expect(own.transmittals.map((t) => t.number)).toEqual(["TR-0007"]);
     expect(s.browserReads).not.toContain("transmittals");
   });
 
@@ -444,7 +512,22 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/** The census's rule for one statement: an empty select, a select whose
+ *  first column token is `*` (`"*"`, `"*, items"`, `` `*` ``…), or any
+ *  mention of portal_token (final review (6)). */
+const censusFlags = (stmt: string) =>
+  /\.select\(\s*\)/.test(stmt) || /\.select\(\s*["'`]\s*\*/.test(stmt) || /portal_token/.test(stmt);
+
 describe("DIST-18 limb (a) — census: outside the server routes, no read of transmittals selects * or the token", () => {
+  it("final review (6): the census flags an empty select, ANY select whose first column token is `*`, and portal_token — and passes a named column list", () => {
+    for (const bad of [`.select()`, `.select( )`, `.select("*")`, `.select('*')`, "`.select(`*`)`", `.select("*, items")`, `.select(" * ,id")`, `.select('*,portal_expires_at')`, `.select("id, portal_token")`]) {
+      expect(censusFlags(bad), bad).toBe(true);
+    }
+    for (const ok of [`.select("id")`, `.select(TRANSMITTAL_CLIENT_COLUMNS)`, `.select("id, number, items")`, `.select("id", { count: "exact", head: true })`]) {
+      expect(censusFlags(ok), ok).toBe(false);
+    }
+  });
+
   it("every .from(\"transmittals\") outside app/api/** names its columns (never `*`, never an empty select, never portal_token)", () => {
     const files = [...walk("lib"), ...walk("components"), ...walk("app")].filter((f) => !f.startsWith("app/api/"));
     const offenders: string[] = [];
@@ -454,7 +537,7 @@ describe("DIST-18 limb (a) — census: outside the server routes, no read of tra
       for (const m of src.matchAll(/\.from\(\s*["']transmittals["']\s*\)/g)) {
         sites++;
         const stmt = src.slice(m.index!, src.indexOf(";", m.index!)).replace(/\/\/[^\n]*/g, "");
-        if (/\.select\(\s*(["'`]\s*\*\s*["'`])?\s*\)/.test(stmt) || /portal_token/.test(stmt)) offenders.push(`${f}:${src.slice(0, m.index!).split("\n").length}`);
+        if (censusFlags(stmt)) offenders.push(`${f}:${src.slice(0, m.index!).split("\n").length}`);
       }
     }
     expect(offenders).toEqual([]);
@@ -476,6 +559,8 @@ describe("DIST-18 limb (a) — census: outside the server routes, no read of tra
   it("the Inspector's trail and its distribution pill still read through listTransmittalsForDocument (no browser SELECT of their own)", () => {
     const panel = readFileSync(join(ROOT, "components/documents/InspectorPanel.tsx"), "utf8");
     expect(panel.match(/listTransmittalsForDocument\(/g)?.length).toBe(2);
+    // final review (1): both read the withheld word (rendered in dcRoundGP29TrailWithheldRendered.test.ts)
+    expect(panel.match(/trail\.withheld/g)?.length).toBe(2);
     expect(panel).not.toMatch(/from\(["']transmittals["']\)/);
   });
 });
@@ -522,9 +607,16 @@ describe("20261231 — one paste, DEC-30 shape, a column privilege and nothing e
     expect(code.match(/^BEGIN;$/gm)).toHaveLength(1);
     expect(code.match(/^COMMIT;$/gm)).toHaveLength(1);
     const tail = code.slice(iCommit + "COMMIT;".length);
-    expect(tail.match(/^SELECT /gm)).toHaveLength(1);
-    expect(tail).toMatch(/^SELECT 'transmittals: RLS still on' AS "check",\s*\n.*AS ok,\s*\n\s*NULL::text AS n/m);
-    expect(tail).toMatch(/UNION ALL SELECT inventory, NULL, n FROM/);
+    // final review (4): ONE outer SELECT of (check, ok, n) over the union, with a
+    // sort key carried through every branch and ONE outer ORDER BY on it
+    expect(tail.match(/^SELECT /gm)).toHaveLength(2);
+    expect(tail).toMatch(/^SELECT "check", ok, n FROM \(\n/m);
+    expect(tail).toMatch(/^SELECT 1 AS k, 'transmittals: RLS still on' AS "check",\s*\n.*AS ok,\s*\n\s*NULL::text AS n/m);
+    expect(tail.trimEnd()).toMatch(/\n\) v\nORDER BY k;$/);
+    expect(tail.match(/ORDER BY/g)).toHaveLength(1);
+    const branches = tail.match(/^UNION ALL SELECT (\d+|100 \+ b\.ord),/gm)!.map((b) => b.replace(/^UNION ALL SELECT |,$/g, ""));
+    expect(branches).toEqual(["2", "3", "4", "5", "6", "7", "8", "9", "100 + b.ord"]);
+    expect(tail).toMatch(/UNION ALL SELECT 100 \+ b\.ord, b\.inventory, NULL, b\.n FROM _dc_g31_before b\n\) v/);
   });
 
   it("the inventory is aggregate counts and privilege flags only — never a customer row", () => {
@@ -564,10 +656,14 @@ describe("20261231 — one paste, DEC-30 shape, a column privilege and nothing e
   });
 
   it("the header states the order (deploy first, then paste — after 20261133 and 20261199, inheriting 20261199's hold), the rollback, and the rule for a later column", () => {
-    expect(sql).toMatch(/DEPLOY FIRST, THEN PASTE/);
-    expect(sql).toMatch(/PASTE AFTER 20261133 AND 20261199/);
-    expect(sql).toMatch(/it inherits 20261199's hold/);
-    expect(sql).not.toMatch(/Either order\s*\n?--\s*with every other pending paste: it re-creates/);
+    // final review (2): read whitespace-tolerantly — comment prefixes and newlines collapsed
+    const header = sql.slice(0, sql.indexOf("\nDROP TABLE IF EXISTS pg_temp._dc_g31_before"))
+      .split("\n").map((l) => l.replace(/^\s*--\s?/, "")).join(" ").replace(/\s+/g, " ");
+    expect(header).toMatch(/DEPLOY FIRST, THEN PASTE/);
+    expect(header).toMatch(/PASTE AFTER 20261133 AND 20261199: 20261231 refuses \(changing nothing, naming the missing file\) unless the 20261133 columns \(portal_expires_at, portal_revoked_at, portal_revoked_by, portal_last_used_at, portal_open_count, portal_download_count\) and 20261199's stamp_check exist, so it inherits 20261199's HOLD; deploy the P29 app first\./);
+    // the removed sentence, in any wrapping or case
+    expect(header).not.toMatch(/either order with every other pending paste/i);
+    expect(header).not.toMatch(/either order/i);
     expect(sql).toMatch(/--\s+GRANT SELECT ON transmittals TO anon, authenticated;/);
     expect(sql).toMatch(/A LATER MIGRATION THAT ADDS A COLUMN to transmittals must also/);
   });

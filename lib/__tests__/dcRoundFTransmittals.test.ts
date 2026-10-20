@@ -628,18 +628,20 @@ describe("TRX-9 — the transmittal trail says when it could not be read", () =>
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "permission denied" }), { status: 500 })));
     await expect(listTransmittalsForDocument(ORG, "d1")).rejects.toThrow(/Couldn't read the transmittal trail: permission denied/);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "x", missingTable: true }), { status: 404 })));
-    expect(await listTransmittalsForDocument(ORG, "d1")).toEqual([]);
+    expect(await listTransmittalsForDocument(ORG, "d1")).toEqual({ transmittals: [], withheld: false });
     vi.unstubAllGlobals();
     expect(db.calls.filter((c) => c.client === "browser" && c.table === "transmittals")).toEqual([]);
   });
   it("the Inspector's distribution pill marks the issued count unknown on a failed read and still shows the acks counts", () => {
     const panel = src("components/documents/InspectorPanel.tsx");
-    expect(panel).toContain("useState<{ issued: number | null; issuedCapped: boolean; ackDone: number; ackTotal: number } | null>(null)");
+    // (document-control P29 final review: the summary also carries whether the
+    // register withheld the trail — rendered in dcRoundGP29TrailWithheldRendered.test.ts)
+    expect(panel).toContain("useState<{ issued: number | null; issuedCapped: boolean; issuedWithheld: boolean; ackDone: number; ackTotal: number } | null>(null)");
     // the transmittal read is caught on its own …
-    expect(panel).toMatch(/issuedCapped = list\.length >= 50;\s*\n\s*\} catch \{ issued = null; \}\s*\n\s*try \{\s*\n\s*let ackDone = 0;/);
+    expect(panel).toMatch(/issuedWithheld = trail\.withheld;\s*\n\s*\} catch \{ issued = null; \}\s*\n\s*try \{\s*\n\s*let ackDone = 0;/);
     // … and the pill renders the unknown count beside the acks
-    expect(panel).toContain("distSummary && (distSummary.issued === null || distSummary.issued > 0 || distSummary.ackTotal > 0)");
-    expect(panel).toContain('{distSummary.issued === null ? "? issued" :');
+    expect(panel).toContain("distSummary && (distSummary.issued === null || distSummary.issued > 0 || distSummary.issuedWithheld || distSummary.ackTotal > 0)");
+    expect(panel).toContain('if (d.issued === null) return "? issued";');
     expect(panel).not.toMatch(/\} catch \{ if \(alive\) setDistSummary\(null\); \}/);
   });
   it("the Inspector's TransmittalTrail renders the failure instead of an empty trail", () => {

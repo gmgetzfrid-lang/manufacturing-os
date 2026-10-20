@@ -4,8 +4,12 @@
 //   GET ?orgId=<org>[&id=<transmittal>]  → { transmittals: Transmittal[] }
 //   DIST-18 limb (a) (document-control P29) — the other browser readers'
 //   slices, each through the same redaction (one slice per request):
-//     &documentId=<doc>   the Inspector's trail: rows listing it, 50 newest
-//                         (none unless this viewer may read the document)
+//     &documentId=<doc>   the Inspector's trail: rows listing it, 50 newest.
+//                         For a document this viewer may not read, only the
+//                         rows they sent themselves (created_by = them —
+//                         rows the register already shows them whole), and
+//                         the answer says `withheld: true`: the rest of the
+//                         trail is not shown, never "none"
 //     &projectId=<proj>   the project evidence pack: oldest first, 500
 //     &q=<text>[&limit=n] global search: number / subject / recipient name /
 //                         company matching, newest first, n (default 5, at
@@ -110,25 +114,6 @@ export async function GET(req: NextRequest) {
     throw e;
   }
   if (!principal) return bad("Not a member of this workspace.", 403);
-  // DIST-18 (limb a, review): the documentId slice answers only about a
-  // document this viewer may read. Otherwise the list of transmittals that
-  // sent a document (recipients, dates) would tell anyone who knows or
-  // guesses its id that it exists and where it went — a membership oracle on
-  // the service-role read that limb (b)'s database narrowing would not close.
-  // The Inspector asks only for the document the viewer has open, so a
-  // reader sees no change; a controller is answered before any read (DEC-43).
-  if (documentId && !principal.isController) {
-    let mayAsk: Set<string>;
-    try {
-      mayAsk = await readableControlledDocIds(principal, [documentId]);
-    } catch (e) {
-      if (!(e instanceof DcLandscapeUnreadableError)) throw e;
-      console.warn("[transmittal/register] the document read decision could not be made — the trail is not served (fail closed)", e.message);
-      return bad("Couldn't check your access to this document — try again.", 503, { unreadable: true });
-    }
-    if (!mayAsk.has(documentId)) return NextResponse.json({ transmittals: [] });
-  }
-
   const base = () => supabaseAdmin.from("transmittals").select("*").eq("org_id", orgId);
   let read = base();
   let ascending = false;
@@ -146,6 +131,23 @@ export async function GET(req: NextRequest) {
     cap = 500;
   }
   let reads = [read];
+  // DIST-18 (limb a, final review): the documentId slice answers in full only
+  // about a document this viewer may read. Otherwise the list of transmittals
+  // that sent a document (recipients, dates) would tell anyone who knows or
+  // guesses its id that it exists and where it went — a membership oracle on
+  // the service-role read that limb (b)'s database narrowing would not close.
+  // For a document the I-12 predicate refuses, the answer is only the rows
+  // the viewer sent themselves (created_by = them: rows the register already
+  // shows them whole, so they tell nothing new), flagged `withheld` so the
+  // Inspector says the rest is not shown — never "none". A controller is
+  // answered before any read decision (DEC-43) and reads one slice. For
+  // anyone else both slices are read up front — nothing is returned before
+  // the decision — so the decision is ONE readableControlledDocIds call over
+  // the document and every item either slice names (below).
+  const ownSlice = !!documentId && !principal.isController;
+  if (ownSlice) {
+    reads = [read, base().contains("items", JSON.stringify([{ documentId }])).eq("created_by", user.id)];
+  }
   if (q !== null) {
     // searchTransmittals' match (lib/globalSearch.ts before DIST-18) as one
     // read per column, each bounded to this org and carrying the text as a
@@ -162,28 +164,51 @@ export async function GET(req: NextRequest) {
     console.error("[transmittal/register] the register read failed", error.message);
     return bad("Couldn't load the transmittal register — try again.", 500);
   }
-  const byId = new Map<unknown, Record<string, unknown>>();
-  for (const a of answers) for (const r of (a.data ?? []) as Array<Record<string, unknown>>) if (!byId.has(r.id)) byId.set(r.id, r);
-  let raw = [...byId.values()];
-  if (q !== null) raw = raw.sort((x, y) => Number(y.seq) - Number(x.seq)).slice(0, cap);
-  const rows = raw.map(rowToTransmittal);
+  const rowsOf = (a: (typeof answers)[number]) => (a.data ?? []) as Array<Record<string, unknown>>;
+  let raw: Array<Record<string, unknown>>;
+  let ownRaw: Array<Record<string, unknown>> = [];
+  if (ownSlice) {
+    raw = rowsOf(answers[0]);
+    ownRaw = rowsOf(answers[1]);
+  } else {
+    const byId = new Map<unknown, Record<string, unknown>>();
+    for (const a of answers) for (const r of rowsOf(a)) if (!byId.has(r.id)) byId.set(r.id, r);
+    raw = [...byId.values()];
+    if (q !== null) raw = raw.sort((x, y) => Number(y.seq) - Number(x.seq)).slice(0, cap);
+  }
+  let rows = raw.map(rowToTransmittal);
+  const ownRows = ownRaw.map(rowToTransmittal);
 
-  // One read decision for every item the rows name (a controller is answered
-  // before any read — DEC-43).
+  // ONE read decision per request for every document it needs — the asked
+  // document (documentId) and every item the rows name (a controller is
+  // answered before any read — DEC-43).
   let readable: Set<string> | null = new Set();
+  let withheld = false;
   if (!principal.isController) {
-    const docIds = [...new Set(rows.flatMap((t) => t.items.map((i) => i.documentId)).filter((d): d is string => !!d))];
+    const named = [...rows, ...ownRows].flatMap((t) => t.items.map((i) => i.documentId));
+    const docIds = [...new Set([...(documentId ? [documentId] : []), ...named].filter((d): d is string => !!d))];
     try {
       readable = await readableControlledDocIds(principal, docIds);
     } catch (e) {
       if (!(e instanceof DcLandscapeUnreadableError)) throw e;
+      if (documentId) {
+        // Whether this viewer may ask about the document is undecided: the
+        // trail is not served at all (fail closed), never as "none".
+        console.warn("[transmittal/register] the document read decision could not be made — the trail is not served (fail closed)", e.message);
+        return bad("Couldn't check your access to this document — try again.", 503, { unreadable: true });
+      }
       console.warn("[transmittal/register] the document read decision could not be made — items and portal links withheld (fail closed)", e.message);
       readable = null;
+    }
+    if (documentId && readable !== null && !readable.has(documentId)) {
+      rows = ownRows;
+      withheld = true;
     }
   }
 
   const who = { uid: user.id, isController: principal.isController };
   const shown = rows.map((t) => redactTransmittalForViewer(t, who, readable));
+  if (withheld) return NextResponse.json({ transmittals: shown, withheld: true });
   if (q === null) return NextResponse.json({ transmittals: shown });
   // DIST-18 (limb a): every hit says q, as written, in a field this viewer
   // is shown — a withheld subject is never an oracle, and neither is any

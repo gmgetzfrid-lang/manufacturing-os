@@ -26,7 +26,10 @@
 //     the counts-only inventory in order, a re-paste the same; without
 //     20260910, 20261133 or 20261199 it refuses, changing nothing (review
 //     blocker: a column a later paste adds would miss the column grant, and
-//     the revoke's WHERE on it would be refused).
+//     the revoke's WHERE on it would be refused) — each of 20261133's six
+//     columns checked on its own (final review (2)); the final SELECT's
+//     order fixed by one outer ORDER BY on a carried sort key and pinned
+//     row by row (final review (4)).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -279,6 +282,31 @@ describe.skipIf(skip !== null)("BEFORE the paste (HEAD's table-level SELECT — 
   });
 });
 
+/** The final SELECT's rows, in the order its outer ORDER BY fixes. */
+const PROBE_ORDER = [
+  "transmittals: RLS still on",
+  "transmittals_select is kept (20260910)",
+  "authenticated, anon and PUBLIC hold no table-level SELECT",
+  "authenticated cannot SELECT portal_token",
+  "anon cannot SELECT portal_token",
+  "authenticated can SELECT every other column",
+  "anon can SELECT every other column",
+  "service_role keeps SELECT on the whole table",
+  "authenticated's INSERT / UPDATE / DELETE on transmittals are as they were",
+];
+const INVENTORY_ORDER = [
+  "transmittals (all)",
+  "transmittals with a portal token set",
+  "of those, with a LIVE link",
+  "live links listing an item that is not plainly open",
+  "active members of an org holding a live link",
+  "authenticated held table-level SELECT",
+  "anon held table-level SELECT",
+  "authenticated's INSERT / UPDATE / DELETE",
+  "authenticated could SELECT transmittals",
+  "anon could SELECT transmittals",
+];
+
 describe.skipIf(skip !== null)("20261231 pasted as ONE script, as the SQL editor sends it", () => {
   const paste = (scratch: string) => runPsql(mosDb().conn!, scratch, "postgres", { sql: body() });
   const rowsOf = (stdout: string) => stdout.split("\n").filter((l) => l.length > 0).map((l) => {
@@ -311,6 +339,9 @@ describe.skipIf(skip !== null)("20261231 pasted as ONE script, as the SQL editor
       expect(probes.every((p) => p.n === "")).toBe(true);
       expect(inventory.every((i) => i.ok === "" && /^\d+$/.test(i.n)), JSON.stringify(inventory)).toBe(true);
       expect(inventory.map((i) => i.check.replace(/:.*$/, ""))).toEqual(Array(10).fill("inventory (before apply)"));
+      // final review (4): the order is fixed by ONE outer ORDER BY on the sort key
+      expect(probes.map((p, i) => p.check.startsWith(PROBE_ORDER[i]) || `${i}: ${p.check}`)).toEqual(Array(9).fill(true));
+      expect(inventory.map((p, i) => p.check.startsWith(`inventory (before apply): ${INVENTORY_ORDER[i]}`) || `${i}: ${p.check}`)).toEqual(Array(10).fill(true));
       expect(inventory[0].n).toBe(total);
       expect(inventory[1].n).toBe(withToken);
       expect(inventory[5].n).toBe(pass === 1 ? "1" : "0"); // authenticated held table-level SELECT
@@ -361,6 +392,22 @@ describe.skipIf(skip !== null)("20261231 pasted as ONE script, as the SQL editor
     expect(admin(scratch, "SELECT has_column_privilege('authenticated', 'public.transmittals', 'portal_token', 'SELECT')")).toBe("t");
   });
 
+  it("final review (2): the refusal checks EACH of 20261133's six columns — any one of them missing refuses, naming 20261133, and changes nothing", () => {
+    for (const col of ["portal_expires_at", "portal_revoked_at", "portal_revoked_by", "portal_last_used_at", "portal_open_count", "portal_download_count"]) {
+      const scratch = `mos_p29_no_${col}`;
+      scratches.push(scratch);
+      admin("postgres", `CREATE DATABASE ${scratch} TEMPLATE ${db}`);
+      toHead(scratch);
+      admin(scratch, `ALTER TABLE transmittals DROP COLUMN ${col} CASCADE;`);
+      const r = paste(scratch);
+      expect(r.error, col).toMatch(/20261231 needs 20261133 \(the transmittals portal lifecycle columns\) — paste 20261133 first; nothing was changed\./);
+      expect(admin(scratch, "SELECT has_table_privilege('authenticated', 'public.transmittals', 'SELECT')"), col).toBe("t");
+      expect(admin(scratch, "SELECT has_column_privilege('authenticated', 'public.transmittals', 'portal_token', 'SELECT')"), col).toBe("t");
+      expect(admin(scratch, "SELECT has_table_privilege('anon', 'public.transmittals', 'SELECT')"), col).toBe("t");
+      admin("postgres", `DROP DATABASE IF EXISTS ${scratch}`);
+    }
+  });
+
   it("review blocker: WITHOUT 20261199 (no stamp_check — the file held on the P24 deploy) it refuses, naming it, and changes nothing", () => {
     const scratch = "mos_p29_no_1199";
     scratches.push(scratch);
@@ -368,8 +415,9 @@ describe.skipIf(skip !== null)("20261231 pasted as ONE script, as the SQL editor
     toHead(scratch);
     admin(scratch, "ALTER TABLE transmittals DROP COLUMN stamp_check CASCADE;");
     const r = paste(scratch);
-    expect(r.error).toMatch(/20261231 needs 20261199/);
+    expect(r.error).toMatch(/20261231 needs 20261199 \(transmittals\.stamp_check\) — paste 20261199 first/);
     expect(admin(scratch, "SELECT has_table_privilege('authenticated', 'public.transmittals', 'SELECT')")).toBe("t");
+    expect(admin(scratch, "SELECT has_column_privilege('authenticated', 'public.transmittals', 'portal_token', 'SELECT')")).toBe("t");
   });
 
   it("why the order matters (the failure the refusal prevents): a column added AFTER the column grant reaches members with no SELECT, and the revoke's WHERE on it is refused (42501)", () => {
