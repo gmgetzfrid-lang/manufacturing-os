@@ -9,7 +9,8 @@
 // controllers).
 
 import { supabase } from "@/lib/supabase";
-import { uploadToPath, type UploadProgress } from "@/lib/storage";
+import { uploadToPath, ArchivedFileError, type UploadProgress } from "@/lib/storage";
+import { MIRROR_SOURCE_RESTRICTED } from "@/lib/knowledgeMirrorAccess";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
 import type { AiProviderId } from "@/lib/ai/providerCall";
 import { assertOrgKnowledgeDocIds, legendIdsAdded } from "@/lib/codebook";
@@ -64,7 +65,12 @@ export interface KnowledgeDocument {
   id: string;
   libraryId: string;
   name: string;
-  fileKey: string;
+  /** The stored file's key — for a DIRECT UPLOAD only. A source-linked
+   *  mirror carries `null`: its key is never selected into the browser
+   *  (KACL-5 criterion 4 / KACL-7 criterion 3), and its pages open through
+   *  getKnowledgeMirrorUrl (/api/knowledge/mirror-url), which decides through
+   *  the bytes door's read predicate and answers a signed URL. */
+  fileKey: string | null;
   fileSize: number | null;
   pageCount: number | null;
   pagesIndexed: number;
@@ -453,7 +459,9 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
   id: r.id as string,
   libraryId: r.library_id as string,
   name: r.name as string,
-  fileKey: r.file_key as string,
+  // A mirror's row is read without file_key (listKnowledgeDocuments), and a
+  // mirror never carries one here even if a caller selected it.
+  fileKey: r.source_document_id ? null : ((r.file_key as string | null) ?? null),
   fileSize: (r.file_size as number | null) ?? null,
   pageCount: (r.page_count as number | null) ?? null,
   pagesIndexed: (r.pages_indexed as number) ?? 0,
@@ -477,12 +485,95 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
   chunkVersion: "chunk_version" in r ? (typeof r.chunk_version === "number" ? r.chunk_version : null) : undefined,
 });
 
+/** The columns of a MIRROR row the library list reads — every column
+ *  mapDocument maps except `file_key` (KACL-5 criterion 4 / KACL-7 criterion
+ *  3: a source-linked mirror's storage key never reaches the browser). Tiers
+ *  for an older database: without the 20261122 columns, then without
+ *  20260922's `vision_pages` — each absent column reads as mapDocument reads
+ *  it under `select("*")` on that database. */
+const MIRROR_LIST_BASE =
+  "id, library_id, name, file_size, page_count, pages_indexed, status, error, created_by_name, created_at, source_id, source_document_id, source_rev";
+export const MIRROR_LIST_COLUMN_TIERS: readonly string[] = [
+  `${MIRROR_LIST_BASE}, vision_pages, empty_pages, vision_failed_pages, vision_partial_accepted, chunk_version`,
+  `${MIRROR_LIST_BASE}, vision_pages`,
+  MIRROR_LIST_BASE,
+];
+
+const missingColumn = (e: { code?: string } | null | undefined) =>
+  !!e && (e.code === "42703" || e.code === "PGRST204");
+
 export async function listKnowledgeDocuments(libraryId: string): Promise<KnowledgeDocument[]> {
-  const { data, error } = await supabase
+  // Direct uploads: the whole row, exactly as before (their key opens them).
+  const uploads = await supabase
     .from("knowledge_documents").select("*").eq("library_id", libraryId)
+    .is("source_document_id", null)
     .order("created_at", { ascending: true });
-  if (error) return [];
-  return (data ?? []).map(mapDocument);
+  if (uploads.error) return [];
+  // Source-linked mirrors: every listed column but file_key.
+  let mirrors: Array<Record<string, unknown>> = [];
+  for (const columns of MIRROR_LIST_COLUMN_TIERS) {
+    const { data, error } = await supabase
+      .from("knowledge_documents").select(columns).eq("library_id", libraryId)
+      .not("source_document_id", "is", null)
+      .order("created_at", { ascending: true });
+    if (!error) { mirrors = (data ?? []) as unknown as Array<Record<string, unknown>>; break; }
+    if (missingColumn(error) && columns !== MIRROR_LIST_COLUMN_TIERS[MIRROR_LIST_COLUMN_TIERS.length - 1]) continue;
+    return [];
+  }
+  const rows = [
+    ...((uploads.data ?? []) as Array<Record<string, unknown>>).filter((r) => !r.source_document_id),
+    ...mirrors.filter((r) => !!r.source_document_id),
+  ];
+  // One list in creation order, as the single read gave it.
+  rows.sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
+  return rows.map(mapDocument);
+}
+
+/** A mirror's source is restricted for the caller: no URL, and the viewer
+ *  says so (MIRROR_SOURCE_RESTRICTED). */
+export class KnowledgeMirrorRestrictedError extends Error {
+  constructor(message = MIRROR_SOURCE_RESTRICTED) {
+    super(message);
+    this.name = "KnowledgeMirrorRestrictedError";
+  }
+}
+
+/** Signed URLs for mirrors, per knowledge document id, for the window the
+ *  route granted (minus a margin) — so reopening a page does not re-sign,
+ *  as the storage cache spares a key (lib/storage signedUrlCache). */
+const mirrorUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+/** KACL-5 criterion 4 / KACL-7 criterion 3: a short-lived, inline signed URL
+ *  for a SOURCE-LINKED mirror's file, decided by /api/knowledge/mirror-url
+ *  (the bytes door's read predicate on the mirror's source). Throws
+ *  KnowledgeMirrorRestrictedError when the source is restricted for the
+ *  caller, ArchivedFileError when the file was shed to an offline archive,
+ *  and an Error carrying the route's words otherwise (a check that could not
+ *  be made says so). */
+export async function getKnowledgeMirrorUrl(documentId: string): Promise<string> {
+  const cached = mirrorUrlCache.get(documentId);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+  const now = Date.now();
+  const token = await authToken();
+  const res = await fetch(`/api/knowledge/mirror-url?id=${encodeURIComponent(documentId)}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const data = (await res.json().catch(() => null)) as {
+    url?: string; expiresIn?: number | null; error?: string; restricted?: boolean;
+    archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string | null;
+  } | null;
+  if (res.ok && data && typeof data.url === "string") {
+    const seconds = typeof data.expiresIn === "number" && data.expiresIn > 0 ? data.expiresIn : 3600;
+    // Re-sign a minute (or a tenth of a short window) before it closes.
+    const margin = Math.min(60, Math.floor(seconds / 10)) * 1000;
+    mirrorUrlCache.set(documentId, { url: data.url, expiresAt: now + seconds * 1000 - margin });
+    return data.url;
+  }
+  if (res.status === 403 && data?.restricted) throw new KnowledgeMirrorRestrictedError(data.error || MIRROR_SOURCE_RESTRICTED);
+  if (res.status === 409 && data?.archived) {
+    throw new ArchivedFileError({ archiveId: data.archiveId ?? null, root: data.root ?? null, fileName: data.fileName || "file" });
+  }
+  throw new Error(data?.error || `Couldn't open this document (HTTP ${res.status}).`);
 }
 
 // ── The browser-side PDF check (ING-9) ────────────────────────────────────

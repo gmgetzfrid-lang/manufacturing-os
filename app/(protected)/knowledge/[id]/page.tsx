@@ -55,7 +55,10 @@ import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
 
 interface ViewerTarget {
-  fileKey: string;
+  /** A direct upload's key; `null` for a source-linked mirror, which the
+   *  viewer opens by `documentId` through the server (KACL-5 / KACL-7 — the
+   *  browser never holds a mirror's storage key). */
+  fileKey: string | null;
   page: number;
   quote: string | null;
   title: string;
@@ -66,7 +69,7 @@ interface ViewerTarget {
   /** The answer's full evidence trail — 2+ entries grow the viewer's
    *  Previous/Next source carousel. */
   sources?: Array<{
-    fileKey: string; page: number; quote: string | null; title: string;
+    fileKey: string | null; page: number; quote: string | null; title: string;
     section?: string | null; documentId?: string; tags?: string[]; n?: number;
   }>;
   sourceIndex?: number;

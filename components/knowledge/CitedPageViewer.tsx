@@ -30,11 +30,19 @@ import {
   ZoomIn, ZoomOut,
 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
-import { locateTagsOnPage, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
+import { locateTagsOnPage, getKnowledgeMirrorUrl, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
 import { textMarkPosition, type PageGeometry } from "@/lib/drawingLocate";
 import { supabase } from "@/lib/supabase";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+
+/** Is this the same file? One knowledge document is one file, so two sources
+ *  naming document ids compare by id (a source-linked mirror carries no key
+ *  in the browser — KACL-5 / KACL-7); otherwise by stored key, as before. */
+const sameFile = (
+  a: { fileKey: string | null; documentId?: string | null },
+  b: { fileKey: string | null; documentId?: string | null },
+) => (a.documentId && b.documentId ? a.documentId === b.documentId : a.fileKey === b.fileKey);
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
@@ -63,7 +71,10 @@ async function rejectVisionMark(input: { orgId: string; documentId: string; page
 /** One stop on the answer's evidence trail — everything needed to open a
  *  document at a cited page with its passage highlighted. */
 export interface CitedSource {
-  fileKey: string;
+  /** A direct upload's stored key; `null` for a source-linked mirror, whose
+   *  page opens through getKnowledgeMirrorUrl by `documentId` (KACL-5 /
+   *  KACL-7 — the browser never holds a mirror's key). */
+  fileKey: string | null;
   page: number;
   quote: string | null;
   title: string;
@@ -79,7 +90,7 @@ export default function CitedPageViewer({
   section: sectionProp, onClose, orgId, documentId: documentIdProp,
   tags: tagsProp, sources, initialIndex,
 }: {
-  fileKey: string;
+  fileKey: string | null;
   page: number;
   quote: string | null;
   title: string;
@@ -133,7 +144,7 @@ export default function CitedPageViewer({
   // would cage or overrun the page arrows until the new PDF loads.
   useEffect(() => {
     setView((prev) => {
-      if (prev.fileKey !== fileKey) setNumPages(null);
+      if (!sameFile(prev, { fileKey, documentId })) setNumPages(null);
       return { fileKey, title, documentId };
     });
     setPageNumber(page);
@@ -142,12 +153,23 @@ export default function CitedPageViewer({
   useEffect(() => {
     let cancelled = false;
     setUrl(null);
-    // SEC-7 / DEC-49: "open in new tab" shows this URL — a reviewed inline caller.
-    getSignedUrlForPath(view.fileKey, undefined, { inline: true })
+    // A source that could not be opened (a restricted mirror in a carousel)
+    // never blanks the next one.
+    setError(null);
+    const signed = view.fileKey
+      // SEC-7 / DEC-49: "open in new tab" shows this URL — a reviewed inline caller.
+      ? getSignedUrlForPath(view.fileKey, undefined, { inline: true })
+      // KACL-5 / KACL-7: a source-linked mirror opens through the server,
+      // which decides on its source and answers a URL — never the key. A
+      // restricted source says so (the route's words).
+      : view.documentId
+        ? getKnowledgeMirrorUrl(view.documentId)
+        : Promise.reject(new Error("This document has no stored file to open."));
+    signed
       .then((u) => { if (!cancelled) setUrl(u); })
       .catch((e) => { if (!cancelled) setError((e as Error).message); });
     return () => { cancelled = true; };
-  }, [view.fileKey]);
+  }, [view.fileKey, view.documentId]);
 
   // Fit-to-width baseline: the page fills the modal at 100%; zoom multiplies.
   useEffect(() => {
@@ -328,7 +350,7 @@ export default function CitedPageViewer({
   /** Go where the tag is — another page of this sheet, or a sibling sheet. */
   const jumpTo = (e: TagElsewhere) => {
     setMarks([]); setElsewhere([]); setLocateNote(null);
-    if (e.fileKey !== view.fileKey) {
+    if (!sameFile(e, view)) {
       setNumPages(null);
       setView({ fileKey: e.fileKey, title: e.documentName, documentId: e.documentId });
     }
@@ -446,7 +468,7 @@ export default function CitedPageViewer({
             {(pageNumber !== page || view.documentId !== documentId) && (
               <button onClick={() => {
                   setMarks([]); setElsewhere([]); setLocateNote(null);
-                  if (view.fileKey !== fileKey) {
+                  if (!sameFile(view, { fileKey, documentId })) {
                     setNumPages(null);
                     setView({ fileKey, title, documentId });
                   }
@@ -627,7 +649,7 @@ export default function CitedPageViewer({
               </div>
               <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
                 {list.map((s, i) => (
-                  <button key={`${s.fileKey}-${s.page}-${i}`} type="button" onClick={() => setIdx(i)}
+                  <button key={`${s.fileKey ?? s.documentId}-${s.page}-${i}`} type="button" onClick={() => setIdx(i)}
                     title={`${s.title.replace(/\.pdf$/i, "")}${s.section ? ` · ${s.section}` : ""} · p.${s.page}`}
                     className={`min-w-6 h-6 px-1.5 rounded-md text-[10px] font-black tabular-nums border transition-all ${
                       i === idx

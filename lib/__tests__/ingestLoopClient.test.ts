@@ -36,7 +36,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const docRows = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
 vi.mock("@/lib/supabase", () => {
   const chain = {
-    select: () => chain, eq: () => chain,
+    // KACL-5 / KACL-7 (I-29): the list reads uploads and mirrors apart
+    // (`.is` / `.not` on source_document_id) and keeps each side's own rows.
+    select: () => chain, eq: () => chain, is: () => chain, not: () => chain,
     order: async () => ({ data: docRows.rows, error: null }),
   };
   return {
