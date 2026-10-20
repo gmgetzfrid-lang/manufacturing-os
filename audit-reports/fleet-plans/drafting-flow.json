@@ -716,6 +716,25 @@
    "sequencingNotes": [
     "Added by the integrator at the DF-P12 merge, 2026-10-20 (DEC-31)."
    ]
+  },
+  {
+   "name": "DF-P16 QUEUE HISTORY AND OUTCOME BREAKDOWN — closed and canceled requests reachable from the queue on demand, and the org's own ending reasons counted on /admin/analytics",
+   "findings": [
+    "drafting-flow ROUTE-13 done-when 1 (LOW; assigned at the DF-P14 merge): any closed or canceled request can be reached from the queue on demand (a 'closed history' read that pages like lib/ticketQueueRead.ts, never loaded by default), the open queue unchanged",
+    "roles-and-permissions GAP-13 acceptance 2, per-reason half (assigned at the DF-P14 merge): /admin/analytics 'How Requests Ended' (components/requests/RequestOutcomes.tsx) breaks each outcome down by the org's configured reasons (metadata.outcome_reason, words snapshotted), unconfigured or bare-category ends shown as such; the outcome-level counts unchanged"
+   ],
+   "files": [
+    "app/(protected)/requests/page.tsx (the closed-history affordance only), lib/ticketQueueRead.ts",
+    "components/requests/RequestOutcomes.tsx, app/(protected)/admin/analytics/page.tsx (that block only)",
+    "tests: a closed request reached from the queue; the open queue unchanged; per-reason counts with and without configured reasons"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "drafting-flow DF-P14 merged (2026-10-20; lib/ticketQueueRead.ts, lib/ticketOutcomeReasons.ts)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P14 merge, 2026-10-20 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

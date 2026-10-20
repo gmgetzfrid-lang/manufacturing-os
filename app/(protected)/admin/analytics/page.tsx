@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
 import { isTerminalTicketStatus } from '@/lib/ticketShed';
+import { ticketStatusLabel } from '@/lib/ticketStatusLabels';
 import { summarizeOutcomes } from '@/lib/ticketOutcome';
 import RequestOutcomes from '@/components/requests/RequestOutcomes';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
@@ -513,7 +514,7 @@ export default function AnalyticsPage() {
                               <div className="min-w-0">
                                 <div className="flex items-center mb-1">
                                   <span className="text-xs font-mono font-bold text-[var(--color-text-muted)] mr-2">{t.ticketId}</span>
-                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' : 'bg-green-100 text-green-700 border-green-200'}`}>{t.status}</span>
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${t.status === 'CLOSED' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' : 'bg-green-100 text-green-700 border-green-200'}`}>{ticketStatusLabel(t.status)}</span>
                                 </div>
                                 <p className="text-sm font-bold text-[var(--color-text)] truncate pr-4">{t.title}</p>
                               </div>

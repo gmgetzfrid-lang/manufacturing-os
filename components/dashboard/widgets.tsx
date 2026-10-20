@@ -34,6 +34,7 @@ import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { computeNudges } from "@/lib/nudges";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -279,21 +280,27 @@ function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
-// Ticket status → short label + badge classes (mirrors the request portal).
-const TICKET_STATUS: Record<string, { label: string; cls: string }> = {
-  PENDING_ENG_TEAM: { label: "Eng review", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  PENDING_ASSIGNMENT: { label: "Unassigned", cls: "bg-purple-50 text-purple-700 border-purple-200" },
-  DRAFTING: { label: "Drafting", cls: "bg-blue-50 text-blue-700 border-blue-200" },
-  PENDING_REVIEW: { label: "In review", cls: "bg-yellow-50 text-yellow-700 border-yellow-200" },
-  REVISION_REQ: { label: "Revisions", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  PENDING_IFC: { label: "Pending IFC", cls: "bg-teal-50 text-teal-700 border-teal-200" },
-  FINAL_DRAFT: { label: "Final draft", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_FINAL_APPROVAL: { label: "Final appr.", cls: "bg-lime-50 text-lime-700 border-lime-200" },
-  CLOSED: { label: "Closed", cls: "bg-gray-100 text-gray-500 border-gray-200" },
-  CANCELED: { label: "Canceled", cls: "bg-gray-100 text-gray-500 border-gray-200" },
+// Ticket status → badge classes. The WORDS are the request portal's own
+// (lib/ticketStatusLabels.ts ticketStatusLabel — drafting-flow UI-7, DF-P14):
+// this widget kept a third label set ("Final draft" here, "Issued — awaiting
+// acknowledgement" on the ticket) and showed an unknown value raw.
+const TICKET_STATUS_CLS: Record<string, string> = {
+  PENDING_ENG_TEAM: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  PENDING_ASSIGNMENT: "bg-purple-50 text-purple-700 border-purple-200",
+  DRAFTING: "bg-blue-50 text-blue-700 border-blue-200",
+  PENDING_REVIEW: "bg-yellow-50 text-yellow-700 border-yellow-200",
+  REVISION_REQ: "bg-amber-50 text-amber-700 border-amber-200",
+  PENDING_IFC: "bg-teal-50 text-teal-700 border-teal-200",
+  FINAL_DRAFT: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  PENDING_FINAL_APPROVAL: "bg-lime-50 text-lime-700 border-lime-200",
+  CLOSED: "bg-gray-100 text-gray-500 border-gray-200",
+  CANCELED: "bg-gray-100 text-gray-500 border-gray-200",
 };
 function ticketStatus(s: string | null | undefined) {
-  return (s && TICKET_STATUS[s]) || { label: s ?? "—", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" };
+  return {
+    label: s ? ticketStatusLabel(s) : "—",
+    cls: (s && TICKET_STATUS_CLS[s]) || "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  };
 }
 
 // ─── widget bodies ───────────────────────────────────────────────
@@ -431,37 +438,81 @@ interface TicketRow {
   assigned_drafter_name: string | null; updated_at: string | null;
 }
 
+/** The Drafting Requests widget's pipeline parts, in FIXED order (slot ↔
+ *  color assignment never shifts): the statuses each part counts. */
+const DRAFTING_PIPELINE: ReadonlyArray<readonly string[]> = [
+  ["PENDING_ENG_TEAM"],
+  ["PENDING_ASSIGNMENT"],
+  ["DRAFTING"],
+  ["PENDING_REVIEW", "REVISION_REQ"],
+  ["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"],
+];
+
+type ExactCount = { ok: true; n: number } | { ok: false; error: string };
+
+/** One exact count (a HEAD read, no rows). A refused read, or an answer with
+ *  no count, is a fault with its reason — never a 0. */
+async function exactCount(build: () => PromiseLike<{ count: number | null; error: { message?: string } | null }>): Promise<ExactCount> {
+  try {
+    const { count, error } = await build();
+    if (error) return { ok: false, error: error.message || "the count could not be read" };
+    if (typeof count !== "number") return { ok: false, error: "no count came back" };
+    return { ok: true, n: count };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "the count could not be read" };
+  }
+}
+
 function DraftingRequestsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const [statusRes, recentRes, newDates] = await Promise.all([
-      supabase.from("tickets").select("status")
-        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")').limit(2000),
+    // drafting-flow ROUTE-14 (DF-P14 integrator fix pass, DEC-90): the open
+    // count and the pipeline bar are EXACT counts — one HEAD count of every
+    // open request, and one per pipeline part — never rows counted from one
+    // read capped at 2,000 (above that both undercounted in silence: ROUTE-12's
+    // defect on the dashboard). The same scope as before (the workspace's
+    // requests not CLOSED or CANCELED); a failed count is said, never a 0.
+    const openScope = () => supabase.from("tickets").select("id", { count: "exact", head: true })
+      .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")');
+    const [openRead, partReads, recentRes, newDates] = await Promise.all([
+      exactCount(() => openScope() as unknown as PromiseLike<{ count: number | null; error: { message?: string } | null }>),
+      Promise.all(DRAFTING_PIPELINE.map((statuses) =>
+        exactCount(() => openScope().in("status", [...statuses]) as unknown as PromiseLike<{ count: number | null; error: { message?: string } | null }>))),
       supabase.from("tickets")
         .select("id, ticket_id, title, status, created_at, requester_name, assigned_drafter_name, updated_at")
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
         .order("created_at", { ascending: false }).limit(30),
       fetchRecentDates("tickets", orgId, 14),
     ]);
-    const byStatus = new Map<string, number>();
-    for (const r of ((statusRes.data ?? []) as Array<{ status: string | null }>)) {
-      const s = r.status ?? "PENDING_ASSIGNMENT";
-      byStatus.set(s, (byStatus.get(s) ?? 0) + 1);
-    }
-    const open = Array.from(byStatus.values()).reduce((a, b) => a + b, 0);
-    return { open, byStatus, recent: (recentRes.data ?? []) as TicketRow[], newDates };
+    const partFault = partReads.find((r): r is Extract<ExactCount, { ok: false }> => !r.ok);
+    return {
+      // null when the count could not be read (said below, never a 0).
+      open: openRead.ok ? openRead.n : null,
+      countFault: openRead.ok ? null : openRead.error,
+      // the bar's parts; null when any part could not be counted (the bar
+      // is then left out and the reason said — never a short bar as whole).
+      parts: partFault ? null : partReads.map((r) => (r.ok ? r.n : 0)),
+      barFault: partFault ? partFault.error : null,
+      recent: (recentRes.data ?? []) as TicketRow[], newDates,
+    };
   });
 
   if (loading) return <Skeleton />;
+  const countFault = data?.countFault ?? (data ? null : "the count could not be read");
   const open = data?.open ?? 0;
+  const barFault = data?.barFault ?? null;
+  const parts = data?.parts ?? null;
   const recent = data?.recent ?? [];
-  const by = (keys: string[]) => keys.reduce((s, k) => s + (data?.byStatus.get(k) ?? 0), 0);
-  // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
+  const part = (i: number) => parts?.[i] ?? 0;
+  // Pipeline stages in FIXED order (DRAFTING_PIPELINE; slot ↔ color never shifts).
   const pipeline: Segment[] = [
-    { label: "Eng review", count: by(["PENDING_ENG_TEAM"]) },
-    { label: "Unassigned", count: by(["PENDING_ASSIGNMENT"]) },
-    { label: "Drafting", count: by(["DRAFTING"]) },
-    { label: "In review", count: by(["PENDING_REVIEW", "REVISION_REQ"]) },
-    { label: "Closing out", count: by(["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"]) },
+    // UI-7 (DF-P14): a single-status part reads its status's shared label
+    // (the chips' words); a part that counts two statuses has its own name,
+    // never one status's label.
+    { label: ticketStatusLabel("PENDING_ENG_TEAM"), count: part(0) },
+    { label: ticketStatusLabel("PENDING_ASSIGNMENT"), count: part(1) },
+    { label: ticketStatusLabel("DRAFTING"), count: part(2) },
+    { label: "In review or revision", count: part(3) },
+    { label: "Closing out", count: part(4) },
   ];
   const wk = weekSplit(data?.newDates ?? []);
 
@@ -471,7 +522,7 @@ function DraftingRequestsBody() {
           week's intake vs last. */}
       <div className="flex items-end justify-between gap-3 shrink-0">
         <div className="flex items-end gap-2">
-          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{open}</span>
+          <span data-testid="drafting-open-count" className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{countFault ? "—" : open}</span>
           <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">open requests</span>
         </div>
         <div className="flex items-center gap-2">
@@ -481,7 +532,13 @@ function DraftingRequestsBody() {
           </Link>
         </div>
       </div>
-      {open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
+      {countFault && (
+        <p role="status" data-testid="drafting-open-count-fault" className="mt-1 text-[11px] text-amber-700 shrink-0">Open requests could not be counted — {countFault}.</p>
+      )}
+      {!countFault && !barFault && open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
+      {!countFault && barFault && (
+        <p role="status" data-testid="drafting-pipeline-fault" className="mt-1 text-[11px] text-amber-700 shrink-0">Where the open requests sit could not be counted — {barFault}.</p>
+      )}
 
       {recent.length === 0 ? (
         <BodyShell>
