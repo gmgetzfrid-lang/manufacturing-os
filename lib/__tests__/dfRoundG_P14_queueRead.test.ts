@@ -188,9 +188,18 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
 });
-afterEach(() => { act(() => root?.unmount()); host?.remove(); vi.restoreAllMocks(); });
+afterEach(() => { act(() => root?.unmount()); host?.remove(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-const flush = async () => { for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
+// Under fake timers (the realtime tests) a tick advances the fake clock by 0.
+const tick = () => (vi.isFakeTimers() ? vi.advanceTimersByTimeAsync(0) : new Promise((r) => setTimeout(r, 0)));
+const flush = async () => { for (let i = 0; i < 10; i++) await act(async () => { await tick(); }); };
+/** ROUTE-13 done-when 2 (the DF-P14 integrator ruling): the page's realtime
+ *  listener is a trailing debounce of REALTIME_SETTLE_MS (500 ms). */
+const SETTLE_MS = 500;
+/** Fake the clock the listener's debounce runs on (after mount). */
+const fakeClock = () => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); };
+/** Let `ms` pass on the fake clock, then let the reads it started land. */
+const pass = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); await flush(); };
 const mount = async () => { await act(async () => { root!.render(React.createElement(RequestsPage)); }); await flush(); };
 const q = <T extends HTMLElement>(sel: string) => host!.querySelector(sel) as T | null;
 const click = async (el: Element | null) => { expect(el).toBeTruthy(); await act(async () => { (el as HTMLElement).click(); }); await flush(); };
@@ -364,8 +373,9 @@ describe("ROUTE-12 — the queue holds every request of its scope (rendered)", (
     // a tickets event re-reads the list (the org-filtered listener) — and this read fails
     const listener = s.channels.find((c) => c.cfg.event === "*");
     expect(listener).toBeTruthy();
+    fakeClock();
     await act(async () => { listener!.cb({}); });
-    await flush();
+    await pass(SETTLE_MS); // the burst settles: one read
     const alert = q("[data-testid=requests-read-failed]");
     expect(alert?.textContent).toMatch(/could not be refreshed/);
     expect(alert?.textContent).toMatch(/as last read/);
@@ -524,7 +534,10 @@ describe("ROUTE-12 fix pass — the queue page (rendered)", () => {
     const n = s.reads.length;
     s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
     s.failReads = [n + 1];
-    await act(async () => { listener.cb({}); }); // read A (realtime): will fail, late
+    fakeClock();
+    await act(async () => { listener.cb({}); });
+    await pass(SETTLE_MS); // read A (realtime, after the burst settles): will fail, late
+    expect(s.reads.length).toBe(n + 1);
     s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
     // read B: an explicit Refresh (realtime events are coalesced behind A since
     // fix pass 2; an explicit read is not), fresh, at once
@@ -543,7 +556,10 @@ describe("ROUTE-12 fix pass — the queue page (rendered)", () => {
     let releaseA: () => void = () => undefined;
     const n = s.reads.length;
     s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
-    await act(async () => { listener.cb({}); }); // read A (realtime): succeeds with the old list, late
+    fakeClock();
+    await act(async () => { listener.cb({}); });
+    await pass(SETTLE_MS); // read A (realtime, after the burst settles): succeeds with the old list, late
+    expect(s.reads.length).toBe(n + 1);
     s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
     s.failReads = [n + 2];
     await click(host!.querySelector("button[title='Refresh Data']")); // read B (explicit): fails at once
@@ -553,27 +569,92 @@ describe("ROUTE-12 fix pass — the queue page (rendered)", () => {
     expect(q("[data-testid=requests-read-failed]")?.textContent).toMatch(/could not be refreshed/);
   });
 
-  it("REVIEW FIX PASS 2: a burst of tickets events during a read is coalesced — five events cost at most two reads, and the trailing read lands the latest list", async () => {
-    s.tickets = [row("t1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null }), row("t2", { status: "DRAFTING" })];
-    await mount();
-    expect(host!.textContent).toMatch(/2 Total Records/);
-    const listener = s.channels.find((c) => c.cfg.event === "*")!;
-    const n = s.reads.length;
-    let releaseA: () => void = () => undefined;
-    s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
-    await act(async () => { listener.cb({}); }); // read A starts and waits
-    s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
-    for (let i = 0; i < 4; i++) await act(async () => { listener.cb({}); }); // four more events, during A
-    await flush();
-    expect(s.reads.length).toBe(n + 1); // only A so far: the four only marked the list dirty
-    await act(async () => { releaseA(); });
-    await flush();
-    expect(s.reads.length).toBe(n + 2); // ONE trailing read for all four
-    expect(host!.textContent).toMatch(/3 Total Records/);
-    // quiet again: one event, one read
-    await act(async () => { listener.cb({}); });
-    await flush();
-    expect(s.reads.length).toBe(n + 3);
+  describe("ROUTE-13 done-when 2 (DF-P14 integrator ruling, DEC-90): the realtime listener is a trailing debounce — at most one re-read per tab per burst", () => {
+    const seed = () => { s.tickets = [row("t1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null }), row("t2", { status: "DRAFTING" })]; };
+    const listenerOf = () => s.channels.find((c) => c.cfg.event === "*")!;
+
+    it("a burst of 5 tickets events produces exactly ONE read, after the burst settles — and it lands the latest list", async () => {
+      seed();
+      await mount();
+      expect(host!.textContent).toMatch(/2 Total Records/);
+      fakeClock();
+      const n = s.reads.length;
+      s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
+      for (let i = 0; i < 5; i++) {
+        await act(async () => { listenerOf().cb({}); });
+        await pass(100); // events 100 ms apart: the burst has not settled
+      }
+      expect(s.reads.length).toBe(n); // nothing read during the burst
+      await pass(SETTLE_MS - 100 - 1);
+      expect(s.reads.length).toBe(n); // 499 ms after the last event: still nothing
+      await pass(1);
+      expect(s.reads.length).toBe(n + 1); // settled: ONE read for all five
+      expect(host!.textContent).toMatch(/3 Total Records/);
+      await pass(10_000);
+      expect(s.reads.length).toBe(n + 1); // and nothing more
+    }, 30_000);
+
+    it("an event during an in-flight read produces ONE trailing read when that read settles", async () => {
+      seed();
+      await mount();
+      fakeClock();
+      const n = s.reads.length;
+      let releaseA: () => void = () => undefined;
+      s.gates[n + 1] = new Promise<void>((r) => { releaseA = r; });
+      await act(async () => { listenerOf().cb({}); });
+      await pass(SETTLE_MS); // read A starts and waits
+      expect(s.reads.length).toBe(n + 1);
+      s.tickets = [...s.tickets, row("t3", { status: "DRAFTING" })];
+      for (let i = 0; i < 3; i++) await act(async () => { listenerOf().cb({}); }); // during A
+      await pass(SETTLE_MS * 4); // the burst settles while A is still in flight
+      expect(s.reads.length).toBe(n + 1); // only A: the events marked the list dirty
+      await act(async () => { releaseA(); });
+      await flush();
+      expect(s.reads.length).toBe(n + 2); // ONE trailing read
+      expect(host!.textContent).toMatch(/3 Total Records/);
+      await pass(10_000);
+      expect(s.reads.length).toBe(n + 2);
+    }, 30_000);
+
+    it("explicit reads stay immediate: Refresh Data and Try again read at once, with no wait for the debounce", async () => {
+      seed();
+      await mount();
+      fakeClock();
+      const n = s.reads.length;
+      await click(host!.querySelector("button[title='Refresh Data']"));
+      expect(s.reads.length).toBe(n + 1); // no fake time passed
+      // a failed read's Try again, likewise
+      s.failReads = [n + 2];
+      await click(host!.querySelector("button[title='Refresh Data']"));
+      expect(q("[data-testid=requests-read-failed]")).toBeTruthy();
+      await click(byText("[data-testid=requests-read-failed] button", /Try again/));
+      expect(s.reads.length).toBe(n + 3);
+      expect(q("[data-testid=requests-read-failed]")).toBeNull();
+    }, 30_000);
+
+    it("a stream of events that never settles cannot starve the list: a read starts within 5 s of the first unread event", async () => {
+      seed();
+      await mount();
+      fakeClock();
+      const n = s.reads.length;
+      for (let i = 0; i < 13; i++) { // one event every 400 ms for 5.2 s
+        await act(async () => { listenerOf().cb({}); });
+        await pass(400);
+      }
+      expect(s.reads.length).toBe(n + 1);
+    }, 30_000);
+
+    it("a pending re-read is dropped when the page goes away (no read after unmount)", async () => {
+      seed();
+      await mount();
+      fakeClock();
+      const n = s.reads.length;
+      await act(async () => { listenerOf().cb({}); });
+      act(() => root!.unmount());
+      root = null;
+      await act(async () => { await vi.advanceTimersByTimeAsync(SETTLE_MS * 2); });
+      expect(s.reads.length).toBe(n);
+    }, 30_000);
   });
 
   describe("REVIEW FIX PASS 2: Export CSV never writes an unread or short list as the queue", () => {
@@ -628,5 +709,117 @@ describe("ROUTE-12 fix pass — the queue page (rendered)", () => {
     await click(host!.querySelector("button[title='Refresh Data']"));
     expect(s.reads.length).toBe(before + 1);
     expect(host!.textContent).toMatch(/2 Total Records/);
+  });
+});
+
+describe("DF-P14 integrator rulings (3) and (4), DEC-90 — the export's name and the Drafter's short-read banner say only what is true", () => {
+  const statusSelect = () => Array.from(host!.querySelectorAll("select")).find((el) => Array.from((el as HTMLSelectElement).options).some((o) => o.value === "ALL")) as HTMLSelectElement;
+  async function choose(sel: HTMLSelectElement, value: string) {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(sel, value);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+  }
+  async function exportName(): Promise<string | null> {
+    let name: string | null = null;
+    const had = Object.prototype.hasOwnProperty.call(URL, "createObjectURL");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: () => "blob:test" });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { name = this.getAttribute("download"); });
+    try {
+      const btn = q<HTMLButtonElement>("[data-testid=requests-export-csv]");
+      expect(btn).toBeTruthy();
+      await act(async () => { btn!.click(); });
+    } finally {
+      clickSpy.mockRestore();
+      if (!had) delete (URL as unknown as Record<string, unknown>).createObjectURL;
+    }
+    return name;
+  }
+  const drafter = () => { s.role = { activeRole: "Drafter", roles: ["Drafter"], activeOrgId: "org-1", uid: "d-9" }; };
+  const banner = () => q("[data-testid=requests-read-short]")?.textContent ?? "";
+
+  it("(3) the suffix's N is what the file holds — the filtered rows written, not the rows read", async () => {
+    s.tickets = [
+      row("t1", { status: "DRAFTING" }),
+      row("t2", { status: "DRAFTING" }),
+      row("t3", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null }),
+    ];
+    s.countBonus = 1; // the list is short: 3 of 4
+    await mount();
+    expect(banner()).toMatch(/shows 3 of the 4 requests/);
+    expect(await exportName()).toMatch(/^drafting_export_.+_partial_3_of_4\.csv$/); // Any status: all 3 written
+    await choose(statusSelect(), "DRAFTING");
+    // the open scope's read is short too (3 rows of a count of 4) — the file may miss a row: said, with N = the 2 Drafting rows written
+    expect(await exportName()).toMatch(/^drafting_export_.+_partial_2_of_4\.csv$/);
+  });
+
+  it("(3) no suffix when the file cannot be missing a row: every open request was read and the filter is one open status", async () => {
+    drafter();
+    s.ceiling = 50;
+    s.tickets = [
+      // the Drafter's assigned scope holds closed history past the ceiling…
+      ...bulk(70, () => ({ status: "CLOSED", assigned_drafter_id: "d-9" })),
+      // …and five open requests, older than all of it
+      ...Array.from({ length: 5 }, (_, i) => row(`o${i}`, { status: "DRAFTING", assigned_drafter_id: "d-9", last_modified: `2026-03-0${i + 1}T00:00:00.000Z` })),
+      row("p1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null }),
+    ];
+    await mount();
+    expect(banner()).toMatch(/Every open request in this view is listed/);
+    await choose(statusSelect(), "DRAFTING");
+    expect(q("[data-testid=requests-read-short]")).toBeTruthy(); // the list is still short of closed history
+    expect(await exportName()).toMatch(/^drafting_export_[^_]+\.csv$/); // but the five Drafting requests are all in the file
+    // Any status: closed history is bounded, so the file says so
+    await choose(statusSelect(), "ALL");
+    expect(await exportName()).toMatch(/_partial_\d+_of_uncounted\.csv$/);
+  });
+
+  it("(4) the Drafter's capped list never sums the two scopes' overlapping counts: 'the N most recent — the list is longer than one read'", async () => {
+    drafter();
+    s.ceiling = 50;
+    s.tickets = [
+      // three requests in BOTH scopes (assigned to them and back in the pool)
+      ...Array.from({ length: 3 }, (_, i) => row(`b${i}`, { status: "PENDING_ASSIGNMENT", assigned_drafter_id: "d-9" })),
+      // the pool past the ceiling
+      ...bulk(60, () => ({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null })),
+    ];
+    await mount();
+    const text = banner();
+    expect(text).toMatch(/shows the \d+ most recent requests in this view — the list is longer than one read/);
+    expect(text).not.toMatch(/\b66\b/); // 3 + 63: the old summed total
+    expect(text).not.toMatch(/ of the \d+ requests/);
+  });
+
+  it("(4) the Drafter's every-open-listed banner names no summed total either", async () => {
+    drafter();
+    s.ceiling = 50;
+    s.tickets = [
+      ...bulk(70, () => ({ status: "CLOSED", assigned_drafter_id: "d-9" })),
+      row("o1", { status: "DRAFTING", assigned_drafter_id: "d-9", last_modified: "2026-03-01T00:00:00.000Z" }),
+      row("p1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null }),
+    ];
+    await mount();
+    expect(banner()).toMatch(/Every open request in this view is listed, with the 50 most recently active closed or canceled ones, more than one list holds/);
+    expect(banner()).not.toMatch(/requests in all/);
+  });
+
+  it("(4) the Drafter's short (not capped) list: no total M — 'the list may be longer than what was read'", async () => {
+    drafter();
+    s.tickets = [row("a1", { status: "DRAFTING", assigned_drafter_id: "d-9" }), row("p1", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null })];
+    s.countBonus = 1;
+    await mount();
+    expect(banner()).toMatch(/shows the 2 requests that could be read — the list may be longer than what was read/);
+    expect(banner()).not.toMatch(/of the 4/);
+  });
+
+  it("REGRESSION: a non-Drafter's short list keeps its exact N of M; a whole list shows no banner and names its file as before", async () => {
+    s.tickets = [row("t1", { status: "DRAFTING" }), row("t2", { status: "PENDING_ASSIGNMENT", assigned_drafter_id: null })];
+    s.countBonus = 1;
+    await mount();
+    expect(banner()).toMatch(/shows 2 of the 3 requests in this view/);
+    s.countBonus = 0;
+    await click(host!.querySelector("button[title='Refresh Data']"));
+    expect(q("[data-testid=requests-read-short]")).toBeNull();
+    expect(await exportName()).toMatch(/^drafting_export_[^_]+\.csv$/);
   });
 });

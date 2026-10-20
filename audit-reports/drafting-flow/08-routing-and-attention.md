@@ -1,6 +1,6 @@
 # 08 · Routing, notification & attention
 
-**11 findings** — 11 MEDIUM.
+**14 findings** — 10 MEDIUM, 4 LOW. *(Corrected at the DF-P14 integrator fix pass, 2026-10-20: this line read "11 findings — 11 MEDIUM", stale since the verification pass lowered `ROUTE-5` / `ROUTE-6` and since `ROUTE-12`, `ROUTE-13` and `ROUTE-14` were opened.)*
 
 Who is told what, and what goes silent. Overlaps `04-flow-leaks.md` deliberately — that report owns the leak framing, this one owns the mechanism.
 
@@ -812,6 +812,8 @@ hooks/useTicketNotifications.ts:188-193 —
 - ✓ A failed read is said, never an empty queue (rendered: the first read failing at its second page; a later refresh failing; a stale failure never covering a fresh list), and the filter bar stays so a narrower scope can be read.
 - ✓ A rendered test with more rows than one page asserts an old, untouched request appears in the list and, when it needs the viewer, in Needs me (the supervisor's assignment; the requester's review; the Drafter's pool request found by search; at the ceiling, the oldest open request behind 50 newer closed ones).
 
+**Ruled by the integrator at the DF-P14 merge, 2026-10-20 (DEC-90)** — two of the final review's minors, built at the integrator fix pass (`app/(protected)/requests/page.tsx`; `lib/__tests__/dfRoundG_P14_queueRead.test.ts`, "DF-P14 integrator rulings (3) and (4)", each failing on the pre-pass page). **(3) The export's file name says only what the file holds:** the `_partial_N_of_M` suffix's N is the rows written (`filteredTickets.length`, the filtered list the file holds), not the rows read; and no suffix is added when the file cannot be missing a row — every open request was read (`listShort.openComplete`, now exact: each scope read whole, or stopped at the ceiling with its open requests read whole on their own — a read short for any other reason no longer counts) and the status filter is one open status with Show Closed off (`exportWhole`, `handleExportCSV` `:921`). Rendered: a 3-of-4 list exports `_partial_3_of_4`, its Drafting-only view `_partial_2_of_4`; a Drafter's capped list filtered to Drafting exports with no suffix, and the same list at Any status keeps it. **(4) The Drafter's short-read banner never sums overlapping counts:** the Drafter's list is two scope reads (assigned; the pool) whose counts overlap (a request assigned to them and back at Awaiting drafter is in both), so the list's `total` is one scope's exact count or none (`total` / `merged` `:489-495`), and the Drafter's banners name no M — "This list shows the N most recent requests in this view — the list is longer than one read" when a scope stopped at the ceiling, "… the list may be longer than what was read" when it fell short otherwise (`:1391`); every other role's banner is unchanged (REGRESSION test: "shows 2 of the 3 requests"). **The dashboard widget's count** (the bullet above) is re-built at the same pass as exact HEAD counts and recorded as its own finding, `ROUTE-14` (LOW, RESOLVED) — the keyset read above was correct but held up to 10,000 rows for a number.
+
 **Scope / residual.** Recorded as a new finding, `ROUTE-13` (LOW, OPEN, owner proposed — `DEC-31`): closed and canceled requests past the 10,000-row ceiling cannot be reached in the page (choosing Closed or Canceled reads the same most recent ones), and (as first recorded) every tickets event re-read the whole scope — met here at review fix pass 2: a burst now costs at most two reads per tab (above), recorded under `ROUTE-13`'s second done-when. Remediation's second sentence (bound the default view to open requests and page closed history on demand) is that finding's. Nothing else remains of this finding: the header's Refresh Data and the dashboard widget's capped count, listed here as residual in the first draft, are fixed above.
 
 
@@ -823,7 +825,7 @@ hooks/useTicketNotifications.ts:188-193 —
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** proposed — drafting-flow, the next package that holds `app/(protected)/requests/page.tsx` (the integrator assigns, `DEC-31`: a remainder is a new id with an owner) — opened by drafting-flow DF-P14's review fix pass, 2026-10-14, as `ROUTE-12`'s remainder.
+- **Assigned:** the integrator assigns at the DF-P14 merge (done-when 1, closed history on demand; no package holds it yet — listed in the DF-P14 integrator fix pass report, 2026-10-20). *Was:* proposed — drafting-flow, the next package that holds `app/(protected)/requests/page.tsx` (the integrator assigns, `DEC-31`: a remainder is a new id with an owner) — opened by drafting-flow DF-P14's review fix pass, 2026-10-14, as `ROUTE-12`'s remainder.
 - **Verification:** CONFIRMED (by reading and by the rendered tests in `lib/__tests__/dfRoundG_P14_queueRead.test.ts`; not exercised against a live database)
 - **Independently verified:** — (`author`: opened at the DF-P14 review fix pass from the reviewer's finding; not yet challenged by a second party).
 - **Blast radius:** visibility / performance
@@ -850,7 +852,42 @@ hooks/useTicketNotifications.ts:188-193 —
 - [ ] Any closed or canceled request can be reached from the queue — not done; the default view still reads whole history and stops at the ceiling for closed history (owner as above).
 - ✓ in substance — a burst of ticket changes starts at most one re-read per tab *after the read already in flight* (one trailing read for the whole burst), with a rendered test. Applying changed rows instead of re-reading, which would remove even that read, is not built.
 
-**Scope / residual.** Stays OPEN for the first done-when (closed history on demand) — owner as proposed above. Each re-read still carries the full scope (`select('*')` up to the ceiling), not measured.
+**Ruled by the integrator at the DF-P14 merge, 2026-10-20 (DEC-90)** — done-when 2 is implemented as written, not "in substance": the realtime listener is now a **trailing debounce** of 500 ms (`REALTIME_SETTLE_MS`, `app/(protected)/requests/page.tsx:106`; `onTicketsEvent` / `onSettled` `:548-561`) on top of the in-flight coalescing above — an event only (re)arms the timer, so a burst of events starts ONE read after it settles; an event during an in-flight read still costs one trailing read when that read settles; a stream that never settles cannot starve the list (a read starts at most 5 s, `REALTIME_MAX_WAIT_MS`, after the first unread event — fail-safe, beyond the ruling's letter); the timer is cleared when the page goes away. The first read on mount, Try again and Refresh Data stay immediate (`fetchTickets`; `readSeqRef` applies only the latest answer). Tests (rendered, fake timers; `lib/__tests__/dfRoundG_P14_queueRead.test.ts`, "ROUTE-13 done-when 2 …"): a burst of 5 events 100 ms apart makes no read for 499 ms after the last and exactly ONE read at 500 ms, which lands the latest list, then nothing for 10 s; an event during a gated in-flight read makes exactly one trailing read; Refresh Data and Try again read with no time passed; events every 400 ms for 5.2 s make one read; a pending re-read is dropped on unmount. The burst, max-wait and unmount tests fail on the pre-pass page (it read once per settled in-flight read, so a burst cost two). The four existing realtime tests (a failing refresh; the two overlapping-read tests) now let the 500 ms pass before asserting.
+
+**Done-when (status at the DF-P14 integrator fix pass, 2026-10-20).**
+- [ ] Any closed or canceled request can be reached from the queue — not done (owner: the integrator assigns at the DF-P14 merge).
+- ✓ A burst of ticket changes starts at most one re-read per tab — one read after the burst settles, or one trailing read after a read already in flight — with rendered fake-timer tests (above).
+
+**Scope / residual.** Stays OPEN for the first done-when (closed history on demand) — **Assigned:** the integrator assigns at the DF-P14 merge. Each re-read still carries the full scope (`select('*')` up to the ceiling), not measured.
+
+---
+
+<a id="route-14"></a>
+
+## ROUTE-14 · The dashboard's Drafting Requests widget counted open requests from one read capped at 2,000 rows, so above that its count and pipeline bar undercounted without a word
+
+- **Severity:** LOW
+- **Status:** RESOLVED
+- **Assigned:** drafting-flow DF-P14 QUEUE READ AND STATUS-LABEL REMAINDERS — the integrator fix pass at the DF-P14 merge, 2026-10-20 (`components/dashboard/widgets.tsx` is in DF-P14's plan).
+- **Verification:** CONFIRMED (by reading `9b52f56` and by the rendered tests in `lib/__tests__/dfRoundG_P14_labels.test.ts`; not exercised against a live database)
+- **Independently verified:** — (`author`: observed by the DF-P14 final review and recorded by the integrator at the DF-P14 merge, 2026-10-20; not yet challenged by a second party).
+- **Blast radius:** attention / visibility
+- **Locations:**
+  - `components/dashboard/widgets.tsx:466-545` — `DraftingRequestsBody`. On `9b52f56` (`:434-484` there) the open count was the number of rows of ONE read, `select("status")…not("status","in",'("CLOSED","CANCELED")').limit(2000)`, its `error` unread; the pipeline bar counted the same rows. DF-P14's review fix pass replaced that read with the queue's keyset reader (`ROUTE-12`'s Resolution); this pass replaces it with exact counts.
+- **Related:** `ROUTE-12` (the same defect in the queue — RESOLVED), `ROUTE-7` (the attention feed's own cap)
+
+**Mechanism.** The widget asked for at most 2,000 rows and counted what came back (PostgREST's own max-rows, 1,000 by default, could cap it lower still). Nothing marked the answer short and a failed read was not read, so above the cap "N open requests" and the bar stopped at the cap, and a refused read showed "0 open requests" and "No open requests".
+
+**Failure scenario.** A large site with 2,400 open drafting requests: the dashboard says 2,000 (or 1,000), the bar's parts are short in proportion to which rows the read happened to return, and a supervisor sizing the backlog from the dashboard under-reads it by a sixth with nothing on screen to say so. A statement timeout on that read says the backlog is zero.
+
+**Remediation.** Count, do not read rows: an exact count of the open requests and one per pipeline part (`{ count: 'exact', head: true }`), the same scope as before; a failed count said, never a 0.
+
+**Done when.**
+
+- ✓ 1, 2,000 and 2,400 open requests render the open count and each pipeline part as the rows imply, with no row read for the numbers.
+- ✓ A failed count read is said, never shown as zero.
+
+**Resolution (2026-10-20, drafting-flow Round G — the integrator fix pass at the DF-P14 merge, DEC-90).** `DraftingRequestsBody` (`components/dashboard/widgets.tsx:466`) now reads **exact HEAD counts** (`exactCount` `:455`): one of every open request (`select("id", { count: "exact", head: true })`, the workspace, status not `CLOSED` / `CANCELED` — the scope the widget read before) and one per pipeline part (`DRAFTING_PIPELINE` `:443`, the same parts in the same fixed order, each `.in("status", …)`) — six requests that return no rows, whatever the number. Below 2,000 the widget shows exactly what it showed before: the same count (a status outside the pipeline is counted in the total and in no part, as before), the same bar and legend, the same recent list (30 rows). A count read that is refused, throws, or comes back with no number is a fault with its reason: the open count shows "—" with "Open requests could not be counted — …" (`drafting-open-count-fault`); a pipeline part that cannot be counted leaves the bar out and says "Where the open requests sit could not be counted — …" (`drafting-pipeline-fault`), the total standing — never a short bar or a 0. The keyset read DF-P14's review fix pass put here (up to 10,000 rows for a number, with a partial-bar note) is removed. Tests (`lib/__tests__/dfRoundG_P14_labels.test.ts`, the widget AS RENDERED, its PostgREST stand-in answering HEAD counts with the filters applied and honouring `.limit()` on every other read; the big-count tests carry an explicit 30 s timeout): 1 / 2,000 / 2,400 open requests (plus 50 closed) render the count and each part's legend as the rows imply, from six HEAD reads with the scope's filters and no `limit`, the recent list at most 30; REGRESSION: an unknown status in the total and no part; none open → 0, no bar, "No open requests."; a refused count and a count with no number each show "—" and say so; one part's failed count leaves the total, drops the bar and says so.
 
 ---
 

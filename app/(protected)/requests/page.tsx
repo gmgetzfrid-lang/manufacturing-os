@@ -99,6 +99,13 @@ interface DashboardMetrics {
   pendingReview: number;
 }
 
+/** ROUTE-13 done-when 2 (DF-P14 integrator ruling, DEC-90): how long the
+ *  realtime listener waits for a burst of tickets events to settle before it
+ *  re-reads the list once; and the longest an unread event waits while events
+ *  keep arriving. */
+const REALTIME_SETTLE_MS = 500;
+const REALTIME_MAX_WAIT_MS = 5_000;
+
 // =========================================================================================
 // SECTION 2: UTILITY FUNCTIONS
 // =========================================================================================
@@ -202,7 +209,11 @@ export default function RequestPortal() {
   // closed history is bounded.
   const [listFault, setListFault] = useState<string | null>(null);
   const [listLoadedFor, setListLoadedFor] = useState<string | null>(null);
-  const [listShort, setListShort] = useState<{ shown: number; total: number | null; capped: boolean; openComplete: boolean; closedShown: number } | null>(null);
+  // `merged` (DF-P14 integrator ruling (4), DEC-90): the list is the union of
+  // more than one scope read (the Drafter's assigned scope and the pool),
+  // whose counts may overlap — no total is claimed (`total` null) unless an
+  // exact de-duplicated one is known.
+  const [listShort, setListShort] = useState<{ shown: number; total: number | null; capped: boolean; openComplete: boolean; closedShown: number; merged: boolean } | null>(null);
   const [listReadAt, setListReadAt] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [processingBulk, setProcessingBulk] = useState<boolean>(false);
@@ -473,9 +484,15 @@ export default function RequestPortal() {
         const short = done.some((d) => !d.read.complete)
           ? {
               shown: rows.length,
-              total: done.every((d) => d.read.total !== null) ? done.reduce((n, d) => n + (d.read.total ?? 0), 0) : null,
+              // DF-P14 integrator ruling (4), DEC-90: overlapping scope counts
+              // are never summed into a total — one scope's exact count, or none.
+              total: done.length === 1 ? done[0].read.total : null,
               capped: done.some((d) => d.read.capped),
-              openComplete: done.every((d) => !d.read.capped || (!!d.open && d.open.complete)),
+              // every OPEN request is in the list: each read is whole, or it
+              // stopped at the ceiling and its open requests were read whole
+              // on their own (a read short for any other reason is not).
+              openComplete: done.every((d) => d.read.complete || (d.read.capped && !!d.open && d.open.complete)),
+              merged: done.length > 1,
               closedShown: rows.filter((r) => isTerminalTicketStatus(r.status as string)).length,
             }
           : null;
@@ -509,17 +526,39 @@ export default function RequestPortal() {
     // most two reads. Explicit reads (Try again, Refresh, a stale-row
     // re-read) go straight to fetchTickets; readSeqRef still applies only
     // the latest answer.
+    //
+    // ROUTE-13 done-when 2 (ruled by the integrator at the DF-P14 merge,
+    // 2026-10-20, DEC-90): on top of that coalescing, the listener is a
+    // TRAILING DEBOUNCE — an event only (re)arms a REALTIME_SETTLE_MS timer,
+    // so a burst of events starts ONE read after it settles (at most one
+    // re-read per tab per burst). An event during an in-flight read still
+    // costs one trailing read. A stream of events that never settles cannot
+    // starve the list: REALTIME_MAX_WAIT_MS after the first unread event the
+    // read starts anyway. The first read on mount, Try again and Refresh stay
+    // immediate (fetchTickets; readSeqRef applies only the latest answer).
     let readInFlight = false;
     let dirty = false;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let firstPendingAt: number | null = null;
     const coalescedRead = async (): Promise<void> => {
       readInFlight = true;
       try { await fetchTickets(); } finally { readInFlight = false; }
       if (dirty && alive) { dirty = false; await coalescedRead(); }
     };
-    const onTicketsEvent = () => {
+    const onSettled = () => {
+      settleTimer = null;
+      firstPendingAt = null;
       if (!alive) return;
       if (readInFlight) { dirty = true; return; }
       void coalescedRead();
+    };
+    const onTicketsEvent = () => {
+      if (!alive) return;
+      const now = Date.now();
+      if (firstPendingAt === null) firstPendingAt = now;
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      const wait = Math.max(0, Math.min(REALTIME_SETTLE_MS, firstPendingAt + REALTIME_MAX_WAIT_MS - now));
+      settleTimer = setTimeout(onSettled, wait);
     };
 
     void coalescedRead();
@@ -542,7 +581,7 @@ export default function RequestPortal() {
         })
       .subscribe();
 
-    return () => { alive = false; refetchTicketsRef.current = null; supabase.removeChannel(channel); };
+    return () => { alive = false; if (settleTimer !== null) clearTimeout(settleTimer); refetchTicketsRef.current = null; supabase.removeChannel(channel); };
   }, [roles, activeOrgId, uid, includeClosed, listScopeKey]);
 
   // --------------------------------------------------------------------
@@ -875,7 +914,12 @@ export default function RequestPortal() {
     link.setAttribute('href', url);
     // ROUTE-12 review fix pass 2: a list that holds fewer than its scope's
     // requests says so in the file's name ("N of M"), as the banner does.
-    const partial = listShort ? `_partial_${listShort.shown}_of_${listShort.total ?? 'uncounted'}` : '';
+    // DF-P14 integrator ruling (3), DEC-90: N is what the file holds (the
+    // filtered rows written), and no suffix is added when the file cannot be
+    // missing a row — every open request was read and the filter shows one
+    // open status alone (no closed rows riding along with Show Closed).
+    const exportWhole = !!listShort && listShort.openComplete && filters.status !== 'ALL' && !isTerminalTicketStatus(filters.status) && !showClosed;
+    const partial = listShort && !exportWhole ? `_partial_${filteredTickets.length}_of_${listShort.total ?? 'uncounted'}` : '';
     link.setAttribute('download', `drafting_export_${new Date().toISOString()}${partial}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -1344,11 +1388,15 @@ export default function RequestPortal() {
             <div className="text-sm flex-1">
               {listShort.capped && listShort.openComplete
                 ? <>Every open request in this view is listed, with the {listShort.closedShown} most recently active closed or canceled ones{listShort.total !== null ? <> — {listShort.total} requests in all</> : null}, more than one list holds. Older closed and canceled requests are not listed here (choosing Closed or Canceled reads the same most recent ones); the open counts above are whole, the closed ones count only those listed.</>
-                : listShort.capped
-                  ? <>This list shows the {listShort.shown} most recently active of {listShort.total !== null ? `the ${listShort.total}` : 'the'} requests in this view — more than one list holds, open requests included. Choose an open status to narrow it and see the rest; the counts above are of the {listShort.shown} shown.</>
-                  : listShort.total !== null
-                    ? <>This list shows {listShort.shown} of the {listShort.total} requests in this view — requests changed while it was being read. Refresh to read it again.</>
-                    : <>This list shows the {listShort.shown} requests that could be read, but the total could not be counted, so more may exist. Refresh to read it again.</>}
+                : listShort.capped && listShort.merged
+                  ? <>This list shows the {listShort.shown} most recent requests in this view — the list is longer than one read, open requests included. Choose an open status to narrow it and see the rest; the counts above are of the {listShort.shown} shown.</>
+                  : listShort.capped
+                    ? <>This list shows the {listShort.shown} most recently active of {listShort.total !== null ? `the ${listShort.total}` : 'the'} requests in this view — more than one list holds, open requests included. Choose an open status to narrow it and see the rest; the counts above are of the {listShort.shown} shown.</>
+                    : listShort.merged
+                      ? <>This list shows the {listShort.shown} requests that could be read — the list may be longer than what was read (requests changed while it was being read, or the total could not be counted). Refresh to read it again.</>
+                      : listShort.total !== null
+                        ? <>This list shows {listShort.shown} of the {listShort.total} requests in this view — requests changed while it was being read. Refresh to read it again.</>
+                        : <>This list shows the {listShort.shown} requests that could be read, but the total could not be counted, so more may exist. Refresh to read it again.</>}
             </div>
             <button type="button" onClick={() => refetchTicketsRef.current?.()} className="px-3 py-1.5 bg-[var(--color-surface)] border border-amber-300 rounded-lg text-xs font-bold text-amber-800 hover:bg-amber-100">Refresh list</button>
           </div>

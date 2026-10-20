@@ -35,7 +35,6 @@ import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
 import { SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
-import { readQueueScope, type QueueQuery } from "@/lib/ticketQueueRead";
 import { computeNudges } from "@/lib/nudges";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -439,56 +438,81 @@ interface TicketRow {
   assigned_drafter_name: string | null; updated_at: string | null;
 }
 
+/** The Drafting Requests widget's pipeline parts, in FIXED order (slot ↔
+ *  color assignment never shifts): the statuses each part counts. */
+const DRAFTING_PIPELINE: ReadonlyArray<readonly string[]> = [
+  ["PENDING_ENG_TEAM"],
+  ["PENDING_ASSIGNMENT"],
+  ["DRAFTING"],
+  ["PENDING_REVIEW", "REVISION_REQ"],
+  ["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"],
+];
+
+type ExactCount = { ok: true; n: number } | { ok: false; error: string };
+
+/** One exact count (a HEAD read, no rows). A refused read, or an answer with
+ *  no count, is a fault with its reason — never a 0. */
+async function exactCount(build: () => PromiseLike<{ count: number | null; error: { message?: string } | null }>): Promise<ExactCount> {
+  try {
+    const { count, error } = await build();
+    if (error) return { ok: false, error: error.message || "the count could not be read" };
+    if (typeof count !== "number") return { ok: false, error: "no count came back" };
+    return { ok: true, n: count };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "the count could not be read" };
+  }
+}
+
 function DraftingRequestsBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
-    const [statusRead, recentRes, newDates] = await Promise.all([
-      // ROUTE-12 fix pass (DF-P14): EVERY open request is counted — read
-      // through the queue's own keyset reader (lib/ticketQueueRead.ts), with
-      // its exact count — never one read capped at 2,000 rows whose error
-      // went unread (above that the count and the bar undercounted in
-      // silence, the queue's own defect).
-      readQueueScope((counted) => supabase.from("tickets").select("id, status, last_modified", counted ? { count: "exact" } : undefined)
-        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as QueueQuery),
+    // drafting-flow ROUTE-14 (DF-P14 integrator fix pass, DEC-90): the open
+    // count and the pipeline bar are EXACT counts — one HEAD count of every
+    // open request, and one per pipeline part — never rows counted from one
+    // read capped at 2,000 (above that both undercounted in silence: ROUTE-12's
+    // defect on the dashboard). The same scope as before (the workspace's
+    // requests not CLOSED or CANCELED); a failed count is said, never a 0.
+    const openScope = () => supabase.from("tickets").select("id", { count: "exact", head: true })
+      .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")');
+    const [openRead, partReads, recentRes, newDates] = await Promise.all([
+      exactCount(() => openScope() as unknown as PromiseLike<{ count: number | null; error: { message?: string } | null }>),
+      Promise.all(DRAFTING_PIPELINE.map((statuses) =>
+        exactCount(() => openScope().in("status", [...statuses]) as unknown as PromiseLike<{ count: number | null; error: { message?: string } | null }>))),
       supabase.from("tickets")
         .select("id, ticket_id, title, status, created_at, requester_name, assigned_drafter_name, updated_at")
         .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
         .order("created_at", { ascending: false }).limit(30),
       fetchRecentDates("tickets", orgId, 14),
     ]);
-    const byStatus = new Map<string, number>();
-    for (const r of ((statusRead.ok ? statusRead.rows : []) as Array<{ status?: string | null }>)) {
-      const s = r.status ?? "PENDING_ASSIGNMENT";
-      byStatus.set(s, (byStatus.get(s) ?? 0) + 1);
-    }
-    const counted = Array.from(byStatus.values()).reduce((a, b) => a + b, 0);
+    const partFault = partReads.find((r): r is Extract<ExactCount, { ok: false }> => !r.ok);
     return {
-      // The exact count when one came back; null when the read failed (said
-      // below, never a 0).
-      open: statusRead.ok ? (statusRead.total ?? counted) : null,
-      countFault: statusRead.ok ? null : statusRead.error,
-      // The bar counts fewer than the count (past the reader's ceiling, or
-      // rows that changed mid-read): said, never a short bar shown as whole.
-      partial: statusRead.ok && !statusRead.complete ? { counted, total: statusRead.total } : null,
-      byStatus, recent: (recentRes.data ?? []) as TicketRow[], newDates,
+      // null when the count could not be read (said below, never a 0).
+      open: openRead.ok ? openRead.n : null,
+      countFault: openRead.ok ? null : openRead.error,
+      // the bar's parts; null when any part could not be counted (the bar
+      // is then left out and the reason said — never a short bar as whole).
+      parts: partFault ? null : partReads.map((r) => (r.ok ? r.n : 0)),
+      barFault: partFault ? partFault.error : null,
+      recent: (recentRes.data ?? []) as TicketRow[], newDates,
     };
   });
 
   if (loading) return <Skeleton />;
+  const countFault = data?.countFault ?? (data ? null : "the count could not be read");
   const open = data?.open ?? 0;
-  const countFault = data?.countFault ?? null;
-  const partial = data?.partial ?? null;
+  const barFault = data?.barFault ?? null;
+  const parts = data?.parts ?? null;
   const recent = data?.recent ?? [];
-  const by = (keys: string[]) => keys.reduce((s, k) => s + (data?.byStatus.get(k) ?? 0), 0);
-  // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
+  const part = (i: number) => parts?.[i] ?? 0;
+  // Pipeline stages in FIXED order (DRAFTING_PIPELINE; slot ↔ color never shifts).
   const pipeline: Segment[] = [
     // UI-7 (DF-P14): a single-status part reads its status's shared label
     // (the chips' words); a part that counts two statuses has its own name,
     // never one status's label.
-    { label: ticketStatusLabel("PENDING_ENG_TEAM"), count: by(["PENDING_ENG_TEAM"]) },
-    { label: ticketStatusLabel("PENDING_ASSIGNMENT"), count: by(["PENDING_ASSIGNMENT"]) },
-    { label: ticketStatusLabel("DRAFTING"), count: by(["DRAFTING"]) },
-    { label: "In review or revision", count: by(["PENDING_REVIEW", "REVISION_REQ"]) },
-    { label: "Closing out", count: by(["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"]) },
+    { label: ticketStatusLabel("PENDING_ENG_TEAM"), count: part(0) },
+    { label: ticketStatusLabel("PENDING_ASSIGNMENT"), count: part(1) },
+    { label: ticketStatusLabel("DRAFTING"), count: part(2) },
+    { label: "In review or revision", count: part(3) },
+    { label: "Closing out", count: part(4) },
   ];
   const wk = weekSplit(data?.newDates ?? []);
 
@@ -511,9 +535,9 @@ function DraftingRequestsBody() {
       {countFault && (
         <p role="status" data-testid="drafting-open-count-fault" className="mt-1 text-[11px] text-amber-700 shrink-0">Open requests could not be counted — {countFault}.</p>
       )}
-      {!countFault && open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
-      {partial && (
-        <p data-testid="drafting-open-count-partial" className="mt-1 text-[11px] text-amber-700 shrink-0">The bar counts the {partial.counted} most recently active of {partial.total ?? "the"} open requests.</p>
+      {!countFault && !barFault && open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
+      {!countFault && barFault && (
+        <p role="status" data-testid="drafting-pipeline-fault" className="mt-1 text-[11px] text-amber-700 shrink-0">Where the open requests sit could not be counted — {barFault}.</p>
       )}
 
       {recent.length === 0 ? (
