@@ -22,21 +22,29 @@
 //     `printed` voids the whole print ('print_aborted' — nothing was
 //     downloaded). Only the member who minted the print, only once (a
 //     settled print is final — the 20261237 guard refuses a change too).
-//     A voided token's scan reads stale, never green.
-//     PS-P10 (PHYS-19 c3): a work-package pack's settle also carries
-//     `coverPrintId`, the work_package_prints id of the cover printed with it
-//     (the cover is recorded AFTER the sheets are stamped — PKG-6 — so the
-//     mint cannot carry it; the settle is the first moment it exists). The
-//     server checks it — same workspace, printed by the caller, its printed
-//     sheets exactly this settle's `printed` sheets at the versions the
-//     tokens were minted for, recorded after the mint, linked to no other
-//     print — and stores it on every token row of the print
-//     (print_sheet_tokens.cover_print_id, 20261240). A mismatched id is
-//     refused 400 and NOTHING is settled (the tokens stay live — what an
-//     unsettled print always means). Before 20261240 is pasted (42703 /
-//     PGRST204) the id is ignored and the print settles exactly as today.
-//     A pack without a cover (the asset hub's, the two "Print all" packs)
-//     sends none: its token print keeps its own id and a NULL link.
+//     A voided token's scan reads stale, never green. The settle never reads
+//     or writes the cover link (PS-P10 review fix: it first carried it, but
+//     the settle is fired and never awaited, so a dropped settle left the
+//     print unlinked for good — the link moved to `link`, below).
+//
+//   { action: "link", orgId, printId, coverPrintId, printed: [documentId…] }
+//     → { linked: true, sheets: n } | { available: false, linked: false }
+//     PS-P10 (PHYS-19 c3): a work-package pack's sheet tokens link by key to
+//     the work_package_prints id of the cover printed with them. The cover is
+//     recorded AFTER the sheets are stamped (PKG-6), so the mint cannot carry
+//     it; the pack path calls this right after recording the cover and
+//     AWAITS it BEFORE the download — a link that is refused or fails stops
+//     the print (nothing downloaded; the abort voids the tokens), as a cover
+//     snapshot that cannot be written does (VFY-18). The server checks it —
+//     same workspace, printed by the caller, its printed sheets exactly
+//     `printed` at the versions the tokens were minted for, recorded after
+//     the mint, linked to no other print — and stores it on every unsettled
+//     token row of the print (print_sheet_tokens.cover_print_id, 20261240).
+//     A mismatch is 400 and nothing is written. Repeating a link that is
+//     already written answers linked (idempotent). Before 20261240 is pasted
+//     (42703 / PGRST204): { available: false } — the pack prints as today,
+//     unlinked. A pack without a cover (the asset hub's, the two "Print all"
+//     packs) never calls it: its token print keeps its own id and a NULL link.
 //
 //   { action: "void", orgId, coverPrintId | printId, reason }
 //     → { recalled: true, voided: n, alreadyVoid: m }
@@ -86,6 +94,13 @@ export const dynamic = "force-dynamic";
 
 const noStore = { "Cache-Control": "no-store" };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: noStore });
+
+/** A recall by a cover's print id that finds no sheet code linked to it. */
+const NO_LINKED_SHEET_CODE =
+  "No sheet code is linked to this print record, so a recall from here cannot reach its sheets — nothing was changed. " +
+  "Its sheets carry either the document's own QR (no per-print code could be issued) or codes printed before per-print " +
+  "codes were linked to their print record (database update 20261240 and this release); either way they keep scanning " +
+  "by their revision's status. Withdraw that paper by hand, and hold or supersede the revision if its sheets must read red.";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHUNK = 100;
@@ -190,18 +205,12 @@ export async function POST(req: NextRequest) {
   if (body.action === "settle") {
     const printId = typeof body.printId === "string" ? body.printId.toLowerCase() : "";
     if (!UUID_RE.test(printId) || !Array.isArray(body.printed)) return json({ error: "Invalid request" }, 400);
-    // PS-P10: the cover's print id, when the pack has a cover.
-    const coverRequested = body.coverPrintId !== undefined && body.coverPrintId !== null;
-    if (coverRequested && (typeof body.coverPrintId !== "string" || !UUID_RE.test(body.coverPrintId))) {
-      return json({ error: "Invalid request" }, 400);
-    }
-    let coverPrintId = coverRequested ? String(body.coverPrintId).toLowerCase() : null;
     const printed = new Set(
       (body.printed as unknown[]).filter((x): x is string => typeof x === "string" && UUID_RE.test(x)).map((x) => x.toLowerCase()),
     );
     const { data, error } = await actor.admin
       .from("print_sheet_tokens")
-      .select("id, document_id, version_id, minted_at")
+      .select("id, document_id")
       .eq("print_id", printId)
       .eq("org_id", orgId)
       .eq("minted_by", actor.userId)
@@ -210,18 +219,8 @@ export async function POST(req: NextRequest) {
       if (isMissingSheetTokenTable(error)) return json({ available: false, settled: false });
       return json({ error: "Couldn't settle the print — try again" }, 503);
     }
-    const rows = (data as Array<{ id: string; document_id: string; version_id?: string | null; minted_at?: string | null }> | null) ?? [];
+    const rows = (data as Array<{ id: string; document_id: string }> | null) ?? [];
     if (rows.length === 0) return json({ error: "Unknown or already settled print" }, 404);
-
-    // PS-P10: check the cover before anything is written. A mismatch is a
-    // 400 and nothing is settled; before 20261240 the link is skipped.
-    if (coverPrintId) {
-      const link = await checkCoverLink(actor, { orgId, printId, coverPrintId, rows, printed });
-      if (link.outcome === "refused") return json({ error: link.error }, 400);
-      if (link.outcome === "error") return json({ error: "Couldn't settle the print — try again" }, 503);
-      if (link.outcome === "unavailable") coverPrintId = null;
-    }
-    const linkPatch = coverPrintId ? { cover_print_id: coverPrintId } : {};
 
     const now = new Date().toISOString();
     const reason: SheetTokenVoidReason = printed.size === 0 ? "print_aborted" : "not_printed";
@@ -230,7 +229,7 @@ export async function POST(req: NextRequest) {
     for (const ids of chunks(voidIds)) {
       const { data: hit, error: vErr } = await actor.admin
         .from("print_sheet_tokens")
-        .update({ voided_at: now, void_reason: reason, settled_at: now, ...linkPatch })
+        .update({ voided_at: now, void_reason: reason, settled_at: now })
         .in("id", ids)
         .is("settled_at", null)
         .select("id");
@@ -242,7 +241,7 @@ export async function POST(req: NextRequest) {
     if (keep > 0) {
       const { data: hit, error: sErr } = await actor.admin
         .from("print_sheet_tokens")
-        .update({ settled_at: now, ...linkPatch })
+        .update({ settled_at: now })
         .eq("print_id", printId)
         .eq("org_id", orgId)
         .eq("minted_by", actor.userId)
@@ -251,18 +250,79 @@ export async function POST(req: NextRequest) {
       if (sErr) return json({ error: "Couldn't settle the print — try again" }, 503);
       if (((hit as unknown[] | null)?.length ?? 0) !== keep) return json({ error: "The print changed while it was settled — try again" }, 409);
     }
-    return json({ settled: true, voided, ...(coverRequested ? { coverLinked: !!coverPrintId } : {}) });
+    return json({ settled: true, voided });
   }
+
+  if (body.action === "link") return linkCover(actor, orgId, body);
 
   if (body.action === "void") return recallPrint(actor, orgId, body);
 
   return json({ error: "Unknown action" }, 400);
 }
 
-/** PS-P10 (PHYS-19 c3): may this settle's print be linked to that cover?
- *  `unavailable` — 20261240 not pasted (the link column is missing): settle
- *  as today, unlinked. `refused` — the cover is not this print's: 400,
- *  nothing settled. Read-only. */
+/** PS-P10 (PHYS-19 c3): a work-package pack's token print linked by key to
+ *  its cover's print, before the download (the pack path awaits it; a
+ *  failure stops the print). Writes only unsettled rows the caller minted. */
+async function linkCover(actor: AuthorizedActor, orgId: string, body: Record<string, unknown>) {
+  const printId = typeof body.printId === "string" ? body.printId.toLowerCase() : "";
+  const coverPrintId = typeof body.coverPrintId === "string" ? body.coverPrintId.toLowerCase() : "";
+  if (!UUID_RE.test(printId) || !UUID_RE.test(coverPrintId) || !Array.isArray(body.printed) || body.printed.length === 0) {
+    return json({ error: "Invalid request" }, 400);
+  }
+  const printed = new Set(
+    (body.printed as unknown[]).filter((x): x is string => typeof x === "string" && UUID_RE.test(x)).map((x) => x.toLowerCase()),
+  );
+  const unavailable = () => json({ available: false, linked: false });
+  const { data, error } = await actor.admin
+    .from("print_sheet_tokens")
+    .select("id, document_id, version_id, minted_at, cover_print_id")
+    .eq("print_id", printId)
+    .eq("org_id", orgId)
+    .eq("minted_by", actor.userId)
+    .is("settled_at", null);
+  if (error) {
+    if (isMissingSheetTokenTable(error) || isMissingCoverLinkColumn(error)) return unavailable();
+    console.error("[print-sheet-tokens] link: print unreadable — nothing linked:", error.message);
+    return json({ error: "Couldn't link the sheets to the cover — try again" }, 503);
+  }
+  const rows = (data as Array<{ id: string; document_id: string; version_id?: string | null; minted_at?: string | null; cover_print_id?: string | null }> | null) ?? [];
+  if (rows.length === 0) return json({ error: "Unknown or already settled print" }, 404);
+  const linkedTo = new Set(rows.map((r) => (r.cover_print_id ? String(r.cover_print_id).toLowerCase() : null)).filter((x): x is string => !!x));
+  if ([...linkedTo].some((c) => c !== coverPrintId)) return json({ error: "This print is already linked to another cover" }, 400);
+  const toLink = rows.filter((r) => !r.cover_print_id);
+  // A repeat of a link already written (a retry after a lost answer).
+  if (toLink.length === 0) return json({ linked: true, sheets: rows.length });
+
+  const check = await checkCoverLink(actor, { orgId, printId, coverPrintId, rows, printed });
+  if (check.outcome === "unavailable") return unavailable();
+  if (check.outcome === "refused") return json({ error: check.error }, 400);
+  if (check.outcome === "error") return json({ error: "Couldn't link the sheets to the cover — try again" }, 503);
+
+  let linked = 0;
+  for (const ids of chunks(toLink.map((r) => r.id))) {
+    const { data: hit, error: lErr } = await actor.admin
+      .from("print_sheet_tokens")
+      .update({ cover_print_id: coverPrintId })
+      .in("id", ids)
+      .is("settled_at", null)
+      .is("cover_print_id", null)
+      .select("id");
+    if (lErr) {
+      if (isMissingCoverLinkColumn(lErr)) return unavailable();
+      console.error("[print-sheet-tokens] link refused — the print is stopped:", lErr.message);
+      return json({ error: "Couldn't link the sheets to the cover — try again" }, 503);
+    }
+    linked += (hit as unknown[] | null)?.length ?? 0;
+  }
+  if (linked !== toLink.length) return json({ error: "The print changed while it was linked — try again" }, 409);
+  return json({ linked: true, sheets: rows.length });
+}
+
+/** PS-P10 (PHYS-19 c3): may this print be linked to that cover?
+ *  `unavailable` — 20261240 not pasted (the link column is missing): the
+ *  pack prints as today, unlinked. `refused` — the cover is not this print's:
+ *  400, nothing written. `error` — a transient read failure: 503, nothing
+ *  written. Read-only. */
 async function checkCoverLink(
   actor: AuthorizedActor,
   input: {
@@ -281,7 +341,7 @@ async function checkCoverLink(
     .limit(1);
   if (probeErr) {
     if (isMissingCoverLinkColumn(probeErr)) return { outcome: "unavailable" };
-    console.error("[print-sheet-tokens] cover link unreadable — nothing settled:", probeErr.message);
+    console.error("[print-sheet-tokens] cover link unreadable — nothing linked:", probeErr.message);
     return { outcome: "error" };
   }
   if (((elsewhere as unknown[] | null) ?? []).length > 0) return refused("That cover is already linked to another print");
@@ -292,7 +352,7 @@ async function checkCoverLink(
     .eq("id", input.coverPrintId)
     .maybeSingle();
   if (coverErr) {
-    console.error("[print-sheet-tokens] cover unreadable — nothing settled:", coverErr.message);
+    console.error("[print-sheet-tokens] cover unreadable — nothing linked:", coverErr.message);
     return { outcome: "error" };
   }
   const c = cover as { org_id?: string | null; printed_by?: string | null; printed_at?: string | null; sheets?: unknown } | null;
@@ -301,8 +361,8 @@ async function checkCoverLink(
     return refused("That cover is not one this print can be linked to");
   }
   // The cover belongs to the pack being printed: its printed sheets are
-  // exactly this settle's sheets, each at the version its token was minted
-  // for, and it was recorded after the tokens were minted.
+  // exactly the sheets this print downloads, each at the version its token
+  // was minted for, and it was recorded after the tokens were minted.
   const onCover = coverPrintedSheets(c.sheets);
   const same = onCover.size === input.printed.size && [...input.printed].every((d) => onCover.has(d));
   const versionsMatch = input.rows.every((r) => {
@@ -360,7 +420,10 @@ async function recallPrint(actor: AuthorizedActor, orgId: string, body: Record<s
   }
   const rows = (data as Array<{ id: string; print_id: string; settled_at: string | null; voided_at: string | null }> | null) ?? [];
   if (rows.length === 0) {
-    return json({ error: "No sheet of this print carries a per-print code (it was printed before the codes were linked to their cover, or they could not be issued) — a recall cannot reach its paper." }, 404);
+    // Said truthfully (PS-P10 review fix): no code is LINKED to this print
+    // record — its paper may still carry live per-print codes from before
+    // the link existed, which keep scanning by their revision's status.
+    return json({ error: NO_LINKED_SHEET_CODE }, 404);
   }
   const live = rows.filter((r) => !r.voided_at);
   if (live.length === 0) return json({ error: "Every sheet of this print is already void" }, 409);

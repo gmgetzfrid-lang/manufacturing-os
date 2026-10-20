@@ -98,24 +98,16 @@ export async function mintSheetTokens(input: {
 /** Tell the server which sheets left in the PDF: every other token of the
  *  print is voided ('not_printed'); an EMPTY list voids the whole print
  *  ('print_aborted' — nothing was downloaded). Never throws: an unsettled
- *  print keeps every token live, which is what a downloaded pack needs.
- *  PS-P10 (PHYS-19 c3): a work-package pack passes its cover's
- *  work_package_prints id (`coverPrintId`) so the server links the token
- *  print to it by key; a pack without a cover passes none and the request is
- *  exactly as before. */
+ *  print keeps every token live, which is what a downloaded pack needs. */
 export async function settleSheetTokens(input: {
   orgId: string;
   printId: string;
   printedDocumentIds: string[];
-  coverPrintId?: string | null;
 }): Promise<boolean> {
   try {
     const token = await bearer();
     if (!token) return false;
-    const res = await postTokenRoute(token, {
-      action: "settle", orgId: input.orgId, printId: input.printId, printed: input.printedDocumentIds,
-      ...(input.coverPrintId ? { coverPrintId: input.coverPrintId } : {}),
-    });
+    const res = await postTokenRoute(token, { action: "settle", orgId: input.orgId, printId: input.printId, printed: input.printedDocumentIds });
     if (!res.ok) {
       console.warn("[print-sheet-tokens] print not settled:", res.status);
       return false;
@@ -124,6 +116,39 @@ export async function settleSheetTokens(input: {
   } catch (e) {
     console.warn("[print-sheet-tokens] print not settled:", (e as Error)?.message);
     return false;
+  }
+}
+
+/** What linking a token print to its cover's print came to (public-surfaces
+ *  PS-P10; PHYS-19 c3). `linked: false` with ok — database update 20261240
+ *  is not pasted yet: the pack prints as today, unlinked. */
+export type SheetTokenCoverLinkResult =
+  | { ok: true; linked: boolean }
+  | { ok: false; status: number; error: string };
+
+/** Link a work-package pack's token print to the work_package_prints id of
+ *  the cover printed with it, by key (the server checks the cover: same
+ *  workspace, printed by this member, listing exactly `printedDocumentIds` at
+ *  the minted versions). Called by the pack path BEFORE the download and
+ *  awaited — a failure stops the print (lib/docPack.ts). Never throws. */
+export async function linkSheetTokensToCover(input: {
+  orgId: string;
+  printId: string;
+  coverPrintId: string;
+  printedDocumentIds: string[];
+}): Promise<SheetTokenCoverLinkResult> {
+  try {
+    const token = await bearer();
+    if (!token) return { ok: false, status: 401, error: "You are signed out — sign in and try again." };
+    const res = await postTokenRoute(token, {
+      action: "link", orgId: input.orgId, printId: input.printId, coverPrintId: input.coverPrintId, printed: input.printedDocumentIds,
+    });
+    const body = res.body as { linked?: boolean; available?: boolean; error?: string } | null;
+    if (res.ok && body?.linked === true) return { ok: true, linked: true };
+    if (res.ok && body?.available === false) return { ok: true, linked: false };
+    return { ok: false, status: res.status, error: body?.error ?? `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, status: 0, error: (e as Error)?.message || "network" };
   }
 }
 

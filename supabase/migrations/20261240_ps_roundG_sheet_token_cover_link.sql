@@ -20,10 +20,15 @@
 --      work_package_prints(id) ON DELETE SET NULL (a cover snapshot that is
 --      gone leaves its sheets' tokens in place, unlinked), plus a partial index
 --      for the recall's lookup by cover. Written by POST
---      /api/print-sheet-tokens `settle` (service role) once the server has
---      checked the cover: same workspace, printed by the caller, and its
---      printed sheets are exactly the sheets this token print settles, at the
---      versions the tokens were minted for.
+--      /api/print-sheet-tokens `link` (service role) — awaited by the pack
+--      path right after the cover's snapshot is recorded and BEFORE the
+--      download, so a pack whose link cannot be written does not print —
+--      once the server has checked the cover: same workspace, printed by the
+--      caller, and its printed sheets are exactly the sheets this token print
+--      is about to download, at the versions the tokens were minted for.
+--      (Review fix: first built on the post-download settle, which is fired
+--      and never awaited — a settle that never landed left the print unlinked
+--      for good and its recall unreachable from the print history.)
 --   2. print_sheet_tokens_void_reason_known re-created with one more value,
 --      'recalled' — a controller's recall of a printed pack (the route's
 --      `void` action, Admin / DocCtrl by the role collection, with an audit
@@ -33,9 +38,11 @@
 --      (20261237 — no later migration defines it; pinned by
 --      lib/__tests__/psP10SheetTokenCoverLink.test.ts, which scans the folder
 --      at test time) with every line kept and ONE limb added: a sheet's link
---      to its cover is written once, in the update that settles it, to a cover
---      of the same workspace; once written it never changes — except to NULL
---      when the cover row itself is gone (the FK's ON DELETE SET NULL).
+--      to its cover is written once, while the sheet is still unsettled
+--      (before the download, or in the update that settles it), to a cover of
+--      the same workspace; once written it never changes — except to NULL
+--      when the cover row itself is gone (the FK's ON DELETE SET NULL); a
+--      settled sheet is never linked after the fact.
 --      Refused with 42501. Still SECURITY INVOKER (it runs as whoever updates
 --      — the service role, or the FK action as the table owner); search_path
 --      pinned; EXECUTE revoked from PUBLIC, anon and authenticated.
@@ -55,10 +62,10 @@
 --
 -- PASTE / DEPLOY ORDER: either order with the PS-P10 deploy (DEC-30 — the app
 -- works before and after the paste).
---   * Code deployed, file NOT pasted: a work-package pack's settle sends its
---     cover's print id; the server's link probe answers 42703 / PGRST204 and
---     the print settles exactly as today, unlinked (nothing breaks, the print
---     is never refused). A controller's recall answers "not available until
+--   * Code deployed, file NOT pasted: a work-package pack's `link` sends its
+--     cover's print id; the server meets 42703 / PGRST204 and answers
+--     { available: false }, and the pack prints and settles exactly as today,
+--     unlinked (nothing breaks, the print is never refused for it). A controller's recall answers "not available until
 --     database update 20261240 is pasted" and changes nothing (no audit row,
 --     no void). Every pack prints and scans as today.
 --   * File pasted, code NOT deployed: nothing writes the column or the new
@@ -116,7 +123,7 @@ ALTER TABLE print_sheet_tokens
 CREATE INDEX IF NOT EXISTS print_sheet_tokens_cover_print_idx
   ON print_sheet_tokens (cover_print_id) WHERE cover_print_id IS NOT NULL;
 COMMENT ON COLUMN print_sheet_tokens.cover_print_id IS
-  'PHYS-19 c3 (public-surfaces PS-P10): the work_package_prints id of the cover printed with this sheet — written once by the settle after the server checked it (same org, the same printer, the cover''s printed sheets are this print''s sheets at the minted versions). NULL for a pack without a cover and for every token written before 20261240.';
+  'PHYS-19 c3 (public-surfaces PS-P10): the work_package_prints id of the cover printed with this sheet — written once, before the download (never on a settled row), after the server checked it (same org, the same printer, the cover''s printed sheets are this print''s sheets at the minted versions). NULL for a pack without a cover and for every token written before 20261240.';
 
 -- ── 2. a controller's recall is a void reason of its own ─────────────────
 ALTER TABLE print_sheet_tokens DROP CONSTRAINT IF EXISTS print_sheet_tokens_void_reason_known;
@@ -146,9 +153,10 @@ BEGIN
     RAISE EXCEPTION 'print_sheet_tokens: a settled print stays settled'
       USING ERRCODE = '42501';
   END IF;
-  -- PS-P10 (PHYS-19 c3): the link to the cover's print is written once, with
-  -- the settle, to a cover of the same workspace, and never changes after —
-  -- except to NULL once that cover row is gone (ON DELETE SET NULL).
+  -- PS-P10 (PHYS-19 c3): the link to the cover's print is written once, while
+  -- the sheet is unsettled, to a cover of the same workspace, and never
+  -- changes after — except to NULL once that cover row is gone (ON DELETE SET
+  -- NULL).
   IF NEW.cover_print_id IS DISTINCT FROM OLD.cover_print_id THEN
     IF OLD.cover_print_id IS NOT NULL THEN
       IF NEW.cover_print_id IS NOT NULL
@@ -156,9 +164,9 @@ BEGIN
         RAISE EXCEPTION 'print_sheet_tokens: a sheet''s link to its cover''s print never changes'
           USING ERRCODE = '42501';
       END IF;
-    ELSIF NOT (OLD.settled_at IS NULL AND NEW.settled_at IS NOT NULL)
+    ELSIF OLD.settled_at IS NOT NULL
           OR NOT EXISTS (SELECT 1 FROM work_package_prints w WHERE w.id = NEW.cover_print_id AND w.org_id = NEW.org_id) THEN
-      RAISE EXCEPTION 'print_sheet_tokens: a sheet is linked to its cover''s print only when it settles, and only to a cover of its own workspace'
+      RAISE EXCEPTION 'print_sheet_tokens: a sheet is linked to its cover''s print only before it is settled, and only to a cover of its own workspace'
         USING ERRCODE = '42501';
     END IF;
   END IF;
@@ -195,7 +203,7 @@ UNION ALL SELECT 4, 'a void reason is not_printed, print_aborted or recalled (an
                         AND pg_get_constraintdef(c.oid) LIKE '%recalled%'
                    FROM pg_constraint c
                   WHERE c.conrelid = to_regclass('public.print_sheet_tokens') AND c.conname = 'print_sheet_tokens_void_reason_known'), false), NULL
-UNION ALL SELECT 5, 'print_sheet_tokens_guard: SECURITY INVOKER, search_path pinned, 20261237''s limbs kept and the cover-link limb added (42501)',
+UNION ALL SELECT 5, 'print_sheet_tokens_guard: SECURITY INVOKER, search_path pinned, 20261237''s limbs kept and the cover-link limb added — linked only before the settle (42501)',
        COALESCE((SELECT NOT p.prosecdef
                         AND array_to_string(p.proconfig, ',') LIKE '%search_path=public%'
                         AND p.prosrc LIKE '%NEW.version_id IS DISTINCT FROM OLD.version_id%'
@@ -203,6 +211,8 @@ UNION ALL SELECT 5, 'print_sheet_tokens_guard: SECURITY INVOKER, search_path pin
                         AND p.prosrc LIKE '%a settled print stays settled%'
                         AND p.prosrc LIKE '%link to its cover''''s print never changes%'
                         AND p.prosrc LIKE '%w.org_id = NEW.org_id%'
+                        AND p.prosrc LIKE '%ELSIF OLD.settled_at IS NOT NULL%'
+                        AND p.prosrc LIKE '%only before it is settled%'
                         AND p.prosrc LIKE '%ERRCODE = ''42501''%'
                    FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                   WHERE ns.nspname = 'public' AND p.proname = 'print_sheet_tokens_guard'), false), NULL

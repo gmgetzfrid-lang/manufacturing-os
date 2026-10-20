@@ -299,11 +299,15 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   document_holds: fkRules("document_id>documents origin_ticket_id>tickets"),
   document_intents: fkRules("document_id>documents library_id>libraries base_version_id>document_versions ticket_id>tickets"),
   document_markups: fkRules("document_id>documents version_id>document_versions"),
-  // public-surfaces PS-P10: the link to the cover's print (20261240) is
-  // bounded like any pointer — the cover is restored first (FK order), and a
-  // token naming a cover outside this workspace is refused (its sheet then
-  // reads "Unknown code", never green).
-  print_sheet_tokens: fkRules("document_id>documents version_id>document_versions cover_print_id>work_package_prints"),
+  // public-surfaces PS-P10: the link to the cover's print (20261240) is an
+  // optional pointer (nullable, ON DELETE SET NULL) — the cover is restored
+  // first (FK order); a link naming a cover that is not in this workspace is
+  // CLEARED and the token lands, keeping its sheet's verdict (the link gates
+  // no verdict and no read; cleared, it only stops a recall by the cover's
+  // print id from reaching the token — never wider). Review fix: it was
+  // strict, which refused the whole token and turned its sheet into
+  // "Unknown code" whenever its cover print was not restored.
+  print_sheet_tokens: fkRules("document_id>documents version_id>document_versions cover_print_id>work_package_prints?"),
   document_related_resources: fkRules("document_id>documents target_document_id>documents"),
   document_sets: fkRules("library_id>libraries"),
   document_shares: fkRules("document_id>documents"),

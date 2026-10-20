@@ -233,9 +233,11 @@ export default function PackagesPage() {
                 : []),
           });
           // PS-P10 (PHYS-19 c3): this pack's sheet tokens link to this
-          // cover's print by key (sent with the post-download settle; the
-          // server checks it).
-          cover.linkPrint(printId);
+          // cover's print by key, here, before the download (the server
+          // checks it). A link that is refused or fails STOPS the print —
+          // nothing downloaded, no pin moved — like the snapshot above
+          // (VFY-18): a pack its print history could not recall never leaves.
+          await cover.linkPrint(printId);
           // PKG-12: every cover entry carries its page(s) in this pack — the
           // cover's own pages come first.
           const labels = coverEntryLabels(includedSheets, coverContentsChunks(includedSheets.length).length);

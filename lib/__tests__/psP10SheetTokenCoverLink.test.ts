@@ -251,9 +251,9 @@ const LIMB = [
   "        RAISE EXCEPTION 'print_sheet_tokens: a sheet''s link to its cover''s print never changes'",
   "          USING ERRCODE = '42501';",
   "      END IF;",
-  "    ELSIF NOT (OLD.settled_at IS NULL AND NEW.settled_at IS NOT NULL)",
+  "    ELSIF OLD.settled_at IS NOT NULL",
   "          OR NOT EXISTS (SELECT 1 FROM work_package_prints w WHERE w.id = NEW.cover_print_id AND w.org_id = NEW.org_id) THEN",
-  "      RAISE EXCEPTION 'print_sheet_tokens: a sheet is linked to its cover''s print only when it settles, and only to a cover of its own workspace'",
+  "      RAISE EXCEPTION 'print_sheet_tokens: a sheet is linked to its cover''s print only before it is settled, and only to a cover of its own workspace'",
   "        USING ERRCODE = '42501';",
   "    END IF;",
   "  END IF;",
@@ -319,5 +319,17 @@ describe("PS-P10 — 20261240 (DEC-30 one-paste shape; the guard from its newest
 
   it("probe 5 matches the stored body: a doubled apostrophe in the function's literal is written as four inside the LIKE", () => {
     expect(code).toContain("p.prosrc LIKE '%link to its cover''''s print never changes%'");
+  });
+
+  it("review fix: the link is written only while a sheet is UNSETTLED (before the download) — never on a settled row; probe 5 tells this body from the first one", () => {
+    const g = guardOf(sql);
+    expect(g).toContain("    ELSIF OLD.settled_at IS NOT NULL");
+    expect(g).not.toContain("NOT (OLD.settled_at IS NULL AND NEW.settled_at IS NOT NULL)");
+    expect(code).toContain("AND p.prosrc LIKE '%ELSIF OLD.settled_at IS NOT NULL%'");
+    expect(code).toContain("AND p.prosrc LIKE '%only before it is settled%'");
+    // each LIKE pattern of probe 5 is found in the body the file creates
+    for (const pat of ["ELSIF OLD.settled_at IS NOT NULL", "only before it is settled", "w.org_id = NEW.org_id", "a settled print stays settled"]) {
+      expect(g).toContain(pat);
+    }
   });
 });

@@ -27,7 +27,7 @@ import { applyStampToPdfDoc, type StampTextMapping } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { mintedSheetToken, packSheetVerifyUrl } from "@/lib/printSheetTokens";
-import { mintSheetTokens, settleSheetTokens, type MintedSheetTokens } from "@/lib/printSheetTokensClient";
+import { linkSheetTokensToCover, mintSheetTokens, settleSheetTokens, type MintedSheetTokens } from "@/lib/printSheetTokensClient";
 import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { ackGateDocuments } from "@/lib/downloads";
 import type { PackLeftOutCode } from "@/lib/packLeftOut";
@@ -127,6 +127,23 @@ export class PackTooLargeError extends Error {
   constructor(message: string, readonly parts: number, readonly perPack: number, readonly split: string[][] | null = null) {
     super(message);
     this.name = "PackTooLargeError";
+  }
+}
+
+/** PS-P10 (PHYS-19 c3): the pack's sheet codes could not be linked to the
+ *  cover's print record — the print is STOPPED before the download (nothing
+ *  downloaded, no pin moved; the minted codes are voided), as a cover
+ *  snapshot that cannot be written stops it (VFY-18): a pack whose codes are
+ *  not linked to its print record could not be recalled from the work
+ *  package's print history. Retrying the print is safe. */
+export class SheetTokenCoverLinkError extends Error {
+  readonly code = "sheet_token_cover_link" as const;
+  constructor(readonly detail: string) {
+    super(
+      `This pack's sheet codes could not be linked to its print record (${detail}) — nothing was downloaded and no pin moved. ` +
+      "Print the pack again.",
+    );
+    this.name = "SheetTokenCoverLinkError";
   }
 }
 
@@ -562,10 +579,8 @@ async function resolveToHttpUrl(raw: string): Promise<string> {
 
 /** PS-P9 (intelligence DACL-8 c2): the per-print sheet tokens of one build —
  *  minted before the first sheet is stamped, settled once the download is
- *  triggered. PS-P10 (PHYS-19 c3): `coverPrintId` — the cover's
- *  work_package_prints id, when the caller's cover recorded one — rides on
- *  that settle so the server links the token print to it by key. */
-interface SheetTokenPrint { minted: MintedSheetTokens | null; downloaded: boolean; coverPrintId?: string | null }
+ *  triggered. */
+interface SheetTokenPrint { minted: MintedSheetTokens | null; downloaded: boolean }
 
 /** PS-P9 (intelligence DACL-8 criterion 2, rulings under DEC-90): every
  *  sheet's QR names it by a per-print token the server mints for this build
@@ -577,7 +592,7 @@ interface SheetTokenPrint { minted: MintedSheetTokens | null; downloaded: boolea
  *  of sheets that did not make it into the PDF are voided ('not_printed') —
  *  a voided token's scan reads stale, never green. */
 export async function buildAndDownloadDocPack(input: Parameters<typeof buildAndDownloadDocPackOnce>[1]): Promise<DocPackResult> {
-  const tokenPrint: SheetTokenPrint = { minted: null, downloaded: false, coverPrintId: null };
+  const tokenPrint: SheetTokenPrint = { minted: null, downloaded: false };
   try {
     return await buildAndDownloadDocPackOnce(tokenPrint, input);
   } catch (e) {
@@ -603,14 +618,18 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
    *  aborts the print with nothing downloaded and no pins moved.
    *  VFY-19: it also receives every sheet THIS build left out, with its
    *  code, so the snapshot can record what the paper does not hold.
-   *  PS-P10 (PHYS-19 c3): a cover that records a print snapshot passes its
-   *  id to `cover.linkPrint` — the post-download settle then carries it, so
-   *  the pack's sheet tokens link to the cover's print by key (checked by the
-   *  server). A cover that does not call it leaves the link NULL. */
+   *  PS-P10 (PHYS-19 c3): a cover that records a print snapshot AWAITS
+   *  `cover.linkPrint(id)` — the pack's sheet tokens are linked to the
+   *  cover's print by key there and then, before the download (the server
+   *  checks it). It throws SheetTokenCoverLinkError when the link is refused
+   *  or fails, which stops the print like any throw here. With no token
+   *  minted (today's QR on every sheet) or before database update 20261240
+   *  it resolves and links nothing. A cover that does not call it leaves the
+   *  link NULL. */
   buildCoverAfter?: (
     included: PackSheetRef[],
     skipped: PackSkip[],
-    cover: { linkPrint: (coverPrintId: string) => void },
+    cover: { linkPrint: (coverPrintId: string) => Promise<void> },
   ) => Promise<PDFDocument | null>;
   /** PKG-6: runs after the download has been triggered — the place for
    *  state that must only ever assert an EXISTING print (pin refresh).
@@ -849,7 +868,19 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
   // in the PDF.
   if (input.buildCoverAfter) {
     const cover = await input.buildCoverAfter([...includedSheets], [...skipped], {
-      linkPrint: (coverPrintId: string) => { tokenPrint.coverPrintId = coverPrintId; },
+      linkPrint: async (coverPrintId: string) => {
+        const minted = tokenPrint.minted;
+        if (!minted) return; // no per-print code on this paper: nothing to link
+        const link = () => linkSheetTokensToCover({
+          orgId: input.orgId, printId: minted.printId, coverPrintId,
+          printedDocumentIds: includedSheets.map((s) => s.documentId),
+        });
+        let r = await link();
+        // One retry for a transient failure (no answer, or a 5xx) — a refusal
+        // is never retried.
+        if (!r.ok && (r.status === 0 || r.status >= 500)) r = await link();
+        if (!r.ok) throw new SheetTokenCoverLinkError(r.error);
+      },
     });
     if (cover) {
       const coverPages = await merged.copyPages(cover, cover.getPageIndices());
@@ -887,13 +918,10 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
     // and the pins are written, never awaited (DEC-90, the integrator at the
     // PS-P9 merge): nothing waits on it — an unsettled print keeps every
     // token live, which is what a downloaded pack needs. Never throws.
+    // (PS-P10: the link to the cover's print was written before the
+    // download — it never rides on this settle.)
     if (tokenPrint.minted) {
-      void settleSheetTokens({
-        orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: includedSheets.map((s) => s.documentId),
-        // PS-P10: the cover's print id, when this pack's cover recorded one
-        // (the abort path above never sends it: no cover lists an empty pack).
-        coverPrintId: tokenPrint.coverPrintId ?? null,
-      });
+      void settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: includedSheets.map((s) => s.documentId) });
     }
   }
 

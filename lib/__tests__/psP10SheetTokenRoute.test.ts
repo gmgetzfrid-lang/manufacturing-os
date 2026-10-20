@@ -2,13 +2,15 @@
 // (PHYS-19 done-when 3; intelligence DACL-8 residual (c); rulings under
 // DEC-90).
 //
-//   settle + coverPrintId: the server checks the cover (same workspace, the
-//         caller printed it, its printed sheets are exactly this print's at
-//         the minted versions, recorded after the mint, linked to no other
-//         print) and writes cover_print_id on every token row of the print;
-//         a mismatch is 400 and NOTHING is written; before 20261240 (42703 /
-//         PGRST204 on the probe) the id is ignored and the print settles as
-//         today. A settle without a cover is byte-for-byte today's.
+//   link: the server checks the cover (same workspace, the caller printed
+//         it, its printed sheets are exactly this print's at the minted
+//         versions, recorded after the mint, linked to no other print) and
+//         writes cover_print_id on every UNSETTLED token row of the print —
+//         before the download (the pack path awaits it); a mismatch is 400
+//         and NOTHING is written; a repeat is idempotent; before 20261240
+//         (42703 / PGRST204) { available: false }; any other failure 503.
+//   settle: PS-P9's, unchanged — it never reads or writes the link (review
+//         fix: the link first rode on the fire-and-forget settle).
 //   void: a controller (Admin / DocCtrl by the role collection) recalls a
 //         print — audit row FIRST (DISTRIBUTION_RECALL with the reason), then
 //         every live token voided 'recalled' (a settled one keeps its settle,
@@ -147,33 +149,45 @@ async function post(body: unknown) {
   return POST(new NextRequest("https://app/api/print-sheet-tokens", { method: "POST", body: JSON.stringify(body), headers: { authorization: "Bearer x" } }));
 }
 const settleBody = (extra: Record<string, unknown> = {}) => ({ action: "settle", orgId: ORG, printId: PRINT, printed: [D1, D2], ...extra });
+const linkBody = (extra: Record<string, unknown> = {}) => ({ action: "link", orgId: ORG, printId: PRINT, coverPrintId: COVER, printed: [D1, D2], ...extra });
 
-describe("PS-P10 settle — a work-package pack's sheet tokens link by key to its cover's print", () => {
-  it("a matching cover: every token row of the print is settled WITH cover_print_id; the answer says it is linked", async () => {
-    const res = await post(settleBody({ coverPrintId: COVER }));
+describe("PS-P10 link — a work-package pack's sheet tokens link by key to its cover's print, before the download", () => {
+  it("a matching cover: every unsettled token row of the print is linked (cover_print_id only — nothing settled); checked before anything is written", async () => {
+    const res = await post(linkBody());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ settled: true, voided: 0, coverLinked: true });
+    expect(await res.json()).toEqual({ linked: true, sheets: 2 });
     expect(state.updates).toHaveLength(1);
-    expect(state.updates[0].patch).toEqual({ settled_at: expect.any(String), cover_print_id: COVER });
-    // checked before anything was written
+    expect(state.updates[0].patch).toEqual({ cover_print_id: COVER });
+    expect(state.updates[0].filters).toEqual(expect.arrayContaining([
+      ["in", "id", ["t1", "t2"]], ["is", "settled_at", null], ["is", "cover_print_id", null],
+    ]));
     expect(state.log).toEqual(["probe", "update"]);
+    const tokenRead = state.reads.find((r) => r.table === "print_sheet_tokens" && !r.filters.some((f) => f[0] === "neq"))!;
+    expect(tokenRead.filters).toEqual(expect.arrayContaining([
+      ["eq", "print_id", PRINT], ["eq", "org_id", ORG], ["eq", "minted_by", UID], ["is", "settled_at", null],
+    ]));
     const coverRead = state.reads.find((r) => r.table === "work_package_prints")!;
     expect(coverRead.filters).toContainEqual(["eq", "id", COVER]);
     const probe = state.reads.find((r) => r.filters.some((f) => f[0] === "neq"))!;
     expect(probe.filters).toEqual(expect.arrayContaining([["eq", "cover_print_id", COVER], ["neq", "print_id", PRINT]]));
   });
 
-  it("a sheet left out of the PDF is voided 'not_printed' and linked too; the printed ones settle linked", async () => {
+  it("a sheet left out of the PDF (on the cover as printed:false) is not among `printed`; its token is linked too — the settle later voids it", async () => {
     state.cover = coverOf({ sheets: [{ documentId: D1, versionId: V1, printed: true }, { documentId: D2, versionId: V2, printed: false, leftOutCode: "fetch_failed" }] });
-    const res = await post(settleBody({ printed: [D1], coverPrintId: COVER }));
-    expect(await res.json()).toEqual({ settled: true, voided: 1, coverLinked: true });
-    expect(state.updates[0].patch).toMatchObject({ void_reason: "not_printed", cover_print_id: COVER });
-    expect(state.updates[1].patch).toEqual({ settled_at: expect.any(String), cover_print_id: COVER });
+    expect(await (await post(linkBody({ printed: [D1] }))).json()).toEqual({ linked: true, sheets: 2 });
+    expect(state.updates[0].filters).toContainEqual(["in", "id", ["t1", "t2"]]);
   });
 
   it("a cover snapshot from before VFY-19 (no `printed` key) counts every entry as printed", async () => {
     state.cover = coverOf({ sheets: [{ documentId: D1, versionId: V1 }, { documentId: D2, versionId: V2 }] });
-    expect(await (await post(settleBody({ coverPrintId: COVER }))).json()).toEqual({ settled: true, voided: 0, coverLinked: true });
+    expect(await (await post(linkBody())).json()).toEqual({ linked: true, sheets: 2 });
+  });
+
+  it("a repeat of a link already written answers linked and writes nothing (a retry after a lost answer)", async () => {
+    state.tokenRows = state.tokenRows.map((r) => ({ ...r, cover_print_id: COVER }));
+    expect(await (await post(linkBody())).json()).toEqual({ linked: true, sheets: 2 });
+    expect(state.updates).toEqual([]);
+    expect(state.log).toEqual([]);
   });
 
   const refusals: Array<[string, () => void]> = [
@@ -185,57 +199,108 @@ describe("PS-P10 settle — a work-package pack's sheet tokens link by key to it
     ["a cover listing another version of a sheet", () => { state.cover = coverOf({ sheets: [{ documentId: D1, versionId: V1, printed: true }, { documentId: D2, versionId: V1, printed: true }] }); }],
     ["a cover recorded before the tokens were minted", () => { state.cover = coverOf({ printed_at: "2026-10-20T07:59:00.000Z" }); }],
     ["a cover already linked to another print", () => { state.probeRows = [{ id: "x" }]; }],
+    ["a print already linked to another cover", () => { state.tokenRows = state.tokenRows.map((r, i) => (i === 0 ? { ...r, cover_print_id: "c2c2c2c2-0000-0000-0000-000000000002" } : r)); }],
   ];
   for (const [what, arrange] of refusals) {
-    it(`refuses ${what} with 400 and writes NOTHING (the tokens stay live, as an unsettled print's always do)`, async () => {
+    it(`refuses ${what} with 400 and writes NOTHING (the pack path then stops the print)`, async () => {
       arrange();
-      const res = await post(settleBody({ coverPrintId: COVER }));
+      const res = await post(linkBody());
       expect(res.status).toBe(400);
       expect(state.updates).toEqual([]);
       expect(state.inserts).toEqual([]);
     });
   }
 
-  it("a malformed cover id is 400 before anything is read", async () => {
-    expect((await post(settleBody({ coverPrintId: "nope" }))).status).toBe(400);
-    expect((await post(settleBody({ coverPrintId: 7 }))).status).toBe(400);
+  it("a malformed request is 400 before anything is read", async () => {
+    for (const body of [linkBody({ coverPrintId: "nope" }), linkBody({ coverPrintId: 7 }), linkBody({ coverPrintId: undefined }), linkBody({ printId: "x" }), linkBody({ printed: [] }), linkBody({ printed: "x" })]) {
+      expect((await post(body)).status).toBe(400);
+    }
     expect(state.reads).toEqual([]);
     expect(state.updates).toEqual([]);
   });
 
-  it("BEFORE 20261240 (42703 / PGRST204 on the probe) the cover id is ignored and the print settles exactly as today", async () => {
-    for (const probeError of [
-      { code: "42703", message: 'column print_sheet_tokens.cover_print_id does not exist' },
-      { code: "PGRST204", message: "Could not find the 'cover_print_id' column of 'print_sheet_tokens' in the schema cache" },
-    ]) {
-      state.updates = [];
-      state.probeError = probeError;
-      const res = await post(settleBody({ coverPrintId: COVER }));
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ settled: true, voided: 0, coverLinked: false });
-      expect(state.updates).toHaveLength(1);
-      expect(state.updates[0].patch).toEqual({ settled_at: expect.any(String) });
-    }
-    // the cover was never read: nothing to link it to yet
-    expect(state.reads.some((r) => r.table === "work_package_prints")).toBe(false);
-  });
-
-  it("any other failure reading the link or the cover is a 503 and nothing is settled", async () => {
-    state.probeError = { code: "57014", message: "statement timeout" };
-    expect((await post(settleBody({ coverPrintId: COVER }))).status).toBe(503);
-    state.probeError = null;
-    state.coverError = { message: "boom" };
-    expect((await post(settleBody({ coverPrintId: COVER }))).status).toBe(503);
+  it("an unknown or already settled print is 404 (a settled sheet is never linked after the fact)", async () => {
+    state.tokenRows = [];
+    expect((await post(linkBody())).status).toBe(404);
     expect(state.updates).toEqual([]);
   });
 
-  it("REGRESSION: a settle without a cover (the asset hub's pack, the two Print all packs) is today's request and today's answer — no cover read, no link written", async () => {
-    const res = await post(settleBody());
-    expect(await res.json()).toEqual({ settled: true, voided: 0 });
-    expect(state.updates).toHaveLength(1);
-    expect(state.updates[0].patch).toEqual({ settled_at: expect.any(String) });
-    expect(state.reads.map((r) => r.table)).toEqual(["print_sheet_tokens"]);
-    expect(state.log).toEqual(["update"]);
+  it("BEFORE 20261240 (42703 / PGRST204 on the read, the probe or the write) — or before 20261237: { available: false, linked: false }, nothing written", async () => {
+    for (const tokenReadError of [
+      { code: "42703", message: "column print_sheet_tokens.cover_print_id does not exist" },
+      { code: "PGRST205", message: "Could not find the table 'public.print_sheet_tokens' in the schema cache" },
+    ]) {
+      state.tokenReadError = tokenReadError;
+      const res = await post(linkBody());
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ available: false, linked: false });
+    }
+    state.tokenReadError = null;
+    state.probeError = { code: "PGRST204", message: "Could not find the 'cover_print_id' column of 'print_sheet_tokens' in the schema cache" };
+    expect(await (await post(linkBody())).json()).toEqual({ available: false, linked: false });
+    expect(state.reads.some((r) => r.table === "work_package_prints")).toBe(false);
+    state.probeError = null;
+    state.updateError = { code: "PGRST204", message: "Could not find the 'cover_print_id' column" } as { message: string };
+    expect(await (await post(linkBody())).json()).toEqual({ available: false, linked: false });
+  });
+
+  it("any other failure reading the print, the link or the cover — or writing it — is a 503 (the pack path retries once, then stops the print)", async () => {
+    state.tokenReadError = { code: "57014", message: "statement timeout" };
+    expect((await post(linkBody())).status).toBe(503);
+    state.tokenReadError = null;
+    state.probeError = { code: "57014", message: "statement timeout" };
+    expect((await post(linkBody())).status).toBe(503);
+    state.probeError = null;
+    state.coverError = { message: "boom" };
+    expect((await post(linkBody())).status).toBe(503);
+    expect(state.updates).toEqual([]);
+    state.coverError = null;
+    state.updateError = { message: "print_sheet_tokens: a sheet is linked to its cover's print only before it is settled" };
+    expect((await post(linkBody())).status).toBe(503);
+  });
+
+  it("a short link (the print changed under it) is a 409", async () => {
+    state.updateShort = true;
+    expect((await post(linkBody())).status).toBe(409);
+  });
+});
+
+describe("PS-P10 settle — never reads or writes the cover link (review fix)", () => {
+  it("REGRESSION: a settle is PS-P9's request and answer — no probe, no cover read, no link written; a stray coverPrintId is ignored", async () => {
+    for (const body of [settleBody(), settleBody({ coverPrintId: COVER })]) {
+      state.updates = [];
+      state.reads = [];
+      state.log = [];
+      state.touched = new Set();
+      const res = await post(body);
+      expect(await res.json()).toEqual({ settled: true, voided: 0 });
+      expect(state.updates).toHaveLength(1);
+      expect(state.updates[0].patch).toEqual({ settled_at: expect.any(String) });
+      expect(state.reads.map((r) => r.table)).toEqual(["print_sheet_tokens"]);
+      expect(state.log).toEqual(["update"]);
+    }
+  });
+
+  it("a cover-link failure can no longer stop a settle: with the link probe and the cover unreadable, a left-out sheet is still voided 'not_printed' and the rest settle", async () => {
+    state.probeError = { code: "57014", message: "statement timeout" };
+    state.coverError = { message: "boom" };
+    const res = await post(settleBody({ printed: [D1], coverPrintId: COVER }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ settled: true, voided: 1 });
+    expect(state.updates[0].patch).toEqual({ voided_at: expect.any(String), void_reason: "not_printed", settled_at: expect.any(String) });
+    expect(state.updates[0].filters).toContainEqual(["in", "id", ["t2"]]);
+    expect(state.updates[1].patch).toEqual({ settled_at: expect.any(String) });
+    expect(state.reads.some((r) => r.table === "work_package_prints")).toBe(false);
+  });
+
+  it("the settle's token read names neither the link nor the minted version (pinned on the route source)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(process.cwd(), "app/api/print-sheet-tokens/route.ts"), "utf8");
+    const settle = src.slice(src.indexOf('if (body.action === "settle")'), src.indexOf('if (body.action === "link")'));
+    expect(settle).toContain('.select("id, document_id")');
+    expect(settle).not.toContain("cover_print_id");
+    expect(settle).not.toContain("checkCoverLink");
   });
 });
 
@@ -353,7 +418,12 @@ describe("PS-P10 void — a controller recalls a printed pack", () => {
     state.tokenRows = [];
     const none = await post(voidBody());
     expect(none.status).toBe(404);
-    expect(((await none.json()) as { error: string }).error).toMatch(/cannot reach its paper/);
+    const said = ((await none.json()) as { error: string }).error;
+    // review fix: said truthfully — no code is LINKED; the paper may still carry live codes
+    expect(said).toMatch(/No sheet code is linked to this print record/);
+    expect(said).toMatch(/nothing was changed/);
+    expect(said).toMatch(/keep scanning by their revision's status/);
+    expect(said).not.toMatch(/carries no per-print code|cannot reach its paper/);
     state.tokenRows = [{ id: "t1", document_id: D1, print_id: PRINT, settled_at: "x", voided_at: "y" }];
     expect((await post(voidBody())).status).toBe(409);
     expect(state.inserts).toEqual([]);

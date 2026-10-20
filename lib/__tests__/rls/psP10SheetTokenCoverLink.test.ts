@@ -6,10 +6,11 @@
 //     replay (a re-paste) — every probe true, the counts-only inventory in
 //     order, nothing else; on a database WITHOUT 20261237 it stops at its
 //     floor and changes nothing;
-//   - the link: written once, in the update that settles the sheet, to a
-//     cover of the same workspace; never changed after (42501, even for the
-//     service role); a cover row that is deleted unlinks its tokens (ON DELETE
-//     SET NULL passes the guard) and the tokens stay;
+//   - the link: written once, while the sheet is UNSETTLED (before the
+//     download — the route's `link`; or with the settle), to a cover of the
+//     same workspace; never on a settled sheet, never changed after (42501,
+//     even for the service role); a cover row that is deleted unlinks its
+//     tokens (ON DELETE SET NULL passes the guard) and the tokens stay;
 //   - a controller's recall: 'recalled' is a known void reason; a void after a
 //     settle is allowed and stays one-way; members and anon still can neither
 //     read nor write the table.
@@ -117,19 +118,29 @@ describe.skipIf(skip !== null)("PS-P10: a pack's sheet tokens link by key to the
     expect(admin(bare, "SELECT to_regclass('public.print_sheet_tokens') IS NULL")).toBe("t");
   });
 
-  it("the link is written once, with the settle, to a cover of the same workspace — and never changes after (42501, even for the service role)", () => {
+  it("the link is written once, while the sheet is unsettled (before the download), to a cover of the same workspace — never on a settled sheet, never changed after (42501, even for the service role)", () => {
     const id = randomUUID();
     expect(asCaller(db, svc, insertSql(id))).toEqual({ ok: true, rows: 1 });
-    // not without a settle in the same update
-    const early = asCaller(db, svc, `UPDATE print_sheet_tokens SET cover_print_id = '${cover}' WHERE id = '${id}'`);
-    expect(early.ok).toBe(false);
-    if (!early.ok) expect(early.code).toBe("42501");
     // not to another workspace's cover
-    const foreign = asCaller(db, svc, `UPDATE print_sheet_tokens SET settled_at = now(), cover_print_id = '${otherCover}' WHERE id = '${id}'`);
+    const foreign = asCaller(db, svc, `UPDATE print_sheet_tokens SET cover_print_id = '${otherCover}' WHERE id = '${id}'`);
     expect(foreign.ok).toBe(false);
     if (!foreign.ok) expect(foreign.code).toBe("42501");
-    // with the settle, to this workspace's cover: written
-    expect(asCaller(db, svc, `UPDATE print_sheet_tokens SET settled_at = now(), cover_print_id = '${cover}' WHERE id = '${id}'`)).toEqual({ ok: true, rows: 1 });
+    // review fix: on its own, before the settle (the route's `link`, awaited before the download): written
+    expect(asCaller(db, svc, `UPDATE print_sheet_tokens SET cover_print_id = '${cover}' WHERE id = '${id}'`)).toEqual({ ok: true, rows: 1 });
+    // the later settle keeps it
+    expect(asCaller(db, svc, `UPDATE print_sheet_tokens SET settled_at = now() WHERE id = '${id}'`)).toEqual({ ok: true, rows: 1 });
+    expect(admin(db, `SELECT cover_print_id = '${cover}' AND settled_at IS NOT NULL FROM print_sheet_tokens WHERE id = '${id}'`)).toBe("t");
+    // with the settle in one update: still allowed (the row was unsettled)
+    const both = randomUUID();
+    expect(asCaller(db, svc, insertSql(both))).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, svc, `UPDATE print_sheet_tokens SET settled_at = now(), cover_print_id = '${cover}' WHERE id = '${both}'`)).toEqual({ ok: true, rows: 1 });
+    // never on a sheet already settled unlinked (a settled print is final)
+    const late = randomUUID();
+    expect(asCaller(db, svc, insertSql(late))).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, svc, `UPDATE print_sheet_tokens SET settled_at = now() WHERE id = '${late}'`)).toEqual({ ok: true, rows: 1 });
+    const after = asCaller(db, svc, `UPDATE print_sheet_tokens SET cover_print_id = '${cover}' WHERE id = '${late}'`);
+    expect(after.ok).toBe(false);
+    if (!after.ok) expect(after.code).toBe("42501");
     // never changed or cleared while its cover exists
     for (const set of ["cover_print_id = NULL", `cover_print_id = '${otherCover}'`]) {
       const o = asCaller(db, svc, `UPDATE print_sheet_tokens SET ${set} WHERE id = '${id}'`);
