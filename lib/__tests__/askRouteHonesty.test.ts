@@ -1029,6 +1029,92 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
     expect(body.answer).toBe(text.replace("`427.5 psig`", RESULT_WITHHELD) + `\n\n${RESULT_WITHHELD_NOTE}`);
   });
 
+  // ── I-25 fix pass 4 (review majors and minors) ─────────────────────────
+
+  it.each([
+    ["a temperature qualifier", "**Substituted:** P_T at 100 °F = 1.3 × `285 psig`", "`370.5 psig`"],
+    ["an equation number", "**Substituted:** t per Eq. 3 = `285 psig` × `10.75 in` / (2 × `20,000 psi` × 1.0)", "`0.0766 in`"],
+    ["a bracketed equation number", "**Substituted:** t (Eq. 3) = (285 psig)(10.75 in)/(2 × 20,000 psi × 1.0)", "`0.0766 in`"],
+    ["a step number", "**Substituted:** Step 2: P_T = 1.3 × 285 psig", "`370.5 psig`"],
+  ])("review major (fix pass 4) — a left-hand side holding a number, %s: the formula and every input come back unchanged; a result after them is the only thing withheld", async (_shape, line, result) => {
+    hydrotestLibrary();
+    const text = "**Answer:** Compute it from the substituted expression below [1].\n- P = `285 psig` (USER-PROVIDED)\n" +
+      line + "\n**Check:** the factor on page 4 [1].";
+    const inputs = "design pressure = 285 psig at 100 °F, OD = 10.75 in, S = 20,000 psi, E = 1.0, factor 1.3";
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
+    const body = await (await ask({ question: "What is the test pressure / wall thickness?", inputs })).json();
+    // 1ee2039 withheld every value after the first "=": "P_T at 100 °F =
+    // [result withheld] × [result withheld]".
+    expect(body.answer).toBe(text);
+    expect(body.arithmetic).toBe("unverified");
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(text);
+    expect(withholdModelResults(text)).toEqual({ text, withheld: 0 });
+    const worked = text.replace(line, `${line} = ${result}`);
+    const r = withholdModelResults(worked, inputs);
+    expect(r.text).toBe(text.replace(line, `${line} = ${RESULT_WITHHELD}`) + `\n\n${RESULT_WITHHELD_NOTE}`);
+    expect(withholdModelResults(worked).text).toBe(r.text);
+  });
+
+  describe("review major (fix pass 4) — a table value read from a FETCHED page image is an input: shown on the Substituted line, only the result withheld", () => {
+    const WALL =
+      "**Answer:** Compute t from the substituted expression below [1].\n**Basis:**\n" +
+      "- P = `285 psig` (USER-PROVIDED)\n- D = `10.75 in` (USER-PROVIDED)\n" +
+      "- S = `20,000 psi` (Table A-1, SA-106 B at 300 °F)\n" +
+      "**Substituted:** t = `285 psig` × `10.75 in` / (2 × `20,000 psi` × 1.0) = `0.0766 in`\n" +
+      "**Check:** S in Table A-1 at 300 °F.";
+    const inputs = "design pressure = 285 psig, OD = 10.75 in, E = 1.0, design temperature 300 °F";
+    function tableLibrary() {
+      hydrotestLibrary();
+      rowsOf("knowledge_documents").push(kdoc("k-tab", { name: "B31.3 Appendix A.pdf" }));
+      rowsOf("knowledge_chunks").push(
+        kchunk("k-tab", "Table A-1 basic allowable stress, SA-106 B, 300 °F: 20,000 psi", { id: "c-tab", page: 12 }));
+    }
+
+    it("the fetched page is attached and its text grounds S: the protocol's own Fetch flow keeps the input it fetched", async () => {
+      tableLibrary();
+      vi.mocked(renderKnowledgePages)
+        .mockImplementationOnce(async () => [])
+        .mockImplementationOnce(async (_k: string, pages: number[]) => pages.map((page) => ({ page, mediaType: "image/png", base64: "AAAA" })));
+      h.script = [QUERY_GEN, REFINE_NONE, { text: "**Fetch:** Table A-1 stress", usage: { inputTokens: 4000, outputTokens: 10 } }, { ...ANSWER, text: WALL }];
+      const body = await (await ask({ question: "What wall thickness does the line need?", inputs })).json();
+      expect(h.calls).toHaveLength(4);
+      expect(h.calls[3].images).toBe(1);
+      // The value rode no text prompt: it was read off the attached page.
+      expect(h.calls[2].user).not.toContain("20,000");
+      expect(h.calls[3].user).not.toContain("20,000");
+      expect(h.calls[3].system).not.toContain("20,000");
+      // 1ee2039: "- S = [result withheld] …" and "(2 × [result withheld] × 1.0)".
+      expect(body.answer).toBe(WALL.replace("`0.0766 in`", RESULT_WITHHELD) + `\n\n${RESULT_WITHHELD_NOTE}`);
+      expect(body.arithmetic).toBe("unverified");
+      expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
+      expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).toContain("k-tab");
+    });
+
+    it("control: the same answer when the page was never shown — S is in no text the model was given, and is withheld (the fail-safe direction)", async () => {
+      tableLibrary();
+      h.script = [QUERY_GEN, REFINE_NONE, { text: "**Fetch:** Table A-1 stress", usage: { inputTokens: 4000, outputTokens: 10 } }, { ...ANSWER, text: WALL }];
+      const body = await (await ask({ question: "What wall thickness does the line need?", inputs })).json();
+      expect(h.calls).toHaveLength(4);
+      expect(h.calls[3].images ?? 0).toBe(0);
+      expect(body.answer).not.toContain("20,000");
+      expect(body.answer).not.toContain("0.0766");
+      expect(body.answer).toContain(`- S = ${RESULT_WITHHELD} (Table A-1, SA-106 B at 300 °F)`);
+    });
+  });
+
+  it("review minor (fix pass 4) — a factor from the org's Reasoning Skills (system prompt) is grounded: shown on the Substituted line, only the result withheld", async () => {
+    ordinaryLibrary();
+    h.skills = { block: "\n\nORG SKILLS: our hydrotest factor is 1.3 per ES-12.", skills: [] };
+    const text = "**Answer:** Compute P_T from the substituted expression below.\n**Basis:**\n" +
+      "- Factor 1.3 per ES-12 (workspace skill)\n- P = `285 psig` (USER-PROVIDED)\n" +
+      "**Substituted:** P_T = 1.3 × `285 psig` = `370.5 psig`";
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text }];
+    const body = await (await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig" })).json();
+    expect(answerCall().system).toContain("our hydrotest factor is 1.3 per ES-12");
+    // 1ee2039 withheld the 1.3 on both lines.
+    expect(body.answer).toBe(text.replace("`370.5 psig`", RESULT_WITHHELD) + `\n\n${RESULT_WITHHELD_NOTE}`);
+  });
+
   describe("withholdModelResults — the pure rule", () => {
     it("a lookup comes back as the very same string, with nothing withheld — and is never marked arithmetic, so the route runs no grounding pass on it", () => {
       for (const lookup of [
@@ -1170,6 +1256,44 @@ describe("PR-9 (I-25) — the ask route never presents a number the model comput
       // A minus between numbers is still the operator, and a dash between them a range.
       expect(withholdModelResults("- ΔP = 600 −150 = 450 psig").text.split("\n")[0]).toBe(`- ΔP = 600 −150 = ${RESULT_WITHHELD}`);
       expect(withholdModelResults("- Range 10–20 psig [1]")).toEqual({ text: "- Range 10–20 psig [1]", withheld: 0 });
+    });
+
+    it("fix pass 4 minor: implicit multiplication, a chain in minutes and 'equals' are worked chains — marked, the result withheld; footnote markers are not factors", () => {
+      for (const [line, shown] of [
+        ["(285 psig)(1.5) = 427.5 psig", `(285 psig)(1.5) = ${RESULT_WITHHELD}`],
+        ["t = (285)(10.75)/(2)(20000)(1) = 0.0766 in", `t = (285)(10.75)/(2)(20000)(1) = ${RESULT_WITHHELD}`],
+        ["t = (285 psig) (10.75 in) / (2)(20000 psi)(1.0) = 0.0766 in", `t = (285 psig) (10.75 in) / (2)(20000 psi)(1.0) = ${RESULT_WITHHELD}`],
+        ["2 × 30 min = 60 min", `2 × 30 min = ${RESULT_WITHHELD}`],
+        ["1.5 × 285 psig equals 427.5 psig", `1.5 × 285 psig equals ${RESULT_WITHHELD}`],
+        ["2 × 4 h = 8 h", `2 × 4 h = ${RESULT_WITHHELD}`],
+      ] as const) {
+        expect([line, answerHasComputation(line, "")]).toEqual([line, true]);
+        expect([line, withholdModelResults(line).text.split("\n")[0]]).toEqual([line, shown]);
+      }
+      // The result in minutes is withheld where it is written again.
+      expect(withholdModelResults("- Hold = 2 × 30 min = 60 min\n**Answer:** hold for `60 min` [1]").text.split("\n")[1])
+        .toBe(`**Answer:** hold for ${RESULT_WITHHELD} [1]`);
+      // Footnote markers after a word, a number or a citation are not a product.
+      for (const lookup of ["S (1)(2) = 20 ksi", "Class 150 (1)(2) = 285 psig", "Allowable stress [1] (1)(2) = 20 ksi", "Hold 10 min per para 345.2.2 [1]"]) {
+        expect([lookup, answerHasComputation(lookup, "")]).toEqual([lookup, false]);
+        expect(withholdModelResults(lookup)).toEqual({ text: lookup, withheld: 0 });
+      }
+    });
+
+    it("fix pass 4 major: a Substituted line whose left-hand side holds a number keeps its inputs; a symbol-less worked line is still a result at its first '='", () => {
+      for (const line of [
+        "**Substituted:** P_T at 100 °F = 1.3 × 285 psig",
+        "**Substituted:** t per Eq. 3 = 285 psig × 10.75 in / (2 × 20,000 psi × 1.0)",
+        "**Substituted:** t (Eq. 3) = (285 psig)(10.75 in)/(2 × 20,000 psi × 1.0)",
+        "**Substituted:** Step 2: P_T = 1.3 × 285 psig",
+      ]) {
+        expect(withholdModelResults(line)).toEqual({ text: line, withheld: 0 });
+        expect(withholdModelResults(line, "285 psig\n100 °F\n1.3\n10.75 in\n20,000 psi\n1.0")).toEqual({ text: line, withheld: 0 });
+      }
+      expect(withholdModelResults("**Substituted:** 1.3 × 285 psig = 370.5 psig").text.split("\n")[0])
+        .toBe(`**Substituted:** 1.3 × 285 psig = ${RESULT_WITHHELD}`);
+      expect(withholdModelResults("**Substituted:** 1.3 × 285 psig = 370.5 psig (2.55 MPa)").text.split("\n")[0])
+        .toBe(`**Substituted:** 1.3 × 285 psig = ${RESULT_WITHHELD} (${RESULT_WITHHELD})`);
     });
 
     it("a whole result is matched elsewhere only where it is written with no unit, never after an identifier word (review minor)", () => {

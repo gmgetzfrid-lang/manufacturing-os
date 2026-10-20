@@ -2584,6 +2584,9 @@ export async function POST(req: NextRequest) {
      *  rate limit, an overload, a 5xx — AiCallError). The request was sent,
      *  so its pages reached a prompt; the answer did not come back. */
     let refetchFailed: AiCallError | null = null;
+    /** PR-9 (I-25 fix pass 4): the FETCHED / FETCH RESULT note the answer
+     *  that came back was given — part of its grounding. */
+    let answeredFetchNote = "";
     // Either way the ask ends with a stated sentence, saved as a library
     // answer, after the first answer was paid for: never a 402 or 429 from
     // the second call's reservation or its provider. What every call spent
@@ -2658,6 +2661,7 @@ export async function POST(req: NextRequest) {
                 : {}),
             });
             pageImages = secondImages;
+            answeredFetchNote = fetchNote;
           } catch (e) {
             if (e instanceof AiCallError) {
               pageImages = secondImages;
@@ -2714,18 +2718,42 @@ export async function POST(req: NextRequest) {
     // the formula and every cited input, and RESULT_WITHHELD stands where the
     // model's result was. Decided on the model's own text, before the route's
     // notes are added; a lookup (no computation) is returned byte-for-byte.
-    // The grounding is everything the model was given — the question, the
-    // user's values, the passages as rendered, the drawing facts, anchor
-    // facts, legend, chosen scope and page list (dataSections), the aspects,
-    // the owner's instructions, and the conversation (an earlier answer with
-    // its own computed numbers withheld first, so a pre-I-25 result never
-    // grounds itself): on any line of an arithmetic answer, a value none of
-    // it holds is one the model made, and it is withheld.
+    // The grounding is every piece of content the model was given — the
+    // question, the user's values, the passages as rendered, the drawing
+    // facts, anchor facts, legend, chosen scope and page list
+    // (dataSections), the aspects, the library owner's instructions, the
+    // org playbooks and Reasoning Skills in the system prompt
+    // (orgInstructions), the Fetch note, the text of every page image the
+    // answer was shown (attached up front or fetched — read from the
+    // page's indexed text, I-25 fix pass 4), and the conversation (an
+    // earlier answer with its own computed numbers withheld first, so a
+    // pre-I-25 result never grounds itself). The route's own fixed rules
+    // are not: their worked examples must never ground a value. On any line
+    // of an arithmetic answer, a value none of it holds is one the model
+    // made, and it is withheld.
     const arithmetic = !needRefused && !unanswered && !/^\*\*Need:\*\*/.test(answer.trim())
       && answerHasComputation(answer, inputs);
     if (arithmetic) {
+      // The page images' text: every indexed chunk of each (document, page)
+      // the answer was shown (an image-only page has none, so a value read
+      // only off its picture is still withheld — PR-13). A read that fails
+      // grounds nothing more, which withholds more, never less.
+      const pageText: string[] = [];
+      if (pageImages.length > 0) {
+        const shown = new Set(pageImages.map((img) => `${img.documentId}:${img.page}`));
+        const docs = [...new Set(pageImages.map((img) => img.documentId))];
+        const pages = [...new Set(pageImages.map((img) => img.page))];
+        const read = await readAll<{ document_id: string; page: number; content: string | null }>((from, to) => supabaseAdmin
+          .from("knowledge_chunks").select("document_id, page, content")
+          .eq("org_id", orgId).in("document_id", docs).in("page", pages)
+          .order("id").range(from, to), 5_000);
+        for (const r of read.rows) {
+          if (shown.has(`${r.document_id}:${r.page}`) && r.content) pageText.push(r.content);
+        }
+      }
       const grounding = [
         question, inputs, renderPassages(), dataSections(pageImages), focusLine, ownerBlock,
+        orgInstructions, answeredFetchNote, ...pageText,
         ...history.flatMap((t) => [t.question, withholdModelResults(t.answer).text]),
       ].join("\n");
       answer = withholdModelResults(answer, grounding).text;
