@@ -6,7 +6,7 @@ import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
   parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
-  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow, extractAnswerMeta, structureAnswer, isMissingFact,
+  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow, extractAnswerMeta, structureAnswer, isMissingFact, enforceDocumentsOnly,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -816,5 +816,24 @@ describe("tables survive section splitting", () => {
     expect(table).toBeDefined();
     expect(table!.split("\n")).toHaveLength(5);
     expect(table).toContain("Pipe | 3-24 | ASTM A312 TP304 Welded | Sch 10S");
+  });
+});
+
+describe("enforceDocumentsOnly", () => {
+  it("removes statements the model marked as outside the library, and says so", () => {
+    const out = enforceDocumentsOnly([
+      "**Answer:** NO — EP 5-2-2 §4.3 prohibits it [12].",
+      "**Why:**",
+      "- §4.3 prohibits slip-ons directly on fittings [12].",
+      "- Engineering reason (not from your library): the fillet weld sits in the fitting's transition.",
+    ].join("\n"));
+    expect(out.removed).toBe(1);
+    expect(out.answer).not.toMatch(/fillet weld sits/);
+    expect(out.answer).toMatch(/1 statement not backed by your documents was removed/);
+  });
+
+  it("leaves a clean answer untouched", () => {
+    const a = "**Answer:** YES — listed [1].";
+    expect(enforceDocumentsOnly(a)).toEqual({ answer: a, removed: 0 });
   });
 });

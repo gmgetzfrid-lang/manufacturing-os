@@ -45,6 +45,11 @@ export interface KnowledgeAiFeatures {
   /** Legend / symbols / line-key documents (ids from THIS library) whose
    *  content rides along with every question. Max 3. */
   legendDocIds?: string[];
+  /** Off (default) = DOCUMENTS ONLY: answers come solely from this
+   *  library's documents and what the asker says. On = general engineering
+   *  knowledge may fill gaps, every such statement tagged "not from your
+   *  library". Never the web — that is the separate Internet source. */
+  allowGeneralKnowledge?: boolean;
   /** What this library holds. A hint for mapping and answers — every
    *  document is still profiled on its own, so a mixed library works. */
   kind?: LibraryKind;
@@ -160,6 +165,9 @@ export interface KnowledgeAnswer {
   answerMode?: "answer" | "compliance" | "explore" | "deviation";
   /** Where the conversation is heading, when the model saw it. */
   goal?: { kind: string; why: string };
+  /** What the answer was allowed to draw on: this library's documents
+   *  only, or documents plus tagged general engineering knowledge. */
+  knowledgeSource?: "documents" | "documents_and_general";
   /** Library documents to use for what the user is doing — forms,
    *  checklists, specs — resolved against the catalog. */
   suggestedDocs?: Array<{

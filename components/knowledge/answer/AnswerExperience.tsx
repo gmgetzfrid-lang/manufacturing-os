@@ -12,7 +12,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   BookOpen, Sparkles, Send, FileText, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Eye,
-  ThumbsUp, ThumbsDown, X, Waypoints, Loader2, Mail, Printer, Upload, RefreshCw,
+  ThumbsUp, ThumbsDown, X, Waypoints, Loader2, Mail, Printer, Upload, RefreshCw, ShieldCheck,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
@@ -1334,8 +1334,23 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
             {/* Header bar: what kind of answer this is, and the one place to
                 send it — always visible at the top, never hunted for. */}
             <div className="flex items-center justify-between gap-2 flex-wrap pb-3 border-b border-[var(--color-border)]">
-              <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                {MODES.find((m) => m.id === mode)?.label ?? "Direct answer"}
+              <span className="inline-flex items-center gap-2 flex-wrap">
+                <span className="font-mono text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                  {MODES.find((m) => m.id === mode)?.label ?? "Direct answer"}
+                </span>
+                {/* What this answer was allowed to draw on — visible, not assumed. */}
+                {answer.knowledgeSource === "documents" && (
+                  <span title="Every statement comes from this library's documents or what you said — no AI training knowledge, no web"
+                    className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300">
+                    <ShieldCheck className="w-3 h-3" /> Documents only
+                  </span>
+                )}
+                {answer.knowledgeSource === "documents_and_general" && (
+                  <span title="This library allows general engineering knowledge where documents are silent — each such statement is tagged"
+                    className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300">
+                    Documents + tagged general knowledge
+                  </span>
+                )}
               </span>
               <ExportButtons question={question} answer={answer} large />
             </div>
@@ -1431,7 +1446,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
               <span>·</span>
               {/* Version beacon: which renderer produced this card. */}
-              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt11</span>
+              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt12</span>
             </div>
           </div>
 

@@ -619,6 +619,26 @@ export function extractAnswerMeta(answer: string): {
   return { answer: kept.join("\n").trim(), answeringFor, followup, mode, goal, useThis };
 }
 
+/** Documents-only, enforced in code: any line the model itself marked as
+ *  coming from outside the library is removed before the reader sees it,
+ *  and one line says how many — nothing vanishes silently. (A model that
+ *  adds outside knowledge WITHOUT marking it can't be caught here; the
+ *  prompt forbids it, and this catches every case it confesses to.) */
+export function enforceDocumentsOnly(answer: string): { answer: string; removed: number } {
+  let removed = 0;
+  const kept = answer.split("\n").filter((line) => {
+    const outside = /\(not from (?:your|the) library[^)]*\)/i.test(line);
+    if (outside) removed++;
+    return !outside;
+  });
+  let out = kept.join("\n");
+  if (removed > 0) {
+    out += `\n\n! ${removed} statement${removed === 1 ? "" : "s"} not backed by your documents ` +
+      `${removed === 1 ? "was" : "were"} removed — this library answers from its documents only.`;
+  }
+  return { answer: out, removed };
+}
+
 /** "line class: not given" — a fact the answer depends on that the asker
  *  hasn't supplied. Rendered as a dashed chip that invites the value. */
 export function isMissingFact(chip: string): boolean {

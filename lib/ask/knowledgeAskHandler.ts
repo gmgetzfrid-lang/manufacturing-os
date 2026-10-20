@@ -39,7 +39,7 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
   parseSearchQueries, parseFollowupPlan, extractCitationNumbers, sanitizeStorageText, truncateSafe,
   type RetrievedChunk, mergeRetrievedRRF,
-  extractEvidenceBlock, extractAnswerMeta, locateSpan, type EvidenceSpan, type EvidenceRole,
+  extractEvidenceBlock, extractAnswerMeta, enforceDocumentsOnly, locateSpan, type EvidenceSpan, type EvidenceRole,
 } from "@/lib/knowledgeText";
 import { fuseRankings } from "@/lib/hybridRank";
 import { embeddingConnectionFrom } from "@/lib/ai/embeddings";
@@ -132,6 +132,11 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   // Deep read is DEFAULT ON — reading tables/formulas as printed is baseline
   // behavior, not a feature. The checkbox is an opt-OUT for token thrift.
   const visionEnabled = aiFeatures.visionPages !== false;
+  // DOCUMENTS ONLY is the default and the promise of Library mode: every
+  // statement comes from this library's documents (or what the asker said).
+  // General engineering knowledge — still clearly tagged — is an explicit
+  // per-library opt-in, never something the answer drifts into.
+  const allowGeneral = aiFeatures.allowGeneralKnowledge === true;
 
   // Linked reference libraries (the bridge): asked library GOVERNS, links
   // are consulted as REFERENCE. Missing table/column = no links (42P01/42703).
@@ -1697,6 +1702,18 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     const baseAnswerSystem =
       "You are the reference-library assistant for an industrial facility's document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
+      (allowGeneral
+        ? "KNOWLEDGE SOURCE — documents first, general knowledge allowed: this library's owner allows " +
+          "general engineering knowledge where the documents are silent. Every such statement must end " +
+          "with \"(not from your library)\" so the reader can tell it apart; never mix it into a cited " +
+          "sentence.\n\n"
+        : "KNOWLEDGE SOURCE — DOCUMENTS ONLY (this library's setting; non-negotiable): every statement must " +
+          "come from the numbered passages, the PIPE CLASS / DRAWING FACTS, or what the user told you. Do " +
+          "NOT add engineering knowledge, code requirements, typical values, or reasons from your own " +
+          "training — not even marked or hedged. When the documents don't say something the answer needs " +
+          "(why a rule exists, a code value, a design basis), say plainly that the library doesn't state " +
+          "it, and name under **To settle this:** what would — the referenced code or standard, the " +
+          "basis document, or who to ask.\n\n") +
       "OUTPUT FORMAT — follow it exactly, sections in this order, no preamble, no restating the question:\n" +
       "**Mode:** answer | compliance | explore | deviation — one word, the shape you chose (see ANSWER MODES).\n" +
       "**Heading toward:** (optional) when the conversation shows where the user is going — not just " +
@@ -1833,8 +1850,12 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "engineer to judge: the Answer line says whether a deviation looks technically supportable " +
       "for THEIR case — YES, WITH CONDITIONS — / NO — / NOT SETTLED —. Why, in order: (1) " +
       "**Requirement:** the rule, quoted [n]; (2) **Why the rule exists:** the reason as the " +
-      "standard or its referenced code states it [n] — when no passage states it, give the " +
-      "generally accepted engineering reason marked (not from your library); (3) **Does that reason " +
+      "standard or its referenced code states it [n] — " +
+      (allowGeneral
+        ? "when no passage states it, give the generally accepted engineering reason marked (not from your library); "
+        : "when no passage states it, say the library doesn't state the reason and list under **To settle this:** the " +
+          "document that would (the referenced code clause, the standard's basis) — do not supply a reason yourself; ") +
+      "(3) **Does that reason " +
       "apply here:** what about their case makes the hazard present or absent; (4) **Proposed " +
       "alternative and mitigations.** Before you act: approvals, calculations, inspections the " +
       "deviation needs. One question: the single fact that decides whether the reason applies. " +
@@ -1848,9 +1869,13 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         : "Pick the mode from the question; when unsure, use answer.\n\n") +
       "CONSEQUENCES: for substitutions and material changes, name what the change affects " +
       "downstream — design basis (pressure rating, wall thickness, weld joint factor), NDE, " +
-      "inspection, records — citing passages, or ending the item with \"(not from your " +
-      "library)\" when it comes from general engineering knowledge or a code that isn't here. " +
-      "Any statement not backed by a passage carries that same marker.\n\n" +
+      "inspection, records — " +
+      (allowGeneral
+        ? "citing passages, or ending the item with \"(not from your library)\" when it comes from general " +
+          "engineering knowledge or a code that isn't here. Any statement not backed by a passage carries " +
+          "that same marker.\n\n"
+        : "only where the passages support it [n]; an effect that would need a code or document that isn't " +
+          "here goes under **To settle this:** as that document, not as a statement.\n\n") +
       "EVIDENCE (mandatory, always LAST): end every answer that cites passages with a line " +
       "\"**Evidence:**\" followed by one line per cited passage, most decisive first, in this exact " +
       "shape:\n" +
@@ -1947,6 +1972,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     }
     let answer = meta.answer.replace(/\[image \d+(?:,\s*(p\.\s*\d+))?\]/gi,
       (_m, pg: string | undefined) => (pg ? `(${pg})` : ""));
+    // Documents only, enforced in code too: a statement the model itself
+    // marked as outside the library does not reach the reader of a
+    // documents-only library. Said in one line, so nothing vanishes silently.
+    if (!allowGeneral) answer = enforceDocumentsOnly(answer).answer;
     const spanByN = new Map<number, EvidenceSpan>();
     for (const s of evidence.spans) if (!spanByN.has(s.n)) spanByN.set(s.n, s);
 
@@ -2174,6 +2203,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       answer, citations, provider, model, mode: "library", missingDocs, partialDocs, questionId, budget: budget(),
       ...(meta.answeringFor.length > 0 ? { answeringFor: meta.answeringFor } : {}),
       ...(meta.goal ? { goal: meta.goal } : {}),
+      knowledgeSource: allowGeneral ? "documents_and_general" : "documents",
       ...(suggestedDocs.length > 0 ? { suggestedDocs } : {}),
       ...(meta.followup ? { followup: meta.followup } : {}),
       answerMode: meta.mode ?? answerMode ?? "answer",

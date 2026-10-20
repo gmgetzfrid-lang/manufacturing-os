@@ -91,7 +91,9 @@ const DRAFT_SYSTEM =
   "- Never invent facts the conversation doesn't contain: no line numbers, equipment tags, dates, names, " +
   "signatures, approval or reference numbers. Leave those fields \"\" and list them in needsInput.\n" +
   "- Checkbox fields: \"Yes\" or \"\". Choice fields: exactly one of the listed options, or \"\".\n" +
-  "- Anything from general engineering knowledge rather than the cited documents: say so in the text.";
+  "- Use ONLY what the question, the answer and the quoted proof contain. Never add engineering content, " +
+  "reasons, values or code requirements of your own — if the form asks for something they don't cover, " +
+  "leave it \"\" and list it in needsInput.";
 
 export async function POST(req: NextRequest) {
   const user = await authUser(req);

@@ -37,6 +37,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   const [drawingIntel, setDrawingIntel] = useState(library.aiFeatures?.drawingIntel === true);
   const [decoder, setDecoder] = useState(library.aiFeatures?.decoder ?? "");
   const [kind, setKind] = useState<LibraryKind>(library.aiFeatures?.kind ?? "mixed");
+  const [allowGeneral, setAllowGeneral] = useState(library.aiFeatures?.allowGeneralKnowledge === true);
   const [legendDocIds, setLegendDocIds] = useState<Set<string>>(
     new Set(library.aiFeatures?.legendDocIds ?? []));
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
@@ -54,6 +55,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     setDrawingIntel(library.aiFeatures?.drawingIntel === true);
     setDecoder(library.aiFeatures?.decoder ?? "");
     setKind(library.aiFeatures?.kind ?? "mixed");
+    setAllowGeneral(library.aiFeatures?.allowGeneralKnowledge === true);
     setLegendDocIds(new Set(library.aiFeatures?.legendDocIds ?? []));
     let cancelled = false;
     Promise.all([
@@ -86,7 +88,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     try {
       await saveLibraryAiInstructions(library.id, instructions);
       await saveLibraryAiFeatures(library.id, {
-        clarifyFacets, visionPages, visionAllPages, drawingIntel, kind,
+        clarifyFacets, visionPages, visionAllPages, drawingIntel, kind, allowGeneralKnowledge: allowGeneral,
         decoder: decoder.trim() || undefined,
         legendDocIds: legendDocIds.size > 0 ? [...legendDocIds].slice(0, 3) : undefined,
       });
@@ -129,6 +131,29 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               {LIBRARY_KINDS.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
             </select>
           </div>
+
+          <fieldset>
+            <legend className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              Where answers may come from
+            </legend>
+            <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
+              Neither option ever searches the web — that is the separate <b>Internet</b> source in the chat.
+            </p>
+            {[
+              { v: false, title: "Documents only (recommended)", body: "Every statement comes from this library's documents or what you tell it. When the documents don't say something, the answer says so and names what would settle it — it never fills the gap from the AI's own training." },
+              { v: true, title: "Documents + general engineering knowledge", body: "Where the documents are silent, the AI may add general engineering knowledge. Every such statement is tagged \"not from your library\" so it can't pass for a cited fact." },
+            ].map((o) => (
+              <label key={String(o.v)} className={`mt-1.5 flex items-start gap-2.5 rounded-xl border px-3 py-2.5 cursor-pointer transition-colors ${allowGeneral === o.v
+                ? "border-orange-400 bg-orange-50/60 dark:bg-orange-950/20" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+                <input type="radio" name="knowledge-source" checked={allowGeneral === o.v} onChange={() => setAllowGeneral(o.v)}
+                  className="accent-orange-600 w-4 h-4 mt-0.5" />
+                <span className="min-w-0">
+                  <span className="block text-xs font-bold text-[var(--color-text)]">{o.title}</span>
+                  <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">{o.body}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
