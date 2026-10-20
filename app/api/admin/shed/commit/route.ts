@@ -200,14 +200,25 @@ export async function POST(req: NextRequest) {
   const persisted = await persistReclaimShortfall(sb, orgId, archiveId, keysFailed);
   if (!persisted.ok) errors.push(persisted.error);
 
+  // ALOG-8 (admin-and-org P13): the DATA_ARCHIVE_RECLAIM row is the only
+  // record of which bytes were destroyed, so its insert is CHECKED
+  // (supabase-js resolves a refusal into `error`, it never throws). The
+  // reclaim has happened either way, so a refused row is carried in the
+  // answer (`auditError`) and logged — never a silent success (the purge's
+  // and archive-cancel's rule).
+  let auditError: string | null = null;
   try {
-    await sb.from("audit_logs").insert({
+    const { error: auditErr } = await sb.from("audit_logs").insert({
       action: "DATA_ARCHIVE_RECLAIM",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
       details: { archiveId, reclaimed, keysDeleted: deletedKeys, keysFailed, shortfallPersisted: persisted.ok, heldSkipped, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) },
     });
-  } catch { /* best-effort */ }
+    if (auditErr) auditError = auditErr.message || "audit insert refused";
+  } catch (e) {
+    auditError = (e as Error).message || String(e);
+  }
+  if (auditError) console.error("[admin/shed/commit] the DATA_ARCHIVE_RECLAIM audit row was not written", auditError);
 
   const notes = [
     heldSkipped > 0 ? `${heldSkipped} revision(s) under LEGAL HOLD were left untouched.` : "",
@@ -218,5 +229,6 @@ export async function POST(req: NextRequest) {
     ok: true, archiveId, reclaimed, keysDeleted: deletedKeys, keysFailed, shortfallPersisted: persisted.ok, errors,
     heldSkipped, rejectedKeys, sharedSkipped,
     ...(notes.length ? { note: notes.join(" ") } : {}),
+    ...(auditError ? { auditError: `the reclaim freed ${deletedKeys} file(s) but its DATA_ARCHIVE_RECLAIM audit row was not written: ${auditError}` } : {}),
   });
 }

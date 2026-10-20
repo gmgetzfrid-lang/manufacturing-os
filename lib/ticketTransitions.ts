@@ -293,9 +293,16 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   }
 
   const newHistory = [...(ticket.history || []), historyEntry];
-  const newUnreadBy = [ticket.requesterId, ticket.assignedDrafterId].filter(
+  // notifications PROD-4 done-when 3 (drafting-flow DF-P9): the default
+  // audience is everyone with a stake the comment route already tells —
+  // requester, drafter AND the assigned engineer (app/api/tickets/comment
+  // involved set). An engineer assigned for review used to be told once and
+  // then dropped from every later transition until they acted, so the
+  // person the ticket was blocked on stopped hearing about it. De-duplicated
+  // (one person can hold two parts); the actor is never told of their own act.
+  const newUnreadBy = Array.from(new Set([ticket.requesterId, ticket.assignedDrafterId, ticket.assignedEngineerId].filter(
     (id): id is string => !!id && id !== actorUid,
-  );
+  )));
 
   const updates: Record<string, unknown> = {
     last_modified: now,

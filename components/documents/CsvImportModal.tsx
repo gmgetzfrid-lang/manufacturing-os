@@ -155,6 +155,7 @@ export default function CsvImportModal({
     let ok = 0;
     // PROD-5: the first imported row's number, for the followers' notice.
     let firstLabel = "";
+    let firstDocumentId: string | null = null;
     // GAP-314 (P13 third review fix): the ids the inserts returned; a number
     // only for a row whose insert returned no id (the read-back fallback).
     const importedIds: string[] = [];
@@ -210,9 +211,12 @@ export default function CsvImportModal({
         }).select("id");
         if (insertErr) throw insertErr;
         ok += 1;
-        if (!firstLabel) firstLabel = documentNumber;
-        if (statusNote) statusNotes.push({ row: rIdx + 2, note: statusNote });
         const insertedId = ((inserted ?? []) as Array<{ id?: unknown }>)[0]?.id;
+        if (!firstLabel) {
+          firstLabel = documentNumber;
+          firstDocumentId = insertedId ? String(insertedId) : null; // NEDGE-22: the document the notice names
+        }
+        if (statusNote) statusNotes.push({ row: rIdx + 2, note: statusNote });
         if (insertedId) importedIds.push(String(insertedId));
         else importedNumbers.push(documentNumber);
       } catch (e) {
@@ -255,7 +259,7 @@ export default function CsvImportModal({
       // PROD-5: the library's followers hear about a bulk import exactly as
       // they do about a staged upload (one notice per batch, in-app only).
       void notifyLibraryDocsAdded({
-        orgId, libraryId: library.id, count: ok, firstLabel: firstLabel || "document", actorUserId, actorName,
+        orgId, libraryId: library.id, count: ok, firstLabel: firstLabel || "document", firstDocumentId, actorUserId, actorName,
       });
     }
   };

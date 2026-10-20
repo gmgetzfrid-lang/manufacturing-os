@@ -11,6 +11,11 @@
 import React from "react";
 import { X, ArrowDown, RotateCcw, GitBranch } from "lucide-react";
 import type { TicketStatus } from "@/types/schema";
+// drafting-flow UI-7 (DF-P9): the stage names are the display labels every
+// request surface shows (the ticket header, the queue's chips and filter) —
+// one source, so the map and the chip never disagree. UI-2: the map opens
+// from the ticket, the queue and the new-request form.
+import { TICKET_STATUS_LABELS } from "@/lib/ticketStatusLabels";
 
 interface StageDef {
   status: TicketStatus;
@@ -21,19 +26,19 @@ interface StageDef {
 // Canonical happy-path order. Branch states (REVISION_REQ, CANCELED) are shown
 // separately because they're loops/exits, not steps.
 const MAIN_FLOW: StageDef[] = [
-  { status: "PENDING_ASSIGNMENT", label: "Awaiting drafter", blurb: "Where every new request lands. An Admin — or the DraftingSupervisor, if one is set — assigns a drafter, or flags it for engineering review first." },
-  { status: "DRAFTING", label: "Drafting", blurb: "A drafter is actively producing the deliverable. Files are staged here until submitted." },
-  { status: "PENDING_REVIEW", label: "In review", blurb: "Draft submitted. The requester (or reviewer) checks it and either approves or requests a revision." },
-  { status: "PENDING_FINAL_APPROVAL", label: "Final approval", blurb: "Sent to an engineer for sign-off before it can be issued for construction." },
-  { status: "PENDING_IFC", label: "Ready to issue (IFC)", blurb: "Approved. The final IFC package is being prepared / issued for construction." },
-  { status: "FINAL_DRAFT", label: "Final package", blurb: "The issued package awaiting the requester's acknowledgement." },
-  { status: "CLOSED", label: "Closed", blurb: "Done and acknowledged. Reopen only if something was missed." },
+  { status: "PENDING_ASSIGNMENT", label: TICKET_STATUS_LABELS.PENDING_ASSIGNMENT, blurb: "Where every new request lands. An Admin — or the DraftingSupervisor, if one is set — assigns a drafter, or flags it for engineering review first." },
+  { status: "DRAFTING", label: TICKET_STATUS_LABELS.DRAFTING, blurb: "A drafter is actively producing the deliverable. Files are staged here until submitted." },
+  { status: "PENDING_REVIEW", label: TICKET_STATUS_LABELS.PENDING_REVIEW, blurb: "Draft submitted. The requester (or reviewer) checks it and either approves or requests a revision." },
+  { status: "PENDING_FINAL_APPROVAL", label: TICKET_STATUS_LABELS.PENDING_FINAL_APPROVAL, blurb: "Sent to an engineer for sign-off before it can be issued for construction." },
+  { status: "PENDING_IFC", label: TICKET_STATUS_LABELS.PENDING_IFC, blurb: "Approved. The final IFC package is being prepared / issued for construction." },
+  { status: "FINAL_DRAFT", label: TICKET_STATUS_LABELS.FINAL_DRAFT, blurb: "The issued package awaiting the requester's acknowledgement." },
+  { status: "CLOSED", label: TICKET_STATUS_LABELS.CLOSED, blurb: "Done and acknowledged. Reopen only if something was missed." },
 ];
 
 const BRANCHES: StageDef[] = [
-  { status: "PENDING_ENG_TEAM", label: "Engineering review (optional)", blurb: "When an assigner flags a request, a specific engineer reviews the scope, then hands it back to assignment or returns it with questions. Not every request needs this." },
-  { status: "REVISION_REQ", label: "Revision requested", blurb: "A reviewer sent it back. It loops to Drafting with the revision reason — fix and resubmit." },
-  { status: "CANCELED", label: "Canceled", blurb: "Withdrawn by the requester (or management) with a reason, from the queue or during drafting. A terminal exit off the main flow — it is not reopened; file a new request instead." },
+  { status: "PENDING_ENG_TEAM", label: `${TICKET_STATUS_LABELS.PENDING_ENG_TEAM} (optional)`, blurb: "When an assigner flags a request, a specific engineer reviews the scope, then hands it back to assignment or returns it with questions. Not every request needs this." },
+  { status: "REVISION_REQ", label: TICKET_STATUS_LABELS.REVISION_REQ, blurb: "A reviewer sent it back. It loops to Drafting with the revision reason — fix and resubmit." },
+  { status: "CANCELED", label: TICKET_STATUS_LABELS.CANCELED, blurb: "Withdrawn by the requester (or management) with a reason, from the queue or during drafting. A terminal exit off the main flow — it is not reopened; file a new request instead." },
 ];
 
 const TONE: Record<string, string> = {

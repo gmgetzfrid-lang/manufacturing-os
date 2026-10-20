@@ -520,13 +520,17 @@ describe("MON-13 — the contractor link is set once; a decided item keeps its c
 
 describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definition + ONE clause", () => {
   const definers = () => numbered().filter((f) => /CREATE POLICY audit_logs_admin_trail/.test(mig(f)));
-  it("the newest earlier definition is found by scanning the sequence (today 20261142), and this file is the newest of all", () => {
-    const ds = definers();
+  // ALOG-16 (admin-and-org P13, 20261219) re-creates the overlay after this
+  // file, from this body plus one clause — its lineDiff is
+  // aoRoundGP13AuditTrailMigration.test.ts's — so this file's own pins read
+  // the sequence up to itself.
+  it("the newest earlier definition is found by scanning the sequence (today 20261142), and this file is the newest up to itself", () => {
+    const ds = definers().filter((f) => f <= FILE);
     expect(ds[ds.length - 1]).toBe(FILE);
     expect(ds[ds.length - 2]).toBe("20261142_prj_roundG_project_audit_rows.sql");
   });
   it("lineDiff: nothing of the newest earlier body is lost; only the SEC-21 comment and its clause are added", () => {
-    const ds = definers();
+    const ds = definers().filter((f) => f <= FILE);
     const prev = mig(ds[ds.length - 2]);
     const live = between(prev, "DROP POLICY IF EXISTS audit_logs_admin_trail ON audit_logs;", "\n  );");
     const next = between(M, "DROP POLICY IF EXISTS audit_logs_admin_trail ON audit_logs;", "\n  );");

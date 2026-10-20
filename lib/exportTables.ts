@@ -303,6 +303,8 @@ export const USER_SCOPED_FOR_ORG_TABLES = ["notification_preferences"] as const;
 /** Tables that exist in the schema but are DELIBERATELY not exported.
  *  Each needs a reason — the coverage tripwire enforces the decision. */
 export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
+  audit_dead_letters:
+    "the audit dead-letter outbox (an audit row whose insert was refused, kept as its writer sent it; admin-and-org P13, 20261219) — service-role only, a transient queue the daily maintenance cron drains into audit_logs as AUDIT_DEAD_LETTER rows, which are exported; a restored outbox would replay another deployment's recovered rows into this deployment's trail",
   users: "global auth identity — never copied; members re-link by email on restore",
   ai_connections:
     "holds live AI provider API keys — secrets never leave the database; reconnect providers after a restore",

@@ -15,7 +15,9 @@ import { isTerminalTicketStatus, TERMINAL_TICKET_STATUSES } from '@/lib/ticketSh
 import {
   isActionRequired, attentionLabel, isQueueViewer, isEngineerRole,
 } from '@/lib/ticketAttention';
-import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { affordancePolicyFault } from '@/lib/checkoutAffordances';
+import { loadRequesterRoles } from '@/lib/ticketRequesterRoles';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
 import {
   KIND_META, NOTIFICATION_SECTIONS, isNotificationKind, type NotificationSection,
@@ -103,9 +105,13 @@ import {
 // first page is OPEN_TICKET_CAP rows with an exact count; when the scope holds
 // more, the next pages are read too, up to TICKET_SCAN_CEILING (TRAIL-7: an
 // untouched ticket is often the one that needs attention, so truncating the
-// oldest hid exactly those). Beyond the ceiling the surfaces say "showing N of
-// M" (AttentionStatus). Only the columns the attention rule reads are fetched
-// (RT-3 dw3) — never the comments or history JSON.
+// oldest hid exactly those). Beyond the ceiling the scope is read OLDEST-
+// modified first instead (drafting-flow EDGE-3 / ROUTE-7, DF-P9): the
+// TICKET_SCAN_CEILING requests evaluated are the longest-neglected, and the
+// ones left unevaluated are the most recently touched — and the surfaces say
+// "the N longest-waiting of M" (AttentionStatus). Only the columns the
+// attention rule reads are fetched (RT-3 dw3) — never the comments or history
+// JSON.
 const OPEN_TICKET_CAP = 500;
 const TICKET_SCAN_CEILING = 5000;
 /** The columns isActionRequired (lib/ticketAttention.ts → lib/workflow.ts)
@@ -133,7 +139,7 @@ function fromDbTicket(row: Record<string, unknown>): Ticket {
     ticketId: row.ticket_id as string,
     title: row.title as string,
     description: row.description as string | undefined,
-    unit: row.unit as string,
+    unit: typeof row.unit === 'string' ? row.unit : null, // PERS-6: NULL is "unknown" (DEC-101), never a cast string
     requestType: row.request_type as string,
     status: row.status as Ticket['status'],
     priority: row.priority as number | undefined,
@@ -259,6 +265,9 @@ export interface AttentionStatus {
    *  not counted). They differ only past TICKET_SCAN_CEILING. */
   ticketsLoaded: number;
   ticketsTotal: number | null;
+  /** EDGE-3 / ROUTE-7: past the ceiling the evaluated requests are the
+   *  longest-waiting (read oldest-modified first), not the most recent. */
+  ticketsOldestFirst: boolean;
 }
 
 /** The provider's value: the hook's shape plus the status. */
@@ -277,6 +286,7 @@ const IDLE_STATUS: AttentionStatus = Object.freeze({
   loadingMore: false,
   ticketsLoaded: 0,
   ticketsTotal: null,
+  ticketsOldestFirst: false,
 });
 
 /** The one feed of the tab (AttentionProvider). Null outside it. */
@@ -286,6 +296,9 @@ type TicketQuery = PromiseLike<{ data: unknown; error: { code?: string; message?
   limit: (n: number) => TicketQuery;
   range: (from: number, to: number) => TicketQuery;
 };
+/** A scope's query: the select (with its count), its filters, and its order —
+ *  most recently modified first, or (`oldestFirst`) least recently. */
+type TicketScopeBuild = (cols: string, counted: boolean, oldestFirst: boolean) => TicketQuery;
 
 /** One ticket scope, read a page at a time (see OPEN_TICKET_CAP). `build`
  *  starts a fresh query each call (the select with its count, then the
@@ -297,23 +310,38 @@ type TicketQuery = PromiseLike<{ data: unknown; error: { code?: string; message?
  *  Range pages over a last_modified order can return a ticket twice when it
  *  is modified between two page reads (it moves up into a page already
  *  read), so the rows are deduplicated by id — the first (newest) copy kept
- *  — and the next page starts after the rows read, duplicates included. */
+ *  — and the next page starts after the rows read, duplicates included.
+ *
+ *  EDGE-3 / ROUTE-7 (DF-P9): when the count says the scope holds more than
+ *  TICKET_SCAN_CEILING, the pages are read OLDEST first, so the requests
+ *  left unevaluated are the most recently touched, never the longest-
+ *  neglected (`oldestFirst` in the answer). In that order a ticket modified
+ *  between two page reads moves to the end and the row behind it can slip
+ *  past one page boundary for that one read; the modification is itself a
+ *  tickets event, so the feed reads again straight after. */
 async function loadTicketScope(
-  build: (cols: string, counted: boolean) => TicketQuery,
+  build: TicketScopeBuild,
   opts?: { single?: boolean },
-): Promise<{ rows: Record<string, unknown>[]; total: number | null; failed: boolean }> {
+): Promise<{ rows: Record<string, unknown>[]; total: number | null; failed: boolean; oldestFirst: boolean }> {
   const single = opts?.single === true;
   let cols = TICKET_ATTENTION_COLUMNS;
-  let first = await build(cols, !single).limit(OPEN_TICKET_CAP);
+  let first = await build(cols, !single, false).limit(OPEN_TICKET_CAP);
   if (first.error && first.error.code === '42703') {
     cols = '*';
-    first = await build(cols, !single).limit(OPEN_TICKET_CAP);
+    first = await build(cols, !single, false).limit(OPEN_TICKET_CAP);
   }
-  if (first.error) return { rows: [], total: null, failed: true };
-  const rows = [...((first.data as Record<string, unknown>[] | null) ?? [])];
+  if (first.error) return { rows: [], total: null, failed: true, oldestFirst: false };
   const total = !single && typeof first.count === 'number' ? first.count : null;
+  const oldestFirst = total !== null && total > TICKET_SCAN_CEILING;
+  let rows = [...((first.data as Record<string, unknown>[] | null) ?? [])];
+  if (oldestFirst) {
+    // Past the ceiling: start again from the oldest end.
+    const again = await build(cols, false, true).limit(OPEN_TICKET_CAP);
+    if (again.error) return { rows: [], total: null, failed: true, oldestFirst: false };
+    rows = [...((again.data as Record<string, unknown>[] | null) ?? [])];
+  }
   while (total !== null && rows.length < total && rows.length < TICKET_SCAN_CEILING && rows.length % OPEN_TICKET_CAP === 0) {
-    const page = await build(cols, false).range(rows.length, Math.min(rows.length + OPEN_TICKET_CAP, TICKET_SCAN_CEILING) - 1);
+    const page = await build(cols, false, oldestFirst).range(rows.length, Math.min(rows.length + OPEN_TICKET_CAP, TICKET_SCAN_CEILING) - 1);
     if (page.error) break;
     const got = (page.data as Record<string, unknown>[] | null) ?? [];
     if (got.length === 0) break;
@@ -326,7 +354,7 @@ async function loadTicketScope(
     seen.add(r.id);
     return true;
   });
-  return { rows: unique, total, failed: false };
+  return { rows: unique, total, failed: false, oldestFirst };
 }
 
 /** A ticket the feed counts as an open request (the scopes' status filter;
@@ -358,6 +386,11 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   const [remainderRead, setRemainderRead] = useState(true);
   const [docLibrary, setDocLibrary] = useState<Record<string, string>>({});
   const [ticketTotal, setTicketTotal] = useState<number | null>(null);
+  // EDGE-3 / ROUTE-7: the scope was past the ceiling and read oldest first.
+  const [ticketsOldestFirst, setTicketsOldestFirst] = useState(false);
+  // FRIC-7: the requesters' current collections (an entry per requester of
+  // the tickets held; [] = not an active member), read with the tickets.
+  const [requesterRoles, setRequesterRoles] = useState<ReadonlyMap<string, readonly string[]> | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
@@ -377,6 +410,13 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   // OWN capability policy — the same inputs the ticket page evaluates — so
   // the badge cannot count a ticket the page will show as view-only.
   const [policy, setPolicy] = useState<CapabilityPolicy | undefined>(undefined);
+  // AUTHZ-15 (DF-P9): the policy could not be read and no last good copy was
+  // served — "must act" is then NOT counted (the shipped defaults are not the
+  // org's policy), and the feed says why. A `stale` answer is the last good
+  // policy and counts as usual. Re-read on each feed pass while it holds.
+  const [policyFault, setPolicyFault] = useState<string | null>(null);
+  const [policyAttempt, setPolicyAttempt] = useState(0);
+  const policyFaultRef = useRef<string | null>(null);
   // DRAFT-2 / WF-15: the type-level flags the ticket page evaluates too — an
   // "engineering first" type disables pick-up in the queue, so without them
   // the badge flagged a Drafter the page showed as view-only.
@@ -391,7 +431,19 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   useEffect(() => {
     let alive = true;
     if (!enabled || !activeOrgId) return;
-    void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => {});
+    void loadCapabilityPolicyEntry(activeOrgId).then((entry) => {
+      if (!alive) return;
+      const fault = affordancePolicyFault(entry);
+      policyFaultRef.current = fault;
+      setPolicyFault(fault);
+      setPolicy(fault ? undefined : entry.policy);
+    }).catch((e: unknown) => {
+      if (!alive) return;
+      const fault = (e as Error)?.message || 'the capability policy could not be read';
+      policyFaultRef.current = fault;
+      setPolicyFault(fault);
+      setPolicy(undefined);
+    });
     void supabase
       .from('org_members')
       .select('uid', { count: 'exact', head: true })
@@ -411,7 +463,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         setCloseWithoutReviewTypes(closeTypes.length > 0 ? closeTypes : undefined);
       }, () => {});
     return () => { alive = false; };
-  }, [enabled, activeOrgId]);
+  }, [enabled, activeOrgId, policyAttempt]);
   // Unique per feed instance: the provider's one channel, and a test's own.
   const channelId = useId().replace(/[^a-z0-9]/gi, '');
 
@@ -431,7 +483,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           feedKeyRef.current = null;
           rawRef.current = []; remainderRef.current = []; ticketIdsRef.current = new Set();
           setTickets([]); setRawNotifs([]); setHidden(new Set()); setNotifTotal(null); setRemainder([]);
-          setTicketTotal(null); setLoadError(null); setLoading(false);
+          setTicketTotal(null); setTicketsOldestFirst(false); setRequesterRoles(null); setLoadError(null); setLoading(false);
         }
       })();
       return () => { alive = false; };
@@ -452,7 +504,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         pagesRef.current = 1;
         keptAtRef.current.clear(); echoRef.current.clear(); inFlightRef.current = null;
         setTickets([]); setRawNotifs([]); setHidden(new Set()); setNotifTotal(null);
-        setRemainder([]); setRemainderRead(true); setTicketTotal(null); setDocLibrary({});
+        setRemainder([]); setRemainderRead(true); setTicketTotal(null); setTicketsOldestFirst(false); setRequesterRoles(null); setDocLibrary({});
         setLoadError(null); setLoading(true);
       })();
     }
@@ -562,19 +614,22 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         // 1) My tickets, scoped by role (same visibility rules as the portal).
         let list: Ticket[] | null = null;
         let total: number | null = null;
+        let oldestFirstRead = false;
         if (isQueueViewer(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
-          const scope = await loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }) as unknown as TicketQuery);
-          if (!scope.failed) { list = scope.rows.map((r) => fromDbTicket(r)); total = scope.total; }
+          const scope = await loadTicketScope((cols, counted, oldestFirst) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: oldestFirst }) as unknown as TicketQuery);
+          if (!scope.failed) { list = scope.rows.map((r) => fromDbTicket(r)); total = scope.total; oldestFirstRead = scope.oldestFirst; }
         } else if (roles.includes('Drafter')) {
           // The drafter's assigned tickets: the OPEN ones paged with a count
           // (TRAIL-7), and the closed ones in one capped, uncounted read as
-          // before the paging (a closed ticket enters the feed only while it
-          // is unread) — a long-tenured drafter's thousands of closed tickets
-          // are never paged on every refetch.
+          // before the paging — a long-tenured drafter's thousands of closed
+          // tickets are never paged on every refetch. EDGE-3 (DF-P9): a
+          // closed ticket enters the feed only while it is unread for me, so
+          // the closed read asks the server for exactly those (unread_by
+          // holds me) — closed rows the feed would drop never fill its cap.
           const [assigned, assignedClosed, pool] = await Promise.all([
-            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }) as unknown as TicketQuery),
-            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).in('status', [...TERMINAL_TICKET_STATUSES]).order('last_modified', { ascending: false }) as unknown as TicketQuery, { single: true }),
-            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }) as unknown as TicketQuery),
+            loadTicketScope((cols, counted, oldestFirst) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: oldestFirst }) as unknown as TicketQuery),
+            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).in('status', [...TERMINAL_TICKET_STATUSES]).contains('unread_by', [uid]).order('last_modified', { ascending: false }) as unknown as TicketQuery, { single: true }),
+            loadTicketScope((cols, counted, oldestFirst) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: oldestFirst }) as unknown as TicketQuery),
           ]);
           if (!assigned.failed && !assignedClosed.failed && !pool.failed) {
             const map = new Map<string, Ticket>();
@@ -587,12 +642,24 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
             // only when one was cut at the ceiling.
             const cut = (x: { rows: unknown[]; total: number | null }) => x.total !== null && x.rows.length < x.total;
             total = cut(assigned) || cut(pool) ? (assigned.total ?? 0) + (pool.total ?? 0) : list.filter(isOpenTicket).length;
+            oldestFirstRead = assigned.oldestFirst || pool.oldestFirst;
           }
         } else {
-          const scope = await loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('requester_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }) as unknown as TicketQuery);
-          if (!scope.failed) { list = scope.rows.map((r) => fromDbTicket(r)); total = scope.total; }
+          const scope = await loadTicketScope((cols, counted, oldestFirst) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('requester_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: oldestFirst }) as unknown as TicketQuery);
+          if (!scope.failed) { list = scope.rows.map((r) => fromDbTicket(r)); total = scope.total; oldestFirstRead = scope.oldestFirst; }
         }
         if (list === null) failure = 'Your requests could not be loaded.';
+
+        // 1b) FRIC-7: the requesters' current collections — the input the
+        //     ticket page and the route give the engine, so a departed
+        //     requester's co-review is counted here too. A failed read is
+        //     "unknown" (null): every requester assumed present, as before.
+        let requesterMap: Map<string, string[]> | null = null;
+        if (list !== null) {
+          requesterMap = await loadRequesterRoles(activeOrgId, list.map((t) => t.requesterId));
+        }
+        // AUTHZ-15: while the policy is unreadable, read it again each pass.
+        if (policyFaultRef.current && alive) setPolicyAttempt((n) => n + 1);
 
         // 2) My unread in-app notifications (the bell's events), scoped to the
         //    active workspace: the newest page, and older pages on request
@@ -696,7 +763,8 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         if (alive) {
           if (list !== null) {
             ticketIdsRef.current = new Set(list.map((t) => t.id).filter((x): x is string => !!x));
-            setTickets(list); setTicketTotal(total);
+            setTickets(list); setTicketTotal(total); setTicketsOldestFirst(oldestFirstRead);
+            setRequesterRoles(requesterMap);
           }
           if (rawWindow !== null) {
             rawRef.current = rawWindow;
@@ -854,7 +922,9 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     };
 
     for (const t of tickets) {
-      const actionReq = isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount });
+      // AUTHZ-15: an unreadable policy counts nothing as "must act" (the
+      // defaults are not the org's policy); the feed says so (status.error).
+      const actionReq = !policyFault && isActionRequired(t, { uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles });
       const unread = !!uid && !!t.unreadBy?.includes(uid);
       if (!actionReq && !unread) continue;
       const matched = t.id ? notifByTicket.get(t.id) : undefined;
@@ -865,7 +935,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         kind: 'ticket',
         section: 'requests',
         title: `${t.ticketId || ''} ${t.title || ''}`.trim() || 'Request',
-        subtitle: actionReq ? attentionLabel(t.status) : (matched?.title || 'New activity'),
+        subtitle: actionReq ? attentionLabel(t.status, { hasDrafter: !!t.assignedDrafterId }) : (matched?.title || 'New activity'),
         // Prefer the latest notification's deep-link (e.g. ?c=<commentId>) even
         // for action-required tickets, so clicking lands on (and highlights) the
         // new comment instead of the top of the ticket.
@@ -940,7 +1010,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     }
     const counts: AttentionCounts = { all, action, activity: all - action, notifications };
     return { items: out, counts, sectionCounts };
-  }, [tickets, notifs, rawNotifs, notifTotal, remainder, remainderRead, docLibrary, uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount]);
+  }, [tickets, notifs, rawNotifs, notifTotal, remainder, remainderRead, docLibrary, uid, roles, policy, policyFault, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles]);
 
   const markAll = useCallback(() => markAllRead(activeOrgId), [activeOrgId]);
   const value = useMemo<TicketNotifications>(() => ({
@@ -979,7 +1049,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   const openTicketsLoaded = useMemo(() => tickets.filter(isOpenTicket).length, [tickets]);
   const status = useMemo<AttentionStatus>(() => ({
     stale,
-    error: loadError,
+    error: loadError ?? (policyFault ? 'Permissions could not be read, so requests that need you are not counted until they can be.' : null),
     notificationsShown: notifs.length,
     notificationsTotal: notifTotal === null ? null : Math.max(notifs.length, notifTotal - hidden.size),
     hasMoreNotifications: notifTotal !== null && notifTotal > rawNotifs.length,
@@ -987,7 +1057,8 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     loadingMore,
     ticketsLoaded: openTicketsLoaded,
     ticketsTotal: ticketTotal,
-  }), [stale, loadError, notifs.length, notifTotal, hidden.size, rawNotifs.length, loadMoreNotifications, loadingMore, openTicketsLoaded, ticketTotal]);
+    ticketsOldestFirst,
+  }), [stale, loadError, policyFault, notifs.length, notifTotal, hidden.size, rawNotifs.length, loadMoreNotifications, loadingMore, openTicketsLoaded, ticketTotal, ticketsOldestFirst]);
 
   return useMemo(() => ({ value, status }), [value, status]);
 }

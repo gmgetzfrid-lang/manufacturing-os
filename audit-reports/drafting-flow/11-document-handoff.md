@@ -182,6 +182,15 @@ app/(protected)/requests/[id]/page.tsx:649-651 —
 
 **Scope / residual.** Done-when 3's page half → **DF-P9** (as assigned). Nothing left for DF-P10.
 
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — done-when 3's page half. The ticket page's Rev chip compares version ids when the request captured one: `revDrift({ versionId: sourceRef.versionId, rev: sourceRef.rev }, { versionId: sourceDoc.doc.currentVersionId, rev: sourceDoc.doc.rev })` (`app/(protected)/requests/[id]/page.tsx`:2512; the source read now selects `current_version_id`), so a sheet re-issued under the same label reads "Rev advanced", and a row with no captured id falls back to labels as before. `SourceDriftBanner` is mounted on the ticket (`app/(protected)/requests/[id]/page.tsx`:2474, `HAND-7`). A failed source read is its own state, never "restricted" (`DCW-5`).
+
+**Done-when.**
+- ✓ (in `DEC-22`'s shape) Unchanged (DF-P1).
+- ✗ The stamp (unchanged) → DF-P10 (`PHYS-9`).
+- ✓ A ticket whose source has advanced is flagged against the captured base version id — `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "DCW-5 / HAND-3 / HAND-7 — the source card" ("the Rev chip compares version ids: a re-issued sheet under the same label has moved"; REGRESSION: the same version reads current).
+
+**Scope / residual.** Done-when 2 → DF-P10 (`PHYS-9`). Status stays OPEN for it.
+
 ---
 
 <a id="hand-4"></a>
@@ -380,6 +389,15 @@ lib/revisions.ts:461 —
 
 **Scope / residual.** (2) → **DF-P9** (its brief mounts `SourceDriftBanner` on the ticket page as one line; the drafting-queue chip is added in `99-fix-sequencing.md`, "Hand-offs from DF-P2"). (3) → proposed **DF-P6** (the approval actions' review model), same section.
 
+**Partial (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — done-when 2. `SourceDriftBanner` is mounted at the top of the ticket's Incoming Assets (`app/(protected)/requests/[id]/page.tsx`:2474, with the ticket's metadata and org), and the queue shows a **"Source moved"** chip on a row whose source has moved (`app/(protected)/requests/page.tsx` `rowChips`, :645, `data-testid="chip-source-moved"`): one `documents` read per page of rows (`id, rev, current_version_id`, this workspace, as the viewer, chunked by 100), compared through `SourceDriftBanner`'s `driftedSources` (version ids when captured); a document the viewer cannot see, or a failed read, says nothing. The page's Rev chip compares version ids too (`HAND-3`).
+
+**Done-when.**
+- ✓ (1) DF-P2.
+- ✓ (2) The ticket and the drafting queue show a "source revision has moved" banner / chip — `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` "REGRESSION: the same version reads current; the drift banner is mounted with the ticket's metadata", and the version-id case; the queue chip is `driftedSources` (DF-P2's tested component) over the page's documents read.
+- ✗ (3) Approving over a superseded base requires no acknowledgement yet. **Owner:** drafting-flow **DF-P6** (as assigned).
+
+**Scope / residual.** (3) → DF-P6.
+
 ---
 
 <a id="hand-8"></a>
@@ -387,7 +405,7 @@ lib/revisions.ts:461 —
 ## HAND-8 · As-built markups are never persisted anywhere; the only escape route silently falls back to the clean original
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/viewers/FullScreenViewer.tsx:912`, `components/viewers/FullScreenViewer.tsx:916`, `lib/markupRequests.ts:123`, `app/(protected)/inbox/page.tsx:139`, `components/dashboard/widgets.tsx:795`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. Markup state lives only in the component's `pageStates` React state (FullScreenViewer.tsx:369) — there is no markup table in supabase/migrations, and markup_requests stores only a pasted `shared_markup_url`, which both resolve call sites (inbox/page.tsx:139, dashboard/widgets.tsx:795) omit entirely, so lib/markupRequests.ts:123 writes `shared_markup_url: null` even for status 'shared'.
@@ -438,6 +456,15 @@ app/(protected)/inbox/page.tsx:139-147 — resolveMarkupRequest({ markupRequestI
 - ✓ Marking a request "shared" no longer claims an artifact that does not exist: the inbox toast reads "Noted on the document's activity thread — hand the marked-up sheet over there or on the ticket." (`app/(protected)/inbox/page.tsx:146-150`), and the share posts a `markup_ref` row on the document's thread (`lib/markupRequests.ts:137-150`).
 
 **Scope / residual.** The silent fallback lives in the **Send to Drafting** handler — `const sendToDrafting = async () => {` (`components/viewers/FullScreenViewer.tsx:912`), the catch at `:950-958`, the clean-original attach at `:980-983`, the hand-off to `/requests/new` at `:985` — **not** in `downloadWithMarkup` (`:1000` onward), the region the public-surfaces plan gave PS-STAMP ("FullScreenViewer downloadWithMarkup (~977-1065)"; `downloadWithMarkup` already surfaces its own failures). So the fleet plan's condition ("if it still falls back, the residual is PS-STAMP's downloadWithMarkup region") is not met, and PS-STAMP has merged in any case. Owner: **DF-P9** (the ticket-side UI package; the handler's only job is to open the request form DF-P9's sibling pages sit beside): on a failed bake — the `catch` **or** an empty `ensureBytes()` — an `appAlert` saying the marked-up sheet could not be attached and a confirm-or-abort before routing to `/requests/new`, never a silent clean-original substitution; the persisted markup (`document_markups`, LIFE-3) means the user loses nothing by aborting. The edit is confined to `sendToDrafting` (`:912-990`). Concurrency (review fix pass): the plan runs DF-P9 now on the premise that it touches no document-control file, and `FullScreenViewer.tsx` is one DC has touched — but DC's re-owned `HLD-1` limb (the markup export's hold stamp, `ce39cf6`) merged with DC P15 (`b9cdfdc`) before `f1ac550`, and no unmerged package in any fleet plan lists this file, so there is no in-flight hunk to sequence behind; if a later DC package claims the file, DF-P9's hunk is disjoint from `downloadWithMarkup` (`:1000` onward) and lands first or rebases. DF-P9's brief does not list `FullScreenViewer.tsx`; the integrator must add the line, in the form the plan already uses for re-owned remainders (`99-fix-sequencing.md`, "Hand-offs from DF-P0").
+
+**Resolution (2026-10-14, drafting-flow Round G).** DF-P9 TICKET-PAGE — the Send to Drafting fallback, confined to `sendToDrafting` (`components/viewers/FullScreenViewer.tsx`; `downloadWithMarkup` untouched). When the sheet has markups and the bake cannot run — `ensureBytes()` returned nothing, or `bakeMarkupIntoPdf` / `stashDraft` threw — the viewer asks (`appConfirm`, :1020): "Your markups could not be attached — your markups stay on this sheet while it is open, but <why>. Cancel to stay — <what the download can do>. Or send the request with the clean sheet (it will say the markups are not attached)", followed by what leaving does, worded from what this viewer can do (`markupsPersist`, :981): with a parent that persists markups (`onPageStatesChange` — the library's markup store) "Sending saves your markups to this document as you leave the viewer (as closing it does)", and the sheet's states are handed to it after the choice and before the hand-off (:1029); without one (the store could not be read, so the seed is read-only and no callback is passed) "Nothing is saving your markups in this viewer — sending leaves it and they are lost, so try to download them first if you need them". *DF-P9 integrator fix pass (say only what is true):* the dialog used to promise "'Download w/ Markup' saves a copy you can attach to the request" whatever had failed — but that button fetches the same file and bakes the same way (`ensureBytes`, `lib/markupExport.ts`), so after a failed fetch or bake it would fail too. The hint is now worded per failure (`downloadHint`, :991): the file could not be fetched → "'Download w/ Markup' needs the same file, so it may not work either until the file can be fetched"; the bake threw → "'Download w/ Markup' bakes them the same way, so it may fail too"; the bake worked but the hand-off store (`stashDraft`) failed → "the marked-up copy could not be kept for the request form … 'Download w/ Markup' may still save a copy you can attach to the request". **Cancel** stays on the sheet and sends nothing (the button is not left "sending"); **Send the clean sheet** attaches the original and the request's description says "(the requester's markups could NOT be attached — the clean sheet is attached)". No markup, or a bake that works, behaves exactly as before. *(Corrected at the DF-P9 review fix pass: the first wording told every person "your markups are saved on this document" — not true at that moment, since the viewer persists only through its parent when it closes, and not at all on a read-only seed — and the request's description repeated the claim.)*
+
+**Done-when.**
+- ✓ Markup state is persisted (LIFE-3; unchanged).
+- ✓ A failed bake surfaces a blocking question instead of silently substituting the clean original — `lib/__tests__/dfRoundG_P9_sendToDrafting.test.ts` (rendered: fetch failure → asked, Cancel sends nothing, and with no persisting parent the question says the markups are lost and to download first, never "saved"; bake throws → asked, the clean sheet is attached and the request says so; with a persisting parent the question says leaving saves them and the states reach the parent after the choice, before the hand-off — Cancel hands nothing over; REGRESSION: no markup → no question, the original attached; a bake that works → the marked-up draft; integrator fix pass: after a failed fetch or bake the question never says the download "saves a copy" and says why it may fail too, and only a failed hand-off store offers the download as a way to keep a copy).
+- ✓ The "shared" claim is honest (LIFE-8; unchanged).
+
+**Scope / residual.** None.
 
 ---
 

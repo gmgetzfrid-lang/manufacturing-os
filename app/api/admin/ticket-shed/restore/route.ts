@@ -154,8 +154,13 @@ export async function POST(req: NextRequest) {
     skippedForeignKey = 0, notArchived = 0;
   let decompressed = 0;
   const errors: string[] = [];
+  // ALOG-8 fix pass: the decompression bound can stop the restore part way —
+  // after tickets were put back and binaries uploaded. It no longer returns
+  // from inside the loop: it stops, and the TICKET_ARCHIVE_RESTORE row below
+  // records what was done (partial) before the 413.
+  let aborted: string | null = null;
 
-  for (const { tp, row, id } of snapshots) {
+  tickets: for (const { tp, row, id } of snapshots) {
     const stub = stubById.get(id);
     if (!stub) { notArchived++; continue; } // hot ticket or not present — never overwrite it
 
@@ -174,7 +179,8 @@ export async function POST(req: NextRequest) {
         const bytes = await zip.files[entry].async("uint8array");
         decompressed += bytes.byteLength;
         if (decompressed > MAX_DECOMPRESSED) {
-          return NextResponse.json({ error: "Archive decompresses to too much data; aborted.", restored, filesUploaded }, { status: 413 });
+          aborted = "Archive decompresses to too much data; aborted.";
+          break tickets;
         }
         // Verify BEFORE the write: a tampered or mis-laid-out entry restores
         // nothing for this ticket, and the stub (the recovery pointer) stays.
@@ -237,14 +243,33 @@ export async function POST(req: NextRequest) {
     restored++;
   }
 
+  // ALOG-8 (admin-and-org P13): CHECKED — the restore has happened either
+  // way (in full, or up to the decompression bound), so a refused
+  // TICKET_ARCHIVE_RESTORE row is carried in the answer (`auditError`) and
+  // logged, never a silent success (the purge's rule).
+  let auditError: string | null = null;
   try {
-    await sb.from("audit_logs").insert({
+    const { error: auditErr } = await sb.from("audit_logs").insert({
       action: "TICKET_ARCHIVE_RESTORE",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
-      details: { restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors: errors.slice(0, 8) },
+      details: { restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors: errors.slice(0, 8), ...(aborted ? { aborted, stoppedPartWay: true } : {}) },
     });
-  } catch { /* best-effort */ }
+    if (auditErr) auditError = auditErr.message || "audit insert refused";
+  } catch (e) {
+    auditError = (e as Error).message || String(e);
+  }
+  if (auditError) console.error("[admin/ticket-shed/restore] the TICKET_ARCHIVE_RESTORE audit row was not written", auditError);
 
-  return NextResponse.json({ ok: true, restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors });
+  if (aborted) {
+    return NextResponse.json({
+      error: aborted, restored, filesUploaded, commentRows,
+      ...(auditError ? { auditError: `the restore stopped part way after putting back ${restored} ticket(s) and uploading ${filesUploaded} file(s), and its TICKET_ARCHIVE_RESTORE audit row was not written: ${auditError}` } : {}),
+    }, { status: 413 });
+  }
+
+  return NextResponse.json({
+    ok: true, restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors,
+    ...(auditError ? { auditError: `the restore put back ${restored} ticket(s) but its TICKET_ARCHIVE_RESTORE audit row was not written: ${auditError}` } : {}),
+  });
 }

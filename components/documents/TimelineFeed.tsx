@@ -20,6 +20,7 @@ import {
   AlertOctagon, Check, Flag, Split, Merge, Hash, Repeat2, Undo2, Wrench,
 } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
+import { auditActorNote, AUDIT_TRAIL_UNSEEN_NOTE } from "@/lib/auditActions";
 
 interface TimelineFeedProps {
   events: TimelineEvent[];
@@ -42,26 +43,40 @@ function isReversible(event: TimelineEvent): boolean {
   return event.kind === "audit" && REVERSIBLE_ACTIONS.has(event.action);
 }
 
+/** ALOG-16 (admin-and-org P13, 20261219): both consumers' feeds are built
+ *  from audit rows the database filters per reader, so the feed says, in one
+ *  neutral line and with no count, that entries the reader may not see are
+ *  not listed. */
+function UnseenNote() {
+  return <p className="mb-2 text-[11px] text-[var(--color-text-muted)]" data-testid="audit-trail-unseen-note">{AUDIT_TRAIL_UNSEEN_NOTE}</p>;
+}
+
 export default function TimelineFeed({ events, showScope = true, emptyMessage = "No history yet.", onReverseRequest }: TimelineFeedProps) {
   if (events.length === 0) {
     return (
-      <div className="text-xs text-[var(--color-text-muted)] py-8 text-center border border-dashed border-[var(--color-border)] rounded-xl">
-        {emptyMessage}
-      </div>
+      <>
+        <UnseenNote />
+        <div className="text-xs text-[var(--color-text-muted)] py-8 text-center border border-dashed border-[var(--color-border)] rounded-xl">
+          {emptyMessage}
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="relative">
-      {/* Left rail */}
-      <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-slate-200" />
+    <>
+      <UnseenNote />
+      <div className="relative">
+        {/* Left rail */}
+        <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-slate-200" />
 
-      <div className="space-y-3">
-        {events.map((e) => (
-          <TimelineRow key={e.id} event={e} showScope={showScope} onReverseRequest={onReverseRequest} />
-        ))}
+        <div className="space-y-3">
+          {events.map((e) => (
+            <TimelineRow key={e.id} event={e} showScope={showScope} onReverseRequest={onReverseRequest} />
+          ))}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -150,6 +165,12 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
                 <>
                   <span className="text-slate-300">·</span>
                   <span>{event.userName || event.userEmail}</span>
+                  {/* ALOG-7 (P13): an audit row's identity says whose word it is. */}
+                  {event.actorKind !== undefined && (
+                    <span className={`text-[10px] ${event.actorKind ? "text-[var(--color-text-faint)]" : "text-amber-700"}`} title="ALOG-7: whose word the identity on this row is">
+                      ({auditActorNote(event.actorKind)})
+                    </span>
+                  )}
                 </>
               )}
               <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
