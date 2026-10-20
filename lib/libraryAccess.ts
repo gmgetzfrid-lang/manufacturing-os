@@ -20,6 +20,18 @@
 //     effectiveLibraryAclFromRow too — one library check on both pages and
 //     at every door that reads a document's content for someone.
 //
+// I-31 (DEC-90 R6; DACL-10 criterion 1's database half): migration 20261228
+// writes each legacy library's lists into libraries.acl as EXACTLY the rung
+// legacyLibraryAcl returns for it (same roles, same order, same visibility,
+// discover / read / download), so after that paste the ACL says something on
+// every such row and effectiveLibraryAcl returns it — the same object — with
+// no change to anyone's answer. legacyLibraryAcl stays as the FALLBACK
+// (DEC-90's I-31 ruling (2)): before the paste it decides every legacy
+// library, after it none, and it still binds a library whose ACL is later
+// saved with nothing in it while its lists restrict. Its deletion (and the
+// documents home card's move to the ACL) is the integrator's, once the
+// 20261228 paste-back reads 0 such libraries (DEC-31).
+//
 // DACL-9: the library page evaluated a document's chain from the folders the
 // browser happened to receive. RLS hides a private folder the reader has no
 // grant on, so its ACL silently dropped out of every chain below it and a
@@ -89,6 +101,38 @@ export function legacyLibraryAcl(lib: LibraryAccessFields): AccessControl | unde
     visibility,
     rules: roles.map((r) => ({ effect: "allow" as const, subject: { type: "role" as const, id: r }, actions: ["discover", "read", "download"] as PermissionAction[] })),
   } as AccessControl;
+}
+
+/** The actions the library wizard grants its upload roles
+ *  (LibraryWizard handleSubmit) — one allow rule per role, exactly these. */
+const WIZARD_UPLOAD_ACTIONS: readonly PermissionAction[] = ["upload", "createFolder", "editMetadata", "write", "download", "read", "discover"];
+
+/** ALOG-13 (I-31): the roles the library wizard's upload picker opens with
+ *  on an edit. The wizard no longer writes libraries.write_access (nothing
+ *  reads it for a library whose ACL the wizard writes), so the picker is
+ *  seeded from what the wizard DID write: the role subjects of the ACL's
+ *  allow rules carrying exactly the wizard's upload actions, with no expiry
+ *  (a drawer-made rule — another action set, or an expiry — is not the
+ *  picker's and is never re-emitted as one, which would widen it). A library
+ *  whose ACL carries no such rule — a legacy library, a Save-As library born
+ *  with no ACL — keeps today's seed, its write_access column (undefined when
+ *  that is unset, so the caller's default applies, as before). For every
+ *  library the wizard saved before this change the two are the same list in
+ *  the same order (the wizard wrote write_access and these rules from one
+ *  array). */
+export function wizardUploadRolesSeed(lib: { acl?: AccessControl | null; writeAccess?: Role[] | null } | null | undefined): Role[] | undefined {
+  if (!lib) return undefined;
+  const rules = Array.isArray(lib.acl?.rules) ? lib.acl!.rules : [];
+  const fromAcl: Role[] = [];
+  for (const r of rules) {
+    if (!r || r.effect !== "allow" || r.subject?.type !== "role" || typeof r.subject.id !== "string") continue;
+    if (r.expiresAt != null) continue;
+    const acts = Array.isArray(r.actions) ? r.actions : [];
+    const exact = acts.length === WIZARD_UPLOAD_ACTIONS.length && WIZARD_UPLOAD_ACTIONS.every((a) => acts.includes(a));
+    if (exact && !fromAcl.includes(r.subject.id as Role)) fromAcl.push(r.subject.id as Role);
+  }
+  if (fromAcl.length > 0) return fromAcl;
+  return lib.writeAccess ?? undefined;
 }
 
 /** The library rung the explorer evaluates under (see the header). */

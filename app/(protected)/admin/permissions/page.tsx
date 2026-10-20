@@ -10,10 +10,22 @@
 //      can_manage_node).
 //   3. Detailed role tree (live holders, situational authority, known gaps).
 //
-// The old read/write/admin role matrix is GONE: it wrote columns
-// (libraries.read_access/write_access/admin_access) that no policy, trigger,
-// or query ever read — a decorative permission system is worse than none.
-// Confirmed safe to remove: no org data depended on it.
+// The library role lists (libraries.read_access / visible_to / write_access
+// / admin_access) are NOT the access model — the ACL above is — but they are
+// still read, so say exactly where (ALOG-13; DEC-90 R1 / R6):
+//   · read_access / visible_to decide which library cards the documents home
+//     shows (lib/libraryAccess libraryReadsByRole); controllers see all;
+//   · all four are the library rung's FALLBACK for a legacy library whose ACL
+//     says nothing while read_access is restricted (lib/libraryAccess
+//     legacyLibraryAcl — the library page, the AI seam and the bytes door).
+//     Migration 20261228 writes those lists into each such library's ACL,
+//     after which no library takes the fallback.
+// The library wizard writes the ACL (its view, upload and admin roles are
+// rules) together with read_access / visible_to; it no longer writes
+// write_access / admin_access, and neither does the Save-As createLibrary.
+// No policy or trigger decides access by the lists; the library
+// sensitive-column guard only refuses a change to them from someone without
+// authority.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {

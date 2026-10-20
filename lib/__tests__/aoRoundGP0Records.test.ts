@@ -30,12 +30,11 @@
 // NOT holding at HEAD (the records stay OPEN), each an `it.fails` tripwire
 // that fails the suite the day the fix makes it hold, so the owner flips it
 // to `it`:
-//   ALOG-13 done-when 1  the permissions console still says the legacy
-//                        read/write/admin matrix is GONE while a library
-//                        write still names write_access / admin_access. The
-//                        write side is a census over app/, lib/, hooks/,
-//                        components/ and types/ (today: the wizard save AND
-//                        createLibrary), not one file. Owner admin-and-org P8.
+//   ALOG-13 done-when 1  (flipped to `it` by intelligence I-31: the console
+//                        no longer says the legacy read/write/admin matrix is
+//                        GONE while a library write still names
+//                        read_access — the write side is a census over app/,
+//                        lib/, hooks/, components/ and types/.)
 //   revoke_member        its grant strip does not stamp updated_at, so the
 //                        policy route's compare-and-set cannot see it (the
 //                        proposed finding in ALOG-12's record). Owner
@@ -333,7 +332,7 @@ describe("ORG-3 — access_requests is org-scoped, service-role-written, and the
   });
 });
 
-describe("ALOG-13 — NOT holding at HEAD (owner admin-and-org P8)", () => {
+describe("ALOG-13 — done-when 1 holds since intelligence I-31 (was: NOT holding at HEAD, owner admin-and-org P8)", () => {
   const CONSOLE = "app/(protected)/admin/permissions/page.tsx";
   // A write names the column as an object key: `write_access: …`. The
   // console comment names all three dead columns, read_access included
@@ -368,10 +367,11 @@ describe("ALOG-13 — NOT holding at HEAD (owner admin-and-org P8)", () => {
     expect(sourceFiles()).toContain("lib/libraryCollections.ts");
   });
 
-  // Flips only when the comment goes or EVERY writer stops: today both
-  // app/(protected)/admin/libraries/page.tsx:116 and
-  // lib/libraryCollections.ts:180-181 write the columns.
-  it.fails("done-when 1: the console's 'GONE' comment does not coexist with a library write that still names read_access / write_access / admin_access", () => {
+  // Flipped from it.fails by intelligence I-31 (ALOG-13 done-when 1): the
+  // console comment now says where the lists are still read (the home card,
+  // the legacy rung's fallback) instead of claiming they are GONE; the wizard
+  // save and createLibrary still write read_access / visible_to.
+  it("done-when 1: the console's 'GONE' comment does not coexist with a library write that still names read_access / write_access / admin_access", () => {
     const claimsGone = /read\/write\/admin role matrix is GONE/.test(src(CONSOLE));
     const stillWrites = filesMatching(WRITES).length > 0;
     expect(claimsGone && stillWrites).toBe(false);

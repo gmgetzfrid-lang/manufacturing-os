@@ -121,7 +121,10 @@ export default function LibraryAdminPage() {
       const dbConfig = {
         name: config.name, type: config.type, description: config.description,
         custom_columns: config.customColumns ?? [],
-        write_access: config.writeAccess ?? [], admin_access: config.adminAccess ?? [],
+        // ALOG-13 (I-31): write_access / admin_access are no longer written —
+        // the wizard's upload and admin roles are ACL rules (mergedAcl). An
+        // edited library keeps the values it had; nothing reads them for a
+        // library whose ACL says something (lib/libraryAccess legacyLibraryAcl).
         read_access: config.readAccess ?? "ALL", visible_to: config.visibleTo ?? [],
         folder_security: config.folderSecurity, default_new_visibility: config.defaultNewVisibility,
         default_new_acl: config.defaultNewAcl ?? null, acl: mergedAcl,

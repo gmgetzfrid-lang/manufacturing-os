@@ -82,7 +82,7 @@ import { notifyLibraryDocsAdded, firstNoticeTarget } from "@/lib/libraryNotify";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
-import { canWithAclChain, canPublishOnLibrary, canPublishViaIndex, type Principal } from "@/lib/permissions";
+import { canWithAclChain, canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal, type Principal } from "@/lib/permissions";
 import { effectiveLibraryAcl, explorerDocReadable, explorerFolderVisible, explorerLibraryVisible, LIBRARY_PAGE_COLUMNS, libraryConfigFromRow } from "@/lib/libraryAccess";
 import { getMyTeamIds } from "@/lib/teams";
 import {
@@ -1748,6 +1748,12 @@ export default function LibraryExplorerPage() {
   // raw ACL fallback. The button and the mutator can no longer disagree.
   const canPublish = useMemo(() => {
     if (!principal) return false;
+    // I-31: controllers first, as the mutator (resolveCanControlLibrary) and
+    // the database (user_can_publish_on_library) decide. canPublishViaIndex
+    // has no controller short-circuit, so a library index that grants Admin /
+    // DocCtrl nothing — what 20261228 (and the nightly rebuild after it)
+    // writes for a legacy library — hid Publish from a controller here.
+    if (isControllerPrincipal(principal)) return true;
     const viaIndex = canPublishViaIndex(library?.aclIndex ?? null, principal);
     if (viaIndex !== null) return viaIndex;
     return canPublishOnLibrary({ principal, libraryAcl: library?.acl });
