@@ -231,6 +231,12 @@ const siteCodeTaken = (e: { message?: string } | null | undefined) =>
 type PgErr = { code?: string; message?: string } | null | undefined;
 const missingColumn = (e: PgErr) =>
   !!e && (e.code === "42703" || e.code === "PGRST204" || /column [\w."]+ does not exist|could not find the .* column/i.test(e.message ?? ""));
+/** A pre-migration database: the TABLE is missing (42P01 / PGRST205) —
+ *  never a missing column. */
+const missingTable = (e: PgErr) =>
+  !!e && (e.code === "42P01" || e.code === "PGRST205"
+    || /relation "?[\w.]+"? does not exist/i.test(e.message ?? "")
+    || /could not find the table/i.test(e.message ?? ""));
 const checkViolation = (e: PgErr) => !!e && e.code === "23514";
 const uniqueViolation = (e: PgErr) => !!e && e.code === "23505";
 
@@ -1567,17 +1573,42 @@ export async function adoptDrawingRelation(admin: SupabaseClient, input: {
   };
 }
 
+/** What the knowledge door's relation write (20261235) came to. */
+export interface KnowledgeRelationOutcome {
+  /** Rows written or refreshed in knowledge_document_assets. */
+  written: number;
+  /** Why the links were not recorded (a database before 20261235, or a
+   *  refused write) — the discovered equipment stands either way. */
+  notRecorded: string | null;
+}
+
+/** The sentence a database before 20261235 gets (GAP-307 acceptance 3). */
+export const KNOWLEDGE_RELATION_NEEDS_MIGRATION =
+  "The equipment was discovered; which sheets of the upload carry it is recorded once migration 20261235 (knowledge_document_assets) is applied — discover again from the upload after it to record the links.";
+
 /** GAP-307 — the knowledge door: a P&ID uploaded straight into a knowledge
  *  library (no controlled document) builds the registry. A person names the
  *  tags (from the coverage report's sheet-only list); each becomes a
  *  discovered asset with door 'knowledge' provenance. There is no controlled
  *  document, so there is no unit decode: the asset is created UNIT-LESS and
- *  reported (assetCategorize's discipline — never guessed). */
+ *  reported (assetCategorize's discipline — never guessed).
+ *
+ *  GAP-307 acceptance 3 (I-26): each named tag — discovered now or already in
+ *  the registry — is then related to the upload in its own relation,
+ *  knowledge_document_assets (20261235): the sheet and pages it was read on,
+ *  and document_assets' provenance (a machine reading; the model that
+ *  transcribed the page; the revision the upload carried). Before 20261235
+ *  (42P01 / PGRST205) the discovery is exactly today's and says the links
+ *  need that file; a refused write is said, never thrown — the discovered
+ *  equipment stands. */
 export async function discoverFromKnowledge(admin: SupabaseClient, input: {
   orgId: string; userId: string; knowledgeDocumentId: string; tags: string[];
-}): Promise<{ created: string[]; existing: string[]; held: string[]; failed: Array<{ tag: string; reason: string }>; unitless: number; auditError?: string }> {
+}): Promise<{ created: string[]; existing: string[]; held: string[]; failed: Array<{ tag: string; reason: string }>; unitless: number; relations: KnowledgeRelationOutcome; auditError?: string }> {
   const { orgId, userId, knowledgeDocumentId } = input;
-  const out = { created: [] as string[], existing: [] as string[], held: [] as string[], failed: [] as Array<{ tag: string; reason: string }>, unitless: 0 };
+  const out = {
+    created: [] as string[], existing: [] as string[], held: [] as string[], failed: [] as Array<{ tag: string; reason: string }>, unitless: 0,
+    relations: { written: 0, notRecorded: null } as KnowledgeRelationOutcome,
+  };
   const { data: kdoc } = await admin.from("knowledge_documents").select("id, org_id, source_document_id, source_rev")
     .eq("id", knowledgeDocumentId).eq("org_id", orgId).maybeSingle();
   if (!kdoc) throw new Error("No such knowledge document in this workspace.");
@@ -1586,23 +1617,32 @@ export async function discoverFromKnowledge(admin: SupabaseClient, input: {
   if (wantedTags.length === 0) return out;
   // Only tags this document's own index carries — a person names what the
   // sheet says, never a free-typed tag through this door.
-  const ents = await readWindows<{ tag: string; page: number }>(() => admin.from("knowledge_page_entities")
-    .select("id, tag, page").eq("document_id", knowledgeDocumentId).in("kind", ["equipment"])
+  const ents = await readWindows<{ tag: string; page: number; kind?: string; raw?: string | null }>(() => admin.from("knowledge_page_entities")
+    .select("id, tag, page, kind, raw").eq("document_id", knowledgeDocumentId).in("kind", ["equipment", "self"])
     .order("id", { ascending: true }) as unknown as Builder, ENTITY_CEILING);
   const pagesByTag = new Map<string, Set<number>>();
+  // GAP-301: the title block of each page — the sheet address the relation records.
+  const selfByPage = new Map<number, Array<{ tag: string; raw?: string | null }>>();
   for (const e of ents.rows) {
+    if (e.kind === "self") {
+      const p = Number(e.page);
+      if (Number.isFinite(p)) (selfByPage.get(p) ?? selfByPage.set(p, []).get(p)!).push({ tag: String(e.tag), raw: e.raw ?? null });
+      continue;
+    }
     const t = normalizeTag(String(e.tag));
     (pagesByTag.get(t) ?? pagesByTag.set(t, new Set()).get(t)!).add(Number(e.page));
   }
   const book = await loadCodebookAdmin(admin, orgId);
   const typeIdByLabel = await ensureAssetTypes(admin, orgId, book, wantedTags.map((tag) => ({ tag })));
+  /** Every named tag that reached an asset (created now, or already there). */
+  const toRelate: Array<{ assetId: string; tag: string; pages: Set<number> }> = [];
   for (const tag of wantedTags) {
     const pages = pagesByTag.get(tag);
     if (!pages) { out.failed.push({ tag, reason: "This document's index does not carry the tag." }); continue; }
     const { data: hit } = await admin.from("assets").select("id").eq("org_id", orgId).eq("tag_normalized", assetNorm(tag)).maybeSingle();
-    if (hit) { out.existing.push(tag); continue; }
+    if (hit) { out.existing.push(tag); toRelate.push({ assetId: String((hit as { id: string }).id), tag, pages }); continue; }
     const t = typeForTag(tag, book);
-    const { error } = await admin.from("assets").insert({
+    const { data: made, error } = await admin.from("assets").insert({
       org_id: orgId, tag, tag_normalized: assetNorm(tag),
       type_id: t ? typeIdByLabel.get(t.label) ?? null : null,
       description: null, unit_code: null, code: null, origin: "drawing",
@@ -1610,22 +1650,84 @@ export async function discoverFromKnowledge(admin: SupabaseClient, input: {
       created_by: userId,
     }).select("id").single();
     if (error) {
-      if (uniqueViolation(error)) { out.existing.push(tag); continue; }
+      if (uniqueViolation(error)) {
+        out.existing.push(tag);
+        const { data: raced } = await admin.from("assets").select("id").eq("org_id", orgId).eq("tag_normalized", assetNorm(tag)).maybeSingle();
+        if (raced) toRelate.push({ assetId: String((raced as { id: string }).id), tag, pages });
+        continue;
+      }
       out.failed.push({ tag, reason: error.message });
       continue;
     }
+    if (made) toRelate.push({ assetId: String((made as { id: string }).id), tag, pages });
     out.created.push(tag);
     out.unitless++;
     if (!t) out.held.push(tag); // created untyped: the codebook does not know its prefix — teach it
   }
+  // GAP-307 acceptance 3: the upload's own relation (20261235).
+  out.relations = await relateKnowledgeUpload(admin, { orgId, knowledgeDocumentId, sourceRev: (kdoc.source_rev as string | null) ?? null }, toRelate, selfByPage);
   // Checked: discovery created registry assets — a missing audit row is
   // said to the caller, never swallowed (GAP-307 / GAP-303).
   const { error: auditErr } = await admin.from("audit_logs").insert({
     action: "EQUIPMENT_BRIDGE_DISCOVERED", resource_type: "knowledge_document", resource_id: knowledgeDocumentId, org_id: orgId, user_id: userId,
-    details: { door: "knowledge", created: out.created, existing: out.existing, untyped: out.held, failed: out.failed, unitless: out.unitless },
+    details: {
+      door: "knowledge", created: out.created, existing: out.existing, untyped: out.held, failed: out.failed, unitless: out.unitless,
+      relationsWritten: out.relations.written, ...(out.relations.notRecorded ? { relationNotRecorded: out.relations.notRecorded } : {}),
+    },
   });
   if (auditErr) return { ...out, auditError: `The equipment was discovered, but the audit record could not be written: ${auditErr.message}` };
   return out;
+}
+
+/** GAP-307 acceptance 3 — write the knowledge door's relation rows: one per
+ *  (upload, asset), with the sheet address of the pages the tag was read on
+ *  (GAP-301), a machine's assertion, the model that transcribed any of those
+ *  pages (GOV-9; "unknown" when that record could not be read — never taken
+ *  as the text layer) and the revision the upload carried. Service role
+ *  only (no signed-in writer, 20261235). Never throws: a missing table is
+ *  today's path, said; a refused write is said. */
+async function relateKnowledgeUpload(
+  admin: SupabaseClient,
+  ctx: { orgId: string; knowledgeDocumentId: string; sourceRev: string | null },
+  items: ReadonlyArray<{ assetId: string; tag: string; pages: ReadonlySet<number> }>,
+  selfByPage: ReadonlyMap<number, ReadonlyArray<{ tag: string; raw?: string | null }>>,
+): Promise<KnowledgeRelationOutcome> {
+  if (items.length === 0) return { written: 0, notRecorded: null };
+  // Which pages an AI model transcribed (20261122) — a missing column means
+  // nothing recorded; any other failure fails toward the warning.
+  const aiPages = new Map<number, string | null>();
+  let aiUnknown = false;
+  try {
+    const v = await readWindows<{ page: number; source_model: string | null }>(() => admin
+      .from("knowledge_chunks").select("id, page, source_model")
+      .eq("document_id", ctx.knowledgeDocumentId).eq("source", "vision")
+      .order("id", { ascending: true }) as unknown as Builder, ENTITY_CEILING);
+    if (v.error && !missingColumn(v.error)) aiUnknown = true;
+    for (const c of v.rows) aiPages.set(Number(c.page), c.source_model ?? null);
+  } catch { aiUnknown = true; }
+  const rows = items.map((it) => {
+    const pages = [...it.pages].filter((p) => Number.isFinite(p)).sort((a, b) => a - b);
+    const sheets = pages.map((p) => sheetAddressForPage(p, selfByPage.get(p) ?? [], aiUnknown || aiPages.has(p)));
+    const model = aiUnknown ? "unknown" : (pages.map((p) => aiPages.get(p)).find((m) => m !== undefined) ?? null);
+    return {
+      org_id: ctx.orgId, knowledge_document_id: ctx.knowledgeDocumentId, asset_id: it.assetId,
+      tag_text: it.tag, source: "drawing", sheet_label: relationSheetLabel(sheets), pages,
+      asserted_by: "machine", asserted_by_user: null,
+      model: model === null && pages.some((p) => aiPages.has(p)) ? "unknown" : model,
+      source_revision: ctx.sourceRev, source_version_id: null,
+    };
+  });
+  try {
+    const { data, error } = await admin.from("knowledge_document_assets")
+      .upsert(rows, { onConflict: "knowledge_document_id,asset_id" }).select("id");
+    if (error) {
+      if (missingTable(error)) return { written: 0, notRecorded: KNOWLEDGE_RELATION_NEEDS_MIGRATION };
+      return { written: 0, notRecorded: `The equipment was discovered, but which sheets of the upload carry it could not be recorded: ${error.message ?? "the write was refused"}.` };
+    }
+    return { written: ((data as unknown[] | null) ?? []).length, notRecorded: null };
+  } catch (e) {
+    return { written: 0, notRecorded: `The equipment was discovered, but which sheets of the upload carry it could not be recorded: ${(e as Error)?.message ?? String(e)}.` };
+  }
 }
 
 /** Find-or-create asset_types matching the codebook equipment-type labels

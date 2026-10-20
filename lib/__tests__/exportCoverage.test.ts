@@ -87,7 +87,14 @@ const excluded = new Set<string>(Object.keys(EXPORT_EXCLUDED_TABLES));
  *  AO-P4's in the 2026-10-07 wave). The integrator writes the decision and
  *  removes the table from here in the same merge — the test after the gap
  *  check fails once both say it, so the entry cannot outlive its merge. */
-const DECISION_AT_MERGE: Record<string, string> = {};
+const DECISION_AT_MERGE: Record<string, string> = {
+  // intelligence Round G I-26 (GAP-307 acceptance 3). Proposed decision: EXPORT it
+  // (ORG_SCOPED_TABLES, beside document_assets) and restore it with the service
+  // role — the relation carries provenance (asserted_by, model, revision), and
+  // GAP-303 acceptance 4 holds that provenance survives export and restore. Its
+  // parents: knowledge_documents (knowledge_document_id) and assets (asset_id).
+  knowledge_document_assets: "a knowledge upload's document↔equipment relation with its provenance — export (proposed), restored after knowledge_documents and assets",
+};
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
 // not in the pattern — file_key / template_file_key / builtin_key are storage

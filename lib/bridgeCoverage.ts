@@ -43,6 +43,18 @@ export interface CoverageRelation {
 export interface CoverageDocument {
   id: string; document_number: string | null; title: string | null; library_id: string | null; unit_code: string | null;
 }
+/** GAP-307 acceptance 3 (20261235): a knowledge upload's own relation row. */
+export interface CoverageKnowledgeRelation {
+  knowledge_document_id: string;
+  asset_id: string;
+  /** The upload's name, as its copy row reads. */
+  name: string;
+  sheet_label: string | null;
+  pages: number[] | null;
+  /** The AI model that transcribed a page it was read on (GOV-9); null: the
+   *  PDF's own text layer. */
+  model?: string | null;
+}
 export interface CoverageSheetTag {
   knowledgeDocumentId: string;
   /** The controlled document the copy mirrors; null for a knowledge upload. */
@@ -57,6 +69,9 @@ export interface CoverageInput {
   relations: CoverageRelation[];
   documents: CoverageDocument[];
   sheetTags: CoverageSheetTag[];
+  /** GAP-307 acceptance 3: the knowledge uploads' relation (20261235);
+   *  absent or empty before that file. */
+  knowledgeRelations?: CoverageKnowledgeRelation[];
   units: Array<{ code: string; label: string }>;
   unitCode?: string | null;
   notes?: string[];
@@ -115,6 +130,18 @@ export function buildCoverage(input: CoverageInput): CoverageReport {
       sheet: r.sheet_label, aiRead: !!r.model, pages: [], via: "relation", door: "controlled", libraryId: d.library_id,
     });
   }
+  // GAP-307 acceptance 3: a knowledge upload's link is a relation of its
+  // own — read as one (via 'relation', door 'knowledge'), never only as the
+  // extracted working list. Its extracted rows below fold into it.
+  const knowledgeLinked = new Set<string>(); // `${asset}:${kdoc}`
+  for (const r of input.knowledgeRelations ?? []) {
+    knowledgeLinked.add(`${r.asset_id}:${r.knowledge_document_id}`);
+    push(r.asset_id, {
+      documentId: null, knowledgeDocumentId: r.knowledge_document_id, name: r.name,
+      sheet: r.sheet_label, aiRead: !!r.model, pages: [...(r.pages ?? [])].sort((a, b) => a - b),
+      via: "relation", door: "knowledge", libraryId: null,
+    });
+  }
   const sheetOnly = new Map<string, { tag: string; where: CoverageWhere[]; units: Set<string> }>();
   for (const t of input.sheetTags) {
     const norm = normalizeTag(t.tag);
@@ -128,6 +155,12 @@ export function buildCoverage(input: CoverageInput): CoverageReport {
       libraryId: doc?.library_id ?? null,
     };
     const asset = byKey.get(tagKey(norm));
+    if (asset && !t.documentId && knowledgeLinked.has(`${asset.id}:${t.knowledgeDocumentId}`)) {
+      // the upload's relation already says it: its pages fold into that row
+      const rel = (whereFor.get(asset.id) ?? []).find((x) => x.via === "relation" && x.knowledgeDocumentId === t.knowledgeDocumentId);
+      if (rel) rel.pages = [...new Set([...rel.pages, t.page])].sort((a, b) => a - b);
+      continue;
+    }
     if (asset) { push(asset.id, w); continue; }
     const cur = sheetOnly.get(norm) ?? sheetOnly.set(norm, { tag: norm, where: [], units: new Set() }).get(norm)!;
     const dup = cur.where.find((x) => x.knowledgeDocumentId === w.knowledgeDocumentId);
@@ -185,6 +218,9 @@ export function buildCoverage(input: CoverageInput): CoverageReport {
 
 type PgErr = { code?: string; message?: string } | null;
 const missingColumn = (e: PgErr) => !!e && (e.code === "42703" || e.code === "PGRST204" || /column [\w."]+ does not exist/i.test(e.message ?? ""));
+/** A pre-migration database: the TABLE is missing — never a missing column. */
+const missingTable = (e: PgErr) => !!e && (e.code === "42P01" || e.code === "PGRST205"
+  || /relation "?[\w.]+"? does not exist/i.test(e.message ?? "") || /could not find the table/i.test(e.message ?? ""));
 
 /** Keyset pages over `id` until an empty window or the ceiling. */
 async function pageAll<T extends { id: string }>(
@@ -307,6 +343,32 @@ export async function loadCoverage(admin: SupabaseClient, orgId: string, opts: {
       sheetTags.push({ knowledgeDocumentId: c.id, documentId: c.source_document_id, name: c.name ?? "Untitled", tag: e.tag, page: Number(e.page) });
     }
   }
+  // GAP-307 acceptance 3 (20261235): the knowledge uploads' own relation, for
+  // the uploads that count. Before 20261235 (42P01 / PGRST205) there is none
+  // and the uploads' sheets are listed from their extracted tags, as before;
+  // a read that fails otherwise is said, and the same working list stands.
+  const knowledgeRelations: CoverageKnowledgeRelation[] = [];
+  {
+    const kr = await pageAll<{ id: string; knowledge_document_id: string; asset_id: string; sheet_label: string | null; pages: number[] | null; model: string | null }>((after) => {
+      let q = admin.from("knowledge_document_assets").select("id, knowledge_document_id, asset_id, sheet_label, pages, model")
+        .eq("org_id", orgId).order("id", { ascending: true }).limit(1000);
+      if (after) q = q.gt("id", after);
+      return q;
+    }, COVERAGE_CEILING);
+    if (kr.error && !missingTable(kr.error)) {
+      notes.push(`The knowledge uploads' links could not be read (${kr.error.message ?? "read failed"}) — their sheets are listed from the tags read off them.`);
+    } else if (!kr.error) {
+      truncated ||= kr.truncated;
+      for (const r of kr.rows) {
+        const c = copyById.get(r.knowledge_document_id);
+        if (!c || c.source_document_id) continue; // an upload that counts (DEC-83: org-wide)
+        knowledgeRelations.push({
+          knowledge_document_id: r.knowledge_document_id, asset_id: r.asset_id, name: c.name ?? "Untitled",
+          sheet_label: r.sheet_label ?? null, pages: Array.isArray(r.pages) ? r.pages : null, model: r.model ?? null,
+        });
+      }
+    }
+  }
   if (truncated) notes.push(`The report stopped at ${COVERAGE_CEILING.toLocaleString()} rows of one kind — it is partial; narrow it to one unit.`);
   const unreadable = docIds.length - ids.length;
   if (unreadable > 0) notes.push(`${unreadable} document${unreadable === 1 ? " you cannot read is" : "s you cannot read are"} left out.`);
@@ -319,6 +381,7 @@ export async function loadCoverage(admin: SupabaseClient, orgId: string, opts: {
     })),
     documents,
     sheetTags,
+    knowledgeRelations,
     units: book.units.map((u) => ({ code: u.code, label: u.label })),
     unitCode: opts.unitCode,
     notes,
