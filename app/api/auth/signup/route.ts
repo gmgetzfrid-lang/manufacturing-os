@@ -1,53 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
+import { publicDoorClientIp, publicDoorVerdict, recordPublicDoorAttempt } from "@/lib/publicDoorLimiter";
 
 const TRIAL_DAYS = 60;
 
-// Public, unauthenticated endpoint — cap attempts per source IP per hour so
-// nobody can loop it to enumerate accounts or burn trial orgs. Best-effort:
-// if the attempt table isn't present yet (pre-migration) the check no-ops
-// rather than blocking real signups.
-const SIGNUP_MAX_PER_HOUR = 8;
-
-function clientIp(req: NextRequest): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  return req.headers.get("x-real-ip")?.trim() || "unknown";
-}
-
-/** Returns true when the caller is over the limit and should be turned away. */
-async function signupRateLimited(ip: string): Promise<boolean> {
-  if (ip === "unknown") return false; // don't punish everyone if IP is missing
-  const since = new Date(Date.now() - 3600_000).toISOString();
-  const { count, error } = await supabaseAdmin
-    .from("signup_attempts")
-    .select("id", { count: "exact", head: true })
-    .eq("ip", ip)
-    .gte("created_at", since);
-  if (error) return false; // table absent / transient — fail open
-  return (count ?? 0) >= SIGNUP_MAX_PER_HOUR;
-}
-
-async function recordSignupAttempt(ip: string, email: string | null, outcome: string): Promise<void> {
-  await supabaseAdmin.from("signup_attempts").insert({ ip, email, outcome })
-    .then(() => undefined, () => undefined);
-}
+// Public, unauthenticated endpoint — attempts are capped per source IP per
+// hour so nobody can loop it to enumerate accounts or burn trial orgs. The
+// window is the one /api/auth/request-access draws on too, and what it does
+// when it cannot count (no client address, no table, a failed read) is
+// decided in lib/publicDoorLimiter.ts (ORG-8 / BILL-14, admin-and-org Round G
+// P5): a header-less caller shares one budget, a missing table leaves the door
+// open as before (logged), and any other failed read refuses with a 503.
 
 export async function POST(req: NextRequest) {
-  const ip = clientIp(req);
+  const ip = publicDoorClientIp(req);
   try {
-    if (await signupRateLimited(ip)) {
-      return NextResponse.json(
-        { error: "Too many signup attempts from this network. Please wait a while and try again." },
-        { status: 429 },
-      );
+    const door = await publicDoorVerdict(supabaseAdmin, ip, "signup attempts");
+    if (!door.allowed) {
+      return NextResponse.json({ error: door.error }, { status: door.status });
     }
 
     const { email: rawEmail, password, displayName, companyName } = await req.json();
 
     if (!rawEmail || !password || !displayName || !companyName) {
-      await recordSignupAttempt(ip, null, "error");
+      await recordPublicDoorAttempt(supabaseAdmin, ip, null, "error");
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });
     }
     // One canonical casing for identity (IDENT-3) — otherwise an Azure-cased
@@ -56,12 +33,15 @@ export async function POST(req: NextRequest) {
 
     const trimmedOrgName = companyName.trim();
     if (trimmedOrgName.length < 2) {
+      // ORG-8: a short name is an attempt too — recorded BEFORE the answer,
+      // so short-name probes spend the per-IP window like every other one.
+      await recordPublicDoorAttempt(supabaseAdmin, ip, String(email), "rejected");
       return NextResponse.json({ error: "Organization name is too short." }, { status: 400 });
     }
 
     // Log every well-formed attempt so probing (repeated 409s) counts toward
     // the per-IP window, not just successful signups.
-    await recordSignupAttempt(ip, String(email), "attempt");
+    await recordPublicDoorAttempt(supabaseAdmin, ip, String(email), "attempt");
 
     // 1. Check if org name already exists (case-insensitive)
     const { data: existingOrg } = await supabaseAdmin
@@ -71,8 +51,12 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (existingOrg) {
+      // ORG-8: the name is taken — a real need to say so (the person must
+      // pick another, or ask to join), but the answer repeats the name as
+      // TYPED, never the workspace's stored casing, so a fuzzy guess is not
+      // turned into the exact registered name.
       return NextResponse.json(
-        { error: `An organization named "${(existingOrg as { name: string }).name}" already exists. If you belong to this organization, use "Request Access" instead.` },
+        { error: `An organization named "${trimmedOrgName}" already exists. If you belong to this organization, use "Request Access" instead.` },
         { status: 409 }
       );
     }

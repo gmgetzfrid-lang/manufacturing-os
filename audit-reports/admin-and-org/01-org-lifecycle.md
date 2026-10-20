@@ -579,7 +579,7 @@ users/page.tsx:178 — the entire removal: `const { error } = await supabase.fro
 ## ORG-8 · Request-access has no rate limiter while signup does, and both are distinguishing-response org-name oracles
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/request-access/route.ts:4-24`, `app/api/auth/signup/route.ts:10, 19-29, 53-60`, `supabase/migrations/20261010_signup_rate_limit.sql:9-13`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search for a middleware/edge limiter (none exists). The asymmetry is exactly as described: the endpoint that was hardened is the one that already leaks less.
@@ -606,6 +606,27 @@ request-access/route.ts:19-24 — `if (!org) { return NextResponse.json({ error:
 - [ ] The 404/409/200 responses are collapsed to one neutral acknowledgement, or the org's real name is no longer echoed
 - [ ] The short-org-name rejection in signup records an attempt before returning
 - [ ] The anon INSERT policy on access_requests is removed so PostgREST cannot be used to bypass the route
+
+
+**Resolution (2026-10-20, admin-and-org Round G).** Package P5 ("ORG-8 residual"; the rate limit itself landed under roles-and-permissions `EGRESS-5`), under the integrator's DEC-90 ruling (4): collapse the oracle — industry practice for an unauthenticated door.
+
+**Reproduced on `7f92269`.** `app/api/auth/request-access/route.ts:255-260` answered 404 "No organization named …", `:284-289` 409 "You already have a pending request to join "<registered name>"", `:311` 200 `{ ok: true, orgName: orgRealName }`; `app/api/auth/signup/route.ts:58-60` returned the short-name 400 before the attempt was recorded (`:64`); signup's 409 echoed the stored casing (`:75`). Done-when 1 and 4 already held (below).
+
+**What landed.**
+- **One neutral answer.** "No such workspace", "a request already waiting" and "request recorded" all answer **200 `{ ok: true, message: REQUEST_ACCESS_ACKNOWLEDGEMENT }`** (`route.ts:249`, `:275`, `:298`; the sentence in `lib/publicDoorLimiter.ts:67`): "Thanks — if a workspace by that name uses this service, its administrators have been told about your request, and you'll get an email when they answer. If you don't hear back, check the workspace's exact name with your administrator." It names no workspace. The real request is still recorded with the stored name, and the Admins are told (PROD-15), exactly as before; a pending duplicate still stacks nothing. Only answers that say nothing about the name differ: missing fields (400), the window (429 / 503), and a fault while recording (500, generic — the database's words are no longer relayed).
+- **The page says what holds either way.** `app/signup/page.tsx` "Request Sent" now reads "If a workspace named "<typed name>" uses this service, its administrators have been told…" — it used to claim an admin received the request, which the server can no longer say (IDENT-6's "the success screen must not lie" kept). A 400 / 429 / 503 / 500 still shows its error, as before.
+- **Signup's short name spends an attempt** (`signup/route.ts:38`, outcome `rejected`, before the 400). **Signup's "name taken" repeats the name as typed**, never the stored casing (`:59`; the 23505 branch already did).
+- Both doors share `lib/publicDoorLimiter.ts` (BILL-14): the same per-IP window, its branches deliberate.
+
+**Tests.** `lib/__tests__/aoRoundGP5PublicDoors.test.ts` "ORG-8 — …" (the three outcomes give byte-identical bodies with no workspace name, the real request still written; the window spent before the lookup; 429 / 503 / the shared unknown bucket; a recording fault names nothing; the page copy) and "ORG-8 — signup's own answers" (the short name records `rejected` first; the typed name in the 409; the window). `lib/__tests__/requestAccessRoute.test.ts` and `lib/__tests__/producersRoutes.test.ts` updated where they pinned the old 404 / 409 / `orgName` answers.
+
+**Done-when.**
+- [x] /api/auth/request-access records attempts and enforces the same per-IP window as /api/auth/signup ✓ — by EGRESS-5 (`signup_attempts`, the shared bucket, already on `7f92269`: `route.ts:27-42`, `:227-246`), now through the one shared limiter with the same branches (BILL-14).
+- [x] The 404/409/200 responses are collapsed to one neutral acknowledgement ✓ — and the real name is no longer echoed anywhere on the door.
+- [x] The short-org-name rejection in signup records an attempt before returning ✓.
+- [x] The anon INSERT policy on access_requests is removed so PostgREST cannot be used to bypass the route ✓ — by `20261023` §3 (EGRESS-5, **LIVE**, MIGRATION-PASTE-ORDER.md row 25); the route writes as the service role. `20261238` (P5, **PASTE pending**) re-asserts the drop (a no-op where 20261023 ran) and probes "no INSERT / ALL policy on access_requests".
+
+**Scope / residual.** Signup must still say a name is taken (the person picks another or asks to join), so that one answer remains, bounded by the shared window and no longer handing out the registered casing. The door's response time still differs between a name that exists (insert + notice) and one that does not — a timing side channel, opened as `ORG-24` (LOW). A fault while recording (500) is reachable only when the workspace exists; an attacker cannot cause one.
 
 ---
 
@@ -666,6 +687,14 @@ On PostgreSQL 16, before either paste, an Admin's member session updated its own
 - [ ] The three enforcement points are wired up, or the dead ones deleted — **not done here**: A&O P5 (`BILL-10`, "ORG-9 (enforcement half)").
 
 **Scope / residual.** OPEN for Done-when 3 (A&O P5). The chain reaction's other columns on orgs (`ticket_prefix` / `ticket_record_code` / `ticket_number_pad`, `name`) stay Admin-writable, by design. They are the settings page's and the restore's, and are not billing state.
+
+
+**Partial (2026-10-20, admin-and-org Round G).** Package P5 — Done-when 3, the enforcement half (`BILL-10`, whose record carries the detail and the tests). Status stays OPEN.
+- (a) `SubscriptionGate`: wired — no constant; it asks `GET /api/subscription/access`, which answers from the server's one switch (`SUBSCRIPTION_ENFORCE`, default off, DEC-18) with the same check the billable routes refuse on. The header that claimed enforcement that did not exist is rewritten.
+- (b) `assertOrgHasAccess`: wired — `create-user` (SURF-15), `/api/storage/upload-url`, `/api/storage/multipart` (create), through `enforceOrgAccess` (off: logged only; on: 402 with a sentence). The contractor intake door (`app/api/intake/upload/**`) is not wired — held by intelligence I-26 in parallel; owner in `BILL-10`'s Partial.
+- (c) `org_has_active_subscription` (20260713): neither wired nor deleted. The integrator's ruling allows the RLS limb only if it cannot regress an active workspace, and it could (the database cannot see the server's switch; a missed webhook would refuse an active workspace's writes), so it is not wired; its own comment says "NOT wired to any blocking policy yet", which is true, so there is no false claim to delete. Done-when 3 as written is therefore not met for (c): the integrator rules whether (c) is dropped (one `DROP FUNCTION` in a later migration; no caller) or kept as documented scaffolding.
+
+**Done-when 3.** [ ] Not met as written — (a) and (b) wired except the intake door; (c) neither wired nor deleted (above). Owners: the intake-door limb as in `BILL-10`; (c) the integrator.
 
 ---
 
@@ -775,7 +804,7 @@ ThemeProvider.tsx:183 — `const applyOrgPalette = useCallback((p: Palette | nul
 ## ORG-12 · prune_signup_attempts() has no caller — the housekeeping the migration describes does not exist, and no cron slot is available to add one
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261010_signup_rate_limit.sql:34-40`, `app/api/auth/signup/route.ts:31-34`, `app/api/cron/maintenance/route.ts:286-291`, `vercel.json`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The no-caller claim is true. The severity is not: the row is tiny, signup_attempts is service-role-only with no policies, the hot query is index-covered (signup_attempts_ip_time_idx), and nothing breaks — this is unbounded growth of a housekeeping table. The secondary claim 'no cron slot is available' is also overstated: /api/cron/maintenance already exists as a daily slot and the RPC could be added inside it without a new vercel.json entry.
@@ -803,6 +832,35 @@ The obvious fix is constrained: a third vercel.json cron entry fails deployment 
 - [ ] The existing maintenance cron route calls `prune_signup_attempts()` (no new vercel.json entry — a third fails deploy per app/api/cron/maintenance/route.ts:286-291)
 - [ ] The retention window in the function matches the window the limiter actually reads, or the comment is corrected
 - [ ] signup_attempts is reviewed against the data-portability export contract given it holds IPs and attempted emails
+
+
+**Resolution (2026-10-20, admin-and-org Round G).** Package P5, under the integrator's DEC-90 ruling (3).
+
+**Reproduced on `7f92269`.** No `rpc("prune_signup_attempts")` anywhere (a repo-wide grep finds only its CREATE, `20261010:37`); the function keeps two days (`:39`) while the doors read one hour (`signup/route.ts:22`); the export contract excluded the table with the reason "rolling rate-limit window with no customer data" (`lib/exportTables.ts:315-316`) — untrue: it holds client IPs and the addresses typed at the doors; `prune_signup_attempts()` was executable by PUBLIC (the default; harmless — SECURITY INVOKER over a table with RLS on and no policy, so an anon call deletes nothing, measured below).
+
+**What landed.**
+- **The cron prunes it** — one step on the existing maintenance route (`app/api/cron/maintenance/route.ts:403`, step 4e; the one hunk P5 adds to that file). 42883 / PGRST202 (20261010 not pasted) → no-op; any other error → `result.errors` and the log; success → `result.signupAttemptsPruned = true` (the function returns no count). No new `vercel.json` entry (still two, pinned).
+- **The retention is stated where it is used.** Two days is kept on purpose: the one-hour window the doors read plus a short tail an operator can read back when a door is abused; with a daily prune a one-hour retention would erase the previous evening's evidence before anyone looked. It is stated in the limiter's header (`lib/publicDoorLimiter.ts`), the cron step, the export reason, and — once pasted — on the function itself.
+- **`supabase/migrations/20261238_ao_roundG_signup_attempts_housekeeping.sql`** (DEC-30 one paste, idempotent, NOT a widening): the function's COMMENT states the two-day retention, why, and its one caller (20261010's own comment is not edited: a written migration is history); `ALTER FUNCTION … SET search_path = public`; EXECUTE revoked from PUBLIC, anon and authenticated and granted to service_role (the house rule for `prune_verify_scans` / `prune_intake_attempts`); a table comment on `signup_attempts`; `DROP POLICY IF EXISTS access_requests_anyone_insert` (ORG-8 done-when 4, re-asserted). The body is not re-created (no CREATE OR REPLACE), so no lineDiff applies; a probe pins `INTERVAL '2 days'`. Counts-only inventory before the transaction; one final SELECT (check, ok, n): nine probes, five inventory counts, one after-count.
+- **The export contract** (`lib/exportTables.ts`, `EXPORT_EXCLUDED_TABLES.signup_attempts`): the reason now says what it holds (client IP and the address typed at the door), that it is not org-scoped, kept two days by the cron, service-role only; never exported, nothing to restore.
+
+**Exercised on a throwaway PostgreSQL 16.13** (initdb in a temp directory, deleted afterwards; roles anon / authenticated / service_role, the 20260819 `access_requests` shape with its anon INSERT policy, 20261010 applied, three seeded rows: 3 days, 5 hours and 10 minutes old):
+- without 20261010 → the paste stops at its first statement with "20261238 needs 20261010 … Nothing was changed" (the anon INSERT policy still present);
+- first paste → all nine probes true; inventory: 3 rows, 1 older than two days, 1 inside the hour, 3 client roles able to EXECUTE (PUBLIC, anon, authenticated), 1 INSERT / ALL policy on access_requests; after-count 3 (nothing deleted);
+- second paste → all nine true; inventory 0 roles able to EXECUTE, 0 INSERT policies (idempotent);
+- after: anon and authenticated `SELECT prune_signup_attempts()` → "permission denied for function"; service_role → prunes the 3-day row (3 → 2); anon INSERT into access_requests → "new row violates row-level security policy";
+- before the paste (a third database): anon's call deleted nothing (3 rows stay); service_role's pruned (3 → 2) — the cron works before and after the paste.
+
+**Tests.** `lib/__tests__/aoRoundGP5PublicDoors.test.ts` "ORG-12 — …" (the cron step and its error handling; no new cron; the two-day retention stated at the limiter and the cron; the export reason) and "20261238 — the DEC-30 one-paste shape" (guard → inventory → BEGIN/COMMIT → one SELECT; counts only; no function / policy / trigger created, no row written, the body probed).
+
+**Done-when.**
+- [x] The existing maintenance cron route calls `prune_signup_attempts()` (no new vercel.json entry) ✓.
+- [x] The retention window in the function matches the window the limiter reads, or the comment is corrected ✓ — the comment is corrected **on the function** by `20261238` (pending its paste) and at every place the code uses the window; the two-day window is kept deliberately (above). 20261010's file is not edited.
+- [x] signup_attempts is reviewed against the data-portability export contract ✓ — excluded, with the reason corrected to what it holds.
+
+**Pending migration:** `supabase/migrations/20261238_ao_roundG_signup_attempts_housekeeping.sql` (PASTE; after 20261010; either order with the P5 deploy). The cron step needs no paste.
+
+**Scope / residual.** None for this finding. Pasting 20261010 itself (row 9, "ASK") is the operator's: until then the doors run without a per-IP window (logged) and the prune is a no-op.
 
 ---
 
@@ -1298,5 +1356,27 @@ Tests: `lib/__tests__/aoRoundGP13Principal.test.ts` — reproduced (the empty re
 **Done when.**
 - Every `lib/permissions.ts` decision answers false for a principal with `isActiveMember === false` before any controller or owner shortcut (an unknown status — no flag — unchanged).
 - Tests: a suspended controller and a suspended owner are refused by each shortcut; an active controller / owner and an unknown-status principal unchanged.
+
+---
+
+<a id="org-24"></a>
+
+## ORG-24 · `/api/auth/request-access` answers a real workspace measurably slower than an unknown name — the neutral acknowledgement still leaks existence by timing
+
+- **Severity:** LOW
+- **Severity rationale:** The author's estimate. ORG-8's oracle is closed in the status code and the body; what remains is a timing difference an attacker must measure through network jitter, bounded by the shared per-IP window (8 attempts an hour per address) and by the per-org notice cap.
+- **Status:** OPEN
+- **Assigned:** — Owner: the integrator, to route (admin-and-org; the file is `app/api/auth/request-access/route.ts`). Opened 2026-10-20 by admin-and-org Round G P5 as the DEC-31 remainder of `ORG-8`.
+- **Verification:** CONFIRMED (by reading, on `7f92269` + P5)
+- **Locations:** `app/api/auth/request-access/route.ts:249` (no workspace → answers at once), `:252-298` (a workspace → a duplicate read, an insert, and `notifyAccessRequest` — the Admin roster, the per-org count, a bell insert and the email queue — all awaited before the same answer)
+- **Related:** `ORG-8` (resolved), `PROD-2`, `PROD-15`
+
+**Mechanism.** Since ORG-8 every outcome returns the same 200 and body, but the existing-workspace path awaits several database round trips (and the notice fan-out) before answering, while the unknown-name path answers after one lookup.
+
+**Failure scenario.** A script times the door for a list of company names; the slow answers mark the names that are workspaces here.
+
+**Done when.**
+- The answer's timing does not depend on whether the workspace exists: the notice runs after the response (`after()` from `next/server`, or the request is queued for the cron), and the no-workspace path does equivalent work or waits a comparable, randomised interval.
+- A test pins that the response is sent before the notice and that the duplicate / recorded / unknown paths do the same awaited work.
 
 ---

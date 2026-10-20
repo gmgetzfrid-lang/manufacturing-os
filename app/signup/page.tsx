@@ -242,7 +242,10 @@ export default function SignupPage() {
                       </svg>
                     </div>
                     <h3 className="text-lg font-bold text-slate-900 mb-2">Request Sent</h3>
-                    <p className="text-slate-500 text-sm">Your organization&rsquo;s admin will receive your request and create your account. You&rsquo;ll get an email with login instructions.</p>
+                    {/* ORG-8: the server answers the same whether or not the
+                        workspace exists, so this screen must not claim an
+                        admin received it — it says what holds either way. */}
+                    <p className="text-slate-500 text-sm">If a workspace named &ldquo;{requestData.orgName.trim()}&rdquo; uses this service, its administrators have been told about your request, and you&rsquo;ll get an email when they answer. If you don&rsquo;t hear back, check the workspace&rsquo;s exact name with your administrator.</p>
                   </div>
                 ) : (
                   <>

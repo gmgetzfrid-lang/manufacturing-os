@@ -7,38 +7,31 @@ import { resolveRoleRecipients } from "@/lib/notify/recipients";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { isMissingFunction } from "@/lib/intakeRateLimit";
 import {
+  publicDoorClientIp, publicDoorVerdict, recordPublicDoorAttempt, REQUEST_ACCESS_ACKNOWLEDGEMENT,
+} from "@/lib/publicDoorLimiter";
+import {
   ACCESS_REQUEST_AUDIENCE, ACCESS_REQUEST_BURST_RESOURCE_TYPE, ACCESS_REQUEST_NOTICES_PER_ORG_HOUR,
   noticeSafeName, wellFormedAddress,
 } from "@/lib/accessRequestOutcome";
 
 // This public, unauthenticated endpoint was the one door in the auth pair with
 // no rate limit — its neighbour /api/auth/signup carries the full
-// signup_attempts throttle. Unthrottled, it is an org-name existence oracle
-// (404 vs 200) and a request-spam vector. Mirror the signup pattern exactly,
-// sharing the same per-IP bucket (EGRESS-5 / DEC-19).
-const REQUEST_ACCESS_MAX_PER_HOUR = 8;
+// signup_attempts throttle. It shares that per-IP bucket (EGRESS-5 / DEC-19),
+// and the window's rules — a header-less caller shares one budget, a missing
+// table leaves the door open as before (logged), any other failed count
+// refuses with a 503 — live in lib/publicDoorLimiter.ts (ORG-8 / BILL-14,
+// admin-and-org Round G P5).
+//
+// ORG-8 (admin-and-org Round G P5): the door is no longer an org-name
+// oracle. "No such workspace", "you already asked" and "request recorded" all
+// get the SAME answer — 200 and REQUEST_ACCESS_ACKNOWLEDGEMENT — which never
+// names a workspace, so neither the status nor the body says whether the name
+// exists or what its registered casing is. Only answers that say nothing
+// about the name differ: missing fields (400), the window (429 / 503), and a
+// server fault while recording (500, without the database's words).
 
-function clientIp(req: NextRequest): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  return req.headers.get("x-real-ip")?.trim() || "unknown";
-}
-
-async function requestAccessRateLimited(ip: string): Promise<boolean> {
-  if (ip === "unknown") return false; // don't punish everyone if IP is missing
-  const since = new Date(Date.now() - 3600_000).toISOString();
-  const { count, error } = await supabaseAdmin
-    .from("signup_attempts")
-    .select("id", { count: "exact", head: true })
-    .eq("ip", ip)
-    .gte("created_at", since);
-  if (error) return false; // table absent / transient — fail open
-  return (count ?? 0) >= REQUEST_ACCESS_MAX_PER_HOUR;
-}
-
-async function recordAttempt(ip: string, email: string | null, outcome: string): Promise<void> {
-  await supabaseAdmin.from("signup_attempts").insert({ ip, email, outcome })
-    .then(() => undefined, () => undefined);
+function acknowledged(): NextResponse {
+  return NextResponse.json({ ok: true, message: REQUEST_ACCESS_ACKNOWLEDGEMENT });
 }
 
 /** The notice's per-org cap: how many requests this org received in the
@@ -139,8 +132,9 @@ async function notifyAccessRequestBurst(orgId: string, orgName: string, recipien
 }
 
 /** PROD-2: a request nobody hears about is a request nobody answers. After
- *  the row is written, every active member of the org holding Admin or
- *  DocCtrl (headline or additive role, lib/notify/recipients.ts) gets a bell
+ *  the row is written, every active member of the org holding Admin
+ *  (headline or additive role, lib/notify/recipients.ts — PROD-15: the people
+ *  who can see the pending list, ACCESS_REQUEST_AUDIENCE) gets a bell
  *  row (access_request_pending, linking to Admin → Users, where the pending
  *  requests are listed) and an email. The row names no actor — the person
  *  at the door has no account; a service-role row (20261160 passes it
@@ -160,8 +154,9 @@ async function notifyAccessRequestBurst(orgId: string, orgName: string, recipien
  *  requests to the org in an hour — or when that count cannot be read — a
  *  request gets neither a bell row nor an email of its own: the pool is
  *  told once that more are waiting (notifyAccessRequestBurst). The per-IP
- *  limiter (fails open, exempts an unknown IP, trusts the first
- *  x-forwarded-for entry) cannot bound this; the per-org count does. */
+ *  limiter (lib/publicDoorLimiter.ts — it trusts the first x-forwarded-for
+ *  entry, so rotating addresses passes it) cannot bound this; the per-org
+ *  count does. */
 async function notifyAccessRequest(input: {
   orgId: string; orgName: string; displayName: string; email: string; requestId: string | null;
 }): Promise<void> {
@@ -222,42 +217,36 @@ async function notifyAccessRequest(input: {
 }
 
 export async function POST(req: NextRequest) {
-  const ip = clientIp(req);
+  const ip = publicDoorClientIp(req);
   try {
-    if (await requestAccessRateLimited(ip)) {
-      return NextResponse.json(
-        { error: "Too many access requests from this network. Please wait a while and try again." },
-        { status: 429 },
-      );
+    const door = await publicDoorVerdict(supabaseAdmin, ip, "access requests");
+    if (!door.allowed) {
+      return NextResponse.json({ error: door.error }, { status: door.status });
     }
 
     const { displayName, email: rawEmail, orgName } = await req.json();
 
     if (!displayName || !rawEmail || !orgName) {
-      await recordAttempt(ip, null, "error");
+      await recordPublicDoorAttempt(supabaseAdmin, ip, null, "error");
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });
     }
     // One canonical casing for identity (IDENT-3).
     const email = normalizeEmail(String(rawEmail));
 
     // Consume one attempt from the per-IP window BEFORE the org lookup, so
-    // repeated 404 org-name probing and 409 duplicate probing both count
-    // against the limit rather than being free.
-    await recordAttempt(ip, email, "request-access");
+    // repeated org-name probing and duplicate probing both count against the
+    // limit rather than being free.
+    await recordPublicDoorAttempt(supabaseAdmin, ip, email, "request-access");
 
     // 1. Find the organization (case-insensitive)
     const { data: org } = await supabaseAdmin
       .from("orgs")
       .select("id, name")
-      .ilike("name", orgName.trim())
+      .ilike("name", String(orgName).trim())
       .maybeSingle();
 
-    if (!org) {
-      return NextResponse.json(
-        { error: `No organization named "${orgName}" was found. Check spelling, or create a new organization if you're the first admin.` },
-        { status: 404 }
-      );
-    }
+    // ORG-8: no such workspace gets the same answer as a recorded request.
+    if (!org) return acknowledged();
 
     const orgId = (org as { id: string; name: string }).id;
     const orgRealName = (org as { id: string; name: string }).name;
@@ -275,18 +264,15 @@ export async function POST(req: NextRequest) {
       .limit(1);
     if (dupCheckError) {
       return NextResponse.json(
-        { error: "Couldn't check for an existing request — please try again." },
+        { error: "Couldn't submit your request — please try again." },
         { status: 500 }
       );
     }
     const existingReq = existingReqs?.[0] ?? null;
 
-    if (existingReq) {
-      return NextResponse.json(
-        { error: `You already have a pending request to join "${orgRealName}". Please wait for an admin to respond.` },
-        { status: 409 }
-      );
-    }
+    // ORG-8: a request already waiting gets the same answer too — nothing is
+    // stacked, nobody is told twice.
+    if (existingReq) return acknowledged();
 
     // 3. Insert request linked to the org
     const { data: inserted, error: insertError } = await supabaseAdmin.from("access_requests").insert({
@@ -299,7 +285,8 @@ export async function POST(req: NextRequest) {
     }).select("id").maybeSingle();
 
     if (insertError) {
-      return NextResponse.json({ error: `Failed to submit request: ${insertError.message}` }, { status: 500 });
+      console.warn(`[request-access] the request was not recorded: ${insertError.message}`);
+      return NextResponse.json({ error: "Couldn't submit your request — please try again." }, { status: 500 });
     }
 
     // 4. Tell the people who can answer it (PROD-2).
@@ -308,9 +295,9 @@ export async function POST(req: NextRequest) {
       requestId: ((inserted as { id?: string } | null)?.id) ?? null,
     });
 
-    return NextResponse.json({ ok: true, orgName: orgRealName });
+    return acknowledged();
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Unexpected server error.";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.warn(`[request-access] unexpected failure: ${err instanceof Error ? err.message : String(err)}`);
+    return NextResponse.json({ error: "Couldn't submit your request — please try again." }, { status: 500 });
   }
 }

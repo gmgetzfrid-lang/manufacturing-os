@@ -26,16 +26,21 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { configuredPublicOrigin } from "@/lib/publicOrigin";
 
-/** The roles told about a NEW request (the request door, PROD-2 dw1): the
- *  org's Admin / DocCtrl pool — DEC-92 item 1, the pool the holds
- *  audience uses; both may grant the membership at /api/admin/create-user
- *  and decline at /api/admin/access-requests. */
-export const ACCESS_REQUEST_AUDIENCE = ["Admin", "DocCtrl"] as const;
+/** The roles told about a NEW request (the request door, PROD-2 dw1).
+ *  PROD-15 (admin-and-org Round G P5, DEC-92 item 1 narrowed under DEC-90):
+ *  the org's Admins — the same people who can see the pending list the
+ *  notice links to (the card on Admin → Users reads hasAnyRole(['Admin']),
+ *  and access_requests_admin_select, 20261023, admits Admin only), because
+ *  membership is the Admin's to grant. It was the Admin / DocCtrl pool, so a
+ *  DocCtrl was told about a request they could not open. The decide routes
+ *  (/api/admin/create-user, /api/admin/access-requests) are unchanged.
+ *  Held equal to the list's set by lib/__tests__/aoRoundGP5PublicDoors.test.ts. */
+export const ACCESS_REQUEST_AUDIENCE = ["Admin"] as const;
 
 // ── What a stranger at the public door may put into a notice ─────────────
 //
 // The request door is public and unauthenticated; its notice fans one request
-// out to every Admin / DocCtrl, by bell and by email from the app's own sender
+// out to every Admin (PROD-15; it was every Admin / DocCtrl), by bell and by email from the app's own sender
 // (PROD-2). So nothing typed there reaches a notice unchecked (the review of
 // N8: a "name" or "address" carrying a phishing line and a link, multiplied
 // by the pool and repeated by rotating the address):
@@ -93,7 +98,7 @@ export function noticeSafeName(raw: string | null | undefined, max = 80): string
 /** Past this many requests to one org in an hour (the new one included), a
  *  request gets no bell row and no email of its own: anyone can reach this
  *  door, and one request must not become an unbounded run of bell rows,
- *  toasts and mail to every Admin / DocCtrl — burying their compliance
+ *  toasts and mail to every Admin — burying their compliance
  *  notices under the bell's 50-row list (TAX-6). The pool is told ONCE that
  *  more are waiting (ACCESS_REQUEST_BURST_RESOURCE_TYPE). N8's review fix. */
 export const ACCESS_REQUEST_NOTICES_PER_ORG_HOUR = 5;

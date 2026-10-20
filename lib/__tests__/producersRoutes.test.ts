@@ -2,7 +2,8 @@
 // heard, and so is its answer.
 //
 //   dw1  POST /api/auth/request-access, after the row is written, tells the
-//        org's Admin / DocCtrl pool (DEC-92 item 1): a bell row
+//        org's Admins (DEC-92 item 1, narrowed to the people who can see the
+//        pending list by PROD-15, admin-and-org Round G P5): a bell row
 //        (access_request_pending → Admin → Users) and an email each — through
 //        the shared-client helpers bound to the service role
 //        (runWithServerClient), the role pool resolved by the real
@@ -18,8 +19,11 @@
 // its own (bell or email) — each pool member holds ONE unread "more are
 // waiting" row instead; and a decided request's pool notices are marked read.
 // REGRESSION FIRST: every response is the one the route gave before — the
-// rate limit, the 404 / 409, the decline's authority, the member grant —
-// and a notice that cannot be sent never changes a response.
+// rate limit, the decline's authority, the member grant — except the ones
+// ORG-8 (admin-and-org Round G P5) deliberately collapsed: no such workspace
+// and an already-pending request now get the recorded request's neutral 200
+// (REQUEST_ACCESS_ACKNOWLEDGEMENT), which names no workspace. A notice that
+// cannot be sent never changes a response.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -143,6 +147,7 @@ vi.mock("@/lib/serverAuth", () => ({ assertOrgHasAccess: async () => null }));
 import { POST as requestAccess } from "@/app/api/auth/request-access/route";
 import { POST as decide } from "@/app/api/admin/access-requests/route";
 import { POST as createUser } from "@/app/api/admin/create-user/route";
+import { REQUEST_ACCESS_ACKNOWLEDGEMENT } from "@/lib/publicDoorLimiter";
 import {
   renderAccessRequestOutcome, ACCESS_REQUEST_AUDIENCE, ACCESS_REQUEST_NOTICES_PER_ORG_HOUR, ADDRESS_MAX,
   noticeSafeName, wellFormedAddress,
@@ -167,6 +172,7 @@ beforeEach(() => {
     member("admin1", ["Admin"]),
     member("dc1", ["DocCtrl"]),
     member("mgr-dc", ["Manager", "DocCtrl"]),     // the DocCtrl hat held additively
+    member("mgr-adm", ["Manager", "Admin"]),      // the Admin hat held additively (PROD-15: told)
     member("eng", ["Engineer"]),
     member("old-admin", ["Admin"], "suspended"),
   ];
@@ -178,16 +184,22 @@ const post = (url: string, body: Record<string, unknown>, auth = true) =>
   new NextRequest(url, { method: "POST", headers: { "content-type": "application/json", ...(auth ? { authorization: "Bearer t" } : {}) }, body: JSON.stringify(body) });
 const ask = (body: Record<string, unknown> = { displayName: "Greg", email: "Greg@Corp.com", orgName: "acme refining" }) =>
   requestAccess(post("https://app/api/auth/request-access", body, false));
+/** The same door from a given client address (a script rotating addresses). */
+const askFrom = (ip: string, body: Record<string, unknown>) =>
+  requestAccess(new NextRequest("https://app/api/auth/request-access", {
+    method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip }, body: JSON.stringify(body),
+  }));
+const ACK = { ok: true, message: REQUEST_ACCESS_ACKNOWLEDGEMENT };
 
-describe("PROD-2 dw1 — the request door tells the Admin / DocCtrl pool", () => {
-  it("the audience is exactly the plan's default pool", () => {
-    expect([...ACCESS_REQUEST_AUDIENCE]).toEqual(["Admin", "DocCtrl"]);
+describe("PROD-2 dw1 — the request door tells the Admins (PROD-15: the people who can see the pending list)", () => {
+  it("the audience is the Admins — the pending list's own set (PROD-15)", () => {
+    expect([...ACCESS_REQUEST_AUDIENCE]).toEqual(["Admin"]);
   });
 
-  it("after the row is written: one bell row per ACTIVE Admin / DocCtrl (additive roles), linking to Admin → Users, no actor; one email each", async () => {
+  it("after the row is written: one bell row per ACTIVE Admin (additive roles), linking to Admin → Users, no actor; one email each — a DocCtrl-only member is no longer told", async () => {
     const res = await ask();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, orgName: "Acme Refining" });     // REGRESSION: the response
+    expect(await res.json()).toEqual(ACK);                                       // ORG-8: the neutral answer
     expect(s.db.tables.access_requests).toHaveLength(1);
     const req = s.db.tables.access_requests[0];
     expect(req).toMatchObject({ org_id: ORG, email: "greg@corp.com", status: "pending" });
@@ -198,8 +210,8 @@ describe("PROD-2 dw1 — the request door tells the Admin / DocCtrl pool", () =>
       title: "Greg asked to join Acme Refining",
     });
     expect(bell).not.toHaveProperty("actorUserId");                                // the person at the door has no account
-    expect((bell.userIds as string[]).sort()).toEqual(["admin1", "dc1", "mgr-dc"]); // not the Engineer, not the suspended Admin
-    expect(s.emails.map((e) => e.toEmail).sort()).toEqual(["admin1@acme.test", "dc1@acme.test", "mgr-dc@acme.test"]);
+    expect((bell.userIds as string[]).sort()).toEqual(["admin1", "mgr-adm"]); // not the Engineer, not the suspended Admin, not a DocCtrl (PROD-15)
+    expect(s.emails.map((e) => e.toEmail).sort()).toEqual(["admin1@acme.test", "mgr-adm@acme.test"]);
     for (const e of s.emails) {
       expect(e).toMatchObject({ orgId: ORG, subject: "Access request waiting for review", eventType: "assignment" });
       expect(String(e.bodyText)).toContain("Greg (greg@corp.com) asked for access to Acme Refining");
@@ -211,10 +223,15 @@ describe("PROD-2 dw1 — the request door tells the Admin / DocCtrl pool", () =>
     expect(String(s.bells[0].title)).toBe(`${"x".repeat(80)} asked to join Acme Refining`);
   });
 
-  it("REGRESSION: no org (404), a pending duplicate (409), the rate limit (429) and missing fields (400) notify nobody", async () => {
-    expect((await ask({ displayName: "G", email: "g@c.co", orgName: "Nope" })).status).toBe(404);
+  it("REGRESSION: no org, a pending duplicate (both now the neutral 200 — ORG-8), the rate limit (429) and missing fields (400) notify nobody", async () => {
+    const none = await ask({ displayName: "G", email: "g@c.co", orgName: "Nope" });
+    expect(none.status).toBe(200);
+    expect(await none.json()).toEqual(ACK);
     s.db.tables.access_requests = [{ id: "r0", org_id: ORG, email: "g@c.co", status: "pending" }];
-    expect((await ask({ displayName: "G", email: "g@c.co", orgName: "Acme Refining" })).status).toBe(409);
+    const dup = await ask({ displayName: "G", email: "g@c.co", orgName: "Acme Refining" });
+    expect(dup.status).toBe(200);
+    expect(await dup.json()).toEqual(ACK);
+    expect(s.db.tables.access_requests).toHaveLength(1);                          // nothing stacked
     expect((await ask({ displayName: "", email: "g@c.co", orgName: "Acme Refining" })).status).toBe(400);
     s.db.tables.signup_attempts = Array.from({ length: 8 }, (_, i) => ({ id: `a${i}`, ip: "9.9.9.9", created_at: new Date().toISOString() }));
     const limited = await requestAccess(new NextRequest("https://app/api/auth/request-access", {
@@ -248,7 +265,7 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
   it("the reviewer's case — a phishing line, a newline and a link in the name and the address: the request is recorded and answered as before; the bell carries no line break and no link; the address shows as invalid; no email at all", async () => {
     const res = await ask({ displayName: PHISH_NAME, email: PHISH_EMAIL, orgName: "Acme Refining" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, orgName: "Acme Refining" });     // REGRESSION: no response change
+    expect(await res.json()).toEqual(ACK);                                       // ORG-8's neutral answer, as for every request
     expect(s.db.tables.access_requests).toHaveLength(1);                          // recorded, as before
     expect(s.bells).toHaveLength(1);
     const { title, body } = s.bells[0] as { title: string; body: string };
@@ -278,39 +295,40 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
   it("control, zero-width and bidi characters in the name are dropped or spaced; a well-formed address still gets its email", async () => {
     await ask({ displayName: "Gr\u200beg\u202e \u0007Smith\r\n", email: "greg@corp.com", orgName: "Acme Refining" });
     expect(s.bells[0].title).toBe("Greg Smith asked to join Acme Refining");
-    expect(s.emails).toHaveLength(3);
+    expect(s.emails).toHaveLength(2);
   });
 
   /** The pool's "more access requests are waiting" rows (keyed on the org). */
   const burstRows = () => (s.db.tables.notifications ?? []).filter((n) => n.kind === "access_request_pending" && n.resource_type === "org");
 
-  it("a burst (the reviewer's case: a script, a new address each time, no usable IP): only the first ACCESS_REQUEST_NOTICES_PER_ORG_HOUR requests reach the bell and the mail; after that each pool member holds ONE unread 'more are waiting' row, however many more arrive", async () => {
+  it("a burst (the reviewer's case: a script, a new address and a new client IP each time): only the first ACCESS_REQUEST_NOTICES_PER_ORG_HOUR requests reach the bell and the mail; after that each pool member holds ONE unread 'more are waiting' row, however many more arrive", async () => {
     const burst = ACCESS_REQUEST_NOTICES_PER_ORG_HOUR + 3;          // 8 requests
     for (let i = 0; i < burst; i++) {
-      // no forwarded IP: the per-IP limiter exempts 'unknown' — the org cap is what holds
-      expect((await ask({ displayName: `Person ${i}`, email: `p${i}@corp.com`, orgName: "Acme Refining" })).status).toBe(200);
+      // a new client IP each time: the per-IP window never fills — the org cap is what holds
+      // (a header-less caller no longer escapes the window: it shares the one "unknown" budget, BILL-14)
+      expect((await askFrom(`10.0.0.${i}`, { displayName: `Person ${i}`, email: `p${i}@corp.com`, orgName: "Acme Refining" })).status).toBe(200);
     }
     expect(s.db.tables.access_requests).toHaveLength(burst);                    // REGRESSION: every request recorded, answered ok
     expect(s.bells).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR);           // a row per request for the first 5 only
     expect(s.bells.map((b) => b.title)).toEqual(Array.from({ length: ACCESS_REQUEST_NOTICES_PER_ORG_HOUR }, (_, i) => `Person ${i} asked to join Acme Refining`));
-    expect(s.emails).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR * 3);      // 3 pool members per request
+    expect(s.emails).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR * 2);      // 2 pool members (the Admins) per request
     const burstNow = burstRows();
-    expect(burstNow.map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);   // ONE each, not three each
+    expect(burstNow.map((n) => n.user_id).sort()).toEqual(["admin1", "mgr-adm"]);   // ONE each, not three each
     expect(burstNow[0]).toMatchObject({
       org_id: ORG, resource_id: ORG, link: "/admin/users", actor_user_id: null,
       title: "More access requests are waiting for Acme Refining", metadata: { accessRequestBurst: true },
     });
     expect(String(burstNow[0].body)).toContain("Every request is listed under Admin → Users");
     expect(String(burstNow[0].body)).not.toMatch(/Person \d|@corp\.com/);      // nothing a stranger typed
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/requests to this org in the last hour — this request gets no notice of its own; 3 pool member\(s\) newly told/));
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/0 pool member\(s\) newly told that more are waiting, 3 already were/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/requests to this org in the last hour — this request gets no notice of its own; 2 pool member\(s\) newly told/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/0 pool member\(s\) newly told that more are waiting, 2 already were/));
     // a member who READ theirs is told again by the next request — only they
-    burstNow.find((n) => n.user_id === "dc1")!.read_at = "2026-10-07T10:00:00Z";
-    expect((await ask({ displayName: "Person 99", email: "p99@corp.com", orgName: "Acme Refining" })).status).toBe(200);
-    expect(burstRows().filter((n) => n.read_at == null).map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
-    expect(burstRows()).toHaveLength(4);
+    burstNow.find((n) => n.user_id === "mgr-adm")!.read_at = "2026-10-07T10:00:00Z";
+    expect((await askFrom("10.0.0.99", { displayName: "Person 99", email: "p99@corp.com", orgName: "Acme Refining" })).status).toBe(200);
+    expect(burstRows().filter((n) => n.read_at == null).map((n) => n.user_id).sort()).toEqual(["admin1", "mgr-adm"]);
+    expect(burstRows()).toHaveLength(3);                                         // the two Admins' first rows + the re-told one
     expect(s.bells).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR);
-    expect(s.emails).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR * 3);
+    expect(s.emails).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR * 2);
   });
 
   it("the cap fails closed: when the org's request count cannot be read, the request gets no bell row or email of its own — the pool gets the one 'more are waiting' row each", async () => {
@@ -319,7 +337,7 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
     expect((await ask({ displayName: "Ann", email: "ann@corp.com", orgName: "Acme Refining" })).status).toBe(200);
     expect(s.bells).toEqual([]);
     expect(s.emails).toEqual([]);
-    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);   // at most one each
+    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "mgr-adm"]);   // at most one each
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/count could not be read — this request gets no notice of its own/));
   });
 
@@ -327,7 +345,7 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
     s.countFails = true;
     expect((await ask()).status).toBe(200);                                     // this may be the org's only request today
     const rows = burstRows();
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(2);
     for (const r of rows) {
       expect(r.title).toBe("Access requests are waiting for Acme Refining");
       expect(r.body).toBe("Access requests are waiting for Acme Refining. Every request is listed under Admin → Users: review them there.");
@@ -338,19 +356,19 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
     s.db.tables.notifications = [];
     for (let i = 0; i <= ACCESS_REQUEST_NOTICES_PER_ORG_HOUR; i++) await ask({ displayName: `P${i}`, email: `p${i}@corp.com`, orgName: "Acme Refining" });
     const over = burstRows();
-    expect(over).toHaveLength(3);
+    expect(over).toHaveLength(2);
     expect(over[0].title).toBe("More access requests are waiting for Acme Refining");
     expect(over[0].body).toBe(`More than ${ACCESS_REQUEST_NOTICES_PER_ORG_HOUR} people asked to join Acme Refining within an hour, so they are no longer announced one by one. Every request is listed under Admin → Users: review them there.`);
   });
 
   it("a member's browser cannot silence the burst notice with a decoy: the open-row check matches only the server's own rows (no actor — 20261160 stamps every signed-in writer)", async () => {
     s.db.tables.notifications = [{
-      id: "forged", org_id: ORG, user_id: "dc1", kind: "access_request_pending", resource_type: "org", resource_id: ORG,
+      id: "forged", org_id: ORG, user_id: "mgr-adm", kind: "access_request_pending", resource_type: "org", resource_id: ORG,
       read_at: null, actor_user_id: "eng", title: "nothing to see",
     }];
     s.countFails = true;
     expect((await ask()).status).toBe(200);
-    expect(burstRows().filter((n) => n.actor_user_id == null).map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    expect(burstRows().filter((n) => n.actor_user_id == null).map((n) => n.user_id).sort()).toEqual(["admin1", "mgr-adm"]);
     const read = s.db.calls.filter((c) => c.table === "notifications" && c.method === "is").map((c) => c.args);
     expect(read).toContainEqual(["actor_user_id", null]);
   });
@@ -372,19 +390,19 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
     s.countFails = true;
     expect((await ask()).status).toBe(200);
     expect(s.rpcCalls).toEqual([{ fn: "claim_access_request_burst", args: {
-      p_org: ORG, p_recipients: expect.arrayContaining(["admin1", "dc1", "mgr-dc"]),
+      p_org: ORG, p_recipients: expect.arrayContaining(["admin1", "mgr-adm"]),
       p_title: "Access requests are waiting for Acme Refining",
       p_body: "Access requests are waiting for Acme Refining. Every request is listed under Admin → Users: review them there.",
     } }]);
-    expect((s.rpcCalls[0].args.p_recipients as string[]).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    expect((s.rpcCalls[0].args.p_recipients as string[]).sort()).toEqual(["admin1", "mgr-adm"]);
     // the app neither reads the open rows nor inserts: the function does both under its lock
     expect(s.db.calls.filter((c) => c.table === "notifications")).toEqual([]);
     const claimed = burstRows();
-    expect(claimed.map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    expect(claimed.map((n) => n.user_id).sort()).toEqual(["admin1", "mgr-adm"]);
     expect(claimed[0]).toMatchObject({ org_id: ORG, resource_id: ORG, link: "/admin/users", actor_user_id: null, metadata: { accessRequestBurst: true } });
     expect(s.bells).toEqual([]);
     expect(s.emails).toEqual([]);
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/count could not be read — this request gets no notice of its own; 3 pool member\(s\) newly told that more are waiting, 0 already were$/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/count could not be read — this request gets no notice of its own; 2 pool member\(s\) newly told that more are waiting, 0 already were$/));
   });
 
   it("PROD-16 — two over-cap requests that land at once give each pool member ONE unread burst row (the claim is serialised per org); before the paste the same pair runs today's unserialised two steps, said in the log", async () => {
@@ -395,14 +413,14 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
       ask({ displayName: "Bob", email: "bob@corp.com", orgName: "Acme Refining" }),
     ]);
     expect(both.map((r) => r.status)).toEqual([200, 200]);
-    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/0 pool member\(s\) newly told that more are waiting, 3 already were$/));
+    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "mgr-adm"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/0 pool member\(s\) newly told that more are waiting, 2 already were$/));
     // before 20261197 (PGRST202): today's path, and the log says it is unserialised
     s.burstRpc = "missing";
     s.db.tables.notifications = [];
     expect((await ask({ displayName: "Cy", email: "cy@corp.com", orgName: "Acme Refining" })).status).toBe(200);
-    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/3 pool member\(s\) newly told that more are waiting, 0 already were \(unserialised: 20261197 is not pasted — PROD-16\)$/));
+    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "mgr-adm"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/2 pool member\(s\) newly told that more are waiting, 0 already were \(unserialised: 20261197 is not pasted — PROD-16\)$/));
   });
 
   it("PROD-16 — a claim that fails for any other reason writes nothing (as an unreadable open-row read does) and never changes the answer", async () => {

@@ -852,7 +852,7 @@ lib/storageUsage.ts:157-159 — `token = res.IsTruncated ? res.NextContinuationT
 ## BILL-14 · signup_attempts grows without bound and its prune function is never called, while the trial itself is bounded only by a fail-open per-IP counter
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261010_signup_rate_limit.sql:34-40`, `app/api/auth/signup/route.ts:31-34`, `app/api/auth/signup/route.ts:19-29`, `app/api/auth/signup/route.ts:103-114`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. A repo-wide grep for `prune_signup_attempts` returns exactly one hit — the CREATE at :37 — and app/api/cron/maintenance/route.ts contains no rpc call to it (its only prune is `intent-prune` at :134), so the rolling-window table accumulates forever behind the `(ip, created_at DESC)` index at :28-29. The limiter fails open on any query error and on a missing/unparseable client IP, and 60-day trial orgs are minted at signup/route.ts:103-114 with no other cap.
@@ -874,6 +874,25 @@ supabase/migrations/20261010_signup_rate_limit.sql:37-40 — `CREATE OR REPLACE 
 - [ ] The maintenance cron calls prune_signup_attempts() (as a step in the existing handler, not a new vercel.json cron entry)
 - [ ] The signup limiter's fail-open branches are deliberate and documented, or tightened
 - [ ] Trial expiry has a defined consequence
+
+
+**Resolution (2026-10-20, admin-and-org Round G).** Package P5, under the integrator's DEC-90 rulings (2) and (3).
+
+**Reproduced on `7f92269`.** No caller of `prune_signup_attempts()` (a repo-wide grep: only its CREATE at `20261010:37`); `app/api/auth/signup/route.ts:21` `if (ip === "unknown") return false;` and `:28` `if (error) return false;` (the same two branches in `app/api/auth/request-access/route.ts:28,35`); the ended trial's only consequence was a red banner shown to every member (`components/subscription/TrialBanner.tsx:29-32`), and the curtain (off anyway) excluded it.
+
+**What landed.**
+- **The prune runs** — one step on the existing maintenance cron (`app/api/cron/maintenance/route.ts:403`, step 4e, `sb.rpc("prune_signup_attempts")`; no new `vercel.json` entry). A missing function (42883 / PGRST202 — 20261010 not pasted) is a no-op; any other error is reported in `result.errors` and the log. Its retention (two days) is ORG-12's.
+- **The limiter's branches, each deliberate** (`lib/publicDoorLimiter.ts`, new, shared by both doors): a header-less caller is **counted** under the one shared key `unknown` (it was exempt — an unlimited door; Next's own server sets `x-forwarded-for` from the socket, so a real browser never lands there); the table missing (42P01 / PGRST205 / 42703 / PGRST204 — 20261010 is "ASK / unknown" in the paste guide) keeps today's open door and logs that the window is not enforced (refusing every signup there would be a regression); **any other failed count now refuses with 503** and a sentence to try again (a failing count must not be an unlimited door). Recording an attempt is a checked write (a refusal logged, never thrown).
+- **Trial expiry has a defined consequence.** Switch on (`SUBSCRIPTION_ENFORCE=true`): the same lapsed state as canceled / unpaid / paused — the server refuses new seats and new files with the sentence, the curtain shows, the escape hatches and every export stay open (BILL-10). Switch off (the default): only a notice to the people who can renew — the red "Your free trial has ended" banner now shows only to the billing surface's writes set (Admin, Manager; `components/subscription/TrialBanner.tsx:37`); no other member is nagged. The countdown before the end is unchanged for every member.
+
+**Tests.** `lib/__tests__/aoRoundGP5PublicDoors.test.ts` "BILL-14 — the shared per-IP window, every branch deliberate" (the unknown bucket counted and refused at the limit; under / at the limit; table missing → open + logged; denial / outage / thrown read → 503; checked recording) and "ORG-12 — …" (the cron step, pinned); `lib/__tests__/aoRoundGP5SubscriptionEnforcement.test.ts` (an ended trial lapsed under the switch; the banner RENDERED: ended → Admin / Manager / additive Admin only, never a DocCtrl or Viewer; the countdown to every member, as before). `lib/__tests__/producersRoutes.test.ts`'s burst test now rotates client addresses (it relied on the old unknown-IP exemption).
+
+**Done-when.**
+- [x] The maintenance cron calls `prune_signup_attempts()` as a step in the existing handler, not a new `vercel.json` entry ✓ (`route.ts:403`; `vercel.json` still has two crons, pinned).
+- [x] The signup limiter's fail-open branches are deliberate and documented, or tightened ✓ — unknown IP and a failed count tightened; the missing-table branch kept deliberately, documented and pinned.
+- [x] Trial expiry has a defined consequence ✓ — the lapsed state under the switch; a billing-writer notice without it.
+
+**Scope / residual.** The per-IP window still trusts the first `x-forwarded-for` entry (Vercel sets it; a self-host behind no proxy can be spoofed) — unchanged, as before, and the request door's per-org notice cap (PROD-2) is what bounds a rotating-address script. Enabling the switch is the operator's step (BILL-10). The 20261238 paste (ORG-12) states the retention in the database; this finding's code half needs no paste.
 
 ---
 
