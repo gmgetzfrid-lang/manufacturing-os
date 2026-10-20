@@ -28,7 +28,7 @@ import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type Outcome
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
-import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS } from "@/lib/ticketLibrary";
+import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
 import type { Principal } from "@/lib/permissions";
 
@@ -847,6 +847,47 @@ export async function POST(req: NextRequest) {
           unbackedPublish = !backingDoc || (backingDoc as { library_id?: string | null }).library_id !== ticket.libraryId;
         }
       }
+    } else if (!closeSrc?.id && !ticket.libraryId && recordedState?.state === "published") {
+      // DCW-4 remainder (ruled by the integrator at the DF-P15 merge,
+      // 2026-10-20, DEC-90): a request with NEITHER a source document NOR a
+      // library records a publication into a library its publisher chose
+      // (/api/tickets/handback, which checked the publisher's authority
+      // there). The close believes it on the same terms as the library-only
+      // branch above: a version in this org, of the recorded document,
+      // carrying this ticket — and the recorded publication's document must
+      // still exist in the register, in this org, in a library (the one the
+      // record names, when it names one). Same read rules (a failed read is a
+      // 503 with nothing written; a non-UUID id is unbacked with no read).
+      const recordedDoc = String(recordedState.document_id ?? "");
+      const recordedLib = (recordedState as { library_id?: unknown }).library_id;
+      if (!UUID_RE.test(String(recordedState.version_id)) || !UUID_RE.test(recordedDoc)) {
+        unbackedPublish = true;
+      } else {
+        const registerUnreadable = (message: string) => {
+          console.error(`[workflow-action] register read failed while closing ticket ${body.ticketId}: ${message}`);
+          return NextResponse.json(
+            { error: "The document register could not be read to confirm this request's published deliverable, so the request was not closed. Try again in a moment.", code: "register_unreadable" },
+            { status: 503 },
+          );
+        };
+        const { data: backing, error: backingErr } = await supabaseAdmin
+          .from("document_versions").select("id")
+          .eq("id", recordedState.version_id).eq("org_id", ticket.orgId)
+          .eq("record_id", recordedDoc).eq("related_ticket_id", body.ticketId)
+          .maybeSingle();
+        if (backingErr) return registerUnreadable(backingErr.message);
+        if (!backing) {
+          unbackedPublish = true;
+        } else {
+          const { data: backingDoc, error: backingDocErr } = await supabaseAdmin
+            .from("documents").select("id, library_id")
+            .eq("id", recordedDoc).eq("org_id", ticket.orgId)
+            .maybeSingle();
+          if (backingDocErr) return registerUnreadable(backingDocErr.message);
+          const docLib = (backingDoc as { library_id?: string | null } | null)?.library_id ?? null;
+          unbackedPublish = !backingDoc || !docLib || (typeof recordedLib === "string" && docLib !== recordedLib);
+        }
+      }
     }
   }
 
@@ -1041,6 +1082,27 @@ export async function POST(req: NextRequest) {
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
           updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
         }
+      } else if (!src?.id && !ticket.libraryId && recorded?.state === "published" && unbackedPublish) {
+        // DCW-4 remainder (DEC-90 ruling at the DF-P15 merge): a library-less
+        // request's recorded publication the register does not back is
+        // replaced, visibly — the false "published" removed, and the library
+        // the record named (if any) noted as not holding the deliverable. A
+        // library-less request with nothing recorded closes exactly as before
+        // (no metadata written).
+        const recordedLib = (recorded as { library_id?: unknown }).library_id;
+        const base: Record<string, unknown> = { ...(ticket.metadata ?? {}) };
+        delete base.deliverable;
+        let label = "the register";
+        if (typeof recordedLib === "string" && recordedLib) {
+          const { data: libRow } = await supabaseAdmin
+            .from("libraries").select(`id, name, ${LIBRARY_RUNG_COLUMNS}`).eq("id", recordedLib).eq("org_id", ticket.orgId).maybeSingle();
+          const named = libraryLabelForTicket(libRow ? libraryChoiceFromRow(libRow as unknown as Record<string, unknown>) : null);
+          label = named === UNNAMED_TARGET_LIBRARY ? "the library it named" : named;
+        }
+        updates.metadata = typeof recordedLib === "string" && recordedLib ? (noteDeliverableNotInLibrary(base, { libraryId: recordedLib }) ?? base) : base;
+        handbackNote = `Closed without a register document: the recorded publication could not be matched to a document in ${label}. The deliverable is treated as not published.`;
+        const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
+        updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
       }
     } catch (e) {
       console.warn("[workflow-action] deliverable-state note failed (non-blocking)", e);

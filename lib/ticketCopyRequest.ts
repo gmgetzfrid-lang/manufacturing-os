@@ -52,9 +52,20 @@
 //     downloadStampedPdf, watermark, QR and superseded footer included), so
 //     the page keeps doing that — OVERSIZE_FALLBACK_NOTE says why — and the
 //     "take the UNSTAMPED copy anyway?" question is asked only when a stamp
-//     really failed. Anything else (401, 409 `archived`, 503 `unrecorded`, a
-//     JSON 502 …) is said in words and nothing is copied — except for a
-//     preview (below).
+//     really failed. So is a TRANSIENT answer to a print or download — a JSON
+//     502 (the storage read failed), a 503 other than `unrecorded` (the
+//     ticket, membership or read-scope read failed), or a network failure
+//     reaching the route: the server copy was unavailable, not refused, so the
+//     page takes the browser path that worked before DF-P15 (stamped and
+//     recorded by the tab exactly as before, carrying `acknowledged` when the
+//     route already asked its question) and says so in one sentence
+//     (serverUnavailableNotice). Ruled by the integrator at the DF-P15 merge,
+//     2026-10-20 (DEC-90): option (a) of the final review's issue 1 — no
+//     print or download that worked before DF-P15 fails because the new route
+//     hiccuped. A 503 `unrecorded` (the record could not be written) stays a
+//     refusal: an unrecorded copy is never handed out (DEC-44). Anything else
+//     (401, 409 `archived`, 404 not in storage, 503 `unrecorded` …) is said in
+//     words and nothing is copied — a preview's transient answer is below.
 //   * takeTicketCopy runs the questions in order. A preview ("view") asks
 //     none: the stamp says the file's standing, and an unstampable file is
 //     shown unstamped and recorded as such (the viewer marks it). A preview
@@ -133,8 +144,11 @@ export type TicketCopyResponse =
   | { kind: "file"; blob: Blob; filename: string; stamped: boolean }
   | { kind: "confirm"; message: string }
   | { kind: "unstampable"; message: string }
-  /** The server cannot issue this file by construction — the browser path. */
-  | { kind: "not_server"; message: string }
+  /** The server cannot issue this file by construction — the browser path.
+   *  `transient`: the route was unavailable for a print or download (a JSON
+   *  502, a 503 other than `unrecorded`, a network failure) — the browser
+   *  path too, said as the server copy being unavailable (DEC-90 ruling). */
+  | { kind: "not_server"; message: string; transient?: boolean }
   /** `transient`: the route could not read what it checks right now (a JSON
    *  502, or a 503 other than `unrecorded`) — not a ruling on this caller. */
   | { kind: "refused"; status: number; message: string; transient?: boolean };
@@ -144,6 +158,18 @@ export function filenameFromDisposition(header: string | null | undefined, fallb
   const m = /filename="([^"]+)"/i.exec(header ?? "");
   return m?.[1] || fallback;
 }
+
+/** What the viewer says, in one sentence, when the server copy route was
+ *  unavailable for a print or download and the browser copy was used
+ *  (EVID-16 transient fallback — ruled by the integrator at the DF-P15 merge,
+ *  2026-10-20, DEC-90). */
+export function serverUnavailableNotice(reason: string): string {
+  return `The server copy was unavailable (${reason}), so the browser copy was used — stamped and recorded from your browser, as before.`;
+}
+
+/** A route message without its "try again" tail — the copy is not retried,
+ *  the browser path takes it. */
+const transientReason = (message: string) => message.replace(/\s*[—-]\s*try again in a moment\.?\s*$/i, "") || message;
 
 /** Statuses the HOST answers (no JSON body) when it refuses or times out the
  *  function — a too-large response, a crash, a gateway timeout. */
@@ -178,7 +204,12 @@ export async function requestTicketCopy(
       }),
     });
   } catch (e) {
-    return { kind: "refused", status: 0, message: `The copy could not be requested (${(e as Error)?.message || "network error"}). Try again in a moment.` };
+    const why = (e as Error)?.message || "network error";
+    // The route could not be reached: for a print or download the browser
+    // path takes the copy (DEC-90 ruling, see the header); a preview keeps its
+    // presigned frame (takeTicketCopy, `transient`).
+    if (input.channel !== "view") return { kind: "not_server", message: `the copy route could not be reached (${why})`, transient: true };
+    return { kind: "refused", status: 0, message: `The preview could not be requested (${why}).`, transient: true };
   }
   if (res.ok) {
     let blob: Blob;
@@ -221,6 +252,11 @@ export async function requestTicketCopy(
     return { kind: "not_server", message: READ_SCOPE_FALLBACK_NOTE };
   }
   const transient = res.status === 502 || (res.status === 503 && body.error !== "unrecorded");
+  if (transient && input.channel !== "view") {
+    // The server copy was unavailable, not refused: the browser path, said
+    // (DEC-90 ruling, see the header). A 503 `unrecorded` never lands here.
+    return { kind: "not_server", message: transientReason(message), transient: true };
+  }
   return transient ? { kind: "refused", status: res.status, message, transient: true } : { kind: "refused", status: res.status, message };
 }
 
@@ -231,7 +267,9 @@ export type TicketCopyOutcome =
    *  for this copy — the browser path does not ask it a second time. */
   /** `previewOnly`: a preview refused for a transient reason — the presigned
    *  inline frame shows it; print and download still go through the server. */
-  | { kind: "browser"; message: string; acknowledged?: boolean; previewOnly?: boolean }
+  /** `transient`: a print or download whose server copy was unavailable —
+   *  the browser path, said with serverUnavailableNotice. */
+  | { kind: "browser"; message: string; acknowledged?: boolean; previewOnly?: boolean; transient?: boolean }
   | { kind: "refused"; message: string };
 
 /** The whole exchange for one copy: the questions the route asks, asked in
@@ -257,10 +295,18 @@ export async function takeTicketCopy(input: {
       token, fallbackName: input.fallbackName, acknowledged, acceptUnstamped,
     }, input.fetchImpl);
     if (res.kind === "file") return res;
-    if (res.kind === "not_server") return !view && acknowledged ? { kind: "browser", message: res.message, acknowledged: true } : { kind: "browser", message: res.message };
+    if (res.kind === "not_server") {
+      return {
+        kind: "browser",
+        message: res.message,
+        ...(!view && acknowledged ? { acknowledged: true } : {}),
+        ...(!view && res.transient ? { transient: true } : {}),
+      };
+    }
     if (res.kind === "refused") {
       // A preview refused for a transient reason keeps the presigned inline
-      // frame, said (see the header); a print or download is refused in words.
+      // frame, said (see the header). A print or download's transient answer
+      // arrived as not_server (the browser path); what is left is a refusal.
       if (view && res.transient) return { kind: "browser", message: res.message, previewOnly: true };
       return { kind: "refused", message: res.message };
     }

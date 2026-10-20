@@ -18,6 +18,27 @@
 // ticket's library (in its org). A request with a source document is
 // unchanged: only a version of that document is accepted.
 //
+// Item 3 of the integrator's rulings at the DF-P15 merge (2026-10-20,
+// DEC-90): a version is recorded as a NEW document (`new_document: true`,
+// "created as a new document", its notice title) only when it is its
+// document's FIRST version — a checked read of document_versions by
+// record_id for any version created before it (a failed read is a 503 before
+// anything is written). A later version is "Rev X of <doc> — published into
+// <library> from this request's Final deliverable", with the matching notice.
+//
+// DCW-4 remainder (ruled by the integrator at the DF-P15 merge, 2026-10-20,
+// DEC-90; DEC-107 stands — a request never requires a library at filing): a
+// request with NEITHER a source document NOR a library hands back a version
+// that carries `related_ticket_id = ticket`, in this org, whose document is
+// in this org and in a library the CALLER may publish into — checked here, as
+// the service role, through the database's own evaluators
+// (user_can_publish_on_library, then user_is_effective_owner on the library:
+// the server side of lib/revisions.ts canPutFirstRevisionInContainer, the
+// gate the page's offer uses); the client's library is never trusted. A
+// failed check is a 503, a refusal a 403, nothing written. The request's own
+// library field is never written; the publication records the library it
+// went into (`metadata.deliverable.library_id`, `library_chosen: true`).
+//
 // Body: { ticketId, versionId }
 
 import { NextRequest, NextResponse } from "next/server";
@@ -25,6 +46,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rowToTicket } from "@/lib/ticketTransitions";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { publishedDeliverable } from "@/lib/ticketHandback";
+import { libraryChoiceFromRow, libraryLabelForTicket, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
+import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
 import type { TicketHistoryEntry } from "@/types/schema";
 
 export const runtime = "nodejs";
@@ -57,36 +80,80 @@ export async function POST(req: NextRequest) {
   const src = parseSourceDocument(ticket.metadata);
   // DCW-4 (DF-P15): no source document — the ticket's library is the target.
   const libraryId = !src?.id ? (ticket.libraryId ?? null) : null;
-  if (!src?.id && !libraryId) return bad("This request was not raised against a controlled document and names no target library", 400);
+  // DCW-4 remainder (DEC-90 ruling at the DF-P15 merge): neither — the
+  // publisher chose a library they may publish into (checked below).
+  const chosenLibrary = !src?.id && !libraryId;
 
   // The proof: a version row of the SOURCE document (or, for a library-only
   // request, of a document in its library), in this org, carrying this ticket
   // as its provenance. The publish path wrote it; nothing here can.
   const { data: version, error: versionErr } = await supabaseAdmin
     .from("document_versions")
-    .select("id, org_id, record_id, revision_label, related_ticket_id, review_state, created_by")
+    .select("id, org_id, record_id, revision_label, related_ticket_id, review_state, created_by, created_at")
     .eq("id", versionId).maybeSingle();
-  if (versionErr && libraryId) return bad("The document register could not be read to confirm the deliverable — try again in a moment", 503);
+  if (versionErr && (libraryId || chosenLibrary)) return bad("The document register could not be read to confirm the deliverable — try again in a moment", 503);
   const v = version as {
     id: string; org_id: string | null; record_id: string; revision_label: string;
-    related_ticket_id: string | null; review_state: string | null; created_by: string | null;
+    related_ticket_id: string | null; review_state: string | null; created_by: string | null; created_at?: string | null;
   } | null;
   if (!v || v.org_id !== ticket.orgId || v.related_ticket_id !== ticketId || (src?.id ? v.record_id !== src.id : false)) {
     return bad("That revision is not this request's deliverable", 409);
   }
   // A library-only request: the version's document must be in the ticket's
-  // library, in its org, and its number names it on the request.
-  let newDoc: { id: string; document_number: string | null; status: string | null } | null = null;
-  if (libraryId) {
+  // library, in its org, and its number names it on the request. A request
+  // with neither (DCW-4 remainder): in this org, in SOME library — one the
+  // caller may publish into (below).
+  let newDoc: { id: string; document_number: string | null; status: string | null; library_id: string } | null = null;
+  // Item 3 (DEC-90 ruling): is `v` its document's FIRST version?
+  let firstVersion = false;
+  let libLabel = UNNAMED_TARGET_LIBRARY;
+  if (libraryId || chosenLibrary) {
+    const registerUnreadable = () => bad("The document register could not be read to confirm the deliverable — try again in a moment", 503);
     const { data: docRow, error: docErr } = await supabaseAdmin
       .from("documents").select("id, document_number, status, library_id, org_id")
       .eq("id", v.record_id).maybeSingle();
-    if (docErr) return bad("The document register could not be read to confirm the deliverable — try again in a moment", 503);
+    if (docErr) return registerUnreadable();
     const d = docRow as { id: string; document_number: string | null; status: string | null; library_id: string | null; org_id: string | null } | null;
-    if (!d || d.org_id !== ticket.orgId || d.library_id !== libraryId) {
+    if (!d || d.org_id !== ticket.orgId || !d.library_id || (libraryId ? d.library_id !== libraryId : false)) {
       return bad("That revision is not this request's deliverable", 409);
     }
-    newDoc = { id: d.id, document_number: d.document_number, status: d.status };
+    if (chosenLibrary) {
+      // The CALLER may publish into the document's library — the database's
+      // evaluators, as the service role naming the caller (never the
+      // client's word): a publish grant (a controller included), else the
+      // library's effective owner. Unreadable → 503; no → 403; nothing written.
+      const { data: canPublish, error: pubErr } = await supabaseAdmin.rpc("user_can_publish_on_library", {
+        p_library: d.library_id, p_uid: caller.id, p_org: ticket.orgId,
+      });
+      if (pubErr) return bad("Your authority on that library could not be confirmed — try again in a moment", 503);
+      let may = canPublish === true;
+      if (!may) {
+        const { data: owns, error: ownErr } = await supabaseAdmin.rpc("user_is_effective_owner", {
+          p_doc_owner: null, p_collection: null, p_library: d.library_id, p_uid: caller.id,
+        });
+        if (ownErr) return bad("Your authority on that library could not be confirmed — try again in a moment", 503);
+        may = owns === true;
+      }
+      if (!may) return bad("Forbidden: you may not publish into that document's library, so it cannot be recorded as this request's deliverable", 403);
+    }
+    // Item 3: any version of this document created before `v`? (Checked: a
+    // failed read is a 503 before anything is written.) With no created_at
+    // on `v`, any other version of the document means it is not the first.
+    let earlier = supabaseAdmin.from("document_versions").select("id").eq("record_id", d.id).neq("id", v.id);
+    if (v.created_at) earlier = earlier.lt("created_at", v.created_at);
+    const { data: before, error: beforeErr } = await earlier.limit(1);
+    if (beforeErr) return registerUnreadable();
+    firstVersion = !Array.isArray(before) || before.length === 0;
+    newDoc = { id: d.id, document_number: d.document_number, status: d.status, library_id: d.library_id };
+    // The library's label — read by the requester and every watcher, so a
+    // hidden / private / restricted library is never named (DF-P4's rule,
+    // read through the rung's columns as the close does). A label only.
+    if (!firstVersion) {
+      const { data: libRow } = await supabaseAdmin
+        .from("libraries").select(`id, name, ${LIBRARY_RUNG_COLUMNS}`).eq("id", d.library_id).eq("org_id", ticket.orgId).maybeSingle();
+      libLabel = libraryLabelForTicket(libRow ? libraryChoiceFromRow(libRow as unknown as Record<string, unknown>) : null);
+      if (chosenLibrary && libLabel === UNNAMED_TARGET_LIBRARY) libLabel = "a library of the register";
+    }
   }
 
   const now = new Date().toISOString();
@@ -101,11 +168,13 @@ export async function POST(req: NextRequest) {
   // not issued — said on the request, never "published" bare.
   const filedAsDraft = !!newDoc && newDoc.status === "Draft";
   if (newDoc) {
-    (metadata.deliverable as Record<string, unknown>).library_id = libraryId;
-    (metadata.deliverable as Record<string, unknown>).new_document = true;
+    (metadata.deliverable as Record<string, unknown>).library_id = newDoc.library_id;
+    // Item 3 (DEC-90 ruling): "new document" only for its FIRST version.
+    if (firstVersion) (metadata.deliverable as Record<string, unknown>).new_document = true;
+    if (chosenLibrary) (metadata.deliverable as Record<string, unknown>).library_chosen = true;
     if (filedAsDraft) (metadata.deliverable as Record<string, unknown>).filed_as_draft = true;
   }
-  const docLabel = src?.documentNumber || newDoc?.document_number || (src?.id ? "the source document" : "the new document");
+  const docLabel = src?.documentNumber || newDoc?.document_number || (src?.id ? "the source document" : firstVersion ? "the new document" : "the document");
   const entry: TicketHistoryEntry = {
     action: inReview
       ? "Deliverable submitted for document review"
@@ -115,11 +184,13 @@ export async function POST(req: NextRequest) {
     date: now,
     details: inReview
       ? `Draft ${v.revision_label} of ${docLabel} opened for reviewer sign-off from this request's Final deliverable.`
-      : newDoc
+      : newDoc && firstVersion
         ? filedAsDraft
           ? `${docLabel} created as a new document (Draft, not issued) from this request's Final deliverable.`
           : `${docLabel} Rev ${v.revision_label} — published as a new document from this request's Final deliverable.`
-        : `Rev ${v.revision_label} of ${docLabel} — published from this request's Final deliverable.`,
+        : newDoc
+          ? `Rev ${v.revision_label} of ${docLabel} — published into ${libLabel} from this request's Final deliverable.${filedAsDraft ? " The document is a Draft — not issued." : ""}`
+          : `Rev ${v.revision_label} of ${docLabel} — published from this request's Final deliverable.`,
   };
   const history = [...(ticket.history ?? []), entry];
 
@@ -142,7 +213,12 @@ export async function POST(req: NextRequest) {
     user_id: caller.id,
     user_email: callerEmail,
     user_role: (member.role as string | null) ?? null,
-    details: { versionId: v.id, revisionLabel: v.revision_label, documentId, documentNumber: src?.documentNumber ?? newDoc?.document_number ?? null, inReview, ...(newDoc ? { newDocument: true, libraryId, initialStatus: newDoc.status } : {}) },
+    details: {
+      versionId: v.id, revisionLabel: v.revision_label, documentId, documentNumber: src?.documentNumber ?? newDoc?.document_number ?? null, inReview,
+      ...(newDoc
+        ? { newDocument: firstVersion, libraryId: newDoc.library_id, ...(firstVersion ? { initialStatus: newDoc.status } : { documentStatus: newDoc.status }), ...(chosenLibrary ? { libraryChosen: true } : {}) }
+        : {}),
+    },
   });
   if (auditErr) return NextResponse.json({ ok: true, metadata, history, warning: `Recorded, but the audit row failed: ${auditErr.message}` });
 
@@ -164,7 +240,13 @@ export async function POST(req: NextRequest) {
       orgId: ticket.orgId, category: "status", kind: "ticket_status",
       title: inReview
         ? `${ticket.ticketId}: deliverable submitted for document review`
-        : filedAsDraft ? `${ticket.ticketId}: deliverable filed as a Draft document` : `${ticket.ticketId}: deliverable published as Rev ${v.revision_label}`,
+        : newDoc && firstVersion
+          ? filedAsDraft
+            ? `${ticket.ticketId}: deliverable created as a new document (${docLabel}, a Draft)`
+            : `${ticket.ticketId}: deliverable created as a new document (${docLabel} Rev ${v.revision_label})`
+          : newDoc
+            ? `${ticket.ticketId}: deliverable published as Rev ${v.revision_label} of ${docLabel} into ${libLabel}`
+            : `${ticket.ticketId}: deliverable published as Rev ${v.revision_label}`,
       body: entry.details,
       link: `/requests/${ticketId}`,
       resource: { type: "ticket", id: ticketId },

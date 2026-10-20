@@ -325,13 +325,13 @@ describe("DF-P15 fix — a file over the platform's ~4.5 MB buffered-response ca
     expect(out).toEqual({ kind: "browser", message: OVERSIZE_FALLBACK_NOTE, acknowledged: true });
     expect(st.inserts).toEqual([]);
   });
-  it("DF-P15 fix (review) — a preview refused for a TRANSIENT reason (membership read failed: 503) keeps the presigned frame (previewOnly, said); a print in the same state is refused in words", async () => {
+  it("DF-P15 fix (review) — a preview refused for a TRANSIENT reason (membership read failed: 503) keeps the presigned frame (previewOnly, said); a print in the same state takes the browser path, said as the server copy being unavailable (ruled by the integrator at the DF-P15 merge, 2026-10-20, DEC-90); an unrecorded copy is still refused", async () => {
     const { takeTicketCopy } = await import("@/lib/ticketCopyRequest");
     const res503 = () => new Response(JSON.stringify({ error: "Couldn't confirm your membership of this workspace — try again in a moment" }), { status: 503 });
     const view = await takeTicketCopy({ ticketRowId: T, attachmentId: "f-1", channel: "view", fallbackName: "x.pdf", getToken: async () => "tok", confirm: async () => true, fetchImpl: async () => res503() });
     expect(view).toEqual({ kind: "browser", message: "Couldn't confirm your membership of this workspace — try again in a moment", previewOnly: true });
     const print = await takeTicketCopy({ ticketRowId: T, attachmentId: "f-1", channel: "print", fallbackName: "x.pdf", getToken: async () => "tok", confirm: async () => true, fetchImpl: async () => res503() });
-    expect(print.kind).toBe("refused");
+    expect(print).toEqual({ kind: "browser", message: "Couldn't confirm your membership of this workspace", transient: true });
     // the route's own unrecorded view (DEC-44) is still not shown
     vi.spyOn(console, "error").mockImplementation(() => {});
     st.insertErrors = { audit_logs: [{ message: "audit refused" }] };
@@ -339,6 +339,12 @@ describe("DF-P15 fix — a file over the platform's ~4.5 MB buffered-response ca
     expect(unrecorded.status).toBe(503);
     const out = await takeTicketCopy({ ticketRowId: T, attachmentId: "f-1", channel: "view", fallbackName: "x.pdf", getToken: async () => "tok", confirm: async () => true, fetchImpl: async () => unrecorded });
     expect(out.kind).toBe("refused");
+    // …and neither is an unrecorded PRINT (the route's real 503 unrecorded): refused, never the browser path
+    st.insertErrors = { audit_logs: [{ message: "audit refused" }] };
+    const unrecordedPrint = await post({ ticketId: T, attachmentId: "f-1", channel: "print", acknowledged: true, acceptUnstamped: true });
+    expect(unrecordedPrint.status).toBe(503);
+    const outPrint = await takeTicketCopy({ ticketRowId: T, attachmentId: "f-1", channel: "print", fallbackName: "x.pdf", getToken: async () => "tok", confirm: async () => true, fetchImpl: async () => unrecordedPrint });
+    expect(outPrint.kind).toBe("refused");
   });
   it("a large file whose stream cannot be opened records NOTHING (502) — a failed send never leaves a distribution row naming a copy that never arrived", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});

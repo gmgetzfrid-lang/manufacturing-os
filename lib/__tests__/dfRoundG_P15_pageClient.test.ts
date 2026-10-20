@@ -72,7 +72,7 @@ vi.mock("@/lib/supabase", () => {
 });
 
 import { ticketFileCopyPath, requestTicketCopy, takeTicketCopy, filenameFromDisposition, BROWSER_PATH_NOTE, NON_PDF_PRINT_NOTE, READ_SCOPE_FALLBACK_NOTE } from "@/lib/ticketCopyRequest";
-import { OVERSIZE_FALLBACK_NOTE } from "@/lib/ticketCopyRequest";
+import { OVERSIZE_FALLBACK_NOTE, serverUnavailableNotice } from "@/lib/ticketCopyRequest";
 import { findTicketNewDocumentVersion, newDocumentNotRecordedMessage } from "@/lib/ticketNewDocumentHandback";
 import { supabase as clientDb } from "@/lib/supabase";
 import TicketCopyRecallPanel from "@/components/requests/TicketCopyRecallPanel";
@@ -163,7 +163,7 @@ describe("EVID-16 done-when 2 — the server copy, its questions asked once each
       expect((await takeTicketCopy({ ...base, channel: "print", confirm: async () => true, fetchImpl: f.impl })).kind).toBe("browser");
     }
   });
-  it("anything else is said in words and nothing is copied: 503 unrecorded, 409 archived, 404 not in storage, 401, a network failure, no session", async () => {
+  it("anything else is said in words and nothing is copied: 503 unrecorded, 409 archived, 404 not in storage, 401, no session (a network failure is the browser path — DEC-90 ruling, below)", async () => {
     for (const ans of [
       json(503, { error: "unrecorded", message: "This copy was not issued: the distribution record refused it." }),
       json(409, { error: "archived", message: "This request is archived…" }),
@@ -175,7 +175,7 @@ describe("EVID-16 done-when 2 — the server copy, its questions asked once each
       expect(out.kind).toBe("refused");
     }
     const net = await requestTicketCopy({ ...base, channel: "print", token: "t" }, async () => { throw new Error("offline"); });
-    expect(net).toMatchObject({ kind: "refused", status: 0 });
+    expect(net).toEqual({ kind: "not_server", message: "the copy route could not be reached (offline)", transient: true });
     expect(await takeTicketCopy({ ...base, getToken: async () => null, channel: "print", confirm: async () => true })).toMatchObject({ kind: "refused" });
   });
   it("a preview (view) asks nothing: it is requested acknowledged and accepting unstamped, so the stamp says the standing and an unstampable file is marked", async () => {
@@ -186,7 +186,7 @@ describe("EVID-16 done-when 2 — the server copy, its questions asked once each
     expect(confirm).not.toHaveBeenCalled();
     expect(f.calls[0].body).toEqual({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true, acceptUnstamped: true });
   });
-  it("DF-P15 fix — a PLATFORM failure with no JSON body (413 / 500 / 502 / 504: the host refusing or timing out the function) → the browser path, said; the route's own JSON 502 is still a refusal", async () => {
+  it("DF-P15 fix — a PLATFORM failure with no JSON body (413 / 500 / 502 / 504: the host refusing or timing out the function) → the browser path, said; the route's own JSON 502 is the browser path too, as the server copy being unavailable (DEC-90 ruling)", async () => {
     for (const status of [413, 500, 502, 504]) {
       const f = fakeFetch([() => new Response("<html>Request Entity Too Large</html>", { status, headers: { "content-type": "text/html" } })]);
       const out = await takeTicketCopy({ ...base, channel: "print", confirm: async () => true, fetchImpl: f.impl });
@@ -195,12 +195,13 @@ describe("EVID-16 done-when 2 — the server copy, its questions asked once each
     }
     const empty = await requestTicketCopy({ ...base, channel: "download", token: "t" }, async () => new Response(null, { status: 504 }));
     expect(empty.kind).toBe("not_server");
-    // the route answering (JSON) is not a platform failure: said, nothing copied
+    // the route answering (JSON 502 — its storage read failed) is a transient answer: the browser path, said as unavailable
     const routeSaid = await requestTicketCopy({ ...base, channel: "download", token: "t" },
       async () => new Response(JSON.stringify({ error: "The file could not be read from storage right now — try again in a moment" }), { status: 502 }));
-    expect(routeSaid).toMatchObject({ kind: "refused", status: 502 });
-    // a non-JSON 503 / 401 is not on the platform list
-    expect((await requestTicketCopy({ ...base, channel: "download", token: "t" }, async () => new Response("x", { status: 503 }))).kind).toBe("refused");
+    expect(routeSaid).toEqual({ kind: "not_server", message: "The file could not be read from storage right now", transient: true });
+    // a non-JSON 503 is not `unrecorded`: transient, the browser path; a 401 stays a refusal
+    expect(await requestTicketCopy({ ...base, channel: "download", token: "t" }, async () => new Response("x", { status: 503 }))).toMatchObject({ kind: "not_server", transient: true });
+    expect((await requestTicketCopy({ ...base, channel: "download", token: "t" }, async () => new Response("x", { status: 401 }))).kind).toBe("refused");
   });
   it("DF-P15 fix — bytes cut off in transit (the body fails to read) → the browser path, said; requestTicketCopy never throws", async () => {
     const broken = new ReadableStream<Uint8Array>({ pull(c) { c.error(new Error("socket hang up")); } });
@@ -486,14 +487,14 @@ describe("DF-P15 fix (review) — a transient refusal never blanks the PDF previ
       expect(out).toMatchObject({ kind: "browser", previewOnly: true });
     }
   });
-  it("REGRESSION: view with 503 unrecorded (DEC-44) or 401 is still refused; a print or download with a transient 503 is refused in words", async () => {
+  it("REGRESSION: view with 503 unrecorded (DEC-44) or 401 is still refused; a print or download with a transient 503 takes the browser path, never previewOnly (DEC-90 ruling)", async () => {
     for (const ans of [json(503, { error: "unrecorded", message: "This preview was not served: …" }), json(401, { error: "Unauthorized" })]) {
       const f = fakeFetch([ans]);
       expect((await takeTicketCopy({ ...base, channel: "view", confirm: async () => true, fetchImpl: f.impl })).kind).toBe("refused");
     }
     for (const channel of ["print", "download"] as const) {
       const f = fakeFetch([json(503, { error: "Couldn't confirm your membership of this workspace — try again in a moment" })]);
-      expect((await takeTicketCopy({ ...base, channel, confirm: async () => true, fetchImpl: f.impl })).kind).toBe("refused");
+      expect(await takeTicketCopy({ ...base, channel, confirm: async () => true, fetchImpl: f.impl })).toEqual({ kind: "browser", message: "Couldn't confirm your membership of this workspace", transient: true });
     }
   });
   it("the page presigns on previewOnly and says it is the unstamped original while copies still go through the server (source pins)", () => {
@@ -536,5 +537,124 @@ describe("DF-P15 fix (review) — a created-but-unrecorded new document is recor
     expect(page).toContain("{recordingExisting ? 'Recording…' : `Record ${existingNewDoc.documentNumber || 'the existing document'} on the request`}");
     const fn = page.slice(page.indexOf("const recordHandback = async"), page.indexOf("// --- 2. SAFE SCROLL ---"));
     expect(fn).toContain("message: newDocumentNotRecordedMessage(opts.newDocumentNumber, (e as Error).message, true)");
+  });
+});
+
+// ─── EVID-16 transient refusals — ruled by the integrator at the DF-P15 merge, 2026-10-20 (DEC-90), option (a) ───
+describe("EVID-16 (DEC-90 ruling) — a transient copy-route answer to a print or download takes the browser path that worked before DF-P15", () => {
+  it("502 (the route's storage read failed) → the browser path, transient, for print and download; nothing is asked", async () => {
+    for (const channel of ["print", "download"] as const) {
+      const f = fakeFetch([json(502, { error: "The file could not be read from storage right now — try again in a moment" })]);
+      const confirm = vi.fn(async () => true);
+      const out = await takeTicketCopy({ ...base, channel, confirm, fetchImpl: f.impl });
+      expect(out, channel).toEqual({ kind: "browser", message: "The file could not be read from storage right now", transient: true });
+      expect(f.calls).toHaveLength(1);
+      expect(confirm).not.toHaveBeenCalled();
+    }
+  });
+  it("503 scope-unknown (and the other read failures) → the browser path, transient; after the route's confirm was answered it carries acknowledged, as the oversize path does", async () => {
+    for (const channel of ["print", "download"] as const) {
+      const f = fakeFetch([json(503, { error: "Couldn't confirm you can see this request — try again in a moment" })]);
+      expect(await takeTicketCopy({ ...base, channel, confirm: async () => true, fetchImpl: f.impl }), channel)
+        .toEqual({ kind: "browser", message: "Couldn't confirm you can see this request", transient: true });
+    }
+    const g = fakeFetch([json(409, { error: "confirm", message: "superseded" }), json(503, { error: "The request could not be read right now — try again in a moment" })]);
+    expect(await takeTicketCopy({ ...base, channel: "print", confirm: async () => true, fetchImpl: g.impl }))
+      .toEqual({ kind: "browser", message: "The request could not be read right now", acknowledged: true, transient: true });
+    // a network failure reaching the route is the same answer
+    const net = await takeTicketCopy({ ...base, channel: "download", confirm: async () => true, fetchImpl: async () => { throw new Error("Failed to fetch"); } });
+    expect(net).toEqual({ kind: "browser", message: "the copy route could not be reached (Failed to fetch)", transient: true });
+  });
+  it("503 unrecorded (the record could not be written) → refused, nothing copied: an unrecorded copy is never handed out (DEC-44)", async () => {
+    for (const channel of ["print", "download"] as const) {
+      const f = fakeFetch([json(503, { error: "unrecorded", message: "This copy was not issued: the distribution record refused it." })]);
+      const out = await takeTicketCopy({ ...base, channel, confirm: async () => true, fetchImpl: f.impl });
+      expect(out, channel).toEqual({ kind: "refused", message: "This copy was not issued: the distribution record refused it." });
+      expect(f.calls).toHaveLength(1);
+    }
+  });
+  it("a preview keeps its own rule: a network failure keeps the presigned frame (previewOnly), never the browser copy path", async () => {
+    const out = await takeTicketCopy({ ...base, channel: "view", confirm: async () => true, fetchImpl: async () => { throw new Error("offline"); } });
+    expect(out).toMatchObject({ kind: "browser", previewOnly: true });
+    expect((out as { transient?: boolean }).transient).toBeUndefined();
+  });
+  it("the page says one sentence that the server copy was unavailable and the browser copy was used, and takes the browser path exactly as before (source pins)", () => {
+    expect(serverUnavailableNotice("x")).toBe("The server copy was unavailable (x), so the browser copy was used — stamped and recorded from your browser, as before.");
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    const modal = page.slice(page.indexOf("const FileViewerModal = ("), page.indexOf("<DownloadComplianceModal"));
+    const printPart = modal.slice(modal.indexOf("const handlePrint = async"), modal.indexOf("const browserSourceUrl = async"));
+    expect(printPart).toContain("setServerUnavailable(out.transient === true);");
+    expect(printPart).toContain("await appAlert({ message: out.transient ? serverUnavailableNotice(out.message) :");
+    expect(printPart).toContain("return browserPrint({ standingConfirmed: out.acknowledged === true });");
+    const downloadPart = modal.slice(modal.indexOf("const performDownload = async"), modal.indexOf("const browserDownload = async"));
+    expect(downloadPart).toContain("setServerUnavailable(out.transient === true);");
+    expect(downloadPart).toContain("if (fallBack) await browserDownload({ standingConfirmed });");
+    expect(page).toContain(": serverNote && serverUnavailable\n                ? serverUnavailableNotice(serverNote)");
+  });
+});
+
+// ─── DCW-4 remainder — ruled by the integrator at the DF-P15 merge, 2026-10-20 (DEC-90) ───
+describe("DCW-4 remainder (DEC-90 ruling) — a library-less request's 'Publish as a new document' asks the publisher to choose a library", () => {
+  const props = (onCreated = vi.fn()) => ({
+    orgId: ORG, libraryId: null, libraryName: "", libraryChoices: [{ id: "lib-1", name: "Piping" }, { id: "lib-2", name: "Civil" }],
+    ticketRowId: T, ticketNumber: "KE-9", defaultTitle: "Pump iso",
+    file: new File(["%PDF-1.7"], "ifc.pdf", { type: "application/pdf" }), actorUserId: "me", actorEmail: "me@plant.test", actorRole: "Engineer",
+    onClose: vi.fn(), onCreated,
+  });
+  const setInput = async (node: HTMLInputElement, value: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(node, value);
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  const choose = async (value: string) => {
+    const sel = host!.querySelector("select") as HTMLSelectElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(sel, value);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+  it("lists only the libraries it is given; nothing is created until one is chosen; the document goes into the chosen library and the version is found there", async () => {
+    const onCreated = vi.fn();
+    await act(async () => { root!.render(React.createElement(PublishNewDocumentModal, props(onCreated))); });
+    const options = Array.from(host!.querySelectorAll("select option")).map((o) => o.textContent);
+    expect(options).toEqual(["Choose a library…", "Piping", "Civil"]);
+    await setInput(host!.querySelector("input[placeholder]") as HTMLInputElement, "P-101-ISO-001");
+    await act(async () => { byText("button", /Create the document/)!.click(); });
+    await flush();
+    expect(s.creates).toEqual([]);
+    expect(host!.textContent).toMatch(/Choose the library to publish it into/);
+    await choose("lib-1");
+    expect(host!.textContent).toMatch(/Publish as a new document in Piping/);
+    await act(async () => { byText("button", /Create the document/)!.click(); });
+    await flush();
+    expect(s.creates).toEqual([expect.objectContaining({ orgId: ORG, libraryId: "lib-1", collectionId: null, relatedTicketId: T })]);
+    expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ versionId: "v-new", libraryId: "lib-1", documentId: "doc-new" }));
+  });
+  it("REGRESSION: a request WITH a library shows no chooser and creates in its own library", async () => {
+    const onCreated = vi.fn();
+    await act(async () => { root!.render(React.createElement(PublishNewDocumentModal, { ...props(onCreated), libraryId: "lib-1", libraryName: "Piping", libraryChoices: [{ id: "lib-2", name: "Civil" }] })); });
+    expect(host!.querySelector("select")).toBeNull();
+    await setInput(host!.querySelector("input[placeholder]") as HTMLInputElement, "P-1");
+    await act(async () => { byText("button", /Create the document/)!.click(); });
+    await flush();
+    expect(s.creates).toEqual([expect.objectContaining({ libraryId: "lib-1" })]);
+  });
+  it("the existing-document lookup accepts the list of chosen-able libraries (a document in none of them is 'none')", async () => {
+    expect(await findTicketNewDocumentVersion(clientDb, { orgId: ORG, ticketRowId: T, libraryId: ["lib-2", "lib-1"] })).toMatchObject({ kind: "found", version: { versionId: "v-new" } });
+    expect(await findTicketNewDocumentVersion(clientDb, { orgId: ORG, ticketRowId: T, libraryId: ["lib-2"] })).toEqual({ kind: "none" });
+    expect(await findTicketNewDocumentVersion(clientDb, { orgId: ORG, ticketRowId: T, libraryId: [] })).toEqual({ kind: "none" });
+  });
+  it("the page: the choices are the libraries where the publisher may put a first revision (the same gate, per library); none → no offer; the request's library is never written (source pins)", () => {
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    expect(page).toContain("const chooseNewDocLibrary = !!ticket?.id && !sourceRefId && !ticket?.libraryId;");
+    expect(page).toContain("canPutFirstRevisionInContainer({ orgId: ticketOrgId, libraryId: r.id, collectionId: null, actorUserId: uid, actorRole: activeRole ?? undefined }).catch(() => false)));");
+    expect(page).toContain("const canOfferChosenLibraryDocument = chooseNewDocLibrary && newDocLibraryChoices.length > 0 &&");
+    expect(page).toContain("libraryChoices={newDocLibraryChoices}");
+    // REGRESSION: the library request's offer is unchanged
+    expect(page).toContain("const canOfferNewDocument = !!newDocLibraryId && canPublishNew && !ticket.archivedAt && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published' && !existingNewDoc;");
+    // nothing on the page writes the ticket's library from this offer
+    const block = page.slice(page.indexOf("const chooseNewDocLibrary ="), page.indexOf("const recordExistingNewDocument = async"));
+    expect(block).not.toMatch(/library_id|from\('tickets'\)|\.update\(/);
   });
 });

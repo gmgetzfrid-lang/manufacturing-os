@@ -17,6 +17,13 @@
 // relatedTicketId), then keeps the first one whose document is in the
 // request's library. A failed read is "unknown", never "none": the page then
 // neither re-offers creation nor claims nothing was created.
+//
+// DCW-4 remainder (ruled by the integrator at the DF-P15 merge, 2026-10-20,
+// DEC-90): a request with neither a source document nor a library has no
+// library of its own — its publisher chooses one. `libraryId` may then be the
+// LIST of libraries the caller may put a first revision into (the page's
+// choices): the first version carrying the ticket whose document is in any
+// of them is found.
 
 export type TicketNewDocumentVersion = {
   versionId: string;
@@ -42,7 +49,7 @@ const selectFrom = (db: NewDocumentLookupClient, table: string, columns: string)
 /** The version the ticket's new document carries, if one exists (see the header). */
 export async function findTicketNewDocumentVersion(
   db: NewDocumentLookupClient,
-  input: { orgId: string; ticketRowId: string; libraryId: string; documentId?: string | null },
+  input: { orgId: string; ticketRowId: string; libraryId: string | readonly string[]; documentId?: string | null },
 ): Promise<TicketNewDocumentLookup> {
   try {
     let q = selectFrom(db, "document_versions", "id, record_id, revision_label, created_at")
@@ -55,13 +62,17 @@ export async function findTicketNewDocumentVersion(
       .filter((v) => typeof v.id === "string" && typeof v.record_id === "string");
     if (rows.length === 0) return { kind: "none" };
     const docIds = Array.from(new Set(rows.map((v) => v.record_id as string)));
-    const { data: docs, error: dErr } = await selectFrom(db, "documents", "id, document_number, library_id")
-      .eq("org_id", input.orgId)
-      .eq("library_id", input.libraryId)
-      .in("id", docIds);
+    const libraries = typeof input.libraryId === "string" ? [input.libraryId] : Array.from(input.libraryId);
+    if (libraries.length === 0) return { kind: "none" };
+    const docsQ = selectFrom(db, "documents", "id, document_number, library_id").eq("org_id", input.orgId);
+    const { data: docs, error: dErr } = await (typeof input.libraryId === "string"
+      ? docsQ.eq("library_id", input.libraryId)
+      : docsQ.in("library_id", libraries)
+    ).in("id", docIds);
     if (dErr) return { kind: "unknown", error: dErr.message || "the register could not be read" };
+    const wanted = new Set(libraries);
     const inLibrary = new Map(((docs as Array<{ id?: string; document_number?: string | null; library_id?: string | null }> | null) ?? [])
-      .filter((d) => typeof d.id === "string" && d.library_id === input.libraryId)
+      .filter((d) => typeof d.id === "string" && typeof d.library_id === "string" && wanted.has(d.library_id))
       .map((d) => [d.id as string, d.document_number ?? null]));
     const hit = rows.find((v) => inLibrary.has(v.record_id as string));
     if (!hit) return { kind: "none" };

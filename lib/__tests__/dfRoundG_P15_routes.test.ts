@@ -36,6 +36,8 @@ const state = vi.hoisted(() => ({
   /** The 1-based org_configurations 'drafting' read that fails, or 0. */
   failDraftingRead: 0,
   draftingReads: 0,
+  /** rpc name → its answer (the database evaluators the hand-back asks). */
+  rpc: {} as Record<string, { data: unknown; error: { message: string } | null }>,
 }));
 
 const at = (r: Row, k: string): unknown => {
@@ -87,6 +89,8 @@ function chain(table: string) {
         if (["insert", "update", "upsert", "delete"].includes(prop) && method === null) { method = prop; payload = args[0]; }
         if (prop === "eq") { eqs.push([String(args[0]), args[1]]); filters.push((r) => at(r, String(args[0])) === args[1]); }
         if (prop === "in") { const s = new Set(args[1] as unknown[]); filters.push((r) => s.has(at(r, String(args[0])))); }
+        if (prop === "neq") filters.push((r) => at(r, String(args[0])) !== args[1]);
+        if (prop === "lt") filters.push((r) => { const x = at(r, String(args[0])); return x != null && String(x) < String(args[1]); });
         if (prop === "is") filters.push((r) => (args[1] === null ? at(r, String(args[0])) == null : at(r, String(args[0])) === args[1]));
         if (prop === "not" && args[1] === "is" && args[2] === null) filters.push((r) => at(r, String(args[0])) != null);
         if (prop === "contains") filters.push((r) => Array.isArray(r[String(args[0])]) && (args[1] as unknown[]).every((x) => (r[String(args[0])] as unknown[]).includes(x)));
@@ -113,6 +117,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
     rpc: vi.fn(async (fn: string, args: unknown) => {
       state.calls.push({ table: "rpc", method: fn, args: [args] });
       if (fn === "email_gate") return { data: true, error: null };
+      if (state.rpc[fn]) return state.rpc[fn];
       return { data: null, error: null };
     }),
   };
@@ -206,7 +211,7 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 
 beforeEach(() => {
   __resetCapabilityPolicyCache();
-  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.seq = 0; state.failDraftingRead = 0; state.draftingReads = 0;
+  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.seq = 0; state.failDraftingRead = 0; state.draftingReads = 0; state.rpc = {};
   vi.mocked(after).mockReset();
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
@@ -494,12 +499,13 @@ describe("DCW-4 (DF-P15) — /api/tickets/handback records a new document publis
     expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(409);
     expect(ticketUpdates()).toEqual([]);
   });
-  it("a register read that fails is a 503, nothing written; neither a source document nor a library is a 400", async () => {
+  it("a register read that fails is a 503, nothing written; a request with neither a source document nor a library is checked, not trusted (a version not carrying the ticket is a 409 — DEC-90 ruling at the DF-P15 merge, below)", async () => {
     seed();
     state.errors["documents.select"] = [{ message: "timeout" }];
     expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(503);
     seed({ library_id: null });
-    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(400);
+    state.rows.document_versions[0].related_ticket_id = "t-other";
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(409);
     expect(ticketUpdates()).toEqual([]);
   });
   it("REGRESSION: a request with a source document still accepts only a version of THAT document (a new document in its library is refused), and records it as before", async () => {
@@ -513,5 +519,179 @@ describe("DCW-4 (DF-P15) — /api/tickets/handback records a new document publis
     expect(((upd.metadata as Row).deliverable as Row).new_document).toBeUndefined();
     const hist = upd.history as Row[];
     expect(hist[hist.length - 1].details).toBe("Rev 0 of P-9 — published from this request's Final deliverable.");
+  });
+});
+
+// ─── Rulings by the integrator at the DF-P15 merge, 2026-10-20 (DEC-90) ─────
+const UUIDV0 = "a0a0a0a0-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const LIB2 = "22222222-2222-4333-8444-555555555555";
+
+describe("Item 3 (DEC-90 ruling) — the hand-back labels a version 'new document' only when it is its document's FIRST version", () => {
+  const post = (body: Row) => handback(req("/api/tickets/handback", body));
+  const seed = (over: Row = {}, doc: Row = {}) => {
+    seedMembers();
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", library_id: LIB, deliverable_rev: "1", attachments: [DRAFT, FINAL1], ...over })];
+    state.rows.libraries = [{ id: LIB, org_id: ORG, name: "Piping", acl: null, visibility: "normal", read_access: "ALL", visible_to: [], write_access: [], admin_access: [] }];
+    state.rows.document_versions = [
+      { id: UUIDV0, org_id: ORG, record_id: UUIDD, revision_label: "0", related_ticket_id: null, review_state: null, created_by: SUP, created_at: "2026-09-01T00:00:00.000Z" },
+      { id: UUIDV, org_id: ORG, record_id: UUIDD, revision_label: "1", related_ticket_id: "t1", review_state: null, created_by: SUP, created_at: "2026-10-01T00:00:00.000Z" },
+    ];
+    state.rows.documents = [{ id: UUIDD, org_id: ORG, library_id: LIB, document_number: "P-101-ISO-001", status: "Issued", ...doc }];
+    state.user = { id: SUP };
+  };
+  it("a SECOND version of an existing document in the request's library: recorded as 'Rev 1 of <doc> — published into <library>', never as a new document", async () => {
+    seed();
+    const res = await post({ ticketId: "t1", versionId: UUIDV });
+    expect(res.status).toBe(200);
+    const upd = ticketUpdates()[0];
+    const d = (upd.metadata as Row).deliverable as Row;
+    expect(d).toMatchObject({ state: "published", version_id: UUIDV, document_id: UUIDD, revision_label: "1", library_id: LIB });
+    expect(d.new_document).toBeUndefined();
+    const hist = upd.history as Row[];
+    expect(hist[hist.length - 1]).toMatchObject({ action: "Deliverable published to the register", details: "Rev 1 of P-101-ISO-001 — published into Piping from this request's Final deliverable." });
+    expect(String(hist[hist.length - 1].details)).not.toMatch(/new document/);
+    expect(auditRows().find((r) => r.action === "TICKET_HANDBACK_PUBLISHED")!.details).toMatchObject({ newDocument: false, libraryId: LIB, documentStatus: "Issued" });
+    // the read is the checked one: versions of THIS document created before v
+    const lt = state.calls.find((c) => c.table === "document_versions" && c.method === "lt");
+    expect(lt?.args).toEqual(["created_at", "2026-10-01T00:00:00.000Z"]);
+    // the notice says the same
+    const bell = inserted("notifications");
+    expect(bell.length).toBeGreaterThan(0);
+    for (const n of bell) expect(String(n.title)).toBe("REQ-1: deliverable published as Rev 1 of P-101-ISO-001 into Piping");
+  });
+  it("the FIRST version (no earlier version of its document) keeps the new-document record and says 'created as a new document' in its notice", async () => {
+    seed();
+    state.rows.document_versions = [state.rows.document_versions[1]];
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(200);
+    const upd = ticketUpdates()[0];
+    expect(((upd.metadata as Row).deliverable as Row).new_document).toBe(true);
+    expect(inserted("notifications").length).toBeGreaterThan(0);
+    for (const n of inserted("notifications")) expect(String(n.title)).toBe("REQ-1: deliverable created as a new document (P-101-ISO-001 Rev 1)");
+  });
+  it("the earlier-version read failing is a 503 before anything is written", async () => {
+    seed();
+    state.errors["document_versions.select"] = [null, { message: "statement timeout" }];
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(503);
+    expect(ticketUpdates()).toEqual([]);
+    expect(auditRows()).toEqual([]);
+  });
+  it("REGRESSION: a source-document request reads no earlier versions and records exactly as before", async () => {
+    seed({ metadata: { source_document: { id: UUIDD, document_number: "P-9" } } });
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(200);
+    expect(state.calls.some((c) => c.table === "document_versions" && c.method === "lt")).toBe(false);
+    const hist = ticketUpdates()[0].history as Row[];
+    expect(hist[hist.length - 1].details).toBe("Rev 1 of P-9 — published from this request's Final deliverable.");
+  });
+});
+
+describe("DCW-4 remainder (DEC-90 ruling) — a request with neither a source document nor a library publishes into a library the publisher chooses", () => {
+  const post = (body: Row) => handback(req("/api/tickets/handback", body));
+  const PUBLISHER = U(9);
+  const seed = (over: Row = {}) => {
+    seedMembers(member(PUBLISHER, "Engineer"));
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", library_id: null, deliverable_rev: "1", attachments: [DRAFT, FINAL1], ...over })];
+    state.rows.document_versions = [{ id: UUIDV, org_id: ORG, record_id: UUIDD, revision_label: "0", related_ticket_id: "t1", review_state: null, created_by: PUBLISHER, created_at: "2026-10-01T00:00:00.000Z" }];
+    state.rows.documents = [{ id: UUIDD, org_id: ORG, library_id: LIB2, document_number: "N-1", status: "Issued" }];
+    state.user = { id: PUBLISHER };
+  };
+  const rpcCalls = (fn: string) => state.calls.filter((c) => c.table === "rpc" && c.method === fn).map((c) => c.args[0] as Row);
+  it("a library-less request records the new document published into the chosen library — the publisher's authority checked server-side on the DOCUMENT's library; the request's own library is never written", async () => {
+    seed();
+    state.rpc.user_can_publish_on_library = { data: true, error: null };
+    // a client-sent library id is ignored: the document's library is the one checked
+    const res = await post({ ticketId: "t1", versionId: UUIDV, libraryId: "ffffffff-ffff-4fff-8fff-ffffffffffff" });
+    expect(res.status).toBe(200);
+    expect(rpcCalls("user_can_publish_on_library")).toEqual([{ p_library: LIB2, p_uid: PUBLISHER, p_org: ORG }]);
+    const upd = ticketUpdates()[0];
+    expect("library_id" in upd).toBe(false);
+    expect((upd.metadata as Row).deliverable).toMatchObject({ state: "published", version_id: UUIDV, document_id: UUIDD, library_id: LIB2, library_chosen: true, new_document: true });
+    expect(auditRows().find((r) => r.action === "TICKET_HANDBACK_PUBLISHED")!.details).toMatchObject({ newDocument: true, libraryId: LIB2, libraryChosen: true });
+  });
+  it("the library's effective owner may publish there too (user_is_effective_owner on the library)", async () => {
+    seed();
+    state.rpc.user_can_publish_on_library = { data: false, error: null };
+    state.rpc.user_is_effective_owner = { data: true, error: null };
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(200);
+    expect(rpcCalls("user_is_effective_owner")).toEqual([{ p_doc_owner: null, p_collection: null, p_library: LIB2, p_uid: PUBLISHER }]);
+  });
+  it("a library the caller may NOT publish into is refused server-side (403), nothing written; an authority read that fails is a 503, nothing written", async () => {
+    seed();
+    state.rpc.user_can_publish_on_library = { data: false, error: null };
+    state.rpc.user_is_effective_owner = { data: false, error: null };
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(403);
+    seed();
+    state.rpc.user_can_publish_on_library = { data: null, error: { message: "timeout" } };
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(503);
+    expect(ticketUpdates()).toEqual([]);
+    expect(auditRows()).toEqual([]);
+  });
+  it("refused, nothing written: a document in another workspace, a document in no library, a version not carrying the ticket", async () => {
+    state.rpc.user_can_publish_on_library = { data: true, error: null };
+    seed();
+    state.rows.documents[0].org_id = "o2";
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(409);
+    seed();
+    state.rows.documents[0].library_id = null;
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(409);
+    seed();
+    state.rows.document_versions[0].related_ticket_id = "t-other";
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(409);
+    expect(ticketUpdates()).toEqual([]);
+  });
+  it("REGRESSION: a request WITH a library, or with a source document, asks no authority question and behaves exactly as before", async () => {
+    seed({ library_id: LIB2 });
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(200);
+    seed({ metadata: { source_document: { id: UUIDD, document_number: "N-1" } } });
+    expect((await post({ ticketId: "t1", versionId: UUIDV })).status).toBe(200);
+    expect(rpcCalls("user_can_publish_on_library")).toEqual([]);
+    expect(rpcCalls("user_is_effective_owner")).toEqual([]);
+  });
+});
+
+describe("DCW-4 remainder (DEC-90 ruling) — the close re-checks a library-less request's recorded publication against the register", () => {
+  const seed = (deliverable: Row | null, versions: Row[] = [], documents: Row[] = [{ id: UUIDD, org_id: ORG, library_id: LIB2 }]) => {
+    seedMembers();
+    state.rows.libraries = [{ id: LIB2, org_id: ORG, name: "Civil", acl: null, visibility: "normal", read_access: "ALL", visible_to: [], write_access: [], admin_access: [] }];
+    state.rows.document_versions = versions;
+    state.rows.documents = documents;
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", library_id: null, deliverable_rev: "1", attachments: [DRAFT, FINAL1], metadata: deliverable ? { deliverable } : {} })];
+    state.user = { id: REQ };
+  };
+  const published = { state: "published", version_id: UUIDV, revision_label: "0", document_id: UUIDD, published_at: LM, published_by: SUP, library_id: LIB2, library_chosen: true, new_document: true };
+  const backing = [{ id: UUIDV, org_id: ORG, record_id: UUIDD, related_ticket_id: "t1" }];
+  it("backed (the version carries the ticket; its document still exists, in the recorded library): closes clean", async () => {
+    seed(published, backing);
+    expect((await act({ actionType: "close_ticket" })).status).toBe(200);
+    const upd = ticketUpdates()[0];
+    expect("metadata" in upd).toBe(false);
+    expect((upd.history as Row[]).some((h) => h.action === "Closed — deliverable not in the register")).toBe(false);
+  });
+  it("the recorded document no longer in the register (or in another library): closes visibly NOT in the register, the false state replaced", async () => {
+    seed(published, backing, []);
+    expect((await act({ actionType: "close_ticket" })).status).toBe(200);
+    let upd = ticketUpdates()[0];
+    expect((upd.metadata as Row).deliverable).toMatchObject({ state: "not_in_register", document_id: null, library_id: LIB2 });
+    const hist = upd.history as Row[];
+    expect(hist[hist.length - 1]).toMatchObject({ action: "Closed — deliverable not in the register" });
+    expect(String(hist[hist.length - 1].details)).toContain("could not be matched to a document in Civil");
+    state.calls = [];
+    seed(published, backing, [{ id: UUIDD, org_id: ORG, library_id: LIB }]);
+    expect((await act({ actionType: "close_ticket" })).status).toBe(200);
+    upd = ticketUpdates()[0];
+    expect(((upd.metadata as Row).deliverable as Row).state).toBe("not_in_register");
+  });
+  it("a register read that fails proves nothing: 503 register_unreadable, nothing written", async () => {
+    seed(published, backing);
+    state.errors["documents.select"] = [{ message: "statement timeout" }];
+    const res = await act({ actionType: "close_ticket" });
+    expect(res.status).toBe(503);
+    expect(ticketUpdates()).toEqual([]);
+  });
+  it("REGRESSION: a library-less request with nothing recorded closes exactly as before (no metadata written, no note)", async () => {
+    seed(null);
+    expect((await act({ actionType: "close_ticket" })).status).toBe(200);
+    const upd = ticketUpdates()[0];
+    expect("metadata" in upd).toBe(false);
+    expect((upd.history as Row[]).some((h) => h.action === "Closed — deliverable not in the register")).toBe(false);
   });
 });
