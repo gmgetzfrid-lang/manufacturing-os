@@ -513,7 +513,7 @@ What landed:
 - **Severity:** MEDIUM
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/storage/download-url/route.ts:144-151`, `lib/docPack.ts:31-34`, `lib/downloads.ts:220`, `lib/downloads.ts:139`
+- **Locations:** `app/api/storage/download-url/route.ts:41-45`, `app/api/storage/download-url/route.ts:120`, `lib/docPack.ts:31-34`, `lib/downloads.ts:220`, `lib/downloads.ts:139`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Authorization is per-request (active membership + private/hidden ACL discover + explicit download-deny), but all of it is spent once: the minted URL carries no further authentication and survives membership revocation for its whole lifetime, up to SigV4's 7-day ceiling, and the bytes it serves are the raw unstamped original with no download_audits row. MEDIUM is a fair severity — it requires an authenticated member who already passes the ACL gate.
 
 **Mechanism.** `const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600"); … await getSignedUrl(r2, command, { expiresIn });` — no upper bound, no lower bound, no NaN handling. The SigV4 presigner accepts up to 604800 seconds. Every other signing site in the codebase hardcodes its lifetime (resolve: 3600, multipart part: 3600, upload-url: 900, transmittal: 300); this is the only caller-controlled one. Once issued, the URL is bearer-only: it survives the member being deactivated, the document being voided, an ACL download-deny being added, and a legal hold.

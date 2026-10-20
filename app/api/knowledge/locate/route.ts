@@ -235,9 +235,16 @@ export async function POST(req: NextRequest) {
   // tag on every sheet in the library — use it. ACL fails closed: a mirror
   // of a controlled doc the caller can't read is never suggested.
   const missingHere = tags.filter((t) => !onThisPage.has(t));
+  // KACL-7 criterion 3 (built at the I-29 merge — the integrator's DEC-90
+  // ruling (3)): a direct upload's jump carries its key exactly as before; a
+  // SOURCE-LINKED mirror's jump carries its id, a null key and its revision
+  // (non-secret), and the viewer opens it through /api/knowledge/mirror-url
+  // — the same door decision on the same key the browser used to sign, so
+  // the same reader opens the same file; the mirror's key stays here.
   const elsewhere: Array<{
-    tag: string; documentId: string; documentName: string; fileKey: string;
+    tag: string; documentId: string; documentName: string; fileKey: string | null;
     page: number; sameDocument: boolean;
+    sourceVersionId?: string | null; sourceRev?: string | null;
   }> = [];
   if (missingHere.length > 0) {
     try {
@@ -257,7 +264,7 @@ export async function POST(req: NextRequest) {
       if (hitDocIds.length > 0) {
         const { data: docRows } = await supabaseAdmin
           .from("knowledge_documents")
-          .select("id, name, file_key, source_document_id")
+          .select("id, name, file_key, source_document_id, source_version_id, source_rev")
           .in("id", hitDocIds);
         const docsById = new Map((docRows ?? []).map((d) => [d.id as string, d]));
         const mirrors = (docRows ?? []).filter((d) => d.source_document_id);
@@ -286,11 +293,19 @@ export async function POST(req: NextRequest) {
         }
         for (const [tag, hit] of best) {
           const d = docsById.get(hit.document_id)!;
-          elsewhere.push({
-            tag, documentId: hit.document_id,
-            documentName: d.name as string, fileKey: d.file_key as string,
-            page: hit.page, sameDocument: hit.document_id === documentId,
-          });
+          elsewhere.push(d.source_document_id
+            ? {
+                tag, documentId: hit.document_id,
+                documentName: d.name as string, fileKey: null,
+                page: hit.page, sameDocument: hit.document_id === documentId,
+                sourceVersionId: (d.source_version_id as string | null) ?? null,
+                sourceRev: (d.source_rev as string | null) ?? null,
+              }
+            : {
+                tag, documentId: hit.document_id,
+                documentName: d.name as string, fileKey: d.file_key as string,
+                page: hit.page, sameDocument: hit.document_id === documentId,
+              });
         }
       }
     } catch { /* best-effort — a missing answer here just means less help */ }

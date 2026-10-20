@@ -153,7 +153,8 @@ describe("CHAIN-1 — restrictions bind on ANY held role; grants follow any held
   it("source pin: download-url seeds held roles from the headline (roles: [] no longer drops it)", () => {
     // The deny-download evaluation moved into lib/downloadDeny.ts (one rule for
     // the route and the public share routes — SHR-3); the seed moved with it.
-    const route = readFileSync(join(process.cwd(), "app", "api", "storage", "download-url", "route.ts"), "utf8");
+    // The bytes door's gate (which calls it) moved verbatim to lib/documentKeyGate.ts (DEC-90 ruling (4), I-29 merge).
+    const route = readFileSync(join(process.cwd(), "lib", "documentKeyGate.ts"), "utf8");
     const rule = readFileSync(join(process.cwd(), "lib", "downloadDeny.ts"), "utf8");
     expect(route).toMatch(/await memberDownloadDenied\(supabaseAdmin, \{/);
     expect(rule).toMatch(/const roles: string\[\] = normalizeRoles\(mem\?\.roles, mem\?\.role\);/);

@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal, loadDcLandscape, containerReadable } from "@/lib/knowledgeAccess";
 import { aiReadability } from "@/lib/aiBoundary";
+import { readHeldBackIds, HELD_BACK_UNREADABLE } from "@/lib/heldBackIds";
 import {
   suggestFoldersForUnit, computeAreaDrift, type AreaFolder,
 } from "@/lib/areaKnowledge";
@@ -76,12 +77,13 @@ export async function GET(req: NextRequest) {
   // and AI-READABLE only, so "12 docs" in a drift banner never turns into
   // "linked — 0 documents pulled in" (the sync skips superseded/archived/
   // fileless/excluded docs, so this count must too). ─────────────────────
-  const aiExcluded = new Set<string>();
-  {
-    const { data } = await supabaseAdmin
-      .from("documents").select("id").eq("org_id", orgId).eq("ai_excluded", true);
-    for (const r of (data ?? []) as Array<{ id: string }>) aiExcluded.add(r.id);
-  }
+  // KACL-9 residual (I-29): the held-back read is CHECKED and paged — an
+  // errored read withholds the counts (503, never a held-back document
+  // counted as AI-readable); a database without the column holds nothing
+  // back, as the knowledge sync reads it (lib/heldBackIds).
+  const held = await readHeldBackIds(orgId);
+  if (!held.ok) return bad(HELD_BACK_UNREADABLE, 503);
+  const aiExcluded = held.ids;
   const docCountByFolder = new Map<string, number>();
   for (let from = 0; from < 20_000; from += 1000) {
     const { data, error: docErr } = await supabaseAdmin

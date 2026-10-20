@@ -176,6 +176,28 @@ SELECT count(*) AS n FROM pg_indexes WHERE schemaname = 'public' AND indexname I
 ```
 
 4: nothing to do. Fewer: paste `supabase/migrations/20260630_perf_indexes.sql` (now safe in any order and on any database; a re-paste changes nothing). (int/16-persistence-rls.md `IRLS-18`.)
+
+### F. A read-only check BEFORE the deploy carrying intelligence I-29 (merged 2026-10-20)
+
+From the I-29 deploy, the knowledge viewer opens a source-linked mirror only through the server, and refuses a mirror whose stored file is not a revision of its source or sits under another workspace. No code writes such a mirror, so both counts are expected to be 0. Before you deploy, paste this read-only query. It changes nothing:
+
+```sql
+SELECT 'mirror key under another workspace prefix (must be 0)' AS check, count(*)::text AS n
+  FROM knowledge_documents k
+ WHERE k.source_document_id IS NOT NULL AND k.file_key LIKE 'orgs/%' AND k.file_key NOT LIKE 'orgs/' || k.org_id || '/%'
+UNION ALL
+SELECT 'mirror key not a revision file of its source (must be 0)', count(*)::text
+  FROM knowledge_documents k
+ WHERE k.source_document_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM document_versions v WHERE v.record_id = k.source_document_id AND v.file_url = k.file_key)
+UNION ALL
+SELECT 'inventory: bound mirror keys without the orgs/ prefix (now decided by the door''s gate)', count(*)::text
+  FROM knowledge_documents k
+ WHERE k.source_document_id IS NOT NULL AND k.file_key NOT LIKE 'orgs/%'
+   AND EXISTS (SELECT 1 FROM document_versions v WHERE v.record_id = k.source_document_id AND v.file_url = k.file_key);
+```
+
+The first two 0: deploy. Either non-zero: do not deploy I-29 yet — send the three counts back and the integrator decides (a re-sync from the source repairs a stale mirror; a key under another workspace needs a look first). The third row is an inventory only. (int/05-knowledge-acl.md `KACL-5`.)
 ---
 
 ## 4. Ordered table (numeric order)

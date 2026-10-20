@@ -100,7 +100,8 @@ describe("20261212 — DEC-30 one-paste shape", () => {
     expect(header).toMatch(/1\. ALWAYS, on every paste — the KACL-5 index/);
     expect(header).toMatch(/The index is the\s+--\s+I-12 deploy's ONLY prerequisite\./);
     // the route's two lookups are unchanged — the index only changes their cost
-    const route = readFileSync(join(process.cwd(), "app/api/storage/download-url/route.ts"), "utf8");
+    // documentsNamingKey moved verbatim to lib/documentKeyGate.ts (DEC-90 ruling (4), I-29 merge).
+    const route = readFileSync(join(process.cwd(), "lib/documentKeyGate.ts"), "utf8");
     expect(route).toMatch(/for \(const col of \["file_url", "source_file_key"\] as const\)/);
     expect(route).toMatch(/document_versions_source_file_key_idx/);
   });

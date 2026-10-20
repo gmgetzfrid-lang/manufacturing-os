@@ -364,7 +364,7 @@ before reading the body, and read the body once.
 - **Blast radius:** security
 - **Locations:**
   - `lib/storage.ts:118` — `getPresignedDownloadUrl`
-  - `app/api/storage/download-url/route.ts:146-151` — the call site
+  - `app/api/storage/download-url/route.ts:113-120` — the call site
   - `app/api/transmittal/route.ts:73` — the correct pattern, for reference
 - **Related:** `SEC-1`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `GetObjectCommand({ Bucket, Key })` is signed with no `ResponseContentDisposition` (`download-url/route.ts:146-151`), so the object is served with its stored content type and renders inline. This is the delivery side of `SEC-1`.
