@@ -97,6 +97,9 @@ const g = vi.hoisted(() => ({
   insertError: null as { code: string; message: string } | null,
   inserts: [] as Array<{ table: string; row: unknown }>,
   adopt: { ok: true, status: 200, body: { ok: true, adopted: true, already: null } as Record<string, unknown> },
+  // I-15 fix pass (AREA-2): what the member's read of the pair's source answers.
+  pairRead: { data: { source: "drawing" } as Record<string, unknown> | null, error: null as { message: string } | null },
+  pairReads: 0,
   // I-15 (FLOW-14 / GAP-315): what the confirmed-flow read answers.
   flowEdges: { edges: [] as unknown[], state: "ok" as "ok" | "missing" | "error", error: undefined as string | undefined, truncated: false, skipped: 0, unitNodes: [] as string[] },
   flowReads: 0,
@@ -190,7 +193,13 @@ vi.mock("@/lib/supabase", () => ({
           }),
         }),
       }
-      : ({ insert: async (row: unknown) => { g.inserts.push({ table, row }); return { error: g.insertError }; } }),
+      : ({
+        insert: async (row: unknown) => { g.inserts.push({ table, row }); return { error: g.insertError }; },
+        select: () => {
+          const chain = { eq: () => chain, maybeSingle: async () => { g.pairReads += 1; return g.pairRead; } };
+          return chain;
+        },
+      }),
   },
 }));
 
@@ -200,6 +209,7 @@ import { settingsKey, lensByKey } from "@/lib/graphSettings";
 import { URL_WRITE_BURST, keyboardOrder, keyboardBaseOrder } from "@/lib/graphView";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { edgeRgbFor, edgeLabelFor, EDGE_RGB, TAG_MACHINE_RGB, AI_READ_MARK } from "@/components/graph/graphTheme";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -279,6 +289,8 @@ beforeEach(() => {
   g.insertError = null;
   g.inserts = [];
   g.adopt = { ok: true, status: 200, body: { ok: true, adopted: true, already: null } };
+  g.pairRead = { data: { source: "drawing" }, error: null };
+  g.pairReads = 0;
   g.flowEdges = { edges: [], state: "ok", error: undefined, truncated: false, skipped: 0, unitNodes: [] };
   g.flowReads = 0;
   g.proposals = { pairs: [], total: 0, capped: false, error: null };
@@ -1480,6 +1492,55 @@ describe("AREA-2 graph limb — Connect writes a document ↔ equipment link onl
     expect(host.querySelector('[data-testid="connect-error"]')?.textContent).toBe("You cannot read this document, so you cannot link it.");
     expect(text()).not.toContain("Connected LOOSE-2 ↔ P-102 ✓");
   });
+
+  it("fix pass: after the adopt the drawing's edge IS the person's — slate, not orange, and no 'not yet a person's link' or AI-read label", async () => {
+    g.graph.edges.push({ a: "doc:d2", b: "asset:a2", type: "tag", sheet: "SHT 4", pages: [4], assertedBy: "machine", aiRead: true });
+    g.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
+    nav.params = new URLSearchParams("select=doc%3Ad2");
+    await render(page());
+    const before = last().edges.find((e) => e.type === "tag" && e.a === "doc:d2")!;
+    expect(edgeRgbFor(before)).toBe(TAG_MACHINE_RGB);
+    await click(btn("Draw a connection from this node"));
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "asset:a2")!); });
+    await flush();
+    expect(g.pairReads).toBe(1);
+    expect(g.fetches.find((f) => f.url === "/api/equipment-bridge")?.body).toMatchObject({ action: "adopt" });
+    const after = last().edges.filter((e) => e.type === "tag" && e.a === "doc:d2");
+    expect(after).toEqual([{ a: "doc:d2", b: "asset:a2", type: "tag", sheet: "SHT 4", pages: [4], assertedBy: "human" }]);
+    expect(edgeRgbFor(after[0])).toBe(EDGE_RGB.tag);
+    expect(edgeLabelFor(after[0])).toBe("Shared equipment · SHT 4");
+    expect(edgeLabelFor(after[0])).not.toMatch(/AI-read|Read from the drawing/);
+    expect(text()).toContain("Connected LOOSE-2 ↔ P-102 ✓");
+  });
+
+  it("fix pass: a pair already a person's link (manual) needs no adopt — the source is read first, and a failing Bridge cannot turn 'already linked' into an error", async () => {
+    g.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
+    g.pairRead = { data: { source: "manual" }, error: null };
+    g.adopt = { ok: false, status: 503, body: { error: "The document access couldn't be checked." } };
+    nav.params = new URLSearchParams("select=doc%3Ad2");
+    await render(page());
+    await click(btn("Draw a connection from this node"));
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "asset:a2")!); });
+    await flush();
+    expect(g.fetches.find((f) => f.url === "/api/equipment-bridge")).toBeUndefined();
+    expect(host.querySelector('[data-testid="connect-error"]')).toBeNull();
+    expect(text()).toContain("Connected LOOSE-2 ↔ P-102 ✓");
+    expect(last().edges).toContainEqual({ a: "doc:d2", b: "asset:a2", type: "tag" });
+  });
+
+  it("fix pass: a source the member's read cannot tell (an error, or no row visible) still goes to adopt, which decides", async () => {
+    g.insertError = { code: "23505", message: "duplicate key value violates unique constraint" };
+    g.pairRead = { data: null, error: { message: "statement timeout" } };
+    g.adopt = { ok: true, status: 200, body: { ok: true, adopted: false, already: "jsonb_sync" } };
+    nav.params = new URLSearchParams("select=doc%3Ad2");
+    await render(page());
+    await click(btn("Draw a connection from this node"));
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "asset:a2")!); });
+    await flush();
+    expect(g.fetches.find((f) => f.url === "/api/equipment-bridge")?.body).toMatchObject({ action: "adopt" });
+    expect(last().edges).toContainEqual({ a: "doc:d2", b: "asset:a2", type: "tag" });
+    expect(text()).toContain("Connected LOOSE-2 ↔ P-102 ✓");
+  });
 });
 
 describe("FLOW-14 done-when 3 / GAP-315 acceptance 3 — a unit's upstream and downstream set from confirmed flows", () => {
@@ -1545,5 +1606,37 @@ describe("FLOW-14 done-when 3 / GAP-315 acceptance 3 — a unit's upstream and d
     await render(page());
     expect(host.querySelector('[data-testid="process-reach"]')).toBeNull();
     expect(g.flowReads).toBe(0);
+  });
+});
+
+describe("GM-14 / GAP-303 graph limb (fix pass) — the peek says what a document ↔ equipment link is", () => {
+  it("a machine reading's sheet and the AI-read mark show beside the node it reaches; a plain link says nothing more", async () => {
+    g.graph.edges = g.graph.edges.map((e) => e.type === "tag" && e.a === "doc:d1"
+      ? { ...e, sheet: "SHT 4", pages: [4], assertedBy: "machine" as const, aiRead: true } : e);
+    nav.params = new URLSearchParams("select=asset%3Aa1");
+    await render(page());
+    const notes = [...host.querySelectorAll('[data-testid="peek-link-note"]')].map((n) => n.textContent);
+    expect(notes).toEqual([`Read from the drawing · SHT 4 (${AI_READ_MARK})`]);
+    const row = host.querySelector('[data-testid="peek-link-note"]')!.closest("button")!;
+    expect(row.textContent).toContain("PID-1");
+    expect(row.getAttribute("title")).toBe(`Read from the drawing · SHT 4 (${AI_READ_MARK})`);
+  });
+
+  it("a person's link without a sheet adds no note", async () => {
+    nav.params = new URLSearchParams("select=asset%3Aa1");
+    await render(page());
+    expect(peek()).toBeTruthy();
+    expect(host.querySelector('[data-testid="peek-link-note"]')).toBeNull();
+  });
+});
+
+describe("GAP-313 (fix pass) — a map too large to send is said plainly", () => {
+  it("the 413's sentence is shown and no map is drawn; a snapshot note from an earlier load is not left standing", async () => {
+    const { GraphLoadError, graphTooLargeMessage } = await import("@/lib/orgGraph");
+    g.loadError = new GraphLoadError(graphTooLargeMessage(4_200_000), 413, false, true);
+    await render(page());
+    expect(text()).toContain("This map is too large to send in one answer (4.2 MB), so it is not drawn. Scope the map to one unit");
+    expect(host.querySelector('[data-testid="map2d"]')).toBeNull();
+    expect(host.querySelector('[data-testid="snapshot-skipped"]')).toBeNull();
   });
 });

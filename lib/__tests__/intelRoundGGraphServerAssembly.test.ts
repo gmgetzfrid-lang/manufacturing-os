@@ -40,6 +40,8 @@ const st = vi.hoisted(() => ({
   predicateThrows: null as Error | null,
   predicateCalls: [] as string[][],
   proposals: { pairs: [] as unknown[], total: 0 as number | null, capped: false, error: null as string | null },
+  // fix pass: the answer budget the route holds the body to (null: the real one).
+  budget: null as number | null,
 }));
 
 vi.mock("@/lib/supabaseAdmin", () => ({
@@ -74,6 +76,10 @@ vi.mock("@/lib/knowledgeAccess", async (orig) => {
     }),
   };
 });
+vi.mock("@/lib/orgGraph", async (orig) => {
+  const actual = await orig<typeof import("@/lib/orgGraph")>();
+  return { ...actual, fitGraphPayload: (p: Parameters<typeof actual.fitGraphPayload>[0], b?: number) => actual.fitGraphPayload(p, st.budget ?? b) };
+});
 vi.mock("@/lib/linkProposals", async (orig) => ({
   ...(await orig<typeof import("@/lib/linkProposals")>()),
   readPendingProposalPairs: vi.fn(async () => structuredClone(st.proposals)),
@@ -83,7 +89,9 @@ import { NextRequest } from "next/server";
 import { GET as graphRoute } from "@/app/api/graph/route";
 import { makeGraphFake, newGraphFakeDb, resetGraphFakeDb } from "./helpers/graphFakeDb";
 import { runWithServerClient } from "@/lib/serverClientScope";
-import { buildOrgGraph, fetchOrgGraph, GraphLoadError, relationOf, type OrgGraph } from "@/lib/orgGraph";
+import {
+  buildOrgGraph, fetchOrgGraph, GraphLoadError, relationOf, unpackGraphPayload, graphTooLargeMessage, PAIRS_LEFT_OUT, type OrgGraph,
+} from "@/lib/orgGraph";
 import { DcLandscapeUnreadableError, PRINCIPAL_UNREADABLE } from "@/lib/knowledgeAccess";
 import { edgeRgbFor, edgeLabelFor, EDGE_RGB, EDGE_LEGEND, TAG_MACHINE_RGB, AI_READ_MARK } from "@/components/graph/graphTheme";
 import { readFileSync } from "node:fs";
@@ -166,6 +174,7 @@ beforeEach(() => {
   st.predicateThrows = null;
   st.predicateCalls = [];
   st.proposals = { pairs: [], total: 0, capped: false, error: null };
+  st.budget = null;
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -177,6 +186,9 @@ const ask = (token: string | null, qs = `orgId=${ORG}`) => graphRoute(new NextRe
  *  through the shared client, here bound to that reader's RLS view. */
 const clientMap = (client: unknown, scope?: { kind: "unit"; code: string }) =>
   runWithServerClient(client, () => (scope ? buildOrgGraph(ORG, { scope }) : buildOrgGraph(ORG)));
+/** The route's answer, unpacked as fetchOrgGraph unpacks it (a refusal,
+ *  which carries no map, as sent). */
+const read = (r: Response) => r.json().then((j) => (j.graph ? unpackGraphPayload(j) : j));
 const ids = (g: OrgGraph) => g.nodes.map((n) => n.id).sort();
 const edgesOf = (g: OrgGraph, id: string) => g.edges.filter((e) => e.a === id || e.b === id);
 
@@ -193,7 +205,7 @@ describe("GAP-313 acceptance 1 — the payload comparison against the client ass
   it("a CONTROLLER's payload is exactly the map the client assembly gives them (org-wide)", async () => {
     const res = await ask("tc");
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await read(res);
     const client = await clientMap(ctrlClient);
     expect(body.graph).toEqual(JSON.parse(JSON.stringify(client)));
     expect(ids(body.graph)).toContain("doc:d2");
@@ -202,7 +214,7 @@ describe("GAP-313 acceptance 1 — the payload comparison against the client ass
   it("a CONTROLLER's scoped payload is exactly the client assembly's scoped map", async () => {
     const res = await ask("tc", `orgId=${ORG}&scope=unit:20`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await read(res);
     const client = await clientMap(ctrlClient, { kind: "unit", code: "20" });
     expect(body.graph).toEqual(JSON.parse(JSON.stringify(client)));
     expect(body.graph.scope).toMatchObject({ label: "Crude Unit" });
@@ -210,7 +222,7 @@ describe("GAP-313 acceptance 1 — the payload comparison against the client ass
 
   it("a GRANTED-NOTHING member whose predicate agrees with RLS gets exactly the client assembly's map for them — the restricted drawing absent, as in their browser", async () => {
     st.predicate = (asked) => new Set(asked.filter((id) => id !== "d2"));
-    const body = await (await ask("tm")).json();
+    const body = await read(await ask("tm"));
     const client = await clientMap(memberClient);
     expect(body.graph).toEqual(JSON.parse(JSON.stringify(client)));
     expect(ids(body.graph)).not.toContain("doc:d2");
@@ -219,7 +231,7 @@ describe("GAP-313 acceptance 1 — the payload comparison against the client ass
 
   it("where the predicate is STRICTER than RLS (d3 listed, canReadNode refuses it): exactly d3 and the links naming it are gone, uncounted, and one more document is outside their access", async () => {
     st.predicate = (asked) => new Set(asked.filter((id) => id !== "d2" && id !== "d3"));
-    const body = await (await ask("tm")).json();
+    const body = await read(await ask("tm"));
     const client = await clientMap(memberClient);
     const g = body.graph as OrgGraph;
     // the client assembly (RLS alone) shows d3 and its links …
@@ -241,7 +253,7 @@ describe("GAP-313 acceptance 1 — the payload comparison against the client ass
 
   it("the same stricter predicate on a SCOPED map: d3 is not drawn, and the map says documents are outside the member's access", async () => {
     st.predicate = (asked) => new Set(asked.filter((id) => id !== "d3"));
-    const body = await (await ask("tm", `orgId=${ORG}&scope=unit:20`)).json();
+    const body = await read(await ask("tm", `orgId=${ORG}&scope=unit:20`));
     const client = await clientMap(memberClient, { kind: "unit", code: "20" });
     expect(ids(client)).toContain("doc:d3");
     expect(ids(body.graph)).not.toContain("doc:d3");
@@ -253,7 +265,7 @@ describe("GAP-313 acceptance 1 — the payload comparison against the client ass
   it("before 20261138 (no documents_total_for_org) a refused document is still said, never silently missing", async () => {
     memberDb.rpc = {};
     st.predicate = (asked) => new Set(asked.filter((id) => id !== "d3"));
-    const body = await (await ask("tm")).json();
+    const body = await read(await ask("tm"));
     expect(body.graph.access.outsideAccess).toBeNull();
     expect(body.graph.truncations).toContain("1 document you could otherwise list is outside your access under the library, folder and document rules — not on this map.");
   });
@@ -264,7 +276,7 @@ describe("GAP-313 — fails closed, and never one payload across callers", () =>
     st.predicateThrows = new DcLandscapeUnreadableError("libraries", "statement timeout");
     const res = await ask("tm");
     expect(res.status).toBe(503);
-    const body = await res.json();
+    const body = await read(res);
     expect(body.graph).toBeUndefined();
     expect(body.accessUnchecked).toBe(true);
     expect(body.error).toMatch(/document access couldn't be checked just now, so the map is not drawn/);
@@ -274,7 +286,7 @@ describe("GAP-313 — fails closed, and never one payload across callers", () =>
     st.principalThrows = true;
     let res = await ask("tm");
     expect(res.status).toBe(503);
-    expect((await res.json()).error).toBe(PRINCIPAL_UNREADABLE);
+    expect((await read(res)).error).toBe(PRINCIPAL_UNREADABLE);
     st.principalThrows = false;
     res = await ask("tx");
     expect(res.status).toBe(403);
@@ -293,16 +305,16 @@ describe("GAP-313 — fails closed, and never one payload across callers", () =>
     const res = await ask("tc");
     expect(res.status).toBe(500);
     await expect(clientMap(ctrlClient)).rejects.toThrow("statement timeout");
-    expect((await res.json()).error).toBe("statement timeout");
+    expect((await read(res)).error).toBe("statement timeout");
   });
 
   it("each answer is private and uncached, and interleaved callers each get their own map", async () => {
     const m1 = await ask("tm");
     expect(m1.headers.get("cache-control")).toBe("private, no-store");
-    const c1 = await (await ask("tc")).json();
-    const m2 = await (await ask("tm")).json();
+    const c1 = await read(await ask("tc"));
+    const m2 = await read(await ask("tm"));
     expect(ids(c1.graph)).toContain("doc:d2");
-    expect(ids((await m1.json()).graph)).not.toContain("doc:d2");
+    expect(ids((await read(m1)).graph)).not.toContain("doc:d2");
     expect(ids(m2.graph)).not.toContain("doc:d2");
     const fail = await ask("tm").then((r) => r.headers.get("cache-control"));
     expect(fail).toBe("private, no-store");
@@ -314,10 +326,10 @@ describe("GAP-313 / GM-7 — the proposal pairs ride in the one payload", () => 
 
   it("a controller gets the reader's queue as read; a pair naming a document the predicate refused is dropped for the member", async () => {
     st.proposals = { pairs: [pair("d1", "d3"), pair("d1", "d4")], total: 2, capped: false, error: null };
-    const c = await (await ask("tc")).json();
+    const c = await read(await ask("tc"));
     expect(c.proposals).toEqual(st.proposals);
     st.predicate = (asked) => new Set(asked.filter((id) => id !== "d3"));
-    const m = await (await ask("tm")).json();
+    const m = await read(await ask("tm"));
     expect(m.proposals.pairs).toEqual([pair("d1", "d4")]);
   });
 
@@ -325,7 +337,7 @@ describe("GAP-313 / GM-7 — the proposal pairs ride in the one payload", () => 
     st.proposals = { pairs: [], total: null, capped: false, error: "statement timeout" };
     const res = await ask("tc");
     expect(res.status).toBe(200);
-    expect((await res.json()).proposals).toEqual({ pairs: [], total: null, capped: false, error: "statement timeout" });
+    expect((await read(res)).proposals).toEqual({ pairs: [], total: null, capped: false, error: "statement timeout" });
   });
 });
 
@@ -381,6 +393,46 @@ describe("GM-14 limb 2 / GAP-303 graph limb — the doc ↔ asset edge carries i
   });
 });
 
+describe("GAP-313 (fix pass) — the answer is held to the budget one buffered response can carry", () => {
+  const pair = (a: string, b: string) => ({ documentId: a, targetDocumentId: b, proposer: "tag", nodeA: `doc:${a}`, nodeB: `doc:${b}` });
+
+  it("the body is packed (edges by node position) and unpacks to exactly the map and pairs — JSON, private, uncached", async () => {
+    st.proposals = { pairs: [pair("d1", "d3")], total: 1, capped: false, error: null };
+    const res = await ask("tc");
+    expect(res.headers.get("content-type")).toMatch(/^application\/json/);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    const raw = await res.clone().json();
+    expect(raw.graph.wire).toBe(1);
+    expect(raw.graph.edges.every((e: unknown[]) => typeof e[0] === "number" && typeof e[1] === "number" && typeof e[2] === "number")).toBe(true);
+    expect(raw.proposals.pairs).toEqual([["d1", "d3", "tag"]]);
+    const body = await read(res);
+    expect(body.graph).toEqual(JSON.parse(JSON.stringify(await clientMap(ctrlClient))));
+    expect(body.proposals).toEqual(st.proposals);
+  });
+
+  it("past the budget the proposal pairs are left out and the payload says why; the map still arrives", async () => {
+    st.proposals = { pairs: Array.from({ length: 200 }, () => pair("d1", "d3")), total: 200, capped: false, error: null };
+    const full = (await (await ask("tc")).text()).length;
+    st.budget = full - 10;
+    const res = await ask("tc");
+    expect(res.status).toBe(200);
+    const body = await read(res);
+    expect(body.graph).toEqual(JSON.parse(JSON.stringify(await clientMap(ctrlClient))));
+    expect(body.proposals).toEqual({ pairs: [], total: 200, capped: false, error: PAIRS_LEFT_OUT });
+  });
+
+  it("a map past the budget even alone is refused with the reason (413, tooLarge) — never sent for the platform to cut", async () => {
+    st.budget = 100;
+    const res = await ask("tc");
+    expect(res.status).toBe(413);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    const body = await res.json();
+    expect(body.graph).toBeUndefined();
+    expect(body.tooLarge).toBe(true);
+    expect(body.error).toMatch(/^This map is too large to send in one answer \(0\.0 MB\), so it is not drawn\. Scope the map to one unit/);
+  });
+});
+
 describe("GAP-313 — fetchOrgGraph, the page's one request", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -402,7 +454,23 @@ describe("GAP-313 — fetchOrgGraph, the page's one request", () => {
     expect(e).toBeInstanceOf(GraphLoadError);
     expect(e).toMatchObject({ message: "no map", status: 503, accessUnchecked: true });
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 502, json: async () => { throw new Error("html"); } })));
-    await expect(fetchOrgGraph(ORG)).rejects.toMatchObject({ message: "The map could not be loaded (HTTP 502).", accessUnchecked: false });
+    await expect(fetchOrgGraph(ORG)).rejects.toMatchObject({ message: "The map could not be loaded (HTTP 502).", accessUnchecked: false, tooLarge: false });
+  });
+
+  it("a packed answer is unpacked to the map and the pairs it carried", async () => {
+    st.proposals = { pairs: [{ documentId: "d1", targetDocumentId: "d4", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d4" }], total: 1, capped: false, error: null };
+    const sent = await (await ask("tc")).text();
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => JSON.parse(sent) })));
+    const r = await fetchOrgGraph(ORG);
+    expect(r.graph).toEqual(JSON.parse(JSON.stringify(await clientMap(ctrlClient))));
+    expect(r.proposals).toEqual(st.proposals);
+  });
+
+  it("a map too large to send is a GraphLoadError marked tooLarge — the route's 413 with its sentence, or the platform's bare 413", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 413, json: async () => ({ error: "This map is too large to send in one answer (4.2 MB), so it is not drawn.", tooLarge: true }) })));
+    await expect(fetchOrgGraph(ORG)).rejects.toMatchObject({ status: 413, tooLarge: true, message: "This map is too large to send in one answer (4.2 MB), so it is not drawn." });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 413, json: async () => { throw new Error("FUNCTION_PAYLOAD_TOO_LARGE"); } })));
+    await expect(fetchOrgGraph(ORG)).rejects.toMatchObject({ status: 413, tooLarge: true, message: graphTooLargeMessage(null) });
   });
 });
 

@@ -1339,11 +1339,129 @@ export interface OrgGraphPayload {
   proposals: PendingPairsRead;
 }
 
+// ─── The wire (GAP-313, fix pass) ───────────────────────────────────────────
+//
+// The answer is buffered, and the hosting platform refuses a buffered
+// function response past ~4.5 MB (vercel.json; the repo's own note in
+// lib/__tests__/transmittalPortalRoute.test.ts). The plain JSON of a map at
+// the caps is about 4.0 MB (3,841 nodes and 23,010 edges in
+// lib/__tests__/intelRoundGGraphPayloadBudget.test.ts), and 4,000 proposal
+// pairs add about 0.96 MB: about 4.9 MB, past it. Most of that is node ids
+// repeated in every edge, so on the wire an edge names its ends by their
+// POSITION in `nodes` and its type by a position in WIRE_EDGE_TYPES, and a
+// pair is [document, target, proposer] (its node ids are `doc:<id>`, a fact
+// of the schema). Nothing is dropped: unpackGraphPayload gives back exactly
+// the payload that was packed. At the caps, pairs and all, the answer is
+// about 2.2 MB (2.5 MB with 120-character titles and descriptions). One
+// still past GRAPH_PAYLOAD_BUDGET leaves the proposal pairs out (said), and
+// one past it even then is refused with the reason (413, `tooLarge`), never
+// sent for the platform to cut.
+
+/** The largest answer GET /api/graph sends: bytes of JSON, under the
+ *  platform's ~4.5 MB with room for its own framing. */
+export const GRAPH_PAYLOAD_BUDGET = 4_000_000;
+
+/** Every edge type, by its position on the wire. Append only. */
+export const WIRE_EDGE_TYPES: readonly GraphEdgeType[] = [
+  "tag", "unit", "library", "project", "related", "supersession", "proposed", "mention", "flow", "plot",
+];
+
+type EdgeExtra = Omit<GraphEdge, "a" | "b" | "type">;
+/** An edge on the wire: its two ends as positions in `nodes` (a node id
+ *  only for an end that is not on the map — the assembly never draws one),
+ *  its type as a position in WIRE_EDGE_TYPES, then whatever else it says. */
+export type WireEdge =
+  | [number | string, number | string, number]
+  | [number | string, number | string, number, EdgeExtra];
+export interface OrgGraphWire extends Omit<OrgGraph, "edges"> { wire: 1; edges: WireEdge[] }
+export interface PendingPairsWire extends Omit<PendingPairsRead, "pairs"> { pairs: Array<[string, string, string]> }
+export interface OrgGraphPayloadWire { graph: OrgGraphWire; proposals: PendingPairsWire }
+
+export function packGraphPayload(p: OrgGraphPayload): OrgGraphPayloadWire {
+  const at = new Map(p.graph.nodes.map((n, i) => [n.id, i] as const));
+  const edges = p.graph.edges.map((e): WireEdge => {
+    const t = WIRE_EDGE_TYPES.indexOf(e.type);
+    if (t < 0) throw new Error(`The map carries an edge type the wire does not know (${e.type}).`);
+    const ends: [number | string, number | string, number] = [at.get(e.a) ?? e.a, at.get(e.b) ?? e.b, t];
+    const extra: EdgeExtra = {};
+    for (const [k, v] of Object.entries(e)) {
+      if (k !== "a" && k !== "b" && k !== "type" && v !== undefined) (extra as Record<string, unknown>)[k] = v;
+    }
+    return Object.keys(extra).length > 0 ? [...ends, extra] : ends;
+  });
+  return {
+    graph: { ...p.graph, wire: 1, edges },
+    proposals: { ...p.proposals, pairs: p.proposals.pairs.map((x) => [x.documentId, x.targetDocumentId, String(x.proposer)]) },
+  };
+}
+
+export function unpackGraphPayload(w: OrgGraphPayloadWire): OrgGraphPayload {
+  const { edges, ...rest } = w.graph;
+  const graph = { ...rest } as Partial<OrgGraphWire>;
+  delete graph.wire;
+  const nodes = rest.nodes;
+  const idOf = (x: number | string): string => {
+    if (typeof x === "string") return x;
+    const n = nodes[x];
+    if (!n) throw new Error("The map arrived malformed (an edge names no node).");
+    return n.id;
+  };
+  return {
+    graph: {
+      ...(graph as Omit<OrgGraph, "edges">),
+      edges: edges.map(([a, b, t, extra]) => {
+        const type = WIRE_EDGE_TYPES[t];
+        if (!type) throw new Error("The map arrived malformed (an edge of no known type).");
+        return extra ? { a: idOf(a), b: idOf(b), type, ...extra } : { a: idOf(a), b: idOf(b), type };
+      }),
+    },
+    proposals: {
+      ...w.proposals,
+      pairs: w.proposals.pairs.map(([documentId, targetDocumentId, proposer]) => ({
+        documentId, targetDocumentId, proposer, nodeA: `doc:${documentId}`, nodeB: `doc:${targetDocumentId}`,
+      })),
+    },
+  };
+}
+
+/** What the page says when the pairs were left out to keep the map. */
+export const PAIRS_LEFT_OUT = "they were left out so the map fits in one answer";
+
+const byteLength = (s: string) => new TextEncoder().encode(s).length;
+const mb = (n: number) => `${(n / 1_000_000).toFixed(1)} MB`;
+
+/** The sentence for a map too large to send at all. */
+export const graphTooLargeMessage = (bytes: number | null) =>
+  `This map is too large to send in one answer${bytes !== null ? ` (${mb(bytes)})` : ""}, so it is not drawn. Scope the map to one unit (the scope picker, or a unit's peek) to see its part.`;
+
+/** The body GET /api/graph sends: packed, and within `budget` bytes — the
+ *  proposal pairs left out (said in the payload) if that is what it takes;
+ *  `tooLarge` when even the map alone is past it. */
+export function fitGraphPayload(
+  p: OrgGraphPayload, budget = GRAPH_PAYLOAD_BUDGET,
+): { body: string; bytes: number; pairsLeftOut: boolean } | { tooLarge: true; bytes: number } {
+  const wire = packGraphPayload(p);
+  let body = JSON.stringify(wire);
+  let bytes = byteLength(body);
+  if (bytes <= budget) return { body, bytes, pairsLeftOut: false };
+  if (wire.proposals.pairs.length > 0) {
+    body = JSON.stringify({
+      ...wire,
+      proposals: { pairs: [], total: wire.proposals.total, capped: false, error: PAIRS_LEFT_OUT },
+    } satisfies OrgGraphPayloadWire);
+    bytes = byteLength(body);
+    if (bytes <= budget) return { body, bytes, pairsLeftOut: true };
+  }
+  return { tooLarge: true, bytes };
+}
+
 /** A map the server would not or could not assemble. `accessUnchecked`: the
  *  caller's document access could not be decided, so no map was assembled
- *  (fails closed — the page drops any snapshot it painted). */
+ *  (fails closed — the page drops any snapshot it painted). `tooLarge`: the
+ *  map is past what one answer can carry (the route's 413, or the
+ *  platform's own). */
 export class GraphLoadError extends Error {
-  constructor(message: string, readonly status: number, readonly accessUnchecked = false) {
+  constructor(message: string, readonly status: number, readonly accessUnchecked = false, readonly tooLarge = false) {
     super(message);
     this.name = "GraphLoadError";
   }
@@ -1351,7 +1469,8 @@ export class GraphLoadError extends Error {
 
 /** GAP-313 — the graph page's ONE request: GET /api/graph assembles the map
  *  on the server for this caller (buildOrgGraphForCaller), the proposal
- *  pairs with it. Throws GraphLoadError with the route's sentence. */
+ *  pairs with it, packed (unpackGraphPayload). Throws GraphLoadError with
+ *  the route's sentence. */
 export async function fetchOrgGraph(
   orgId: string, opts?: { scope?: ScopeRef | null },
 ): Promise<OrgGraphPayload> {
@@ -1365,16 +1484,22 @@ export async function fetchOrgGraph(
     cache: "no-store",
   });
   const body = await res.json().catch(() => null) as
-    | (Partial<OrgGraphPayload> & { error?: string; accessUnchecked?: boolean })
+    | (Partial<OrgGraphPayloadWire> & { error?: string; accessUnchecked?: boolean; tooLarge?: boolean })
     | null;
   if (!res.ok || !body?.graph) {
+    // A 413 is a map too large to send — the route's own refusal, or the
+    // platform's, which carries no sentence of ours.
+    const tooLarge = !!body?.tooLarge || res.status === 413;
     throw new GraphLoadError(
-      body?.error || `The map could not be loaded (HTTP ${res.status}).`,
-      res.status, !!body?.accessUnchecked,
+      body?.error || (tooLarge ? graphTooLargeMessage(null) : `The map could not be loaded (HTTP ${res.status}).`),
+      res.status, !!body?.accessUnchecked, tooLarge,
     );
   }
-  return {
-    graph: body.graph,
-    proposals: body.proposals ?? { pairs: [], total: null, capped: false, error: "the proposals were not in the answer" },
-  };
+  const proposals = body.proposals ?? { pairs: [], total: null, capped: false, error: "the proposals were not in the answer" };
+  return body.graph.wire === 1
+    ? unpackGraphPayload({ graph: body.graph, proposals })
+    : {
+      graph: body.graph as unknown as OrgGraph,
+      proposals: proposals as unknown as PendingPairsRead,
+    };
 }

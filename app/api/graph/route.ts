@@ -1,7 +1,8 @@
 // /api/graph — the org graph, assembled on the server for ONE caller
 // (intelligence Round G, I-15; GAP-313).
 //
-//   GET ?orgId=<org>[&scope=unit:<code>]  →  { graph, proposals }
+//   GET ?orgId=<org>[&scope=unit:<code>]  →  { graph, proposals } (packed —
+//   lib/orgGraph packGraphPayload / unpackGraphPayload)
 //
 // The graph page's one request. Before this route the page assembled the map
 // in the browser: about fourteen requests for a typical org, up to ~56 at the
@@ -33,6 +34,13 @@
 // payload, read as the caller; a pair naming a document the predicate
 // refused is dropped. Their read failing is said in the payload (GM-7's
 // three answers), never a failed map.
+//
+// THE SIZE OF THE ANSWER (fix pass). It is one buffered body, and the
+// platform refuses one past ~4.5 MB. lib/orgGraph fitGraphPayload packs it
+// (an edge names its ends by position — nothing is dropped; the page unpacks
+// it) and holds it to GRAPH_PAYLOAD_BUDGET: past that the proposal pairs are
+// left out (the payload says so), and a map past it even alone is refused
+// with the reason — 413, `tooLarge` — never handed to the platform to cut.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -41,7 +49,7 @@ import { runWithServerClient } from "@/lib/serverClientScope";
 import {
   loadPrincipal, readableControlledDocIds, PrincipalUnreadableError, PRINCIPAL_UNREADABLE,
 } from "@/lib/knowledgeAccess";
-import { buildOrgGraphForCaller } from "@/lib/orgGraph";
+import { buildOrgGraphForCaller, fitGraphPayload, graphTooLargeMessage } from "@/lib/orgGraph";
 import { readPendingProposalPairs, type PendingPairsRead } from "@/lib/linkProposals";
 import { parseScopeParam } from "@/lib/scope";
 
@@ -109,7 +117,14 @@ export async function GET(req: NextRequest) {
     const refused = built.refused;
     const pairs = refused.size === 0 ? proposals.pairs
       : proposals.pairs.filter((p) => !refused.has(p.documentId) && !refused.has(p.targetDocumentId));
-    return NextResponse.json({ graph: built.graph, proposals: { ...proposals, pairs } }, { headers: PRIVATE });
+    const fitted = fitGraphPayload({ graph: built.graph, proposals: { ...proposals, pairs } });
+    if ("tooLarge" in fitted) {
+      console.error("[api/graph] the map is past the answer budget:", fitted.bytes, { orgId });
+      return bad(graphTooLargeMessage(fitted.bytes), 413, { tooLarge: true });
+    }
+    return new NextResponse(fitted.body, {
+      status: 200, headers: { ...PRIVATE, "Content-Type": "application/json" },
+    });
   } catch (e) {
     if (e instanceof AccessUnchecked) {
       console.error("[api/graph] the document predicate could not decide:", e.message, { orgId });

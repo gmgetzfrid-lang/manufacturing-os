@@ -107,6 +107,22 @@ function withEdge(g: OrgGraph, e: GraphEdge): OrgGraph {
   return g.edges.some(same) ? g : { ...g, edges: [...g.edges, e] };
 }
 
+/** AREA-2 (fix pass) — a drawing-held pair just adopted is now the person's
+ *  link: its edge says so at once (asserted by a person, where on the sheet
+ *  it was read kept, the AI-read mark gone — what the adopted row says and
+ *  the next load would draw), never the machine's colour and label. */
+function withAdoptedTag(g: OrgGraph, a: string, b: string): OrgGraph {
+  let found = false;
+  const edges = g.edges.map((x) => {
+    if (x.type !== "tag" || !((x.a === a && x.b === b) || (x.a === b && x.b === a))) return x;
+    found = true;
+    const mine: GraphEdge = { ...x, assertedBy: "human" };
+    delete mine.aiRead;
+    return mine;
+  });
+  return found ? { ...g, edges } : { ...g, edges: [...g.edges, { a, b, type: "tag", assertedBy: "human" }] };
+}
+
 const plural = (n: number, w: string) => `${n.toLocaleString("en-US")} ${w}${n === 1 ? "" : "s"}`;
 
 /** The sessionStorage snapshot key of a map: the org's, or one scope's. */
@@ -292,6 +308,8 @@ function GraphPageInner() {
       })
       .catch((e) => {
         if (!alive) return;
+        // A failed load keeps no word about a snapshot of a map not drawn.
+        setSnapshotNote(null);
         // Fails closed (GAP-313): a map whose access could not be checked is
         // not drawn, and the snapshot is not painted again.
         if (e instanceof GraphLoadError && e.accessUnchecked) {
@@ -642,22 +660,40 @@ function GraphPageInner() {
           tag_text: plan.tag, source: "manual",
         });
         if (error && error.code !== "23505") throw new Error(error.message);
-        if (error) {
-          // 23505: the pair is already linked. When the equipment sweep read
-          // it off the drawing (a 'drawing' row a person cannot write), the
-          // link becomes this person's through the Bridge's 'adopt' — the
-          // registry drawer's path — or a later Dismiss of the drawing's
-          // reading would take the person's link with it (AREA-2 / GAP-302).
-          // Any other existing link is left as it is (adopt answers `already`).
+        // 23505: the pair is already linked. When the equipment sweep read
+        // it off the drawing (a 'drawing' row a person cannot write), the
+        // link becomes this person's through the Bridge's 'adopt' — the
+        // registry drawer's path — or a later Dismiss of the drawing's
+        // reading would take the person's link with it (AREA-2 / GAP-302).
+        // Any other existing link (manual, synced) is already a person's and
+        // needs nothing: the pair's source is read first (the member may read
+        // the relation), and only a 'drawing' row — or a row the read could
+        // not see — goes to adopt, so an adopt failure never turns "already
+        // linked" into an error (fix pass).
+        let adopted = false;
+        const held = error
+          ? await supabase.from("document_assets").select("source")
+            .eq("org_id", activeOrgId).eq("document_id", plan.documentId).eq("asset_id", plan.assetId)
+            .maybeSingle()
+          : null;
+        const heldSource = held && !held.error && held.data ? String((held.data as { source?: unknown }).source ?? "") : null;
+        if (error && (heldSource === null || heldSource === "drawing")) {
           const { data: { session } } = await supabase.auth.getSession();
           const res = await fetch("/api/equipment-bridge", {
             method: "POST",
             headers: { authorization: `Bearer ${session?.access_token ?? ""}`, "content-type": "application/json" },
             body: JSON.stringify({ action: "adopt", orgId: activeOrgId, documentId: plan.documentId, assetId: plan.assetId }),
           });
-          const json = await res.json().catch(() => ({})) as { error?: string; auditError?: string };
+          const json = await res.json().catch(() => ({})) as { error?: string; auditError?: string; adopted?: boolean };
           if (!res.ok) throw new Error(json.error ?? `The link could not be made yours (HTTP ${res.status}).`);
           if (json.auditError) throw new Error(json.auditError);
+          adopted = json.adopted === true;
+        }
+        if (adopted) {
+          const a = `doc:${plan.documentId}`, b = `asset:${plan.assetId}`;
+          setGraph((g) => g ? withAdoptedTag(g, a, b) : g);
+          setConnect({ from, status: "picking", done: { a: from.label, b: target.label } });
+          return;
         }
       }
       // Draw it now — the row is real, the rebuild would only rediscover it.
@@ -766,6 +802,20 @@ function GraphPageInner() {
     const list = [...linked, ...proposed].map((id) => byId.get(id)).filter((n): n is GraphNode => !!n)
       .sort((a, b) => b.degree - a.degree);
     return { allConnections: list, proposedOnly: [...proposed].filter((id) => byId.has(id)).length };
+  }, [selected, view]);
+  // GM-14 / GAP-303 (fix pass): what a document ↔ equipment link in the
+  // peek's list says about itself — the sheet or pages it was read on, a
+  // drawing's reading that is not yet a person's link, the AI-read mark —
+  // in the theme's own words (edgeLabelFor), beside the node it reaches.
+  const linkNotes = React.useMemo(() => {
+    const notes = new Map<string, string>();
+    if (!selected || !view) return notes;
+    for (const e of view.edges) {
+      if (e.type !== "tag" || (e.a !== selected.id && e.b !== selected.id)) continue;
+      if (e.assertedBy !== "machine" && !e.sheet && !(e.pages && e.pages.length > 0) && !e.aiRead) continue;
+      notes.set(e.a === selected.id ? e.b : e.a, edgeLabelFor(e));
+    }
+    return notes;
   }, [selected, view]);
   const connections = React.useMemo(() => allConnections.slice(0, 12), [allConnections]);
 
@@ -1648,6 +1698,7 @@ function GraphPageInner() {
                 node={selected}
                 orgId={activeOrgId}
                 connections={connections}
+                linkNoteOf={(c) => linkNotes.get(c.id) ?? null}
                 connectionsTotal={allConnections.length}
                 connectionsProposedOnly={proposedOnly}
                 viewDegree={peekCounts?.inView}

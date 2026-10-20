@@ -917,4 +917,6 @@ The asset hub shows them as "Also read on (not linked yet)", labelled as proposa
 
 **Scope / residual.** Sheets the entity index holds with no relation yet (the hub's "Also read on (not linked yet)") are not drawn: they are proposals, not links, and drawing them would infer an edge at assembly time ("each edge is a row somewhere", 99-fix-sequencing "Do not"). No new finding: that is the design, recorded on GAP-301.
 
+*Fix pass (2026-10-20, review of I-15).* Done-when 2 was marked ✓ while the sheet and the AI-read mark reached the member only through the path-finder's step list. They now also show in the peek, beside each node a document ↔ equipment link reaches, in `edgeLabelFor`'s words and as the row's hover title (`app/(protected)/graph/page.tsx` `linkNotes`; `components/graph/NodePeek.tsx` `linkNoteOf`); the map itself still marks a machine's reading by colour only (the legend names it). Detail and tests on `GAP-303`'s I-15 Partial (90-gap-register.md). The server assembly behind done-when 1 is now held to a payload budget and compared over the real predicate (`GAP-313`'s fix pass).
+
 ---
