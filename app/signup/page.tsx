@@ -97,8 +97,11 @@ export default function SignupPage() {
         body: JSON.stringify(requestData),
       });
       // The success screen must not lie: this used to ignore the response
-      // entirely, so "No organization named…", "already have a pending
-      // request" and server errors all rendered as "Request Sent" (IDENT-6).
+      // entirely, so every error rendered as "Request Sent" (IDENT-6). Since
+      // ORG-8 (admin-and-org Round G P5) the server answers an unknown
+      // workspace and a request already waiting with the same neutral 200 as
+      // a recorded one, so the only errors left are a missing field (400),
+      // the per-IP window (429 / 503) and a fault while recording (500).
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error((body as { error?: string } | null)?.error || "Failed to send request. Please try again.");

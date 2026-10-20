@@ -113,12 +113,17 @@ describe("DEL-8 — the register shows the live owner, never the snapshot", () =
 });
 
 describe("SURF-15 — the subscription gate has a caller on the billable mutation", () => {
-  it("create-user consults assertOrgHasAccess; refusal rides SUBSCRIPTION_ENFORCE, otherwise it is logged", () => {
+  it("create-user consults the subscription gate; refusal rides SUBSCRIPTION_ENFORCE, otherwise it is logged", () => {
+    // admin-and-org Round G P5 review fix: through enforceOrgAccess, the one
+    // reading of the switch (it logs the would-be refusal when off) — no
+    // inline second spelling of SUBSCRIPTION_ENFORCE in the route
     const r = src("app/api/admin/create-user/route.ts");
-    expect(r).toMatch(/const gate = await assertOrgHasAccess\(supabaseAdmin, orgId\);/);
-    expect(r).toMatch(/process\.env\.SUBSCRIPTION_ENFORCE === "true"/);
-    expect(r).toMatch(/subscription gate would refuse org/);
-    expect(src("lib/serverAuth.ts")).toMatch(/export async function assertOrgHasAccess/);
+    expect(r).toMatch(/const gate = await enforceOrgAccess\(supabaseAdmin, orgId, "create-user"\);\n  if \(gate\) return NextResponse\.json\(\{ error: gate\.error \}, \{ status: gate\.status \}\);/);
+    expect(r).not.toMatch(/process\.env\.SUBSCRIPTION_ENFORCE/);
+    expect(r).not.toMatch(/assertOrgHasAccess/);
+    const auth = src("lib/serverAuth.ts");
+    expect(auth).toMatch(/export async function assertOrgHasAccess/);
+    expect(auth).toMatch(/subscription gate would refuse org \$\{orgId\} \(SUBSCRIPTION_ENFORCE off\)/);
   });
   it("BILL-10 (admin-and-org Round G P5): the routes that mint new stored bytes consult it too, through the one switch", () => {
     const auth = src("lib/serverAuth.ts");

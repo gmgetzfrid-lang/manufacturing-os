@@ -13,7 +13,8 @@
 //                       subscription enforcement off, an ended trial's only
 //                       consequence is this notice to the people who can act
 //                       on it; with it on, the server refuses new seats and
-//                       new files and SubscriptionGate curtains the app.
+//                       new files and SubscriptionGate's strip says so
+//                       above every page (the pages still render).
 
 import React from "react";
 import Link from "next/link";

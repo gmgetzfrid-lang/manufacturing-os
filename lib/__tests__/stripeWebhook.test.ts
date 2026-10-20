@@ -408,6 +408,23 @@ describe("regression — checkout and the portal for a workspace with no live su
       expect(portal.status === 403, `portal ${roles}`).toBe(!admitted);
     }
   });
+
+  it("SURF-19 review fix (DEC-87 §3): STRIPE_CHECKOUT_CREATED records the role the gate admitted the caller by, not the headline", async () => {
+    for (const [roles, recorded] of [
+      [["Viewer", "Admin"], "Admin"],      // a Viewer headline holding Admin additively acted as the Admin
+      [["DocCtrl", "Manager"], "Manager"],
+      [["Admin"], "Admin"],                // unchanged for a plain Admin
+      [["Manager"], "Manager"],
+    ] as Array<[string[], string]>) {
+      seed();
+      state.roles = roles;
+      const res = await checkoutPOST(post("/api/stripe/checkout", { orgId: ORG, plan: "growth" }));
+      expect(res.status, `${roles}`).toBe(200);
+      const rows = audits("STRIPE_CHECKOUT_CREATED");
+      expect(rows, `${roles}`).toHaveLength(1);
+      expect(rows[0].user_role, `${roles}`).toBe(recorded);
+    }
+  });
 });
 
 // ─── reproductions (fail on f5073fc) ─────────────────────────────────────

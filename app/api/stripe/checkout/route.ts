@@ -115,7 +115,9 @@ export async function POST(req: NextRequest) {
     org_id: orgId,
     user_id: auth.userId,
     user_email: auth.email,
-    user_role: auth.role,
+    // DEC-87 §3: the role the billing surface admitted them by (a Viewer
+    // headline holding Admin additively is recorded as the Admin it acted as).
+    user_role: auth.admittedRole,
     details: { plan, session_id: session.id },
   });
   // CHECKED: the session stands (the customer is on their way to Stripe);

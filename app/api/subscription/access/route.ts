@@ -1,9 +1,9 @@
 // GET /api/subscription/access?orgId=<uuid>
 //
 // admin-and-org BILL-10 / ORG-9 (Round G P5): the server's answer for the
-// app's subscription curtain (components/subscription/SubscriptionGate.tsx).
+// app's lapsed-workspace strip (components/subscription/SubscriptionGate.tsx).
 // The switch is a SERVER environment variable (SUBSCRIPTION_ENFORCE, DEC-18),
-// which a browser bundle cannot read, so the curtain asks here instead of
+// which a browser bundle cannot read, so the strip asks here instead of
 // carrying a constant of its own. Any active member of the workspace may ask.
 //
 //   { enforced: false, access: true,  reason: null }  — the switch is off
@@ -11,7 +11,7 @@
 //   { enforced: true,  access: false, reason: "…" }   — on, workspace lapsed
 //
 // The decision is lib/serverAuth.ts orgAccessVerdict — the same check the
-// billable routes make (enforceOrgAccess), so the curtain and the server's
+// billable routes make (enforceOrgAccess), so the strip and the server's
 // refusals cannot disagree.
 
 import { NextRequest, NextResponse } from "next/server";

@@ -142,7 +142,7 @@ vi.mock("@/lib/notifications", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   queueEmail: vi.fn(async (p: Record<string, unknown>) => { s.emails.push(p); }),
 }));
-vi.mock("@/lib/serverAuth", () => ({ assertOrgHasAccess: async () => null }));
+vi.mock("@/lib/serverAuth", () => ({ assertOrgHasAccess: async () => null, enforceOrgAccess: async () => null }));
 
 import { POST as requestAccess } from "@/app/api/auth/request-access/route";
 import { POST as decide } from "@/app/api/admin/access-requests/route";

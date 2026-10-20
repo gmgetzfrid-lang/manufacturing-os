@@ -925,7 +925,9 @@ Tests: `lib/__tests__/auditRoutesP7.test.ts` "SURF-19 (purge / archive-cancel li
 1. ✓ for the finding's census (its Locations): no route under `app/api/admin/**`, `app/api/data-export/**` or `app/api/stripe/**` that the census names declares its own admin role constant; each calls `authorizeAdminSurface`. Outside the census, as P6 recorded and unchanged here: `capability-policy`, `create-user`, `access-requests`, `schema-health`, `unit-identity` (each its own authority, never part of this finding), and the machine-authenticated `stripe/webhook` and `data-export/run-scheduled` (no person, no surface).
 2. ✓ — the registry is the only place the billing set is spelled, and a test moves the routes' answer by the role set (the per-role table above; P6's and P7's registry-change tests cover the shared gate).
 
-**Scope / residual.** None. `user_role` on the `STRIPE_CHECKOUT_CREATED` audit row is still the headline role (`auth.role`), not the gate's `admittedRole` — the brief limited P5 to the gate lines; recorded for the integrator (DEC-87 §3's convention), no behaviour changed.
+**Review fix (same day).** `STRIPE_CHECKOUT_CREATED`'s `user_role` now records the gate's `admittedRole` (`checkout/route.ts:120`, DEC-87 §3), not the headline: a Viewer holding Admin additively is recorded as the Admin it acted as. Test: `stripeWebhook.test.ts` "SURF-19 review fix (DEC-87 §3) …" (`["Viewer","Admin"]` → `Admin`, `["DocCtrl","Manager"]` → `Manager`, a plain Admin / Manager unchanged); it fails against `auth.role`.
+
+**Scope / residual.** None.
 
 ---
 

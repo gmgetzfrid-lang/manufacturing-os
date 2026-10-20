@@ -10,11 +10,13 @@
 //   would-be refusal is only logged.
 //   ON: a lapsed workspace — canceled, unpaid, paused, or a free trial whose
 //   end has passed (past_due keeps its grace) — is refused by the SERVER on
-//   the routes that mint new stored bytes (402, the reason in one sentence),
-//   the app's surface is curtained except the escape hatches (billing, data
-//   export, /admin/storage's full backup, profile), and getting the data out
-//   is never gated. The curtain shows the export link only to the people who
-//   can export, and the billing link only to the people who can pay.
+//   the routes that mint a seat or new stored bytes (402, the reason in one
+//   sentence); every page still RENDERS (reading, downloading and exporting
+//   are never gated — DEC-90 ruling (2)), with a strip above it saying what
+//   is paused in the server's own sentence. The strip shows the export link
+//   only to the people who can export, and the billing link only to the
+//   people who can pay. (Other row writes are not refused while lapsed:
+//   BILL-10's Partial.)
 // A database fault never locks anyone out (fail-open), in either state.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -117,7 +119,7 @@ import {
 import { POST as uploadUrl } from "@/app/api/storage/upload-url/route";
 import { POST as multipart } from "@/app/api/storage/multipart/route";
 import { GET as accessGET } from "@/app/api/subscription/access/route";
-import SubscriptionGate, { curtainFor, ALLOWED_WHEN_LAPSED } from "@/components/subscription/SubscriptionGate";
+import SubscriptionGate, { lapsedNoticeFor, LAPSED_FALLBACK } from "@/components/subscription/SubscriptionGate";
 import TrialBanner from "@/components/subscription/TrialBanner";
 import { adminSurface } from "@/lib/adminSurfaces";
 
@@ -172,12 +174,15 @@ describe("the switch — ONE server variable, off unless exactly \"true\"", () =
     expect(subscriptionEnforced()).toBe(true);
   });
 
-  it("the old dead constant is gone: no `const ENFORCE = false` and no 'never a merely-expired trial' claim in the curtain", () => {
+  it("the old dead constant is gone: no `const ENFORCE = false` and no 'never a merely-expired trial' claim in the gate", () => {
     const gate = readFileSync(join(process.cwd(), "components/subscription/SubscriptionGate.tsx"), "utf8");
     expect(gate).not.toMatch(/const ENFORCE\b/);
     expect(gate).not.toMatch(/never a merely-expired trial/);
     expect(gate).toMatch(/\/api\/subscription\/access/);
-    expect(gate).toMatch(/signOutOfThisBrowser\(supabase\)/);              // N17 / OS-15: kept
+    // review fix: the gate no longer replaces the page, so it no longer
+    // carries an escape-hatch list or a sign-out of its own (the Sidebar and
+    // /profile sign out, through the one helper — sw.test.ts)
+    expect(gate).not.toMatch(/ALLOWED_WHEN_LAPSED|usePathname|signOutOfThisBrowser/);
   });
 });
 
@@ -321,21 +326,27 @@ describe("ON — a lapsed workspace is refused by the server, with a clear sente
     for (const f of ["app/api/storage/upload-url/route.ts", "app/api/storage/multipart/route.ts"]) {
       expect(readFileSync(join(root, f), "utf8"), f).toMatch(/await enforceOrgAccess\(supabaseAdmin, orgMatch\[1\], "storage\/(upload-url|multipart)"\)/);
     }
+    // review fix: so does the seat route, through the same one switch — no
+    // second spelling of SUBSCRIPTION_ENFORCE on any seat / file route
+    const cu = readFileSync(join(root, "app/api/admin/create-user/route.ts"), "utf8");
+    expect(cu).toMatch(/const gate = await enforceOrgAccess\(supabaseAdmin, orgId, "create-user"\);/);
+    for (const f of ["app/api/admin/create-user/route.ts", "app/api/storage/upload-url/route.ts", "app/api/storage/multipart/route.ts"]) {
+      expect(readFileSync(join(root, f), "utf8"), f).not.toMatch(/assertOrgHasAccess|process\.env\.SUBSCRIPTION_ENFORCE/);
+    }
   });
 });
 
-describe("the curtain — when it shows, and what it offers whom", () => {
-  it("curtainFor: never without a server answer, never with the switch off, never for a workspace with access", () => {
-    expect(curtainFor(null, "/documents")).toBe(false);
-    expect(curtainFor({ enforced: false, access: false, reason: "x" }, "/documents")).toBe(false);
-    expect(curtainFor({ enforced: true, access: true, reason: null }, "/documents")).toBe(false);
-    expect(curtainFor({ enforced: true, access: false, reason: "x" }, "/documents")).toBe(true);
+describe("the lapsed-workspace strip — when it shows, what it offers whom, and that the page always renders", () => {
+  it("lapsedNoticeFor: never without a server answer, never with the switch off, never for a workspace with access", () => {
+    expect(lapsedNoticeFor(null)).toBe(false);
+    expect(lapsedNoticeFor({ enforced: false, access: false, reason: "x" })).toBe(false);
+    expect(lapsedNoticeFor({ enforced: true, access: true, reason: null })).toBe(false);
+    expect(lapsedNoticeFor({ enforced: true, access: false, reason: "x" })).toBe(true);
   });
-  it("the escape hatches stay open when lapsed — billing, data export, /admin/storage's full backup, profile (and below them)", () => {
-    expect(ALLOWED_WHEN_LAPSED).toEqual(["/admin/billing", "/admin/data-export", "/admin/storage", "/profile"]);
-    const lapsed = { enforced: true, access: false, reason: "x" };
-    for (const p of ["/admin/billing", "/admin/data-export", "/admin/storage", "/profile", "/admin/storage/x"]) expect(curtainFor(lapsed, p), p).toBe(false);
-    for (const p of ["/", "/documents", "/admin/users", "/admin/storagex"]) expect(curtainFor(lapsed, p), p).toBe(true);
+  it("the fallback sentence names what the server pauses — and never claims more", () => {
+    expect(LAPSED_FALLBACK).toMatch(/adding members and uploading new files are paused/);
+    expect(LAPSED_FALLBACK).toMatch(/documents can still be opened, downloaded and exported/);
+    expect(LAPSED_FALLBACK).not.toMatch(/read-only|Subscription required/i);
   });
 
   let container: HTMLDivElement;
@@ -365,33 +376,68 @@ describe("the curtain — when it shows, and what it offers whom", () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   };
 
-  it("OFF: the page renders, exactly as before (the server is asked once, with the session)", async () => {
+  const strip = () => container.querySelector("[data-subscription-lapsed]");
+
+  it("OFF: the page renders, exactly as before (the server is asked once, with the session); no strip", async () => {
     s.verdict = { enforced: false, access: true, reason: null };
     await render();
     expect(container.querySelector("#page")?.textContent).toBe("the page");
-    expect(container.textContent).not.toMatch(/Subscription required/);
+    expect(strip()).toBeNull();
+    expect(container.textContent).toBe("the page");
     expect(s.fetches).toEqual([`/api/subscription/access?orgId=org-1`]);
   });
-  it("fail-open: a failed answer, or no session, renders the page", async () => {
+  it("ON, in good standing: the page, no strip", async () => {
+    s.verdict = { enforced: true, access: true, reason: null };
+    await render();
+    expect(container.textContent).toBe("the page");
+  });
+  it("fail-open: a failed answer, or no session, renders the page with no strip", async () => {
     s.verdict = { error: "boom" };
     s.verdictStatus = 500;
     await render();
     expect(container.querySelector("#page")).not.toBeNull();
+    expect(strip()).toBeNull();
     s.session = null;
     await render();
     expect(container.querySelector("#page")).not.toBeNull();
+    expect(strip()).toBeNull();
   });
-  it("ON, lapsed, a Viewer: the curtain with the server's sentence; no billing link and no export link (they can use neither)", async () => {
-    s.verdict = { enforced: true, access: false, reason: "This workspace's free trial has ended, so adding members and uploading new files are paused." };
+  it("REVIEW FIX (DEC-90 ruling 2): ON and lapsed, a controlled document page STILL RENDERS — opened, read and downloaded — on every path, with the strip above it", async () => {
+    // the server's own sentence, as the access route returns it
+    s.verdict = { enforced: true, access: false, reason: lapsedWorkspaceMessage({ status: "canceled" }) };
+    s.roles = ["Viewer"];
+    const docPage = React.createElement("article", { id: "doc" },
+      React.createElement("h1", null, "SOP-114 Lockout / Tagout, Rev C"),
+      React.createElement("a", { href: "/api/storage/download-url?key=sop-114.pdf", id: "download" }, "Download"));
+    for (const path of ["/documents/lib-1/doc-1", "/", "/admin/users", "/admin/storage", "/admin/billing", "/profile"]) {
+      s.pathname = path;
+      await act(async () => { root.render(React.createElement(SubscriptionGate, null, docPage)); });
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      expect(container.querySelector("#doc h1")?.textContent, path).toBe("SOP-114 Lockout / Tagout, Rev C");
+      expect(container.querySelector("#download"), path).not.toBeNull();
+      expect(strip(), path).not.toBeNull();
+      // the strip comes first, the page after it — never instead of it
+      expect(container.firstElementChild?.hasAttribute("data-subscription-lapsed"), path).toBe(true);
+    }
+    expect(container.textContent).not.toMatch(/Subscription required/);
+  });
+  it("ON, lapsed, a Viewer: the strip says what the server pauses, in its own sentence; no billing link and no export link (they can use neither)", async () => {
+    s.verdict = { enforced: true, access: false, reason: lapsedWorkspaceMessage({ status: "trialing" }) };
     s.roles = ["Viewer"];
     await render();
-    expect(container.querySelector("#page")).toBeNull();
-    expect(container.textContent).toMatch(/Subscription required/);
-    expect(container.textContent).toMatch(/free trial has ended/);
-    expect(container.textContent).toMatch(/Ask a workspace Admin or Manager to renew access/);
+    expect(container.querySelector("#page")).not.toBeNull();
+    const text = strip()?.textContent ?? "";
+    expect(text).toMatch(/^Subscription inactive\. This workspace's free trial has ended, so adding members and uploading new files are paused until billing is renewed/);
+    expect(text).toMatch(/an Admin or Manager can do that under Admin → Billing/);
+    expect(text).not.toMatch(/read-only/i);
     expect(container.querySelector('a[href="/admin/billing"]')).toBeNull();
     expect(container.querySelector('a[href="/admin/data-export"]')).toBeNull();
-    expect(container.textContent).toMatch(/Sign out/);
+  });
+  it("ON, lapsed, no sentence from the server: the fallback names the same paused limbs", async () => {
+    s.verdict = { enforced: true, access: false, reason: null };
+    await render();
+    expect(strip()?.textContent).toContain(LAPSED_FALLBACK);
+    expect(container.querySelector("#page")).not.toBeNull();
   });
   it("ON, lapsed: an Admin is offered both; a Manager billing only; a DocCtrl neither — by the registry's sets", async () => {
     s.verdict = { enforced: true, access: false, reason: "lapsed" };
@@ -407,13 +453,8 @@ describe("the curtain — when it shows, and what it offers whom", () => {
       await render();
       expect(!!container.querySelector('a[href="/admin/billing"]'), `${roles} billing`).toBe(billing);
       expect(!!container.querySelector('a[href="/admin/data-export"]'), `${roles} export`).toBe(exp);
+      expect(container.querySelector("#page"), `${roles} page`).not.toBeNull();
     }
-  });
-  it("ON, lapsed, on an escape hatch: the page renders", async () => {
-    s.verdict = { enforced: true, access: false, reason: "lapsed" };
-    s.pathname = "/admin/storage";
-    await render();
-    expect(container.querySelector("#page")).not.toBeNull();
   });
 
   // BILL-14: with enforcement off, an ended trial's only consequence is a

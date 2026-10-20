@@ -1,6 +1,6 @@
 "use client";
 
-// SubscriptionGate — the app's curtain for a LAPSED workspace, when the
+// SubscriptionGate — the app's notice for a LAPSED workspace, when the
 // operator has switched subscription enforcement on (admin-and-org BILL-10 /
 // ORG-9 / BILL-14, Round G P5; DEC-18).
 //
@@ -13,31 +13,28 @@
 // the only sign of an ended trial.
 //
 // With the switch on, a lapsed workspace — canceled, unpaid, paused, or a
-// free trial whose end has passed (past_due is the grace period) — sees this
-// curtain instead of the page. The curtain is not the boundary: the server
-// refuses new seats and new stored bytes itself. Nothing is deleted.
-//
-// Escape hatches (always reachable, even when lapsed):
-//   - /admin/billing      so a billing admin can pay and recover;
-//   - /admin/data-export  so the "your data is yours, one-click exit"
-//                         promise holds after a lapse;
-//   - /admin/storage      the full ZIP backup, binaries included;
-//   - /profile            so anyone can sign out or switch workspace.
+// free trial whose end has passed (past_due is the grace period) — sees a
+// strip above every page saying what is paused. The page itself ALWAYS
+// renders: members keep reading, downloading and exporting their controlled
+// documents (DEC-90 ruling (2): a lapsed workspace is not locked out of its
+// own records). What is paused is what the SERVER refuses — new seats and
+// new stored files (create-user, storage/upload-url, storage/multipart) —
+// and the strip says exactly that, in the server's own sentence. Other row
+// writes are not refused while lapsed (BILL-10's Partial names the gap and
+// its owner), so the strip never claims the workspace is read-only.
+// Nothing is deleted. Billing, data export, /admin/storage's full backup and
+// /profile are reachable like every other page.
 //
 // Fail-open: while the server's answer is loading, or if it cannot be had,
-// the page renders — a transient fault never locks anyone out.
+// no strip shows — a transient fault never alarms anyone.
 
 import React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Lock, CreditCard, Download, LogOut } from "lucide-react";
-import { supabase, setPreferMicrosoft } from "@/lib/supabase";
-import { signOutOfThisBrowser } from "@/lib/swSession";
+import { Lock, CreditCard, Download } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { adminSurface } from "@/lib/adminSurfaces";
 import type { Role } from "@/types/schema";
-
-export const ALLOWED_WHEN_LAPSED = ["/admin/billing", "/admin/data-export", "/admin/storage", "/profile"];
 
 /** Who may renew (start a checkout / open the portal): the billing surface's
  *  writes set, the set the Stripe routes' gate holds them to. */
@@ -51,12 +48,11 @@ const EXPORTERS = (() => {
 
 export type ServerAccessVerdict = { enforced: boolean; access: boolean; reason: string | null };
 
-/** Should the curtain show? Only when the server says enforcement is on AND
- *  the workspace has no access, and the page is not an escape hatch. A
- *  missing answer (loading, or a failed request) never curtains. */
-export function curtainFor(verdict: ServerAccessVerdict | null, pathname: string): boolean {
-  if (!verdict || !verdict.enforced || verdict.access) return false;
-  return !ALLOWED_WHEN_LAPSED.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+/** Should the lapsed-workspace notice show? Only when the server says
+ *  enforcement is on AND the workspace has no access. A missing answer
+ *  (loading, or a failed request) never shows it. It never hides the page. */
+export function lapsedNoticeFor(verdict: ServerAccessVerdict | null): boolean {
+  return !!verdict && verdict.enforced && !verdict.access;
 }
 
 /** Ask the server once per workspace. null until it answers, and on any
@@ -80,7 +76,7 @@ function useServerAccessVerdict(orgId: string | null): ServerAccessVerdict | nul
           setVerdict({ orgId, v: { enforced: body.enforced, access: body.access, reason: body.reason ?? null } });
         }
       } catch {
-        // fail-open: no answer, no curtain
+        // fail-open: no answer, no strip
       }
     })();
     return () => { live = false; };
@@ -90,21 +86,28 @@ function useServerAccessVerdict(orgId: string | null): ServerAccessVerdict | nul
 
 export default function SubscriptionGate({ children }: { children: React.ReactNode }) {
   const { activeOrgId, hasAnyRole } = useRole();
-  const pathname = usePathname() ?? "";
   const verdict = useServerAccessVerdict(activeOrgId);
 
-  if (!curtainFor(verdict, pathname)) return <>{children}</>;
+  if (!lapsedNoticeFor(verdict)) return <>{children}</>;
 
   return (
-    <SubscriptionBlocked
-      reason={verdict?.reason ?? null}
-      canRenew={hasAnyRole(BILLING_WRITERS)}
-      canExport={hasAnyRole(EXPORTERS)}
-    />
+    <>
+      <SubscriptionLapsedNotice
+        reason={verdict?.reason ?? null}
+        canRenew={hasAnyRole(BILLING_WRITERS)}
+        canExport={hasAnyRole(EXPORTERS)}
+      />
+      {children}
+    </>
   );
 }
 
-export function SubscriptionBlocked({
+/** The fallback when the server gave no sentence: what is paused, the same
+ *  limbs lib/serverAuth.ts lapsedWorkspaceMessage names. */
+export const LAPSED_FALLBACK =
+  "This workspace's subscription is inactive, so adding members and uploading new files are paused until billing is renewed (an Admin or Manager can do that under Admin → Billing). Nothing has been deleted; documents can still be opened, downloaded and exported.";
+
+export function SubscriptionLapsedNotice({
   reason,
   canRenew,
   canExport,
@@ -114,44 +117,32 @@ export function SubscriptionBlocked({
   canExport: boolean;
 }) {
   return (
-    <div className="min-h-full w-full flex items-center justify-center p-6 bg-[var(--color-canvas)]">
-      <div className="w-full max-w-md bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl p-8 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 mx-auto flex items-center justify-center mb-4">
-          <Lock className="w-7 h-7 text-amber-600" />
-        </div>
-        <h1 className="text-xl font-black text-[var(--color-text)]">Subscription required</h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-2">{reason ?? "This workspace's subscription is inactive."}</p>
-        <p className="text-sm text-[var(--color-text-muted)] mt-1">
-          {canRenew
-            ? "Renew to restore access. Your documents, audit trail, and history are safe and unchanged."
-            : "Your documents and audit trail are safe. Ask a workspace Admin or Manager to renew access."}
-        </p>
-
-        <div className="mt-6 flex flex-col gap-2">
-          {canRenew && (
-            <Link
-              href="/admin/billing"
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-bold transition-colors"
-            >
-              <CreditCard className="w-4 h-4" /> Go to Billing
-            </Link>
-          )}
-          {canExport && (
-            <Link
-              href="/admin/data-export"
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:bg-[var(--color-canvas)] text-[var(--color-text)] text-sm font-bold transition-colors"
-            >
-              <Download className="w-4 h-4" /> Export your data
-            </Link>
-          )}
-          <button
-            onClick={() => { setPreferMicrosoft(false); void signOutOfThisBrowser(supabase); }}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-sm font-semibold transition-colors"
-          >
-            <LogOut className="w-4 h-4" /> Sign out
-          </button>
-        </div>
-      </div>
+    <div
+      role="status"
+      data-subscription-lapsed=""
+      className="w-full bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs"
+    >
+      <Lock className="w-4 h-4 shrink-0 text-amber-600" aria-hidden="true" />
+      <p className="flex-1 min-w-[12rem]">
+        <span className="font-bold">Subscription inactive. </span>
+        {reason ?? LAPSED_FALLBACK}
+      </p>
+      {canRenew && (
+        <Link
+          href="/admin/billing"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-600 hover:bg-amber-700 text-white font-bold"
+        >
+          <CreditCard className="w-3.5 h-3.5" aria-hidden="true" /> Go to Billing
+        </Link>
+      )}
+      {canExport && (
+        <Link
+          href="/admin/data-export"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-amber-300 hover:bg-amber-100 font-bold"
+        >
+          <Download className="w-3.5 h-3.5" aria-hidden="true" /> Export your data
+        </Link>
+      )}
     </div>
   );
 }

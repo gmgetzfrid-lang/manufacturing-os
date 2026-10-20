@@ -109,11 +109,15 @@ export function callerScopedClient(req: Request): SupabaseClient | AuthError {
 // refusals are only logged; with it on, a LAPSED workspace — a subscription
 // that is canceled, unpaid or paused, or a free trial whose end has passed
 // (hasAccess, lib/billing.ts; past_due is the grace period and keeps access)
-// — is refused by the server on every route that mints a seat or new stored
-// bytes, and the app's surface is curtained (components/subscription/
-// SubscriptionGate.tsx, which asks /api/subscription/access). Nothing is ever
-// deleted, and getting the data out is never gated: the data-export routes,
-// /admin/storage's full backup and every download stay open.
+// — is refused by the server on the routes that mint a seat or new stored
+// bytes (create-user, storage/upload-url, storage/multipart create — the
+// contractor intake door is not yet one of them: BILL-10), and the app shows
+// a strip above every page saying so (components/subscription/
+// SubscriptionGate.tsx, which asks /api/subscription/access); the pages
+// themselves still render, for reading. Other row writes are NOT refused
+// while lapsed (BILL-10's Partial). Nothing is ever deleted, and getting the
+// data out is never gated: the data-export routes, /admin/storage's full
+// backup and every download stay open.
 // The scheduled-export sweep and Run Now read the same variable
 // (lib/exportEntitlement.ts, app/api/data-export/run/route.ts).
 
@@ -123,7 +127,8 @@ export function subscriptionEnforced(): boolean {
 }
 
 /** The refusal a lapsed workspace reads, naming why — one sentence for every
- *  route that refuses, and for the curtain. Exported for the tests. */
+ *  route that refuses, and for the lapsed-workspace strip. Exported for the
+ *  tests. */
 export function lapsedWorkspaceMessage(info: Pick<SubscriptionInfo, "status" | "trialEndsAt">): string {
   const why =
     info.status === "trialing" ? "This workspace's free trial has ended"
@@ -193,10 +198,10 @@ export async function enforceOrgAccess(
   return null;
 }
 
-/** The server's answer for the curtain (GET /api/subscription/access). */
+/** The server's answer for the lapsed-workspace strip (GET /api/subscription/access). */
 export type OrgAccessVerdict = { enforced: boolean; access: boolean; reason: string | null };
 
-/** What the curtain should do for this workspace. Switch off: `access: true`
+/** What the strip should say for this workspace. Switch off: `access: true`
  *  without reading anything — the app renders exactly as before. Switch on:
  *  the same check the billable routes make (fail-open on a fault). */
 export async function orgAccessVerdict(admin: SupabaseClient, orgId: string): Promise<OrgAccessVerdict> {
