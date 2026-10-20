@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**275 findings** — 9 CRITICAL, 59 HIGH, 151 MEDIUM, 56 LOW — plus **15 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01; `DACL-13` (LOW) opened at I-31 and resolved at its merge, 2026-10-20; `AREA-12` (LOW) opened at I-15, 2026-10-20; `PR-13` (MEDIUM) opened at I-25, 2026-10-20).
+**275 findings** — 9 CRITICAL, 59 HIGH, 151 MEDIUM, 56 LOW — plus **16 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GAP-316` opened at I-26, 2026-10-20 (owner: I-32); `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01; `DACL-13` (LOW) opened at I-31 and resolved at its merge, 2026-10-20; `AREA-12` (LOW) opened at I-15, 2026-10-20; `PR-13` (MEDIUM) opened at I-25, 2026-10-20).
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 

@@ -1692,8 +1692,9 @@ export async function discoverFromKnowledge(admin: SupabaseClient, input: {
  *  pages (GOV-9; "unknown" when that record could not be read — never taken
  *  as the text layer) and the revision the upload carried. Service role
  *  only (no signed-in writer, 20261235). Never throws: a missing table is
- *  today's path, said; a refused write is said. */
-async function relateKnowledgeUpload(
+ *  today's path, said; a refused write is said. Exported for its test (the
+ *  merge by asset below). */
+export async function relateKnowledgeUpload(
   admin: SupabaseClient,
   ctx: { orgId: string; knowledgeDocumentId: string; sourceRev: string | null },
   items: ReadonlyArray<{ assetId: string; tag: string; pages: ReadonlySet<number> }>,
@@ -1712,7 +1713,19 @@ async function relateKnowledgeUpload(
     if (v.error && !missingColumn(v.error)) aiUnknown = true;
     for (const c of v.rows) aiPages.set(Number(c.page), c.source_model ?? null);
   } catch { aiUnknown = true; }
-  const rows = items.map((it) => {
+  // One row per (upload, asset): two spellings of one tag ('P-101A' and
+  // 'P-101-A') reach the same asset, and an upsert that names the same
+  // conflict key twice is refused whole by Postgres ("ON CONFLICT DO UPDATE
+  // command cannot affect row a second time") — which would lose every other
+  // tag in the batch. Merge by asset first: the pages united, the first
+  // spelling kept as tag_text (I-26 review, DEC-90).
+  const byAsset = new Map<string, { assetId: string; tag: string; pages: Set<number> }>();
+  for (const it of items) {
+    const seen = byAsset.get(it.assetId);
+    if (seen) { for (const p of it.pages) seen.pages.add(p); continue; }
+    byAsset.set(it.assetId, { assetId: it.assetId, tag: it.tag, pages: new Set(it.pages) });
+  }
+  const rows = [...byAsset.values()].map((it) => {
     const pages = [...it.pages].filter((p) => Number.isFinite(p)).sort((a, b) => a - b);
     const sheets = pages.map((p) => sheetAddressForPage(p, selfByPage.get(p) ?? [], aiUnknown || aiPages.has(p)));
     const model = aiUnknown ? "unknown" : (pages.map((p) => aiPages.get(p)).find((m) => m !== undefined) ?? null);

@@ -3230,4 +3230,23 @@ describe("GOV-9 criterion 4 (I-26) — a title block read only off an AI transcr
     expect(r.body.identityAiRead).toEqual(["025-PID-0201"]);
     expect(logRows().map((x) => x.sheet_number).sort()).toEqual(["025-PID-0201", "025-PID-0202", "025-PID-0203"]);
   });
+
+  it("REGRESSION (review): only the self rows that derive the identity decide it — a text layer's number plus an unrelated self tag on an AI-transcribed page is NOT marked; a vision-only identity still IS", async () => {
+    aiSet();
+    db.tables.knowledge_documents.push(kdoc("x-204", { name: "x-204.pdf", vision_pages: 1, page_count: 2 }));
+    db.tables.knowledge_page_entities.push(
+      ent("x-204", "self", "025-PID-0204", 1),        // the identity, read off the text layer (page 1)
+      ent("x-204", "self", "999-XYZ-0001", 2),        // another number, on the AI-transcribed page 2
+      ent("x-204", "equipment", "P-4", 1),
+    );
+    db.tables.knowledge_chunks.push(chunk("x-204", "P-4"), vchunk("x-204", 2));
+    const body = await (await get("orgId=o1&libraryId=kl-1")).json();
+    expect(sheet(body, "x-204").declared).toBe("025-PID-0204");
+    expect("declaredAiRead" in sheet(body, "x-204")).toBe(false);
+    expect(sheet(body, "v-201")).toMatchObject({ declared: "025-PID-0201", declaredAiRead: true });
+    expect(body.suggestions.join(" ")).not.toMatch(/x-204\.pdf/);
+    const r = await record("kl-1");
+    expect(r.status).toBe(200);
+    expect(r.body.identityAiRead).toEqual(["025-PID-0201"]);
+  });
 });

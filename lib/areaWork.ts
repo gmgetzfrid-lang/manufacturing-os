@@ -101,14 +101,34 @@ export interface LocatedMilestone {
 
 type Raw = { id: string; name: string | null; status: string | null; planned_at: string | null; location: string | null; project_id: string | null };
 
+/** Pure: an ILIKE pattern every location resolveMilestoneLocation could
+ *  match to this tag satisfies — a SUPERSET, so the server narrows the read
+ *  and the client match stays the final word (I-26 review, DEC-90). That
+ *  match takes the location (or a tag-shaped token in it) whose tagKey —
+ *  lowercased, everything but [a-z0-9] removed — equals the tag's; so the
+ *  key's characters appear in the location in order, with anything between
+ *  them: `%c1%c2%…%` (ILIKE: case-blind; `%` spans any run, newlines
+ *  included). 'i' and 'k' are written `_` (any one character): two
+ *  non-ASCII capitals lowercase to them in JavaScript (U+0130 → "i̇",
+ *  U+212A KELVIN SIGN → "k") and a database's case folding (a Turkish
+ *  collation's I) need not agree, so the pattern never drops one. null:
+ *  the tag has no key, and the client match takes nothing. */
+export function assetLocationPattern(tag: string): string | null {
+  const key = tagKey(tag);
+  if (!key) return null;
+  return `%${[...key].map((c) => (c === "i" || c === "k" ? "_" : c)).join("%")}%`;
+}
+
 /** The org's open milestones that carry a location, keyset-paged to an
- *  empty page (or the cap). null + why when the read failed. */
-async function readOpenLocatedMilestones(orgId: string): Promise<{ rows: Raw[]; capped: boolean; error: string | null }> {
+ *  empty page (or the cap) — with `locationLike`, only those whose location
+ *  matches that ILIKE pattern. null + why when the read failed. */
+async function readOpenLocatedMilestones(orgId: string, locationLike?: string): Promise<{ rows: Raw[]; capped: boolean; error: string | null }> {
   const rows: Raw[] = [];
   for (let after: string | null = null; rows.length < MILESTONE_CAP;) {
     let q = supabase.from("milestones").select("id, name, status, planned_at, location, project_id")
-      .eq("org_id", orgId).not("location", "is", null).neq("status", "completed")
-      .order("id", { ascending: true }).limit(PAGE);
+      .eq("org_id", orgId).not("location", "is", null).neq("status", "completed");
+    if (locationLike) q = q.ilike("location", locationLike);
+    q = q.order("id", { ascending: true }).limit(PAGE);
     if (after) q = q.gt("id", after);
     const { data, error } = await q;
     if (error) return { rows, capped: false, error: error.message || "the read failed" };
@@ -232,9 +252,15 @@ export async function loadAreaWork(orgId: string, unitCode: string): Promise<Are
   return { holds, workPackages: workPackages.sort((a, b) => a.name.localeCompare(b.name)), milestones, complete, notes };
 }
 
-/** WIRE-7 criterion 3: the open milestones whose location names this asset. */
+/** WIRE-7 criterion 3: the open milestones whose location names this asset.
+ *  The server reads only the locations that could name it
+ *  (assetLocationPattern, a superset of the match — I-26 review: the hub no
+ *  longer reads every open located milestone in the workspace on each
+ *  open); resolveMilestoneLocation decides, as before. */
 export async function loadAssetScheduledWork(orgId: string, asset: { id: string; tag: string }): Promise<{ milestones: LocatedMilestone[]; note: string | null }> {
-  const ms = await readOpenLocatedMilestones(orgId);
+  const like = assetLocationPattern(asset.tag);
+  if (!like) return { milestones: [], note: null };
+  const ms = await readOpenLocatedMilestones(orgId, like);
   const milestones = locate(ms.rows, { assets: [asset], units: [] }, (m) => m.kind === "asset");
   const note = ms.error ? `Scheduled work could not be read (${ms.error}).`
     : ms.capped ? `Only the first ${MILESTONE_CAP} open milestones with a location were read.` : null;

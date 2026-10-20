@@ -64,9 +64,11 @@
 -- Uploads discovered BEFORE the paste are related the next time a writer
 -- discovers from that upload; the paste writes no customer rows.
 --
--- Requires 20260609 (assets), 20260911 (knowledge_documents). Paste order:
--- any time after those; independent of every pending file. Deploy order:
--- either. Single paste: inventory (TEMP, counts only) → BEGIN/DDL/COMMIT →
+-- Requires 20260609 (assets), 20260911 (knowledge_documents), 20260917
+-- (knowledge_documents.source_document_id), 20260928 (assets.origin /
+-- discovered_from). Paste order: any time after those four — pasting it
+-- after 20261170 / 20261171 (whose shape it mirrors) is advisory only; it
+-- depends on neither in SQL. Deploy order: either. Single paste: inventory (TEMP, counts only) → BEGIN/DDL/COMMIT →
 -- ONE SELECT (check text, ok boolean, n text). Idempotent; a re-paste is
 -- clean.
 -- ─────────────────────────────────────────────────────────────────────────────

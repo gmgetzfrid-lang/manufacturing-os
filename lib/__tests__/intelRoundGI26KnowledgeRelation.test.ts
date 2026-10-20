@@ -23,7 +23,7 @@ import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fa
 vi.mock("@/lib/unitCodeDecode", () => ({ decodeDocumentUnitCodes: async () => ({ results: [], notApplied: false }) }));
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 
-import { discoverFromKnowledge, KNOWLEDGE_RELATION_NEEDS_MIGRATION } from "@/lib/equipmentBridgeServer";
+import { discoverFromKnowledge, relateKnowledgeUpload, KNOWLEDGE_RELATION_NEEDS_MIGRATION } from "@/lib/equipmentBridgeServer";
 import { buildCoverage, loadCoverage, type CoverageInput } from "@/lib/bridgeCoverage";
 
 let db: FakeDb;
@@ -80,6 +80,63 @@ describe("GAP-307 acceptance 3 — the knowledge door writes the upload's own re
     const again = await discoverFromKnowledge(admin(), { orgId: "o1", userId: "u1", knowledgeDocumentId: "k-up", tags: ["P-44", "E-22"] });
     expect(again).toMatchObject({ created: [], existing: ["P-44", "E-22"] });
     expect(rel()).toHaveLength(2);
+  });
+
+  describe("REGRESSION (review): one row per (upload, asset) — two spellings of one tag reach one asset", () => {
+    // Postgres refuses an upsert that names one conflict key twice
+    // ("ON CONFLICT DO UPDATE command cannot affect row a second time") —
+    // the whole statement, every other tag with it. Transcribed here.
+    function refuseRepeatedKey() {
+      const seen = new Set<string>();
+      db.beforeInsert = { knowledge_document_assets: (row) => {
+        const key = `${row.knowledge_document_id}|${row.asset_id}`;
+        if (seen.has(key)) throw { code: "21000", message: "ON CONFLICT DO UPDATE command cannot affect row a second time" };
+        seen.add(key);
+        return row;
+      } };
+    }
+    const upserted = () => {
+      const calls = db.calls.filter((c) => c.table === "knowledge_document_assets" && c.method === "upsert");
+      expect(calls).toHaveLength(1);
+      return calls[0].args[0] as Row[];
+    };
+    const selfByPage = new Map([
+      [3, [{ tag: "25-PID-0101-SH3", raw: "DWG 25-PID-0101 SH 3 REV C" }]],
+      [4, [{ tag: "25-PID-0101-SH4", raw: "DWG 25-PID-0101 SH 4 REV C" }]],
+    ]);
+
+    it("'P-101A' and 'P-101-A' resolve to one asset: exactly one row is upserted for it (pages united, the first spelling kept) and every other tag in the batch is still written", async () => {
+      refuseRepeatedKey();
+      const r = await relateKnowledgeUpload(admin(), { orgId: "o1", knowledgeDocumentId: "k-up", sourceRev: "C" }, [
+        { assetId: "a-p101a", tag: "P-101A", pages: new Set([3]) },
+        { assetId: "a-e22", tag: "E-22", pages: new Set([3]) },
+        { assetId: "a-p101a", tag: "P-101-A", pages: new Set([4]) },
+        { assetId: "a-p44", tag: "P-44", pages: new Set([3]) },
+      ], selfByPage);
+      expect(r).toEqual({ written: 3, notRecorded: null });
+      const payload = upserted();
+      expect(payload.filter((x) => x.asset_id === "a-p101a")).toHaveLength(1);
+      expect(new Set(payload.map((x) => x.asset_id)).size).toBe(payload.length);
+      expect(rel()).toHaveLength(3);
+      const byAsset = new Map(rel().map((x) => [x.asset_id, x]));
+      expect(byAsset.get("a-p101a")).toMatchObject({ tag_text: "P-101A", pages: [3, 4], sheet_label: "25-PID-0101 SHT 3, SHT 4", model: "vision-model-x", asserted_by: "machine" });
+      expect(byAsset.get("a-e22")).toMatchObject({ tag_text: "E-22", pages: [3], model: null });
+      expect(byAsset.get("a-p44")).toMatchObject({ tag_text: "P-44", pages: [3], model: null });
+    });
+
+    it("through the knowledge door: the batch with both spellings writes one row per asset ('P-101-A' is turned away by the extractor's gate today; the merge holds either way)", async () => {
+      db.tables.assets.push({ id: "a-p101a", org_id: "o1", tag: "P-101A", tag_normalized: "p101a", unit_code: "20", code: null, archived: false, origin: "manual" });
+      db.tables.knowledge_page_entities.push(
+        { id: "u6", document_id: "k-up", page: 3, kind: "equipment", tag: "P-101A", raw: "P-101A" },
+        { id: "u7", document_id: "k-up", page: 4, kind: "equipment", tag: "P-101-A", raw: "P-101-A" },
+      );
+      refuseRepeatedKey();
+      const r = await discoverFromKnowledge(admin(), { orgId: "o1", userId: "u1", knowledgeDocumentId: "k-up", tags: ["P-101A", "P-101-A", "P-44", "E-22"] });
+      expect(r.relations).toEqual({ written: 3, notRecorded: null });
+      const payload = upserted();
+      expect(new Set(payload.map((x) => x.asset_id)).size).toBe(payload.length);
+      expect(new Set(rel().map((x) => x.asset_id))).toEqual(new Set(["a-p101a", "a-e22", db.tables.assets.find((a) => a.tag === "P-44")!.id]));
+    });
   });
 
   it("an unreadable AI-vision record fails toward the warning: the model reads 'unknown', never the text layer", async () => {

@@ -488,6 +488,22 @@ function selfIsAiRead(
   return !!read && on.every((p) => read.has(p));
 }
 
+/** GOV-9 criterion 4 (I-26 review, DEC-90): the sheet's declared identity
+ *  is AI-read when a `self` row that DERIVES it — the base itself, or a
+ *  sheet-addressed form of it (`<base>-SHn`) — was read only off an AI
+ *  transcription. Any other `self` row on the sheet (an unrelated number a
+ *  vision page carries) says nothing about the identity and never marks it. */
+function identityIsAiRead(
+  docId: string, tags: readonly string[], base: string | null,
+  selfPages: ReadonlyMap<string, ReadonlyMap<string, number[]>>,
+  ai: { pages: ReadonlyMap<string, ReadonlySet<number>>; wholeDoc: ReadonlySet<string> }, visionPages: number,
+): boolean {
+  if (!base) return false;
+  return tags
+    .filter((t) => t === base || t.replace(/-SH\d+$/, "") === base)
+    .some((t) => selfIsAiRead(docId, t, selfPages, ai, visionPages));
+}
+
 /** Index maps the census, audit and readout share. */
 function indexMaps(index: IndexRead) {
   const selfByDoc = new Map<string, string[]>();
@@ -707,8 +723,7 @@ export async function GET(req: NextRequest) {
     // GOV-9 criterion 4: a number declared only through an AI model's
     // transcription of the title block is AI-read, unconfirmed — never shown
     // as the sheet's identity.
-    const declaredAiRead = !!identity.base
-      && (selfByDoc.get(d.id) ?? []).some((t) => selfIsAiRead(d.id, t, selfPages, aiRead, visionPages));
+    const declaredAiRead = identityIsAiRead(d.id, selfByDoc.get(d.id) ?? [], identity.base, selfPages, aiRead, visionPages);
     // An SHX export, by what it gave (DWG-7): thin text, nothing but its own
     // title block's number, no references to OTHER drawings. Only such a
     // sheet is worth the SHX advice — a legend, cover or index sheet of a
@@ -1346,7 +1361,7 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const identityAiRead = docs
     .filter((d) => {
       const tags = selfByDoc.get(d.id) ?? [];
-      return !!declaredSheetIdentity(tags).base && tags.some((t) => selfIsAiRead(d.id, t, selfPages, aiRead, Number(d.vision_pages ?? 0)));
+      return identityIsAiRead(d.id, tags, declaredSheetIdentity(tags).base, selfPages, aiRead, Number(d.vision_pages ?? 0));
     })
     .map((d) => declaredSheetIdentity(selfByDoc.get(d.id) ?? []).base as string);
   // A sheet not read whole is no evidence of what it lacks (review fix pass

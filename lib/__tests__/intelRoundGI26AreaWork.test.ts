@@ -18,6 +18,8 @@ type Row = Record<string, unknown>;
 const db = vi.hoisted(() => ({
   tables: {} as Record<string, Row[]>,
   fail: {} as Record<string, { message: string } | undefined>,
+  /** table → how many statements read it (one per round trip). */
+  reads: {} as Record<string, number>,
   scope: { documents: [] as string[], assets: [] as string[], label: "Crude", complete: true },
 }));
 vi.mock("@/lib/supabase", () => {
@@ -26,6 +28,7 @@ vi.mock("@/lib/supabase", () => {
     let cols = "";
     let limit = Infinity;
     const run = () => {
+      db.reads[table] = (db.reads[table] ?? 0) + 1;
       if (db.fail[table]) return { data: null, error: db.fail[table] };
       const pick = cols.split(",").map((x) => x.trim()).filter(Boolean);
       const rows = (db.tables[table] ?? []).filter((r) => filters.every((f) => f(r)))
@@ -45,6 +48,11 @@ vi.mock("@/lib/supabase", () => {
           if (prop === "is") filters.push((r) => (v === null ? r[c] == null : r[c] === v));
           if (prop === "not") filters.push((r) => r[c] != null);
           if (prop === "gt") filters.push((r) => String(r[c]) > String(v));
+          // ILIKE, as Postgres reads it: case-blind, % any run (newlines too), _ any one character
+          if (prop === "ilike") {
+            const re = new RegExp(`^${String(v).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".")}$`, "is");
+            filters.push((r) => r[c] != null && re.test(String(r[c])));
+          }
           if (prop === "limit") limit = Number(a[0]);
           return new Proxy(p, h);
         };
@@ -65,7 +73,7 @@ vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => React.createElement("a", { href, ...rest }, children),
 }));
 
-import { resolveMilestoneLocation, loadAreaWork, loadAssetScheduledWork } from "@/lib/areaWork";
+import { resolveMilestoneLocation, loadAreaWork, loadAssetScheduledWork, assetLocationPattern } from "@/lib/areaWork";
 import { AreaWorkPanel, ScheduledWorkPanel } from "@/components/assets/AreaWorkPanel";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -205,6 +213,49 @@ describe("WIRE-7 criterion 3 — the asset hub's scheduled work", () => {
     const r = await loadAssetScheduledWork("o1", { id: "a22", tag: "E-22" });
     expect(r.note).toBeNull();
     expect(r.milestones.map((m) => m.id)).toEqual(["m1"]);
+  });
+
+  it("REGRESSION (review): the server reads only the locations that could name the asset — every milestone the client match accepted over the whole workspace is still returned (no narrowing), and an asset no milestone names costs one round trip", async () => {
+    // A corpus of locations: spellings of the one tag grammar, near misses,
+    // punctuation and case games, the two non-ASCII capitals that lowercase
+    // to ASCII, newlines — and a seeded random fuzz over the same alphabet.
+    const fixed = [
+      "E-22", "e22", "E 22", "E_22", "E/22", "E.22", "E--22", "E\n22", "  e - 2 2  ", "Exchanger E-22 north", "near E-22A",
+      "E-222", "E-2", "PE-22", "E22/E-23", "Bay 3, E-22 tube bundle", "P-101", "P101", "p 101", "P-101-A", "P-101A", "unit 20",
+      "K-9", "\u212A-9", "k9", "KK-9", "I-22", "\u0130-22", "i22", "ı-22", "Kiln KI-7", "KI-7", "K\u0130-7", "", "—", "22-E",
+    ];
+    let state = 42;
+    const rand = () => { state = (state * 1103515245 + 12345) % 2147483648; return state / 2147483648; };
+    const alphabet = ["E", "e", "2", "-", " ", "P", "1", "0", "K", "k", "I", "i", "9", "7", "A", "/", "\n", "\u212A", "\u0130", "ı", "_", "%", "x"];
+    const fuzz = Array.from({ length: 4000 }, () => Array.from({ length: 1 + Math.floor(rand() * 7) }, () => alphabet[Math.floor(rand() * alphabet.length)]).join(""));
+    db.tables.milestones = [...fixed, ...fuzz].map((location, n) => ({
+      id: `m${String(n).padStart(5, "0")}`, org_id: "o1", name: `M${n}`, status: "planned", planned_at: null, location, project_id: null,
+    }));
+    for (const asset of [{ id: "a22", tag: "E-22" }, { id: "a101", tag: "P-101A" }, { id: "a9", tag: "K-9" }, { id: "ai", tag: "I-22" }, { id: "aki", tag: "KI-7" }, { id: "a7", tag: "E-27" }]) {
+      // the old read: every open located milestone, the client match deciding
+      const before = db.tables.milestones
+        .filter((m) => m.status !== "completed" && m.location != null)
+        .filter((m) => resolveMilestoneLocation(String(m.location), { assets: [asset], units: [] })?.kind === "asset")
+        .map((m) => m.id).sort();
+      db.reads = {};
+      const r = await loadAssetScheduledWork("o1", asset);
+      expect(r.note).toBeNull();
+      expect(r.milestones.map((m) => m.id).sort(), asset.tag).toEqual(before);
+      if (asset.tag === "E-22") expect(before.length).toBeGreaterThan(10);
+    }
+    // the server's predicate holds every location the match accepts, by construction
+    expect(assetLocationPattern("E-22")).toBe("%e%2%2%");
+    expect(assetLocationPattern("KI-7")).toBe("%_%_%7%");
+    expect(assetLocationPattern("--")).toBeNull();
+    // an asset no milestone names: one statement, and nothing listed
+    db.tables.milestones = [
+      { id: "m1", org_id: "o1", name: "Exchanger retube", status: "planned", planned_at: null, location: "E-22", project_id: null },
+      ...Array.from({ length: 2500 }, (_, n) => ({ id: `n${String(n).padStart(5, "0")}`, org_id: "o1", name: `N${n}`, status: "planned", planned_at: null, location: `Bay ${n}`, project_id: null })),
+    ];
+    db.reads = {};
+    const none = await loadAssetScheduledWork("o1", { id: "a9", tag: "Q-77" });
+    expect(none).toEqual({ milestones: [], note: null });
+    expect(db.reads.milestones).toBe(1);
   });
 
   let host: HTMLDivElement;

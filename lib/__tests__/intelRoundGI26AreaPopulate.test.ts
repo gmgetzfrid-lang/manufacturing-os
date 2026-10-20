@@ -236,6 +236,18 @@ describe("AREA-4 — the checklist step, rendered", () => {
     expect(s.querySelector("[data-area-drawings-read='0']")).not.toBeNull();
   });
 
+  it("REGRESSION (review): an empty shelf (only knowledge uploads, no document-control drawing) says so and points to the coverage report's Discover — never 'none read yet'", async () => {
+    db.tables.knowledge_documents = db.tables.knowledge_documents.filter((k) => k.source_document_id === null); // the upload k4 alone
+    await mount(status());
+    const s = step(POPULATE);
+    expect(s.querySelector("[data-area-shelf-empty='1']")).not.toBeNull();
+    expect(s.textContent).toContain("This area's shelf holds no document-control drawings yet");
+    expect(s.textContent).toContain("open the coverage report (“Coverage — drawings vs. the equipment list”) and use its “Discover from knowledge uploads”");
+    expect(s.textContent).not.toContain("has been read for equipment yet");
+    expect(s.textContent).not.toContain("read for equipment so far");
+    expect(s.querySelector("svg.lucide-check")).toBeNull();
+  });
+
   it("some drawings read, none waiting, others still indexing: 'in progress' with N of M read, never a tick", async () => {
     db.tables.document_equipment_suggestions = [
       sugg("d1", [{ tag: "P-101" }], { status: "applied", applied: ["P-101"] }),

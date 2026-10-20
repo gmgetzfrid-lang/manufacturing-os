@@ -268,6 +268,8 @@ Registry discovery is separated from column population. `applyForDocument` resol
 
 **Scope / residual.** None that a criterion names. An indexed P&ID builds the registry with no person at all only after its library opted into auto-apply and was reviewed once (DEC-96 item 7: a person between the reading and the record) — now both from the area page. The launch is offered to the area's knowledge controllers (`canManage`); the sweep route admits the registry writer tier, so a writer who is not a knowledge controller still sweeps from the library page.
 
+*Fix pass (2026-10-20, the integrator's fix pass at the I-26 merge; Ruled by the integrator at the I-26 merge, 2026-10-20 (DEC-90)).* An area whose shelf holds no document-control drawing (`shelfDocuments` 0 — say, only P&IDs uploaded straight into a knowledge library) read "None of this area's drawings has been read for equipment yet", as if drawings waited. The populate step now says the shelf holds no document-control drawings yet and points to the coverage report ("Coverage — drawings vs. the equipment list") and its "Discover from knowledge uploads" (`components/assets/AreaKnowledgePanel.tsx`, `data-area-shelf-empty`); every other state reads as before. Test: `lib/__tests__/intelRoundGI26AreaPopulate.test.ts` "REGRESSION (review): an empty shelf …".
+
 ---
 
 <a id="area-5"></a>

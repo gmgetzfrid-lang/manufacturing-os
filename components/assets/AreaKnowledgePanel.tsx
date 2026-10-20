@@ -447,7 +447,11 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
                     ? <>No equipment proposals are waiting on this area&apos;s {proposals.shelfDocuments} drawing{proposals.shelfDocuments === 1 ? "" : "s"} — every one has been read for equipment.</>
                     : proposals.readDocuments > 0
                       ? <>No equipment proposals are waiting on the drawings read so far.</>
-                      : <>None of this area&apos;s drawings has been read for equipment yet.</>}
+                      : proposals.shelfDocuments === 0
+                        // I-26 review: an empty shelf is not "none read yet" — a P&ID
+                        // uploaded straight into a knowledge library is never on it.
+                        ? <span data-area-shelf-empty="1">This area&apos;s shelf holds no document-control drawings yet, so there is nothing here to read for equipment. For P&amp;IDs uploaded straight into a knowledge library, open the coverage report (&ldquo;Coverage — drawings vs. the equipment list&rdquo;) and use its &ldquo;Discover from knowledge uploads&rdquo;.</span>
+                        : <>None of this area&apos;s drawings has been read for equipment yet.</>}
                 {proposals.shelfDocuments > 0 && !allDrawingsRead && (
                   <span data-area-drawings-read={proposals.readDocuments}>
                     {" "}<b>{proposals.readDocuments}</b> of <b>{proposals.shelfDocuments}</b> drawing{proposals.shelfDocuments === 1 ? "" : "s"} read for equipment so far — the rest are still indexing, or have not been read yet.
