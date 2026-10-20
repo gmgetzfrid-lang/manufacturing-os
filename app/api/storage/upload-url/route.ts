@@ -8,6 +8,7 @@ import {
   isNodeImageKey, NODE_CUSTOMIZE_ROLES, nodeImageUploadProblem,
 } from "@/lib/storageKey";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { enforceOrgAccess } from "@/lib/serverAuth";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -70,6 +71,12 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     }
+    // BILL-10 (admin-and-org Round G P5, DEC-18): new stored bytes are a
+    // billable resource. With SUBSCRIPTION_ENFORCE on, a lapsed workspace is
+    // refused here (402, the reason in a sentence); off, the would-be refusal
+    // is only logged. Downloads and exports never pass this gate.
+    const gate = await enforceOrgAccess(supabaseAdmin, orgMatch[1], "storage/upload-url");
+    if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
   }
   if (logo) {
     const problem = logoUploadProblem(contentType, size);

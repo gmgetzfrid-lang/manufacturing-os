@@ -847,7 +847,7 @@ WHERE (en.metadata->>'external') IS DISTINCT FROM 'true'
 ## SURF-19 · The API routes behind an admin surface still carry their own role constants instead of calling the admin gate
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P6 — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** split by the integrator, 2026-10-02, when A&O P4 and P6 were launched side by side (fleet plan `audit-reports/fleet-plans/admin-and-org.json`):
   - admin-and-org P6 takes every route listed below except two pairs. It also adds the writes-level intent to `lib/adminGate.ts`.
@@ -911,6 +911,23 @@ Tests: `lib/__tests__/auditRoutesP7.test.ts` "SURF-19 (purge / archive-cancel li
 2. ✓ for the converted routes (purge, archive-cancel included): the registry is the only place their set is spelled, and a route test proves a registry change moves the answer.
 
 **Scope / residual.** The stripe pair (A&O P5). Status stays OPEN for it.
+
+
+**Resolution (2026-10-20, admin-and-org Round G).** Package P5 — the stripe limb, the last of SURF-19's four routes (the integrator's split, 2026-10-02; P4 and P6 merged first).
+
+**Reproduced on `7f92269`.** `app/api/stripe/checkout/route.ts:23` and `app/api/stripe/portal/route.ts:17` spelled `const ADMIN_ROLES = ["Admin", "Manager"];`, each through `authorizeOrgRole(req, orgId, ADMIN_ROLES)` (`:39`, `:32`); the "STILL carry a constant" pin (`lib/__tests__/roundE_D_rolesAdmin.test.ts`) listed exactly these two.
+
+**What landed.** Only the gate lines: both routes call `authorizeAdminSurface(req, orgId, "billing", "write")` (`checkout/route.ts:42`, `portal/route.ts:35`) — the billing surface's `writes` set (`lib/adminSurfaces.ts`: `["Admin", "Manager"]`, the old constant) by the full collection; no role constant, no `authorizeOrgRole`. P4's `liveSubscriptionRefusal` / `customerOwnershipRefusal` after the gate line are untouched. A refused caller now reads "Changes on Billing are limited to Admin and Manager." instead of "Insufficient role" (status 403 unchanged).
+
+**Tests.** `lib/__tests__/stripeWebhook.test.ts` "SURF-19 (A&O P5): the gate admits exactly the people the old ADMIN_ROLES constant admitted …" — checkout and the portal for every role in `ALL_ROLES` and five collections (`["Viewer","Manager"]`, `["DocCtrl","Admin"]`, `["Drafter","Viewer"]`, `["Auditor","DocCtrl"]`, an unknown role): refused iff the collection holds neither Admin nor Manager (a mutation to the `"enter"` intent admits a Viewer and fails it); its source pin now requires the gate call and no constant. `lib/__tests__/roundE_D_rolesAdmin.test.ts`: the "STILL carry a constant" table is emptied (replaced by a pin that no stripe route spells a constant and that billing's `writes` is the old set), and the conversion table gains the two stripe rows. Every existing checkout / portal regression test passes unchanged.
+
+**Done-when.**
+1. ✓ for the finding's census (its Locations): no route under `app/api/admin/**`, `app/api/data-export/**` or `app/api/stripe/**` that the census names declares its own admin role constant; each calls `authorizeAdminSurface`. Outside the census, as P6 recorded and unchanged here: `capability-policy`, `create-user`, `access-requests`, `schema-health`, `unit-identity` (each its own authority, never part of this finding), and the machine-authenticated `stripe/webhook` and `data-export/run-scheduled` (no person, no surface).
+2. ✓ — the registry is the only place the billing set is spelled, and a test moves the routes' answer by the role set (the per-role table above; P6's and P7's registry-change tests cover the shared gate).
+
+**Review fix (same day).** `STRIPE_CHECKOUT_CREATED`'s `user_role` now records the gate's `admittedRole` (`checkout/route.ts:120`, DEC-87 §3), not the headline: a Viewer holding Admin additively is recorded as the Admin it acted as. Test: `stripeWebhook.test.ts` "SURF-19 review fix (DEC-87 §3) …" (`["Viewer","Admin"]` → `Admin`, `["DocCtrl","Manager"]` → `Manager`, a plain Admin / Manager unchanged); it fails against `auth.role`. *(Verified by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90; DEC-87 §3): the row's `user_role` is `auth.admittedRole` (`app/api/stripe/checkout/route.ts:120`), never the headline; the portal route writes no audit row; the test above is the pin. No change needed.)*
+
+**Scope / residual.** None.
 
 ---
 

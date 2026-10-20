@@ -108,7 +108,7 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => ({ ok: true })) }));
 vi.mock("@/lib/complianceNotify", () => ({ notifyCompliance: vi.fn(async () => true), loadScanRetryPlan: vi.fn(async () => ({ only: () => () => true })) }));
-vi.mock("@/lib/serverAuth", () => ({ assertOrgHasAccess: async () => null }));
+vi.mock("@/lib/serverAuth", () => ({ assertOrgHasAccess: async () => null, enforceOrgAccess: async () => null }));
 vi.mock("@/lib/accessRequestOutcome", () => ({ clearAccessRequestNotices: vi.fn(async () => {}), queueAccessRequestOutcome: vi.fn(async () => {}) }));
 
 import { listAccessGrantsDetailed, recertifyAccess } from "@/lib/accessRecert";
