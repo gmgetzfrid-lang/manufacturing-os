@@ -39,7 +39,8 @@ import PermissionsDrawer from "@/components/permissions/PermissionDrawer";
 import SetManager from "@/components/documents/SetManager";
 import EquipmentSweepModal from "@/components/documents/EquipmentSweepModal";
 import StagingTray from "@/components/documents/StagingTray";
-import MetadataStagingModal, { type StagedItem, type CustomColumnDef } from "@/components/documents/MetadataStagingModal";
+import MetadataStagingModal, { type StagedItem, type CustomColumnDef, type UploadOutcome } from "@/components/documents/MetadataStagingModal";
+import DuplicateUploadsModal from "@/components/documents/DuplicateUploadsModal";
 import CollectionsStrip from "@/components/documents/CollectionsStrip";
 import FavoritesStrip from "@/components/documents/FavoritesStrip";
 import ViewSelector from "@/components/documents/ViewSelector";
@@ -159,6 +160,7 @@ import {
   GripVertical,
   Eye,
   ChevronDown,
+  Copy,
   ChevronUp,
   FileText,
   FolderPlus,
@@ -341,6 +343,11 @@ export default function LibraryExplorerPage() {
   // indistinguishable from one that has died.
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Good news, shown the same way errors now are (in a banner, on screen).
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showDuplicates, setShowDuplicates] = useState(false);
+  // Files from the current staged batch that already landed.
+  const landedFilesRef = useRef<WeakSet<File>>(new WeakSet());
 
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   // The convention watchdog: after an upload or a new folder, what looks
@@ -2476,7 +2483,7 @@ export default function LibraryExplorerPage() {
   // 2. Files run through R2 + DB in parallel (concurrency = 4) so
   //    8 files don't take 8× one-file time.
   const UPLOAD_CONCURRENCY = 6;
-  const handleStagedUpload = async (items: StagedItem[], signal?: AbortSignal) => {
+  const handleStagedUpload = async (items: StagedItem[], signal?: AbortSignal): Promise<UploadOutcome | void> => {
     // Every document that lands is handed to the estate resolver once the
     // upload is done — unit, project and equipment links from its name,
     // folder and (once read) pages. Fire-and-forget; never blocks an upload.
@@ -2498,6 +2505,10 @@ export default function LibraryExplorerPage() {
         })).catch(() => undefined);
     };
     if (!activeOrgId || !uid || !library) return;
+    // Never send a file twice: anything that already landed from this
+    // staged batch is skipped, whatever the window still lists.
+    items = items.filter((it) => !landedFilesRef.current.has(it.file));
+    const landedFiles: File[] = [];
     setLoadingUpload(true);
     setError(null);
 
@@ -2544,6 +2555,40 @@ export default function LibraryExplorerPage() {
         const f = targetId ? folderMap.get(targetId) : null;
         return f ? buildFolderChain(f) : buildFolderChain(currentFolder);
       };
+
+      // ── Already here? Skip it. ───────────────────────────────────
+      // Same name + same size already in the target folder = this file
+      // landed before (an earlier attempt, a re-dropped folder). Dropping the
+      // same folder again therefore FILLS IN what's missing instead of adding
+      // a second copy of everything.
+      const existingKeys = new Set<string>();
+      {
+        const targets = [...new Set(items.map((it) => targetFolderFor(it.file)))];
+        const ids = targets.filter((t): t is string => !!t);
+        const readFolderDocs = async (apply: (q: ReturnType<typeof baseQ>) => ReturnType<typeof baseQ>) => {
+          for (let from = 0; from < 20000; from += 1000) {
+            const { data } = await apply(baseQ()).range(from, from + 999);
+            for (const r of (data ?? []) as Array<{ collection_id: string | null; name: string | null; size: string | null }>) {
+              if (r.name) existingKeys.add(`${r.collection_id ?? "root"}|${r.name.toLowerCase()}|${r.size ?? "?"}`);
+            }
+            if ((data ?? []).length < 1000) break;
+          }
+        };
+        const baseQ = () => supabase.from("documents").select("collection_id, name, size:metadata->>size_bytes")
+          .eq("org_id", activeOrgId).eq("library_id", libraryId).order("id");
+        for (let i = 0; i < ids.length; i += 100) {
+          const chunk = ids.slice(i, i + 100);
+          await readFolderDocs((q) => q.in("collection_id", chunk));
+        }
+        if (targets.includes(null)) await readFolderDocs((q) => q.is("collection_id", null));
+      }
+      const alreadyHere: File[] = [];
+      items = items.filter((it) => {
+        const key = `${targetFolderFor(it.file) ?? "root"}|${it.file.name.toLowerCase()}|${it.file.size}`;
+        if (existingKeys.has(key)) { alreadyHere.push(it.file); return false; }
+        return true;
+      });
+      for (const f of alreadyHere) { landedFiles.push(f); landedFilesRef.current.add(f); }
 
       // ── Pre-flight: resolve final doc numbers ────────────────────
       // Auto-numbering (when this library owns a counter): items whose number
@@ -2667,10 +2712,17 @@ export default function LibraryExplorerPage() {
           created_at: now,
         }).select("id").single();
 
-        if (verErr || !newVersion) throw new Error(verErr?.message || "Failed to create document version");
+        if (verErr || !newVersion) {
+          // Don't leave a document with no file behind — a retry would add a
+          // second one next to it.
+          await supabase.from("documents").delete().eq("id", newDoc.id).then(() => undefined, () => undefined);
+          throw new Error(verErr?.message || "Failed to create document version");
+        }
 
         await supabase.from("documents").update({ current_version_id: newVersion.id }).eq("id", newDoc.id);
         createdDocIds.push(newDoc.id as string);
+        landedFiles.push(file);
+        landedFilesRef.current.add(file);
       };
 
       // ── Run in capped-concurrency chunks ──────────────────────────
@@ -2678,40 +2730,52 @@ export default function LibraryExplorerPage() {
       // abandon every file after it, so a 40-file batch could stop at file 7
       // with no statement of what landed and what didn't. Every file now gets
       // its attempt and the batch reports the truth at the end.
-      const failures: Array<{ name: string; reason: string }> = [];
-      let stoppedAt = -1;
-      setUploadProgress({ done: 0, total: resolved.length });
       // A pool, not fixed chunks: each worker takes the next file the moment
       // its last one lands, so one slow file never idles the other lanes.
-      let nextIdx = 0;
+      // Files that fail are retried automatically (twice, after a pause) —
+      // a transient network or rate-limit blip on file 700 of 1,100 must not
+      // turn into "click Upload again".
+      let stopped = false;
       let finished = 0;
-      const worker = async () => {
-        for (;;) {
-          // The user pressed Stop or closed the modal. Don't start work
-          // nobody is waiting for; files already in flight abort on their own.
-          if (signal?.aborted) { if (stoppedAt < 0) stoppedAt = nextIdx; return; }
-          const idx = nextIdx++;
-          if (idx >= resolved.length) return;
-          try { await uploadOne(resolved[idx]); }
-          catch (err) {
-            failures.push({ name: resolved[idx].item.file.name, reason: (err as Error)?.message ?? "unknown error" });
+      setUploadProgress({ done: 0, total: resolved.length });
+      const runPool = async (entries: typeof resolved) => {
+        const failed: Array<{ entry: (typeof resolved)[number]; reason: string }> = [];
+        let nextIdx = 0;
+        const worker = async () => {
+          for (;;) {
+            // The user pressed Stop or closed the window. Don't start work
+            // nobody is waiting for; files in flight abort on their own.
+            if (signal?.aborted) { stopped = true; return; }
+            const idx = nextIdx++;
+            if (idx >= entries.length) return;
+            try {
+              await uploadOne(entries[idx]);
+              finished++;
+              setUploadProgress({ done: finished, total: resolved.length });
+            } catch (err) {
+              failed.push({ entry: entries[idx], reason: (err as Error)?.message ?? "unknown error" });
+            }
           }
-          finished++;
-          setUploadProgress({ done: finished, total: resolved.length });
-        }
+        };
+        await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, entries.length) }, worker));
+        return failed;
       };
-      await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, resolved.length) }, worker));
-      // stoppedAt is the index of the first chunk we never started, which is
-      // exactly the number of files that did get an attempt.
-      const attempted = stoppedAt >= 0 ? stoppedAt : resolved.length;
-      const notStarted = resolved.length - attempted;
-      const landed = attempted - failures.length;
+      let failedRound = await runPool(resolved);
+      for (let round = 1; round <= 2 && failedRound.length > 0 && !stopped; round++) {
+        await new Promise((r) => setTimeout(r, 2000 * round));
+        if (signal?.aborted) { stopped = true; break; }
+        failedRound = await runPool(failedRound.map((f) => f.entry));
+      }
+      const failures = failedRound.map((f) => ({ name: f.entry.item.file.name, reason: f.reason }));
+      const landed = landedFiles.length - alreadyHere.length;
+      const notStarted = resolved.length - landed - failures.length;
       if (landed > 0) {
         notifyLibrarySubscribers(landed, resolved[0]?.docNumber || resolved[0]?.original || "document");
       }
 
       const notes: string[] = [];
       if (foldersCreatedNote) notes.push(foldersCreatedNote);
+      if (alreadyHere.length) notes.push(`${alreadyHere.length.toLocaleString()} file${alreadyHere.length === 1 ? " was" : "s were"} already here and skipped.`);
       if (autoRenamed.length > 0) {
         const sample = autoRenamed.slice(0, 3).map((r) => `${r.original} → ${r.final}`).join(", ");
         const more = autoRenamed.length > 3 ? `, +${autoRenamed.length - 3} more` : "";
@@ -2724,10 +2788,16 @@ export default function LibraryExplorerPage() {
         if (failures.length > 0) {
           const sample = failures.slice(0, 3).map((f) => `${f.name} (${f.reason})`).join("; ");
           const more = failures.length > 3 ? `, +${failures.length - 3} more` : "";
-          notes.push(`${failures.length} file${failures.length === 1 ? "" : "s"} did NOT upload: ${sample}${more}. Everything else landed — re-stage just the failures.`);
+          notes.push(`${failures.length} file${failures.length === 1 ? "" : "s"} still failed after 3 tries: ${sample}${more}.`);
         }
-        // Keep the staging modal open so the failures are still in hand.
-        setError(`Uploaded ${landed} of ${resolved.length}. ${notes.join(" ")}`);
+        // The window stays open holding ONLY what didn't land, and says so
+        // in the window itself.
+        if (createdDocIds.length) nudgeKnowledgeSources(activeOrgId!, libraryId);
+        return {
+          landed: landedFiles,
+          message: `Uploaded ${landed.toLocaleString()} of ${resolved.length.toLocaleString()}. ${notes.join(" ")}`,
+          failed: failedRound.map((f) => ({ file: f.entry.item.file, reason: f.reason })),
+        };
       } else {
         setShowStagingModal(false);
         // A file just landed in doc control — any AI library watching this
@@ -2738,7 +2808,8 @@ export default function LibraryExplorerPage() {
         uploadPathsRef.current = new Map();
         uploadFolderPlanRef.current = null;
         setFolderStaged(false);
-        if (notes.length > 0) setError(`Uploaded. ${notes.join(" ")}`);
+        landedFilesRef.current = new WeakSet();
+        setNotice(`Upload complete — ${landed.toLocaleString()} file${landed === 1 ? "" : "s"} uploaded${alreadyHere.length ? `, ${alreadyHere.length.toLocaleString()} already there` : ""}, all now in ${currentFolder ? `"${currentFolder.name}"` : library.name}.${notes.length ? " " + notes.join(" ") : ""}`);
       }
     } catch (e) {
       console.error(e);
@@ -3534,6 +3605,14 @@ export default function LibraryExplorerPage() {
               >
                 {isController && (
                   <button
+                    onClick={() => { setActionsMenuOpen(false); setShowDuplicates(true); }}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Find duplicate uploads…
+                  </button>
+                )}
+                {isController && (
+                  <button
                     onClick={() => { setActionsMenuOpen(false); setNumberingOpen(true); }}
                     className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
                   >
@@ -3662,6 +3741,25 @@ export default function LibraryExplorerPage() {
           )}
         </div>
       </div>
+
+      {/* Messages used to be set and never shown while the library was open
+          — failed deletes and partial uploads looked like "nothing happened". */}
+      {(error || notice) && (
+        <div className="shrink-0 px-3 pt-2 space-y-1.5 z-20">
+          {error && (
+            <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-xs text-rose-800 dark:text-rose-200 flex items-start gap-2">
+              <span className="flex-1 min-w-0">{error}</span>
+              <button onClick={() => setError(null)} className="shrink-0 p-0.5 rounded hover:bg-rose-100 dark:hover:bg-rose-900/40" title="Dismiss"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          )}
+          {notice && (
+            <div className="rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-start gap-2">
+              <span className="flex-1 min-w-0">{notice}</span>
+              <button onClick={() => setNotice(null)} className="shrink-0 p-0.5 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/40" title="Dismiss"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          )}
+        </div>
+      )}
 
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleUploadFiles(e.target.files)} />
       {/* webkitdirectory isn't in React's input types — spread it through. */}
@@ -4808,7 +4906,7 @@ export default function LibraryExplorerPage() {
         files={pendingUploadFiles}
         customColumns={(library?.customColumns ?? []) as unknown as CustomColumnDef[]}
         defaultStatus="Issued"
-        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); uploadPathsRef.current = new Map(); uploadFolderPlanRef.current = null; setFolderStaged(false); }}
+        onCancel={() => { setShowStagingModal(false); setPendingUploadFiles([]); uploadPathsRef.current = new Map(); uploadFolderPlanRef.current = null; setFolderStaged(false); landedFilesRef.current = new WeakSet(); }}
         folderUpload={folderStaged ? {
           destination: currentFolder ? [...(currentFolder.pathNames ?? []), currentFolder.name].join(" / ") : (library?.name ?? "this library"),
           pathOf: (f) => uploadPathsRef.current.get(f),
@@ -4820,6 +4918,23 @@ export default function LibraryExplorerPage() {
         onAddSheetAndUseForUniqueness={isController ? handleAddSheetAndUseForUniqueness : undefined}
         orgId={activeOrgId ?? undefined}
       />
+
+      {showDuplicates && activeOrgId && (
+        <DuplicateUploadsModal
+          orgId={activeOrgId}
+          libraryId={libraryId}
+          folderName={(id) => {
+            const f = id ? folderMap.get(id) : null;
+            return f ? [...(f.pathNames ?? []), f.name].join(" / ") : `${library?.name ?? "Library"} (top level)`;
+          }}
+          onClose={() => setShowDuplicates(false)}
+          onDeleted={(ids) => {
+            const gone = new Set(ids);
+            setDocuments((prev) => prev.filter((d) => !gone.has(d.id!)));
+            for (const [k, v] of folderDocsCache.current) folderDocsCache.current.set(k, v.filter((d) => !gone.has(d.id!)));
+          }}
+        />
+      )}
 
       {deleteFolders && activeOrgId && (
         <FolderDeleteModal

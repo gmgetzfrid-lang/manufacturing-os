@@ -30,6 +30,15 @@ export interface CustomColumnDef {
   options?: string[];
 }
 
+/** What a submit achieved. The files that landed leave the list, so a
+ *  second click can only ever send what's left — never the batch again. */
+export interface UploadOutcome {
+  landed: File[];
+  message: string;
+  /** Files that still failed, each with the reason — shown in the window. */
+  failed?: Array<{ file: File; reason: string }>;
+}
+
 export interface StagedItem {
   id: string;
   file: File;
@@ -53,7 +62,7 @@ interface MetadataStagingModalProps {
   /** `signal` aborts the in-flight transfers when the user presses Stop.
    *  Implementations should pass it to uploadToPath and treat
    *  UploadCancelledError as "the user stopped this", not as a failure. */
-  onSubmit: (items: StagedItem[], signal?: AbortSignal) => Promise<void>;
+  onSubmit: (items: StagedItem[], signal?: AbortSignal) => Promise<void | UploadOutcome>;
   /** Opens the parent's column-add wizard. When this completes, the
    *  parent should refresh customColumns; the modal will pick up the
    *  new column via its prop. */
@@ -140,6 +149,9 @@ export default function MetadataStagingModal({
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // After a partial run: what happened, in the window (not behind it).
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const [failedWhy, setFailedWhy] = useState<Array<{ file: File; reason: string }>>([]);
   // Held for the life of one submit so Stop can abort the transfers that are
   // actually on the wire, not merely stop rendering a spinner over them.
   const abortRef = React.useRef<AbortController | null>(null);
@@ -224,6 +236,8 @@ export default function MetadataStagingModal({
     // where the filename parse left the default (never over user edits),
     // small concurrency, totally best-effort.
     setTbFilled(0);
+    setOutcome(null);
+    setFailedWhy([]);
     const cancel = new AbortController();
     void (async () => {
       // Enrichment is a convenience; an upload is someone waiting. Reading N
@@ -455,7 +469,13 @@ export default function MetadataStagingModal({
         for (const k of canonicalKeys) delete customFields[k];
         return { ...it, customFields, fileHash };
       });
-      await onSubmit(cleaned, ctl.signal);
+      const res = await onSubmit(cleaned, ctl.signal);
+      if (res) {
+        const landed = new Set(res.landed);
+        setItems((prev) => prev.filter((it) => !landed.has(it.file)));
+        setOutcome(res.message);
+        setFailedWhy(res.failed ?? []);
+      }
     } catch (e) {
       setError(ctl.signal.aborted ? "Upload stopped." : ((e as Error).message || "Upload failed."));
     } finally {
@@ -903,6 +923,26 @@ export default function MetadataStagingModal({
         </>)}
 
         {/* Error + actions */}
+        {outcome && (
+          <div className="px-4 sm:px-6 py-3 bg-amber-50 dark:bg-amber-950/30 border-t border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2 shrink-0">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <b>{outcome}</b> Only the {items.length} file{items.length === 1 ? "" : "s"} still listed will be sent if you try again — nothing that already uploaded is sent twice.
+              {failedWhy.length > 0 && (
+                <ul className="mt-2 max-h-40 overflow-auto rounded-md border border-amber-200 dark:border-amber-800 bg-[var(--color-surface)] divide-y divide-amber-100 dark:divide-amber-900">
+                  {failedWhy.slice(0, 300).map((f, i) => (
+                    <li key={i} className="px-2 py-1 flex gap-2 min-w-0">
+                      <span className="font-mono truncate max-w-[45%] text-[var(--color-text)]" title={(folderUpload?.pathOf(f.file) ?? []).concat(f.file.name).join("/")}>
+                        {(folderUpload?.pathOf(f.file) ?? []).concat(f.file.name).join("/")}
+                      </span>
+                      <span className="text-rose-700 dark:text-rose-300 truncate" title={f.reason}>{f.reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </span>
+          </div>
+        )}
         {error && (
           <div className="px-4 sm:px-6 py-3 bg-red-50 border-t border-red-200 text-xs text-red-700 flex items-start gap-2 shrink-0">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
@@ -936,7 +976,9 @@ export default function MetadataStagingModal({
             )}
             <button onClick={submit} disabled={submitting || items.length === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow">
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-              {submitting ? "Uploading…" : folderUpload ? `Upload folder (${items.length} files)` : "Upload All"}
+              {submitting ? "Uploading…"
+                : outcome ? `Try the ${items.length} remaining again`
+                : folderUpload ? `Upload folder (${items.length} files)` : "Upload All"}
             </button>
           </div>
         </div>
