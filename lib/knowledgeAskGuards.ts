@@ -1,8 +1,9 @@
-// lib/knowledgeAskGuards.ts — SERVER-ONLY helpers for /api/knowledge/ask
-// (intelligence Round G, I-03). Pure, so the route's rules are testable
-// without the route: the paged read that never trusts a short page, the
-// fence that keeps document text out of the instructions, and the honesty
-// markers an answer carries.
+// lib/knowledgeAskGuards.ts — helpers for /api/knowledge/ask (intelligence
+// Round G, I-03). Pure, so the route's rules are testable without the route:
+// the paged read that never trusts a short page, the fence that keeps
+// document text out of the instructions, and the honesty markers an answer
+// carries. No server import: the knowledge page re-applies the PR-9 result
+// withholding (I-25) to the answers it shows.
 
 import { refSeries, sheetDrawingNumbers } from "@/lib/drawingText";
 
@@ -162,13 +163,228 @@ const VALUE_MARKUP = /\*\*|`/g;
 const SIZE_FRACTION = /\bNPS\s*(?:\d+-)?\d+\/\d+|\b\d+\/\d+\s*(?:inch(?:es)?\b|in\b|["″])/gi;
 
 /** PR-9: does an answer carry model arithmetic — a substitution worked to a
- *  result, an "Applied to your case" section, or values the user supplied? */
+ *  result, an "Applied to your case" section, values the user supplied, or
+ *  (I-25) the substituted expression the calculation protocol asks for? */
 export function answerHasComputation(answer: string, inputs: string): boolean {
   if (inputs.trim().length > 0) return true;
   if (/###\s*Applied to your case/i.test(answer)) return true;
+  if (SUBSTITUTED_LINE.test(answer)) return true;
   // "285 × 1.5 = 427.5", "(2 * 300) / 4 = 150", "P = 1.5 x `285 psig` = `427.5 psig`"
+  // — and (I-25) the same chain with a citation after an operand,
+  // "1.5 × `285 psig` [2] = 427.5 psig", which the withholding below finds.
   return answer.split("\n").some((line) =>
-    CALC_CHAIN.test(line.replace(VALUE_MARKUP, "").replace(SIZE_FRACTION, "SIZE")));
+    CALC_CHAIN.test(line.replace(VALUE_MARKUP, "").replace(SIZE_FRACTION, "SIZE"))
+    || resultSpans(stripLine(line).text).length > 0);
+}
+
+// ── PR-9 option (b) (DEC-90 A17, intelligence I-25): the ask route never
+//    presents a number the model computed ─────────────────────────────────
+//
+// A model's arithmetic is unvalidated: an answer that carries it shows the
+// formula and each cited input, and the number the model worked out is
+// replaced by RESULT_WITHHELD. What counts as that number:
+//   (a) on a line, the value a chain of numbers and operators runs straight
+//       into ("1.5 × 285 = 427.5 psig" — the CALC_CHAIN grammar above, an
+//       operand allowed a citation after it), and any "= / ≈ / →" value
+//       restating it right after ("= 427.5 psig ≈ 430 psig");
+//   (b) that value written anywhere else in the answer ("**Answer:** the test
+//       pressure is `427.5 psig`") — in the same unit when the result has one;
+//       a result with no unit in any unit, unless it is a small whole number
+//       (a "= 1" ratio is withheld where it is worked, never every "1");
+//   (c) on the server, when the caller passes the text the answer was built
+//       from (the question, the user's values, the passages): any value with
+//       a unit or a decimal point in the **Answer:** line or the
+//       "### Applied to your case" section that none of that text holds —
+//       where the result of a calculation is stated, a number from nowhere is
+//       one the model made, and when the detector cannot place the result it
+//       withholds rather than shows it.
+// A lookup — no chain, no Applied section, no grounding pass — is returned
+// byte-for-byte. Running it again on its own output changes nothing.
+
+/** What stands where a model-computed number was. */
+export const RESULT_WITHHELD = "[result withheld]";
+/** The line an answer with a withheld result ends with (before the route's
+ *  own notes). */
+export const RESULT_WITHHELD_NOTE =
+  "! Result withheld — the AI worked this arithmetic itself and nothing in the app re-derived it, so the number it " +
+  "computed is not shown. Compute the result from the formula and the cited inputs above, and check every " +
+  "substitution and unit against the cited pages.";
+
+/** The line the calculation protocol asks the model to write its substituted
+ *  expression on (route.ts calcProtocol). */
+const SUBSTITUTED_LINE = /^\s*(?:[-*•]\s+)?\*{0,2}Substituted:/im;
+const CALC_NUM = "-?\\d[\\d,]*(?:\\.\\d+)?";
+const CALC_CITE = "(?:\\s*\\[\\d{1,3}\\])?";
+/** CALC_CHAIN with a citation allowed after each operand, capturing the
+ *  value the chain runs into (always the match's suffix). Whitespace is still
+ *  consumed only together with the token after it. */
+const RESULT_CHAIN_SRC =
+  CALC_OPERAND + CALC_CITE + "(?:" + CALC_OP + CALC_OPERAND + CALC_CITE + ")+\\s*=\\s*(" + CALC_NUM + CALC_UNIT + ")";
+/** A value restating the one just withheld: "≈ 430 psig", "= 427.50". */
+const RESTATED = new RegExp("\\s*(?:=|≈|~|→|⇒)\\s*(" + CALC_NUM + CALC_UNIT + ")", "iy");
+/** A standalone value — never part of an identifier ("B31.3", "V-101",
+ *  "§345.4.2", "2026-10-01", "Table A-1") nor a citation marker ("[2]"). */
+const VALUE_SRC = "(?<![\\w§#./\\[-])(" + CALC_NUM + ")(" + CALC_UNIT + ")(?![\\w/\\]]|[.-]\\d)";
+
+/** A line with its value markup (`, **) removed and size fractions masked,
+ *  and where each remaining character sits in the original line. */
+function stripLine(line: string): { text: string; at: number[] } {
+  const chars: string[] = [];
+  const at: number[] = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "`") continue;
+    if (line[i] === "*" && line[i + 1] === "*") { i++; continue; }
+    chars.push(line[i]);
+    at.push(i);
+  }
+  const text = chars.join("").replace(SIZE_FRACTION, (m) => "S".repeat(m.length));
+  return { text, at };
+}
+
+type Span = { start: number; end: number; value: string; unit: string };
+
+const normValue = (v: string): string => {
+  const n = Number(v.replace(/,/g, ""));
+  return Number.isFinite(n) ? String(n) : v;
+};
+const normUnit = (u: string): string => u.toLowerCase().replace(/\s+/g, "");
+
+/** Rule (a): the values chains run into on one (stripped) line, with any
+ *  restatement right after each. */
+function resultSpans(text: string): Span[] {
+  const out: Span[] = [];
+  const chain = new RegExp(RESULT_CHAIN_SRC, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = chain.exec(text)) !== null) {
+    let start = m.index + m[0].length - m[1].length;
+    let token = m[1];
+    for (;;) {
+      const trimmed = token.replace(/,+$/, "");
+      const num = trimmed.match(new RegExp("^" + CALC_NUM))?.[0] ?? trimmed;
+      out.push({ start, end: start + trimmed.length, value: normValue(num), unit: normUnit(trimmed.slice(num.length)) });
+      RESTATED.lastIndex = start + trimmed.length;
+      const again = RESTATED.exec(text);
+      if (!again) break;
+      start = again.index + again[0].length - again[1].length;
+      token = again[1];
+    }
+    // The value a chain ran into may open the next chain ("2 × 3 = 6 × 4 = 24").
+    chain.lastIndex = m.index + m[0].length - m[1].length;
+  }
+  return out;
+}
+
+/** Rule (b)/(c): every standalone value on one (stripped) line. */
+function valueSpans(text: string): Span[] {
+  const out: Span[] = [];
+  const re = new RegExp(VALUE_SRC, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const num = m[1].replace(/,+$/, "");
+    const unit = m[1].endsWith(",") ? "" : m[2];
+    out.push({ start: m.index, end: m.index + num.length + unit.length, value: normValue(num), unit: normUnit(unit) });
+  }
+  return out;
+}
+
+/** Replace the given (stripped-coordinate) spans of one line with the
+ *  marker, taking value markup that wraps a span exactly ("`427.5 psig`",
+ *  "**`427.5 psig`**") with it, so no bold or chip is left half-open. */
+function withholdSpans(line: string, at: number[], spans: Span[]): string {
+  if (spans.length === 0) return line;
+  const ranges = spans
+    .map((s) => {
+      let a = at[s.start];
+      let b = at[s.end - 1] + 1;
+      // Markup inside the span ("427.5 `psig`" has none, "`427.5` psig" has
+      // one tick) is balanced by taking its partner just outside.
+      const ticks = (line.slice(a, b).match(/`/g) ?? []).length;
+      if (ticks % 2 === 1) {
+        if (line[b] === "`") b++;
+        else if (line[a - 1] === "`") a--;
+      }
+      for (;;) {
+        const l = line.slice(0, a).match(/(?:\*\*|`)$/)?.[0];
+        if (!l || !line.slice(b).startsWith(l)) break;
+        a -= l.length;
+        b += l.length;
+      }
+      return [a, b] as const;
+    })
+    .sort((x, y) => x[0] - y[0]);
+  let out = "";
+  let cursor = 0;
+  for (const [a, b] of ranges) {
+    if (a < cursor) continue;
+    out += line.slice(cursor, a) + RESULT_WITHHELD;
+    cursor = b;
+  }
+  return out + line.slice(cursor);
+}
+
+const isSmallWhole = (v: string): boolean => /^-?\d$/.test(v);
+
+/** PR-9 option (b): the answer with every number the model computed replaced
+ *  by RESULT_WITHHELD, and RESULT_WITHHELD_NOTE appended when one was. Pass
+ *  `grounding` (the question, the user's values and the passages' text) for
+ *  rule (c); the knowledge page, which re-applies (a) and (b) to answers it
+ *  shows (a row saved before I-25), has no grounding and passes none. */
+export function withholdModelResults(answer: string, grounding?: string): { text: string; withheld: number } {
+  const lines = answer.split("\n");
+  let withheld = 0;
+  // (a) chain results, and the values they hold.
+  const results: Array<{ value: string; unit: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const { text, at } = stripLine(lines[i]);
+    const spans = resultSpans(text);
+    if (spans.length === 0) continue;
+    for (const s of spans) results.push({ value: s.value, unit: s.unit });
+    lines[i] = withholdSpans(lines[i], at, spans);
+    withheld += spans.length;
+  }
+  // (b) the same values written anywhere else.
+  if (results.length > 0) {
+    // A result with a unit is matched in that unit ("Class 150" is not the
+    // "= 150 lb" just worked); one without, in any (not a small whole number).
+    const sameAs = (s: Span) => results.some((r) =>
+      r.value === s.value && (r.unit !== "" ? r.unit === s.unit : !isSmallWhole(r.value)));
+    for (let i = 0; i < lines.length; i++) {
+      const { text, at } = stripLine(lines[i]);
+      const spans = valueSpans(text).filter(sameAs);
+      if (spans.length === 0) continue;
+      lines[i] = withholdSpans(lines[i], at, spans);
+      withheld += spans.length;
+    }
+  }
+  // (c) where the result is stated, a value none of the source text holds.
+  if (grounding !== undefined) {
+    const grounded = new Set(grounding.split("\n").flatMap((l) => valueSpans(stripLine(l).text).map((s) => s.value)));
+    let inApplied = false;
+    let heroNext = false;
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const t = raw.trim();
+      let stated = false;
+      if (/^#{1,4}\s*Applied to your case/i.test(t)) { inApplied = true; continue; }
+      if (inApplied && (/^#{1,4}\s/.test(t) || /^\*\*[^*]+:\*\*/.test(t))) inApplied = false;
+      if (heroNext && t) { stated = true; heroNext = false; }
+      const hero = t.match(/^\*{0,2}Answer:?\*{0,2}:?\s*(.*)$/i);
+      if (hero) {
+        if (hero[1].trim() === "") heroNext = true;
+        else stated = true;
+      }
+      if (!stated && !inApplied) continue;
+      const { text, at } = stripLine(raw);
+      const spans = valueSpans(text).filter((s) =>
+        (s.unit !== "" || s.value.includes(".")) && !grounded.has(s.value));
+      if (spans.length === 0) continue;
+      lines[i] = withholdSpans(raw, at, spans);
+      withheld += spans.length;
+    }
+  }
+  if (withheld === 0) return { text: answer, withheld: 0 };
+  const text = lines.join("\n");
+  return { text: text.includes(RESULT_WITHHELD_NOTE) ? text : `${text}\n\n${RESULT_WITHHELD_NOTE}`, withheld };
 }
 
 /** ASK-3: the line a cut-off answer ends with. */

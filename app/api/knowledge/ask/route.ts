@@ -39,7 +39,8 @@
 //   * Honest answers: a cut-off answer is said to be cut off and never rated
 //     (ASK-3); a partial tag census says it is partial (ASK-2); AI-transcribed
 //     passages are labelled (GOV-9, PR-4); model arithmetic is marked
-//     unverified (PR-9); "hybrid" means a meaning-found passage is in the
+//     unverified and the number the model computed is withheld — the
+//     formula and its cited inputs are shown (PR-9, I-25); "hybrid" means a meaning-found passage is in the
 //     answer's pool (ASK-10), with the coverage of every library searched
 //     (SEM-12).
 //   * The stored row records every knowledge document whose passages, legend
@@ -77,7 +78,7 @@ import { aiReadability } from "@/lib/aiBoundary";
 import { screenAssistantRequest } from "@/lib/assistantScreen";
 import {
   readAll, readAllByKey, READ_PAGE, columnsMissing, asDocumentData, asName, DATA_OPEN, DATA_CLOSE, OWNER_OPEN, OWNER_CLOSE,
-  DATA_BOUNDARY_RULE, answerHasComputation, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
+  DATA_BOUNDARY_RULE, answerHasComputation, withholdModelResults, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
   PROMPT_CHARS_PER_TOKEN, PROMPT_TOKENS_PER_IMAGE, MIN_ANSWER_TOKENS, ANSWER_MAX_TOKENS, MIN_ANSWER_PROMPT_CHARS,
   DRAWING_FACTS_ROW_CEILING, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
   insertAnswerRow,
@@ -2330,16 +2331,24 @@ export async function POST(req: NextRequest) {
       "merge several provisions into one bullet or one citation: a claim built from §A plus §B " +
       "cites [nA] on the §A part and [nB] on the §B part, so each highlight matches its claim. " +
       "When the user supplied their own operating numbers, END with '### Applied to your case' " +
-      "walking those values through the path to a concrete result. If a required user-specific " +
+      "walking those values through the path to the substituted expression of its final step — never " +
+      "a computed number (see CALCULATIONS). If a required user-specific " +
       "input is MISSING for that final step, do NOT append a Need inside the answer — follow the " +
       "CALCULATIONS rule instead: reply with ONLY the one-line '**Need:** …' question; the full " +
       "decision path comes after they answer.";
+    // PR-9 option (b) (DEC-90 A17, I-25): the model substitutes and stops —
+    // the app never presents a number the model computed, and the route
+    // withholds one the model writes anyway (withholdModelResults below).
     const calcProtocol =
       "\n\nCALCULATIONS: when the question requires computing from a cited formula (test pressures, " +
       "spans, thicknesses…): (1) transcribe the formula EXACTLY as printed with its variable " +
       "definitions [n]; (2) list every input with its source — a cited passage [n], a table lookup " +
-      "(name the table and the exact row/column you read), or USER-PROVIDED; (3) substitute and " +
-      "compute step by step; (4) state units, and end with a **Check:** naming the table cells to " +
+      "(name the table and the exact row/column you read), or USER-PROVIDED; (3) substitute the inputs " +
+      "into the formula and STOP at the substituted expression, on its own line as " +
+      "'**Substituted:** <symbol> = <the formula with every value and its unit in place>' — do NOT " +
+      "evaluate, simplify or round it, and state no resulting number anywhere in the answer (the " +
+      "app never shows a number the AI computed: the engineer computes it from the formula and the " +
+      "cited inputs); (4) state the result's units, and end with a **Check:** naming the table cells to " +
       "verify. If a required input is user-specific (test temperature, design pressure, material " +
       "grade…) and was NOT provided, do NOT assume a value: reply with ONLY one line " +
       "'**Need:** <one specific question naming exactly which value(s) you need and why>' — nothing else.";
@@ -2700,6 +2709,19 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+    // PR-9: model arithmetic is marked unverified (I-03) and — option (b),
+    // DEC-90 A17, I-25 — the number it computed is withheld: the answer keeps
+    // the formula and every cited input, and RESULT_WITHHELD stands where the
+    // model's result was. Decided on the model's own text, before the route's
+    // notes are added; a lookup (no computation) is returned byte-for-byte.
+    // The values the user and the passages supplied are the grounding: in
+    // the Answer line and "Applied to your case", a value none of them holds
+    // is one the model made, and it is withheld.
+    const arithmetic = !needRefused && !unanswered && !/^\*\*Need:\*\*/.test(answer.trim())
+      && answerHasComputation(answer, inputs);
+    if (arithmetic) {
+      answer = withholdModelResults(answer, [question, inputs, ...chunks.map((c) => c.content)].join("\n")).text;
+    }
     if (partial) answer += `\n\n${CUT_OFF_LINE}` +
       (lengthLimitedByBudget ? " (This month's remaining AI budget limited how long this answer could be.)" : "");
     if (fetchUnaffordable && !unanswered) {
@@ -2950,8 +2972,6 @@ export async function POST(req: NextRequest) {
       // every passage of one of them.
       ...graphHops.flatMap((hop) => [hop.from, hop.toId]),
     ]);
-    const arithmetic = !needRefused && !unanswered && !/^\*\*Need:\*\*/.test(answer.trim())
-      && answerHasComputation(answer, inputs);
     const contextDocuments = [...drawn].slice(0, ANSWER_CONTEXT_DOC_CAP);
     const context: AnswerContext = {
       v: 1,

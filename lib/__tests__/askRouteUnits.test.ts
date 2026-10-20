@@ -447,8 +447,23 @@ describe("the answer surface marks what the route now says", () => {
   it("GOV-9: a vision-derived quote is marked 'AI transcription of this page' on its source card", () => {
     expect(page).toMatch(/c\.source === "vision" && \(\s*<span data-citation-source="vision"[\s\S]*?AI transcription of this page/);
   });
-  it("PR-9: an answer with unverified arithmetic carries the label", () => {
-    expect(page).toMatch(/answer\.arithmetic === "unverified" && \(\s*<span data-arithmetic="unverified"[\s\S]*?Unverified arithmetic — check every step/);
+  it("PR-9: an answer with unverified arithmetic carries the label — and (I-25) so does one whose result the page withheld", () => {
+    expect(page).toMatch(/\(answer\.arithmetic === "unverified" \|\| shown\.withheld > 0\) && \(\s*<span data-arithmetic="unverified"[\s\S]*?Unverified arithmetic — check every step/);
+  });
+  it("PR-9 option (b) (I-25): the answer surface shows the withheld text everywhere — never the model's computed number", () => {
+    // Every library answer is shown through withholdModelResults, so an
+    // answer saved before I-25 (a reopened conversation, a replayed record)
+    // is withheld too; a lookup comes back unchanged.
+    expect(page).toMatch(/const shown = useMemo\(\(\) => withholdModelResults\(answer\.answer\), \[answer\.answer\]\);\s*const answerText = shown\.text;\s*const blocks = parseAnswerBlocks\(answerText\);/);
+    expect(page).toMatch(/<CopyButton text=\{answerText\} label="Copy answer" \/>/);
+    expect(page).toMatch(/<AnswerView answer=\{answerText\} citations=\{answer\.citations\} onCite=\{onCite\} \/>/);
+    expect(page).toMatch(/question=\{question\}\s*answer=\{answerText\}/);
+    // The only answer.answer left is the internet branch (no calculation
+    // protocol) and the memo itself.
+    expect(page.match(/answer\.answer/g)).toHaveLength(3);
+    expect(page).toMatch(/<AnswerView answer=\{answer\.answer\} citations=\{answer\.citations\} onCite=\{openCitation\} \/>/);
+    // The marker renders as its own mark, not a value chip.
+    expect(page).toMatch(/if \(part === RESULT_WITHHELD\) \{\s*return \(\s*<span key=\{i\} data-result-withheld="true"/);
   });
   it("IRLS-13: the answer names the Reasoning Skills that shaped it", () => {
     expect(page).toMatch(/<span data-answer-skills="true"[\s\S]*?Shaped by: \{\(answer\.skills \?\? \[\]\)\.map\(\(k\) => k\.name\)\.join\(", "\)\}/);

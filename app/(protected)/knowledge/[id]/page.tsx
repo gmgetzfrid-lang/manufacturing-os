@@ -49,6 +49,7 @@ import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import { keylessPagesShown, keylessTextOnlyLabel } from "@/lib/knowledgeKeyless";
 import { readKeylessTextPages } from "@/lib/knowledgeKeylessClient";
 import { ClarifyCard, NeedCard } from "@/components/knowledge/AssistantAskCards";
+import { withholdModelResults, RESULT_WITHHELD } from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 // pdf.js only loads when someone actually opens a cited page.
@@ -230,7 +231,7 @@ function InlineAnswer({ text, citations, onCite }: {
     .map((d) => d.mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .sort((a, b) => b.length - a.length)
     .join("|");
-  const parts = text.split(new RegExp(`(\\[\\d{1,3}\\]|\\*\\*[^*]+\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "g"));
+  const parts = text.split(new RegExp(`(\\[result withheld\\]|\\[\\d{1,3}\\]|\\*\\*[^*]+\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "g"));
   const linkFor = (s: string) => links.find((d) => d.mention === s);
   const docChip = (d: DocLink, label: string, key: number) => (
     <button key={key} onClick={() => open?.(d)} title={`Open ${d.name} · p.${d.page}`}
@@ -241,6 +242,16 @@ function InlineAnswer({ text, citations, onCite }: {
   return (
     <>
       {parts.map((part, i) => {
+        // PR-9 (I-25): where the model's computed number was — never a value.
+        if (part === RESULT_WITHHELD) {
+          return (
+            <span key={i} data-result-withheld="true"
+              title="The AI computed this number and nothing in the app re-derived it, so it is not shown. Compute it from the formula and the cited inputs."
+              className="inline-flex items-center align-baseline mx-0.5 px-1.5 py-0.5 rounded-md border border-dashed border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-300 font-black text-[0.85em] leading-none">
+              result withheld
+            </span>
+          );
+        }
         const cite = part.match(/^\[(\d{1,3})\]$/);
         if (cite) {
           const c = citations.find((x) => x.n === Number(cite[1]));
@@ -691,7 +702,13 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
   /** Open a document the answer names (show-me chips). */
   onOpenDoc?: (d: DocLink) => void;
 }) {
-  const blocks = parseAnswerBlocks(answer.answer);
+  // PR-9 option (b) (DEC-90 A17, I-25): no surface shows a number the model
+  // computed. The route withholds it before an answer is sent or saved; an
+  // answer saved before that (a reopened conversation, a replayed record)
+  // gets the same withholding here. A lookup is shown byte-for-byte.
+  const shown = useMemo(() => withholdModelResults(answer.answer), [answer.answer]);
+  const answerText = shown.text;
+  const blocks = parseAnswerBlocks(answerText);
   // SEM-12: how the passages were found, for every reader. A replayed answer
   // carries no flag (it was not searched now) and shows none.
   const retrieval = describeRetrieval(answer.retrieval, answer.retrievalCoverage ?? coverage ?? null);
@@ -736,7 +753,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
   // named-document buttons in the hero; the source pile below groups by
   // document, most-load-bearing document first, collapsed past the top.
   const citeByN = new Map(libraryCitations.map((c) => [c.n, c]));
-  const answerOrder = extractCitationNumbers(answer.answer);
+  const answerOrder = extractCitationNumbers(answerText);
   const heroSources = (() => {
     if (!hero) return [] as KnowledgeCitation[];
     const seen = new Set<string>();
@@ -791,7 +808,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
         userId={shapeUid}
         userName={shapeUserEmail ?? undefined}
         question={question}
-        answer={answer.answer}
+        answer={answerText}
         citedKnowledgeDocIds={answer.citations.filter((c) => !c.url && c.documentId).map((c) => c.documentId!)}
         onClose={() => setShaping(false)}
       />
@@ -837,14 +854,14 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
               </span>
               Answer
             </div>
-            <CopyButton text={answer.answer} label="Copy answer" />
+            <CopyButton text={answerText} label="Copy answer" />
           </div>
           {hero ? (
             <div className="text-[17px] font-black text-[var(--color-text)] leading-relaxed">
               <InlineAnswer text={hero.text} citations={answer.citations} onCite={onCite} />
             </div>
           ) : (
-            <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
+            <AnswerView answer={answerText} citations={answer.citations} onCite={onCite} />
           )}
 
           {/* THE documents behind the direct answer — real buttons that open
@@ -878,7 +895,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
           {/* The reasoning waits for "Elaborate" — unnecessary until it isn't */}
           {hero && detailBlocks.length > 0 && elaborated && (
             <div className="mt-4 animate-rise">
-              <SectionedBlocks key={answer.answer} blocks={detailBlocks} citations={answer.citations} onCite={onCite} />
+              <SectionedBlocks key={answerText} blocks={detailBlocks} citations={answer.citations} onCite={onCite} />
             </div>
           )}
 
@@ -906,10 +923,11 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
                 <Search className="w-3 h-3" /> {retrieval.label}
               </span>
             )}
-            {/* PR-9: model arithmetic nothing re-derived is labelled as such. */}
-            {answer.arithmetic === "unverified" && (
+            {/* PR-9: model arithmetic nothing re-derived is labelled as such,
+                and (I-25) the number it computed is withheld. */}
+            {(answer.arithmetic === "unverified" || shown.withheld > 0) && (
               <span data-arithmetic="unverified"
-                title="The AI worked these numbers itself and nothing in the app re-derived them — check every substitution and unit against the cited pages before you use the result."
+                title="The AI worked these numbers itself and nothing in the app re-derived them, so the result it computed is not shown — compute it from the formula and the cited inputs, and check every substitution and unit against the cited pages."
                 className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-950/20">
                 Unverified arithmetic — check every step
               </span>

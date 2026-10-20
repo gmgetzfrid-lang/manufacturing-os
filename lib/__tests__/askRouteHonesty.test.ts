@@ -52,7 +52,7 @@ import { POST as feedbackPOST } from "@/app/api/knowledge/feedback/route";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import {
   DATA_OPEN, DATA_CLOSE, DATA_BOUNDARY_RULE, CUT_OFF_LINE, PROMPT_TOKEN_BUDGET, asDocumentData, answerHasComputation,
-  MIN_ANSWER_PROMPT_CHARS, MIN_ANSWER_TOKENS,
+  MIN_ANSWER_PROMPT_CHARS, MIN_ANSWER_TOKENS, withholdModelResults, RESULT_WITHHELD, RESULT_WITHHELD_NOTE,
 } from "@/lib/knowledgeAskGuards";
 import { AGREEMENT_VERSION, worstCaseCostUsd } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
@@ -689,6 +689,200 @@ describe("PR-9 — model arithmetic is marked unverified (what the code proves: 
     expect(answerHasComputation("1 × ".repeat(3000), "")).toBe(false);
     expect(answerHasComputation(`${"( 1 ) × ".repeat(2000)}x`, "")).toBe(false);
     expect(Date.now() - t).toBeLessThan(5000);
+  });
+});
+
+// ── PR-9 option (b) — DEC-90 A17, intelligence I-25 ─────────────────────────
+
+describe("PR-9 (I-25) — the ask route never presents a number the model computed: the formula and the cited inputs, the result withheld", () => {
+  const WORKED =
+    "**Answer:** The hydrotest pressure is **`427.5 psig`** [1].\n" +
+    "**Basis:**\n" +
+    "- Formula: P_T = 1.5 × P per §5.1 [1]\n" +
+    "- P = `285 psig` (USER-PROVIDED)\n" +
+    "- P_T = 1.5 × `285 psig` = `427.5 psig` [1]\n" +
+    "**Check:** confirm the 1.5 factor on page 4 [1].";
+
+  it("reproduction → fix: a worked substitution reaches the asker as formula and inputs, with no result — on the response and the row", async () => {
+    ordinaryLibrary();
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: WORKED }];
+    const body = await (await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig" })).json();
+    // The model's result is gone from every place it was written.
+    expect(body.answer).not.toContain("427.5");
+    expect(body.answer).toBe(
+      "**Answer:** The hydrotest pressure is [result withheld] [1].\n" +
+      "**Basis:**\n" +
+      "- Formula: P_T = 1.5 × P per §5.1 [1]\n" +
+      "- P = `285 psig` (USER-PROVIDED)\n" +
+      "- P_T = 1.5 × `285 psig` = [result withheld] [1]\n" +
+      "**Check:** confirm the 1.5 factor on page 4 [1].\n\n" + RESULT_WITHHELD_NOTE);
+    // The label stays, and the citation behind the formula is the one it was.
+    expect(body.arithmetic).toBe("unverified");
+    expect(body.citations.map((c: { n: number }) => c.n)).toEqual([1]);
+    expect(typeof body.questionId).toBe("string");
+    const row = rowsOf("knowledge_questions")[0];
+    expect(row.answer).toBe(body.answer);
+    expect(row.context).toMatchObject({ arithmetic: "unverified" });
+  });
+
+  it("REGRESSION: a lookup answer — values, '=' and fractions, no computation — is returned and stored byte-for-byte, unlabelled", async () => {
+    ordinaryLibrary();
+    const lookup =
+      "**Answer:** Torque the bolts to `250 ft-lb` [1].\n**Basis:**\n" +
+      "- Use **3/4 in** bolts; torque = `250 ft-lb` [2]\n" +
+      "- Flange class 150/300: max pressure = 285 psig [1]\n" +
+      "- Tolerance is plus or minus `3 %` per **ASME B31.3** §345.4.2 [2]";
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: lookup }];
+    const body = await (await ask({ question: "What bolt torque for a 150# flange?" })).json();
+    expect(body.answer).toBe(lookup);
+    expect(body.arithmetic).toBeUndefined();
+    expect(body.citations.map((c: { n: number }) => c.n)).toEqual([1, 2]);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(lookup);
+  });
+
+  it("a mixed answer (a lookup and a computation) withholds only the computed number", async () => {
+    ordinaryLibrary();
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text:
+      "**Answer:** The set pressure may not exceed `285 psig` [1]; the test pressure is `427.5 psig` [1].\n" +
+      "**Basis:**\n- Design pressure = `285 psig` [1]\n- P_T = 1.5 × 285 = 427.5 psig [1]" }];
+    const body = await (await ask({ question: "The vessel design pressure is 285 psig: what is the set pressure limit and the hydrotest pressure?" })).json();
+    expect(body.answer).toBe(
+      "**Answer:** The set pressure may not exceed `285 psig` [1]; the test pressure is [result withheld] [1].\n" +
+      "**Basis:**\n- Design pressure = `285 psig` [1]\n- P_T = 1.5 × 285 = [result withheld] [1]\n\n" + RESULT_WITHHELD_NOTE);
+    expect(body.arithmetic).toBe("unverified");
+  });
+
+  it("fail-safe: arithmetic in prose the detector cannot place — in the Answer line and 'Applied to your case' a value nothing supplied is withheld, the user's values are shown", async () => {
+    ordinaryLibrary();
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text:
+      "**Answer:** Your test pressure comes to `427.5 psig` [1].\n" +
+      "**Basis:**\n- The set pressure shall not exceed the design pressure [1]\n" +
+      "### Applied to your case\n- Your design pressure `285 psig` times the factor gives `427.5 psig` [1]" }];
+    const body = await (await ask({ question: "What is my hydrotest pressure?", inputs: "design pressure = 285 psig" })).json();
+    expect(body.answer).not.toContain("427.5");
+    expect(body.answer).toContain("- Your design pressure `285 psig` times the factor gives [result withheld] [1]");
+    expect(body.answer).toContain("**Answer:** Your test pressure comes to [result withheld] [1].");
+    expect(body.answer.endsWith(RESULT_WITHHELD_NOTE)).toBe(true);
+    expect(body.arithmetic).toBe("unverified");
+  });
+
+  it("an answer that follows the protocol — the substituted expression, no result — is shown as written and keeps the label", async () => {
+    ordinaryLibrary();
+    const substituted =
+      "**Answer:** Compute P_T from the substituted expression below [1].\n**Basis:**\n" +
+      "- P = `285 psig` (USER-PROVIDED)\n**Substituted:** P_T = 1.5 × `285 psig`\n**Check:** the factor on page 4 [1].";
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: substituted }];
+    const body = await (await ask({ question: "The design pressure is 285 psig — what is the test pressure?" })).json();
+    expect(body.answer).toBe(substituted);
+    expect(body.arithmetic).toBe("unverified");
+    expect(rowsOf("knowledge_questions")[0].context).toMatchObject({ arithmetic: "unverified" });
+  });
+
+  it("the calculation protocol stops at the substituted expression and states no resulting number", async () => {
+    ordinaryLibrary();
+    h.script = [QUERY_GEN, REFINE_NONE, ANSWER];
+    await ask({ question: "What is the relief valve set pressure limit?" });
+    const system = answerCall().system;
+    expect(system).toContain("STOP at the substituted expression");
+    expect(system).toContain("'**Substituted:** <symbol> = <the formula with every value and its unit in place>'");
+    expect(system).toContain("state no resulting number anywhere in the answer");
+    expect(system).not.toContain("substitute and compute step by step");
+    expect(system).toContain("walking those values through the path to the substituted expression of its final step");
+    expect(system).not.toContain("to a concrete result");
+  });
+
+  it("a '**Need:**' reply is never touched", async () => {
+    ordinaryLibrary();
+    const need = "**Need:** What is the design pressure in psig (the formula needs it)?";
+    h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: need }];
+    const body = await (await ask({ question: "What is the hydrotest pressure?" })).json();
+    expect(body.answer).toBe(need);
+    expect(body.arithmetic).toBeUndefined();
+  });
+
+  describe("withholdModelResults — the pure rule", () => {
+    it("a lookup comes back as the very same string, with nothing withheld", () => {
+      for (const lookup of [
+        ANSWER.text,
+        "- Use **3/4 in** bolts; torque = `250 ft-lb` [2]",
+        "Flange class 150/300: max pressure = 285 psig",
+        "2 x 4 spacing per Table 121.5 = 10 ft",
+        "NPS 1-1/2 = 48.3 mm OD",
+        "Test pressure = 1.5 × design pressure",
+        "V-101 and PSV-2001 per 2026-10-01; set at `285 psig` [1].",
+      ]) {
+        const r = withholdModelResults(lookup, "");
+        expect([lookup, r.withheld]).toEqual([lookup, 0]);
+        expect(r.text).toBe(lookup);
+      }
+    });
+
+    it("the result, its restatements and the next chain it opens are withheld; operands, units, citations and markup stay balanced", () => {
+      expect(withholdModelResults("P_T = 1.5 × `285 psig` × (20,000 / 20,000) = `427.5 psig` ≈ **430 psig** [2]").text)
+        .toBe(`P_T = 1.5 × \`285 psig\` × (20,000 / 20,000) = ${RESULT_WITHHELD} ≈ ${RESULT_WITHHELD} [2]\n\n${RESULT_WITHHELD_NOTE}`);
+      expect(withholdModelResults("2 × 3 = 6 × 4 = 24 ft").text.split("\n")[0]).toBe(`2 × 3 = ${RESULT_WITHHELD} × 4 = ${RESULT_WITHHELD}`);
+      expect(withholdModelResults("**P = 1.5 × 285 = 427.5 psig**").text.split("\n")[0]).toBe(`**P = 1.5 × 285 = ${RESULT_WITHHELD}**`);
+      // A citation after an operand no longer hides the chain (I-03's
+      // detector missed this shape).
+      expect(withholdModelResults("1.5 × `285 psig` [2] = 427.5 psig").text.split("\n")[0]).toBe(`1.5 × \`285 psig\` [2] = ${RESULT_WITHHELD}`);
+      expect(answerHasComputation("1.5 × `285 psig` [2] = 427.5 psig", "")).toBe(true);
+    });
+
+    it("the result is withheld wherever else it is written — in its unit; identifiers, other values and a small whole ratio elsewhere are not", () => {
+      const r = withholdModelResults(
+        "**Answer:** Class 150 bolts carry `150 lb` each per **ASME B16.5** Table 2-1.1 [1].\n" +
+        "- Load = (2 * 300) / 4 = 150 lb [1]\n- Ratio S_T/S = 20,000 / 20,000 = 1\n- Use 1 washer per bolt");
+      expect(r.text.split("\n").slice(0, 4)).toEqual([
+        `**Answer:** Class 150 bolts carry ${RESULT_WITHHELD} each per **ASME B16.5** Table 2-1.1 [1].`,
+        `- Load = (2 * 300) / 4 = ${RESULT_WITHHELD} [1]`,
+        `- Ratio S_T/S = 20,000 / 20,000 = ${RESULT_WITHHELD}`,
+        "- Use 1 washer per bolt",
+      ]);
+      expect(r.withheld).toBe(3);
+    });
+
+    it("running it again on its own output changes nothing (a stored answer re-shown by the page)", () => {
+      const once = withholdModelResults("**Answer:** The test pressure is `427.5 psig` [1].\n### Applied to your case\n- P = 1.5 × 285 = 427.5 psig [1]", "285");
+      expect(once.text).not.toContain("427.5");
+      const twice = withholdModelResults(once.text, "285");
+      expect(twice).toEqual({ text: once.text, withheld: 0 });
+      expect(withholdModelResults(once.text)).toEqual({ text: once.text, withheld: 0 });
+    });
+
+    it("an answer saved before I-25 (a reopened conversation) is withheld by the page without grounding — chains and their repeats only", () => {
+      const saved = "**Answer:** The test pressure is `427.5 psig` [1].\n**Basis:**\n- P = 1.5 × 285 = 427.5 psig [1]\n- S = `20.5 ksi` [2]";
+      const r = withholdModelResults(saved);
+      expect(r.text).toBe(
+        `**Answer:** The test pressure is ${RESULT_WITHHELD} [1].\n**Basis:**\n- P = 1.5 × 285 = ${RESULT_WITHHELD} [1]\n- S = \`20.5 ksi\` [2]\n\n${RESULT_WITHHELD_NOTE}`);
+      // With grounding, the same input value read from a page image (not in
+      // the passages' text) is outside the Answer line and Applied section: shown.
+      expect(withholdModelResults(saved, "").text).toContain("- S = `20.5 ksi` [2]");
+    });
+
+    it("the grounding pass reads only the Answer line and 'Applied to your case', and grounded values there are shown", () => {
+      const r = withholdModelResults(
+        "**Answer:**\nAt your `300 °F` the stress is `20.5 ksi` and the result `61.5 ksi` [1].\n" +
+        "**Basis:**\n- A note of `99.5 psig` outside both [1]\n" +
+        "### Applied to your case\n- At `300 °F`: `61.5 ksi`\n**Check:** `7.25 in` on page 4",
+        "design temperature 300 °F\nTable value 20.5 ksi");
+      expect(r.text.split("\n").slice(0, 7)).toEqual([
+        "**Answer:**",
+        `At your \`300 °F\` the stress is \`20.5 ksi\` and the result ${RESULT_WITHHELD} [1].`,
+        "**Basis:**",
+        "- A note of `99.5 psig` outside both [1]",
+        "### Applied to your case",
+        `- At \`300 °F\`: ${RESULT_WITHHELD}`,
+        "**Check:** `7.25 in` on page 4",
+      ]);
+    });
+
+    it("is quick enough for a whole answer", () => {
+      const t = Date.now();
+      withholdModelResults("1 × ".repeat(3000), "");
+      withholdModelResults(`${"( 1 ) × ".repeat(2000)}x`, "1 ".repeat(2000));
+      withholdModelResults("- value `12.5 psig` [1]\n".repeat(400), "12.5 ".repeat(400));
+      expect(Date.now() - t).toBeLessThan(5000);
+    });
   });
 });
 
