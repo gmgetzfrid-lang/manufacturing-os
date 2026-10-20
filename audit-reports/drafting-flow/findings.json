@@ -17,18 +17,18 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 149,
+    "findings": 152,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 47,
       "MEDIUM": 65,
-      "LOW": 28
+      "LOW": 31
     },
     "by_status": {
-      "RESOLVED": 67,
+      "RESOLVED": 70,
       "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
-      "OPEN": 66,
+      "OPEN": 65,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
       "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — the dead-letter outbox and its drain, pending the `20261219` paste; see the Resolution at the end)*": 1,
@@ -37,7 +37,8 @@
       "WONTFIX": 2,
       "RESOLVED (2026-10-13, by the integrator's ruling at the DF-P2 merge — below)": 1,
       "RESOLVED (2026-10-14, DF-P13 — PASTE pending: `20261218`, after `20261209` and, where `20261195` is still unpasted, before it (both recommended, not required); until it is pasted every active member can still write `sla_defaults` directly and `default_days` carries no CHECK. Done-when 3 is met by pointer to `EDGE-17`, built and RESOLVED at DF-P13's integrator fix pass by the integrator's ruling (`DEC-90`, 2026-10-14) — *corrected from \"not met here; its remainder is `EDGE-17` (OPEN, LOW; owner: the next package that edits `lib/ticketSla.ts`)\"*)": 1,
-      "BLOCKED": 1,
+      "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261222` any time (the (a) counters; until it is pasted an (a) row's counters stay wrong, its stale issue reads `revision_in_progress` / \"cannot confirm\" and its next approval re-cycles); the (b) basis ratified by the integrator at the DF-P12 merge, 2026-10-20 (`DEC-90`, ruling R1))": 1,
+      "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261221` after `20261208` (the guard limbs and the trust index); `20261222` any time (the (a) counters). Until `20261221` is pasted no issue line is proven — every ticket keeps DF-P10's trust boundary, with the two DF-P12 demotions that need no index (each fail-safe, neither driven by member-written history — ruling R2 at the DF-P12 merge, 2026-10-20, `DEC-90`) — and a member can still append an \"issued Rev\" line)": 1,
       "RESOLVED (2026-10-14, DF-P13 integrator fix pass — code only, no migration; the database bound it mirrors is `20261218`'s CHECK, PASTE pending)": 1,
       "INVALID": 1
     }
@@ -2559,7 +2560,7 @@
       "id": "LEAK-7",
       "title": "A reopened ticket re-issues the same revision number, and the public QR says it is current",
       "severity": "MEDIUM",
-      "status": "BLOCKED",
+      "status": "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261222` any time (the (a) counters; until it is pasted an (a) row's counters stay wrong, its stale issue reads `revision_in_progress` / \"cannot confirm\" and its next approval re-cycles); the (b) basis ratified by the integrator at the DF-P12 merge, 2026-10-20 (`DEC-90`, ruling R1))",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "safety / field-truth",
@@ -2573,7 +2574,11 @@
         "app/api/verify-ticket/route.ts:89",
         "app/api/admin/ticket-shed/commit/route.ts:173",
         "app/api/verify-ticket/route.ts:59",
-        "lib/ticketTransitions.ts"
+        "lib/ticketTransitions.ts",
+        "supabase/migrations/20261222_df_roundG_leak7_reopened_label_repair.sql",
+        "lib/verifyTicketVerdict.ts",
+        "lib/__tests__/rls/dfP12DeliverableRails.test.ts",
+        "lib/__tests__/dfRoundG_P12_deliverable.test.ts"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
@@ -3022,7 +3027,7 @@
       "id": "ROUTE-12",
       "title": "The request queue reads its scope in one unpaged request, so above PostgREST's max-rows the oldest-modified requests — the stalled ones — vanish from the queue, its Needs-me lens and its counts without a word",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
       "blast_radius": "attention / visibility",
@@ -3051,7 +3056,7 @@
       "id": "SM-5",
       "title": "Reopen re-issues the SAME deliverable revision number, so two different documents both verify as \"current\" Rev N via the public QR endpoint",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261221` after `20261208` (the guard limbs and the trust index); `20261222` any time (the (a) counters). Until `20261221` is pasted no issue line is proven — every ticket keeps DF-P10's trust boundary, with the two DF-P12 demotions that need no index (each fail-safe, neither driven by member-written history — ruling R2 at the DF-P12 merge, 2026-10-20, `DEC-90`) — and a member can still append an \"issued Rev\" line)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3379,7 +3384,7 @@
       "id": "UI-7",
       "title": "Raw status enums are the primary vocabulary",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "ux",
@@ -4025,6 +4030,59 @@
       "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
     },
     {
+      "id": "ROUTE-13",
+      "title": "The request queue's default view holds the workspace's whole history: closed requests past the 10,000-row ceiling cannot be reached in the page, and every tickets event re-reads the whole scope",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading and by the rendered tests in `lib/__tests__/dfRoundG_P14_queueRead.test.ts`; not exercised against a live database)",
+      "blast_radius": "visibility / performance",
+      "related": [
+        "ROUTE-12",
+        "ROUTE-7"
+      ],
+      "locations": [
+        "app/(protected)/requests/page.tsx:356",
+        "lib/ticketQueueRead.ts:44",
+        "app/(protected)/requests/page.tsx:428",
+        "app/(protected)/requests/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A workspace with 14,000 requests in its history: someone looking for a request closed eighteen months ago to pull its old drafts or reopen it (the reason the Show Closed toggle exists) cannot find it in the queue — the banner says older closed requests are not listed, and nothing in the page reaches them. During a busy shift with several supervisors' tabs open, a burst of ticket changes starts sev",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
+    },
+    {
+      "id": "ROUTE-14",
+      "title": "The dashboard's Drafting Requests widget counted open requests from one read capped at 2,000 rows, so above that its count and pipeline bar undercounted without a word",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading `9b52f56` and by the rendered tests in `lib/__tests__/dfRoundG_P14_labels.test.ts`; not exercised against a live database)",
+      "blast_radius": "attention / visibility",
+      "related": [
+        "ROUTE-12",
+        "ROUTE-7"
+      ],
+      "locations": [
+        "components/dashboard/widgets.tsx:466-545"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A large site with 2,400 open drafting requests: the dashboard says 2,000 (or 1,000), the bar's parts are short in proportion to which rows the read happened to return, and a supervisor sizing the backlog from the dashboard under-reads it by a sixth with nothing on screen to say so. A statement timeout on that read says the backlog is zero.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/08-routing-and-attention.md"
+    },
+    {
       "id": "SM-6",
       "title": "\"Reject / Return to Requester\" and \"Return with Questions\" both dump the ticket into REVISION_REQ, where a ticket with no assigned drafter has zero legal actions and appears on nobody's attention list",
       "severity": "LOW",
@@ -4153,6 +4211,34 @@
       ],
       "refuted": false,
       "summary": "An assigner picking from a list mis-clicks and assigns the drafting ticket to an Accounting or Contractor seat. The server accepts it. That person now holds the drafter's authority on a construction package: they can submit the draft that goes for approval and, after approval, click \"ISSUE FINAL IFC PACKAGE\". Nothing in the flow ever questions whether they are qualified to produce drawings, and th",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/06-state-machine.md"
+    },
+    {
+      "id": "SM-15",
+      "title": "A ticket file's `id` is the client's when it sends one, so a participant can make the printed file's identity ambiguous and grey out every scan of the current deliverable",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading on DF-P12's branch (not exercised against a live database).",
+      "blast_radius": null,
+      "related": [
+        "SM-5",
+        "LEAK-7",
+        "EVID-16"
+      ],
+      "locations": [
+        "app/api/tickets/workflow-action/route.ts:208",
+        "lib/verifyTicketVerdict.ts:324",
+        "app/api/tickets/copy/route.ts:184"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A participant who may attachfile posts an attachment whose id equals the current Final's id (with a different key under the ticket's prefix). Every ?a= print of the real current deliverable now scans \"cannot confirm\" (the id is named twice), and POST /api/tickets/copy for that file answers 404 \"That file is not on this request\". The failure is fail-safe — grey, never green, and the copy is refused",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
     }

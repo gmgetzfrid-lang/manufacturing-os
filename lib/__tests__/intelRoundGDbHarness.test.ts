@@ -31,7 +31,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { discoverPostgres, type DiscoveryHost } from "./rls/pgHarness";
-import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_RULED, TRIGGER_FUNCTIONS } from "./rls/definerDecisions";
+import { BODY_CLAIM_DECISIONS, CALLABLE_DEFINERS, ORACLE_DECISIONS, PERSON_PARAM, RULING_4_RULED, TRIGGER_FUNCTIONS, personBindings } from "./rls/definerDecisions";
 import { BASELINE_KNOWN_ERRORS, CHECKPOINTS, OPERATOR_SWITCHES, OUT_OF_ORDER_FILES } from "./rls/replayKnownDefects";
 import { numberedMigrations } from "./rls/replay";
 
@@ -216,7 +216,7 @@ describe("I-17: the replay's recorded defects and decisions are well-formed", ()
     expect(bodyRows.length).toBeGreaterThan(50);
     for (const d of bodyRows) {
       expect(d.evidence?.length ?? 0, d.signature).toBeGreaterThan(0);
-      for (const f of [...(d.evidence ?? []), ...(d.person?.evidence ?? [])]) {
+      for (const f of [...(d.evidence ?? []), ...personBindings(d).flatMap((p) => p.evidence)]) {
         expect(corpus.includes(squash(f)), `${d.signature}: ${f}`).toBe(true);
       }
     }
@@ -224,34 +224,49 @@ describe("I-17: the replay's recorded defects and decisions are well-formed", ()
     expect(new Set(reasons).size, "two rows share a templated reason").toBe(reasons.length);
   });
 
-  it("an oracle has an owner (INTK-19); a person binding names a person parameter and, when it claims the caller, auth.uid()", () => {
+  it("no oracle is left (INTK-19, intelligence I-28); a person binding names a person parameter and, when it claims the caller, auth.uid()", () => {
     for (const d of CALLABLE_DEFINERS.filter((x) => ORACLE_DECISIONS.includes(x.decision))) {
       expect(d.owner, d.signature).toMatch(/INTK-19/);
-      expect(d.person, d.signature).toBeUndefined();
+      expect(personBindings(d), d.signature).toEqual([]);
     }
-    for (const d of CALLABLE_DEFINERS.filter((x) => x.person)) {
-      const p = d.person!;
-      expect(p.param, d.signature).toMatch(PERSON_PARAM);
-      expect(p.evidence.some((f) => new RegExp(`\\b${p.param}\\b`).test(f)), d.signature).toBe(true);
-      if (p.binding === "is-the-caller" || p.binding === "judged-for-caller" || p.binding === "caller-supplied-oracle") {
-        expect(p.evidence.some((f) => f.includes(p.param) && f.includes("auth.uid()")), d.signature).toBe(true);
+    for (const d of CALLABLE_DEFINERS.filter((x) => personBindings(x).length > 0)) {
+      expect(!(d.person && d.persons), `${d.signature}: person or persons, not both`).toBe(true);
+      for (const p of personBindings(d)) {
+        expect(p.param, d.signature).toMatch(PERSON_PARAM);
+        expect(p.evidence.some((f) => new RegExp(`\\b${p.param}\\b`).test(f)), d.signature).toBe(true);
+        if (p.binding === "is-the-caller" || p.binding === "judged-for-caller" || p.binding === "caller-supplied-oracle") {
+          expect(p.evidence.some((f) => f.includes(p.param) && f.includes("auth.uid()")), d.signature).toBe(true);
+        }
+        // a binding that still leaks is owned, like an oracle
+        if (p.binding === "caller-supplied-oracle") expect(d.owner, d.signature).toMatch(/INTK-\d+/);
       }
-      // a binding that still leaks is owned, like an oracle
-      if (p.binding === "caller-supplied-oracle") expect(d.owner, d.signature).toMatch(/INTK-19/);
     }
-    // The review's case: node_visible's p_owner is the row's column when a
-    // policy calls it, but a caller supplies it over RPC, and the answer
-    // depends on that person's membership.
-    expect(CALLABLE_DEFINERS.find((d) => d.signature === "node_visible(text,jsonb,uuid,uuid,uuid,uuid)")?.person?.binding).toBe("caller-supplied-oracle");
-    // The review's case: org_capability_allows_for judges a p_uid it is given,
-    // so it is an oracle (authenticated-only), not "signed-in".
+    // The I-17 review's case, decided at I-28 under the integrator's ruling
+    // (DEC-90): node_visible's p_owner is the row's column when a policy calls
+    // it; over RPC the caller supplies it, and since 20261224 the answer can
+    // follow that person's membership only inside a workspace where the caller
+    // is active (same-workspace; kept, intelligence I-30 keeps the limb).
+    expect(CALLABLE_DEFINERS.find((d) => d.signature === "node_visible(text,jsonb,uuid,uuid,uuid,uuid)")?.person?.binding).toBe("same-workspace");
+    // user_is_effective_owner binds both of its person parameters: p_uid to the caller,
+    // p_doc_owner to the named library's workspace (its same-workspace answer is INTK-20's)
+    const ueo = CALLABLE_DEFINERS.find((d) => d.signature === "user_is_effective_owner(uuid,uuid,uuid,uuid)");
+    expect(ueo?.decision).toBe("policy-helper");
+    expect(personBindings(ueo!).map((p) => `${p.param}:${p.binding}`)).toEqual(["p_uid:is-the-caller", "p_doc_owner:same-workspace"]);
+    expect(ueo?.owner).toMatch(/INTK-20/);
+    // The I-17 review's other case: org_capability_allows_for judged a p_uid it
+    // was given; since 20261224 only service_role (and its definer callers, as
+    // owner) may execute it.
     expect(CALLABLE_DEFINERS.find((d) => d.signature === "org_capability_allows_for(uuid,text,uuid,jsonb)")).toMatchObject({
-      decision: "signed-in-oracle",
-      execute: { anon: false, authenticated: true, service_role: true },
+      decision: "service-only",
+      execute: { anon: false, authenticated: false, service_role: true },
     });
-    expect(CALLABLE_DEFINERS.filter((d) => ORACLE_DECISIONS.includes(d.decision)).map((d) => d.signature.split("(")[0]).sort()).toEqual(
-      ["acl_index_denies", "org_capability_allows", "org_capability_allows_for", "project_org", "user_can_publish_on_library", "user_is_effective_owner"],
-    );
+    expect(CALLABLE_DEFINERS.filter((d) => ORACLE_DECISIONS.includes(d.decision)).map((d) => d.signature)).toEqual([]);
+    // each uid-taking helper the policies call answers a client only about itself
+    for (const sig of ["acl_index_denies(jsonb,uuid,uuid,text)", "org_capability_allows(uuid,text,uuid)", "user_can_publish_on_library(uuid,text,uuid)"]) {
+      const d = CALLABLE_DEFINERS.find((x) => x.signature === sig);
+      expect(d?.decision, sig).toBe("policy-helper");
+      expect(d?.person?.binding, sig).toBe("is-the-caller");
+    }
   });
 
   it("PERSON_PARAM names a person and nothing else", () => {
@@ -373,8 +388,9 @@ describe("20261217: the definer-grant narrowing (DEC-30 shape, DRLS-16; DEC-90 r
       expect(d.owner, d.signature).toBeUndefined();
       expect(d.reason, d.signature).toContain(RULING_4_RULED);
     }
-    // the membership answer member_is_active gave stays reachable until INTK-19 lands
-    expect(CALLABLE_DEFINERS.find((d) => d.signature === "member_is_active(uuid,uuid)")?.owner).toMatch(/INTK-19/);
+    // INTK-19 landed (20261224): member_is_active's row drops its owner; the same-workspace answer is INTK-20's
+    expect(CALLABLE_DEFINERS.find((d) => d.signature === "member_is_active(uuid,uuid)")?.owner).toBeUndefined();
+    expect(CALLABLE_DEFINERS.find((d) => d.signature === "member_is_active(uuid,uuid)")?.reason).toMatch(/INTK-20/);
   });
 
   // The decisions were reasoned from these call sites (grep every .rpc( site,

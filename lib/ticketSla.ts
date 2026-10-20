@@ -49,6 +49,7 @@ import {
   loadRoutingContext, routedPool, queuePool, type RoutingClient, type RoutingContext,
 } from "@/lib/ticketRouting";
 import { formatRecordDate } from "@/lib/recordTime";
+import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";
 
 /** GAP-106: the fraction of the SLA window at which the owner is warned. */
@@ -190,15 +191,18 @@ export function slaNotice(
   const label = `${t.ticketId ?? ""} ${t.title ?? ""}`.trim() || "A drafting request";
   const due = formatRecordDate(new Date(target).toISOString(), timeZone ?? null);
   const onRequester = waitsOnRequester(t.status) ? REQUESTER_STEP[String(t.status)] : null;
+  // drafting-flow UI-7 (DF-P14): the stage a person reads, in the shared
+  // words (lib/ticketStatusLabels.ts) — never the stored identifier.
+  const stageName = `the “${ticketStatusLabel(String(t.status))}” stage`;
   if (stage === "warn") {
     const pct = usedPercent(t, target, now);
     const used = pct === null ? "" : ` and has used ${Math.min(pct, 99)}% of its time`;
-    const where = onRequester ? `It is waiting at ${t.status}, on ${onRequester}.` : `It is waiting at ${t.status}.`;
+    const where = onRequester ? `It is waiting at ${stageName}, on ${onRequester}.` : `It is waiting at ${stageName}.`;
     return { title: `Due soon · ${label}`, body: `This request is due ${due}${used}. ${where}` };
   }
   return onRequester
-    ? { title: `Overdue · ${label}`, body: `This request was due ${due} and is waiting at ${t.status}, on ${onRequester}. Nothing needs reassigning: ${onRequester} moves it on.` }
-    : { title: `Overdue · ${label}`, body: `This request was due ${due} and is still waiting at ${t.status}. Reassign it, or tell the requester when it will be done.` };
+    ? { title: `Overdue · ${label}`, body: `This request was due ${due} and is waiting at ${stageName}, on ${onRequester}. Nothing needs reassigning: ${onRequester} moves it on.` }
+    : { title: `Overdue · ${label}`, body: `This request was due ${due} and is still waiting at ${stageName}. Reassign it, or tell the requester when it will be done.` };
 }
 
 // ─── the scan (IO; one step of the maintenance cron) ────────────────────────

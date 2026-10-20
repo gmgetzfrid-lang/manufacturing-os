@@ -690,6 +690,51 @@
    "sequencingNotes": [
     "Added by the integrator at the DF-P9 merge, 2026-10-14 (DEC-31). Small and label-only except ROUTE-12's paging; regression-first."
    ]
+  },
+  {
+   "name": "DF-P15 DELIVERABLE PAGE WIRING — the ticket page prints and downloads through the server copy route, offers publishing as a new document, calls the copy recall, and the workflow route mints file ids",
+   "findings": [
+    "EVID-16 done-when 2 (assigned at the DF-P12 merge): the ticket page's print and download go through POST /api/tickets/copy (server stamp, distribution and DOWNLOAD rows before bytes; 409 confirm, 422 unstampable flows in the UI); the inline preview becomes the stamped server stream; a legacy absolute-URL file keeps its browser path and says so",
+    "DCW-4 remainder (assigned at the DF-P12 merge): the ticket page's 'Publish as a new document in <library>' offer (createDocumentWithFile with relatedTicketId) and /api/tickets/handback accepting a NEW document's version that carries the ticket",
+    "public-surfaces PHYS-18 (LOW; assigned at the DF-P12 merge): a recall control on the ticket page (lib/staleCopies.ts getTicketCopyRecall / nudgeStaleTicketHolders) and a recall of superseded copy holders when a new revision issues",
+    "drafting-flow SM-15 (LOW; assigned at the DF-P12 merge): the workflow route mints a ticket file's id on the server (crypto.randomUUID()) for every new attachment and never keeps a client-supplied id already on the ticket",
+    "drafting-flow LEAK-7 residual (ruled by the integrator at the DF-P12 merge, DEC-90): ONLY IF 20261222's paste-back reports a (b) count that is not 0 — a paste-time server snapshot (a guard-protected column naming each label a row issued twice, computed from the history at the paste) so a pre-DF-P10 print of a (b) row answers 'cannot confirm', with no member-writable line able to add to it; if the count is 0, close this limb by record",
+    "drafting-flow DCW-7's last limb (re-owned at the DF-P12 merge): the 'Publish as a new document in <library>' offer is DCW-4's page half above; the free-text unit box for an unconfigured workspace stays by DEC-101 item 1",
+    "drafting-flow EVID-5 (closes by pointer; re-owned at the DF-P12 merge): closes when EVID-16 (this package) and projects-joint EVID-15 (J15) are RESOLVED and document-control 20261068 is pasted — record the pointer close here"
+   ],
+   "files": [
+    "app/(protected)/requests/[id]/page.tsx (print, download, preview, publish offer, recall control)",
+    "app/api/tickets/workflow-action/route.ts (vetTicketAttachment id minting only), app/api/tickets/handback/route.ts",
+    "lib/staleCopies.ts callers only; a migration only for the LEAK-7 snapshot limb if needed",
+    "tests: every print and download flow that works today still works through the route; a superseded file asks; ids are server-minted; the recall reaches the holders of a superseded copy"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "drafting-flow DF-P12 merged (2026-10-20; /api/tickets/copy, the recall arm, relatedTicketId)",
+    "drafting-flow DF-P14 merged (it holds the workflow route's labels and reason validation)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P12 merge, 2026-10-20 (DEC-31)."
+   ]
+  },
+  {
+   "name": "DF-P16 QUEUE HISTORY AND OUTCOME BREAKDOWN — closed and canceled requests reachable from the queue on demand, and the org's own ending reasons counted on /admin/analytics",
+   "findings": [
+    "drafting-flow ROUTE-13 done-when 1 (LOW; assigned at the DF-P14 merge): any closed or canceled request can be reached from the queue on demand (a 'closed history' read that pages like lib/ticketQueueRead.ts, never loaded by default), the open queue unchanged",
+    "roles-and-permissions GAP-13 acceptance 2, per-reason half (assigned at the DF-P14 merge): /admin/analytics 'How Requests Ended' (components/requests/RequestOutcomes.tsx) breaks each outcome down by the org's configured reasons (metadata.outcome_reason, words snapshotted), unconfigured or bare-category ends shown as such; the outcome-level counts unchanged"
+   ],
+   "files": [
+    "app/(protected)/requests/page.tsx (the closed-history affordance only), lib/ticketQueueRead.ts",
+    "components/requests/RequestOutcomes.tsx, app/(protected)/admin/analytics/page.tsx (that block only)",
+    "tests: a closed request reached from the queue; the open queue unchanged; per-reason counts with and without configured reasons"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "drafting-flow DF-P14 merged (2026-10-20; lib/ticketQueueRead.ts, lib/ticketOutcomeReasons.ts)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P14 merge, 2026-10-20 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

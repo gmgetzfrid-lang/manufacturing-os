@@ -1343,6 +1343,7 @@ const ACTOR_PASS_THROUGHS = [
   "lib/revisions.ts#noteOverrideOnHolder(opts.actorUserId)",
   "lib/revisions.ts#notifyHolderOfRetirement(opts.actorUserId)",
   "lib/staleCopies.ts#nudgeStaleHolders(input.actorUserId)",
+  "lib/staleCopies.ts#nudgeStaleTicketHolders(input.actorUserId)",  // DF-P12 (PHYS-17): the ticket arm's recall; no caller yet
   "lib/staleCopies.ts#recallRetiredDocument(input.actorUserId)",
   "lib/turnover.ts#notifyTurnoverRejected(actor.uid)",              // N8 (MON-11)
   "lib/workPackages.ts#notifyPackagesOfRevUp(input.actorUserId)",

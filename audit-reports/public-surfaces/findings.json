@@ -8,18 +8,20 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 66,
+    "findings": 67,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
       "MEDIUM": 21,
-      "LOW": 28
+      "LOW": 29
     },
     "by_status": {
       "RESOLVED": 59,
       "WONTFIX": 1,
-      "OPEN": 6
+      "RESOLVED (2026-10-20, the integrator's ruling R3 at the DF-P12 merge, `DEC-90` — PASTE pending: `20261223` after `20261068`; until it is pasted a ticket copy is recorded without the ticket / file columns and the ticket arm answers \"unavailable\")": 1,
+      "OPEN": 5,
+      "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261223` after `20261068`; until it is pasted the ticket copy is recorded without the two columns and the ticket arm answers \"unavailable\")": 1
     }
   },
   "status_vocabulary": [
@@ -317,7 +319,7 @@
       "id": "PHYS-8",
       "title": "Every share-link and drafting-portal download writes download_audits rows containing columns that do not exist in the schema, and no caller checks the result — the distribution record for external and drafting copies is silently never written",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-20, the integrator's ruling R3 at the DF-P12 merge, `DEC-90` — PASTE pending: `20261223` after `20261068`; until it is pasted a ticket copy is recorded without the ticket / file columns and the ticket arm answers \"unavailable\")",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1351,7 +1353,7 @@
       "id": "PHYS-17",
       "title": "`download_audits` has no ticket or attachment column, so a drafting-ticket copy can never be recalled — the stale-copies ledger has no ticket arm",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261223` after `20261068`; until it is pasted the ticket copy is recorded without the two columns and the ticket arm answers \"unavailable\")",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED on DF-P10's branch.",
       "blast_radius": null,
@@ -1369,6 +1371,30 @@
       ],
       "refuted": false,
       "summary": "Rev 2 of a drafting ticket issues; three people printed Rev 1's package last week. Nothing lists them as holders of a superseded copy: the stale-copies nudge and the recall cover register documents only.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/03-physical-bridge.md"
+    },
+    {
+      "id": "PHYS-18",
+      "title": "The ticket copy recall exists but nothing calls it — the holders of a superseded ticket deliverable are never told",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED on DF-P12's branch.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/staleCopies.ts",
+        "app/(protected)/requests/[id]/page.tsx",
+        "app/api/tickets/workflow-action/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Rev 2 of a drafting ticket issues; three people printed Rev 1's package (each copy now recorded by ticket and file); nobody is told their print is superseded unless they scan it.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
     },
