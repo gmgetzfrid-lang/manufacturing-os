@@ -149,12 +149,21 @@ export const DATA_BOUNDARY_RULE =
 // Every piece below consumes whitespace only together with the token after
 // it, so a line can be split one way only (no exponential backtracking on a
 // long run of numbers that never reaches "=").
-const CALC_UNIT =
-  "(?:\\s*(?:psig|psia|psi|ksi|kpa|mpa|barg|bar|°\\s?[fc]|mm2|mm|cm|inch(?:es)?|in2|in|ft-lb|ft|lbf|lbs|lb|kg|kn|gpm|%)(?![a-z]))?";
+const CALC_UNIT_TOKENS =
+  "psig|psia|psi|ksi|kpa|mpa|barg|bar|°\\s?[fc]|mm2|mm|cm|inch(?:es)?|in2|in|ft-lb|ft|lbf|lbs|lb|kg|kn|gpm|%";
+const CALC_UNIT = "(?:\\s*(?:" + CALC_UNIT_TOKENS + ")(?![a-z]))?";
 const CALC_OPERAND = "(?:\\(\\s*)*-?\\d[\\d,]*(?:\\.\\d+)?" + CALC_UNIT + "(?:\\s*\\))*";
-const CALC_OP = "\\s*(?:[×x*÷/+−]|-(?=\\s))\\s*";
+/** (I-25) A slash before a temperature is a rating table's row and column
+ *  ("Class 150 / 100 °F = 285 psig"), not a division. */
+const TEMPERATURE_OPERAND =
+  "\\s*(?:\\(\\s*)*-?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:°|deg(?:rees)?(?![a-z])|[fc](?![a-z0-9]))";
+/** The operators — (I-25) the dot and caret products too ("2 · 300", "10^3"). */
+const CALC_OP = "\\s*(?:[×x*÷+−·⋅^]|/(?!" + TEMPERATURE_OPERAND + ")|-(?=\\s))\\s*";
+/** (I-25) Where a chain may start: not inside a number or an identifier, and
+ *  never at a pressure class ("Class 150 [1] / 300 …" is a lookup). */
+const CHAIN_START = "(?<![\\w.,])(?<!(?:\\bclass|\\bcl|#|\\bpn)\\s*)";
 const CALC_CHAIN = new RegExp(
-  CALC_OPERAND + "(?:" + CALC_OP + CALC_OPERAND + ")+\\s*=\\s*-?\\d",
+  CHAIN_START + CALC_OPERAND + "(?:" + CALC_OP + CALC_OPERAND + ")+\\s*=\\s*-?\\d",
   "i",
 );
 /** Markdown emphasis an answer wraps values in (`285 psig`, **3/4 in**). */
@@ -184,21 +193,28 @@ export function answerHasComputation(answer: string, inputs: string): boolean {
 // formula and each cited input, and the number the model worked out is
 // replaced by RESULT_WITHHELD. What counts as that number:
 //   (a) on a line, the value a chain of numbers and operators runs straight
-//       into ("1.5 × 285 = 427.5 psig" — the CALC_CHAIN grammar above, an
-//       operand allowed a citation after it), and any "= / ≈ / →" value
-//       restating it right after ("= 427.5 psig ≈ 430 psig");
-//   (b) that value written anywhere else in the answer ("**Answer:** the test
-//       pressure is `427.5 psig`") — in the same unit when the result has one;
-//       a result with no unit in any unit, unless it is a small whole number
-//       (a "= 1" ratio is withheld where it is worked, never every "1");
-//   (c) on the server, when the caller passes the text the answer was built
-//       from (the question, the user's values, the passages): any value with
-//       a unit or a decimal point in the **Answer:** line or the
-//       "### Applied to your case" section that none of that text holds —
-//       where the result of a calculation is stated, a number from nowhere is
-//       one the model made, and when the detector cannot place the result it
-//       withholds rather than shows it.
-// A lookup — no chain, no Applied section, no grounding pass — is returned
+//       into ("1.5 × 285 = 427.5 psig", "2 · 50 N → 100 N" — the CALC_CHAIN
+//       grammar above, an operand allowed a citation after it and any unit
+//       token, the chain ending at "=", "≈", "→" or "⇒"), and any
+//       "= / ≈ / →" value restating it right after ("= 427.5 psig ≈ 430 psig");
+//   (d) on a "**Substituted:**" line, every value after the formula's
+//       right-hand side — after a second "=", or a "≈ ~ → ⇒", "is", "gives",
+//       "equals" or "yields" — whatever its shape;
+//   (b) a value (a) or (d) withheld, written anywhere else in the answer
+//       ("**Answer:** the test pressure is `427.5 psig`") — in the same unit
+//       when the result has one; a result with no unit in any unit when it
+//       has a decimal point, and only where it is written with no unit when
+//       it is whole (a worked "= 300" is not "300 psig"); never a small whole
+//       number (a "= 1" ratio is withheld where it is worked, never every
+//       "1"), and never after an identifier word ("Class 300", "Table 2.1");
+//   (c) on the server, for an answer answerHasComputation marked, with the
+//       text the model was given (the question, the user's values, the
+//       passages, the drawing facts, legend, conversation, owner
+//       instructions…): on EVERY line, any value with a unit or a decimal
+//       point that none of that text holds — a number from nowhere in an
+//       arithmetic answer is one the model made, and when the detector
+//       cannot place the result it withholds rather than shows it.
+// A lookup — no chain, no Substituted line, no grounding pass — is returned
 // byte-for-byte. Running it again on its own output changes nothing.
 
 /** What stands where a model-computed number was. */
@@ -215,13 +231,34 @@ export const RESULT_WITHHELD_NOTE =
 const SUBSTITUTED_LINE = /^\s*(?:[-*•]\s+)?\*{0,2}Substituted:/im;
 const CALC_NUM = "-?\\d[\\d,]*(?:\\.\\d+)?";
 const CALC_CITE = "(?:\\s*\\[\\d{1,3}\\])?";
-/** CALC_CHAIN with a citation allowed after each operand, capturing the
- *  value the chain runs into (always the match's suffix). Whitespace is still
- *  consumed only together with the token after it. */
+/** Words a value is often followed by that are never its unit. */
+const NOT_A_UNIT =
+  "a|an|and|or|nor|per|for|at|to|the|of|with|from|is|are|was|be|as|by|on|if|so|but|then|than|that|this|which|" +
+  "when|where|while|each|max|min|x|vs|via|see|use|plus|minus|times|over|under|into|it|its|not|no|we|you|shall|" +
+  "should|must|may|can|will|gives|equals|yields|total|approx|about|both|all|any|only|also";
+/** (I-25) Any other unit token after a value ("N", "kW", "K", "m3/h"). It
+ *  never re-matches an engineering unit above, so a value parses one way. */
+const ANY_UNIT_TOKEN =
+  "(?!(?:" + CALC_UNIT_TOKENS + "|" + NOT_A_UNIT + ")(?![a-z0-9]))" +
+  "[a-zµμΩ][a-z0-9µμΩ²³]{0,5}(?:/[a-z][a-z0-9]{0,3})?(?![a-z0-9/])";
+const ANY_UNIT = "(?:\\s*(?:(?:" + CALC_UNIT_TOKENS + ")(?![a-z0-9])|" + ANY_UNIT_TOKEN + "))?";
+const RESULT_OPERAND = "(?:\\(\\s*)*-?\\d[\\d,]*(?:\\.\\d+)?" + ANY_UNIT + "(?:\\s*\\))*";
+/** CALC_CHAIN with a citation allowed after each operand and any unit token,
+ *  ending at "=", "≈", "→" or "⇒", capturing the value the chain runs into
+ *  (always the match's suffix). Whitespace is still consumed only together
+ *  with the token after it. */
 const RESULT_CHAIN_SRC =
-  CALC_OPERAND + CALC_CITE + "(?:" + CALC_OP + CALC_OPERAND + CALC_CITE + ")+\\s*=\\s*(" + CALC_NUM + CALC_UNIT + ")";
+  CHAIN_START + RESULT_OPERAND + CALC_CITE + "(?:" + CALC_OP + RESULT_OPERAND + CALC_CITE + ")+" +
+  "\\s*(?:=|≈|→|⇒)\\s*(" + CALC_NUM + ANY_UNIT + ")";
 /** A value restating the one just withheld: "≈ 430 psig", "= 427.50". */
-const RESTATED = new RegExp("\\s*(?:=|≈|~|→|⇒)\\s*(" + CALC_NUM + CALC_UNIT + ")", "iy");
+const RESTATED = new RegExp("\\s*(?:=|≈|~|→|⇒)\\s*(" + CALC_NUM + ANY_UNIT + ")", "iy");
+/** A unit token written right after a value VALUE_SRC read without one. */
+const TRAILING_UNIT = new RegExp("^\\s*" + ANY_UNIT_TOKEN, "i");
+/** An identifier word a number belongs to ("Class 300", "Table 2.1", "Rev 2"). */
+const IDENTIFIER_BEFORE =
+  /(?:\b(?:class|cl|sch(?:edule)?|pn|nps|dn|rev(?:ision)?|table|note|fig(?:ure)?|section|item|grade|type|page|step|sheet|api|asme|ansi|astm|iso|din)\.?|#)\s*$/i;
+/** What ends a substituted formula's right-hand side (rule (d)). */
+const TAIL_TERM = /\s*(?:=|≈|~|→|⇒)|\b(?:is|gives|equals|yields)\b/i;
 /** A standalone value — never part of an identifier ("B31.3", "V-101",
  *  "§345.4.2", "2026-10-01", "Table A-1") nor a citation marker ("[2]"). */
 const VALUE_SRC = "(?<![\\w§#./\\[-])(" + CALC_NUM + ")(" + CALC_UNIT + ")(?![\\w/\\]]|[.-]\\d)";
@@ -274,6 +311,31 @@ function resultSpans(text: string): Span[] {
   return out;
 }
 
+/** A span read with no unit, with the unit token written right after it
+ *  ("100 N") taken in. */
+function withTrailingUnit(text: string, s: Span): Span {
+  if (s.unit !== "") return s;
+  const m = text.slice(s.end).match(TRAILING_UNIT);
+  return m ? { ...s, end: s.end + m[0].length, unit: normUnit(m[0]) } : s;
+}
+
+/** Rule (d): where a "**Substituted:**" line's result begins — after the
+ *  formula's right-hand side — or -1. The first separator ("=", "≈", "is"…)
+ *  divides the symbol from the formula unless values stand before it (no
+ *  symbol was written), in which case it already opens the result. */
+function substitutedTail(text: string): number {
+  const label = /Substituted:\s*/i.exec(text);
+  if (!label) return -1;
+  const from = label.index + label[0].length;
+  const first = TAIL_TERM.exec(text.slice(from));
+  if (!first) return -1;
+  const sep = from + first.index;
+  if (valueSpans(text.slice(from, sep)).length > 0) return sep;
+  const after = sep + first[0].length;
+  const next = TAIL_TERM.exec(text.slice(after));
+  return next ? after + next.index : -1;
+}
+
 /** Rule (b)/(c): every standalone value on one (stripped) line. */
 function valueSpans(text: string): Span[] {
   const out: Span[] = [];
@@ -323,62 +385,74 @@ function withholdSpans(line: string, at: number[], spans: Span[]): string {
 }
 
 const isSmallWhole = (v: string): boolean => /^-?\d$/.test(v);
+const afterIdentifier = (text: string, s: Span): boolean => IDENTIFIER_BEFORE.test(text.slice(0, s.start));
 
 /** PR-9 option (b): the answer with every number the model computed replaced
  *  by RESULT_WITHHELD, and RESULT_WITHHELD_NOTE appended when one was. Pass
- *  `grounding` (the question, the user's values and the passages' text) for
- *  rule (c); the knowledge page, which re-applies (a) and (b) to answers it
- *  shows (a row saved before I-25), has no grounding and passes none. */
+ *  `grounding` — everything the model was given — for rule (c), and only for
+ *  an answer answerHasComputation marked (the route does both). The knowledge
+ *  page, which re-applies (a), (d) and (b) to every answer it shows (a row
+ *  saved before I-25), has no grounding and passes none. */
 export function withholdModelResults(answer: string, grounding?: string): { text: string; withheld: number } {
   const lines = answer.split("\n");
   let withheld = 0;
-  // (a) chain results, and the values they hold.
   const results: Array<{ value: string; unit: string }> = [];
   for (let i = 0; i < lines.length; i++) {
-    const { text, at } = stripLine(lines[i]);
-    const spans = resultSpans(text);
-    if (spans.length === 0) continue;
-    for (const s of spans) results.push({ value: s.value, unit: s.unit });
-    lines[i] = withholdSpans(lines[i], at, spans);
-    withheld += spans.length;
+    // (a) chain results, and the values they hold.
+    {
+      const { text, at } = stripLine(lines[i]);
+      const spans = resultSpans(text);
+      if (spans.length > 0) {
+        for (const s of spans) results.push({ value: s.value, unit: s.unit });
+        lines[i] = withholdSpans(lines[i], at, spans);
+        withheld += spans.length;
+      }
+    }
+    // (d) on a Substituted line, everything after the right-hand side.
+    if (SUBSTITUTED_LINE.test(lines[i])) {
+      const { text, at } = stripLine(lines[i]);
+      const tail = substitutedTail(text);
+      if (tail >= 0) {
+        const spans = valueSpans(text.slice(tail))
+          .map((s) => ({ ...s, start: s.start + tail, end: s.end + tail }))
+          .map((s) => withTrailingUnit(text, s));
+        if (spans.length > 0) {
+          for (const s of spans) results.push({ value: s.value, unit: s.unit });
+          lines[i] = withholdSpans(lines[i], at, spans);
+          withheld += spans.length;
+        }
+      }
+    }
   }
   // (b) the same values written anywhere else.
   if (results.length > 0) {
     // A result with a unit is matched in that unit ("Class 150" is not the
-    // "= 150 lb" just worked); one without, in any (not a small whole number).
+    // "= 150 lb" just worked); one without, in any unit when it has a decimal
+    // point and with no unit when it is whole — never a small whole number,
+    // never a number an identifier word owns.
     const sameAs = (s: Span) => results.some((r) =>
-      r.value === s.value && (r.unit !== "" ? r.unit === s.unit : !isSmallWhole(r.value)));
+      r.value === s.value && (r.unit !== ""
+        ? r.unit === s.unit
+        : !isSmallWhole(r.value) && (r.value.includes(".") || s.unit === "")));
     for (let i = 0; i < lines.length; i++) {
       const { text, at } = stripLine(lines[i]);
-      const spans = valueSpans(text).filter(sameAs);
+      const spans = valueSpans(text).map((s) => withTrailingUnit(text, s))
+        .filter((s) => sameAs(s) && !afterIdentifier(text, s));
       if (spans.length === 0) continue;
       lines[i] = withholdSpans(lines[i], at, spans);
       withheld += spans.length;
     }
   }
-  // (c) where the result is stated, a value none of the source text holds.
+  // (c) on every line of an arithmetic answer, a value none of the text the
+  // model was given holds.
   if (grounding !== undefined) {
     const grounded = new Set(grounding.split("\n").flatMap((l) => valueSpans(stripLine(l).text).map((s) => s.value)));
-    let inApplied = false;
-    let heroNext = false;
     for (let i = 0; i < lines.length; i++) {
-      const raw = lines[i];
-      const t = raw.trim();
-      let stated = false;
-      if (/^#{1,4}\s*Applied to your case/i.test(t)) { inApplied = true; continue; }
-      if (inApplied && (/^#{1,4}\s/.test(t) || /^\*\*[^*]+:\*\*/.test(t))) inApplied = false;
-      if (heroNext && t) { stated = true; heroNext = false; }
-      const hero = t.match(/^\*{0,2}Answer:?\*{0,2}:?\s*(.*)$/i);
-      if (hero) {
-        if (hero[1].trim() === "") heroNext = true;
-        else stated = true;
-      }
-      if (!stated && !inApplied) continue;
-      const { text, at } = stripLine(raw);
-      const spans = valueSpans(text).filter((s) =>
-        (s.unit !== "" || s.value.includes(".")) && !grounded.has(s.value));
+      const { text, at } = stripLine(lines[i]);
+      const spans = valueSpans(text).map((s) => withTrailingUnit(text, s)).filter((s) =>
+        (s.unit !== "" || s.value.includes(".")) && !grounded.has(s.value) && !afterIdentifier(text, s));
       if (spans.length === 0) continue;
-      lines[i] = withholdSpans(raw, at, spans);
+      lines[i] = withholdSpans(lines[i], at, spans);
       withheld += spans.length;
     }
   }

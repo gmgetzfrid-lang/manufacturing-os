@@ -2714,13 +2714,21 @@ export async function POST(req: NextRequest) {
     // the formula and every cited input, and RESULT_WITHHELD stands where the
     // model's result was. Decided on the model's own text, before the route's
     // notes are added; a lookup (no computation) is returned byte-for-byte.
-    // The values the user and the passages supplied are the grounding: in
-    // the Answer line and "Applied to your case", a value none of them holds
-    // is one the model made, and it is withheld.
+    // The grounding is everything the model was given — the question, the
+    // user's values, the passages as rendered, the drawing facts, anchor
+    // facts, legend, chosen scope and page list (dataSections), the aspects,
+    // the owner's instructions, and the conversation (an earlier answer with
+    // its own computed numbers withheld first, so a pre-I-25 result never
+    // grounds itself): on any line of an arithmetic answer, a value none of
+    // it holds is one the model made, and it is withheld.
     const arithmetic = !needRefused && !unanswered && !/^\*\*Need:\*\*/.test(answer.trim())
       && answerHasComputation(answer, inputs);
     if (arithmetic) {
-      answer = withholdModelResults(answer, [question, inputs, ...chunks.map((c) => c.content)].join("\n")).text;
+      const grounding = [
+        question, inputs, renderPassages(), dataSections(pageImages), focusLine, ownerBlock,
+        ...history.flatMap((t) => [t.question, withholdModelResults(t.answer).text]),
+      ].join("\n");
+      answer = withholdModelResults(answer, grounding).text;
     }
     if (partial) answer += `\n\n${CUT_OFF_LINE}` +
       (lengthLimitedByBudget ? " (This month's remaining AI budget limited how long this answer could be.)" : "");
