@@ -1069,7 +1069,7 @@ Done-when, as it stands:
 ## PHYS-18 · The ticket copy recall exists but nothing calls it — the holders of a superseded ticket deliverable are never told
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge) — the recall control on the ticket page and the recall at a new issue (with drafting-flow `EVID-16` done-when 2, `DCW-4`'s page offer and `SM-15`). Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90); opened by drafting-flow Round G DF-P12, 2026-10-14 (DEC-31).
 - **Verification:** CONFIRMED on DF-P12's branch.
 - **Locations:** `lib/staleCopies.ts` (`getTicketCopyRecall`, `nudgeStaleTicketHolders` — no caller), `app/(protected)/requests/[id]/page.tsx`, `app/api/tickets/workflow-action/route.ts` (the issuing actions)
@@ -1084,6 +1084,18 @@ Done-when, as it stands:
 - [ ] The ticket page shows the holders (`getTicketCopyRecall`) to the people who may recall them (the requester, the drafter, a controller) with a "Recall outdated copies" control (`nudgeStaleTicketHolders`, `source: "manual"`), and says when the record could not be read (`unavailable`)
 - [ ] An issuing transition (`approve_draft_ifc`, `approve_minor_correction`, `engineer_approve_final`) recalls the holders of the superseded issue (`source: "auto"`), best-effort after the transition lands
 - [ ] Tests pin both callers
+
+**Resolution (2026-10-20, drafting-flow Round G).** drafting-flow DF-P15 DELIVERABLE PAGE WIRING, as ruled (`DEC-90` ruling (3)). Reproduced on `0041bd8`: `getTicketCopyRecall` / `nudgeStaleTicketHolders` (`lib/staleCopies.ts`) had no caller — no control on the ticket page, nothing at an issue.
+- **The recall control** — `components/requests/TicketCopyRecallPanel.tsx` (new), mounted in the ticket page's Final section (`app/(protected)/requests/[id]/page.tsx` :2974) for the requester, the assigned drafter and a controller (Admin / DocCtrl by the role collection, `hasAnyRole`) only (:1520), on a live ticket. It lists every member who took a copy of the ticket's files in the window, each copy as a scan of it would read now ("Rev 1 — superseded", "review draft", "current"), says how many are outdated, and "Recall outdated copies (N)" calls `nudgeStaleTicketHolders({ …, source: "manual" })` — every member holding an outdated copy who has not since taken the current one, the actor's own copy excluded — then re-reads. A record that cannot be read (before `20261223`, or a failed read) is said as a gap ("who holds one is unknown — not 'nobody'", with Try again), and recording a recall then tells nobody (the arm's `unavailable` rule); a capped list says holders may be missing; a failed recall is said, never shown as sent. The ticket the panel reads is memoized on the fields the verdict reads, so it re-reads only when the ticket moves.
+- **The recall at an issue** — `app/api/tickets/workflow-action/route.ts` (:1292, `recallSupersededTicketCopies` :1457): after `approve_draft_ifc`, `approve_minor_correction` or `engineer_approve_final` writes a new issued label, the route schedules (`after()`, once the response is sent) the ticket arm with the ticket as the transition left it, bound to the service role for that request only (`lib/serverClientScope.ts` — `lib/staleCopies` writes its audit row and its notices through the shared client) and with `source: "auto"`. Best-effort: it never throws (a failure is logged), the issue has already landed and returned, and a transition that issues nothing schedules nothing.
+- Tests: `lib/__tests__/dfRoundG_P15_routes.test.ts` "PHYS-18 — …" (`approve_draft_ifc` issues Rev 2; nothing recalled before the response; after it, the Rev 1 holder gets one `doc_recalled` bell row and the ticket's `DISTRIBUTION_RECALL` row carries `source: "auto"`, `latestIssuedRev: "2"`, the holder and the held rev; an unreadable record (42703, before `20261223`) is recorded `unavailable`, tells nobody and resolves; no holders → nothing; `submit_draft` schedules only the email drain); `lib/__tests__/dfRoundG_P15_pageClient.test.ts` "PHYS-18 — …" (the panel, rendered: the holders, the outdated count, the recall with `source: "manual"` excluding the actor's own copy, the re-read; the gap said and a recall recorded with nobody told; a failed recall said; no holders renders nothing; who sees it, pinned).
+
+**Done-when.**
+- ✓ The ticket page shows the holders (`getTicketCopyRecall`) to the requester, the drafter and a controller, with a "Recall outdated copies" control (`nudgeStaleTicketHolders`, `source: "manual"`), and says when the record could not be read (`unavailable`).
+- ✓ An issuing transition (`approve_draft_ifc`, `approve_minor_correction`, `engineer_approve_final`) recalls the holders of the superseded issue (`source: "auto"`), best-effort after the transition lands.
+- ✓ Tests pin both callers.
+
+**Scope / residual.** The panel reads the ticket without `20261221`'s trust index (the page does not load `history_guarded_from`), so its verdicts read as before that paste — fail-safe; the route's issue-time recall passes the index when the row carries it. The holders shown are those the record names, i.e. copies taken since `20261223` is pasted (before it the record cannot be read by ticket, said). No owner needed.
 
 ---
 

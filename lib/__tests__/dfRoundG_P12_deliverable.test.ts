@@ -914,9 +914,11 @@ describe("EVID-16 — the ticket copy is stamped and recorded in the server requ
     const s = src("app/api/tickets/copy/route.ts");
     expect(s).toContain("ticketCopyPlan({");
     expect(s).toContain("historyGuardedFrom: t.history_guarded_from ?? null");
-    expect(s).toContain("recordTicketCopy(supabaseAdmin, serverAudit,");
+    // (DF-P15 fix: serverAudit, wrapped so an unstamped copy's row carries its reason)
+    expect(s).toContain("recordTicketCopy(supabaseAdmin, audit,");
     // the record precedes the response that carries the bytes
-    expect(s.indexOf("recordTicketCopy(supabaseAdmin")).toBeLessThan(s.indexOf("new NextResponse(Buffer.from(out)"));
+    // (DF-P15 fix: the bytes are a streamed body, never one buffered response)
+    expect(s.indexOf("recordTicketCopy(supabaseAdmin")).toBeLessThan(s.indexOf("return new NextResponse(piped ?? chunkedStream(out"));
   });
 });
 

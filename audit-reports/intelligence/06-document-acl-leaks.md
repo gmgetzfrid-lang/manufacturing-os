@@ -747,6 +747,14 @@ SELECT 'active non-controller members', COUNT(*)::text
 
 *Assigned (2026-10-20, the integrator at the I-31 merge):* the close-notice library label (`app/api/tickets/workflow-action/route.ts`, the select feeding `libraryLabelForTicket`) → drafting-flow **DF-P15 DELIVERABLE PAGE WIRING** (it holds that route next); the 20261228 paste → the operator (paste guide row 178, after the I-31 deploy); the legacy rung's deletion and the home card's move → the integrator once row 178's paste-back reads 0.
 
+**Partial (2026-10-20, drafting-flow Round G).** DF-P15 DELIVERABLE PAGE WIRING — the close-notice label assigned at the I-31 merge (`DEC-90` ruling (6)). Reproduced on `0041bd8`: the ticket close notice's library label read `name, visibility, acl` raw (`app/api/tickets/workflow-action/route.ts:956` on the base, the I-31 header's "one raw read left"), so a legacy library whose lists restrict was NAMED before `20261228` (raw ACL null) and "the target library" after it.
+- `app/api/tickets/workflow-action/route.ts` (:1018) selects `id, name` and `LIBRARY_RUNG_COLUMNS` (`lib/libraryAccess`) and judges the label through `libraryChoiceFromRow` → `libraryLabelForTicket`, the triage check's reading (`DACL-13` R1) — the same answer before and after `20261228`: an open legacy library (`read_access` "ALL", no ACL) keeps its name, a restricted one is "the target library" on both sides. A label only, never an access decision. Before the paste this withholds the name of a restricted legacy library the raw read used to show (the fail-safe direction).
+- The pin I-31 left as found is flipped: `lib/__tests__/intelI31LegacyListsAcl.test.ts` "DACL-13 R1 is wired …" now asserts the rung select and the `libraryChoiceFromRow` decision (and that the raw select is gone). `20261228`'s header still names the close notice as the raw read it then was — a migration is never edited after the fact; this line is the correction. Tests: `lib/__tests__/dfRoundG_P15_routes.test.ts` "DACL-10 remainder — …" (a restricted legacy library is "the target library" before and after the paste — fails on the base; REGRESSION: an open legacy library keeps its name, a hidden one stays unnamed; the read selects the rung's columns).
+
+**Done-when.** Unchanged from the I-31 merge except: no reader of `libraries.acl` for a ticket's label is raw any more. Done-when 1 stays ◐ (the paste, the rung's deletion and the home card — owners below, unchanged).
+
+**Scope / residual.** Unchanged: the `20261228` paste → the operator (row 178, after the I-31 deploy); the legacy rung's deletion and the home card's move → the integrator once row 178's paste-back reads 0.
+
 ---
 
 <a id="dacl-11"></a>
