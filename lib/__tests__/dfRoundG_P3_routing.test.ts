@@ -462,7 +462,8 @@ describe("LEAK-9 / GAP-107 — how a request ended is a typed fact", () => {
     expect(p).toContain("summarizeOutcomes(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, requestType: t.requestType })))");
     expect(p).toContain("outcome: r.outcome ?? null,");
     // fix pass 3: the block is components/requests/RequestOutcomes.tsx (rendered in dfRoundG_P3_outcomesRender.test.ts)
-    expect(p).toContain("<RequestOutcomes summary={outcomes} />");
+    // drafting-flow DF-P16 (GAP-13 acceptance 2): the per-reason breakdown rides beside the same summary
+    expect(p).toContain("<RequestOutcomes summary={outcomes} reasons={outcomeReasons} />");
     const block = src("components/requests/RequestOutcomes.tsx");
     expect(block).toContain('How Requests Ended');
     // it is all time, and says so (the range control belongs to the volume chart), and names the row cap
