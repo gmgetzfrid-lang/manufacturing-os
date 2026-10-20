@@ -1064,12 +1064,21 @@ export default function LibraryExplorerPage() {
       tone: "danger",
     }))) return;
     setBulkDeleting({ done: 0, total: ids.length - heldN });
-    try {
-      const r = await deleteDocuments(activeOrgId, ids,
-        (done) => setBulkDeleting({ done, total: ids.length - heldN }));
-      const gone = new Set(r.deleted);
+    // The delete itself fires a change event per row; refreshing the list
+    // for each made the rows blink. Rows leave the screen as the server
+    // confirms them instead, and the list reloads once at the end.
+    const dropFromView = (gone: Set<string>) => {
       setDocuments((prev) => prev.filter((d) => !gone.has(d.id!)));
-      folderDocsCache.current.clear();
+      for (const [k, v] of folderDocsCache.current) folderDocsCache.current.set(k, v.filter((d) => !gone.has(d.id!)));
+    };
+    bulkBusyRef.current = true;
+    try {
+      const r = await deleteDocuments(activeOrgId, ids, (done, just) => {
+        setBulkDeleting({ done, total: ids.length - heldN });
+        dropFromView(new Set(just));
+      });
+      const gone = new Set(r.deleted);
+      dropFromView(gone);
       setSelectedDocIds(new Set(r.held.map((h) => h.id)));
       if (selectedDoc?.id && gone.has(selectedDoc.id)) setSelectedDoc(null);
       if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept — under a legal hold (e.g. ${r.held[0].label}).`);
@@ -1082,7 +1091,9 @@ export default function LibraryExplorerPage() {
       setDocsRefreshTick((t) => t + 1);
       void appAlert({ title: "Delete failed", message: msg, tone: "danger" });
     } finally {
+      bulkBusyRef.current = false;
       setBulkDeleting(null);
+      setDocsRefreshTick((t) => t + 1);
     }
   };
 
@@ -1621,6 +1632,11 @@ export default function LibraryExplorerPage() {
   // each click tore the socket down mid-connect and the console filled with
   // "WebSocket is closed before the connection is established".
   const [docsRefreshTick, setDocsRefreshTick] = useState(0);
+  // Set while a bulk delete runs: its own row events don't refresh the list.
+  const bulkBusyRef = useRef(false);
+  // The folder the list last loaded — a refresh of the SAME folder keeps
+  // the rows on screen; only a folder switch paints the cache or a spinner.
+  const lastDocsKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!libraryId) return;
     // One refetch per burst: a 300-file upload or a bulk delete fires a row
@@ -1629,6 +1645,7 @@ export default function LibraryExplorerPage() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let firstAt = 0;
     const bump = () => {
+      if (bulkBusyRef.current) return; // one reload at the end instead
       const now = Date.now();
       if (!timer) firstAt = now;
       else clearTimeout(timer);
@@ -1651,8 +1668,14 @@ export default function LibraryExplorerPage() {
     // switch. Keyed by library so folders never bleed across libraries.
     const cacheKey = `${libraryId}|${currentFolderId ?? "root"}|${showArchivedDocs}`;
     const cached = folderDocsCache.current.get(cacheKey);
-    if (cached) { setDocuments(cached); setLoadingDocs(false); }
-    else { setLoadingDocs(true); }
+    // Repainting the cache on a same-folder refresh flashed back rows that
+    // had just been deleted or moved, then removed them again.
+    const switching = lastDocsKeyRef.current !== cacheKey;
+    lastDocsKeyRef.current = cacheKey;
+    if (switching) {
+      if (cached) { setDocuments(cached); setLoadingDocs(false); }
+      else { setLoadingDocs(true); }
+    }
 
     // Progressive full load: the first page paints fast, then the REST of the
     // folder streams in automatically (500/page, hard stop 10,000) so sorting
@@ -1677,19 +1700,28 @@ export default function LibraryExplorerPage() {
           const { data, error: qErr } = await q;
           if (!alive) return;
           if (qErr) {
-            if (from === 0) { setError(qErr.message); setDocuments([]); }
+            if (from === 0) { setError(qErr.message); if (switching) setDocuments([]); }
             else setError(`Loaded the first ${all.length.toLocaleString()} documents; the rest failed: ${qErr.message}`);
             break;
           }
           const rows = (data || []).map((r) => fromDocRow(r as unknown as Record<string, unknown>));
           all = all.concat(rows);
-          folderDocsCache.current.set(cacheKey, all);
-          setDocuments(all);
           const morePagesLikely = rows.length === PAGE;
+          // Opening a folder streams pages in as they arrive; a refresh of
+          // the folder already on screen swaps the list once, complete.
+          if (switching || !morePagesLikely) {
+            folderDocsCache.current.set(cacheKey, all);
+            setDocuments(all);
+          }
           setDocStreamProgress(morePagesLikely && from + PAGE < HARD_CAP ? all.length : null);
           setDocFetchHitCap(morePagesLikely && from + PAGE >= HARD_CAP);
           if (from === 0) setLoadingDocs(false); // first page is on screen
           if (!morePagesLikely) break;
+        }
+        // A refresh that stopped at the hard cap still lands what it read.
+        if (!switching && all.length > 0) {
+          folderDocsCache.current.set(cacheKey, all);
+          setDocuments(all);
         }
       } catch (e: unknown) { if (alive) setError((e as Error).message); }
       finally {

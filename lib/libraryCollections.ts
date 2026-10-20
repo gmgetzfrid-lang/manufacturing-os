@@ -381,22 +381,24 @@ export async function deleteFolder(
 /** Permanently delete documents (server-side, chunked). Records under a
  *  legal hold are skipped and returned in `held`. */
 export async function deleteDocuments(
-  orgId: string, ids: string[], onProgress?: (deleted: number) => void,
+  orgId: string, ids: string[], onProgress?: (deleted: number, justDeleted: string[]) => void,
 ): Promise<{ deleted: string[]; held: Array<{ id: string; label: string }> }> {
   const deleted: string[] = [];
   const held: Array<{ id: string; label: string }> = [];
   let queue = [...ids];
+  // 100 per call: each call returns quickly, so progress (and the rows
+  // leaving the screen) moves in visible steps instead of one long wait.
   while (queue.length) {
-    const batch = queue.slice(0, 500);
+    const batch = queue.slice(0, 100);
     const r = await postAuthed<{ deleted: string[]; held: Array<{ id: string; label: string }>; remaining: string[] }>(
       "/api/documents/delete", { orgId, documentIds: batch }, "Couldn't delete the documents.");
     deleted.push(...r.deleted);
     held.push(...r.held);
-    onProgress?.(deleted.length);
+    onProgress?.(deleted.length, r.deleted);
     if (r.deleted.length === 0 && r.remaining.length > 0) {
       throw new Error("Deleting stalled — try again.");
     }
-    queue = [...r.remaining, ...queue.slice(500)];
+    queue = [...r.remaining, ...queue.slice(100)];
   }
   return { deleted, held };
 }

@@ -15,7 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // Ids travel in the request URL; ~100 uuids keeps it well under the API
 // gateway's URL limit (a 439-row select-all overflowed it).
 const READ_SLICE = 100;
-const DELETE_SLICE = 25;
+const DELETE_SLICE = 50;
 
 export interface HeldDoc { id: string; label: string }
 
