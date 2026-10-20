@@ -80,7 +80,7 @@ lib/projects.ts:832-839 —
 ## EVID-2 · Any active org member can stamp 'acknowledged' on any other person's distribution-ack row, and the row has no acknowledged_by column to detect it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260825_work_packages_acks.sql:131-139`, `lib/distributionAcks.ts:186-193`, `supabase/migrations/20260825_work_packages_acks.sql:99-116`, `supabase/migrations/20260828_integrity_hardening.sql:15-26`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct, including the pointed contrast: 20260828_integrity_hardening.sql:15-26 fixed exactly this hole for document_review_signoffs and document_acknowledgments (`reviewer_user_id = auth.uid()` / `assignee_user_id = auth.uid()`) and left distribution_acks untouched — the migration's own comment even documents the class of bug. No later ALTER adds an acknowledged_by column.
@@ -136,6 +136,19 @@ lib/distributionAcks.ts:186-193 —
 - ✗ Acknowledging writes no `audit_logs` row: `lib/distributionAcks.ts:296-308` has no audit call and `components/documents/DistributionAcks.tsx:119` adds none — the acknowledgment still has no second, independent record.
 
 **Scope / residual.** Refuse un-acknowledging (`acknowledged_at` non-null → NULL) for non-service callers, bound `requested_at` writes to the requester or a controller, and write an `ACK_*` audit row on acknowledgment → **DF-P11**, which edits `lib/distributionAcks.ts` after DC P5 (fleet plan cross-area overlaps) and has the plan's one remaining migration slot. Corrected pointer recorded: the substrate is DC `DIST-3` (`20261032`/`20261033`), not `20261047`.
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — the remainder recorded above.
+- `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql` re-creates `enforce_distribution_ack_guard` from its newest body (`20261033`; lineDiff in `lib/__tests__/dfRoundG_P11_migration.test.ts`) with three additions for a signed-in caller (the service role passes, as before): a recorded acknowledgment is never withdrawn or re-dated (`:310-312`); `requested_by` joins the immutable identity columns (`:301`); `requested_at` may be changed only by the requester or a controller (`is_org_controller(OLD.org_id)`, `:325-326`) and never moved earlier (`:330`).
+- `lib/distributionAcks.ts` `acknowledge()` (`:333-380`) writes `ACK_DISTRIBUTION_CONFIRMED` (`lib/auditActions.ts`) after the checked stamp — document, revision, ack id, time — and RETURNS a refused audit row (`auditRecorded` / `auditError`); `components/documents/DistributionAcks.tsx:131` says so to the recipient. The confirmation is never undone for an audit failure (lib/audit dead-letters it, `DEC-109`).
+
+**Done-when.**
+- ✓ `acknowledged_at` writes are the recipient's own; un-acknowledging, re-dating, and changing `recipient_user_id` / `requested_by` are refused; `requested_at` is bound to the requester or a controller and never backdated. Pending migration `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql`.
+- ✓ `acknowledged_by` exists and is trigger-populated (unchanged); `acknowledged_via` not added (the done-when's "ideally").
+- ✓ `acknowledge()` filters on the caller's uid and checks the write (unchanged).
+- ✓ Acknowledging writes an `audit_logs` row — two independent records.
+- Tests: `lib/__tests__/distributionAckPin.test.ts` "acknowledge writes its own audit row (drafting-flow EVID-2 done-when 4)"; the migration shape test. PostgreSQL 16: the recipient's stamp lands; withdrawal, re-date, a non-requester's re-date, a backdate and a `requested_by` rewrite are refused; the requester and a controller move `requested_at` forward; the service role passes.
+
+**Scope / residual.** Pending paste of `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql`.
 
 ---
 
@@ -203,7 +216,7 @@ lib/revisions.ts:177-181 —
 ## EVID-4 · The 'Approved' identity on a controlled revision is a free-text box; approved_by and approved_at are never written by any code path
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/RevUpModal.tsx:732`, `lib/revisions.ts:893`, `supabase/migrations/20260828_integrity_hardening.sql:142-165`, `supabase/schema.sql:338-346`, `lib/evidencePack.ts:62`, `components/documents/VersionHistoryPanel.tsx:395`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves verified: the identity is free text, and the two structured columns are dead. It is then rendered as an approval stamp (components/documents/VersionHistoryPanel.tsx:395 `<SignoffBit icon={<Stamp .../>} label="Approved" name={v.approvedByName} />`) and printed in the evidence pack's Approved column (lib/evidencePack.ts:61 `${esc(v.approved_by_name || "—")}`). The parallel real mechanism (document_review_signoffs + e_signatures) exists but is separate and does not populate or gate this field.
@@ -244,6 +257,20 @@ supabase/schema.sql:338,345-346 —
 - [ ] approved_by (UUID) and approved_at are populated by publish_revision from an authenticated approver, or the free-text approved_by_name field is removed from the publish path
 - [ ] The evidence pack distinguishes a signature-backed approval (joins e_signatures / document_review_signoffs) from a typed name, and labels the latter as unverified
 - [ ] A query can enumerate every current controlled revision that has no signature-backed approval, so the operator knows the size of the gap
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC, under `DEC-90` ruling (4): `approved_by` / `approved_at` DERIVE from the roster sign-offs or the publisher's identity; the typed box is the publisher's claim; stored values are shown as before, labelled as claims.
+- `lib/versionApproval.ts` (new): `deriveVersionApproval` (`:66`) — a version's signed review sign-offs (`document_review_signoffs`, `status = 'signed'`, bound by `document_version_id`; the approval time is the last signature), else the publisher (`created_by` / `created_by_name`, at release), else "not known" when the roster could not be read; `loadSignedRosters` (`:115`); `APPROVAL_CLAIM_LABEL` = "Approval reference (publisher's note)" (`:99`).
+- `components/documents/VersionHistoryPanel.tsx` (`ApprovalBit`, `:567`; used at `:439`): only a signed roster earns the stamp ("Approved (signed review)"); a release with none reads "Released by (no review sign-off)"; the typed name is shown in italics as the publisher's note; an in-review draft shows no approval.
+- `components/documents/RevUpModal.tsx:904`: the box is labelled the publisher's note ("recorded as your claim, not as an approval"). `lib/revisions.ts` keeps writing `approved_by_name` as before (it is the claim).
+- `lib/evidencePack.ts`: the Approved column is the derived line, with any typed name as "Approval reference (publisher's note) (unverified)".
+
+**Done-when.**
+- ✓ (by the ruling's form) the approval is derived from an authenticated source — the signers of the review roster, or the publisher's own identity — never from the typed box; `publish_revision` still writes no `approved_by` / `approved_at` (the derivation is at read time; no migration).
+- ✓ The evidence pack distinguishes a signature-backed approval from a typed name and labels the latter unverified.
+- ✓ `listCurrentRevisionsWithoutSignedApproval(orgId)` (`lib/versionApproval.ts:155`) enumerates every current, non-retired revision with no signed review sign-off (paged; a failed read throws, never a short list).
+- Tests: `lib/__tests__/dfRoundG_P11_evidence.test.ts` "EVID-4 — the approval is derived, the typed box is a claim" and the pack's Approved column cases.
+
+**Scope / residual.** Ticket-originated revisions carry their engineer approval on the ticket (shown in the pack's originating-request sections, `EVID-10`), not on the version.
 
 ---
 
@@ -418,7 +445,7 @@ Tests: `lib/__tests__/aoRoundGP13AuditOutbox.test.ts` (server branch: reproduced
 ## EVID-7 · Distribution-ack reads fail closed to 'nothing here' via a module-level latch and blanket catches, so a missing record is indistinguishable from no record
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/distributionAcks.ts:30-40`, `lib/distributionAcks.ts:57-73`, `lib/distributionAcks.ts:76-97`, `components/documents/DistributionAcks.tsx:106`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and worse than stated: `resetAckSchemaFlag()` (lib/distributionAcks.ts:31) has zero callers anywhere in the repo (not even a test), so once the latch flips it stays flipped for the life of the module instance. A PGRST204 ("column not found in schema cache") from post-deploy drift is indistinguishable to the UI from "no acknowledgments requested", and the recipient's acknowledge bar disappears because getMyPendingAck returns null.
@@ -464,6 +491,14 @@ lib/distributionAcks.ts:57-72 —
 - [ ] The ackSchemaMissing latch is scoped to a genuinely permanent condition (42P01 / PGRST205 only) or removed in favour of a schema check, so a transient PGRST204 does not blind the session
 - [ ] The DistributionAcks panel renders a distinct 'could not load the distribution record' state rather than the empty state on failure
 - [ ] A test asserts that a read error does not render as an empty roster
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC. `lib/distributionAcks.ts`: the module-level latch and its reset are gone. `readAcksForVersion` (`:81`) and `readMyPendingAck` (`:100`) answer, per call, `ok` (the rows — empty is "none requested"), `unavailable` (the table or a column is missing: 42P01 / PGRST205 / PGRST204 / 42703, named) or `error` (the read failed, with the reason). `listAcksForVersion` / `getMyPendingAck` remain as thin wrappers for other callers. `components/documents/DistributionAcks.tsx:167` renders an unavailable or failed read as a banner with Try again (to every viewer, controller or not) — never as an empty roster. `requestAcks` / `closeStaleAcksForDocument` lost the latch too.
+
+**Done-when.**
+- ✓ The latch is a per-call `unavailable` result the panel renders apart from "none requested"; a failed read is said with its reason, and a schema miss no longer blinds the rest of the session.
+- Tests: `lib/__tests__/dfRoundG_P11_ackRead.test.ts` (the three answers, no latch, the rendered banner, Try again, and a healthy empty read still rendering nothing for a non-controller).
+
+**Scope / residual.** None.
 
 ---
 
@@ -568,7 +603,7 @@ app/api/admin/purge/route.ts:41-44 —
 ## EVID-10 · The one-click Compliance Evidence Pack omits every signature, sign-off, acknowledgment and distribution ack, while asserting it is assembled from the immutable audit trail
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/evidencePack.ts:18-32`, `lib/evidencePack.ts:125`, `lib/evidencePack.ts:62`, `components/documents/InspectorPanel.tsx:950`, `components/navigation/GlobalCommandPalette.tsx:205`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the only four tables queried are documents/document_versions/document_holds/audit_logs, so no signature, review sign-off, acknowledgment or distribution-ack row reaches the pack; the audit section is hard-capped at 1000 rows with no truncation notice; and both callers (InspectorPanel.tsx:950, GlobalCommandPalette.tsx:205) invoke the same gatherEvidence. Signatures appear only indirectly, via the best-effort ESIGNATURE_CAPTURED audit mirror that EVID-11 shows can be dropped.
@@ -601,6 +636,17 @@ lib/evidencePack.ts:125 —
 - [ ] The pack renders the originating drafting ticket's approval history and any bound signature
 - [ ] The audit_logs query pages beyond 1000 rows, or the pack states explicitly when the trail was truncated
 - [ ] The footer's claim is corrected to state what the pack does and does not include, and flags revisions whose approval is a typed name rather than a signature
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC. `lib/evidencePack.ts` `gatherEvidence` (`:58`) now also reads, each as its own section (`EVIDENCE_SECTIONS`, `:47`): e-signatures on the document, on any of its versions (the review gate's) and on its originating requests; `document_review_signoffs`; `document_acknowledgments`; `distribution_acks`; `download_audits`; and the drafting requests the revisions name (`related_ticket_id`) with their approval history. Every read pages past 1,000 rows (`readEveryRow`, up to `PACK_ROW_CEILING`), the audit trail included (it was a silent `.limit(1000)`, `:74`); a capped read says "Truncated at N" (`:213`, `:307`); a failed read says the section could not be read — never "None recorded" (`actSection`, `:209`). The footer (`:312`) states what the pack shows and does not (notifications, views, audit rows on other resources), and how many revisions have no signed review sign-off (their Approved entry names the publisher; a typed name is the publisher's unverified note — `EVID-4`).
+
+**Done-when.**
+- ✓ e_signatures, document_review_signoffs, document_acknowledgments, distribution_acks and download_audits for the document and its versions, each rendered as its own section.
+- ✓ The originating drafting request's approval history (its `history` entries and engineer approval) and any signature bound to it.
+- ✓ The audit query pages beyond 1,000 rows and says when truncated.
+- ✓ The footer states what is and is not included, and flags revisions whose approval is not signature-backed.
+- Tests: `lib/__tests__/dfRoundG_P11_evidence.test.ts` "EVID-10 / EVID-4 — the document evidence pack" (every section, a failed section, 1,500 audit rows, the truncation line, the legacy four-array caller unchanged); `auditEvidencePackActor.test.ts`, `aoRoundGP13AuditTrailUnseenNote.test.ts` unchanged and green.
+
+**Scope / residual.** None. The project pack is unchanged.
 
 ---
 
@@ -650,6 +696,17 @@ lib/acknowledgments.ts:439-446 —
 - [ ] The signature insert and the roster/sign-off update happen in one server-side transaction (or an RPC) so the two stores cannot diverge
 - [ ] The ESIGNATURE_CAPTURED audit mirror is either transactional with the signature or dead-lettered on failure — never `.catch(() => {})`
 - [ ] A reconciliation query/test proves every e_signatures row with intent Approved/Acknowledged has a matching roster row and audit row
+
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC. Re-verified on `29d92ac`: `recordReviewSignoff` already destructures, selects the row back and throws on zero rows (`lib/reviewControl.ts:689-696`, RG-2), and the signing route checks the signature's audit mirror and returns a warning (`app/api/signatures/sign/route.ts:143-149`, R&P `SURF-14`). Built here: `recordAcknowledgment` (`lib/acknowledgments.ts:520-540`) pins BOTH branches to the signer's own pending row (the `rosterId` branch used to filter by id alone), selects it back, and throws a sentence the signer reads on an error or zero rows ("Your signature was recorded, but…"); `components/documents/AckSection.tsx:100` shows it (`appAlert`) — the ceremony does not await `onSign`, so nothing else would.
+
+**Done-when.**
+- ✓ `recordAcknowledgment` and `recordReviewSignoff` destructure `{ error, data }`, request the row back and surface a hard error on zero rows.
+- ✗ Not done: the signature insert and the roster update are still two writes (no RPC / server transaction).
+- ✗ (in part) the audit mirror is checked server-side and dead-lettered by lib/audit (`DEC-109`) — not transactional with the signature.
+- ✗ Not done: no reconciliation query / test over `e_signatures` ↔ roster ↔ audit rows.
+- Tests: `lib/__tests__/dfRoundG_P11_evidence.test.ts` "EVID-11 done-when 1 — recordAcknowledgment checks the roster write" (own row stamped; a voided row and another person's roster id refused; a refused write's reason).
+
+**Scope / residual.** Done-whens 2–4 need the signing route (`app/api/signatures/sign/route.ts`) to write the roster row in the signature's transaction and a reconciliation report — not in this package's plan entry (`DEC-31`); owner for the integrator to assign (roles-and-permissions, which holds the signing route). `components/permissions/PermissionDrawer.tsx:291-302` is admin-and-org P7's (pointer).
 
 ---
 
@@ -850,6 +907,16 @@ lib/drawingAuditLog.ts:141-148 (no audited_at emitted) —
 - [ ] The orchestrator's log_audit_completion cannot downgrade a more severe existing verdict without an explicit human confirmation that is itself recorded in audit_logs
 - [ ] A test proves re-recording the same (sheet, revision) preserves the earlier verdict and its findings
 
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — verified against intelligence `DWG-6` (RESOLVED), which owns `drawing_audit_logs`. Stays OPEN by pointer.
+
+**Done-when.**
+- ✗ Not met: the table is not append-only; it is upserted on `(org_id, library_id, sheet_number, revision_code)` (`20261124`) and no history table keeps an overwritten verdict.
+- ✗ (in part) `audited_at` is written on every write (DWG-6); no actor / source column distinguishes engine, orchestrator and human.
+- ✓ (stricter) neither the route nor the orchestrator's `log_audit_completion` can lower a stored verdict: `RANK` / `wouldLowerSeverity` against the stored row (`lib/drawingAuditLog.ts`; `lib/orchestrator/tools.ts:1297-1489`) — refused outright, with no human-override path.
+- ✗ (in part) `lib/__tests__/intelRoundGDrawingRoutes.test.ts` proves a verdict is never lowered; a re-record at equal severity still replaces the stored findings.
+
+**Scope / residual.** Done-whens 1, 2 (the source column) and 4 → intelligence (the drawing-audit owner): an append-only history (or a superseded-rows table) and a source column. Not built here (`DEC-31`).
+
 ---
 
 <a id="evid-15"></a>
@@ -917,5 +984,14 @@ components/viewers/SecureDocViewer.tsx:83-92 —
 3. ✓ A route test pins the record written in the same request as the bytes.
 
 **Scope / residual.** Done-when 2 → owner: drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge), with `DCW-4`'s page offer, public-surfaces `PHYS-18`'s recall control and `SM-15`. *(Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90), R4: the name first proposed, "DF-P13 DELIVERABLE PAGE WIRING", was taken — DF-P13 merged as the SLA-defaults package.)* For that owner: the route issues every file the row names under the ticket's prefix or at the requester's staged key; a legacy absolute-URL file (409 `legacy_file`) has no server copy path, so the page keeps its browser path, or says so, for those files only. A file whose `id` another attachment on the ticket also carries answers 404 (drafting-flow [`SM-15`](./06-state-machine.md#sm-15), fail-safe). Also in that hunk: the viewer's inline preview still signs a presigned URL of the Final (`getSignedUrlForPath(file.url, undefined, { inline: true })`), so a member can still save the previewed PDF unstamped; closing that makes the preview the stamped server stream too.
+
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — `DEC-90` ruling (2): the storage doors' half of done-when 2 ("the presigned URL of a ticket Final is no longer handed to the browser" of a member who may not read the ticket).
+- `lib/ticketKeyGate.ts` (new, `:64-118`), run by both `/api/storage/download-url` (`:90`) and `/api/storage/resolve` (`:116`) after the document gate: a key under `orgs/<org>/tickets/` is signed for a member who is NOT Contractor-only exactly as before (no further read — everyone who can read the ticket keeps today's access); a key a `document_versions` row names is left to `documentKeyGate` (`DEC-43`'s bypass and its audit row unchanged); a Contractor-only member's own staged upload is theirs; otherwise the key is signed only if a ticket of that workspace naming it in `attachments` is inside the member's read scope (`lib/ticketReadScope.ts`, the SQL's `AUTHZ-13` predicate). An undecidable read (member row, document lookup, ticket lookup, mention lookup) is **503**; out of scope is **403**.
+
+**Done-when.**
+- ✓ 1 and 3 as recorded above.
+- ✗ (in part) 2: the doors no longer sign a ticket file for a member outside the ticket's read scope (`lib/__tests__/storageResolve.test.ts` "EVID-16 / DEC-90 ruling (2)", both doors: kept access, refusal, every in-scope leg, 503 on each undecidable read, staged keys, the document gate's precedence). The page's print / download through `POST /api/tickets/copy` is not built here.
+
+**Scope / residual.** The page wiring → DF-P15 DELIVERABLE PAGE WIRING (unchanged).
 
 ---

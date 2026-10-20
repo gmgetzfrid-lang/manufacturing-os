@@ -1172,7 +1172,7 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 
 - **Severity:** LOW
 - **Severity rationale:** The author's estimate. Today the one caller that acts on the answer, the restore's `ORG-18` clear, is fenced so a wrong answer cannot change a row that was already in the workspace (fix pass 2). The remaining cost is a restored node's legacy cover cleared by a passing storage error while its file is still in R2, plus the archive prompt shown in the viewer for a file that is present.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** — Owner: the integrator, to route to document-control P2 / drafting-flow DF-P11, who own `app/api/storage/resolve/route.ts` (`audit-reports/fleet-plans/drafting-flow.json`). Opened by admin-and-org Round G P11 fix pass 2 under `DEC-31` from `ORG-18`'s Scope / residual.
 - **Assigned:** drafting-flow DF-P11 AFTER-DC (document-control P2 has merged; DF-P11 holds the storage residuals) — by the integrator, 2026-10-14 (A&O P11 merge, DEC-31; fleet plan `audit-reports/fleet-plans/drafting-flow.json`).
 - **Verification:** CONFIRMED (by reading; pinned in `lib/__tests__/aoRoundGP11AppearanceRails.test.ts` "DEC-29: the helper's comments do not claim more than the route gives")
@@ -1191,6 +1191,14 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 **Done when.**
 - `/api/storage/resolve` answers `missing: true` only for a NotFound (name `NotFound` or `$metadata.httpStatusCode` 404); any other storage failure answers a 5xx.
 - A route test drives a NotFound, a 5xx and a timeout from the HEAD and shows the three answers.
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC. `app/api/storage/resolve/route.ts`: the HEAD runs in its own `try`; `isStorageNotFound` (`:43`: name `NotFound` / `NoSuchKey`, code `NoSuchKey`, or `$metadata.httpStatusCode` 404) is the only failure answered `{ archived: true, missing: true }` (`:146`); any other failure is **503** `{ error, retryable: true }` (`:139-141`); a signing failure is 503 too (`:171`). Callers: `components/archive/ArchiveAwareOpen.tsx` shows a non-OK answer's sentence instead of the archive prompt; `components/documents/VersionHistoryPanel.tsx:153-160` throws it; `app/(protected)/admin/restore/page.tsx:323-327` already treats a non-200 as "not reported missing" (the `ORG-18` clear needs a 200 `missing: true`) — checked, unchanged.
+
+**Done-when.**
+- ✓ `missing: true` only for a NotFound; any other storage failure answers a 5xx.
+- ✓ `lib/__tests__/storageResolve.test.ts` "ORG-20 — `missing: true` only for storage's NotFound" (NotFound → 200 missing; 5xx → 503; timeout → 503; present → signed); `aoRoundGP11AppearanceRails.test.ts` re-pinned on the new catch.
+
+**Scope / residual.** `lib/dataRestore.ts:2501-2505`'s comment still says the route answers `missing: true` for any HEAD failure; it is now conservative (the fence it describes stays correct) — left for the restore's owner to reword (not this package's file).
 
 ---
 

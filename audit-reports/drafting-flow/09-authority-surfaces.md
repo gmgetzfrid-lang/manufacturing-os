@@ -217,7 +217,7 @@ lib/workflow.ts:200 — `          if (needsEngineerApproval && !isEng) {`
 ## AUTHZ-4 · /api/storage/resolve issues signed URLs on org membership alone — the ACL enforcement its sibling download-url performs is absent
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/resolve/route.ts:55-64`, `app/api/storage/resolve/route.ts:81-84`, `app/api/storage/download-url/route.ts:35-110`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by direct comparison — resolve has no document lookup for authorization at all (its document_versions read at 32-38 only fetches archived_at/archive_id), so a hidden/private document or one with an explicit download deny is signable through it by any active member.
@@ -257,6 +257,17 @@ and :87-89 — `          if (!allowed) {`  `            return NextResponse.jso
 - [ ] A key that cannot be attributed to an org is refused rather than signed
 - [ ] A test proves a member with no ACL discovery rights on a private document gets 403 from BOTH routes for that document's key
 
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC. Reproduced on `29d92ac`: `/api/storage/resolve` checked an active membership and signed (no document or ticket decision). Both bytes doors now take ONE read decision:
+- `app/api/storage/resolve/route.ts`: the key's own `orgs/<org>/` prefix names its workspace first (the revision / ticket attribution lookups are scoped to it); a key no workspace can be attributed to is refused 403 "This file can't be attributed to a workspace" (`:102`); then the membership check, `documentKeyGate` (`lib/documentKeyGate.ts`, the door's own predicate with `DEC-43`'s controller rail and audit row, `:114`) and `ticketKeyGate` (`:116`) — all before the archive answer, so a refused caller learns nothing about an archive.
+- `lib/ticketKeyGate.ts` (new, `:64-118`) is the ticket-file half both doors run (`app/api/storage/download-url/route.ts:90`, after `documentKeyGate` at `:84`): `DEC-90` ruling (2) — see `EVID-16`.
+
+**Done-when.**
+- ✓ `resolve` runs the same decision as download-url — the shared `documentKeyGate` (one helper both routes call) plus the shared `ticketKeyGate`.
+- ✓ A key that cannot be attributed to an org is refused, never signed (`:102`).
+- ✓ `lib/__tests__/storageResolve.test.ts` "a member the document's ACL does not admit gets 403 from BOTH doors, and no URL" (real `documentKeyGate`, real presigner), with the creator, a `DEC-43` controller (row written), a lookup failure (503), an unattributable key and a cross-workspace prefix pinned beside it.
+
+**Scope / residual.** None for this finding. The ticket-file rule and the archive answer's order are `EVID-16` / `ORG-20`'s.
+
 ---
 
 <a id="authz-5"></a>
@@ -264,7 +275,7 @@ and :87-89 — `          if (!allowed) {`  `            return NextResponse.jso
 ## AUTHZ-5 · Ticket-shed commit deletes R2 objects by keys read verbatim from member-writable attachment JSON, with none of the org-prefix guarding its own restore path applies
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/ticket-shed/commit/route.ts:136-139`, `app/api/admin/ticket-shed/commit/route.ts:186-194`, `app/api/admin/ticket-shed/commit/route.ts:73-88`, `app/api/admin/ticket-shed/restore/route.ts:101`, `app/api/admin/ticket-shed/restore/route.ts:140-144`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the attachments array is member-writable by the blanket tickets policy plus the client write at requests/[id]/page.tsx:1010-1014. The deletes are irreversible (DeleteObjects) and the admin sees only a `keysDeleted` count in the audit row (line 202), so a planted key destroying another tenant's — or the org's own controlled document's — binary is invisible.
@@ -303,6 +314,19 @@ the guard that exists on the other side — app/api/admin/ticket-shed/restore/ro
 - [ ] `keysFor` filters to keys starting with `orgs/${orgId}/` exactly as restore does, and drops anything else with a counted, audited reason
 - [ ] A key still referenced by a non-archived `document_versions.file_url` or by another live ticket is never deleted
 - [ ] The produce step applies the same prefix filter before fetching bytes into the ZIP
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC. Reproduced on `29d92ac`: the commit's `keysFor` took every `attachments[].url` that passed `isOrgOwnedKey` (any `orgs/<org>/…` key, a library revision included). Now:
+- `lib/ticketShed.ts` `isShedTicketKey` (`:140`): a safe key AND either under `orgs/<org>/tickets/<…>` or an intake redline `orgs/<org>/project-intake/<link>/redlines/<file>` — nothing else a ticket names is the shed's to capture or delete.
+- Commit (`app/api/admin/ticket-shed/commit/route.ts`): `keysFor` keeps only `isShedTicketKey` keys (`:193-202`); every other key is refused, counted in `rejectedKeys` and the `TICKET_SHED_RECLAIMED` audit row. After the existing revision check (`sharedLiveKeys`, a `document_versions.file_url` still live), `keysOnOtherLiveTickets` (`lib/ticketShed.ts:176`; per key, `archived_at IS NULL`, batches of 20, a failed read throws → 503 before any delete) skips a key another live ticket still names (`sharedTicketSkipped`, `:286-296`, in the audit row and the answer).
+- Produce (`app/api/admin/ticket-shed/route.ts:203`): a ticket naming any non-request key is skipped whole and counted before any byte is fetched.
+
+**Done-when.**
+- ✓ `keysFor` drops every key outside this workspace's request prefix, counted and audited (`rejectedKeys`). Stricter than "starts with `orgs/${orgId}/`": a library revision under the workspace's prefix is refused too.
+- ✓ A key a live revision or another live ticket still references is never deleted (`sharedSkipped`, `sharedTicketSkipped`).
+- ✓ Produce applies the same filter before fetching bytes.
+- Tests: `lib/__tests__/ticketShedCommit.test.ts` "AUTHZ-5 — the reclaim deletes only this workspace's request files nobody else still uses" (planted keys refused, shared keys skipped, a failed live-ticket read stops the reclaim, produce skips a planted ticket); `dcRoundFShed.test.ts` re-pinned on the narrower rule.
+
+**Scope / residual.** None. DC `RET-6` is the same class on the document shed (closed there).
 
 ---
 

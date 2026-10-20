@@ -836,7 +836,7 @@ lib/turnover.ts:199 — the only assignment to `row.document_id`. Two differentl
 
 - **Severity:** MEDIUM
 - **Severity rationale:** Re-graded from LOW at the J2b integration (2026-10-01). This is half of `QUAL-4`'s first done-when — the HIGH finding's "a discipline reviewer can be granted write authority on a specific project's quality records" — and the failure scenario below is where it bites: without a product path the Admin's choices are an org-wide grant (the reviewer may then write, complete and accept the quality records of every project they can see — broader than the PSSR by every other project), a hand-written policy JSON posted to the route, or no grant at all, which leaves `QUAL-4`'s original failure standing (the owner records the Operations and Maintenance confirmations on their behalf). Not HIGH: the enforcement exists and is project-scoped at the database (`20261136`), an org-wide grant through the console works today, and the separation and signature halves of `QUAL-4` hold whoever is granted.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P9 (permissions console truth) — by the integrator, 2026-10-01; done-when 1 and 3 landed there 2026-10-07. **Done-when 2 (the person-scoped project grant): drafting-flow DF-P11, the package that re-creates `org_capability_allows_for`. The integrator is asked to re-assign it at the A&O P9 merge:** add `QUAL-14` to DF-P11's findings in `audit-reports/fleet-plans/drafting-flow.json`, with a `dependsOn` line naming `20261137` as the newest body. See `audit-reports/admin-and-org/99-fix-sequencing.md`, P9 item 3. **Ruled by the integrator at the A&O P9 merge (2026-10-08, under the user's delegation): done-when 2 is NOT built in P9 — an explicit Partial, owner drafting-flow DF-P11; the integrator adds it to DF-P11's plan entry at the merge.**
 - **Verification:** CONFIRMED (by reading)
 - **Locations:** `components/permissions/CapabilityPolicyEditor.tsx` (`splitPolicyForEditor` treats every non-`requestType` rule as "opaque" — preserved verbatim, counted, not editable; `joinPolicyFromEditor` emits only `requestType` overrides), `app/api/admin/capability-policy/route.ts` (accepts and validates a `projectId` rule since `RESOURCE_KEYS` gained it — on `quality.sign_off` only, `PROJECT_SCOPED_CAPS`, and only once the live database reads the key: it probes for `20261136` and refuses before it), `components/projects/QualityTab.tsx` (no "who signs off here" control)
@@ -880,6 +880,19 @@ DF-P11 takes these files with it:
 - the View-as grant form.
 
 All three are admin-and-org files, so DF-P11 edits them as a cross-area hand-off. Status stays OPEN on done-when 2 alone. *(Corrected at P9's review fix. This read "Proposed owner, for the integrator to assign", and the Assigned line still named P9.)* *Ruled 2026-10-08 by the integrator at the A&O P9 merge: explicit Partial, owner DF-P11; the integrator adds `QUAL-14` done-when 2 to DF-P11's plan entry at the merge (`audit-reports/fleet-plans/drafting-flow.json` is not edited on P9's branch).*
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — done-when 2 (ruling (B), as assigned).
+- `lib/capabilityPolicy.ts`: `UserGrant.projectId` — a personal grant of a capability decided per project (`PROJECT_SCOPED_CAPS`: `quality.sign_off`) may name ONE project; `grantAppliesTo` (`:306`) and `policyAllows`' grant loop (`:407`) hold it only when the decision is about that project (no project in hand never matches); `validateCapabilityPolicy` refuses a project on any other capability, or an invalid one (`:708-713`); `addUserGrant` / `revokeUserGrant` carry it; one grant per (person, capability, project-or-none) (`sameGrant`).
+- `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql`: `org_capability_allows_for` re-created from its newest body (`20261137`, lineDiff) — the grant loop reads `projectId` (`:257-258`); `capability_grant_scope_ready()` (service role only) says the live evaluator reads it.
+- `app/api/admin/capability-policy/route.ts`: a scoped grant must be on a project-scoped capability (400, `:223`) and a project of this workspace (400 / 503 on a failed read, `:231`), and is stored only once `capability_grant_scope_ready` answers true (fail closed, 409, `:134`, `:232`) — before the paste the database's grant loop would honour it on every project. Revoke names which grant. Audited as before (`CAPABILITY_POLICY_CHANGED`).
+- `components/permissions/ViewAsSimulator.tsx`: the grant form offers "On every project they can see" / "On <project> only" for such a capability; the list shows "on <project>"; the quality row names a person's scoped grants. `CapabilityPolicyEditor.tsx`'s note says a grant on one project names one person there.
+
+**Done-when.**
+- ✓ 1 and 3 as recorded above (A&O P9).
+- ✓ 2 — a grant can name one person on one project. Pending migration `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql` (the route refuses a scoped grant before it), and `20261136` as recorded above.
+- Tests: `lib/__tests__/dfRoundG_P11_grants.test.ts` "QUAL-14 — a personal grant on one project (policyAllows)" and "…/api/admin/capability-policy stores a project-scoped grant only when the database reads it" (stored with the probe live; 409 when absent or unreadable; another workspace's project 400; 503 on a failed read; two projects + unscoped coexist; revoke by project); PostgreSQL 16: P1 true, P2 false, none false.
+
+**Scope / residual.** Pending pastes of `20261136` and `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql`.
 
 ---
 

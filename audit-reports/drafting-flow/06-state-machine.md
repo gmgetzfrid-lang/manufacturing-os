@@ -244,6 +244,17 @@ if ((row as { archived_at?: string | null }).archived_at) {
 - [ ] The workflow-action archive guard rejects, or the transition clears, actions on a ticket with a non-null `archive_id`, so the two subsystems cannot both own the row
 - [ ] A test covers produce → reopen → commit and asserts the ticket's comments/history/attachments survive
 
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — the shed's commit (the half this package owns). Reproduced on `29d92ac`: commit stamped and freed every captured ticket with no status read. Now (`app/api/admin/ticket-shed/commit/route.ts`):
+- the captured tickets are re-read (`status`, `last_modified`, `:150`); any that left a terminal status, or was written after the archive was produced (`changedSinceCapture`, `lib/ticketShed.ts:158`, with a five-minute clock margin), is released from the shed (its `archive_id` cleared on a compare-and-set) and the call answers **409 `changed_since_capture`** naming the tickets — nothing is stamped or freed in that call; a re-run frees the rest;
+- each stamp compare-and-sets on a terminal status (`.in("status", TERMINAL)`, `:236`) and the `last_modified` it read (the null its own leg, `:237`), so a reopen between the re-read and the stamp makes the stamp miss and frees nothing for that ticket.
+
+**Done-when.**
+- ✓ (in a stricter form) the commit filters to terminal tickets and re-verifies immediately before each stamp. A ticket that left terminal is reported by name — with the whole call refused rather than the rest committed, so an operator sees it before anything is freed (fail-safe).
+- ✗ not done here: `reopen_ticket` clearing `archive_id`, and the workflow-action guard refusing a ticket with a non-null `archive_id`, are in `app/api/tickets/workflow-action/route.ts` / `lib/workflow.ts` — files this package may not edit this round. The commit-side refusal makes the destruction impossible on its own (a reopened ticket is never stamped or freed), but a reopened ticket keeps a stale `archive_id` until the next commit attempt releases it.
+- ✓ `lib/__tests__/ticketShedCommit.test.ts` "SM-4 — produce → reopen → commit: the live ticket survives".
+
+**Scope / residual.** Done-when 2 and 3 → the workflow route's owner (drafting-flow DF-P15, which holds `app/api/tickets/**` this round): clear `archive_id` in the reopen / cancel-undo transitions and refuse an action on a row with a non-null `archive_id`.
+
 ---
 
 <a id="sm-5"></a>
@@ -471,6 +482,12 @@ if (newComment) {
 
 **Scope / residual.** A drain for what is only logged — a `ticket_comments` mirror that failed twice (reconcile from `tickets.comments`), and a `_NOT_APPLIED` row that failed twice (reconcile from the ticket's history) — or the transition + audit as one RPC: **unowned in the fleet plan**; proposed owner DF-P11 (AFTER-DC, the maintenance-cron residuals), or admin-and-org P7 with `ALOG-8`'s dead-letter work. The request page needs no change for this finding: a refused transition is a plain failure and a retry applies once (the hand-off to DF-P9 for `applied: true` is withdrawn — `99-fix-sequencing.md`, "Hand-offs from DF-P1"). Two hand-offs from the third fix pass, 2026-10-07, are in the same table. Admin-and-org P7's audit viewers must pair each attempt row with the `_NOT_APPLIED` or `_HOLDS_NOT_RELEASED` row naming it (`EVID-12`, "Reading the trail"). DF-P9's request page should show the 200's `warning` when a close's hold could not be released.
 
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC. Not built. Both forms the plan names need a file this package may not edit this round: the one-RPC form is the workflow route (`app/api/tickets/workflow-action/route.ts`, DF-P15's this round), and the drain belongs in the maintenance cron (`app/api/cron/maintenance/**`, admin-and-org's). A drain with no caller would be dead code (`DEC-31`).
+
+**Done-when.** ✗ (in part) done-when 1 unchanged (no retry queue); 2 and 3 ✓ as recorded above.
+
+**Scope / residual.** → the next holder of `app/api/cron/maintenance/route.ts` (admin-and-org P5) for the drain (reconcile a twice-failed `ticket_comments` mirror from `tickets.comments`; write the `_NOT_APPLIED` row for an attempt row whose transition never landed, read from the ticket's history), or DF-P15 for the one-RPC form. Re-assignment is the integrator's.
+
 ---
 
 <a id="sm-8"></a>
@@ -529,7 +546,7 @@ lib/workflow.ts:80-342 — the switch handles NEW, PENDING_ENG_INITIAL, PENDING_
 ## SM-9 · Four writers to the ticket row bypass the compare-and-set entirely and clobber whole JSONB arrays — including the split-brain the comment API was specifically hardened against
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:978`, `app/(protected)/requests/[id]/page.tsx:1010-1014`, `app/(protected)/requests/[id]/page.tsx:1328`, `app/(protected)/requests/[id]/page.tsx:920`, `app/api/intake/upload/route.ts:182-190`, `app/api/tickets/comment/route.ts:205-216`, `app/api/tickets/workflow-action/route.ts:155-191`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Accurate; if anything undercounted (five writers, not four — the intake route is a fifth). The whole-array clobber is real for comments, attachments+history and watchers, and the guard the finding says they bypass demonstrably exists on the two hardened paths.
@@ -599,6 +616,15 @@ casQuery = auth.readLastModified ? casQuery.eq("last_modified", auth.readLastMod
 **Done-when.** ✗ (in part) done-when 3: every writer DF-P4 owns now compare-and-sets (the hand-back's null leg closed); the ticket shed's commit is still unguarded (DF-P11), as recorded above.
 
 **Scope / residual.** The ticket shed's commit / restore → **DF-P11** (unchanged).
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — done-when 3's remainder (the ticket shed). `app/api/admin/ticket-shed/commit/route.ts`: the stamp that precedes `comments: [], history: []` now compare-and-sets on the terminal status and the `last_modified` the commit read (`:225-237`, the null its own leg), after a re-read that refuses (409) any ticket written since the archive was produced (`changedSinceCapture`, `lib/ticketShed.ts:158`) — so a comment or attachment written between produce and commit is never wiped unarchived. `app/api/admin/ticket-shed/restore/route.ts`: a snapshot restores only into the stub reclaimed into THAT archive (`:170-173`, an older archive's copy is skipped and counted `staleSnapshot`), and the write compare-and-sets on the stub's `archive_id` and `last_modified` (`:237-247`, each null its own leg).
+
+**Done-when.**
+- ✓ 1, 2 and 4 as recorded above (WF-9; DF-P1; DF-P4).
+- ✓ 3 — no code path writes `tickets.attachments`, `comments` or `history` as a whole array without a compare-and-set on the value it read: the shed's commit and restore now do. (The database half — the `SM-2` guard and `append_ticket_redline` — remains `20261166`'s, pending its paste as already recorded.)
+- Tests: `lib/__tests__/ticketShedCommit.test.ts` "SM-9 — a comment posted after capture is never wiped unarchived" and "SM-9 (restore) — only from the archive the stub was reclaimed into, compare-and-set on the stub"; `aoRoundGP13ShedAudit.test.ts` re-seeded with a terminal status.
+
+**Scope / residual.** None beyond `20261166`'s pending paste.
 
 ---
 
