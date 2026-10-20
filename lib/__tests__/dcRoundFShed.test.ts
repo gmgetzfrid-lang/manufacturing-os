@@ -489,8 +489,12 @@ describe("ticket shed — RET-6 on both halves", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(res.status).toBe(200);
     expect(state.r2Deletes).toEqual([`orgs/${ORG}/tickets/t1/a.pdf`]);
-    expect(body.rejectedKeys).toBe(1);
-    expect(body.sharedSkipped).toBe(1);
+    // drafting-flow AUTHZ-5 (DF-P11): only this workspace's request files are
+    // deletable at all, so the substituted library key is refused by its
+    // prefix (rejected) before the live-revision check would skip it (RET-8's
+    // share check is pinned on a request-file key in ticketShedCommit.test.ts).
+    expect(body.rejectedKeys).toBe(2);
+    expect(body.sharedSkipped).toBe(0);
     expect(body.keysFailed).toBe(0);
     expect(body.shortfallPersisted).toBe(true);
     expect(archiveUpdates).toEqual([{ reclaim_shortfall: 0 }]);

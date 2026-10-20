@@ -57,7 +57,7 @@ function inferContentType(key: string): string {
   return CONTENT_TYPES[(key.toLowerCase().split(".").pop() || "")] || "application/octet-stream";
 }
 
-interface StubRow { id: string; attachments: Array<{ url?: string }> | null }
+interface StubRow { id: string; attachments: Array<{ url?: string }> | null; archive_id?: string | null; last_modified?: string | null }
 
 export async function POST(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
     const chunk = ids.slice(i, i + 200);
     const { data } = await sb
       .from("tickets")
-      .select("id, attachments")
+      .select("id, attachments, archive_id, last_modified")
       .in("id", chunk)
       .eq("org_id", orgId)
       .not("archived_at", "is", null); // only archived stubs are restorable
@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
   }
 
   let restored = 0, partial = 0, filesUploaded = 0, filesMissing = 0, filesMismatched = 0, commentRows = 0,
-    skippedForeignKey = 0, notArchived = 0;
+    skippedForeignKey = 0, notArchived = 0, staleSnapshot = 0;
   let decompressed = 0;
   const errors: string[] = [];
   // ALOG-8 fix pass: the decompression bound can stop the restore part way —
@@ -163,6 +163,16 @@ export async function POST(req: NextRequest) {
   tickets: for (const { tp, row, id } of snapshots) {
     const stub = stubById.get(id);
     if (!stub) { notArchived++; continue; } // hot ticket or not present — never overwrite it
+    // SM-9 (drafting-flow DF-P11): a stub is restored only from the archive it
+    // was reclaimed into. A snapshot from an OLDER archive (the ticket was
+    // restored, changed and archived again since) would write back a thread
+    // missing everything added after it — refused, nothing written.
+    const snapArchive = typeof row.archive_id === "string" && row.archive_id ? row.archive_id : null;
+    if (snapArchive && stub.archive_id && snapArchive !== stub.archive_id) {
+      staleSnapshot++;
+      errors.push(`ticket ${id}: this archive's copy is from ${snapArchive}, but the request was last archived into ${stub.archive_id} — restore it from that archive`);
+      continue;
+    }
 
     // The only keys we may write are the ones the LIVE stub records, under our prefix.
     const allowedKeys = new Set(
@@ -223,7 +233,10 @@ export async function POST(req: NextRequest) {
 
     // Restore the JSONB + pre-archive metadata snapshot and clear the flags — but
     // ONLY on a still-archived stub (defence-in-depth against a TOCTOU flip).
-    const { error, count } = await sb
+    // SM-9 (DF-P11): a compare-and-set on the stub as read — its archive and
+    // its last_modified (the null its own leg) — like every other writer of
+    // the ticket's arrays.
+    let restoreQ = sb
       .from("tickets")
       .update(
         {
@@ -238,6 +251,9 @@ export async function POST(req: NextRequest) {
       .eq("id", id)
       .eq("org_id", orgId)
       .not("archived_at", "is", null);
+    restoreQ = stub.archive_id ? restoreQ.eq("archive_id", stub.archive_id) : restoreQ.is("archive_id", null);
+    restoreQ = stub.last_modified ? restoreQ.eq("last_modified", stub.last_modified) : restoreQ.is("last_modified", null);
+    const { error, count } = await restoreQ;
     if (error) { errors.push(`update ${id}: ${error.message}`); continue; }
     if ((count ?? 0) === 0) { notArchived++; continue; }
     restored++;
@@ -253,7 +269,7 @@ export async function POST(req: NextRequest) {
       action: "TICKET_ARCHIVE_RESTORE",
       resource_id: orgId, resource_type: "org", org_id: orgId,
       user_id: actor.userId, user_email: actor.email,
-      details: { restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors: errors.slice(0, 8), ...(aborted ? { aborted, stoppedPartWay: true } : {}) },
+      details: { restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, staleSnapshot, badJson, errors: errors.slice(0, 8), ...(aborted ? { aborted, stoppedPartWay: true } : {}) },
     });
     if (auditErr) auditError = auditErr.message || "audit insert refused";
   } catch (e) {
@@ -269,7 +285,7 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({
-    ok: true, restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, badJson, errors,
+    ok: true, restored, partial, filesUploaded, filesMissing, filesMismatched, commentRows, skippedForeign, skippedForeignKey, notArchived, staleSnapshot, badJson, errors,
     ...(auditError ? { auditError: `the restore put back ${restored} ticket(s) but its TICKET_ARCHIVE_RESTORE audit row was not written: ${auditError}` } : {}),
   });
 }

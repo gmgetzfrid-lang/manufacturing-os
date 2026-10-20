@@ -6,7 +6,11 @@
 // least `olderThanDays` is eligible to have its WHOLE self archived to cold
 // storage — comment thread, history and attachment binaries move into one
 // archive while a lightweight stub stays in the list. Open/in-flight tickets are
-// never touched. Pure + deterministic so it unit-tests without a DB.
+// never touched. Pure + deterministic so it unit-tests without a DB (except
+// keysOnOtherLiveTickets at the end, which the reclaim uses).
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { isSafeStorageKey } from "@/lib/storageKey";
 
 export const TERMINAL_TICKET_STATUSES = ["CLOSED", "CANCELED"] as const;
 export type TerminalTicketStatus = (typeof TERMINAL_TICKET_STATUSES)[number];
@@ -116,4 +120,82 @@ export function selectTicketShedCandidates(rows: TicketShedRow[], opts: TicketSh
   }
 
   return { selected, totalBytes, totalCount: selected.length, skipped: eligible.length - selected.length };
+}
+
+// ── drafting-flow AUTHZ-5 / SM-4 / SM-9 (DF-P11): what the ticket shed may
+// delete, and when a captured ticket may still be freed. These are the only
+// non-pure helpers in this module (the last one reads the database).
+
+
+/** True when `key` is a file a drafting request of THIS workspace stores:
+ *  under orgs/<org>/tickets/ (lib/storage.ts makeTicketAttachmentPath, and
+ *  the requester's staging folder) or an intake redline the external door
+ *  appended (orgs/<org>/project-intake/<project>/redlines/…,
+ *  app/api/intake/upload/route.ts). AUTHZ-5: `attachments[].url` is a
+ *  member-writable column on a database without 20261166, so only these two
+ *  shapes are ever read into a ticket archive or deleted by its reclaim; any
+ *  other key — another workspace's, or this workspace's library, knowledge or
+ *  project files — is counted and left in storage (DC RET-6 is the same rule
+ *  on the document shed, at the org prefix). */
+export function isShedTicketKey(key: string | null | undefined, orgId: string): key is string {
+  if (!key || !orgId || !isSafeStorageKey(key)) return false;
+  if (key.startsWith(`orgs/${orgId}/tickets/`) && key.length > `orgs/${orgId}/tickets/`.length) return true;
+  return new RegExp(`^orgs/${orgId.replace(/[^0-9a-fA-F-]/g, "")}/project-intake/[^/]+/redlines/[^/]+$`).test(key);
+}
+
+/** How far a writer's clock may sit behind the database's: a ticket whose
+ *  last_modified is later than (the archive's production time − this) is
+ *  treated as changed since it was captured (a false positive only returns
+ *  the ticket to the live list; it is never freed on a stale capture). */
+export const TICKET_CAPTURE_SKEW_MS = 5 * 60 * 1000;
+
+/** SM-4 / SM-9: why a ticket captured into an archive (archive_id set,
+ *  archived_at still null) must NOT be reclaimed now — it left its terminal
+ *  status since the archive was produced (a reopen), or it was written since
+ *  (a comment, a file, a transition: every writer stamps last_modified) so
+ *  the archive's copy is stale — or null when it may be. `producedAt` is the
+ *  archive catalog row's created_at (stamped before the capture began). */
+export function changedSinceCapture(
+  row: { status?: string | null; last_modified?: string | null },
+  producedAt: string | null | undefined,
+): "left_terminal" | "changed_since_capture" | null {
+  if (!isTerminalTicketStatus(row.status)) return "left_terminal";
+  const produced = Date.parse(producedAt ?? "");
+  const touched = Date.parse(row.last_modified ?? "");
+  if (Number.isFinite(produced) && Number.isFinite(touched) && touched > produced - TICKET_CAPTURE_SKEW_MS) {
+    return "changed_since_capture";
+  }
+  return null;
+}
+
+/** AUTHZ-5 done-when 2: the keys among `keys` that a LIVE ticket outside
+ *  `excludeIds` (the tickets being freed) still names in its attachments — a
+ *  copied request, or a reference planted on purpose. Such a key is never
+ *  deleted. THROWS on any read error (fail closed: the reclaim stops before
+ *  it deletes anything). */
+export async function keysOnOtherLiveTickets(
+  sb: Pick<SupabaseClient, "from">,
+  orgId: string,
+  keys: readonly string[],
+  excludeIds: ReadonlySet<string>,
+): Promise<Set<string>> {
+  const uniq = Array.from(new Set(keys.filter(Boolean)));
+  const shared = new Set<string>();
+  for (let i = 0; i < uniq.length; i += 20) {
+    const batch = uniq.slice(i, i + 20);
+    const answers = await Promise.all(batch.map(async (key) => {
+      const { data, error } = await sb
+        .from("tickets")
+        .select("id")
+        .eq("org_id", orgId)
+        .contains("attachments", JSON.stringify([{ url: key }]))
+        .is("archived_at", null)
+        .limit(50);
+      if (error) throw new Error(`Couldn't verify which live requests still name these files (${error.message}); refusing to delete.`);
+      const rows = (Array.isArray(data) ? data : data ? [data] : []) as Array<{ id: string }>;
+      return rows.some((r) => !excludeIds.has(r.id)) ? key : null;
+    }));
+    for (const k of answers) if (k) shared.add(k);
+  }
+  return shared;
 }
