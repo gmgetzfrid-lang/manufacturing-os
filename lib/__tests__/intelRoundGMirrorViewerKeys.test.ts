@@ -33,8 +33,12 @@ const db = vi.hoisted(() => ({
   errors: {} as Record<string, { message: string; code?: string }>,
   /** "table|column": an .eq(column, …) read of `table` errors with this. */
   failEq: {} as Record<string, { message: string; code?: string }>,
-  /** table → columns that do not exist (a select naming one errors 42703). */
+  /** table → columns that do not exist (a select naming one, or a filter on
+   *  one, errors 42703 — as PostgreSQL / PostgREST do). */
   missingColumns: {} as Record<string, string[]>,
+  /** Statement-level fault hooks (I-29 merge fix pass): the first hook that
+   *  answers an error fails that statement. */
+  failWhen: [] as Array<(s: { table: string; columns: string; filters: string[] }) => { message: string; code?: string } | undefined>,
   maxRows: 100000,
   rpc: {} as Record<string, (args: Record<string, unknown>) => unknown>,
   inserts: [] as Array<{ table: string; row: unknown }>,
@@ -55,6 +59,8 @@ function chain(table: string) {
   let columns = "*";
   let payload: unknown = null;
   const eqCols: string[] = [];
+  /** Every column a filter names (eq / in / is / not / gt). */
+  const filterCols: string[] = [];
   const cmp = (a: unknown, b: unknown) => (a == null ? (b == null ? 0 : 1) : b == null ? -1 : a < b ? -1 : a > b ? 1 : 0);
   const project = (r: Row): Row => {
     if (columns.trim() === "*") return r;
@@ -82,8 +88,12 @@ function chain(table: string) {
     if (eqFail) return eqFail;
     const missing = db.missingColumns[table] ?? [];
     const named = columns.split(",").map((x) => x.trim());
-    const gone = named.find((c) => missing.includes(c));
+    const gone = [...named, ...filterCols].find((c) => missing.includes(c));
     if (gone) return { message: `column ${table}.${gone} does not exist`, code: "42703" };
+    for (const hook of db.failWhen) {
+      const e = hook({ table, columns, filters: [...filters] });
+      if (e) return e;
+    }
     return null;
   };
   const result = () => {
@@ -102,12 +112,13 @@ function chain(table: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) => resolve(result());
       return (...args: unknown[]) => {
         switch (prop) {
-          case "eq": eqCols.push(args[0] as string); filters.push(`eq:${String(args[0])}`); preds.push((r) => r[args[0] as string] === args[1]); break;
-          case "gt": filters.push(`gt:${String(args[0])}`); preds.push((r) => r[args[0] as string] != null && String(r[args[0] as string]) > String(args[1])); break;
-          case "in": filters.push(`in:${String(args[0])}`); preds.push((r) => (args[1] as unknown[]).includes(r[args[0] as string])); break;
-          case "is": filters.push(`is:${String(args[0])}`); preds.push((r) => (args[1] === null ? r[args[0] as string] == null : r[args[0] as string] === args[1])); break;
+          case "eq": eqCols.push(args[0] as string); filterCols.push(args[0] as string); filters.push(`eq:${String(args[0])}`); preds.push((r) => r[args[0] as string] === args[1]); break;
+          case "gt": filterCols.push(args[0] as string); filters.push(`gt:${String(args[0])}`); preds.push((r) => r[args[0] as string] != null && String(r[args[0] as string]) > String(args[1])); break;
+          case "in": filterCols.push(args[0] as string); filters.push(`in:${String(args[0])}`); preds.push((r) => (args[1] as unknown[]).includes(r[args[0] as string])); break;
+          case "is": filterCols.push(args[0] as string); filters.push(`is:${String(args[0])}`); preds.push((r) => (args[1] === null ? r[args[0] as string] == null : r[args[0] as string] === args[1])); break;
           case "not": {
             const [col, o, val] = args as [string, string, unknown];
+            filterCols.push(col);
             filters.push(`not:${col}`);
             if (o === "is" && val === null) preds.push((r) => r[col] != null);
             break;
@@ -157,8 +168,10 @@ import { GET as downloadUrl } from "@/app/api/storage/download-url/route";
 import { GET as flowsBrowse } from "@/app/api/flows/browse/route";
 import { GET as areaStatus } from "@/app/api/area/knowledge-status/route";
 import {
-  listKnowledgeDocuments, getKnowledgeMirrorUrl, KnowledgeMirrorRestrictedError, MIRROR_LIST_COLUMN_TIERS,
+  listKnowledgeDocuments, getKnowledgeMirrorUrl, requestKnowledgeMirrorUrl, KnowledgeMirrorRestrictedError, MIRROR_LIST_COLUMN_TIERS,
 } from "@/lib/knowledge";
+import { createMirrorUrlMemo, mirrorRevisionKey, MIRROR_URL_MEMO_MARGIN_SECONDS } from "@/lib/knowledgeMirrorUrlMemo";
+import { PRESIGNED_DEFAULT_SECONDS } from "@/lib/presignedLifetime";
 import {
   MIRROR_SOURCE_RESTRICTED, MIRROR_ACCESS_UNVERIFIED, MIRROR_UNBOUND, MIRROR_KEY_OUTSIDE_WORKSPACE,
   MIRROR_NOT_FOUND, MIRROR_IS_UPLOAD, MIRROR_KEY_INVALID,
@@ -217,7 +230,7 @@ function seed(opts: {
       {
         id: KD_MIRROR, org_id: ORG, library_id: KL, name: "HSE-7 — Incident procedure", file_key: opts.mirrorKey ?? KEY, file_size: 10,
         page_count: 4, pages_indexed: 4, status: "ready", error: null, created_by_name: null, created_at: "2026-10-01T00:00:01Z",
-        source_id: "src-1", source_document_id: DOC, source_rev: "A", vision_pages: 1, empty_pages: 0,
+        source_id: "src-1", source_document_id: DOC, source_version_id: "v1", source_rev: "A", vision_pages: 1, empty_pages: 0,
         vision_failed_pages: [], vision_partial_accepted: false, chunk_version: 2,
       },
     ],
@@ -228,6 +241,7 @@ function seed(opts: {
   db.errors = {};
   db.failEq = {};
   db.missingColumns = {};
+  db.failWhen = [];
   db.maxRows = 100000;
   db.rpc = { user_is_effective_owner: () => false };
   db.inserts = [];
@@ -514,8 +528,10 @@ describe("KACL-5 criterion 4 / KACL-7 criterion 3 — the viewer asks the route 
   it("source pins: the viewer signs an upload's key as before and opens a mirror by id through the route; the page hands a mirror's null key and its id", () => {
     const viewer = readFileSync(join(process.cwd(), "components/knowledge/CitedPageViewer.tsx"), "utf8");
     expect(viewer).toMatch(/\? getSignedUrlForPath\(view\.fileKey, undefined, \{ inline: true \}\)/);
-    expect(viewer).toMatch(/\? getKnowledgeMirrorUrl\(view\.documentId\)/);
-    expect(viewer).toMatch(/\}, \[view\.fileKey, view\.documentId\]\);/);
+    // DEC-90 ruling (2) at the I-29 merge: a mirror opens through the route
+    // via the viewer's per-mount memory keyed by (documentId, revision).
+    expect(viewer).toMatch(/\? mirrorUrls\.open\(view\.documentId, \{ sourceVersionId: view\.sourceVersionId, sourceRev: view\.sourceRev \}, requestKnowledgeMirrorUrl\)/);
+    expect(viewer).toMatch(/\}, \[view\.fileKey, view\.documentId, view\.sourceVersionId, view\.sourceRev, mirrorUrls\]\);/);
     const page = readFileSync(join(process.cwd(), "app/(protected)/knowledge/[id]/page.tsx"), "utf8");
     expect(page).toMatch(/fileKey: string \| null;/);
     const lib = readFileSync(join(process.cwd(), "lib/knowledge.ts"), "utf8");
@@ -579,5 +595,220 @@ describe("KACL-9 residual — the pickers read the held-back flag checked", () =
     expect(out.ok && out.ids.size).toBe(HELD_BACK_IDS_PAGE * 2 + 7);
     db.failEq["documents|ai_excluded"] = { message: "boom" };
     expect(await readHeldBackIds(ORG)).toEqual({ ok: false, error: "boom" });
+  });
+});
+
+// ── The integrator's DEC-90 rulings at the I-29 merge (2026-10-20) ─────────
+
+describe("I-29 merge, DEC-90 ruling (1) — an older database (before 20260917) lists every upload with its key", () => {
+  /** A database without the source columns: every row is an upload. */
+  const preSources = () => {
+    db.missingColumns.knowledge_documents = ["source_id", "source_document_id", "source_version_id", "source_rev"];
+    db.tables.knowledge_documents = db.tables.knowledge_documents
+      .filter((r) => !r.source_document_id)
+      .map((r) => {
+        const { source_id: _a, source_document_id: _b, source_version_id: _c, source_rev: _d, ...rest } = r;
+        return rest;
+      });
+    db.tables.knowledge_documents.push({
+      ...db.tables.knowledge_documents[0], id: "77777777-7777-4777-8777-777777777700", name: "second.pdf",
+      file_key: `orgs/${ORG}/knowledge/${KL}/2-second.pdf`, created_at: "2026-10-02T00:00:00Z",
+    });
+  };
+  it("reproduction → fix: the source_document_id filter is refused (42703) — the base read lists every upload with its key, in creation order", async () => {
+    preSources();
+    const list = await listKnowledgeDocuments(KL);
+    expect(list.map((d) => [d.id, d.fileKey])).toEqual([
+      [KD_UPLOAD, UPLOAD_KEY],
+      ["77777777-7777-4777-8777-777777777700", `orgs/${ORG}/knowledge/${KL}/2-second.pdf`],
+    ]);
+    // the fallback is the pre-I-29 read: select("*"), the library filter, no mirror read
+    const kd = db.selects.filter((x) => x.table === "knowledge_documents");
+    expect(kd.at(-1)).toEqual({ table: "knowledge_documents", columns: "*", filters: ["eq:library_id"] });
+    expect(kd.some((x) => x.filters.includes("not:source_document_id"))).toBe(false);
+  });
+  it("a PostgREST schema-cache miss naming source_document_id (PGRST204) takes the same base read", async () => {
+    preSources();
+    db.missingColumns = {};
+    db.failWhen.push(({ table, filters }) => table === "knowledge_documents" && filters.some((x) => x.endsWith(":source_document_id"))
+      ? { code: "PGRST204", message: "Could not find the 'source_document_id' column of 'knowledge_documents' in the schema cache" } : undefined);
+    expect((await listKnowledgeDocuments(KL)).map((d) => d.fileKey)).toEqual([UPLOAD_KEY, `orgs/${ORG}/knowledge/${KL}/2-second.pdf`]);
+  });
+  it("regression: any other error (another column, a timeout) is the empty list it always was; a failed base read too", async () => {
+    db.failWhen.push(({ table, filters }) => table === "knowledge_documents" && filters.includes("is:source_document_id")
+      ? { code: "PGRST204", message: "Could not find the 'library_id' column of 'knowledge_documents' in the schema cache" } : undefined);
+    expect(await listKnowledgeDocuments(KL)).toEqual([]);
+    seed();
+    db.failWhen.push(({ table, filters }) => table === "knowledge_documents" && filters.includes("is:source_document_id")
+      ? { code: "57014", message: "canceling statement due to statement timeout (source_document_id)" } : undefined);
+    expect(await listKnowledgeDocuments(KL)).toEqual([]);
+    seed();
+    preSources();
+    db.failWhen.push(({ table, filters }) => table === "knowledge_documents" && filters.length === 1 ? { message: "boom" } : undefined);
+    expect(await listKnowledgeDocuments(KL)).toEqual([]);
+  });
+  it("regression: a current database still splits the read (mirror without its key) — the fallback never runs", async () => {
+    const list = await listKnowledgeDocuments(KL);
+    expect(list.map((d) => [d.id, d.fileKey])).toEqual([[KD_UPLOAD, UPLOAD_KEY], [KD_MIRROR, null]]);
+    expect(list.find((d) => d.id === KD_MIRROR)?.sourceVersionId).toBe("v1");
+    expect(db.selects.filter((x) => x.table === "knowledge_documents").some((x) => x.columns === "*" && x.filters.length === 1)).toBe(false);
+  });
+});
+
+describe("I-29 merge, DEC-90 ruling (2) — DEC-43 frequency: a mirror's URL is remembered per viewer mount by (document, revision), within the granted window", () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  beforeEach(() => {
+    calls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      const url = new URL(String(input), "https://app");
+      return mirrorUrl(new NextRequest(url, { headers: (init?.headers ?? {}) as Record<string, string> }));
+    }) as typeof fetch;
+  });
+  afterEach(() => { globalThis.fetch = realFetch; });
+  const KD_OTHER = "77777777-7777-4777-8777-777777777790";
+  const KEY_B = `orgs/${ORG}/libraries/${LIB}/HSE-7-rev-B.pdf`;
+  /** The source publishes revision B; the sync re-points the SAME row. */
+  const repoint = () => {
+    db.tables.document_versions.push({ ...db.tables.document_versions[0], id: "v2", file_url: KEY_B, revision_label: "B" });
+    db.tables.documents[0].current_version_id = "v2";
+    Object.assign(db.tables.knowledge_documents.find((r) => r.id === KD_MIRROR)!, { file_key: KEY_B, source_version_id: "v2", source_rev: "B" });
+  };
+
+  it("the route says which revision it signed (non-secret — never the key)", async () => {
+    const r = await openMirror();
+    expect(r.body).toMatchObject({ sourceVersionId: "v1", sourceRev: "A", expiresIn: PRESIGNED_DEFAULT_SECONDS });
+    expect(r.text).not.toContain(KEY);
+  });
+  it("reopen within a mount does not re-sign — a carousel stepping to another source and back signs each file once", async () => {
+    db.tables.knowledge_documents.push({ ...db.tables.knowledge_documents[1], id: KD_OTHER });
+    const mount = createMirrorUrlMemo();
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1", sourceRev: "A" }, requestKnowledgeMirrorUrl);
+    await mount.open(KD_OTHER, { sourceVersionId: "v1", sourceRev: "A" }, requestKnowledgeMirrorUrl);
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1", sourceRev: "A" }, requestKnowledgeMirrorUrl);
+    await mount.open(KD_OTHER, { sourceVersionId: "v1", sourceRev: "A" }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(2);
+    expect(db.signedKeys).toEqual([KEY, KEY]);
+  });
+  it("a changed revision re-signs and signs the NEW key (never the superseded file under the new citation)", async () => {
+    const mount = createMirrorUrlMemo();
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1", sourceRev: "A" }, requestKnowledgeMirrorUrl);
+    repoint();
+    await mount.open(KD_MIRROR, { sourceVersionId: "v2", sourceRev: "B" }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(2);
+    expect(db.signedKeys).toEqual([KEY, KEY_B]);
+    // …and B, reopened in the same mount, is remembered too
+    await mount.open(KD_MIRROR, { sourceVersionId: "v2", sourceRev: "B" }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(2);
+  });
+  it("a grant is filed under the revision the ROUTE signed: a page still listing A when the row is at B re-asks on every open (never serves B's URL for A, never A's for B)", async () => {
+    repoint();
+    const mount = createMirrorUrlMemo();
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1", sourceRev: "A" }, requestKnowledgeMirrorUrl);
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1", sourceRev: "A" }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(2);
+    expect(db.signedKeys).toEqual([KEY_B, KEY_B]);
+    // once the page lists B, the remembered B grant serves
+    await mount.open(KD_MIRROR, { sourceVersionId: "v2", sourceRev: "B" }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(2);
+  });
+  it("a fresh mount re-signs", async () => {
+    await createMirrorUrlMemo().open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl);
+    await createMirrorUrlMemo().open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(2);
+  });
+  it("never keyed by the document id alone: with no revision known every open asks", async () => {
+    expect(mirrorRevisionKey(KD_MIRROR, {})).toBeNull();
+    expect(mirrorRevisionKey(KD_MIRROR, { sourceRev: "A" })).not.toBe(mirrorRevisionKey(KD_MIRROR, { sourceRev: "B" }));
+    expect(mirrorRevisionKey(KD_MIRROR, { sourceVersionId: "v1", sourceRev: "A" })).not.toBe(mirrorRevisionKey(KD_MIRROR, { sourceVersionId: "v2", sourceRev: "A" }));
+    const mount = createMirrorUrlMemo();
+    await mount.open(KD_MIRROR, null, requestKnowledgeMirrorUrl);
+    await mount.open(KD_MIRROR, { sourceVersionId: null, sourceRev: null }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(2);
+  });
+  it("at most the granted window: past (granted − margin) the URL is signed again", async () => {
+    let t = 1_000_000;
+    const mount = createMirrorUrlMemo(() => t);
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl);
+    t += (PRESIGNED_DEFAULT_SECONDS - MIRROR_URL_MEMO_MARGIN_SECONDS) * 1000 - 1;
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(1);
+    t += 1;
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl);
+    expect(calls).toBe(2);
+    // a grant with no window is never remembered
+    const noWindow = createMirrorUrlMemo();
+    const sign = async () => ({ url: "u", expiresIn: null, sourceVersionId: "v1", sourceRev: "A" });
+    await noWindow.open(KD_MIRROR, { sourceVersionId: "v1" }, sign);
+    expect(noWindow.size()).toBe(0);
+  });
+  it("a refusal is never remembered: a restricted mirror asks (and refuses) every time", async () => {
+    seed({ folderAcl: acl([allow("team", "T-eng", ["read"])]) });
+    const mount = createMirrorUrlMemo();
+    await expect(mount.open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl)).rejects.toThrow(MIRROR_SOURCE_RESTRICTED);
+    await expect(mount.open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl)).rejects.toThrow(MIRROR_SOURCE_RESTRICTED);
+    expect(calls).toBe(2);
+    expect(mount.size()).toBe(0);
+  });
+  it("the resulting DEC-43 frequency: one CONTROLLER_RESTRICTED_READ per file per revision per viewer mount, within the window", async () => {
+    seed({ folderAcl: acl([allow("team", "T-eng", ["read"])]) });
+    db.user = { id: "u-dc", email: "dc@example.com" };
+    const mount = createMirrorUrlMemo();
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl);
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl);
+    await mount.open(KD_MIRROR, { sourceVersionId: "v1" }, requestKnowledgeMirrorUrl);
+    expect(restrictedReads()).toBe(1);
+    repoint();
+    await mount.open(KD_MIRROR, { sourceVersionId: "v2" }, requestKnowledgeMirrorUrl);
+    expect(restrictedReads()).toBe(2);
+    await createMirrorUrlMemo().open(KD_MIRROR, { sourceVersionId: "v2" }, requestKnowledgeMirrorUrl);
+    expect(restrictedReads()).toBe(3);
+  });
+  it("source pins: the viewer holds ONE memory per mount and keys it by the active source's revision; the library keeps no module-wide memory", () => {
+    const viewer = readFileSync(join(process.cwd(), "components/knowledge/CitedPageViewer.tsx"), "utf8");
+    expect(viewer).toContain("const [mirrorUrls] = useState(() => createMirrorUrlMemo());");
+    expect(viewer).toMatch(/return \{ fileKey, title, documentId, sourceVersionId, sourceRev \};/);
+    expect(viewer).toMatch(/sourceVersionId: e\.sourceVersionId \?\? null, sourceRev: e\.sourceRev \?\? null,/);
+    const page = readFileSync(join(process.cwd(), "app/(protected)/knowledge/[id]/page.tsx"), "utf8");
+    expect(page).toMatch(/sourceVersionId=\{viewer\.sourceVersionId\}/);
+    expect((page.match(/sourceVersionId: (?:d|doc)\.sourceVersionId \?\? null/g) ?? []).length).toBeGreaterThanOrEqual(5);
+    const lib = readFileSync(join(process.cwd(), "lib/knowledge.ts"), "utf8");
+    expect(lib).not.toMatch(/new Map<string, \{ url/);
+  });
+});
+
+describe("I-29 merge, DEC-90 ruling (3) — a mention chip / 'where else' jump of a mirror opens through the route the same file its key opened", () => {
+  it("for the same reader the route signs exactly the key the chip or jump used to carry, and refuses exactly whom the door refused", async () => {
+    for (const c of [
+      { seed: {}, uid: "u-viewer" },
+      { seed: { folderAcl: acl([allow("team", "T-eng", ["read"])]) }, uid: "u-viewer" },
+      { seed: { folderAcl: acl([allow("team", "T-eng", ["read"])]), teams: ["T-eng"] }, uid: "u-viewer" },
+      { seed: { folderAcl: acl([allow("team", "T-eng", ["read"])]) }, uid: "u-dc" },
+    ] as Array<{ seed: Parameters<typeof seed>[0]; uid: string }>) {
+      seed(c.seed);
+      const door = await openKeyAtDoor(c.uid);
+      const doorKeys = [...db.signedKeys];
+      seed(c.seed);
+      const route = await openMirror(KD_MIRROR, c.uid);
+      expect(route.status === 200).toBe(door === 200);
+      expect(db.signedKeys).toEqual(doorKeys);
+      expect(route.text).not.toContain(KEY);
+    }
+  });
+});
+
+describe("KACL-9 residual (I-29 merge) — /api/flows/browse's own documents page read fails closed", () => {
+  const browse = () => flowsBrowse(new NextRequest(`https://app/api/flows/browse?orgId=${ORG}`, { headers: { authorization: "Bearer t" } }));
+  it("reproduction → fix: an errored documents page answers the route's 503 — never a tree ended short", async () => {
+    db.failWhen.push(({ table, columns }) => table === "documents" && columns.includes("document_number") ? { message: "statement timeout" } : undefined);
+    const res = await browse();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "Couldn't read the document libraries and folders (and their access rules) — try again." });
+  });
+  it("regression: a readable page builds the tree as before", async () => {
+    const res = await browse();
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(await res.json())).toContain("HSE-7");
   });
 });

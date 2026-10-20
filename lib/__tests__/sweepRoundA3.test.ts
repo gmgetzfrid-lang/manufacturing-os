@@ -68,7 +68,9 @@ describe("DOCACL-5 — content is served on read/download, never on discover", (
     expect(canServeContent({ principal, aclChain: [], visibility: "normal" })).toBe(true);
   });
   it("the download-url route uses canServeContent", () => {
-    const r = src("app/api/storage/download-url/route.ts");
+    // The gate moved verbatim to lib/documentKeyGate.ts (DEC-90 ruling (4), I-29 merge); the route imports it.
+    expect(src("app/api/storage/download-url/route.ts")).toContain('import { documentKeyGate } from "@/lib/documentKeyGate";');
+    const r = src("lib/documentKeyGate.ts");
     expect(r).toMatch(/const contentCheck = \{/); // Round E / DOCACL-3: the same evaluation feeds the bypass audit
     expect(r).toMatch(/const allowed = canServeContent\(contentCheck\);/);
     expect(r).not.toMatch(/canDiscover\(/);

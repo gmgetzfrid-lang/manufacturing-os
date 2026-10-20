@@ -1072,7 +1072,7 @@
         "public/sw.js:214-215",
         "app/api/storage/download-url/route.ts:10-20",
         "app/api/storage/download-url/route.ts:91-111",
-        "app/api/storage/download-url/route.ts:151-153",
+        "app/api/storage/download-url/route.ts:120-134",
         "app/api/storage/resolve/route.ts:22-25",
         "lib/storage.ts:126-131",
         "components/viewers/SecureDocViewer.tsx:105-110"

@@ -83,6 +83,10 @@ export interface KnowledgeDocument {
   sourceId: string | null;
   sourceDocumentId: string | null;
   sourceRev: string | null;
+  /** The source revision (document_versions id) a mirror's file is — the
+   *  viewer keys its per-mount URL memory by it (DEC-43 frequency, the
+   *  integrator's DEC-90 ruling (2) at the I-29 merge). Null for an upload. */
+  sourceVersionId?: string | null;
   /** Pages that had no text layer and were read by AI vision instead. */
   visionPages: number;
   /** Pages with no extractable text at all — the running count the engine
@@ -144,7 +148,16 @@ export interface KnowledgeAnswer {
   /** Documents the answer text NAMES (matched by designation against the
    *  reachable roster) — each becomes a clickable open-the-document chip
    *  inline in the answer, even when no [n] cites it. */
-  mentionedDocs?: Array<{ id: string; name: string; fileKey: string; page: number; mention: string }>;
+  mentionedDocs?: Array<{
+    id: string; name: string;
+    /** A direct upload's key, as before; `null` for a source-linked mirror,
+     *  which opens by `id` through /api/knowledge/mirror-url (KACL-7
+     *  criterion 3 — the integrator's DEC-90 ruling (3) at the I-29 merge). */
+    fileKey: string | null;
+    page: number; mention: string;
+    /** A mirror's revision (non-secret): the viewer's URL memory key. */
+    sourceVersionId?: string | null; sourceRev?: string | null;
+  }>;
   /** Internet mode only: whether a LIVE web tool ran (vs model knowledge). */
   liveWeb?: boolean;
   /** Documents the passages referenced that no linked library contains —
@@ -472,6 +485,7 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
   sourceId: (r.source_id as string | null) ?? null,
   sourceDocumentId: (r.source_document_id as string | null) ?? null,
   sourceRev: (r.source_rev as string | null) ?? null,
+  sourceVersionId: (r.source_version_id as string | null) ?? null,
   visionPages: (r.vision_pages as number | null) ?? 0,
   // The 20261122 columns ride the same select("*"); absent keys (a database
   // without it) read as nothing recorded.
@@ -492,7 +506,7 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
  *  20260922's `vision_pages` — each absent column reads as mapDocument reads
  *  it under `select("*")` on that database. */
 const MIRROR_LIST_BASE =
-  "id, library_id, name, file_size, page_count, pages_indexed, status, error, created_by_name, created_at, source_id, source_document_id, source_rev";
+  "id, library_id, name, file_size, page_count, pages_indexed, status, error, created_by_name, created_at, source_id, source_document_id, source_rev, source_version_id";
 export const MIRROR_LIST_COLUMN_TIERS: readonly string[] = [
   `${MIRROR_LIST_BASE}, vision_pages, empty_pages, vision_failed_pages, vision_partial_accepted, chunk_version`,
   `${MIRROR_LIST_BASE}, vision_pages`,
@@ -502,13 +516,32 @@ export const MIRROR_LIST_COLUMN_TIERS: readonly string[] = [
 const missingColumn = (e: { code?: string } | null | undefined) =>
   !!e && (e.code === "42703" || e.code === "PGRST204");
 
+/** A missing-column error (42703 / PGRST204) that names source_document_id:
+ *  a database older than 20260917, which has no source-linked mirrors. */
+const namesSourceDocumentColumn = (
+  e: { code?: string; message?: string; details?: string | null; hint?: string | null } | null | undefined,
+) => missingColumn(e) && /source_document_id/.test(`${e?.message ?? ""} ${e?.details ?? ""} ${e?.hint ?? ""}`);
+
 export async function listKnowledgeDocuments(libraryId: string): Promise<KnowledgeDocument[]> {
   // Direct uploads: the whole row, exactly as before (their key opens them).
   const uploads = await supabase
     .from("knowledge_documents").select("*").eq("library_id", libraryId)
     .is("source_document_id", null)
     .order("created_at", { ascending: true });
-  if (uploads.error) return [];
+  if (uploads.error) {
+    // A database older than 20260917 has no source_document_id column, so
+    // the filter itself fails (42703 / PGRST204 naming it). Every row there
+    // is an upload: the base read, exactly as before I-29 — select("*")
+    // ordered by created_at, no filter, no mirror read (ruled by the
+    // integrator at the I-29 merge, 2026-10-20, DEC-90). Any other error is
+    // the empty list it always was.
+    if (!namesSourceDocumentColumn(uploads.error)) return [];
+    const base = await supabase
+      .from("knowledge_documents").select("*").eq("library_id", libraryId)
+      .order("created_at", { ascending: true });
+    if (base.error) return [];
+    return ((base.data ?? []) as Array<Record<string, unknown>>).map(mapDocument);
+  }
   // Source-linked mirrors: every listed column but file_key.
   let mirrors: Array<Record<string, unknown>> = [];
   for (const columns of MIRROR_LIST_COLUMN_TIERS) {
@@ -545,22 +578,32 @@ export class KnowledgeMirrorRestrictedError extends Error {
   }
 }
 
+/** What /api/knowledge/mirror-url granted: the URL, the window it was
+ *  granted for (seconds), and WHICH revision of the mirror it signed — the
+ *  row's current source_version_id / source_rev (non-secret, never the
+ *  key). */
+export interface KnowledgeMirrorGrant {
+  url: string;
+  expiresIn: number | null;
+  sourceVersionId: string | null;
+  sourceRev: string | null;
+}
+
 /** KACL-5 criterion 4 / KACL-7 criterion 3: a short-lived, inline signed URL
  *  for a SOURCE-LINKED mirror's file, decided by /api/knowledge/mirror-url
- *  (the bytes door's read predicate on the mirror's source). Throws
- *  KnowledgeMirrorRestrictedError when the source is restricted for the
- *  caller, ArchivedFileError when the file was shed to an offline archive,
- *  and an Error carrying the route's words otherwise (a check that could not
- *  be made says so).
- *  Never cached in the browser: a mirror keeps its knowledge document id
- *  when its source publishes a new revision (lib/knowledgeSourceSync
- *  re-points file_key on the same row), so a URL remembered by id would open
- *  the superseded revision's file under the new revision's citation. Each
- *  open asks the route, which signs the row's CURRENT key — as the old path
- *  signed the listed key, whose storage cache was per key, so per revision.
- *  The viewer asks once per file it opens (CitedPageViewer re-asks only when
- *  the document changes). */
-export async function getKnowledgeMirrorUrl(documentId: string): Promise<string> {
+ *  (the bytes door's read predicate on the mirror's source), with the grant's
+ *  window and the revision it signed. Throws KnowledgeMirrorRestrictedError
+ *  when the source is restricted for the caller, ArchivedFileError when the
+ *  file was shed to an offline archive, and an Error carrying the route's
+ *  words otherwise (a check that could not be made says so).
+ *  Nothing is remembered HERE (module-wide, by document id): a mirror keeps
+ *  its knowledge document id when its source publishes a new revision
+ *  (lib/knowledgeSourceSync re-points file_key on the same row), so a URL
+ *  remembered by id would open the superseded revision's file under the new
+ *  revision's citation. The viewer keeps a per-mount memory keyed by the
+ *  REVISION (createMirrorUrlMemo, lib/knowledgeMirrorUrlMemo — the
+ *  integrator's DEC-90 ruling (2) at the I-29 merge). */
+export async function requestKnowledgeMirrorUrl(documentId: string): Promise<KnowledgeMirrorGrant> {
   const token = await authToken();
   const res = await fetch(`/api/knowledge/mirror-url?id=${encodeURIComponent(documentId)}`, {
     headers: { authorization: `Bearer ${token}` },
@@ -568,13 +611,26 @@ export async function getKnowledgeMirrorUrl(documentId: string): Promise<string>
   const data = (await res.json().catch(() => null)) as {
     url?: string; expiresIn?: number | null; error?: string; restricted?: boolean;
     archived?: boolean; archiveId?: string | null; root?: string | null; fileName?: string | null;
+    sourceVersionId?: string | null; sourceRev?: string | null;
   } | null;
-  if (res.ok && data && typeof data.url === "string") return data.url;
+  if (res.ok && data && typeof data.url === "string") {
+    return {
+      url: data.url,
+      expiresIn: typeof data.expiresIn === "number" && Number.isFinite(data.expiresIn) ? data.expiresIn : null,
+      sourceVersionId: typeof data.sourceVersionId === "string" && data.sourceVersionId ? data.sourceVersionId : null,
+      sourceRev: typeof data.sourceRev === "string" && data.sourceRev ? data.sourceRev : null,
+    };
+  }
   if (res.status === 403 && data?.restricted) throw new KnowledgeMirrorRestrictedError(data.error || MIRROR_SOURCE_RESTRICTED);
   if (res.status === 409 && data?.archived) {
     throw new ArchivedFileError({ archiveId: data.archiveId ?? null, root: data.root ?? null, fileName: data.fileName || "file" });
   }
   throw new Error(data?.error || `Couldn't open this document (HTTP ${res.status}).`);
+}
+
+/** The URL alone (requestKnowledgeMirrorUrl): every call asks the route. */
+export async function getKnowledgeMirrorUrl(documentId: string): Promise<string> {
+  return (await requestKnowledgeMirrorUrl(documentId)).url;
 }
 
 // ── The browser-side PDF check (ING-9) ────────────────────────────────────
@@ -1970,7 +2026,14 @@ export interface TagElsewhere {
   tag: string;
   documentId: string;
   documentName: string;
-  fileKey: string;
+  /** A direct upload's key, as before; `null` for a source-linked mirror,
+   *  which the viewer opens by `documentId` through /api/knowledge/mirror-url
+   *  (KACL-7 criterion 3 — the integrator's DEC-90 ruling (3) at the I-29
+   *  merge). */
+  fileKey: string | null;
+  /** A mirror's revision (non-secret): the viewer's URL memory key. */
+  sourceVersionId?: string | null;
+  sourceRev?: string | null;
   page: number;
   sameDocument: boolean;
 }

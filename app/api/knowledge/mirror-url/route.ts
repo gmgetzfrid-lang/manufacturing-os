@@ -24,8 +24,10 @@
 // made about the mirror's source. A key under ANOTHER workspace's prefix is
 // refused. A bound key from before the orgs/ prefix (registers can still
 // carry one — the sync copies a revision's file_url unchanged) is decided by
-// the door's own gate (documentKeyGate, exported for this: the same
-// predicate, which the door's handler applies to org keys only) with the
+// the door's own gate (documentKeyGate, lib/documentKeyGate.ts — the same
+// predicate, which the door's handler applies to org keys only; moved out of
+// the door's route module by the integrator's DEC-90 ruling (4) at the I-29
+// merge, behaviour unchanged) with the
 // mirror's workspace as the key's, then signed by the door — one walk, never
 // a key signed on membership alone. Anything that cannot be checked fails
 // CLOSED and says so: a failed lookup is 503, an unbound key is 409, a key
@@ -35,7 +37,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { GET as signStorageKey, documentKeyGate } from "@/app/api/storage/download-url/route";
+import { GET as signStorageKey } from "@/app/api/storage/download-url/route";
+import { documentKeyGate } from "@/lib/documentKeyGate";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import {
   MIRROR_ACCESS_UNVERIFIED, MIRROR_IS_UPLOAD, MIRROR_KEY_INVALID, MIRROR_KEY_OUTSIDE_WORKSPACE, MIRROR_NOT_FOUND,
@@ -86,11 +89,14 @@ export async function GET(req: NextRequest) {
   // The mirror, read as the service role — its key never leaves this route.
   const { data: row, error: rowErr } = await supabaseAdmin
     .from("knowledge_documents")
-    .select("id, org_id, file_key, source_document_id")
+    .select("id, org_id, file_key, source_document_id, source_version_id, source_rev")
     .eq("id", id)
     .maybeSingle();
   if (rowErr) return answer({ error: MIRROR_ACCESS_UNVERIFIED }, 503);
-  const mirror = row as { org_id?: string | null; file_key?: string | null; source_document_id?: string | null } | null;
+  const mirror = row as {
+    org_id?: string | null; file_key?: string | null; source_document_id?: string | null;
+    source_version_id?: string | null; source_rev?: string | null;
+  } | null;
   if (!mirror?.org_id) return answer({ error: MIRROR_NOT_FOUND }, 404);
 
   // An active member of the mirror's workspace, or the row does not exist
@@ -153,6 +159,12 @@ export async function GET(req: NextRequest) {
       expiresIn: body.expiresIn ?? null,
       disposition: body.disposition ?? null,
       contentType: body.contentType ?? null,
+      // WHICH revision was signed (non-secret — never the key): the viewer
+      // files the URL under it in its per-mount memory, so a re-pointed
+      // mirror (a new revision) is always re-signed (the integrator's DEC-90
+      // ruling (2) at the I-29 merge).
+      sourceVersionId: mirror.source_version_id ?? null,
+      sourceRev: mirror.source_rev ?? null,
     }, 200);
   }
   // Anything the door refused, in this route's words; anything else (the

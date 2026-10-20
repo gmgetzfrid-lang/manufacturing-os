@@ -30,7 +30,8 @@ import {
   ZoomIn, ZoomOut,
 } from "lucide-react";
 import { getSignedUrlForPath } from "@/lib/storage";
-import { locateTagsOnPage, getKnowledgeMirrorUrl, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
+import { locateTagsOnPage, requestKnowledgeMirrorUrl, type TagPosition, type TagElsewhere } from "@/lib/knowledge";
+import { createMirrorUrlMemo } from "@/lib/knowledgeMirrorUrlMemo";
 import { textMarkPosition, type PageGeometry } from "@/lib/drawingLocate";
 import { supabase } from "@/lib/supabase";
 
@@ -80,6 +81,10 @@ export interface CitedSource {
   title: string;
   section?: string | null;
   documentId?: string;
+  /** A mirror's source revision (non-secret) — the key of the viewer's
+   *  per-mount URL memory (DEC-90 ruling (2) at the I-29 merge). */
+  sourceVersionId?: string | null;
+  sourceRev?: string | null;
   tags?: string[];
   /** The answer's citation number, shown on the carousel jump chip. */
   n?: number;
@@ -88,6 +93,7 @@ export interface CitedSource {
 export default function CitedPageViewer({
   fileKey: fileKeyProp, page: pageProp, quote: quoteProp, title: titleProp,
   section: sectionProp, onClose, orgId, documentId: documentIdProp,
+  sourceVersionId: sourceVersionIdProp, sourceRev: sourceRevProp,
   tags: tagsProp, sources, initialIndex,
 }: {
   fileKey: string | null;
@@ -100,6 +106,9 @@ export default function CitedPageViewer({
    *  exactly as it always has. */
   orgId?: string;
   documentId?: string;
+  /** A mirror's source revision, when the page knows it (see CitedSource). */
+  sourceVersionId?: string | null;
+  sourceRev?: string | null;
   /** Tags the answer is about — marked on the sheet as soon as it opens. */
   tags?: string[];
   /** The answer's FULL evidence trail. With 2+ entries the viewer grows a
@@ -114,8 +123,11 @@ export default function CitedPageViewer({
   const list = useMemo<CitedSource[]>(
     () => (sources && sources.length > 0
       ? sources
-      : [{ fileKey: fileKeyProp, page: pageProp, quote: quoteProp, title: titleProp, section: sectionProp, documentId: documentIdProp, tags: tagsProp }]),
-    [sources, fileKeyProp, pageProp, quoteProp, titleProp, sectionProp, documentIdProp, tagsProp],
+      : [{
+          fileKey: fileKeyProp, page: pageProp, quote: quoteProp, title: titleProp, section: sectionProp, documentId: documentIdProp,
+          sourceVersionId: sourceVersionIdProp, sourceRev: sourceRevProp, tags: tagsProp,
+        }]),
+    [sources, fileKeyProp, pageProp, quoteProp, titleProp, sectionProp, documentIdProp, sourceVersionIdProp, sourceRevProp, tagsProp],
   );
   const [idx, setIdx] = useState(() =>
     Math.min(Math.max(initialIndex ?? 0, 0), Math.max((sources?.length ?? 1) - 1, 0)));
@@ -123,6 +135,8 @@ export default function CitedPageViewer({
   const { fileKey, page, title } = activeSource;
   const section = activeSource.section ?? null;
   const documentId = activeSource.documentId;
+  const sourceVersionId = activeSource.sourceVersionId ?? null;
+  const sourceRev = activeSource.sourceRev ?? null;
   const tags = activeSource.tags;
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +151,14 @@ export default function CitedPageViewer({
   const dragRef = React.useRef<{ x: number; y: number; sl: number; st: number; moved: boolean } | null>(null);
   // The sheet currently on screen. Starts as the cited one; a jump chip can
   // swap it for a sibling sheet where the wanted tag actually lives.
-  const [view, setView] = useState({ fileKey, title, documentId });
+  const [view, setView] = useState({ fileKey, title, documentId, sourceVersionId, sourceRev });
+  // DEC-43 frequency (the integrator's DEC-90 ruling (2) at the I-29 merge):
+  // a mirror's signed URL is remembered for THIS mount only, keyed by
+  // (documentId, revision) — never by the document id alone — for at most
+  // the granted window, so stepping the carousel back does not re-sign (and
+  // re-record a controller's bypass read), while a re-pointed mirror (a new
+  // revision) and a fresh mount always do (lib/knowledgeMirrorUrlMemo).
+  const [mirrorUrls] = useState(() => createMirrorUrlMemo());
   // Stepping the source carousel (or a prop change) re-aims the viewer at
   // the newly active source's document AND page. Crossing into a DIFFERENT
   // file resets the page count — a stale count from the previous document
@@ -145,10 +166,10 @@ export default function CitedPageViewer({
   useEffect(() => {
     setView((prev) => {
       if (!sameFile(prev, { fileKey, documentId })) setNumPages(null);
-      return { fileKey, title, documentId };
+      return { fileKey, title, documentId, sourceVersionId, sourceRev };
     });
     setPageNumber(page);
-  }, [fileKey, title, documentId, page]);
+  }, [fileKey, title, documentId, sourceVersionId, sourceRev, page]);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,15 +182,16 @@ export default function CitedPageViewer({
       ? getSignedUrlForPath(view.fileKey, undefined, { inline: true })
       // KACL-5 / KACL-7: a source-linked mirror opens through the server,
       // which decides on its source and answers a URL — never the key. A
-      // restricted source says so (the route's words).
+      // restricted source says so (the route's words). Remembered for this
+      // mount by (documentId, revision), within the granted window.
       : view.documentId
-        ? getKnowledgeMirrorUrl(view.documentId)
+        ? mirrorUrls.open(view.documentId, { sourceVersionId: view.sourceVersionId, sourceRev: view.sourceRev }, requestKnowledgeMirrorUrl)
         : Promise.reject(new Error("This document has no stored file to open."));
     signed
       .then((u) => { if (!cancelled) setUrl(u); })
       .catch((e) => { if (!cancelled) setError((e as Error).message); });
     return () => { cancelled = true; };
-  }, [view.fileKey, view.documentId]);
+  }, [view.fileKey, view.documentId, view.sourceVersionId, view.sourceRev, mirrorUrls]);
 
   // Fit-to-width baseline: the page fills the modal at 100%; zoom multiplies.
   useEffect(() => {
@@ -352,7 +374,10 @@ export default function CitedPageViewer({
     setMarks([]); setElsewhere([]); setLocateNote(null);
     if (!sameFile(e, view)) {
       setNumPages(null);
-      setView({ fileKey: e.fileKey, title: e.documentName, documentId: e.documentId });
+      setView({
+        fileKey: e.fileKey, title: e.documentName, documentId: e.documentId,
+        sourceVersionId: e.sourceVersionId ?? null, sourceRev: e.sourceRev ?? null,
+      });
     }
     setPageNumber(e.page);
     setPendingFind(e.tag);
@@ -470,7 +495,7 @@ export default function CitedPageViewer({
                   setMarks([]); setElsewhere([]); setLocateNote(null);
                   if (!sameFile(view, { fileKey, documentId })) {
                     setNumPages(null);
-                    setView({ fileKey, title, documentId });
+                    setView({ fileKey, title, documentId, sourceVersionId, sourceRev });
                   }
                   setPageNumber(page);
                 }}

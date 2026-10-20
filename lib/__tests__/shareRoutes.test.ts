@@ -634,7 +634,8 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     expect(may.indexOf("await memberDownloadDenied(sb, { orgId: s.org_id, uid: s.created_by, aclIndex: d.acl_index ?? null })"))
       .toBeLessThan(may.indexOf("memberHoldsAny(member"));
     expect(may).toMatch(/if \(download\.unreadable\) \{[\s\S]*?return false;\s*\n\s*\}\s*\n\s*if \(download\.denied\) return false;/);
-    const route = src("app/api/storage/download-url/route.ts");
+    // The bytes door's gate moved verbatim to lib/documentKeyGate.ts (DEC-90 ruling (4), I-29 merge).
+    const route = src("lib/documentKeyGate.ts");
     expect(route).toContain('import { memberDownloadDenied, type DownloadDenyIndex } from "@/lib/downloadDeny";');
     // intelligence KACL-5: the route keeps the rule and refuses on a read error (closed).
     expect(route).toMatch(/const download = await memberDownloadDenied\(supabaseAdmin, \{/);

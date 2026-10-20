@@ -2014,7 +2014,7 @@
         "public/sw.js:156-177",
         "public/sw.js:203-220",
         "app/api/share/file/route.ts:152-158",
-        "app/api/storage/download-url/route.ts:144-153"
+        "app/api/storage/download-url/route.ts:120-134"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
@@ -2621,7 +2621,8 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "app/api/storage/download-url/route.ts:144-153",
+        "app/api/storage/download-url/route.ts:41-45",
+        "app/api/storage/download-url/route.ts:120-134",
         "lib/storage.ts:118-154"
       ],
       "has_verifier_correction": true,
@@ -2893,7 +2894,8 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "app/api/storage/download-url/route.ts:144-151",
+        "app/api/storage/download-url/route.ts:41-45",
+        "app/api/storage/download-url/route.ts:120",
         "lib/docPack.ts:31-34",
         "lib/downloads.ts:220",
         "lib/downloads.ts:139"

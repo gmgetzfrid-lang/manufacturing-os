@@ -140,10 +140,15 @@ export async function GET(req: NextRequest) {
     // past its limit, and this tree's whole promise is that no document
     // silently vanishes from it.
     for (let from = 0; from < 20_000; from += 1000) {
-      const { data } = await supabaseAdmin
+      const { data, error: docsErr } = await supabaseAdmin
         .from("documents")
         .select("id, name, title, document_number, library_id, collection_id, status, archived_at, current_version_id")
         .eq("org_id", orgId).order("id").range(from, from + 999);
+      // KACL-9 residual (ruled by the integrator at the I-29 merge,
+      // 2026-10-20, DEC-90): a failed page FAILS CLOSED with the route's own
+      // 503 wording — it never ends the tree short (documents silently
+      // missing, a held-back or restricted one shown out of place).
+      if (docsErr) return bad(UNREADABLE, 503);
       for (const d of (data ?? []) as Array<{
         id: string; name: string | null; title: string | null; document_number: string | null;
         library_id: string | null; collection_id: string | null;
