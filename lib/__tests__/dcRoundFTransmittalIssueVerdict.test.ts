@@ -69,10 +69,13 @@ describe("20261199 — transmittals_guard re-created from its NEWEST definition 
   const base = fnBody(read(newest), H);
   const next = fnBody(m199, H);
 
-  it("the newest definition before this file is 20261133 (the folder is scanned now), and none after it", () => {
+  it("the newest definition before this file is 20261133 (the folder is scanned now); the one after it is 20261224's", () => {
     expect(at).toBeGreaterThan(0);
     expect(newest).toBe("20261133_dc_roundF_transmittal_rails.sql");
-    expect(definers.slice(at + 1)).toEqual([]);
+    // intelligence I-28 (INTK-19) re-creates it from this file's body with its
+    // two TRX-1 capability calls asked as the caller (caller_capability_allows);
+    // its own lineDiff test pins every other line to this body.
+    expect(definers.slice(at + 1)).toEqual(["20261224_intel_roundG_definer_oracles.sql"]);
   });
   it("every line of the 20261133 body survives (lineDiff onlyInA is empty)", () => {
     expect(lineDiff(base, next).onlyInA).toEqual([]);

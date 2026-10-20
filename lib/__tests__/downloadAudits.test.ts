@@ -10,7 +10,11 @@
 //     fallback when data this repo cannot see forbids it). Shape-pinned, and
 //     the SELECT arm is byte-carried from the schema.sql policy it replaces.
 //   * A census replays schema.sql + every numbered migration and proves the
-//     LIVE policy set on download_audits is exactly {insert_own, select}.
+//     LIVE policy set on download_audits is exactly {insert_own, select} —
+//     plus, since drafting-flow DF-P12 (20261223), the RESTRICTIVE SELECT
+//     download_audits_ticket_read_scope, which only narrows (a row naming a
+//     ticket is read under the caller's ticket scope; public-surfaces
+//     PHYS-17). Still no UPDATE, DELETE or ALL.
 //   * lib/staleCopies.getDocumentRecall reads the new shape (legacy fallback
 //     on a pre-migration database), flags EXTERNAL copies, and says
 //     `unavailable` when the record cannot be read instead of returning an
@@ -184,7 +188,7 @@ describe("policy census — the live download_audits policy set, replayed from s
     expect(() => policyEvents("ALTER POLICY download_audits_select ON download_audits USING (true);")).toThrow(/ALTER POLICY/);
   });
 
-  it("is exactly {download_audits_insert_own: INSERT, download_audits_select: SELECT} — no UPDATE, DELETE or ALL survives", () => {
+  it("is exactly {download_audits_insert_own: INSERT, download_audits_select: SELECT, download_audits_ticket_read_scope: SELECT (RESTRICTIVE, 20261223)} — no UPDATE, DELETE or ALL survives", () => {
     const live = new Map<string, string>();
     let sawOriginal = false;
     for (const file of migrationFiles()) {
@@ -206,7 +210,11 @@ describe("policy census — the live download_audits policy set, replayed from s
     expect(Object.fromEntries([...live.entries()].sort())).toEqual({
       download_audits_insert_own: "INSERT",
       download_audits_select: "SELECT",
+      download_audits_ticket_read_scope: "SELECT",
     });
+    // the third is RESTRICTIVE — it narrows the SELECT the second admits, never widens it
+    const defining = migrationFiles().filter((f) => /CREATE\s+POLICY\s+download_audits_ticket_read_scope\s+ON\s+download_audits\s+AS\s+RESTRICTIVE\s+FOR\s+SELECT/.test(stripSqlComments(readFileSync(f, "utf8"))));
+    expect(defining.map((f) => f.slice(f.lastIndexOf("/") + 1))).toEqual(["20261223_df_roundG_download_audits_ticket_copy.sql"]);
   });
 });
 

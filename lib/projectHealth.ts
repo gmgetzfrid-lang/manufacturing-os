@@ -66,8 +66,11 @@ export interface ProjectStateSnapshot {
   checklistsCompletedUnsigned?: number;
   /** QUAL-15: voided checklists — they leave every count above, so each is
    *  named at closeout with who voided it (the CHECKLIST_STATUS audit row;
-   *  null = none on record; `voidedByUnreadable` = that read failed). */
-  checklistsVoided?: Array<{ id: string; title: string; voidedBy: string | null; voidedByUnreadable?: boolean }>;
+   *  null = none on record; `voidedByUnreadable` = that read failed).
+   *  ALOG-7 (admin-and-org P13): `voidedByActorKind` is that row's
+   *  audit_logs.actor_kind (20261201) — null / absent when the row has none
+   *  (the writer's own word), so the line says whose word "voided by" is. */
+  checklistsVoided?: Array<{ id: string; title: string; voidedBy: string | null; voidedByActorKind?: string | null; voidedByUnreadable?: boolean }>;
   turnoverRequired: number;
   turnoverAccepted: number;
   punchOpen: number;

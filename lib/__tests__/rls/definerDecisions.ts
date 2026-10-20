@@ -28,13 +28,15 @@
 //   policy-helper-oracle  as above, but the body never reads the session: it
 //                         judges a person (or maps a project) the caller
 //                         passes in, so anyone holding the anon key can ask
-//                         about another uid. Kept (the policies need it); the
-//                         narrowing is owned by projects-and-cost INTK-19.
+//                         about another uid. No row carries it since
+//                         20261224 (projects-and-cost INTK-19): a new one
+//                         needs an owner.
 //   signed-in-oracle      anon and PUBLIC revoked, authenticated keeps
 //                         EXECUTE, and the body judges a uid the caller
 //                         passes in without binding it to auth.uid(): any
 //                         signed-in account, of any workspace, can ask about
-//                         any person. Recorded; the narrowing is INTK-19's.
+//                         any person. No row carries it since 20261224
+//                         (INTK-19): a new one needs an owner.
 //   own-scope-unused      reads only the caller's own ids; nothing uses it.
 //   signed-in             anon and PUBLIC revoked by its own migration;
 //                         authenticated keeps EXECUTE; the body judges the
@@ -63,9 +65,10 @@
 // PERSON_PARAM: p_uid, p_to_user, p_actor, p_member_id, p_new_owner, …)
 // either carries an oracle decision with an owner, or says in `person` how the
 // body binds that parameter (PersonBinding), with its own evidence; a binding
-// that still leaks (caller-supplied-oracle) carries an owner too. The census
-// checks this against the catalog, so a templated reason cannot hide a new
-// oracle.
+// that still leaks (caller-supplied-oracle) carries an owner too. A function
+// with several person parameters binds each one in `persons` (intelligence
+// I-28: user_is_effective_owner's p_doc_owner and p_uid). The census checks
+// this against the catalog, so a templated reason cannot hide a new oracle.
 
 export type PersonBinding =
   /** For a signed-in caller the body refuses (or replaces) any value but auth.uid(). */
@@ -82,6 +85,9 @@ export type PersonBinding =
   | "caller-authority"
   /** The caller must be an active member of the workspace, and a person outside it gets a constant answer. */
   | "same-workspace";
+
+/** How a body binds one person parameter, with fragments of the body that show it. */
+export interface PersonBindingRow { param: string; binding: PersonBinding; evidence: readonly string[] }
 
 export interface DefinerDecision {
   /** regprocedure text, as pg_proc.oid::regprocedure prints it. */
@@ -103,7 +109,9 @@ export interface DefinerDecision {
   /** Fragments of the live body that carry the decision's claim (required for BODY_CLAIM_DECISIONS). */
   evidence?: readonly string[];
   /** For a function with a PERSON_PARAM parameter that is not an oracle: how the body binds it. */
-  person?: { param: string; binding: PersonBinding; evidence: readonly string[] };
+  person?: PersonBindingRow;
+  /** For a function with SEVERAL person parameters: how the body binds each one (in place of `person`). */
+  persons?: readonly PersonBindingRow[];
   /** Who owns a remaining narrowing, when the decision records one. */
   owner?: string;
 }
@@ -123,6 +131,11 @@ export const RULING_4_RULED =
 
 /** Decisions that record an oracle: the narrowing is owned by projects-and-cost INTK-19. */
 export const ORACLE_DECISIONS: readonly DefinerDecision["decision"][] = ["policy-helper-oracle", "signed-in-oracle"];
+
+/** Every person binding a row records: `persons` (several person parameters) or `person`. */
+export function personBindings(d: DefinerDecision): readonly PersonBindingRow[] {
+  return d.persons ?? (d.person ? [d.person] : []);
+}
 
 /** An IN parameter that names a person (p_uid, p_to_user, p_actor, p_member_id, p_new_owner, p_doc_owner, …). */
 export const PERSON_PARAM = /^(p_)?([a-z0-9]+_)*(uid|uids|user|users|user_id|actor|member|member_id|owner|recipient|signer|assignee|holder|requester|by)$/;
@@ -221,11 +234,11 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
 export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   {
     signature: "acl_index_denies(jsonb,uuid,uuid,text)",
-    decision: "policy-helper-oracle",
+    decision: "policy-helper",
     execute: { anon: true, authenticated: true, service_role: true },
-    reason: "Called inside 2 policies written for PUBLIC, so anon and authenticated keep EXECUTE (a REVOKE would turn a policy's empty answer into a 42501 error). Its body never reads auth.uid(): it judges the p_uid it is given — that uid's own deny entry, then its active roles and its teams — so anyone holding the public anon key can ask whether another person is denied an action, given the uuids. Also named by the app: lib/orchestrator/tools.ts.",
-    evidence: ["IF p_idx->'deny'->'users'->p_action ? p_uid::text THEN RETURN TRUE; END IF;", "FROM org_members WHERE org_id = p_org AND uid = p_uid AND status = 'active' LIMIT 1;"],
-    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+    reason: "Called inside 2 policies written for PUBLIC (documents_deny_upload_guard, documents_deny_write_guard), so anon and authenticated keep EXECUTE, and the intake_door role holds it by name (20261184). Since 20261224 (INTK-19) a client role (the anon key or a signed-in session, by the role PostgREST sets or the JWT's role claim) is answered only about auth.uid(): any other p_uid is refused 42501. Both policies pass auth.uid(), so each answers as before. The service role (lib/orchestrator/tools.ts) still asks about the person it names.",
+    evidence: ["IF p_uid IS DISTINCT FROM auth.uid() AND (current_setting('role', true) IN ('anon', 'authenticated') OR COALESCE(auth.role(), '') IN ('anon', 'authenticated')) THEN RAISE EXCEPTION 'acl_index_denies answers a client only about the signed-in caller (INTK-19).'"],
+    person: { param: "p_uid", binding: "is-the-caller", evidence: ["IF p_uid IS DISTINCT FROM auth.uid() AND (current_setting('role', true) IN ('anon', 'authenticated')"] },
   },
   {
     signature: "adopt_intake_document(uuid,uuid,uuid,text,jsonb)",
@@ -246,6 +259,13 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   { signature: "bump_intake_use(uuid,bigint)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261104_prj_roundG_intake_links.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/intake/upload/route.ts." },
   { signature: "bump_share_access(uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261081_dc_roundF_share_access_log.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/share/resolve/route.ts, lib/schemaExpectations.ts." },
   { signature: "bump_transmittal_portal_use(uuid,text)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261133_dc_roundF_transmittal_rails.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/transmittal/route.ts." },
+  {
+    signature: "caller_capability_allows(uuid,text,jsonb)",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "anon and PUBLIC revoked by 20261224_intel_roundG_definer_oracles.sql (INTK-19); authenticated and service_role execute it. It asks org_capability_allows_for about auth.uid() only. It is the caller-bound form the SECURITY INVOKER trigger transmittals_guard asks for TRX-1 (issuing, voiding and revoking a transmittal), now that the uid-taking form is the service role's and the definers' alone. With no session it answers false. No person parameter; no app .rpc( names it.",
+    evidence: ["SELECT org_capability_allows_for(p_org, p_cap, auth.uid(), p_resource);"],
+  },
   {
     signature: "caller_holds_any_role(uuid,text[])",
     decision: "policy-helper",
@@ -338,6 +358,7 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
     reason: "anon and PUBLIC revoked by 20261138_intel_roundG_unit_identity.sql; authenticated keeps EXECUTE. It counts the workspace's documents only when auth.uid() is an active member of p_org_id, and answers 0 otherwise. Named by the app: lib/orgGraph.ts.",
     evidence: ["WHEN EXISTS (SELECT 1 FROM org_members WHERE org_id = p_org_id AND uid = auth.uid() AND status = 'active') THEN (SELECT COUNT(*) FROM documents WHERE org_id = p_org_id)"],
   },
+  { signature: "effective_owner_matches(uuid,uuid,uuid,uuid)", decision: "internal", execute: { anon: false, authenticated: false, service_role: false }, reason: "Executable by no client role and not by the service role (20261224_intel_roundG_definer_oracles.sql: REVOKE … FROM PUBLIC, anon, authenticated, service_role). It is user_is_effective_owner's walk for the definer review_signoff_owner_stamp, which asks about candidates other than the signed-in caller (INTK-19). Its membership tests are written inline, so user_is_effective_owner stays the only function naming member_is_active." },
   {
     signature: "email_gate(uuid,uuid,text,text,text,text)",
     decision: "signed-in",
@@ -420,7 +441,7 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
     reason: "lib/libraryNumbering.ts:46 calls it as a signed-in member. 20260806 has no grant statement at all, so PUBLIC and Supabase's default grants leave it callable with the anon key; the body then answers NULL without advancing the counter, because a NULL auth.uid() is no active member of the library's workspace. " + RULING_4_RULED,
     evidence: ["IF NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = cfg.org_id AND m.uid = auth.uid() AND m.status = 'active') THEN RETURN NULL;"],
   },
-  { signature: "member_is_active(uuid,uuid)", decision: "revoked-20261217", execute: { anon: false, authenticated: false, service_role: true }, reason: "A membership oracle for ANY uid (\"is uid X active in org Y?\"), callable with the public anon key. Its only caller is user_is_effective_owner, a SECURITY DEFINER function owned by postgres that keeps calling it as its owner; no app .rpc( call, no policy, no SECURITY INVOKER function names it. 20261217 leaves EXECUTE to service_role only. That removes the direct door, not the answer: user_is_effective_owner(X, NULL, <library>, X) still returns it to the anon key, and node_visible's caller-supplied p_owner to a signed-in library owner, until INTK-19 lands.", owner: "projects-and-cost INTK-19 (the same membership answer through user_is_effective_owner and node_visible)" },
+  { signature: "member_is_active(uuid,uuid)", decision: "revoked-20261217", execute: { anon: false, authenticated: false, service_role: true }, reason: "A membership oracle for ANY uid (\"is uid X active in org Y?\"), callable with the public anon key until 20261217, which leaves EXECUTE to service_role only. Its only caller is user_is_effective_owner, a SECURITY DEFINER function owned by postgres that keeps calling it as its owner; no app .rpc( call, no policy, no SECURITY INVOKER function names it (effective_owner_matches writes the same test inline). Since 20261224 (INTK-19) user_is_effective_owner refuses a client role asking about anyone but auth.uid() and answers it false with no workspace, so the anon key and other workspaces no longer get this answer through it, nor through node_visible's p_owner. What remains, the same-workspace answer, is projects-and-cost INTK-20's." },
   { signature: "mfg_dedup_stats()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20260807_dedup_stats_fn.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/storage-stats/route.ts." },
   { signature: "mfg_storage_estimate()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261008_storage_estimate_knowledge.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/storage-stats/route.ts." },
   { signature: "mfg_table_stats()", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20260805_storage_stats_fn.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/admin/purge/route.ts, app/api/admin/storage-stats/route.ts, lib/storageUsage.ts." },
@@ -463,10 +484,9 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
     signature: "node_visible(text,jsonb,uuid,uuid,uuid,uuid)",
     decision: "policy-helper",
     execute: { anon: true, authenticated: true, service_role: true },
-    reason: "Called inside 5 policies written for PUBLIC, and by doc_is_visible and document_share_refusal. Normal visibility answers true (the policies add the membership test); otherwise a controller of p_org sees the row, then its effective owner, then the acl_index grants — each judged for auth.uid(). A policy passes the row's owner column as p_owner, but over PostgREST the caller supplies it, and the ownership walk skips a p_owner who is not active: a signed-in library owner who passes ('restricted', '{}', org, X, NULL, <their library>) gets true exactly when X is not an active member. That narrow membership oracle is recorded with INTK-19 as owner.",
+    reason: "Called inside 5 policies written for PUBLIC, and by doc_is_visible and document_share_refusal. Normal visibility answers true (the policies add the membership test); otherwise a controller of p_org sees the row, then its effective owner, then the acl_index grants, each judged for auth.uid(). A policy passes the row's owner column as p_owner, but over PostgREST the caller supplies it. Since 20261224 (INTK-19) the ownership limb's callee, user_is_effective_owner, answers a client only about auth.uid() and only inside the named library's workspace, so a caller-supplied p_owner tells the anon key nothing, and tells a signed-in account nothing about a workspace it is not an active member of. Inside one where the caller is the active effective owner of the named container, the answer still follows p_owner's membership there, which org_members_read returns to that caller: decided KEPT under the integrator's ruling for intelligence I-28 (DEC-90). intelligence I-30 re-creates this function once and keeps the limb as it is.",
     evidence: ["IF is_org_controller(p_org) THEN RETURN true;", "WHERE uid = auth.uid() AND org_id = p_org AND status = 'active' LIMIT 1;"],
-    person: { param: "p_owner", binding: "caller-supplied-oracle", evidence: ["IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN RETURN true;"] },
-    owner: "projects-and-cost INTK-19 (p_owner's membership leaks through the ownership walk)",
+    person: { param: "p_owner", binding: "same-workspace", evidence: ["IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN RETURN true;"] },
   },
   {
     signature: "notification_i_wrote(uuid,uuid,text,text,text,timestamp with time zone)",
@@ -490,28 +510,20 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   },
   {
     signature: "org_capability_allows(uuid,text,uuid)",
-    decision: "policy-helper-oracle",
+    decision: "policy-helper",
     execute: { anon: true, authenticated: true, service_role: true },
-    reason: "Called inside 4 policies written for PUBLIC, so anon and authenticated keep EXECUTE. Its body is one line, org_capability_allows_for(p_org, p_cap, p_uid, '{}'), and never reads auth.uid(), so anyone holding the public anon key can ask whether another person holds a capability in a workspace, given the uuids.",
-    evidence: ["RETURN org_capability_allows_for(p_org, p_cap, p_uid, '{}'::jsonb);"],
-    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+    reason: "Called inside 4 policies written for PUBLIC (audit_logs_admin_trail, document_holds_insert, document_holds_update, transmittals_update) and by the 3 checkout guards, each with auth.uid(), so anon and authenticated keep EXECUTE. Since 20261224 (INTK-19) a client role is answered only about auth.uid(): any other p_uid is refused 42501, and each policy and guard answers as before. The service role still asks about anyone. It forwards to org_capability_allows_for, which only service_role may execute since 20261224; this function calls it as its owner.",
+    evidence: ["IF p_uid IS DISTINCT FROM auth.uid() AND (current_setting('role', true) IN ('anon', 'authenticated') OR COALESCE(auth.role(), '') IN ('anon', 'authenticated')) THEN RAISE EXCEPTION 'org_capability_allows answers a client only about the signed-in caller (INTK-19).'", "RETURN org_capability_allows_for(p_org, p_cap, p_uid, '{}'::jsonb);"],
+    person: { param: "p_uid", binding: "is-the-caller", evidence: ["IF p_uid IS DISTINCT FROM auth.uid() AND (current_setting('role', true) IN ('anon', 'authenticated')"] },
   },
-  {
-    signature: "org_capability_allows_for(uuid,text,uuid,jsonb)",
-    decision: "signed-in-oracle",
-    execute: { anon: false, authenticated: true, service_role: true },
-    reason: "anon and PUBLIC revoked by 20261137_intel_roundG_ai_manage_caps.sql; authenticated keeps EXECUTE. The body never reads auth.uid(): it loads the role collection of the p_uid it is given and answers whether THAT person holds p_cap under the workspace's capability policy, standing grants included. Any signed-in account, of any workspace, can therefore ask about any person in any other workspace, given the uuids, and nothing is audited. No policy and no app .rpc( call names it; the definers org_capability_allows and quality_signoff_granted_for call it, and so does the SECURITY INVOKER trigger function transmittals_guard, as the signed-in member — so a plain REVOKE from authenticated would break issuing, voiding or revoking a transmittal.",
-    evidence: ["SELECT role, COALESCE(roles, ARRAY[role]) INTO v_role, v_roles FROM org_members WHERE org_id = p_org AND uid = p_uid AND status = 'active'"],
-    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
-  },
+  { signature: "org_capability_allows_for(uuid,text,uuid,jsonb)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only since 20261224_intel_roundG_definer_oracles.sql (INTK-19), under a live-database precondition that holds on the replay (20261137 had revoked anon and PUBLIC). The body judges the p_uid it is given (that person's role collection), so any signed-in account could ask about anyone. Its definer callers, org_capability_allows (which binds a client to itself) and quality_signoff_granted_for (which the quality sign-off helpers use to ask about OTHER signers), call it as its owner. Its one SECURITY INVOKER caller, transmittals_guard, asks caller_capability_allows instead. No policy and no app .rpc( names it." },
   { signature: "post_ticket_comment(uuid,jsonb,uuid[],uuid[])", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261166_df_roundG_ticket_rails.sql: REVOKE … FROM PUBLIC, anon, authenticated). Named by the server code: app/api/tickets/comment/route.ts." },
   {
     signature: "project_org(uuid)",
-    decision: "policy-helper-oracle",
+    decision: "policy-helper",
     execute: { anon: true, authenticated: true, service_role: true },
-    reason: "Called inside 6 policies (PUBLIC and authenticated), so the roles they judge must execute it. Its body is one SELECT of the project's org_id for any caller: a small oracle mapping any project id to its workspace id (a project uuid is unguessable, and the workspace id discloses no row).",
-    evidence: ["SELECT org_id FROM projects WHERE id = p_project;"],
-    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+    reason: "Called inside 6 policies (PUBLIC and authenticated) and by checkouts_resync_project_documents, so the roles they judge must execute it. Since 20261224 (INTK-19) a client role reads a project's workspace only as an active member of it. Each of the 6 policies already requires that membership (EXISTS on org_members, is_org_controller, user_owns_project, project_visible_to_me), so each answers as before; the anon key and other workspaces get NULL. The service role reads it for any project.",
+    evidence: ["OR EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p.org_id AND m.uid = auth.uid() AND m.status = 'active')"],
   },
   { signature: "project_regulated_record_count(uuid)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261103_prj_roundG_project_closeout_rails.sql: REVOKE … FROM PUBLIC, anon, authenticated). No app call site names it today (other definer functions or the SQL editor call it)." },
   {
@@ -629,11 +641,11 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   },
   {
     signature: "user_can_publish_on_library(uuid,text,uuid)",
-    decision: "policy-helper-oracle",
+    decision: "policy-helper",
     execute: { anon: true, authenticated: true, service_role: true },
-    reason: "Called inside 5 policies written for PUBLIC (and by publish_revision, supersession_writable and user_can_publish_doc with the caller's own uid). Its body never reads auth.uid(): it loads the roles and teams of the p_uid it is given (a text parameter) and reads the library's publish grants and denies, so anyone holding the public anon key can ask whether another person may publish into a library, given the uuids. Also named by the app: app/api/intake/upload/route.ts, app/api/links/invalidate/route.ts, lib/documentShares.ts, lib/shareServe.ts.",
-    evidence: ["WHERE org_id = p_org AND uid::text = p_uid AND status = 'active'"],
-    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+    reason: "Called inside 5 policies written for PUBLIC, each with auth.uid()::text, and by 8 definers (the publish, register-rail, retention, review-signoff and intake-link guards, publish_revision, supersession_writable, user_can_publish_doc), each with the session's uid when the request is a client's. Since 20261224 (INTK-19) a client role is answered only about itself: any other p_uid is refused 42501. The service role (app/api/intake/upload/route.ts, app/api/links/invalidate/route.ts, lib/shareServe.ts) still asks about the person it names, and lib/documentShares.ts asks as the signed-in caller about that caller.",
+    evidence: ["IF p_uid IS DISTINCT FROM auth.uid()::text AND (current_setting('role', true) IN ('anon', 'authenticated') OR COALESCE(auth.role(), '') IN ('anon', 'authenticated')) THEN RAISE EXCEPTION 'user_can_publish_on_library answers a client only about the signed-in caller (INTK-19).'"],
+    person: { param: "p_uid", binding: "is-the-caller", evidence: ["IF p_uid IS DISTINCT FROM auth.uid()::text AND (current_setting('role', true) IN ('anon', 'authenticated')"] },
   },
   {
     signature: "user_download_denied(jsonb,uuid,uuid)",
@@ -645,11 +657,15 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   },
   {
     signature: "user_is_effective_owner(uuid,uuid,uuid,uuid)",
-    decision: "policy-helper-oracle",
+    decision: "policy-helper",
     execute: { anon: true, authenticated: true, service_role: true },
-    reason: "Called inside 5 policies written for PUBLIC (and by node_visible, user_can_publish_doc and supersession_writable with auth.uid()). Its body never reads auth.uid(): it walks document owner, folder owner, library owner and the owning team's supervisor, keeps the first that member_is_active confirms, and compares it with the p_uid it is given, so anyone holding the public anon key can ask whether another person is a document's effective owner, given the uuids. Also named by the app: app/api/links/invalidate/route.ts, app/api/storage/download-url/route.ts, lib/docFileServer.ts, lib/ownership.ts, lib/revisions.ts.",
-    evidence: ["IF p_doc_owner IS NOT NULL AND member_is_active(v_org, p_doc_owner) THEN RETURN p_doc_owner = p_uid;"],
-    owner: "projects-and-cost INTK-19 (the integrator, to route to roles-and-permissions)",
+    reason: "Called inside 5 policies written for PUBLIC and by 10 definers (node_visible, user_can_publish_doc, supersession_writable, publish_revision and the document guards), each with auth.uid() as p_uid when the request is a client's. Since 20261224 (INTK-19) a client role is answered only about itself (any other p_uid is refused 42501) and gets false when no workspace resolves. review_signoff_owner_stamp asks about other candidates through effective_owner_matches. p_doc_owner is the row's owner column when a policy or definer passes it, but over PostgREST the caller supplies it. The walk then depends on that person's membership only in the named library's workspace, and only for a caller who is the active effective owner of the named container there, where org_members_read returns that row to the caller. That same-workspace answer is projects-and-cost INTK-20's, ruled KEEP (WONTFIX) by the integrator at the I-28 merge (DEC-90), because org_members_read returns it to the same caller; definerCensus.test.ts's tripwire reopens it if that policy narrows. The service role (app/api/links/invalidate/route.ts, app/api/storage/download-url/route.ts, lib/docFileServer.ts) still asks about anyone; lib/ownership.ts and lib/revisions.ts ask as the signed-in caller about that caller.",
+    evidence: ["IF v_client AND p_uid IS DISTINCT FROM auth.uid() THEN RAISE EXCEPTION 'user_is_effective_owner answers a client only about the signed-in caller (INTK-19).'", "IF v_client AND v_org IS NULL THEN RETURN false;"],
+    persons: [
+      { param: "p_uid", binding: "is-the-caller", evidence: ["IF v_client AND p_uid IS DISTINCT FROM auth.uid() THEN"] },
+      { param: "p_doc_owner", binding: "same-workspace", evidence: ["IF p_doc_owner IS NOT NULL AND member_is_active(v_org, p_doc_owner) THEN RETURN p_doc_owner = p_uid;", "IF v_client AND v_org IS NULL THEN RETURN false;"] },
+    ],
+    owner: "projects-and-cost INTK-20 (the same-workspace membership answer through p_doc_owner, ruled KEEP (WONTFIX) at the I-28 merge, 2026-10-20, DEC-90; reopens if org_members_read narrows; node_visible's p_owner gives the same one, decided kept)",
   },
   {
     signature: "user_owns_project(uuid)",

@@ -670,6 +670,43 @@ A later package that re-creates either starts from `20261178`'s body and keeps t
 
 The assertions those lines stopped covering for later files live in I-16's `intelRoundGCodebookLifecycleMigration.test.ts` ("censuses held for neighbouring migrations"). See CB-5, fix pass 3.
 
+
+**Paste / deploy order — intelligence Round G I-28 (`20261224`, projects-and-cost `INTK-19`).** `20261224` has no deploy gate of its own: no app code changes, and the app calls no new function and no changed signature. It does inherit two holds (below). *Corrected at the review fix pass (2026-10-14). The first version said "no deploy gate" without naming the holds. It also called every later re-paste a mere undo, and claimed an apply-order refusal for `20261137` that the check did not make.*
+- `20261224` needs `20261199`, `20261159`, `20261137` and `20261136`, and the bodies it re-creates (`20261059`, `20261042`, `20261052`, `20261025`, `20260913`). Its apply-order check refuses, changing nothing, when one is missing. It reads each re-created body's marker, `20261137`'s `ai.manage_caps` row in the evaluator, and `quality_signoff_granted_for`, which only `20261136` creates. Both of those files end by granting `authenticated` the evaluator, so neither may come after `20261224`.
+- **Holds.** `20261224` inherits the holds of `20261159` (the Intake force deployed, projects-and-cost `INTK-18`; paste guide row 119) and `20261199` (the app carrying document-control P24 deployed; row 154). Paste it only after both are lifted and pasted. Until then the apply-order check refuses and changes nothing.
+- It is independent of `20261217` and `20261212` (either order).
+- One result set of 44 rows: 13 probes true, 2 after-counts and 29 inventory counts. The four precondition rows read 0.
+- A precondition row above 0 means a client-reachable caller of `org_capability_allows_for` exists on the live database. The evaluator then stays executable by signed-in accounts, two probes answer false, a NOTICE gives the total, and the rest applies.
+- For the paste guide row: a NARROWING. Nobody legitimate loses anything; every policy answers as before per role, proven on the harness.
+
+**For the paste guide: one note per file** (the integrator writes these rows):
+- **`20261224`** (new row): HOLD until `20261159` (row 119) and `20261199` (row 154) are lifted and pasted. It also comes after `20261136` (row 102) and `20261137` (row 102a), and either order with `20261217` and `20261212`. One result set of 44 rows. Never re-paste `20261159`, `20261199`, `20261133` or `20261027` after it.
+- **`20261199`** (row 154): never re-paste after `20261224`. It BREAKS transmittal issue, void and revoke (`42501` on `org_capability_allows_for`) until `20261224` is pasted again in the same sitting.
+- **`20261133`** (row 100): never re-paste after `20261224` (already never after `20261199`). It BREAKS issue, void and revoke the same way. `20261224` alone is then refused over the older guard, so paste `20261199` and then `20261224`.
+- **`20261159`** (row 119): never re-paste after `20261224`. It BREAKS signed-in roster opening on a document whose review control needs the owner (`42501` from `user_is_effective_owner`) until `20261224` is pasted again in the same sitting.
+- **`20261027`** (row 29): already never re-pasted after `20261133`. After `20261224` it raises nothing, but it takes TRX-1 and TRX-17 away.
+- **`20261136`** (row 102) and **`20261137`** (row 102a): paste them before `20261224`, whose apply-order check refuses otherwise. Re-pasted after it, each only gives `authenticated` `org_capability_allows_for` back. That undoes the narrowing and breaks nothing; re-paste `20261224` after it.
+- **`20261059`, `20261042`, `20261052`, `20261025`, `20260913`** (LIVE): re-pasted after `20261224`, each only puts that function's earlier, unbound body back. Re-paste `20261224` after it. Each file's other effects are governed by its own row: `20261052` is never re-pasted after `20261137` (row 102a).
+
+**Re-creation chain.** `20261224` re-creates seven functions from their newest bodies, each with one block added:
+- `user_can_publish_on_library` (`20261059`), `user_is_effective_owner` (`20261042`), `org_capability_allows` (`20261052`) and `acl_index_denies` (`20261025`) gain the client binding;
+- `project_org` (`20260913`) is caller-scoped;
+- `review_signoff_owner_stamp` (`20261159`) calls `effective_owner_matches`;
+- `transmittals_guard` (`20261199`) calls `caller_capability_allows`.
+
+A later package that re-creates any of them starts from `20261224`'s body and keeps the block. The lineDiff tests in `intelRoundGDefinerOraclesMigration.test.ts` scan for the newest earlier definer. A later re-creation of `org_capability_allows_for` (a new capability row) starts from its newest body and grants EXECUTE to `service_role` only, never to `authenticated` (`20261224`, `INTK-19`); the same test file fails any later numbered migration that grants it to `authenticated`, `PUBLIC` or `anon`, or re-creates it without keeping EXECUTE to `service_role` alone.
+
+**Never re-paste `20261159`, `20261199`, `20261133` or `20261027` after `20261224`.** Doing so BREAKS transmittal issue, void and revoke (`42501` on `org_capability_allows_for`), or signed-in roster opening (`42501` from `user_is_effective_owner`). It stays broken until `20261224` is pasted again in the same sitting; after `20261133`, `20261199` goes first. `20261027` raises nothing, but it takes TRX-1 and TRX-17 away.
+- `intelI28DefinerOracles.test.ts` exercises the break and the mend for `20261199`, `20261133` and `20261159`.
+- Re-pasting `20261059`, `20261042`, `20261052`, `20261025`, `20260913`, `20261136` or `20261137` only undoes `20261224` for that function (the unbound body, or `authenticated`'s grant on the evaluator). Re-paste `20261224` after it.
+
+**Merge point — I-28 with I-30 (`node_visible`).** I-28 does not re-create `node_visible`. I-30 re-creates it once and keeps the ownership limb byte for byte: `IF user_is_effective_owner(p_owner, p_collection, p_library, auth.uid()) THEN RETURN true; END IF;`. That limb is decided KEPT under DEC-90; see `INTK-19`'s resolution. Do not route it through `effective_owner_matches`, which has no client binding. The same-workspace answer that remains is `INTK-20`, ruled KEEP (WONTFIX) by the integrator at the I-28 merge, 2026-10-20 (DEC-90): `org_members_read` already returns that status to the same caller. A tripwire in `definerCensus.test.ts` reopens it if that policy narrows; if it is ever reopened and routed to a document-keyed form, the `node_visible` half is made inside I-30's single re-creation.
+
+**Merge conflict point — I-28 with the transmittal and census tests.**
+- `lib/__tests__/dcRoundFTransmittalIssueVerdict.test.ts` and `lib/__tests__/dcRoundFTransmittalMigrations.test.ts` list `20261224` as a later definer of `transmittals_guard`.
+- `lib/__tests__/intelRoundGDbHarness.test.ts` restates the census decisions.
+- `lib/__tests__/rls/replayKnownDefects.ts` adds the `20261224` checkpoint (`CHECKPOINTS`). The I-28 suite reads `mosDb().report.checkpoints['20261224']`, so a conflict resolution that drops the entry fails it. Keep it alongside I-27's or any other harness owner's entries.
+
 ---
 
 ## Do not do these

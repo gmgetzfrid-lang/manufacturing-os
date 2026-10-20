@@ -103,7 +103,9 @@ describe("QUAL-15 — closeoutGateLines counts sign-off, not only item colours",
     const v = lines.find((l) => l.key === "checklistsVoided")!;
     expect(v).toEqual({
       key: "checklistsVoided", ok: false, openCount: 2,
-      text: "2 checklists voided — PSSR — Unit 3 (voided by dc@example.com); MI walkdown (who voided it is not on record)",
+      // ALOG-7 (admin-and-org P13): the audit row's identity says whose word it is
+      // (no actor_kind on record → the writer's own word).
+      text: "2 checklists voided — PSSR — Unit 3 (voided by dc@example.com · as sent by the writer (before identity was resolved by the database)); MI walkdown (who voided it is not on record)",
     });
     // The checklist gate itself may read clear: the void is what is shown.
     expect(lines.find((l) => l.key === "checklists")!.ok).toBe(true);
@@ -177,7 +179,7 @@ describe("QUAL-15 — the snapshot reads the sign-off", () => {
     expect(state.calls).toContain(`audit_logs.eq("resource_id","p1")`);
     const v = closeoutGateLines(snap).find((l) => l.key === "checklistsVoided")!;
     expect(v.ok).toBe(false);
-    expect(v.text).toBe("2 checklists voided — PSSR — Unit 3 (voided by dc@example.com); Old MI (who voided it is not on record)");
+    expect(v.text).toBe("2 checklists voided — PSSR — Unit 3 (voided by dc@example.com · as sent by the writer (before identity was resolved by the database)); Old MI (who voided it is not on record)");
   });
 
   it("a refused audit read leaves the voided line standing, saying who voided it could not be read — never a failed checklist gate", async () => {

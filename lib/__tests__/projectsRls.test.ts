@@ -360,8 +360,11 @@ describe("SEC-20 — audit rows about a private project follow the project's vis
     expect(restrictive.map(([n]) => n)).toEqual(["audit_logs_admin_trail"]);
     const [, trail] = restrictive[0];
     // 20261157 (SEC-21) re-created it from 20261142's body with one more
-    // clause — the lineDiff is prjRoundGJ12Migration.test.ts's.
-    expect(trail.file).toBe("supabase/migrations/20261157_prj_roundG_server_remainders.sql");
+    // clause — the lineDiff is prjRoundGJ12Migration.test.ts's; 20261219
+    // (admin-and-org ALOG-16) re-creates it from that body (the census reads
+    // its last, newest-body variant) with one more — the lineDiff is
+    // aoRoundGP13AuditTrailMigration.test.ts's.
+    expect(trail.file).toBe("supabase/migrations/20261219_ao_roundG_audit_node_trail_and_outbox.sql");
     expect(trail.cmd).toBe("SELECT");
     // the audit roles read every row (admin.audit_view through the evaluator) …
     expect(trail.body).toMatch(/org_capability_allows\(org_id, 'admin\.audit_view', auth\.uid\(\)\)\s*\n\s*OR NOT \(/);
@@ -369,7 +372,9 @@ describe("SEC-20 — audit rows about a private project follow the project's vis
     expect(trail.body).toMatch(/\)\s*\n\s*AND \(COALESCE\(resource_type, ''\) NOT IN \('project', 'cost', 'project_checklist', 'turnover_item'\)\s*\n\s*OR audit_row_project_visible\(resource_type, resource_id\)\)\s*\n/);
     // … SEC-21: and a row naming a project under another type (an intake
     // link, an INTAKE_ / MILESTONE_ action) follows that project too
-    expect(trail.body).toMatch(/AND \(\(COALESCE\(resource_type, ''\) <> 'project_intake_link'\s*\n\s*AND left\(COALESCE\(action, ''\), 10\) <> 'MILESTONE_'\s*\n\s*AND left\(COALESCE\(action, ''\), 7\) <> 'INTAKE_'\)\s*\n\s*OR audit_row_project_ref_visible\(action, resource_type, resource_id, details\)\)\s*\n\s*\)\s*$/);
+    expect(trail.body).toMatch(/AND \(\(COALESCE\(resource_type, ''\) <> 'project_intake_link'\s*\n\s*AND left\(COALESCE\(action, ''\), 10\) <> 'MILESTONE_'\s*\n\s*AND left\(COALESCE\(action, ''\), 7\) <> 'INTAKE_'\)\s*\n\s*OR audit_row_project_ref_visible\(action, resource_type, resource_id, details\)\)\s*\n/);
+    // … ALOG-16: and a node-level authority row reaches only the node's managers (besides the audit roles)
+    expect(trail.body).toMatch(/OR audit_row_project_ref_visible\(action, resource_type, resource_id, details\)\)\s*\n\s*AND \(\(COALESCE\(action, ''\) NOT IN \('NODE_ACL_CHANGED', 'OWNER_ASSIGNED', 'OWNER_CLEARED', 'ACCESS_RECERTIFIED'\)\s*\n\s*AND left\(COALESCE\(action, ''\), 11\) <> 'OWNER_TEAM_'\)\s*\n\s*OR audit_row_node_manageable\(resource_type, resource_id\)\)\s*\n\s*\)\s*$/);
     const permissiveReads = set.filter(([, p]) => p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
     expect(permissiveReads.map(([n]) => n)).toEqual(["audit_logs_org_access"]);
     expect(set.filter(([, p]) => p.cmd === "INSERT" && p.permissive).map(([n]) => n)).toEqual(["audit_logs_insert"]);

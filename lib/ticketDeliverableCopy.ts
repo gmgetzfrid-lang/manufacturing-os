@@ -28,14 +28,24 @@
 //   HAND-3  A ticket file is not a register revision, and its footer says so.
 //   EVID-5  The record of the copy is awaited and checked, never a discarded
 //   PHYS-8  promise, and is written in the columns download_audits HAS
-//           (20261068: source; before it, the table's original shape). The
-//           table has no ticket or attachment column, so WHICH file left is
-//           recorded beside it, on a DOWNLOAD audit_logs row on the ticket.
-//           A refused record never blocks the copy; the page says it.
+//           (20261068: source; before it, the table's original shape).
+//           WHICH file left is also recorded beside it, on a DOWNLOAD
+//           audit_logs row on the ticket. A refused record never blocks the
+//           copy on the page; the page says it.
+//   PHYS-17 (DF-P12, 20261223) The distribution row names the ticket and the
+//           file (ticket_id, attachment_id), so lib/staleCopies.ts can list
+//           the holders of a superseded ticket deliverable. Before the paste
+//           (42703 / PGRST204 naming either) the row is written as before.
+//   SM-5    (DF-P12) The QR also names the FILE (?a=<attachment id>): the
+//           scan checks the file is this ticket's and carries the printed
+//           revision, so two prints of one label are told apart.
+//   EVID-16 (DF-P12) The same plan and record serve the server stamping
+//           route (app/api/tickets/copy), which stamps and records in the
+//           request that issues the bytes.
 
 import type { TicketAttachment } from "@/types/schema";
 import { stampWatermark, type StampControlState } from "@/lib/stamping";
-import { ticketVerifyUrl, ticketVerdict, issueOnRecord, isIssuedTicketRev } from "@/lib/verifyTicketVerdict";
+import { ticketVerifyUrl, ticketVerdict, issueInForce, isIssuedTicketRev } from "@/lib/verifyTicketVerdict";
 
 export type TicketCopyChannel = "print" | "download";
 
@@ -76,6 +86,10 @@ export interface TicketCopyLiveFacts {
    *  approval's (any member may append history in their own name) and never
    *  marks a file superseded. */
   revisionCount?: number | null;
+  /** 20261221 (DF-P12): tickets.history_guarded_from — an issue line at or
+   *  after it is the workflow's own (lib/verifyTicketVerdict.ts
+   *  provenIssueFromHistory). Absent / null: read as before the paste. */
+  historyGuardedFrom?: number | null;
 }
 
 /** Where an issued file stands against the ticket as the page holds it.
@@ -96,7 +110,7 @@ export interface TicketCopyLiveFacts {
  *  no standing here (its watermark and its "cannot confirm" footer speak). */
 export function ticketCopyStanding(rev: string | null, live: TicketCopyLiveFacts | null | undefined): TicketCopyStanding | null {
   if (!live || !isIssuedTicketRev(rev)) return null;
-  const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history, revision_count: live.revisionCount }, rev);
+  const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history, revision_count: live.revisionCount, history_guarded_from: live.historyGuardedFrom }, rev);
   if (v.verdict === "withdrawn") return { kind: "withdrawn" };
   // The scan cannot confirm this file (a CLOSED row with no label; a CLOSED
   // review label whose history issue line its bound set aside): the page
@@ -104,7 +118,7 @@ export function ticketCopyStanding(rev: string | null, live: TicketCopyLiveFacts
   // line any member may append (the integrator's ruling, DEC-90 fail-safe).
   if (v.verdict === "unknown") return null;
   const fromRow = isIssuedTicketRev(live.deliverableRev) ? parseInt(live.deliverableRev, 10) : null;
-  const fromHistory = issueOnRecord(live.history, live.revisionCount, live.deliverableRev);
+  const fromHistory = issueInForce(live.history, live.revisionCount, live.deliverableRev, live.historyGuardedFrom);
   const latest = Math.max(fromRow ?? 0, fromHistory ? parseInt(fromHistory, 10) : 0);
   if (latest > parseInt(rev, 10)) return { kind: "superseded", by: String(latest) };
   return v.verdict === "revision_in_progress" ? { kind: "in_progress" } : null;
@@ -119,7 +133,8 @@ export function ticketCopyControlState(file: Pick<TicketAttachment, "type">): St
 
 /** Everything the stamp of one ticket file says. */
 export function ticketCopyPlan(input: {
-  file: Pick<TicketAttachment, "type" | "rev">;
+  /** The file — its id (when given) rides the QR as ?a= (SM-5 done-when 3). */
+  file: Pick<TicketAttachment, "type" | "rev"> & { id?: string | null };
   ticketNumber?: string | null;
   ticketRowId?: string | null;
   origin: string;
@@ -157,7 +172,7 @@ export function ticketCopyPlan(input: {
   return {
     controlState,
     rev,
-    verifyUrl: ticketVerifyUrl(input.origin, input.ticketRowId, rev),
+    verifyUrl: ticketVerifyUrl(input.origin, input.ticketRowId, rev, input.file.id ?? null),
     footerNotice,
     watermark: stampWatermark(undefined, controlState),
     standing,
@@ -178,6 +193,15 @@ type AuditWriter = (entry: {
   action: string; resourceId: string; resourceType: string; orgId?: string;
   userId: string; userEmail?: string; userRole?: string; details?: Record<string, unknown>;
 }) => Promise<{ ok: boolean; error: string | null }>;
+
+/** A refusal that is the unapplied 20261223 (no ticket_id / attachment_id
+ *  column — PHYS-17): today's row is written instead. */
+export function isMissingTicketCopyColumn(error: PgError): boolean {
+  if (!error) return false;
+  const msg = error.message ?? "";
+  if (!/\b(ticket_id|attachment_id)\b/.test(msg)) return false;
+  return error.code === "PGRST204" || error.code === "42703" || /column|schema cache/i.test(msg);
+}
 
 /** A refusal that is the unapplied 20261068 itself (no `source` column). */
 export function isMissingSourceColumn(error: PgError): boolean {
@@ -209,9 +233,10 @@ export interface TicketCopyRecordResult {
   error: string | null;
 }
 
-/** Record one ticket copy: the distribution row (download_audits) and the
- *  row naming the file (audit_logs DOWNLOAD on the ticket). Both are awaited
- *  and checked; the result says whether both landed. Never throws. */
+/** Record one ticket copy: the distribution row (download_audits — naming
+ *  the ticket and the file since 20261223) and the row naming the file
+ *  (audit_logs DOWNLOAD on the ticket). Both are awaited and checked; the
+ *  result says whether both landed. Never throws. */
 export async function recordTicketCopy(
   client: InsertClient,
   logAudit: AuditWriter,
@@ -225,16 +250,30 @@ export async function recordTicketCopy(
     user_email: input.userEmail ?? null,
     expires_at: input.expiresAt ? input.expiresAt.toISOString() : null,
     source,
+    // PHYS-17 (20261223): which ticket file left — the stale-copies ticket arm reads these.
+    ticket_id: input.ticketRowId ?? null,
+    attachment_id: typeof input.file.id === "string" && input.file.id ? input.file.id : null,
   };
   try {
     let { error } = await client.from("download_audits").insert(row);
+    if (error && isMissingTicketCopyColumn(error)) {
+      // Before 20261223 the table has no ticket / attachment column: today's
+      // row (the file is still named on the audit row below).
+      console.warn("[download_audits] ticket_id / attachment_id are missing (20261223 not applied) — recording the ticket copy without naming the file in the distribution row.");
+      delete row.ticket_id;
+      delete row.attachment_id;
+      ({ error } = await client.from("download_audits").insert(row));
+    }
     if (error && isMissingSourceColumn(error)) {
-      // Before 20261068 the table has no `source`: record the pull in the
-      // original shape (who, when, until when) and say why the channel is
-      // missing — the record degrades, the copy is not lost from it.
+      // Before 20261068 the table has no `source` (nor, then, the 20261223
+      // columns, which need it): record the pull in the original shape (who,
+      // when, until when) and say why the channel is missing — the record
+      // degrades, the copy is not lost from it.
       console.warn("[download_audits] the `source` column is missing (20261068 not applied) — recording the ticket copy without its channel.");
       const legacy = { ...row };
       delete legacy.source;
+      delete legacy.ticket_id;
+      delete legacy.attachment_id;
       ({ error } = await client.from("download_audits").insert(legacy));
     }
     if (error) {

@@ -12,6 +12,7 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { SNAPSHOT_READS, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { logAuditAction } from "@/lib/audit";
+import { auditActorNote } from "@/lib/auditActions";
 import { notify, notifyMany, notifyBatchChecked } from "@/lib/inAppNotifications";
 import {
   ensureActiveEpisode,
@@ -378,7 +379,8 @@ export function closeoutGateLines(s: ProjectStateSnapshot): CloseoutGateLine[] {
     key: "checklistsVoided",
     ok: false,
     text: `${plural(voided.length, "checklist")} voided — ${voided.map((v) => `${v.title} (${
-      v.voidedBy ? `voided by ${v.voidedBy}` : v.voidedByUnreadable ? "who voided it could not be read" : "who voided it is not on record"
+      // ALOG-7 (P13): the audit row's identity says whose word it is.
+      v.voidedBy ? `voided by ${v.voidedBy} · ${auditActorNote(v.voidedByActorKind)}` : v.voidedByUnreadable ? "who voided it could not be read" : "who voided it is not on record"
     })`).join("; ")}`,
     openCount: voided.length,
   }];

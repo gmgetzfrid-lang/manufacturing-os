@@ -20,6 +20,7 @@ import { GitBranch, Flag, KeyRound, Check, Loader2, AlertTriangle } from "lucide
 import { supabase } from "@/lib/supabase";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { listOpenBranchesForOrg, resolveBranch, type RevisionBranch } from "@/lib/branches";
+import { auditActorNote } from "@/lib/auditActions";
 
 const STALE_DAYS = 14;
 
@@ -49,6 +50,10 @@ interface DeletionRequest {
   label: string;
   reason: string | null;
   requestedBy: string | null;
+  /** ALOG-7 (admin-and-org P13): the request row's audit_logs.actor_kind
+   *  (20261201) — null before that paste: the requester's email is then the
+   *  writer's own word. */
+  actorKind: string | null;
   requestedAt: string;
   libraryId: string | null;
 }
@@ -93,9 +98,11 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
         // matching DELETION_REQUEST_RESOLVED row closes them. This queue is
         // what makes the request durable — before it, every controller
         // dismissing the bell made the request evaporate.
+        // ALOG-7 (P13): "*" so the row's actor_kind (20261201) comes along
+        // once pasted, and the read never names a column that is not there yet.
         supabase
           .from("audit_logs")
-          .select("id, resource_id, user_email, timestamp, details")
+          .select("*")
           .eq("org_id", orgId)
           .eq("action", "DELETION_REQUESTED")
           .gt("timestamp", new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString())
@@ -170,6 +177,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
             label: String(det.label || labels.get(String(r.resource_id))?.label || "Document"),
             reason: (det.reason as string | null) ?? null,
             requestedBy: (r.user_email as string | null) ?? null,
+            actorKind: typeof r.actor_kind === "string" ? r.actor_kind : null,
             requestedAt: String(r.timestamp),
             libraryId: labels.get(String(r.resource_id))?.libraryId ?? null,
           };
@@ -382,7 +390,14 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
               <Link href={docLink(req.documentId, req.libraryId)} className="font-bold text-blue-700 hover:underline">
                 {req.label}
               </Link>{" "}
-              — <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString()}.
+              — <b>deletion requested</b> by {req.requestedBy || "the owner"}
+              {/* ALOG-7 (P13): the requester's identity says whose word it is. */}
+              {req.requestedBy && (
+                <span className={`ml-1 text-[10px] ${req.actorKind ? "text-[var(--color-text-faint)]" : "text-amber-700"}`} title="ALOG-7: whose word the requester's identity is">
+                  ({auditActorNote(req.actorKind)})
+                </span>
+              )}
+              {" "}on {new Date(req.requestedAt).toLocaleDateString()}.
               {req.reason && <div className="text-[11px] italic text-[var(--color-text-muted)] mt-0.5">&ldquo;{req.reason}&rdquo;</div>}
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                 Review the document, then delete/archive it (or decline) — and mark this request handled.
