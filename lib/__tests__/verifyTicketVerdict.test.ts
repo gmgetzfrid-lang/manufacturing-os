@@ -560,7 +560,8 @@ describe("the ticket page's FileViewerModal — wired to the rules above", () =>
   });
   it("a superseded or re-worked file is confirmed before stamping, on both paths", () => {
     expect(modal).toContain('!plan.confirmMessage || (await appConfirm({ message: plan.confirmMessage, tone: "danger" }))');
-    expect(modal.match(/if \(!\(await confirmStanding\(plan\)\)\)/g)).toHaveLength(2);
+    // DF-P15 third fix pass: both browser paths still confirm, unless the server copy route already asked this copy's question (an oversize PDF's fallback carries `acknowledged`)
+    expect(modal.match(/if \(!opts\.standingConfirmed && !\(await confirmStanding\(plan\)\)\)/g)).toHaveLength(2);
   });
   it("both paths stamp with the plan's control state, QR and footer — no watermark literal", () => {
     expect(modal.match(/controlState: plan\.controlState,/g)).toHaveLength(2);

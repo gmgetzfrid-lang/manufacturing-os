@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ALL_ROLES, type Role } from "@/types/schema";
 import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
-import { assertOrgHasAccess } from "@/lib/serverAuth";
+import { enforceOrgAccess } from "@/lib/serverAuth";
 import { clearAccessRequestNotices, queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
 import { pruneRemovedMemberAclIndex, type RpcClient } from "@/lib/memberAclIndexPrune";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -333,14 +333,11 @@ export async function POST(req: NextRequest) {
   // SURF-15: adding a seat is THE billable mutation — the server-side
   // subscription gate finally has a caller. Per DEC-18 the refusal is behind
   // SUBSCRIPTION_ENFORCE so behaviour is byte-identical until billing is
-  // switched on; off, the would-be 402 is logged, never silent.
-  const gate = await assertOrgHasAccess(supabaseAdmin, orgId);
-  if (gate) {
-    if (process.env.SUBSCRIPTION_ENFORCE === "true") {
-      return NextResponse.json({ error: gate.error }, { status: gate.status });
-    }
-    console.warn(`[create-user] subscription gate would refuse org ${orgId} (SUBSCRIPTION_ENFORCE off): ${gate.error}`);
-  }
+  // switched on; off, the would-be 402 is logged, never silent. BILL-10
+  // (admin-and-org Round G P5): through enforceOrgAccess, the ONE reading of
+  // the switch the upload routes and the strip share (lib/serverAuth.ts).
+  const gate = await enforceOrgAccess(supabaseAdmin, orgId, "create-user");
+  if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
 
   // Only an Admin may grant the Admin role. Without this a DocCtrl (who can
   // otherwise manage members) could mint an Admin and escalate — the RLS

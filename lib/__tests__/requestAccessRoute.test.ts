@@ -4,7 +4,8 @@
 // Contracts pinned here:
 //  · a failed duplicate lookup REFUSES (500, nothing inserted) instead of
 //    reading as "no pending request" and stacking a duplicate row;
-//  · an existing pending request refuses with the 409;
+//  · an existing pending request inserts nothing (ORG-8: and answers the
+//    same neutral 200 as a recorded request — it used to be a 409);
 //  · the duplicate check matches case-insensitively on the normalized
 //    address, and the inserted row stores the canonical form.
 
@@ -50,6 +51,8 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 }));
 
 import { POST } from "@/app/api/auth/request-access/route";
+import { REQUEST_ACCESS_ACKNOWLEDGEMENT } from "@/lib/publicDoorLimiter";
+import { requestAccessTiming } from "@/lib/accessRequestOutcome";
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/auth/request-access", {
@@ -66,6 +69,9 @@ function accessInserts() {
 }
 
 beforeEach(() => {
+  // ORG-24's response floor (600 ms on every answer) is pinned in
+  // aoRoundGP5FixPass.test.ts; this suite tests the door's other behaviour
+  requestAccessTiming.floorMs = 0;
   mockState.queues = {
     orgs: [{ data: { id: "org-1", name: "Acme Refining" } }],
   };
@@ -80,11 +86,11 @@ describe("POST /api/auth/request-access — fail-closed duplicate check", () => 
     expect(accessInserts()).toHaveLength(0);
   });
 
-  it("refuses (409) when a pending request already exists", async () => {
+  it("an existing pending request inserts nothing — and answers the same neutral 200 as a recorded one (ORG-8; it was a 409 naming the workspace)", async () => {
     mockState.queues.access_requests = [{ data: [{ id: "req-1", status: "pending" }] }];
     const res = await POST(makeRequest(BODY));
-    expect(res.status).toBe(409);
-    expect(String((await res.json()).error)).toContain("pending request");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, message: REQUEST_ACCESS_ACKNOWLEDGEMENT });
     expect(accessInserts()).toHaveLength(0);
   });
 

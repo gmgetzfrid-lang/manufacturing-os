@@ -182,12 +182,16 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: file });
     expect(res.status).toBe(200);
     const [upd] = updateOf("tickets");
-    expect((upd.attachments as TicketAttachment[]).map((a) => a.id)).toEqual(["a-1"]);
+    // SM-15 (drafting-flow DF-P15): the appended file's id is server-minted, never the client's "a-1".
+    const [att] = upd.attachments as TicketAttachment[];
+    expect(upd.attachments as TicketAttachment[]).toHaveLength(1);
+    expect(att.url).toBe(file.url);
+    expect(att.id).not.toBe("a-1");
     expect((upd.history as Array<{ action: string }>).map((h) => h.action)).toEqual(["Assigned", "File Uploaded"]);
     expect(upd.status).toBeUndefined();
     expect(casLegs()).toEqual(expect.arrayContaining([["id", "t1"], ["status", "DRAFTING"], ["last_modified", LM]]));
     const audit = insertsOf("audit_logs").find((a) => a.action === "TICKET_ATTACH_FILE");
-    expect(audit?.details).toMatchObject({ from: "DRAFTING", to: "DRAFTING", attachment: { id: "a-1", name: "iso.pdf", type: "Draft" } });
+    expect(audit?.details).toMatchObject({ from: "DRAFTING", to: "DRAFTING", attachment: { id: att.id, name: "iso.pdf", type: "Draft" } });
   });
   it("route: a concurrent transition between read and write yields 409 — the stale arrays never land", async () => {
     state.user = { id: "req-1" };

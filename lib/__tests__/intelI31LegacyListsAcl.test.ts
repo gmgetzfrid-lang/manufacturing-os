@@ -317,12 +317,12 @@ describe("I-31 — the app's answer before the paste equals its answer after, fo
     }
     expect(libraryLabelForTicket(libraryChoiceFromRow(untouched.all))).toBe("Open");
     expect(offerableLibraries([libraryChoiceFromRow(untouched.all)], PRINCIPALS.vendor)).toHaveLength(1);
-    // a caller that does not carry the lists keeps the raw reading (the close notice's label)
+    // a caller that does not carry the lists keeps the raw reading (what the close notice's label read until DF-P15)
     expect(libraryLabelForTicket({ name: "HR records", visibility: "normal", acl: LEGACY_ROWS.nullAclOwned.acl })).toBe("HR records");
     expect(offerableLibraries([raw(LEGACY_ROWS.nullAclOwned)], PRINCIPALS.vendor)).toHaveLength(1);
   });
 
-  it("DACL-13 R1 is wired: the picker and the workflow-action library check select the rung's columns and decide through libraryChoiceFromRow; the route's close notice is the one raw read left (a label, said in the header)", () => {
+  it("DACL-13 R1 is wired: the picker and the workflow-action library check select the rung's columns and decide through libraryChoiceFromRow; the route's close notice's label reads the rung too since DF-P15 (the header, written at I-31, still names it as the raw read it then was)", () => {
     expect(LIBRARY_CHOICE_COLUMNS).toBe("id, name, owner_user_id, acl, visibility, read_access, visible_to, write_access, admin_access");
     const picker = src("components/requests/LibraryPicker.tsx");
     expect(picker).toContain('supabase.from("libraries").select(LIBRARY_CHOICE_COLUMNS).eq("org_id", orgId)');
@@ -335,8 +335,12 @@ describe("I-31 — the app's answer before the paste equals its answer after, fo
     expect(check).toContain("const offered = libRow ? offerableLibraries([libRow], principal) : [];");
     expect(check).toContain("name: libraryLabelForTicket(libRow)");
     expect(route).not.toContain('select("id, name, visibility, acl, owner_user_id")');
-    // the close notice (outside the library check) still reads name / visibility / acl — its label narrows at the paste
-    expect(route).toContain('.from("libraries").select("name, visibility, acl").eq("id", ticket.libraryId)');
+    // the close notice's label (outside the library check) — left raw at the I-31 merge, flipped by
+    // drafting-flow DF-P15 (the DACL-10 remainder): it selects the rung's columns and is judged on the
+    // effective ACL, so its answer is the same before and after the paste
+    expect(route).not.toContain('.from("libraries").select("name, visibility, acl").eq("id", ticket.libraryId)');
+    expect(route).toContain('.from("libraries").select(`id, name, ${LIBRARY_RUNG_COLUMNS}`).eq("id", ticket.libraryId)');
+    expect(route).toContain("const libLabel = libraryLabelForTicket(libRow ? libraryChoiceFromRow(libRow as unknown as Record<string, unknown>) : null);");
     const header = SQL.slice(0, SQL.indexOf("CREATE OR REPLACE TEMP VIEW"));
     expect(header).toMatch(/the ticket close notice's library label/);
   });

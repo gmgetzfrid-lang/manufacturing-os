@@ -26,16 +26,21 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { configuredPublicOrigin } from "@/lib/publicOrigin";
 
-/** The roles told about a NEW request (the request door, PROD-2 dw1): the
- *  org's Admin / DocCtrl pool — DEC-92 item 1, the pool the holds
- *  audience uses; both may grant the membership at /api/admin/create-user
- *  and decline at /api/admin/access-requests. */
-export const ACCESS_REQUEST_AUDIENCE = ["Admin", "DocCtrl"] as const;
+/** The roles told about a NEW request (the request door, PROD-2 dw1).
+ *  PROD-15 (admin-and-org Round G P5, DEC-92 item 1 narrowed under DEC-90):
+ *  the org's Admins — the same people who can see the pending list the
+ *  notice links to (the card on Admin → Users reads hasAnyRole(['Admin']),
+ *  and access_requests_admin_select, 20261023, admits Admin only), because
+ *  membership is the Admin's to grant. It was the Admin / DocCtrl pool, so a
+ *  DocCtrl was told about a request they could not open. The decide routes
+ *  (/api/admin/create-user, /api/admin/access-requests) are unchanged.
+ *  Held equal to the list's set by lib/__tests__/aoRoundGP5PublicDoors.test.ts. */
+export const ACCESS_REQUEST_AUDIENCE = ["Admin"] as const;
 
 // ── What a stranger at the public door may put into a notice ─────────────
 //
 // The request door is public and unauthenticated; its notice fans one request
-// out to every Admin / DocCtrl, by bell and by email from the app's own sender
+// out to every Admin (PROD-15; it was every Admin / DocCtrl), by bell and by email from the app's own sender
 // (PROD-2). So nothing typed there reaches a notice unchecked (the review of
 // N8: a "name" or "address" carrying a phishing line and a link, multiplied
 // by the pool and repeated by rotating the address):
@@ -93,7 +98,7 @@ export function noticeSafeName(raw: string | null | undefined, max = 80): string
 /** Past this many requests to one org in an hour (the new one included), a
  *  request gets no bell row and no email of its own: anyone can reach this
  *  door, and one request must not become an unbounded run of bell rows,
- *  toasts and mail to every Admin / DocCtrl — burying their compliance
+ *  toasts and mail to every Admin — burying their compliance
  *  notices under the bell's 50-row list (TAX-6). The pool is told ONCE that
  *  more are waiting (ACCESS_REQUEST_BURST_RESOURCE_TYPE). N8's review fix. */
 export const ACCESS_REQUEST_NOTICES_PER_ORG_HOUR = 5;
@@ -102,6 +107,41 @@ export const ACCESS_REQUEST_NOTICES_PER_ORG_HOUR = 5;
  *  'org', resource_id = the org id) — never a request id, so deciding one
  *  request (clearAccessRequestNotices) does not clear it. */
 export const ACCESS_REQUEST_BURST_RESOURCE_TYPE = "org";
+
+// ── ORG-24: the request door answers in the same time whatever the name ────
+//
+// The integrator's ruling 3 at the AO-P5 merge, 2026-10-20 (DEC-90): the
+// neutral acknowledgement (ORG-8) must not leak a workspace's existence by
+// how long it takes. /api/auth/request-access therefore (1) does the same
+// five awaited database round trips for "no such workspace", "already
+// asked" and "recorded" — the window's count, the attempt row, the name
+// lookup, the duplicate lookup, and either the request insert or a
+// same-shaped head count in its place; (2) sends the Admins' notice AFTER
+// the response (next/server after()); and (3) answers no sooner than
+// REQUEST_ACCESS_MIN_RESPONSE_MS after it started, on every path (the
+// refusals included).
+//
+// Why 600 ms: the awaited path is five sequential service-role round trips;
+// the tests drive it at a pessimistic 80 ms per round trip (400 ms, every
+// outcome) and every answer still lands at exactly the floor. A database
+// slower than ~120 ms per round trip would exceed the floor and could again
+// differ by the one row write — the bound ORG-24's record states.
+
+/** The request door's minimum response time, in milliseconds (ORG-24). */
+export const REQUEST_ACCESS_MIN_RESPONSE_MS = 600;
+
+/** The floor the request door applies. A mutable seam ONLY so suites that
+ *  exercise the door's other behaviour (the notice, the burst cap) are not
+ *  slowed by it; lib/__tests__/aoRoundGP5FixPass.test.ts pins the real
+ *  value on every path. Production code never writes it. */
+export const requestAccessTiming = { floorMs: REQUEST_ACCESS_MIN_RESPONSE_MS };
+
+/** Waits until `floorMs` have passed since `startedAt` (Date.now() at entry);
+ *  returns at once when they already have. */
+export async function holdUntilFloor(startedAt: number, floorMs: number = requestAccessTiming.floorMs): Promise<void> {
+  const remaining = floorMs - (Date.now() - startedAt);
+  if (remaining > 0) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+}
 
 export type AccessRequestOutcome = "approved" | "declined";
 

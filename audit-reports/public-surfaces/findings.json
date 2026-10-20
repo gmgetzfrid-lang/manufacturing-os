@@ -17,12 +17,12 @@
       "LOW": 30
     },
     "by_status": {
-      "RESOLVED": 60,
+      "RESOLVED": 61,
       "WONTFIX": 1,
       "RESOLVED (2026-10-20, the integrator's ruling R3 at the DF-P12 merge, `DEC-90` — PASTE pending: `20261223` after `20261068`; until it is pasted a ticket copy is recorded without the ticket / file columns and the ticket arm answers \"unavailable\")": 1,
       "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261223` after `20261068`; until it is pasted the ticket copy is recorded without the two columns and the ticket arm answers \"unavailable\")": 1,
-      "OPEN": 4,
-      "OPEN — limbs 1, 2 and 4 closed at the PS-P9 merge (limb 1 built for the two \"Print all\" packs and WONTFIX for single copies; limb 2 ruled); limb 3 (the cover's print id) and the settled-print void assigned to PS-P10 (below).": 1
+      "OPEN — limbs 1, 2 and 4 closed at the PS-P9 merge (limb 1 built for the two \"Print all\" packs and WONTFIX for single copies; limb 2 ruled); limb 3 (the cover's print id) and the settled-print void assigned to PS-P10 (below).": 1,
+      "OPEN": 3
     }
   },
   "status_vocabulary": [
@@ -1379,7 +1379,7 @@
       "id": "PHYS-18",
       "title": "The ticket copy recall exists but nothing calls it — the holders of a superseded ticket deliverable are never told",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED on DF-P12's branch.",
       "blast_radius": null,

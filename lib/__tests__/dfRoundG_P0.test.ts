@@ -396,7 +396,13 @@ describe("LEAK-8 / SM-13 — submit_final without a deliverable is refused by th
     const ok = await post({ ticketId: "t1", actionType: "submit_final", finalAttachment: FINAL });
     expect(ok.status).toBe(200);
     expect((await ok.json()).status).toBe("FINAL_DRAFT");
-    expect((updateOf("tickets")[0].attachments as TicketAttachment[]).map((a) => a.id)).toEqual(["a-d", "a-f"]);
+    // SM-15 (drafting-flow DF-P15): the appended Final's id is server-minted, never the client's "a-f";
+    // the file already on the ticket keeps its id.
+    const atts = updateOf("tickets")[0].attachments as TicketAttachment[];
+    expect(atts.map((a) => a.url)).toEqual([DRAFT.url, FINAL.url]);
+    expect(atts[0].id).toBe("a-d");
+    expect(atts[1].id).not.toBe("a-f");
+    expect(atts[1].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 });
 
