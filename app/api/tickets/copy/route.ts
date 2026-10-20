@@ -1,5 +1,5 @@
 // POST /api/tickets/copy
-//   { ticketId, attachmentId, channel: "print" | "download",
+//   { ticketId, attachmentId, channel: "print" | "download" | "view",
 //     acknowledged?: boolean, acceptUnstamped?: boolean }
 //
 // drafting-flow EVID-16 (DF-P12): a drafting-ticket file copy is STAMPED and
@@ -48,9 +48,17 @@
 // deployment host or loopback — /api/share/file's rule); with neither the
 // copy carries no QR and its footer no scan instruction (DEC-64 §2).
 //
-// The ticket page still prints and downloads through the browser path until
-// its FileViewerModal is wired here (the page is owned by drafting-flow DF-P9
-// in this round — EVID-16's Partial names the hunk).
+// drafting-flow EVID-16 done-when 2 (DF-P15): the ticket page's print,
+// download and inline PDF preview now go through this route (its
+// FileViewerModal, lib/ticketCopyRequest.ts). The preview is channel "view":
+// the same doors, plan and server stamp, served inline, and recorded as a
+// VIEW row on the ticket's audit trail naming the file (as the secure viewer
+// records a document view) — not as a distribution copy, so the stale-copy
+// recall does not count a viewer as a holder. A view that cannot be recorded
+// is not served (503 `unrecorded`), as a copy is not. Its stamp reads as a
+// download's (the bytes did reach the browser). A file the server cannot
+// issue (a legacy absolute URL, a key outside the ticket's storage) keeps the
+// page's browser path, which says so.
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -142,9 +150,12 @@ export async function POST(req: NextRequest) {
   try { body = (await req.json()) as Body; } catch { return json({ error: "Invalid JSON body" }, 400); }
   const ticketId = typeof body.ticketId === "string" ? body.ticketId : "";
   const attachmentId = typeof body.attachmentId === "string" ? body.attachmentId : "";
-  const channel = body.channel === "print" || body.channel === "download" ? (body.channel as TicketCopyChannel) : null;
+  // EVID-16 dw2 (DF-P15): "view" — the page's inline preview — is planned and
+  // stamped as a download, served inline, and recorded as a VIEW (below).
+  const view = body.channel === "view";
+  const channel = body.channel === "print" || body.channel === "download" ? (body.channel as TicketCopyChannel) : view ? "download" : null;
   if (!UUID_RE.test(ticketId) || !TICKET_ATTACHMENT_ID_RE.test(attachmentId) || !channel) {
-    return json({ error: "ticketId, attachmentId and channel (print | download) are required" }, 400);
+    return json({ error: "ticketId, attachmentId and channel (print | download | view) are required" }, 400);
   }
 
   // 1. The ticket, as the service role (RLS does not apply; the checks below do).
@@ -260,7 +271,28 @@ export async function POST(req: NextRequest) {
 
   // 5. The record, BEFORE a byte leaves. Refused → nothing is issued.
   const roles = (member as { role?: string | null }).role ?? null;
-  const rec = await recordTicketCopy(supabaseAdmin, serverAudit, {
+  // EVID-16 dw2 (DF-P15): a preview is a VIEW of the file on the ticket's
+  // audit trail — no distribution row (a viewer is not a copy holder).
+  const rec = view
+    ? await serverAudit({
+        action: "VIEW",
+        resourceId: t.id,
+        resourceType: "ticket",
+        orgId: t.org_id,
+        userId: caller.id,
+        userEmail: email ?? undefined,
+        userRole: roles ?? undefined,
+        details: {
+          channel: "view",
+          ticketNumber: t.ticket_id,
+          attachmentId: file.id,
+          attachmentType: file.type,
+          fileName: file.name,
+          rev: typeof file.rev === "string" ? file.rev : null,
+          watermark: stamped ? plan.watermark : "UNSTAMPED (stamping failed)",
+        },
+      }).then((a) => (a.ok ? { recorded: true, error: null } : { recorded: false, error: `the audit trail refused it (${a.error || "no reason given"})` }))
+    : await recordTicketCopy(supabaseAdmin, serverAudit, {
     orgId: t.org_id,
     userId: caller.id,
     userEmail: email,
@@ -275,7 +307,7 @@ export async function POST(req: NextRequest) {
   });
   if (!rec.recorded) {
     console.error(`[tickets/copy] the copy of ${attachmentId} on ${t.id} was NOT issued — its record was refused: ${rec.error}`);
-    return json({ error: "unrecorded", message: `This copy was not issued: ${rec.error}. Try again in a moment, or tell Document Control.` }, 503);
+    return json({ error: "unrecorded", message: `${view ? "This preview was not served" : "This copy was not issued"}: ${rec.error}. Try again in a moment, or tell Document Control.` }, 503);
   }
 
   const safe = (s: string) => s.replace(/[^\w.\-]+/g, "_");
@@ -284,7 +316,7 @@ export async function POST(req: NextRequest) {
   return new NextResponse(Buffer.from(out), {
     headers: {
       "Content-Type": stamped || isPdfBytes(source) ? "application/pdf" : "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": `${view ? "inline" : "attachment"}; filename="${filename}"`,
       "Cache-Control": "no-store",
       "X-Ticket-Copy-Stamped": stamped ? "1" : "0",
       "X-Ticket-Copy-Rev": plan.rev ?? "",

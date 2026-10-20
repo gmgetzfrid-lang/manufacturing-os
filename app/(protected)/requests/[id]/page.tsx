@@ -46,8 +46,12 @@ import { isEffectiveOwnerOfDocument } from '@/lib/ownership';
 import { getMyTeamIds } from '@/lib/teams';
 import { handbackPreset, latestFinalAttachment, deliverableStateOf } from '@/lib/ticketHandback';
 import RevUpModal from '@/components/documents/RevUpModal';
+import PublishNewDocumentModal from '@/components/requests/PublishNewDocumentModal';
+import TicketCopyRecallPanel from '@/components/requests/TicketCopyRecallPanel';
+import { canPutFirstRevisionInContainer } from '@/lib/revisions';
 import { publicOrigin } from '@/lib/publicOrigin';
 import { ticketCopyPlan, recordTicketCopy, type TicketCopyLiveFacts } from '@/lib/ticketDeliverableCopy';
+import { ticketFileCopyPath, takeTicketCopy, BROWSER_PATH_NOTE, type TicketCopyContext, type TicketCopyRequestChannel } from '@/lib/ticketCopyRequest';
 import { logAuditAction } from '@/lib/audit';
 // Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
 // of which the request-detail page needs until the user actually opens markup.
@@ -644,6 +648,16 @@ function RedlineEditorMount({
 // =========================================================================================
 // SUB-COMPONENT: FILE VIEWER MODAL (With Protection)
 // =========================================================================================
+/** EVID-16 done-when 2 (DF-P15): the bearer the server copy route is called with. */
+const copyToken = async (): Promise<string | null> => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const FileViewerModal = ({
   file,
   isOpen,
@@ -656,6 +670,7 @@ const FileViewerModal = ({
   archived,
   archiveId,
   liveTicket,
+  copyContext,
 }: {
   file: TicketAttachment | null;
   isOpen: boolean;
@@ -674,6 +689,10 @@ const FileViewerModal = ({
    *  file the page knows is superseded, or whose ticket is being re-worked,
    *  is confirmed before stamping and stamped as such. Never the QR's rev. */
   liveTicket?: TicketCopyLiveFacts | null;
+  /** EVID-16 done-when 2 (DF-P15): what decides whether the server copy
+   *  route can issue this file (lib/ticketCopyRequest.ts ticketFileCopyPath)
+   *  — the ticket's workspace, request number, requester and file list. */
+  copyContext?: Omit<TicketCopyContext, 'ticketRowId'> | null;
 }) => {
   const [showCompliance, setShowCompliance] = useState(false);
   // file.url is stored as the raw R2 storage path (orgs/<org>/tickets/...).
@@ -681,28 +700,64 @@ const FileViewerModal = ({
   // / img tags actually load. Without this they show "not found".
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  // EVID-16 done-when 2 (DF-P15): the PDF preview of a file the server can
+  // issue is the STAMPED server stream (POST /api/tickets/copy, channel
+  // "view" — recorded as a VIEW on the ticket's audit trail); `previewStamped`
+  // is set only then (false: the file could not be stamped, so the preview
+  // is the original, said). `serverNote`: the route said it cannot issue this
+  // file after all — the browser path, said.
+  const [previewStamped, setPreviewStamped] = useState<boolean | null>(null);
+  const [serverNote, setServerNote] = useState<string | null>(null);
   const { userEmail, activeRole } = useRole();
+  const copyPath = file ? ticketFileCopyPath(file, { ...(copyContext ?? {}), ticketRowId: ticketRowId ?? null }) : null;
+  const viaServer = copyPath?.kind === 'server';
+  const fileIsPdf = !!file && (file.type?.includes('pdf') || file.name.toLowerCase().endsWith('.pdf'));
 
   useEffect(() => {
     // Archived tickets have had their attachment binaries shed to the cold
     // archive — don't try to sign a URL for a key that no longer exists.
-    if (!isOpen || !file?.url || archived) { setResolvedUrl(null); setResolveError(null); return; }
+    if (!isOpen || !file?.url || archived) { setResolvedUrl(null); setResolveError(null); setPreviewStamped(null); setServerNote(null); return; }
     let alive = true;
+    let objectUrl: string | null = null;
     setResolvedUrl(null);
     setResolveError(null);
+    setPreviewStamped(null);
+    setServerNote(null);
     // If the stored value already looks like a fully-qualified URL (legacy
     // attachments uploaded before the path-only fix), pass it through.
     if (/^https?:\/\//i.test(file.url)) { setResolvedUrl(file.url); return; }
-    // SEC-7 / DEC-49: this viewer frames the PDF preview — a reviewed inline caller.
-    getSignedUrlForPath(file.url, undefined, { inline: true })
-      .then((u) => { if (alive) setResolvedUrl(u); })
-      .catch((e) => { if (alive) setResolveError((e as Error).message); });
-    return () => { alive = false; };
-  }, [isOpen, file?.url, archived]);
+    const presign = () => {
+      // SEC-7 / DEC-49: this viewer frames the PDF preview — a reviewed inline caller.
+      getSignedUrlForPath(file.url, undefined, { inline: true })
+        .then((u) => { if (alive) setResolvedUrl(u); })
+        .catch((e) => { if (alive) setResolveError((e as Error).message); });
+    };
+    if (viaServer && fileIsPdf && ticketRowId && file.id) {
+      void takeTicketCopy({
+        ticketRowId, attachmentId: file.id, channel: 'view', fallbackName: file.name,
+        getToken: copyToken, confirm: async () => true,
+      }).then((out) => {
+        if (!alive) return;
+        if (out.kind === 'file') {
+          objectUrl = URL.createObjectURL(out.blob);
+          setResolvedUrl(objectUrl);
+          setPreviewStamped(out.stamped);
+        } else if (out.kind === 'browser') {
+          setServerNote(out.message);
+          presign();
+        } else {
+          setResolveError(out.kind === 'refused' ? out.message : 'The preview was not shown.');
+        }
+      });
+    } else {
+      presign();
+    }
+    return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [isOpen, file?.url, file?.id, file?.name, archived, viaServer, fileIsPdf, ticketRowId]);
 
   if (!isOpen || !file) return null;
 
-  const isPdf = file.type?.includes('pdf') || file.name.toLowerCase().endsWith('.pdf');
+  const isPdf = fileIsPdf;
   const isImage = file.type?.includes('image') || file.name.match(/\.(jpeg|jpg|gif|png)$/i);
 
   // PHYS-2 / PHYS-9 / HAND-3: what this file's copy says — its OWN revision
@@ -733,17 +788,66 @@ const FileViewerModal = ({
     }
   };
 
+  // EVID-16 done-when 2 (DF-P15): a file the server can issue is copied
+  // through POST /api/tickets/copy — stamped and recorded in the request that
+  // issues its bytes; its questions (a superseded file, an unstampable one)
+  // are asked here and the answer sent back. The presigned URL is never used
+  // to copy it. A file the server cannot issue keeps the browser path below,
+  // and the viewer says so (BROWSER_PATH_NOTE / serverNote).
+  const serverCopy = async (channel: Exclude<TicketCopyRequestChannel, 'view'>) => {
+    if (!ticketRowId || !file.id) return { kind: 'browser' as const, message: BROWSER_PATH_NOTE.unaddressable };
+    return takeTicketCopy({
+      ticketRowId, attachmentId: file.id, channel, fallbackName: file.name,
+      getToken: copyToken,
+      confirm: (message) => appConfirm({ message, tone: "danger" }),
+    });
+  };
+
   const handlePrint = async () => {
-    if (!resolvedUrl) { await appAlert({ message: 'Still loading file — try again in a moment.' }); return; }
+    if (!viaServer) return browserPrint();
+    const out = await serverCopy("print");
+    if (out.kind === 'declined') return;
+    if (out.kind === 'browser') {
+      setServerNote(out.message);
+      await appAlert({ message: `The server could not issue this file (${out.message}). It will be stamped and recorded from your browser instead.` });
+      return browserPrint();
+    }
+    if (out.kind === 'refused') { await appAlert({ message: out.message, tone: "danger" }); return; }
+    const printUrl = URL.createObjectURL(out.blob);
+    const frame = document.createElement('iframe');
+    frame.style.display = 'none';
+    frame.src = printUrl;
+    document.body.appendChild(frame);
+    frame.onload = () => {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    };
+    setTimeout(() => {
+      document.body.removeChild(frame);
+      URL.revokeObjectURL(printUrl);
+    }, 60_000);
+  };
+
+  // The browser path (before DF-P15 every file's): the file is fetched from a
+  // presigned URL, stamped in the tab and recorded from the tab. Kept for a
+  // file the server cannot issue (lib/ticketCopyRequest.ts ticketFileCopyPath).
+  // A preview that is the server's stamped stream is never re-stamped here:
+  // the raw file is signed afresh.
+  const browserSourceUrl = async (): Promise<string> =>
+    (previewStamped === null ? resolvedUrl : null) || (/^https?:\/\//i.test(file.url) ? file.url : await getSignedUrlForPath(file.url));
+
+  const browserPrint = async () => {
+    let sourceUrl: string;
+    try { sourceUrl = await browserSourceUrl(); } catch { await appAlert({ message: 'Still loading file — try again in a moment.' }); return; }
     // Print the STAMPED stream, never the raw file: watermark + rev footer +
     // the verify QR, exactly like a download. Paper is where copies escape.
-    let printUrl = resolvedUrl;
+    let printUrl = sourceUrl;
     let stamped = false;
     const plan = planFor("print");
     if (!(await confirmStanding(plan))) return;
     try {
       const { stampPdf } = await import("@/lib/stamping");
-      const blob = await stampPdf(resolvedUrl, {
+      const blob = await stampPdf(sourceUrl, {
         userLabel: userEmail?.split("@")[0] || userId || "USER",
         email: userEmail || undefined,
         timestamp: new Date(),
@@ -788,6 +892,33 @@ const FileViewerModal = ({
   };
 
   const performDownload = async () => {
+    if (!viaServer) return browserDownload();
+    let fallBack = false;
+    try {
+      const out = await serverCopy("download");
+      if (out.kind === 'declined') return;
+      if (out.kind === 'browser') {
+        setServerNote(out.message);
+        await appAlert({ message: `The server could not issue this file (${out.message}). It will be stamped and recorded from your browser instead.` });
+        fallBack = true;
+        return;
+      }
+      if (out.kind === 'refused') { await appAlert({ message: out.message, tone: "danger" }); return; }
+      const href = URL.createObjectURL(out.blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = out.filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    } finally {
+      setShowCompliance(false);
+      if (fallBack) await browserDownload();
+    }
+  };
+
+  const browserDownload = async () => {
     const now = new Date();
     const expiresAt = file.type === "Draft"
       ? new Date(now.getTime() + 72 * 60 * 60 * 1000)
@@ -797,7 +928,7 @@ const FileViewerModal = ({
     const plan = planFor("download");
     if (!(await confirmStanding(plan))) { setShowCompliance(false); return; }
     try {
-      const downloadUrl = resolvedUrl || (await getSignedUrlForPath(file.url));
+      const downloadUrl = await browserSourceUrl();
       // Every downloaded copy carries a QR that answers "is this still the
       // latest revision of this ticket's deliverable?" — so a copy a PM
       // handed out keeps warning for itself after a new revision lands.
@@ -824,7 +955,7 @@ const FileViewerModal = ({
         tone: "danger",
       });
       const link = document.createElement("a");
-      link.href = resolvedUrl || (await getSignedUrlForPath(file.url));
+      link.href = await browserSourceUrl();
       link.download = file.name;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
@@ -898,6 +1029,18 @@ const FileViewerModal = ({
           </div>
         </div>
         
+        {/* EVID-16 done-when 2 (DF-P15): a file that keeps the browser path says so,
+            and an unstamped server preview is marked. */}
+        {!archived && (serverNote || copyPath?.kind === 'browser' || previewStamped === false) && (
+          <div role="note" className="px-6 py-2 bg-amber-900/60 border-b border-amber-700 text-amber-100 text-xs relative z-50">
+            {previewStamped === false
+              ? 'Unstamped preview: the watermark / QR stamp could not be applied to this file, so this is the original. Treat it as uncontrolled.'
+              : serverNote
+                ? `The server could not issue this file (${serverNote}). Its copies are stamped and recorded from your browser.`
+                : copyPath?.kind === 'browser' ? BROWSER_PATH_NOTE[copyPath.reason] : null}
+          </div>
+        )}
+
         <div className="flex-1 overflow-hidden relative bg-slate-900/50 flex items-center justify-center p-8">
           {/* VISUAL PROTECTION LAYER */}
           {file.type === 'Draft' && <WatermarkOverlay />}
@@ -1102,6 +1245,12 @@ export default function TicketDetailView() {
   const [handbackFile, setHandbackFile] = useState<File | null>(null);
   const [handbackBusy, setHandbackBusy] = useState(false);
   const [canPublishSource, setCanPublishSource] = useState(false);
+  // DCW-4 (DF-P15): "Publish as a new document in <library>" — a request
+  // with a target library and no source document.
+  const [canPublishNew, setCanPublishNew] = useState(false);
+  const [targetLibraryName, setTargetLibraryName] = useState<string | null>(null);
+  const [newDocFile, setNewDocFile] = useState<File | null>(null);
+  const [newDocBusy, setNewDocBusy] = useState(false);
 
   // Admin Override State
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -1339,6 +1488,64 @@ export default function TicketDetailView() {
     })();
     return () => { alive = false; };
   }, [sourceDoc, uid, activeRole, roles, activeOrgId]);
+
+  // DCW-4 (DF-P15): may THIS caller put a new document's first revision into
+  // the request's target library? The same check createDocumentWithFile runs
+  // first (canPutFirstRevisionInContainer: a controller, a publisher on the
+  // library, or the library's owner), so the offer and the creation cannot
+  // disagree. A request with a source document hands back through "Publish
+  // as revision of …" instead. SESS-6: no role known offers nothing.
+  const newDocLibraryId = !sourceRefId && ticket?.libraryId ? ticket.libraryId : null;
+  useEffect(() => {
+    let alive = true;
+    if (!newDocLibraryId || !ticketOrgId || !uid || activeRole === null) { setCanPublishNew(false); setTargetLibraryName(null); return; }
+    (async () => {
+      try {
+        const may = await canPutFirstRevisionInContainer({ orgId: ticketOrgId, libraryId: newDocLibraryId, collectionId: null, actorUserId: uid, actorRole: activeRole ?? undefined });
+        if (!alive) return;
+        setCanPublishNew(may);
+        if (!may) { setTargetLibraryName(null); return; }
+        const { data } = await supabase.from('libraries').select('name').eq('id', newDocLibraryId).eq('org_id', ticketOrgId).maybeSingle();
+        if (alive) setTargetLibraryName((((data as { name?: string | null } | null)?.name) ?? '').trim() || 'the target library');
+      } catch { if (alive) { setCanPublishNew(false); setTargetLibraryName(null); } }
+    })();
+    return () => { alive = false; };
+  }, [newDocLibraryId, ticketOrgId, uid, activeRole]);
+
+  // PHYS-18 (DF-P15): the copy recall on the page — shown to the people who
+  // may recall a request's copies: its requester, its assigned drafter and a
+  // controller (Admin / DocCtrl, by the role collection). The ticket as the
+  // recall reads it is memoized on what the verdict reads, so the panel
+  // re-reads the record only when the ticket moves.
+  const canRecallCopies = !!ticket && !!uid && !ticket.archivedAt
+    && (ticket.requesterId === uid || ticket.assignedDrafterId === uid || isAdmin);
+  const recallTicket = useMemo(() => (ticket?.id && ticket.orgId ? {
+    id: ticket.id, orgId: ticket.orgId, status: ticket.status ?? null, deliverableRev: ticket.deliverableRev ?? null,
+    history: ticket.history, revisionCount: ticket.revisionCount ?? null, attachments: ticket.attachments,
+  } : null), [ticket?.id, ticket?.orgId, ticket?.status, ticket?.deliverableRev, ticket?.history, ticket?.revisionCount, ticket?.attachments]);
+
+  // DCW-4 (DF-P15): fetch the Final deliverable's bytes for the new-document
+  // path (as openHandback does for a revision). Nothing is created here.
+  const openNewDocument = async () => {
+    if (!ticket) return;
+    const final = latestFinalAttachment(ticket.attachments);
+    if (!final) return;
+    setNewDocBusy(true);
+    try {
+      const url = /^https?:\/\//i.test(final.url) ? final.url : await getSignedUrlForPath(final.url);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('The Final deliverable could not be fetched from storage.');
+      const blob = await res.blob();
+      setNewDocFile(new File([blob], final.name, { type: blob.type || 'application/pdf' }));
+    } catch (e) {
+      const msg = e instanceof ArchivedFileError
+        ? 'The Final deliverable was archived offline — restore the archive before publishing it.'
+        : (e as Error).message;
+      showToast({ type: 'error', title: 'Cannot start the publish', message: msg });
+    } finally {
+      setNewDocBusy(false);
+    }
+  };
 
   // Pre-seed the existing rev-up flow with the Final deliverable and open it.
   // Nothing is published here — RevUpModal → revUpDocument does that, with
@@ -1961,6 +2168,8 @@ export default function TicketDetailView() {
     : null;
   const deliverable = deliverableStateOf(ticket.metadata);
   const canOfferHandback = !!handback && canPublishSource && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published';
+  // DCW-4 (DF-P15): the new-document offer — same conditions, on the library.
+  const canOfferNewDocument = !!newDocLibraryId && canPublishNew && !ticket.archivedAt && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published';
 
   return (
     <div className="pb-20">
@@ -1985,6 +2194,32 @@ export default function TicketDetailView() {
           onSuccess={() => { /* onDirectPublished / onReviewSubmitted record the outcome */ }}
           onDirectPublished={(v) => { setShowHandback(false); if (v.id) void recordHandback(v.id, v.revisionLabel); }}
           onReviewSubmitted={(d) => { setShowHandback(false); void recordHandback(d.versionId, d.revisionLabel); }}
+        />
+      )}
+      {newDocFile && newDocLibraryId && canPublishNew && ticket.id && uid && (
+        <PublishNewDocumentModal
+          orgId={ticket.orgId}
+          libraryId={newDocLibraryId}
+          libraryName={targetLibraryName || 'the target library'}
+          ticketRowId={ticket.id}
+          ticketNumber={ticket.ticketId}
+          defaultTitle={ticket.title || ''}
+          file={newDocFile}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole ?? undefined}
+          onClose={() => setNewDocFile(null)}
+          onCreated={async (r) => {
+            setNewDocFile(null);
+            if (r.creationAuditError) {
+              await appAlert({ message: `${r.documentNumber} was created, but its creation record could not be written (${r.creationAuditError}). Tell Document Control so the record can be completed.`, tone: "danger" });
+            }
+            if (!r.versionId) {
+              showToast({ type: 'error', title: 'Created, but not recorded on the request', message: `${r.documentNumber} is in the register, but its first version could not be read back to record it here. Refresh and try "Publish as a new document" again, or tell Document Control.` });
+              return;
+            }
+            await recordHandback(r.versionId, '0');
+          }}
         />
       )}
       {showRedlineEditor && fileToRedline && (
@@ -2014,6 +2249,7 @@ export default function TicketDetailView() {
         archived={!!ticket?.archivedAt}
         archiveId={ticket?.archiveId}
         liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}
+        copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments } : null}
         onApprove={(() => {
           const action = liveActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;
@@ -2705,6 +2941,38 @@ export default function TicketDetailView() {
                    </div>
                  ))}
                </div>
+               {/* DCW-4 (DF-P15): a request with a target library and no source document —
+                   where its deliverable stands in the register, and the offer to publish it
+                   as a new document there (to someone who may). */}
+               {newDocLibraryId && (deliverable || canOfferNewDocument) && (
+                 <div className="mt-3 flex flex-wrap items-center gap-2 relative z-10">
+                   {deliverable?.state === 'published' && (
+                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
+                       <CheckCircle2 className="w-3 h-3" /> {deliverable.in_review ? `Draft ${deliverable.revision_label} in document review` : (deliverable as { filed_as_draft?: boolean }).filed_as_draft ? 'Filed in the register as a Draft document' : `Published as Rev ${deliverable.revision_label}`}
+                     </span>
+                   )}
+                   {deliverable?.state === 'not_in_register' && (
+                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                       <AlertTriangle className="w-3 h-3" /> Closed — deliverable not in the register
+                     </span>
+                   )}
+                   {canOfferNewDocument && (
+                     <button
+                       type="button"
+                       onClick={() => { void openNewDocument(); }}
+                       disabled={newDocBusy}
+                       title="Create a new document in the request's target library from its Final deliverable — offered to whoever may add a document there, not to whoever can close the request (DEC-22)"
+                       className="text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-md px-2 py-1"
+                     >
+                       {newDocBusy ? 'Preparing…' : `Publish as a new document in ${targetLibraryName || 'the target library'}`}
+                     </button>
+                   )}
+                 </div>
+               )}
+               {/* PHYS-18 (DF-P15): who took a copy of this request's files, and the recall. */}
+               {canRecallCopies && recallTicket && uid && (
+                 <TicketCopyRecallPanel ticket={recallTicket} ticketNumber={ticket.ticketId ?? null} currentUserId={uid} currentUserName={userEmail ?? null} />
+               )}
              </div>
           </div>
 
