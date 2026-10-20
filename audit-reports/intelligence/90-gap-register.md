@@ -350,6 +350,36 @@ Acceptance 2 gains the ⌘K and coverage-report AI-read marks (GOV-9's fix pass 
 
 **Scope / residual.** OPEN on the graph limb's remainder (intelligence I-32 PROVENANCE VIEW AND WIZARD ADOPT; Ruled by the integrator at the I-26 merge, 2026-10-20 (DEC-90)) and on acceptance 1, the single per-asset "how we came to believe this" view — opened as its own finding, `GAP-316` (below), so it is planned rather than left on this record (DEC-31); it is I-32's too (assigned at the I-15 merge). No migration.
 
+
+**Resolution (2026-10-20, intelligence Round G).** Package I-32 PROVENANCE VIEW AND WIZARD ADOPT — the two limbs left on this record: acceptance 1 (the single per-asset view, opened as `GAP-316`) and the graph remainder of acceptance 2 (`DEC-90` rulings (1) and (2); assigned at the I-15 and I-26 merges). Reproduced first (`DEC-29`): on `a21c718` no single per-asset view existed (`GAP-316`'s resolution has the detail). The org graph also disagreed with the asset hub on two kinds of link:
+- **A machine reading a person also tagged the document with.** The hub showed it as "tagged · also on drawing". The graph drew it orange: "Read from the drawing (not yet a person's link)" (`lib/orgGraph.ts relationOf` read only the row).
+- **A person's link carrying the sweep's sheet address.** This is a pair adopted through the Bridge, which keeps `sheet_label` and clears `model` (`HUMAN_PROVENANCE`). The graph labelled it "Shared equipment · SHT 4" as a plain fact. The I-15 fix pass's `withAdoptedTag` dropped the mark at once.
+
+With the base `lib/orgGraph.ts` and `components/graph/graphTheme.ts` put back, the six graph cases of the new `lib/__tests__/intelRoundGI32Provenance.test.ts` fail, and the seven other selected cases pass.
+
+What landed:
+- **Acceptance 1:** the provenance view, `GET /api/assets/provenance` and `components/assets/AssetProvenancePanel.tsx` on the asset hub. See `GAP-316`'s resolution.
+- **The graph remainder.** Machine-read vs person-asserted, and every sheet mark, now come from one function set, `lib/relationProvenance.ts`, which the provenance view uses too:
+  - `lib/orgGraph.ts`: `relationOf(row, personTagged)` marks a machine reading whose document's own equipment tags name the asset's tag `personAlso`. It marks the sweep's address on a person's link `sheetUnconfirmed` (`sheetReadingOf`). The tags come from `readMachineDocTags`: one keyed read of `documents.asset_tags`, only for the documents a machine reading links, under the same client as every other read, org-wide and scoped alike. A read that fails marks nothing (the edges stay the sweep's alone, as before) and the map says so in its notes. `GraphEdge` gains the two optional fields; the wire carries them unchanged (`packGraphPayload` packs every extra).
+  - `components/graph/graphTheme.ts`: a `personAlso` edge takes the person's slate and the label "Tagged, and read from the drawing · <sheet>". A `sheetUnconfirmed` sheet reads "(read by the equipment sweep, unconfirmed)", the `SWEEP_SHEET_MARK`. `AI_READ_MARK` is re-exported from the shared module with the same words.
+  - `app/(protected)/graph/page.tsx`: `withAdoptedTag` redraws a just-adopted pair with the sweep's address unconfirmed, as the next load draws it.
+  - `app/(protected)/assets/[tag]/page.tsx`: the hub's sheet chip carries the same mark on a person's link.
+
+Tests:
+- `lib/__tests__/intelRoundGI32Provenance.test.ts`:
+  - the agreement matrix — for seven kinds of relation row, the view's standing and sheet mark and the edge's colour and label say the same thing;
+  - the org graph: a regression pin, `personAlso`, `sheetUnconfirmed`, scoped, and the failed tags read.
+- `lib/__tests__/intelRoundGI32ProvenancePanel.test.ts`: the hub chip.
+- `lib/__tests__/graphPageRender.test.ts`: the adopt case now expects `sheetUnconfirmed` and "Shared equipment · SHT 4 (read by the equipment sweep, unconfirmed)", still slate and with no AI-read claim (`DEC-90` ruling (2)).
+
+**Done-when (acceptance).**
+1. ✓ For any asset, the system produces the complete story, asserted by whom or read from which sheet of which revision (`GAP-316`).
+2. ✓ AI-derived and human-asserted are distinguishable everywhere both render, the drawing viewer (I-26) and the graph included. The graph's edges now agree with the provenance view on machine-read vs person-asserted, and on which sheet addresses are unconfirmed.
+3. ✓ (2026-10-02) unchanged.
+4. ✓ (2026-10-02) unchanged. The view reads the records, and adds and changes nothing exported or restored.
+
+**Scope / residual.** One remainder sits outside this package's surfaces. ⌘K (`lib/search.ts` / `lib/globalSearch.ts`) and the coverage report (`lib/bridgeCoverage.ts` / `components/assets/CoverageReport.tsx`) still show an adopted pair's sheet address with no mark. It is opened as `GOV-16` (LOW, `DEC-31`; owner to be assigned by the integrator). No migration.
+
 ---
 
 <a id="gap-304"></a>
@@ -1128,6 +1158,35 @@ Every piece of an asset's story is recorded and shown somewhere: the asset's `or
 
 ### Acceptance
 1. For any asset, the hub shows the complete story of how it came to be believed — asserted by whom, or read from which sheet of which revision — from the records alone.
+
+**Resolution (2026-10-20, intelligence Round G).** Package I-32 PROVENANCE VIEW AND WIZARD ADOPT, under `DEC-90` ruling (1): ONE per-asset provenance view on the asset hub that lists every relation (`document_assets` and `knowledge_document_assets`) with who or what asserted it, read under the viewer's own RLS and the I-12 read predicate. A relation on a document the reader may not read is not shown and not counted. A failed read says so, never "none". Reproduced first (`DEC-29`): on `a21c718`, `app/(protected)/assets/[tag]/page.tsx` listed each link's who / sheet / revision / model per document row (`:460-479`), but nothing read `knowledge_document_assets`, the asset's `discovered_from`, or the `EQUIPMENT_BRIDGE_*` decisions on the hub, and no route or component put them together.
+
+What landed:
+- **`GET /api/assets/provenance?orgId&assetId`** (`app/api/assets/provenance/route.ts`, new). Every read runs as the caller (`callerScopedClient`, their own RLS):
+  - the asset, with `origin` / `discovered_from` (falling back without them on a database before `20260928`);
+  - the relation (`document_assets`), its `20261171` / `20261170` columns dropped one step at a time;
+  - `knowledge_document_assets` (`42P01` / `PGRST205`: not installed — `20261235` unpasted — said, never a failure);
+  - the equipment sweep's decisions (`audit_logs`, `EQUIPMENT_BRIDGE_*`, the workspace's newest 1,000; a decision is kept only if its details name this asset by id or by its tag in the one grammar);
+  - the documents and uploads named;
+  - the names of the people who linked or decided.
+
+  Then every controlled document is put to `readableControlledDocIds` (the I-12 predicate): a linked one, a decision's, the discovery's source, and the source of a knowledge mirror. A document either rule refuses takes its links, its decisions and the discovery's naming of it out of the answer, and nothing counts them. A predicate that cannot decide answers 503 and no story (fails closed). An unreadable principal answers 503; a non-member 403. Every other failed read is a sentence in `notes` ("… none of them is shown, which is not the same as none"). The service role reads only the caller's identity. No write, no AI call. The route is `private, no-store`.
+- **`lib/assetProvenance.ts`** (new): the pure assembly `assembleAssetProvenance`.
+  - The discovery: door, source, sheets (AI-read marked), revision, automatic or not, confirmed by a person since or not. A source the reader cannot open is "not one you can open", naming nothing, and no pages or sheets are given for it.
+  - Each link in time order: its target, who or what asserted it in words, the model and revision of a machine reading, the sheet and its mark, the pages, vanished / earlier rev, and when. A person's `manual` link names who linked it (`asserted_by_user`). A tag-sync row never names that uid: it is the document's last tag editor, per `20261171`'s header.
+  - Each decision: words, actor, target, detail, when.
+  - No score, no summary stored.
+- **`lib/relationProvenance.ts`** (new): the one reading of a relation row — `relationAsserter`, `sheetReadingOf` / `sheetMarkOf`, `assetTagsName`, `linkStandingOf`. The view and the org graph's edges share it (`GAP-303`'s graph remainder, below).
+- **`components/assets/AssetProvenancePanel.tsx`** (new), mounted on the asset hub for a registered asset as **"How we came to believe this"**. It is closed until asked: opening the hub reads exactly what it read before (`DEC-90` ruling (4)). Opened, it shows the discovery, "Links you can read (N)" with each link's standing ("AI-read" / "read from drawing" / "tagged · also on drawing" / "a person's link"), its asserter, sheet mark, pages and revision, then "Decisions recorded (N)". A refused or failed answer is said, and a partial answer's notes stand above the list.
+
+Tests:
+- `lib/__tests__/intelRoundGI32Provenance.test.ts`, the route: every relation with its asserter, in order, as the caller; RLS- and predicate-refused documents not shown, not counted, nor their decisions, the discovery's source, or an upload mirroring a refused document; failed reads said; a failed documents read drops their links; `20261235` unpasted and the `20261171` / `20261170` tiers; 503 / 503 / 403 / 401 / 400 / 404; the discovery kinds.
+- `lib/__tests__/intelRoundGI32ProvenancePanel.test.ts`, rendered: no request until opened (the hub's fetches are exactly its old one); the opened story; a 503 said; notes above an empty list; no panel for an unregistered tag.
+
+**Done-when (acceptance).**
+1. ✓ For any registered asset, the hub shows the story from the records alone. That covers how it entered the registry, each link asserted by whom (a named person for a manual link, a person's tags, the sweep reading the text layer, or an AI transcription with its model) or read from which sheet and pages of which revision, and each recorded decision of the sweep. All of it is read under the viewer's access. An unregistered tag has no records to tell (no panel).
+
+**Scope / residual.** The decision read searches the workspace's newest 1,000 equipment-sweep decisions; past that, the view says older ones may not be listed. Archived documents' links are shown, marked "(archived)" — they are records. The hub's own document list, its counts and the "Also read on" list are unchanged. No migration, no new table, no export decision.
 
 ---
 

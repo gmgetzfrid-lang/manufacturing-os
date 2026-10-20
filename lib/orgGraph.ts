@@ -73,9 +73,10 @@
 // uses when a database predates them.
 
 import { supabase } from "@/lib/supabase";
-import type { CodebookEntry } from "@/lib/codebook";
+import { tagKey, type CodebookEntry } from "@/lib/codebook";
 import type { ResolvedScope, ScopeRef } from "@/lib/scope";
 import type { PendingPairsRead } from "@/lib/linkProposals";
+import { assetTagsName, sheetReadingOf } from "@/lib/relationProvenance";
 
 export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot";
 
@@ -150,6 +151,18 @@ export interface GraphEdge {
   pages?: number[];
   assertedBy?: "machine" | "human";
   aiRead?: boolean;
+  /** I-32 (GAP-303 graph remainder) — a machine's reading whose document's
+   *  own equipment tags (documents.asset_tags, typed by a person) also name
+   *  the tag: a person asserted it too, as the asset hub and its provenance
+   *  view say ("tagged · also on drawing"). Absent when the tags were not
+   *  read (the read failed — the edge stays the sweep's alone). */
+  personAlso?: boolean;
+  /** I-32 (GOV-9 criterion 4, the graph's label limb) — a person's link
+   *  carrying the sheet address the equipment sweep read (lib/
+   *  relationProvenance.ts SWEEP_SHEET_MARK): whether off an AI
+   *  transcription is not recorded on the row, so the address is
+   *  unconfirmed, never a plain fact. */
+  sheetUnconfirmed?: boolean;
 }
 
 /** IRLS-14 (the lib/orgGraph.ts half): what the mention read found. It tells
@@ -272,6 +285,10 @@ export interface GraphRows {
    *  library-only upload). A missing key means it could not be resolved. */
   mirrorOf: Map<string, string | null>;
   flows: Array<{ from_kind: string; from_ref: string; to_kind: string; to_ref: string; status: string }>;
+  /** I-32 — document id → its equipment tags (documents.asset_tags), read
+   *  only for the documents a machine reading links (readMachineDocTags). A
+   *  missing key: not read (the edge stays the sweep's alone). */
+  docTags?: Map<string, unknown>;
 }
 
 export const emptyGraphRows = (): GraphRows => ({
@@ -432,6 +449,27 @@ async function readDocAssetsTiered(
     r = await read(cols);
   }
   return r;
+}
+
+/** I-32 (GAP-303 graph remainder) — the equipment tags of the documents a
+ *  machine reading links, so an edge a person also tagged is drawn as the
+ *  asset hub and its provenance view say it ("tagged · also on drawing").
+ *  Only those documents are read (one keyed read, chunked), under the same
+ *  client as every other read. A read that fails marks nothing: the edges
+ *  stay the sweep's alone, as before this file, and the map says so. */
+async function readMachineDocTags(orgId: string, docAssets: readonly DocAssetRow[], notes: string[]): Promise<Map<string, unknown>> {
+  const out = new Map<string, unknown>();
+  const ids = [...new Set(docAssets
+    .filter((r) => r.asserted_by === "machine" || (!r.asserted_by && r.source === "drawing"))
+    .map((r) => String(r.document_id)))];
+  if (ids.length === 0) return out;
+  const r = await pageIn<{ id: string; asset_tags?: unknown }>("documents", "id, asset_tags", orgId, "id", ids, ids.length + 1);
+  if (r.error) {
+    notes.push(`Which equipment-sweep readings a person also tagged could not be read (${r.error.message}) — those links are drawn as the sweep's alone.`);
+    return out;
+  }
+  for (const d of r.rows) out.set(String(d.id), d.asset_tags ?? null);
+  return out;
 }
 
 type Res = { data: unknown; error: PgErr | null; count?: number | null };
@@ -714,6 +752,7 @@ async function readOrgRows(
   const kdocIds = [...new Set(mentions.rows.filter((m) => !m.document_id && m.knowledge_document_id)
     .map((m) => String(m.knowledge_document_id)))];
   const mirrorOf = await resolveMirrors(orgId, kdocIds, notes);
+  const docTags = await readMachineDocTags(orgId, docAssets.rows, notes);
 
   const boundLibraries = [...new Set(codebookUnits.map((u) => (u.meta?.knowledgeLibraryId ?? "").trim()).filter(Boolean))];
   let knowledgeLibraries: GraphRows["knowledgeLibraries"] = [];
@@ -728,7 +767,7 @@ async function readOrgRows(
       codebookUnits, units, plants, systems, libraries, knowledgeLibraries, projects, plotPlans,
       documents, assets,
       docAssets: docAssets.rows, projectDocs: projectDocs.rows, related: related.rows,
-      supersessions: supersessions.rows, mentions: mentions.rows, mirrorOf, flows: flows.rows,
+      supersessions: supersessions.rows, mentions: mentions.rows, mirrorOf, flows: flows.rows, docTags,
     }, gated.refused),
     mentions: { installed: !mentions.missing, capped: mentions.capped },
     refused: gated.refused,
@@ -845,6 +884,7 @@ async function readScopeRows(
   const unresolved = [...new Set(mentions.filter((m) => !m.document_id && m.knowledge_document_id && !mirrorOf.has(String(m.knowledge_document_id)))
     .map((m) => String(m.knowledge_document_id)))];
   for (const [k, v] of await resolveMirrors(orgId, unresolved, notes)) mirrorOf.set(k, v);
+  const docTags = await readMachineDocTags(orgId, docAssets.rows, notes);
 
   return {
     rows: withoutRefused({
@@ -860,7 +900,7 @@ async function readScopeRows(
       documents, assets,
       docAssets: docAssets.rows, projectDocs: projectDocs.rows,
       related: union(relA, relB), supersessions: union(supA, supB),
-      mentions, mirrorOf, flows: flows.rows,
+      mentions, mirrorOf, flows: flows.rows, docTags,
     }, gated.refused),
     // A read with no ids issues no request and cannot report a missing
     // table, so the index is installed only if no read found it missing.
@@ -895,9 +935,14 @@ export interface AssembleOptions {
  *  pages it was read on, who asserted it, and whether the page was read off
  *  an AI transcription. Only what the row says; undefined when it says
  *  nothing (a database before 20261170, or a link a person made with no
- *  sheet), so such an edge is exactly the pair it always was. */
-export function relationOf(r: DocAssetRow): Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead"> | undefined {
-  const out: Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead"> = {};
+ *  sheet), so such an edge is exactly the pair it always was.
+ *  I-32: the sheet address is read through lib/relationProvenance.ts
+ *  sheetReadingOf — the one reading the asset hub's provenance view uses — so
+ *  a person's link carrying the sweep's address is `sheetUnconfirmed` (GOV-9
+ *  criterion 4); `personTagged` (the document's own equipment tags name the
+ *  tag) makes a machine reading `personAlso`. */
+export function relationOf(r: DocAssetRow, personTagged = false): Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead" | "personAlso" | "sheetUnconfirmed"> | undefined {
+  const out: Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead" | "personAlso" | "sheetUnconfirmed"> = {};
   const sheet = typeof r.sheet_label === "string" ? r.sheet_label.trim() : "";
   if (sheet) out.sheet = sheet;
   const pages = Array.isArray(r.pages)
@@ -910,6 +955,10 @@ export function relationOf(r: DocAssetRow): Pick<GraphEdge, "sheet" | "pages" | 
     ? r.asserted_by : r.source === "drawing" ? "machine" : null;
   if (by) out.assertedBy = by;
   if (by === "machine" && typeof r.model === "string" && r.model.trim()) out.aiRead = true;
+  const reading = sheetReadingOf(r);
+  if (reading === "ai") out.aiRead = true;
+  else if (reading === "sweep") out.sheetUnconfirmed = true;
+  if (by === "machine" && personTagged) out.personAlso = true;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -934,7 +983,7 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
   const put = (n: GraphNode) => { if (!inScope || inScope(n.id)) nodes.set(n.id, n); };
 
   type Outcome = "added" | "duplicate" | "self" | "severed" | "boundary" | "unrelated";
-  const addEdge = (a: string, b: string, type: GraphEdgeType, extra?: Pick<GraphEdge, "via" | "note" | "folderIds" | "sheet" | "pages" | "assertedBy" | "aiRead">): Outcome => {
+  const addEdge = (a: string, b: string, type: GraphEdgeType, extra?: Pick<GraphEdge, "via" | "note" | "folderIds" | "sheet" | "pages" | "assertedBy" | "aiRead" | "personAlso" | "sheetUnconfirmed">): Outcome => {
     if (a === b) return "self";
     const hasA = nodes.has(a), hasB = nodes.has(b);
     if (!hasA || !hasB) {
@@ -1131,7 +1180,15 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
     if (d.plant_id) addEdge(`doc:${d.id}`, `plant:${d.plant_id}`, "unit");
     addEdge(`doc:${d.id}`, `lib:${d.library_id}`, "library");
   }
-  for (const r of rows.docAssets) addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag", relationOf(r));
+  // I-32: a machine reading a person also tagged the document with is drawn
+  // as theirs too — the tag is the asset's own (the one tag grammar).
+  const tagOfAsset = new Map(rows.assets.map((a) => [String(a.id), a.tag] as const));
+  for (const r of rows.docAssets) {
+    const docTags = rows.docTags?.get(String(r.document_id));
+    const tag = tagOfAsset.get(String(r.asset_id));
+    const personTagged = docTags !== undefined && !!tag && assetTagsName(docTags, new Set([tagKey(tag)]));
+    addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag", relationOf(r, personTagged));
+  }
   for (const r of rows.projectDocs) addEdge(`proj:${r.project_id}`, `doc:${r.document_id}`, "project");
   for (const r of rows.related) {
     if (r.kind === "document" && r.target_document_id) {
