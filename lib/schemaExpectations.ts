@@ -149,6 +149,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "plants", migration: "20260606_operational_entity_graph.sql" },
   { table: "platform_settings", migration: "20260920_per_user_keys_real_limits.sql" },
   { table: "plot_plans", migration: "20260719_plot_plans_and_whiteboard.sql" },
+  { table: "print_sheet_tokens", migration: "20261237_ps_roundG_print_sheet_tokens.sql" },
   { table: "process_flows", migration: "20261017_process_flows.sql" },
   { table: "project_activity", migration: "20260527_projects_and_collaboration.sql" },
   { table: "project_checklists", migration: "20261013_project_controls_program.sql" },

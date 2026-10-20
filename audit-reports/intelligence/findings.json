@@ -25,16 +25,16 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 274,
+    "findings": 275,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
-      "MEDIUM": 150,
+      "MEDIUM": 151,
       "LOW": 56
     },
     "by_status": {
-      "RESOLVED": 243,
+      "RESOLVED": 244,
       "OPEN": 23,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
@@ -5475,8 +5475,8 @@
       "title": "The calculation protocol asks the model to do engineering arithmetic; nothing in the codebase ever checks it",
       "severity": "MEDIUM",
       "status": "OPEN",
-      "verification": "SUSPECTED",
-      "verification_note": null,
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (reproduced on `708dde2` by intelligence Round G, I-25: a worked substitution's result reached the response and the stored row, labelled only)",
       "blast_radius": null,
       "related": [],
       "locations": [
@@ -5574,6 +5574,31 @@
       ],
       "refuted": false,
       "summary": "A DocCtrl who has never asked a Knowledge question — and therefore never saw or signed the agreement — opens a unit hub and clicks Read flows. Six rendered PFD pages are POSTed to Anthropic/OpenAI on their key. The same user opening a vision-read P&ID and clicking a tag ships another rendered page through /api/knowledge/locate. Neither surface ever showed them the \"never enter passwords, financial",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/20-prompts.md"
+    },
+    {
+      "id": "PR-13",
+      "title": "Model arithmetic the withholding cannot place: an answer never marked arithmetic, a result that matches a grounded value, a pre-I-25 row's prose result, and the internet answer",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by the rule's own scope; each shape below is a case `withholdModelResults` does not withhold)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/knowledgeAskGuards.ts",
+        "app/api/knowledge/ask/route.ts:2734-2760",
+        "app/api/knowledge/ask/route.ts:714",
+        "app/(protected)/knowledge/[id]/page.tsx:709"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "An engineer asks \"what is the hydrotest pressure for a 285 psig vessel?\" without typing values into the inputs box. The model ignores the protocol and answers \"Answer: The factor is 1.5 [1]. For your vessel the test pressure is 428 psig.\" No chain, no Substituted line, no Applied section, no prose pair in one clause and no inputs: the answer is not marked arithmetic, 428 psig is shown and stored, ",
       "area": "intelligence",
       "report": "audit-reports/intelligence/20-prompts.md"
     },
@@ -6106,7 +6131,7 @@
       "id": "DACL-8",
       "title": "Public verify endpoints disclose document number, title and revision status for any document UUID, with no visibility check",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

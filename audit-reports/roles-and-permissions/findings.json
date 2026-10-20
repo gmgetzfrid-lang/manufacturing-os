@@ -25,10 +25,9 @@
       "LOW": 5
     },
     "by_status": {
-      "RESOLVED": 128,
+      "RESOLVED": 129,
       "REFUTED": 3,
-      "WONTFIX": 1,
-      "OPEN": 1
+      "WONTFIX": 1
     }
   },
   "status_vocabulary": [
@@ -3904,7 +3903,7 @@
       "id": "SURF-19",
       "title": "The API routes behind an admin surface still carry their own role constants instead of calling the admin gate",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "access-control / consistency",

@@ -17,6 +17,8 @@ import { supabase } from "@/lib/supabase";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import { stampPdf } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { mintedSheetToken, packSheetVerifyUrl } from "@/lib/printSheetTokens";
+import { mintSheetTokens, settleSheetTokens, type MintedSheetTokens } from "@/lib/printSheetTokensClient";
 import {
   getAssetByTag, createAsset, listAssetFiles, linkAssetFile, unlinkAssetFile,
   type Asset, type AssetFile, type LinkedDocument,
@@ -150,16 +152,40 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
 
   // Print every linked drawing as ONE stamped (uncontrolled) PDF — the file-stack
   // counterpart to the collection book's "Print all".
+  // PS-P9 (intelligence DACL-8 criterion 2; the integrator at the PS-P9
+  // merge, DEC-90): each sheet's QR names it by a per-print token, minted and
+  // settled exactly as lib/docPack.ts buildAndDownloadDocPack does — minted
+  // before the first sheet is stamped (only when the sheets carry a QR at
+  // all), today's /verify/<document>?v=<version> QR on any sheet not minted
+  // (the table absent, the mint failed — the print is never refused); once
+  // the print tab is open and the record written, the print is settled with
+  // exactly the sheets in the PDF (fired, never awaited); when nothing left
+  // (no page, the tab blocked, a failure) the whole print is voided.
   const printAll = async () => {
     const docs = files.map((f) => f.document).filter(Boolean) as LinkedDocument[];
     if (docs.length === 0 || printing) return;
     setPrinting(true);
+    const origin = publicOrigin();
+    let minted: MintedSheetTokens | null = null;
+    let settled = false;
+    const settleTokens = (printedDocumentIds: string[]) => {
+      if (!minted || settled) return;
+      settled = true;
+      void settleSheetTokens({ orgId, printId: minted.printId, printedDocumentIds });
+    };
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const email = session?.user?.email ?? undefined;
+      minted = origin
+        ? await mintSheetTokens({
+            orgId,
+            sheets: docs.flatMap((d) => d.id && d.current_version_id ? [{ documentId: d.id, versionId: d.current_version_id }] : []),
+          })
+        : null;
       const merged = await PDFDocument.create();
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
+      const printed: string[] = [];
       for (const doc of docs) {
         const url = await resolveCurrentVersionUrl(doc);
         if (!url) continue;
@@ -168,13 +194,12 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
             userLabel: email, email, timestamp: now, expiresAt,
             watermarkText: `UNCONTROLLED — ${doc.document_number || "DOC"} Rev ${doc.rev || "-"}`,
             footerNotice: `${doc.document_number || "Document"} Rev ${doc.rev ?? "?"} at time of issue — verify current revision before use.`,
-            verifyUrl: doc.id && doc.current_version_id && publicOrigin()
-              ? `${publicOrigin()}/verify/${doc.id}?v=${doc.current_version_id}`
-              : undefined,
+            verifyUrl: packSheetVerifyUrl(origin, doc.id, doc.current_version_id, doc.current_version_id ? mintedSheetToken(minted, doc.id) : null),
           });
           const src = await PDFDocument.load(await stamped.arrayBuffer());
           const copied = await merged.copyPages(src, src.getPageIndices());
           copied.forEach((p) => merged.addPage(p));
+          printed.push(doc.id);
         } catch (e) { console.error("Failed to add linked drawing", doc.document_number, e); }
       }
       if (merged.getPageCount() === 0) return;
@@ -182,13 +207,26 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
       const u = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
       const w = window.open(u, "_blank");
       setTimeout(() => URL.revokeObjectURL(u), 60_000);
-      if (!w) { await appAlert({ message: "Your browser blocked the print tab. Allow pop-ups for this site to print the linked drawings.", tone: "danger" }); return; }
-      w.addEventListener("load", () => setTimeout(() => w.print(), 250));
-      if (userId) {
-        const rows = docs.map((d) => ({ org_id: orgId, document_id: d.id, version_id: d.current_version_id ?? null, user_id: userId, user_email: email ?? null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(), watermark_policy_id: null }));
-        try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+      if (!w) {
+        settleTokens([]);
+        await appAlert({ message: "Your browser blocked the print tab. Allow pop-ups for this site to print the linked drawings.", tone: "danger" });
+        return;
       }
-    } finally { setPrinting(false); }
+      w.addEventListener("load", () => setTimeout(() => w.print(), 250));
+      try {
+        if (userId) {
+          const rows = docs.map((d) => ({ org_id: orgId, document_id: d.id, version_id: d.current_version_id ?? null, user_id: userId, user_email: email ?? null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(), watermark_policy_id: null }));
+          try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+        }
+      } finally {
+        // PS-P9: the print tab is open — every sheet not in the PDF is voided.
+        settleTokens(printed);
+      }
+    } finally {
+      // PS-P9: nothing left (no page, a failure before the tab) — void the print.
+      settleTokens([]);
+      setPrinting(false);
+    }
   };
 
   return (

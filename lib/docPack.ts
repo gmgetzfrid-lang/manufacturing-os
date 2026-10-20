@@ -26,6 +26,8 @@ import { supabase } from "@/lib/supabase";
 import { applyStampToPdfDoc, type StampTextMapping } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { mintedSheetToken, packSheetVerifyUrl } from "@/lib/printSheetTokens";
+import { mintSheetTokens, settleSheetTokens, type MintedSheetTokens } from "@/lib/printSheetTokensClient";
 import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { ackGateDocuments } from "@/lib/downloads";
 import type { PackLeftOutCode } from "@/lib/packLeftOut";
@@ -558,7 +560,35 @@ async function resolveToHttpUrl(raw: string): Promise<string> {
   return url as string;
 }
 
-export async function buildAndDownloadDocPack(input: {
+/** PS-P9 (intelligence DACL-8 c2): the per-print sheet tokens of one build —
+ *  minted before the first sheet is stamped, settled once the download is
+ *  triggered. */
+interface SheetTokenPrint { minted: MintedSheetTokens | null; downloaded: boolean }
+
+/** PS-P9 (intelligence DACL-8 criterion 2, rulings under DEC-90): every
+ *  sheet's QR names it by a per-print token the server mints for this build
+ *  (`<origin>/verify/<token>`), not by the document's UUID — when the tokens
+ *  can be minted. When they cannot (20261237 not pasted, no session, any
+ *  refusal) every sheet carries today's QR (`/verify/<document>?v=<version>`)
+ *  and the print is unaffected. A build that fails before the download
+ *  voids its whole print ('print_aborted'); after the download, the tokens
+ *  of sheets that did not make it into the PDF are voided ('not_printed') —
+ *  a voided token's scan reads stale, never green. */
+export async function buildAndDownloadDocPack(input: Parameters<typeof buildAndDownloadDocPackOnce>[1]): Promise<DocPackResult> {
+  const tokenPrint: SheetTokenPrint = { minted: null, downloaded: false };
+  try {
+    return await buildAndDownloadDocPackOnce(tokenPrint, input);
+  } catch (e) {
+    // Fired, not awaited: the user sees the failure at once; the void is
+    // best-effort (it never throws, and it gives up after its own timeout).
+    if (tokenPrint.minted && !tokenPrint.downloaded) {
+      void settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: [] });
+    }
+    throw e;
+  }
+}
+
+async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
   orgId: string;
   packLabel: string;               // e.g. the asset tag — used in the filename
   documentIds: string[];
@@ -662,6 +692,17 @@ export async function buildAndDownloadDocPack(input: {
     if (tooMany) throw tooMany;
   }
 
+  // PS-P9: one server-minted token per sheet about to be stamped (only when
+  // the sheets carry a QR at all — a public origin is configured). Never
+  // throws: null stamps today's QR on every sheet.
+  const origin = publicOrigin();
+  tokenPrint.minted = origin
+    ? await mintSheetTokens({
+        orgId: input.orgId,
+        sheets: docs.flatMap((d) => d.current_version_id ? [{ documentId: String(d.id), versionId: String(d.current_version_id) }] : []),
+      })
+    : null;
+
   const merged = await PDFDocument.create();
   let included = 0;
   let done = 0;
@@ -740,6 +781,7 @@ export async function buildAndDownloadDocPack(input: {
         });
         if (over) throw over;
       }
+      const sheetToken = versionId ? mintedSheetToken(tokenPrint.minted, documentId) : null;
       const holderWarning = d.checked_out_by && (
         ` ACTIVE CHANGE IN PROGRESS: checked out by ${(d.checked_out_by_name as string) || "another user"} at time of issue.`
       );
@@ -752,9 +794,9 @@ export async function buildAndDownloadDocPack(input: {
         footerNotice:
           `${label} Rev ${(d.rev as string) ?? "?"} at time of issue — verify current revision before use.` +
           (holderWarning || ""),
-        verifyUrl: versionId && publicOrigin()
-          ? `${publicOrigin()}/verify/${String(d.id)}?v=${versionId}`
-          : undefined,
+        // PS-P9: the sheet's own per-print token when one was minted for this
+        // version; otherwise today's document + version QR, unchanged.
+        verifyUrl: packSheetVerifyUrl(publicOrigin(), String(d.id), versionId, sheetToken),
       });
 
       const pages = await merged.copyPages(single, single.getPageIndices());
@@ -814,16 +856,29 @@ export async function buildAndDownloadDocPack(input: {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  tokenPrint.downloaded = true;
 
   // The distribution record and the reference intents name only paper that
   // left: written once the download is triggered (a failed build records
   // nothing), in one insert, and CHECKED (EGR-6) — a refused record never
   // blocks the pack, but the caller is told which sheets are unrecorded.
-  const unrecorded = await recordPackDownloads(input, includedRows);
+  let unrecorded: string[];
+  try {
+    unrecorded = await recordPackDownloads(input, includedRows);
 
-  // Pins (or any other state that asserts a print) move only AFTER the
-  // download is on its way — a failed build leaves them untouched (PKG-6).
-  if (input.afterDownload) await input.afterDownload([...includedSheets]);
+    // Pins (or any other state that asserts a print) move only AFTER the
+    // download is on its way — a failed build leaves them untouched (PKG-6).
+    if (input.afterDownload) await input.afterDownload([...includedSheets]);
+  } finally {
+    // PS-P9: the paper has left — the tokens of sheets that are not in it are
+    // voided; every printed sheet's token stays live. FIRED once the record
+    // and the pins are written, never awaited (DEC-90, the integrator at the
+    // PS-P9 merge): nothing waits on it — an unsettled print keeps every
+    // token live, which is what a downloaded pack needs. Never throws.
+    if (tokenPrint.minted) {
+      void settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: includedSheets.map((s) => s.documentId) });
+    }
+  }
 
   return { included, skipped, unrecorded };
 }
