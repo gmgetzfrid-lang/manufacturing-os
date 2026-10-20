@@ -917,6 +917,10 @@ export async function listTransmittalsForProject(orgId: string, projectId: strin
   }
 }
 
+/** DIST-18 (limb a): the longest query the register route's search slice
+ *  takes (searchTransmittalsForViewer truncates to it). */
+export const TRANSMITTAL_SEARCH_MAX = 200;
+
 /** DIST-18 (limb a): global search's transmittal hits — number, subject,
  *  recipient name or company matching `q`, newest first, at most `limit` —
  *  as the register shows them to this viewer: a subject the register
@@ -924,7 +928,10 @@ export async function listTransmittalsForProject(orgId: string, projectId: strin
  *  palette: any refusal answers none, as the browser read did. */
 export async function searchTransmittalsForViewer(orgId: string, q: string, limit: number): Promise<Transmittal[]> {
   try {
-    return await readRegister(orgId, { q, limit });
+    // The route asks for 2 to TRANSMITTAL_SEARCH_MAX characters; a longer
+    // query searches on its first TRANSMITTAL_SEARCH_MAX (globalSearch sets
+    // no upper bound) rather than answering no transmittal at all.
+    return await readRegister(orgId, { q: q.trim().slice(0, TRANSMITTAL_SEARCH_MAX), limit });
   } catch {
     return [];
   }

@@ -216,6 +216,25 @@ describe.skipIf(skip !== null)("DIST-18 limb (a), 20261231 replayed: portal_toke
     expect(one(db, svc, `SELECT * FROM transmittals WHERE org_id = '${w.orgId}' ORDER BY seq DESC LIMIT 1000`)).toMatch(/^ok:[1-9]/);
     expect(one(db, svc, `UPDATE transmittals SET status = 'acknowledged', acknowledged_at = now(), acknowledged_by_name = 'Jane Doe', acknowledged_via = 'portal' WHERE id = '${w.tr}' AND status = 'issued' RETURNING *`)).toBe("ok:1");
   });
+
+  it("review blocker: the search slice's old or() term was a service-role oracle on the token; the per-column ilike value is not", () => {
+    const svc: Caller = { role: "service_role" };
+    const p = w.token.slice(0, 4);
+    // What PostgREST compiled q='qqzzqq,portal_token.like.<p>*' into under the
+    // old .or(): the piece before the comma keeps its trailing backslash, and
+    // LIKE raises "must not end with escape character" only when the matcher
+    // reaches it — a prefix that matches no row is just false, and the
+    // injected term decides the row.
+    const oldOr = `SELECT count(*) FROM transmittals WHERE org_id = '${w.orgId}' AND (number ILIKE '%qqzzqq\\' OR portal_token LIKE '${p}%')`;
+    expect(selectAs(db, svc, oldOr)).toEqual(["1"]);
+    expect(selectAs(db, svc, oldOr.replace(`'${p}%'`, "'zzzz%'"))).toEqual(["0"]);
+    // What the route sends now: the whole text as ONE LIKE-escaped value per
+    // column (PostgREST reads its * as %) — no error, no row, no token term.
+    for (const col of ["number", "subject", "recipient_name", "recipient_company"]) {
+      expect(one(db, svc, `SELECT 1 FROM transmittals WHERE org_id = '${w.orgId}' AND ${col} ILIKE '%qqzzqq,portal\\_token.like.${p}%%'`)).toBe("ok:0");
+    }
+    expect(one(db, svc, `SELECT 1 FROM transmittals WHERE org_id = '${w.orgId}' AND number ILIKE '%TR-0007\\\\%'`)).toBe("ok:0");
+  });
 });
 
 describe.skipIf(skip !== null)("BEFORE the paste (HEAD's table-level SELECT — also the file's rollback): the P29 app works the same, and the token is still open", () => {

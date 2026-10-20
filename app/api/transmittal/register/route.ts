@@ -9,7 +9,8 @@
 //     &q=<text>[&limit=n] global search: number / subject / recipient name /
 //                         company matching, newest first, n (default 5, at
 //                         most 50) — a subject withheld from this viewer is
-//                         neither returned nor matched
+//                         neither returned nor matched; every hit says q, as
+//                         written, in a field this viewer is shown
 //
 // Until P27 the register (/transmittals) read every transmittal of the org
 // with the member's browser client (transmittals_select, 20260910: any active
@@ -45,7 +46,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   loadPrincipal, readableControlledDocIds, PrincipalUnreadableError, DcLandscapeUnreadableError, PRINCIPAL_UNREADABLE,
 } from "@/lib/knowledgeAccess";
-import { redactTransmittalForViewer, rowToTransmittal } from "@/lib/transmittals";
+import { redactTransmittalForViewer, rowToTransmittal, TRANSMITTAL_SEARCH_MAX } from "@/lib/transmittals";
 
 export const runtime = "nodejs";
 
@@ -57,10 +58,19 @@ const SEARCH_DEFAULT_LIMIT = 5;
 const SEARCH_MAX_LIMIT = 50;
 const SEARCH_CANDIDATES = 50;
 
-/** The browser's own search escaping (lib/globalSearch.ts before DIST-18):
- *  `%`, `_` and `,` are literal in the pattern. */
-function escapeSearch(q: string): string {
-  return q.replace(/[%_,]/g, "\\$&");
+/** The columns global search matches, each asked as its OWN filter. */
+const SEARCH_COLUMNS = ["number", "subject", "recipient_name", "recipient_company"] as const;
+
+/** DIST-18 (limb a): LIKE's own escaping — `\\`, `%` and `_` are literal in
+ *  the pattern. The text is sent only as ONE filter value (`.ilike(col, …)`),
+ *  which PostgREST never splits, and never inside `.or()`: an unquoted or()
+ *  value runs to the next `,` or `)` whatever backslash precedes it, so the
+ *  request text could add its own filter terms (portal_token among them) to a
+ *  read made with the service role. (PostgREST reads `*` in a like value as
+ *  `%`; that only widens the match on the column itself, and every hit must
+ *  still say q, as written, in a field the viewer is shown — below.) */
+function likeEscape(q: string): string {
+  return q.replace(/[\\%_]/g, "\\$&");
 }
 const MIGRATION_HINT =
   "Transmittals aren't set up yet — run supabase/migrations/20260717_transmittals.sql, then reload.";
@@ -85,7 +95,7 @@ export async function GET(req: NextRequest) {
   if (id && !UUID_RE.test(id)) return bad("id must be a transmittal id", 400);
   if (documentId && !UUID_RE.test(documentId)) return bad("documentId must be a document id", 400);
   if (projectId && !UUID_RE.test(projectId)) return bad("projectId must be a project id", 400);
-  if (q !== null && (q.length < 2 || q.length > 200)) return bad("q must be 2 to 200 characters", 400);
+  if (q !== null && (q.length < 2 || q.length > TRANSMITTAL_SEARCH_MAX)) return bad(`q must be 2 to ${TRANSMITTAL_SEARCH_MAX} characters`, 400);
   if ([id, documentId, projectId, q ?? ""].filter((v) => v.length > 0).length > 1) return bad("Ask for one slice at a time: id, documentId, projectId or q.", 400);
   const rawLimit = params.get("limit");
   const searchLimit = rawLimit === null ? SEARCH_DEFAULT_LIMIT : Number(rawLimit);
@@ -100,7 +110,8 @@ export async function GET(req: NextRequest) {
   }
   if (!principal) return bad("Not a member of this workspace.", 403);
 
-  let read = supabaseAdmin.from("transmittals").select("*").eq("org_id", orgId);
+  const base = () => supabaseAdmin.from("transmittals").select("*").eq("org_id", orgId);
+  let read = base();
   let ascending = false;
   let cap = 1000;
   if (id) read = read.eq("id", id);
@@ -115,21 +126,28 @@ export async function GET(req: NextRequest) {
     ascending = true;
     cap = 500;
   }
+  let reads = [read];
   if (q !== null) {
-    // searchTransmittals' read (lib/globalSearch.ts before DIST-18), bounded
-    // to this org by the eq above whatever the pattern holds.
-    const pat = escapeSearch(q);
-    read = read.or(`number.ilike.%${pat}%,subject.ilike.%${pat}%,recipient_name.ilike.%${pat}%,recipient_company.ilike.%${pat}%`);
+    // searchTransmittals' match (lib/globalSearch.ts before DIST-18) as one
+    // read per column, each bounded to this org and carrying the text as a
+    // single ilike value; merged by id below.
+    const pat = `%${likeEscape(q)}%`;
     cap = Math.max(searchLimit, SEARCH_CANDIDATES);
+    reads = SEARCH_COLUMNS.map((col) => base().ilike(col, pat));
   }
-  const { data, error } = await read.order("seq", { ascending }).limit(cap);
+  const answers = await Promise.all(reads.map((r) => r.order("seq", { ascending }).limit(cap)));
+  const error = answers.find((a) => a.error)?.error ?? null;
   if (error) {
     const missing = error.code === "42P01" || /relation .*transmittals.* does not exist/i.test(error.message ?? "");
     if (missing) return bad(MIGRATION_HINT, 404, { missingTable: true });
     console.error("[transmittal/register] the register read failed", error.message);
     return bad("Couldn't load the transmittal register — try again.", 500);
   }
-  const rows = ((data ?? []) as Array<Record<string, unknown>>).map(rowToTransmittal);
+  const byId = new Map<unknown, Record<string, unknown>>();
+  for (const a of answers) for (const r of (a.data ?? []) as Array<Record<string, unknown>>) if (!byId.has(r.id)) byId.set(r.id, r);
+  let raw = [...byId.values()];
+  if (q !== null) raw = raw.sort((x, y) => Number(y.seq) - Number(x.seq)).slice(0, cap);
+  const rows = raw.map(rowToTransmittal);
 
   // One read decision for every item the rows name (a controller is answered
   // before any read — DEC-43).
@@ -148,11 +166,12 @@ export async function GET(req: NextRequest) {
   const who = { uid: user.id, isController: principal.isController };
   const shown = rows.map((t) => redactTransmittalForViewer(t, who, readable));
   if (q === null) return NextResponse.json({ transmittals: shown });
-  // DIST-18 (limb a): a row the register shows without its subject is a hit
-  // only on what it does show — a withheld subject is never an oracle.
+  // DIST-18 (limb a): every hit says q, as written, in a field this viewer
+  // is shown — a withheld subject is never an oracle, and neither is any
+  // match the database made on something the viewer does not see (a NULL
+  // subject included: such a row is a hit only on its number or recipient).
   const needle = q.toLowerCase();
   const has = (v: string | null | undefined) => !!v && v.toLowerCase().includes(needle);
-  const hits = shown.filter((t, i) => t.subject !== null || rows[i].subject == null
-    || has(t.number) || has(t.recipientName) || has(t.recipientCompany));
+  const hits = shown.filter((t) => has(t.subject) || has(t.number) || has(t.recipientName) || has(t.recipientCompany));
   return NextResponse.json({ transmittals: hits.slice(0, searchLimit) });
 }

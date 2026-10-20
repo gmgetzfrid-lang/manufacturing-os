@@ -57,10 +57,26 @@
 --   with every other pending paste: it re-creates no function, policy or
 --   trigger. Idempotent: a re-paste answers every probe true.
 --
+-- TOKENS READ BEFORE THE PASTE STAY VALID (not closed by this file):
+--   revoking the column privilege stops NEW reads of the token; it does not
+--   invalidate a token a member already copied over REST. Such a token keeps
+--   serving the as-sent files (each pull recorded as the recipient's) until
+--   its link expires — issue + 90 days for a link issued with 20261133
+--   live; a link issued before 20261133 has no expiry (portal_expires_at
+--   NULL) — or a transmit authority revokes it or voids the transmittal.
+--   Inventory row 4 counts the live links listing an item that is not
+--   plainly open: the links whose token a member outside an item's ACL could
+--   have read before this paste. After the paste, a Document Controller
+--   reviews those links and decides, per link, whether to revoke it (the
+--   outside recipient's emailed link then stops; a new transmittal re-sends
+--   the files) or let it run to expiry. Tokens are NOT rotated here: that
+--   would silently break every recipient's emailed link, so it is a ruling,
+--   never automatic (DIST-18's record: the pre-paste residual, its owner).
+--
 -- A LATER MIGRATION THAT ADDS A COLUMN to transmittals must also
 --   `GRANT SELECT (<column>) ON transmittals TO authenticated;` — the
 --   column grant names columns, so a new column is unreadable by members
---   until it is granted (lib/__tests__/dcRoundGP29TransmittalToken.test.ts
+--   until it is granted (lib/__tests__/dcRoundGP29TransmittalRead.test.ts
 --   refuses a later file that adds one without the grant). A later
 --   `GRANT SELECT ON transmittals TO authenticated` (table level) re-opens
 --   the token and must never be written.

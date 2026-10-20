@@ -26,45 +26,49 @@ const s = vi.hoisted(() => ({
   readableCalls: [] as Array<{ uid: string; ids: string[] }>,
   rows: [] as Row[],
   ops: [] as Array<[string, unknown[]]>,
+  queries: [] as Array<Array<[string, unknown[]]>>,
+  ignoreFilters: false,
   browserReads: [] as string[],
   projectRow: { id: "p1", org_id: "11111111-1111-4111-8111-111111111111", name: "Unit 3 turnaround" } as Row | null,
 }));
 
 vi.mock("@/lib/supabaseAdmin", () => {
-  const chain = (): unknown => {
+  const chain = (ops: Array<[string, unknown[]]>): unknown => {
     const c: Row = {};
     const h: ProxyHandler<Row> = {
       get(_t, prop: string) {
         if (prop === "then") {
           return (res: (v: unknown) => void) => {
-            let rows = s.rows.filter((r) => s.ops.filter(([n]) => n === "eq").every(([, a]) => r[a[0] as string] === a[1]));
-            const contains = s.ops.find(([n]) => n === "contains");
+            let rows = s.rows.filter((r) => ops.filter(([n]) => n === "eq").every(([, a]) => r[a[0] as string] === a[1]));
+            const contains = ops.find(([n]) => n === "contains");
             if (contains) {
               const want = (JSON.parse(String(contains[1][1])) as Array<{ documentId: string }>)[0].documentId;
               rows = rows.filter((r) => (r.items as Array<{ documentId: string }>).some((i) => i.documentId === want));
             }
-            const or = s.ops.find(([n]) => n === "or");
-            if (or) {
-              // number / subject / recipient_name / recipient_company ilike %q% (the escaped pattern)
-              const q = /number\.ilike\.%(.*?)%,/.exec(String(or[1][0]))![1].replace(/\\(.)/g, "$1").toLowerCase();
-              rows = rows.filter((r) => ["number", "subject", "recipient_name", "recipient_company"].some((k) => String(r[k] ?? "").toLowerCase().includes(q)));
+            if (ops.some(([n]) => n === "or")) throw new Error("the register route must never put request text into .or()");
+            const ilike = ops.find(([n]) => n === "ilike");
+            if (ilike && !s.ignoreFilters) {
+              // col ILIKE '%<LIKE-escaped q>%' — one filter value
+              const pat = String(ilike[1][1]);
+              const q = pat.slice(1, -1).replace(/\\(.)/g, "$1").toLowerCase();
+              rows = rows.filter((r) => String(r[ilike[1][0] as string] ?? "").toLowerCase().includes(q));
             }
-            const order = s.ops.find(([n]) => n === "order");
+            const order = ops.find(([n]) => n === "order");
             const asc = (order?.[1][1] as { ascending?: boolean } | undefined)?.ascending !== false;
             rows = [...rows].sort((a, b) => (asc ? 1 : -1) * (Number(a.seq) - Number(b.seq)));
-            const limit = s.ops.find(([n]) => n === "limit");
+            const limit = ops.find(([n]) => n === "limit");
             if (limit) rows = rows.slice(0, Number(limit[1][0]));
             res({ data: rows, error: null });
           };
         }
-        return (...args: unknown[]) => { s.ops.push([prop, args]); return new Proxy(c, h); };
+        return (...args: unknown[]) => { ops.push([prop, args]); return new Proxy(c, h); };
       },
     };
     return new Proxy(c, h);
   };
   return {
     supabaseAdmin: {
-      from: (t: string) => { s.ops = [["from", [t]]]; return chain(); },
+      from: (t: string) => { const ops: Array<[string, unknown[]]> = [["from", [t]]]; s.ops = ops; s.queries.push(ops); return chain(ops); },
       auth: { getUser: async () => ({ data: { user: s.user }, error: s.user ? null : { message: "bad jwt" } }) },
     },
   };
@@ -108,7 +112,7 @@ import { GET } from "@/app/api/transmittal/register/route";
 import {
   listTransmittalsForDocument, listTransmittalsForProject, searchTransmittalsForViewer, getTransmittal, transmittalForViewer,
   sendTransmittalEmail, hasPortalLink, redactTransmittalForViewer, rowToTransmittal, RESTRICTED_DOCUMENT_LABEL,
-  TRANSMITTAL_CLIENT_COLUMNS, type Transmittal,
+  TRANSMITTAL_CLIENT_COLUMNS, TRANSMITTAL_SEARCH_MAX, type Transmittal,
 } from "@/lib/transmittals";
 import { gatherProjectEvidence, renderProjectEvidenceHtml, transmittalEvidenceRow } from "@/lib/evidencePack";
 import { globalSearch } from "@/lib/globalSearch";
@@ -159,6 +163,8 @@ beforeEach(() => {
     row({ id: T5, seq: 5, number: "TR-0005", project_id: null, subject: "Other", items: [{ documentId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", number: "X-1" }] }),
   ];
   s.ops = [];
+  s.queries = [];
+  s.ignoreFilters = false;
   s.browserReads = [];
 });
 
@@ -206,7 +212,51 @@ describe("DIST-18 limb (a) — the register route serves each browser reader's s
     expect(byNumber.map((t) => [t.number, t.subject])).toEqual([["TR-0007", null]]);
     const byRecipient = (await served(`orgId=${ORG}&q=buildco&limit=2`)).body.transmittals!;
     expect(byRecipient.map((t) => t.number)).toEqual(["TR-0007", "TR-0006"]);
-    expect(s.ops).toContainEqual(["or", ["number.ilike.%buildco%,subject.ilike.%buildco%,recipient_name.ilike.%buildco%,recipient_company.ilike.%buildco%"]]);
+    // one read per column, each with the text as ONE ilike value, bounded to the org, newest first
+    const last4 = s.queries.slice(-4);
+    expect(last4.map((ops) => ops.find(([n]) => n === "ilike"))).toEqual([
+      ["ilike", ["number", "%buildco%"]], ["ilike", ["subject", "%buildco%"]],
+      ["ilike", ["recipient_name", "%buildco%"]], ["ilike", ["recipient_company", "%buildco%"]]]);
+    for (const ops of last4) expect(ops).toEqual(expect.arrayContaining([["select", ["*"]], ["eq", ["org_id", ORG]], ["order", ["seq", { ascending: false }]], ["limit", [50]]]));
+  });
+
+  it("BLOCKER (review): search text never becomes a filter term — q='zz,portal_token.like.a*' asks no .or() and names no portal_token; LIKE's own characters are escaped", async () => {
+    s.rows.push(row({ id: "66666666-6666-4666-8666-666666666666", seq: 8, number: "TR-0008", subject: null, portal_token: "abcdef0123456789", recipient_name: "Ann", recipient_company: "Acme" }));
+    const res = await served(`orgId=${ORG}&q=${encodeURIComponent("zz,portal_token.like.a*")}&limit=50`);
+    expect(res.status).toBe(200);
+    expect(res.body.transmittals).toEqual([]);
+    const all = s.queries.flat();
+    expect(all.some(([n]) => n === "or")).toBe(false);
+    expect(JSON.stringify(all.filter(([n]) => n !== "ilike")).includes("portal_token")).toBe(false);
+    expect(all.filter(([n]) => n === "ilike").map(([, a]) => a[0])).toEqual(["number", "subject", "recipient_name", "recipient_company"]);
+    // the whole text is one value; a trailing backslash, % and _ are literal
+    expect(all.find(([n]) => n === "ilike")![1][1]).toBe("%zz,portal\\_token.like.a*%"); // its comma is just a character of the value
+    s.queries = [];
+    await served(`orgId=${ORG}&q=${encodeURIComponent("50%_a\\")}`);
+    expect(s.queries.flat().find(([n]) => n === "ilike")![1][1]).toBe("%50\\%\\_a\\\\%");
+  });
+
+  it("BLOCKER (review): even if the database matched on something the viewer is not shown, a subject-less restricted row is returned only when q is in its number or recipient", async () => {
+    // a restricted, subject-less transmittal (the shape the composer stores for an empty subject)
+    s.rows = [row({ id: "66666666-6666-4666-8666-666666666666", seq: 8, number: "TR-0008", subject: null, portal_token: "abcdef0123456789", recipient_name: "Ann", recipient_company: "Acme" })];
+    s.ignoreFilters = true; // the database answers every row, whatever the filter
+    expect((await served(`orgId=${ORG}&q=${encodeURIComponent("qqzzqq,portal_token.like.a*")}&limit=50`)).body.transmittals).toEqual([]);
+    expect((await served(`orgId=${ORG}&q=qqzzqq`)).body.transmittals).toEqual([]);
+    // REGRESSION: its number and recipient still find it, the token withheld
+    const byName = (await served(`orgId=${ORG}&q=acme`)).body.transmittals!;
+    expect(byName.map((t) => [t.number, t.portalToken])).toEqual([["TR-0008", null]]);
+    // the sender sees it whole and still finds it by number
+    s.user = { id: "u-sender" };
+    s.principal = principalOf({ uid: "u-sender" });
+    expect((await served(`orgId=${ORG}&q=tr-0008`)).body.transmittals!.map((t) => t.number)).toEqual(["TR-0008"]);
+    expect((await served(`orgId=${ORG}&q=zzzz`)).body.transmittals).toEqual([]);
+  });
+
+  it("merges the per-column reads by id: a row matching on two columns is one hit, newest first", async () => {
+    s.readable = new Set([OPEN, PID, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"]);
+    s.rows = [row({ subject: "Jane's package" })];
+    const hits = (await served(`orgId=${ORG}&q=jane`)).body.transmittals!;
+    expect(hits.map((t) => t.number)).toEqual(["TR-0007"]);
   });
 
   it("REGRESSION: a viewer who may read every item finds a transmittal by its subject, as before (default 5 hits)", async () => {
@@ -219,7 +269,7 @@ describe("DIST-18 limb (a) — the register route serves each browser reader's s
 
   it("refuses a malformed slice (400) — a bad id, two slices at once, a short query, a limit out of range — before any read", async () => {
     for (const qs of [`orgId=${ORG}&documentId=nope`, `orgId=${ORG}&projectId=nope`, `orgId=${ORG}&documentId=${OPEN}&projectId=${PROJ}`,
-      `orgId=${ORG}&id=${T7}&q=pump`, `orgId=${ORG}&q=p`, `orgId=${ORG}&q=pump&limit=0`, `orgId=${ORG}&q=pump&limit=51`]) {
+      `orgId=${ORG}&id=${T7}&q=pump`, `orgId=${ORG}&q=p`, `orgId=${ORG}&q=${"x".repeat(201)}`, `orgId=${ORG}&q=pump&limit=0`, `orgId=${ORG}&q=pump&limit=51`]) {
       s.ops = [];
       expect((await served(qs)).status, qs).toBe(400);
       expect(s.ops.some(([n, a]) => n === "from" && a[0] === "transmittals"), qs).toBe(false);
@@ -260,6 +310,14 @@ describe("DIST-18 limb (a) — the browser readers ask the route, never the tabl
     const hits = (await globalSearch({ orgId: ORG, query: "buildco" })).filter((h) => h.kind === "transmittal");
     expect(hits.map((h) => [h.title, h.subtitle, h.badge])).toEqual([["TR-0007", "Jane Doe", "acknowledged"], ["TR-0006", "Pump drawings", "acknowledged"], ["TR-0005", "Jane Doe", "acknowledged"]]);
     expect(String(fetchMock.mock.calls[0][0])).toBe(`/api/transmittal/register?orgId=${ORG}&q=buildco&limit=5`);
+    // review minor: a query longer than the route takes searches on its first 200 characters, never "no transmittals"
+    const long = `buildco ${"y".repeat(300)}`;
+    fetchMock.mockClear();
+    await searchTransmittalsForViewer(ORG, long, 5);
+    const sent = new URL(String(fetchMock.mock.calls[0][0]), "https://app").searchParams.get("q")!;
+    expect(sent).toBe(long.slice(0, TRANSMITTAL_SEARCH_MAX));
+    expect(TRANSMITTAL_SEARCH_MAX).toBe(200);
+    expect((await fetchMock.mock.results[0].value as Response).status).toBe(200);
     fetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: "x" }), { status: 503 }));
     expect(await searchTransmittalsForViewer(ORG, "buildco", 5)).toEqual([]);
     expect(s.browserReads).not.toContain("transmittals");
