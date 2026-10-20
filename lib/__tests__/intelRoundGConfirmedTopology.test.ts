@@ -1596,11 +1596,19 @@ describe("DEC-80 item 2 — nothing flow-derived drives a hold or an MOC", () =>
   };
   const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
-  it("flowsToLineEdges has one consumer: the orchestrator's read-only line trace", () => {
+  it("flowsToLineEdges has two read-only consumers: the orchestrator's line trace and the graph page's process reach (I-15, GAP-315 acceptance 3)", () => {
     const users = [...walk(join(ROOT, "lib")), ...walk(join(ROOT, "app")), ...walk(join(ROOT, "components"))]
       // A call, a definition or an import — a comment naming it is not a use.
       .filter((f) => /flowsToLineEdges\(|\{[^}]*\bflowsToLineEdges\b[^}]*\}\s*from/.test(src(f)));
-    expect(users.sort()).toEqual(["lib/orchestrator/tools.ts", "lib/processFlows.ts"]);
+    expect(users.sort()).toEqual(["app/(protected)/graph/page.tsx", "lib/orchestrator/tools.ts", "lib/processFlows.ts"]);
+    // The graph page reads the flows in one place — the reach a person asks
+    // for — and that callback writes nothing (it lights and lists a set).
+    const page = src("app/(protected)/graph/page.tsx");
+    expect(page.match(/flowsToLineEdges\(/g)).toHaveLength(1);
+    const reach = page.slice(page.indexOf("const showReach = React.useCallback("));
+    const reachBody = reach.slice(0, reach.indexOf("\n  }, ["));
+    expect(reachBody).toContain("await flowsToLineEdges(activeOrgId)");
+    expect(reachBody).not.toMatch(/insert\(|update\(|upsert\(|delete\(|createManualFlow|fetch\(/);
     const tools = src("lib/orchestrator/tools.ts");
     const body = tools.slice(tools.indexOf("async function loadLineGraph(ctx: ToolContext)"));
     expect(body.slice(0, body.indexOf("\n}"))).toMatch(/flowsToLineEdges\(ctx\.orgId, supabaseAdmin, \{ deadline: startedAt \+ LINE_GRAPH_READ_BUDGET_MS \}\)/);

@@ -686,7 +686,7 @@ stamping.ts:118-119 `const base = page.getViewport({ scale: 1 });\n        const
 ## PHYS-13 · Two QR generators bypass publicOrigin() and encode window.location.origin — including the share-link QR handed to external parties
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b (IntakePanel / QuotesPanel), identity-and-session IS-P1 (the library page) and notifications N6 (lib/notifications.ts ticketUrl) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (the graph page's Copy link, added by I-14 after the last pass) — by the integrator, 2026-10-07 (IS-P1 merge, DEC-31; fleet plan `intelligence.json`). The library page's limb is done (IS-P1); `lib/notifications.ts` stays with notifications N6.
 - **Verification:** CONFIRMED
@@ -763,6 +763,15 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
    - Not outbound links, not assessed (as the last pass): `app/page.tsx:139` (the sign-in `redirectTo`), `components/viewers/SecureDocViewer.tsx:27` (a same-origin comparison).
 
 **Scope / residual.** OPEN for done-when 3's tree-wide clause only: the graph page's Copy link (intelligence I-15). *Integrator at the N6 merge (2026-10-07): IS-P1 and N6 each closed their site in parallel; the two Partial blocks above are both kept, and this done-when is their union.*
+
+**Resolution (2026-10-20, intelligence Round G).** I-15 GRAPH SERVER ASSEMBLY — the graph page's Copy link (assigned at the IS-P1 merge, 2026-10-07). Reproduced first (DEC-29): on `8224f80` `app/(protected)/graph/page.tsx:694` built the copied link as `${window.location.origin}${pathname}?…`. It is now `${publicOrigin()}${pathname}?…` (`lib/publicOrigin.ts`), as the library page's `/d/` copies are built, so a link pasted to a colleague from a preview deployment carries the configured public origin. Test: `lib/__tests__/graphPageRender.test.ts` "PHYS-13 graph limb — …" (with `NEXT_PUBLIC_SITE_URL` set, the copied link starts with it and never carries the page's host; the page reads `window.location.origin` nowhere).
+
+**Done-when.**
+1. ✓ Unchanged.
+2. ✓ Unchanged.
+3. ✓ By `grep -rn "window.location.origin" app components lib hooks` at this commit, outside `lib/publicOrigin.ts` (and a comment in `lib/physicalBridge.ts`) two readers remain, neither building a URL that leaves the app: `app/page.tsx:139`, the sign-in `redirectTo` — the browser must come back to the host it is signing in on, since a session belongs to its origin, so the page's own origin is the correct value there; and `components/viewers/SecureDocViewer.tsx:27`, a same-origin comparison. Both were set aside as not outbound by the earlier passes; this pass states why.
+
+**Scope / residual.** None for this finding. `PHYS-11`'s residual (a Vercel deployment with system-env exposure off and nothing configured falls back to the page's host) is unchanged and stays on `PHYS-11`.
 
 ---
 
