@@ -20,6 +20,26 @@
 //     effectiveLibraryAclFromRow too — one library check on both pages and
 //     at every door that reads a document's content for someone.
 //
+// I-31 (DEC-90 R6; DACL-10 criterion 1's database half): migration 20261228
+// writes each legacy library's lists into libraries.acl as EXACTLY the rung
+// legacyLibraryAcl returns for it (same roles, same order, same visibility,
+// discover / read / download), so after that paste the ACL says something on
+// every such row and effectiveLibraryAcl returns it — the same object — with
+// no change for any reader that takes the rung; since the I-31 merge that
+// includes the ticket triage picker and the workflow-action library check
+// (lib/ticketLibrary, intelligence DACL-13 R1). What does move is the
+// database's LISTING of a private / hidden row in a written library: once
+// its acl_index is built or rebuilt after the paste (at once on upload,
+// folder create, move or drawer save; an existing row at the latest at the
+// next nightly rebuild) it is listed to the roles the lists name — a row the
+// rung already lets them read here (DACL-13 R2, accepted; rows below a
+// non-inheriting node do not widen). legacyLibraryAcl stays as the FALLBACK
+// (DEC-90's I-31 ruling (2)): before the paste it decides every legacy
+// library, after it none, and it still binds a library whose ACL is later
+// saved with nothing in it while its lists restrict. Its deletion (and the
+// documents home card's move to the ACL) is the integrator's, once the
+// 20261228 paste-back reads 0 such libraries (DEC-31).
+//
 // DACL-9: the library page evaluated a document's chain from the folders the
 // browser happened to receive. RLS hides a private folder the reader has no
 // grant on, so its ACL silently dropped out of every chain below it and a
@@ -91,6 +111,62 @@ export function legacyLibraryAcl(lib: LibraryAccessFields): AccessControl | unde
   } as AccessControl;
 }
 
+/** The actions the library wizard grants its upload roles
+ *  (LibraryWizard handleSubmit) — one allow rule per role, exactly these. */
+const WIZARD_UPLOAD_ACTIONS: readonly PermissionAction[] = ["upload", "createFolder", "editMetadata", "write", "download", "read", "discover"];
+
+/** ALOG-13 (I-31): the roles the library wizard's upload picker opens with
+ *  on an edit. The wizard no longer writes libraries.write_access on a NEW
+ *  library (nothing reads it for one whose ACL the wizard writes; an edit
+ *  keeps it in step — wizardListColumnsFromAcl), so the picker is
+ *  seeded from what the wizard DID write: the role subjects of the ACL's
+ *  allow rules carrying exactly the wizard's upload actions, with no expiry
+ *  (a drawer-made rule — another action set, or an expiry — is not the
+ *  picker's and is never re-emitted as one, which would widen it). A library
+ *  whose ACL carries no such rule — a legacy library, a Save-As library born
+ *  with no ACL — keeps today's seed, its write_access column (undefined when
+ *  that is unset, so the caller's default applies, as before). For every
+ *  library the wizard saved before this change the two are the same list in
+ *  the same order (the wizard wrote write_access and these rules from one
+ *  array). */
+export function wizardUploadRolesSeed(lib: { acl?: AccessControl | null; writeAccess?: Role[] | null } | null | undefined): Role[] | undefined {
+  if (!lib) return undefined;
+  const fromAcl = wizardRoleSubjects(lib.acl, WIZARD_UPLOAD_ACTIONS);
+  if (fromAcl.length > 0) return fromAcl;
+  return lib.writeAccess ?? undefined;
+}
+
+/** The actions the library wizard grants its admin roles (LibraryWizard
+ *  handleSubmit) — one allow rule per role, exactly these. */
+const WIZARD_ADMIN_ACTIONS: readonly PermissionAction[] = ["admin", "managePermissions"];
+
+function wizardRoleSubjects(acl: AccessControl | null | undefined, actions: readonly PermissionAction[]): Role[] {
+  const rules = Array.isArray(acl?.rules) ? acl!.rules : [];
+  const out: Role[] = [];
+  for (const r of rules) {
+    if (!r || r.effect !== "allow" || r.subject?.type !== "role" || typeof r.subject.id !== "string") continue;
+    if (r.expiresAt != null) continue;
+    const acts = Array.isArray(r.actions) ? r.actions : [];
+    const exact = acts.length === actions.length && actions.every((a) => acts.includes(a));
+    if (exact && !out.includes(r.subject.id as Role)) out.push(r.subject.id as Role);
+  }
+  return out;
+}
+
+/** ALOG-13 (I-31 second review fix): the write_access / admin_access a wizard
+ *  EDIT writes, derived from the wizard's own ACL (pass the wizard's form
+ *  ACL, not the drawer-merged one): the role subjects of its upload rules and
+ *  of its admin rules — the same lists, in the same order, the wizard wrote
+ *  to the columns before I-31 (one array fed both). A new library does not
+ *  write them (nothing reads them for it: its ACL always says something, and
+ *  a NULL column is no role). An edited library keeps them in step with the
+ *  ACL until legacyLibraryAcl is deleted, because that fallback still reads
+ *  them if the ACL is later saved with nothing in it — a frozen pre-I-31
+ *  value there would hand a role the wizard since removed its read back. */
+export function wizardListColumnsFromAcl(acl: AccessControl | null | undefined): { write_access: Role[]; admin_access: Role[] } {
+  return { write_access: wizardRoleSubjects(acl, WIZARD_UPLOAD_ACTIONS), admin_access: wizardRoleSubjects(acl, WIZARD_ADMIN_ACTIONS) };
+}
+
 /** The library rung the explorer evaluates under (see the header). */
 export function effectiveLibraryAcl(lib: LibraryAccessFields | null | undefined): AccessControl | undefined {
   if (!lib) return undefined;
@@ -112,15 +188,23 @@ export const LIBRARY_RUNG_COLUMNS = "acl, visibility, read_access, visible_to, w
  *  fix: it read as no rung — open at the AI seam and the bytes door). */
 export function effectiveLibraryAclFromRow(row: Record<string, unknown> | null | undefined): AccessControl | undefined {
   if (!row) return undefined;
+  return effectiveLibraryAcl(libraryAccessFieldsFromRow(row));
+}
+
+/** A raw `libraries` row (LIBRARY_RUNG_COLUMNS) read as the rung's fields,
+ *  by effectiveLibraryAclFromRow's rules (above) — exported so a reader that
+ *  keeps the fields on its own row shape (lib/ticketLibrary LibraryChoiceRow,
+ *  DACL-13 R1) decides by exactly the same reading. */
+export function libraryAccessFieldsFromRow(row: Record<string, unknown>): LibraryAccessFields {
   const ra = row.read_access;
-  return effectiveLibraryAcl({
+  return {
     readAccess: ra === "ALL" ? "ALL" : ra == null ? null : Array.isArray(ra) ? (ra as Role[]) : [],
     visibleTo: toRoles(row.visible_to),
     writeAccess: toRoles(row.write_access),
     adminAccess: toRoles(row.admin_access),
     acl: (row.acl as AccessControl | null | undefined) ?? null,
     visibility: (row.visibility as NodeVisibility | null | undefined) ?? null,
-  });
+  };
 }
 
 /** DACL-10 done-when 2 (review fix): may the reader see THIS library at all

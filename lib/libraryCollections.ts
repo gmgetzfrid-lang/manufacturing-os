@@ -177,8 +177,8 @@ export async function createLibrary(input: { orgId: string; name: string; type?:
       type: input.type ?? "Engineering",
       description: "",
       custom_columns: [],
-      write_access: [],
-      admin_access: [],
+      // ALOG-13 (I-31): write_access / admin_access are not written — the
+      // library is open ("ALL", no ACL), so nothing reads them for it.
       read_access: "ALL",
       visible_to: [],
       folder_security: "Inherited",
