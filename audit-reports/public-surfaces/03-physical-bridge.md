@@ -1076,3 +1076,27 @@ Done-when, as it stands:
 - [ ] An issuing transition (`approve_draft_ifc`, `approve_minor_correction`, `engineer_approve_final`) recalls the holders of the superseded issue (`source: "auto"`), best-effort after the transition lands
 - [ ] Tests pin both callers
 
+---
+
+<a id="phys-19"></a>
+
+## PHYS-19 · A copy downloaded on its own, a share copy and a transmittal copy still carry the document UUID in their verify QR — the per-print sheet token covers printed packs only
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** none — the integrator queues it, or rules it out on `PHYS-4`'s analysis (below). Opened by public-surfaces Round G PS-P9, 2026-10-20 (DEC-31), as the remainder of intelligence `DACL-8` criterion 2 outside the integrator's ruling (1) at the I-12 merge.
+- **Verification:** CONFIRMED by reading the code on PS-P9's branch.
+- **Locations:** `lib/downloads.ts:190-197` (`buildVerifyUrl`), `app/api/share/file/route.ts:124`, `app/api/transmittal/route.ts:683` (the portal copy), `lib/transmittalStampCheck.ts:210` (the issue-time stamp check)
+- **Independently verified:** — opened 2026-10-20 by PS-P9; not yet challenged by a second party.
+
+**Mechanism.** PS-P9 keys a printed pack's sheet QR to a per-print token the server mints at print time (`print_sheet_tokens`, `20261237`; `/verify/<token>`). The three other stamping paths still build `/verify/<document UUID>?v=<version UUID>`: a single download (`buildVerifyUrl`), an external share copy (`app/api/share/file`) and a transmittal copy (the portal copy, `app/api/transmittal`, and the issue-time stamp check that mirrors it). Their verdicts are correct (`DEC-65`); what they print is the durable document UUID.
+
+**Failure scenario.** A contractor receives a single-sheet download or a transmittal copy; its QR carries the document's UUID, which `DACL-8`'s second criterion asked to replace with a per-print key. Nothing is disclosed for a restricted document (`lib/verifyDisclosure`, `VFY-16`), and a scan of it is never green without its printed version.
+
+**Note — `PHYS-4`'s rejected alternative.** `PHYS-4` (WONTFIX) records that a per-print token for single sheets "would swap the document UUID for another bearer string on the same paper — it moves the secret without shrinking it". What a token adds is per-print evidence (the scan row names the print) and a void for a print that never left. Whether that is worth a mint on every download, share and transmittal copy is the integrator's to decide.
+
+**Done when.**
+
+- [ ] Either each of these paths stamps a server-minted per-print token (as `lib/docPack.ts` does, falling back to today's QR when it cannot be minted), or the integrator rules the document + version QR sufficient for them and this finding closes WONTFIX on that ruling
+- [ ] Every QR printed before keeps being answered exactly as today
+
