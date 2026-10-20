@@ -210,6 +210,7 @@ import {
   holdsLiveSubscription, hasAccess, type SubscriptionStatus,
 } from "@/lib/billing";
 import { customerIdempotencyKey } from "@/lib/stripe";
+import { ALL_ROLES } from "@/types/schema";
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
 import { POST as checkoutPOST } from "@/app/api/stripe/checkout/route";
 import { POST as portalPOST } from "@/app/api/stripe/portal/route";
@@ -386,10 +387,26 @@ describe("regression — checkout and the portal for a workspace with no live su
     expect((state.stripeCalls.find((c) => c.m === "billingPortal.sessions.create")!.args[0] as Row).customer).toBe("cus_1");
   });
 
-  it("a Viewer is refused checkout and the portal (the role constant is unchanged)", async () => {
+  it("a Viewer is refused checkout and the portal (the billing surface's writes set, as the old constant)", async () => {
     state.roles = ["Viewer"];
     expect((await checkoutPOST(post("/api/stripe/checkout", { orgId: ORG, plan: "growth" }))).status).toBe(403);
     expect((await portalPOST(post("/api/stripe/portal", { orgId: ORG }))).status).toBe(403);
+  });
+
+  it("SURF-19 (A&O P5): the gate admits exactly the people the old ADMIN_ROLES constant admitted — every role and mixed collections, by the full collection", async () => {
+    const OLD_ADMIN_ROLES = ["Admin", "Manager"];                                   // the constant both routes spelled at base 7f92269
+    const cases: string[][] = [
+      ...ALL_ROLES.map((r) => [r as string]),
+      ["Viewer", "Manager"], ["DocCtrl", "Admin"], ["Drafter", "Viewer"], ["Auditor", "DocCtrl"], ["Engineer"],
+    ];
+    for (const roles of cases) {
+      const admitted = roles.some((r) => OLD_ADMIN_ROLES.includes(r));
+      state.roles = roles;
+      const checkout = await checkoutPOST(post("/api/stripe/checkout", { orgId: ORG, plan: "growth" }));
+      const portal = await portalPOST(post("/api/stripe/portal", { orgId: ORG }));
+      expect(checkout.status === 403, `checkout ${roles}`).toBe(!admitted);
+      expect(portal.status === 403, `portal ${roles}`).toBe(!admitted);
+    }
   });
 });
 
@@ -1377,11 +1394,12 @@ describe("every orgs write in the app — after 20261176 a member's own write st
   });
 });
 
-describe("SURF-19's stripe limb stays A&O P5's — the role constants are untouched", () => {
-  it("checkout and portal keep their ADMIN_ROLES constant", () => {
+describe("SURF-19's stripe limb (A&O P5) — checkout and the portal ask the billing surface's gate", () => {
+  it("no role constant of their own; each calls authorizeAdminSurface on the billing surface's writes set", () => {
     for (const f of ["app/api/stripe/checkout/route.ts", "app/api/stripe/portal/route.ts"]) {
-      expect(src(f)).toMatch(/const ADMIN_ROLES = \["Admin", "Manager"\];/);
-      expect(src(f)).not.toMatch(/authorizeAdminSurface/);
+      expect(src(f)).not.toMatch(/const [A-Z_]*ROLES = /);
+      expect(src(f)).not.toMatch(/authorizeOrgRole\(/);
+      expect(src(f)).toMatch(/await authorizeAdminSurface\(req, orgId, "billing", "write"\);/);
     }
   });
 });
