@@ -92,6 +92,14 @@ export interface KnowledgeCitation {
    *  asked library has linked reference libraries). */
   libraryName?: string;
   tier?: "governing" | "reference";
+  /** The exact words in `quote` that prove the claim — what the page viewer
+   *  marks. Absent on older answers and when the model's span didn't match. */
+  highlight?: string;
+  /** How this passage bears on the answer: it settles it, limits it (a
+   *  condition, exception, or a rule shown not to apply), or is context. */
+  role?: "decides" | "limits" | "context";
+  /** What this passage proves, in a few words. */
+  claim?: string;
   url?: string;
   title?: string;
 }

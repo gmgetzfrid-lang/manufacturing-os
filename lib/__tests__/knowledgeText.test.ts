@@ -6,6 +6,7 @@ import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
   parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
+  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -601,5 +602,99 @@ describe("parseAnswerBlocks — paragraph runs above structure", () => {
     const blocks = parseAnswerBlocks("One intro paragraph with a citation [1].\n- a bullet [1]");
     expect(blocks[0].type).toBe("text");
     expect(blocks[1].type).toBe("bullet");
+  });
+});
+
+// ── Verdict + evidence spans ────────────────────────────────────────────────
+
+
+describe("splitVerdict", () => {
+  it("reads each verdict word and strips it from the sentence", () => {
+    expect(splitVerdict("YES, WITH CONDITIONS — EP 5-2-1 Table 4 lists welded A312 304 [70].")).toEqual({
+      verdict: "conditional", text: "EP 5-2-1 Table 4 lists welded A312 304 [70].",
+    });
+    expect(splitVerdict("NO — cast B16.9 fittings are prohibited [58].").verdict).toBe("no");
+    expect(splitVerdict("YES — permitted for Category D [36].").verdict).toBe("yes");
+    expect(splitVerdict("NOT SETTLED — the line class in EP 5-2-3 decides it.").verdict).toBe("unsettled");
+    expect(splitVerdict("**YES** — allowed.").verdict).toBe("yes");
+  });
+
+  it("ignores ordinary sentences that start with yes/no words", () => {
+    expect(splitVerdict("No welding is permitted on the shell [2].").verdict).toBeNull();
+    expect(splitVerdict("Yes, the table lists it [3].").verdict).toBeNull();
+    expect(splitVerdict("NOTE the spacing table applies [1].").verdict).toBeNull();
+  });
+});
+
+describe("extractEvidenceBlock", () => {
+  const answer = [
+    "**Answer:** YES, WITH CONDITIONS — welded 304 is listed [70][11].",
+    "**Basis:**",
+    "- Table 4 lists A312 and A358 Grade 304 [70].",
+    "",
+    "**Evidence:**",
+    "- [70] decides — A312/A358 304 listed for pipe — \"ASTM A358/A358M Grade 304\"",
+    "- [11] decides — A312 covers welded pipe — “Seamless, Welded, and Heavily Cold Worked”",
+    "- [36] limits: §6.4 applies to Table 2 pipe only: \"Restricted Service piping per Table 2\"",
+    "- [9] context — no quote here",
+  ].join("\n");
+
+  it("removes the block from the text the reader sees", () => {
+    const out = extractEvidenceBlock(answer);
+    expect(out.answer).not.toMatch(/Evidence/);
+    expect(out.answer.endsWith("[70].")).toBe(true);
+  });
+
+  it("parses role, claim, and quote per line; drops lines without a quote", () => {
+    const { spans } = extractEvidenceBlock(answer);
+    expect(spans).toEqual([
+      { n: 70, role: "decides", claim: "A312/A358 304 listed for pipe", quote: "ASTM A358/A358M Grade 304" },
+      { n: 11, role: "decides", claim: "A312 covers welded pipe", quote: "Seamless, Welded, and Heavily Cold Worked" },
+      { n: 36, role: "limits", claim: "§6.4 applies to Table 2 pipe only", quote: "Restricted Service piping per Table 2" },
+    ]);
+  });
+
+  it("leaves answers without a block untouched", () => {
+    expect(extractEvidenceBlock("**Answer:** 250 ft-lb [2].")).toEqual({ answer: "**Answer:** 250 ft-lb [2].", spans: [] });
+  });
+});
+
+describe("locateSpan", () => {
+  const passage = "ASTM A312   Specification for Seamless, Welded,\nand Heavily Cold Worked Austenitic Stainless Steel Pipes ASTM A358 Specification for Electric–Fusion–Welded Pipe";
+
+  it("finds the span despite whitespace, case, and dash differences — returning the passage's own text", () => {
+    expect(locateSpan(passage, "seamless, welded, and heavily cold worked")).toBe("Seamless, Welded,\nand Heavily Cold Worked");
+    expect(locateSpan(passage, "Electric-Fusion-Welded Pipe")).toBe("Electric–Fusion–Welded Pipe");
+  });
+
+  it("uses the longest piece around an ellipsis", () => {
+    expect(locateSpan(passage, "ASTM A312 … Heavily Cold Worked Austenitic Stainless")).toBe("Heavily Cold Worked Austenitic Stainless");
+  });
+
+  it("returns null for words that aren't in the passage", () => {
+    expect(locateSpan(passage, "welded pipe is prohibited in all services")).toBeNull();
+    expect(locateSpan(passage, "A312")).toBeNull(); // too short to trust
+  });
+});
+
+describe("quoteWindow", () => {
+  it("frames the highlight with clipped context", () => {
+    const text = "word ".repeat(100) + "THE PROOF SENTENCE" + " tail".repeat(100);
+    const w = quoteWindow(text, "THE PROOF SENTENCE", 40)!;
+    expect(w.hit).toBe("THE PROOF SENTENCE");
+    expect(w.clippedStart && w.clippedEnd).toBe(true);
+    expect(w.before.length).toBeLessThanOrEqual(40);
+    expect(w.after.length).toBeLessThanOrEqual(40);
+  });
+
+  it("is null when the highlight isn't in the text", () => {
+    expect(quoteWindow("abc", "zzz")).toBeNull();
+  });
+});
+
+describe("parseAnswerBlocks — long markdown headings", () => {
+  it("turns a long ### heading into a label, without its citation", () => {
+    const blocks = parseAnswerBlocks("**Answer:** See below [2].\n### Table 1 — Applicable SEMI Programs at Equity Engineering Sites (EP 19-1-1, p.4) [2]\n- Row [2]");
+    expect(blocks[1]).toEqual({ type: "label", text: "Table 1 — Applicable SEMI Programs at Equity Engineering Sites (EP 19-1-1, p.4)" });
   });
 });

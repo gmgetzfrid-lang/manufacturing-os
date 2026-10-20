@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
   const [profileRes, priorRes] = await Promise.all([
     supabaseAdmin.from("chat_user_profiles").select("discipline, units, notes")
       .eq("org_id", orgId).eq("user_id", user.id).maybeSingle(),
-    supabaseAdmin.from("chat_messages").select("role, content, status")
+    supabaseAdmin.from("chat_messages").select("role, content, status, payload")
       .eq("thread_id", threadId).eq("status", "done")
       .order("created_at", { ascending: false }).limit(16),
   ]);
@@ -161,6 +161,31 @@ export async function POST(req: NextRequest) {
         pendingQ = null;
       }
     }
+  }
+
+  // Pages the last three answers cited, decisive proof first — the
+  // conversation's evidence, carried into the next turn so a follow-up
+  // never loses the passage it is following up on.
+  const pinned: Array<{ documentId: string; page: number }> = [];
+  {
+    const roleRank = (r: unknown) => r === "decides" ? 0 : r === "limits" ? 1 : 2;
+    const answers = ((priorRes.data ?? []) as Array<{ role: string; payload: unknown }>)
+      .filter((r) => r.role === "assistant").slice(0, 3);
+    const seen = new Set<string>();
+    for (const r of answers) {
+      const cites = ((r.payload as { citations?: unknown } | null)?.citations ?? []) as Array<{
+        documentId?: unknown; page?: unknown; role?: unknown; url?: unknown;
+      }>;
+      if (!Array.isArray(cites)) continue;
+      for (const c of [...cites].sort((a, b) => roleRank(a.role) - roleRank(b.role))) {
+        if (c.url || typeof c.documentId !== "string" || typeof c.page !== "number") continue;
+        const key = `${c.documentId}:${c.page}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        pinned.push({ documentId: c.documentId, page: c.page });
+      }
+    }
+    pinned.splice(12);
   }
 
   // ── The question, saved before anything runs ─────────────────────────────
@@ -208,7 +233,7 @@ export async function POST(req: NextRequest) {
               orgId, libraryId: threadLibrary, question,
               mode: threadScope === "internet" ? "internet" : "library",
               focus: body.focus, inputs: body.inputs,
-              history: priorTurns.slice(-4), threadId,
+              history: priorTurns.slice(-4), threadId, pinned,
             },
             emit, extraSystem, userImages,
           });

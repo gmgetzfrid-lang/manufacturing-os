@@ -37,6 +37,18 @@ const escapeHtml = (s: string) =>
 
 const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
+/** A text-layer line that STRADDLES a short cited span — its tail opens the
+ *  span, or its head closes it. Exact-phrase citations are often shorter
+ *  than one printed line, or cross a line break, so plain containment marks
+ *  nothing. 12+ shared chars keeps chance overlaps out. */
+const straddles = (item: string, quote: string): boolean => {
+  const max = Math.min(item.length, quote.length);
+  for (let k = max; k >= 12; k--) {
+    if (quote.startsWith(item.slice(item.length - k)) || quote.endsWith(item.slice(0, k))) return true;
+  }
+  return false;
+};
+
 /** One stop on the answer's evidence trail — everything needed to open a
  *  document at a cited page with its passage highlighted. */
 export interface CitedSource {
@@ -328,7 +340,9 @@ export default function CitedPageViewer({
       }
       const pq = pageQuotes.get(pageNumber);
       if (!pq) return safe;
-      if (norm.length >= 10 && pq.some((q) => q.norm.includes(norm))) {
+      if ((norm.length >= 10 && pq.some((q) => q.norm.includes(norm)))
+        || pq.some((q) => q.norm.length >= 12 && q.norm.length <= 400
+          && (norm.includes(q.norm) || straddles(norm, q.norm)))) {
         return `<mark style="background: rgba(250, 204, 21, 0.55); color: transparent; border-radius: 2px;">${safe}</mark>`;
       }
       // Fragmented layer: mark items whose significant words ALL come from

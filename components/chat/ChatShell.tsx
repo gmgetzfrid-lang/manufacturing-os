@@ -449,12 +449,12 @@ export default function ChatShell() {
     const siblings = pools.find((p) => p.includes(c)) ?? [c];
     const sources = siblings.filter((x) => !x.url && x.documentId).map((x) => {
       const d = docById.get(x.documentId!);
-      return d ? { fileKey: d.fileKey, page: x.page ?? 1, quote: x.quote ?? null, title: x.documentName ?? d.name, section: x.section ?? null, documentId: d.id, tags: x.tags, n: x.n } : null;
+      return d ? { fileKey: d.fileKey, page: x.page ?? 1, quote: x.highlight ?? x.quote ?? null, title: x.documentName ?? d.name, section: x.section ?? null, documentId: d.id, tags: x.tags, n: x.n } : null;
     }).filter((s): s is NonNullable<typeof s> => s !== null);
     const byN = sources.findIndex((s) => s.n === c.n);
     const sourceIndex = Math.max(0, byN >= 0 ? byN : sources.findIndex((s) => s.documentId === c.documentId && s.page === (c.page ?? 1)));
     const target: ViewerTarget = {
-      fileKey: doc.fileKey, page: c.page ?? 1, quote: c.quote ?? null, title: c.documentName ?? doc.name,
+      fileKey: doc.fileKey, page: c.page ?? 1, quote: c.highlight ?? c.quote ?? null, title: c.documentName ?? doc.name,
       section: c.section ?? null, documentId: doc.id, tags: c.tags,
       ...(sources.length > 1 ? { sources, sourceIndex } : {}),
     };

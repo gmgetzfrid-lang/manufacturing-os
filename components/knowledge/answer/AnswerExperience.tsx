@@ -17,7 +17,10 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
-import { parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, type AnswerBlock } from "@/lib/knowledgeText";
+import {
+  parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
+  type AnswerBlock, type Verdict,
+} from "@/lib/knowledgeText";
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
@@ -49,14 +52,64 @@ const ProofContext = React.createContext<{
 
 const PROOF_W = 440;
 
+/** The passage as proof: when the answer named the exact words that prove
+ *  its claim, show THOSE words marked with a little context either side —
+ *  not a 1,600-character wall. Older answers fall back to term marking. */
+function ProofQuote({ c, context, className }: { c: KnowledgeCitation; context?: string; className: string }) {
+  const win = c.highlight ? quoteWindow(c.quote ?? "", c.highlight) : null;
+  const segs = useMemo(
+    () => (win ? [] : highlightQuote(c.quote ?? "", context ? proofTerms(context) : [])),
+    [win, c.quote, context],
+  );
+  if (!c.quote) {
+    return (
+      <p className="text-[11px] italic text-[var(--color-text-muted)]">
+        The passage text wasn&apos;t stored for this answer — open the page to read it in the document.
+      </p>
+    );
+  }
+  return (
+    <blockquote className={className}>
+      {win ? (
+        <>
+          <span className="text-[var(--color-text-muted)]">{win.clippedStart ? "… " : ""}{win.before}</span>
+          <mark className="rounded px-0.5 bg-yellow-200 dark:bg-yellow-700/60 text-[var(--color-text)] font-bold">{win.hit}</mark>
+          <span className="text-[var(--color-text-muted)]">{win.after}{win.clippedEnd ? " …" : ""}</span>
+        </>
+      ) : segs.map((sg, i) => sg.hit
+        ? <mark key={i} className="rounded px-0.5 bg-orange-200 dark:bg-orange-800/70 text-inherit font-bold">{sg.text}</mark>
+        : <React.Fragment key={i}>{sg.text}</React.Fragment>)}
+    </blockquote>
+  );
+}
+
+const VERDICT_STYLE: Record<Verdict, { label: string; cls: string }> = {
+  yes: { label: "Yes", cls: "bg-emerald-600 text-white" },
+  conditional: { label: "Yes, with conditions", cls: "bg-amber-500 text-white dark:bg-amber-600" },
+  no: { label: "No", cls: "bg-rose-600 text-white" },
+  unsettled: { label: "Not settled", cls: "bg-slate-600 text-white dark:bg-slate-500" },
+};
+
+/** The verdict as a badge — the yes/no lands before a single word is read. */
+function VerdictBadge({ verdict }: { verdict: Verdict }) {
+  const v = VERDICT_STYLE[verdict];
+  return (
+    <span className={`inline-flex items-center mb-1.5 px-2.5 py-1 rounded-md text-[12px] font-black uppercase tracking-[0.08em] shadow-sm ${v.cls}`}>
+      {v.label}
+    </span>
+  );
+}
+
 function ProofCard({ proof, onClose, onOpenPage }: {
   proof: ProofState;
   onClose: () => void;
   onOpenPage: (c: KnowledgeCitation) => void;
 }) {
   const { citation: c, context } = proof;
-  const segs = useMemo(() => highlightQuote(c.quote ?? "", proofTerms(context)), [c.quote, context]);
-  const hits = segs.filter((s) => s.hit).length;
+  const hits = useMemo(
+    () => c.highlight ? 0 : highlightQuote(c.quote ?? "", proofTerms(context)).filter((s) => s.hit).length,
+    [c.highlight, c.quote, context],
+  );
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     // Scrolling moves the anchor out from under a fixed card — close rather
@@ -89,23 +142,21 @@ function ProofCard({ proof, onClose, onOpenPage }: {
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
-          {c.quote ? (
-            <blockquote className="border-l-2 border-orange-400 pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto">
-              {segs.map((s, i) => s.hit
-                ? <mark key={i} className="rounded px-0.5 bg-orange-200 dark:bg-orange-800/70 text-inherit font-bold">{s.text}</mark>
-                : <React.Fragment key={i}>{s.text}</React.Fragment>)}
-            </blockquote>
-          ) : (
-            <p className="text-[11px] italic text-[var(--color-text-muted)]">
-              The passage text wasn&apos;t stored for this answer — open the page to read it in the document.
-            </p>
+          {c.claim && (
+            <div className="mb-1.5 text-[12px] font-black text-[var(--color-text)]">{c.claim}</div>
           )}
+          <ProofQuote c={c} context={context}
+            className="border-l-2 border-orange-400 pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto" />
           <div className="mt-2.5 flex items-center gap-2 flex-wrap">
             <button onClick={() => onOpenPage(c)}
               className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors">
               <Eye className="w-3.5 h-3.5" /> Open the page — highlighted
             </button>
-            {hits > 0 && (
+            {c.highlight ? (
+              <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" /> Exact wording from the page
+              </span>
+            ) : hits > 0 && (
               <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> {hits} claim term{hits === 1 ? "" : "s"} found in this passage
               </span>
@@ -132,7 +183,16 @@ export function InlineAnswer({ text, citations, onCite }: {
     .map((d) => d.mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .sort((a, b) => b.length - a.length)
     .join("|");
-  const parts = text.split(new RegExp(`(\\[\\d{1,3}\\]|\\*\\*[^*]+\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "g"));
+  // Bold may contain a lone "*" — standards mark Owner's-Engineer clauses
+  // "(*)", and "**(*) Use in water service…**" used to print raw asterisks.
+  const parts = text.split(new RegExp(`(\\[\\d{1,3}\\]|\\*\\*(?:[^*]|\\*(?!\\*))+?\\*\\*|\`[^\`]+\`${mentionAlt ? `|${mentionAlt}` : ""})`, "g"));
+  // Adjacent markers ("[36][37][39]") read as one long number ("363739")
+  // unless something separates them.
+  const CITE_RE = /^\[(\d{1,3})\]$/;
+  const followsCite = (i: number): boolean => {
+    for (let j = i - 1; j >= 0; j--) if (parts[j] !== "") return CITE_RE.test(parts[j]);
+    return false;
+  };
   const linkFor = (s: string) => links.find((d) => d.mention === s);
   const docChip = (d: DocLink, label: string, key: number) => (
     <button key={key} onClick={() => open?.(d)} title={`Open ${d.name} · p.${d.page}`}
@@ -143,7 +203,10 @@ export function InlineAnswer({ text, citations, onCite }: {
   return (
     <>
       {parts.map((part, i) => {
-        const cite = part.match(/^\[(\d{1,3})\]$/);
+        const cite = part.match(CITE_RE);
+        if (part === "") return null;
+        const sep = cite && followsCite(i);
+        const node = (() => {
         if (cite) {
           const c = citations.find((x) => x.n === Number(cite[1]));
           if (c && !c.url) {
@@ -182,6 +245,10 @@ export function InlineAnswer({ text, citations, onCite }: {
         const dl = open ? linkFor(part) : undefined;
         if (dl) return docChip(dl, part, i);
         return <React.Fragment key={i}>{part}</React.Fragment>;
+        })();
+        return sep
+          ? <React.Fragment key={i}><span className="align-super text-[10px] text-orange-600/60">,</span>{node}</React.Fragment>
+          : node;
       })}
     </>
   );
@@ -431,13 +498,15 @@ export function AnswerView({ answer, citations, onCite }: {
   const blocks = parseAnswerBlocks(answer);
   const hero = blocks[0]?.type === "hero" ? blocks[0] : null;
   const rest = hero ? blocks.slice(1) : blocks;
+  const heroV = hero ? splitVerdict(hero.text) : null;
   return (
     <div className="space-y-2.5">
-      {hero && (
+      {hero && heroV && (
         <div className="rounded-xl border-l-4 border-orange-500 bg-orange-50 dark:bg-orange-950/30 px-4 py-3">
           <div className="text-[9px] font-black uppercase tracking-[0.18em] text-orange-600 mb-1">Answer</div>
+          {heroV.verdict && <div><VerdictBadge verdict={heroV.verdict} /></div>}
           <div className="text-base font-bold text-[var(--color-text)] leading-snug">
-            <InlineAnswer text={hero.text} citations={citations} onCite={onCite} />
+            <InlineAnswer text={heroV.text} citations={citations} onCite={onCite} />
           </div>
         </div>
       )}
@@ -632,13 +701,8 @@ export function SourceCard({ citation, onOpen, delay }: {
       </button>
       {expanded && (
         <div className="px-3 pb-3 pt-1 border-t border-[var(--color-border)] animate-rise">
-          {c.quote ? (
-            <blockquote className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text-muted)] whitespace-pre-wrap max-h-64 overflow-y-auto">
-              {c.quote}
-            </blockquote>
-          ) : (
-            <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this answer — open the page to read it.</p>
-          )}
+          <ProofQuote c={c}
+            className="border-l-2 border-orange-400 pl-3 py-1 text-[11px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-64 overflow-y-auto" />
           <div className="mt-2 flex items-center gap-2">
             <button onClick={() => onOpen(c)}
               className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
@@ -649,6 +713,87 @@ export function SourceCard({ citation, onOpen, delay }: {
               <span className="ml-auto text-[9px] text-[var(--color-text-muted)] font-bold">{c.libraryName}</span>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One piece of proof: what it proves, where it lives, and the exact words —
+ *  marked — with the page one tap away. */
+function ProofItem({ c, onOpen, startOpen }: {
+  c: KnowledgeCitation;
+  onOpen: (c: KnowledgeCitation) => void;
+  startOpen: boolean;
+}) {
+  const [open, setOpen] = useState(startOpen);
+  const doc = (c.documentName ?? "Document").replace(/\.pdf$/i, "");
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+      <button onClick={() => setOpen((o) => !o)}
+        className="w-full px-3 py-2.5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5 text-left hover:bg-[var(--color-surface-2)]/50 transition-colors">
+        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-orange-600 text-white text-[10px] font-black flex items-center justify-center">{c.n}</span>
+        <span className="min-w-0">
+          <span className="block text-[13px] font-black text-[var(--color-text)] leading-snug">{c.claim || doc}</span>
+          <span className="block text-[10px] font-bold text-[var(--color-text-muted)] truncate">
+            {c.claim ? `${doc} · ` : ""}{c.section ? `${c.section.slice(0, 40)} · ` : ""}p.{c.page}
+            {c.tier ? ` · ${c.tier === "governing" ? "governing" : "reference"}` : ""}
+          </span>
+        </span>
+        <ChevronDown className={`mt-1 w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          <ProofQuote c={c}
+            className="border-l-2 border-orange-400 pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-56 overflow-y-auto" />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => onOpen(c)}
+              className="inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
+              <Eye className="w-3 h-3" /> Open p.{c.page} — {c.highlight ? "exact words marked" : "passage highlighted"}
+            </button>
+            {(c.highlight || c.quote) && <CopyButton text={c.highlight ?? c.quote ?? ""} label="Copy quote" />}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The evidence trail, ranked by what each passage does for the answer:
+ *  what decides it, what limits it, and the rest — collapsed. Used when the
+ *  answer tagged its evidence; older answers keep the by-document list. */
+function ProofTrail({ citations, onOpen }: {
+  citations: KnowledgeCitation[];
+  onOpen: (c: KnowledgeCitation) => void;
+}) {
+  const decides = citations.filter((c) => c.role === "decides");
+  const limits = citations.filter((c) => c.role === "limits");
+  const related = citations.filter((c) => c.role !== "decides" && c.role !== "limits");
+  const [showRelated, setShowRelated] = useState(false);
+  const tier = (label: string, dot: string, items: KnowledgeCitation[], openFirst: number) => items.length > 0 && (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-[var(--color-text-muted)]">
+        <span className={`w-2 h-2 rounded-full ${dot}`} />{label}
+      </div>
+      {items.map((c, i) => <ProofItem key={c.n} c={c} onOpen={onOpen} startOpen={i < openFirst} />)}
+    </div>
+  );
+  return (
+    <div className="space-y-3 animate-rise">
+      <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
+        Proof — what decides the answer first
+      </div>
+      {tier("Decides the answer", "bg-emerald-500", decides, 3)}
+      {tier("Conditions & limits", "bg-amber-500", limits, 2)}
+      {related.length > 0 && (
+        <div className="space-y-1.5">
+          <button onClick={() => setShowRelated((v) => !v)}
+            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+            <span className="w-2 h-2 rounded-full bg-slate-400" />
+            Related ({related.length})
+            <ChevronDown className={`w-3 h-3 transition-transform ${showRelated ? "rotate-180" : ""}`} />
+          </button>
+          {showRelated && related.map((c) => <ProofItem key={c.n} c={c} onOpen={onOpen} startOpen={false} />)}
         </div>
       )}
     </div>
@@ -670,6 +815,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
 }) {
   const blocks = parseAnswerBlocks(answer.answer);
   const hero = blocks.find((b) => b.type === "hero");
+  const heroV = hero ? splitVerdict(hero.text) : null;
   const rest = blocks.filter((b) => b !== hero);
   // Imperatives (! lines) stay visible even collapsed — never hide a MUST or
   // a hold point behind a button.
@@ -814,10 +960,13 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
             </div>
             <CopyButton text={answer.answer} label="Copy answer" />
           </div>
-          {hero ? (
-            <div className="text-[17px] font-black text-[var(--color-text)] leading-relaxed">
-              <InlineAnswer text={hero.text} citations={answer.citations} onCite={onCite} />
-            </div>
+          {hero && heroV ? (
+            <>
+              {heroV.verdict && <div><VerdictBadge verdict={heroV.verdict} /></div>}
+              <div className="text-[17px] font-black text-[var(--color-text)] leading-relaxed">
+                <InlineAnswer text={heroV.text} citations={answer.citations} onCite={onCite} />
+              </div>
+            </>
           ) : (
             <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
           )}
@@ -878,8 +1027,8 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
             <span>·</span>
             {/* Version beacon: which renderer produced this card. If a report
                 of bad formatting comes without this tag on screen, the tab is
-                serving pre-fmt5 code — a fact, not a guess. */}
-            <span className="font-black text-orange-600/70" title="Answer renderer version">fmt5</span>
+                serving pre-fmt6 code — a fact, not a guess. */}
+            <span className="font-black text-orange-600/70" title="Answer renderer version">fmt6</span>
           </div>
         </div>
       </div>
@@ -918,7 +1067,10 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           used to render 60 equal flat cards — a pile nobody could
           prioritize. Now: the top documents lead, each group opens on tap,
           and the long tail waits behind "Show all". */}
-      {sourceGroups.length > 0 && (
+      {libraryCitations.some((c) => c.role) && (
+        <ProofTrail citations={libraryCitations} onOpen={onCite} />
+      )}
+      {!libraryCitations.some((c) => c.role) && sourceGroups.length > 0 && (
         <>
           <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
             Sources — most load-bearing documents first; tap a document to see its passages

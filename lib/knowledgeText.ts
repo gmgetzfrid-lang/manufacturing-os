@@ -486,6 +486,144 @@ export function highlightQuote(quote: string, terms: string[]): Array<{ text: st
     .map((p) => ({ text: p, hit: isHit.test(p) }));
 }
 
+// ── Verdict + evidence spans ────────────────────────────────────────────────
+//
+// "Can I use it?" deserves a yes or a no before anything else. Decision
+// questions open their Answer line with one of four verdict words; the UI
+// turns it into a badge. And every cited passage comes back with the EXACT
+// words that prove the claim — so the page viewer marks one sentence, not a
+// 1,600-character chunk the reader still has to hunt through.
+
+export type Verdict = "yes" | "conditional" | "no" | "unsettled";
+
+/** Uppercase only: "No welding is permitted…" is an answer, not a verdict. */
+const VERDICT_RE = /^\s*\**\s*(YES,?\s+WITH\s+CONDITIONS|NOT\s+SETTLED|YES|NO)\b\**\s*(?:[—–:-]+\s*|\.\s+|$)/;
+
+/** Split a leading verdict word off the Answer line. */
+export function splitVerdict(hero: string): { verdict: Verdict | null; text: string } {
+  const m = hero.match(VERDICT_RE);
+  if (!m) return { verdict: null, text: hero };
+  const word = m[1].replace(/\s+/g, " ");
+  const verdict: Verdict = word.startsWith("YES") ? (/CONDITIONS/.test(word) ? "conditional" : "yes")
+    : word === "NO" ? "no" : "unsettled";
+  return { verdict, text: hero.slice(m[0].length).trim() };
+}
+
+export type EvidenceRole = "decides" | "limits" | "context";
+
+export interface EvidenceSpan {
+  n: number;
+  role: EvidenceRole;
+  /** What this passage proves, in a few words. */
+  claim: string;
+  /** The words the model says it copied from passage n. */
+  quote: string;
+}
+
+/** Pull the trailing "**Evidence:**" block out of an answer. The block is
+ *  machinery, not prose: it is removed from the text the reader sees and
+ *  becomes per-citation highlight data. Lines that don't parse are dropped. */
+export function extractEvidenceBlock(answer: string): { answer: string; spans: EvidenceSpan[] } {
+  const lines = answer.split("\n");
+  const start = lines.findIndex((l) => /^\s*(?:#{1,4}\s*)?\*{0,2}Evidence:?\*{0,2}:?\s*$/i.test(l));
+  if (start < 0) return { answer, spans: [] };
+  const spans: EvidenceSpan[] = [];
+  for (const raw of lines.slice(start + 1)) {
+    const m = raw.trim().match(/^(?:[-*•]\s*)?\[(\d{1,3})\]\s*\(?\s*(decides|limits|context)\s*\)?\s*[—–:-]*\s*(.*)$/i);
+    if (!m) continue;
+    const rest = m[3];
+    const q = rest.match(/["“]([^"”]{3,})["”]\s*\.?\s*$/);
+    if (!q) continue;
+    const claim = rest.slice(0, rest.length - q[0].length).replace(/[\s—–:|-]+$/, "").replace(/\*\*/g, "").trim();
+    spans.push({ n: Number(m[1]), role: m[2].toLowerCase() as EvidenceRole, claim: claim.slice(0, 120), quote: q[1].trim() });
+  }
+  return { answer: lines.slice(0, start).join("\n").trimEnd(), spans };
+}
+
+/** Lowercased, whitespace-collapsed, quote/dash-unified copy of `s`, with a
+ *  map from each normalized index back to the original index. */
+function normalizeWithMap(s: string): { norm: string; map: number[] } {
+  let norm = "";
+  const map: number[] = [];
+  let lastSpace = true;
+  for (let i = 0; i < s.length; i++) {
+    let ch = s[i];
+    if (/\s/.test(ch)) {
+      if (lastSpace) continue;
+      ch = " ";
+      lastSpace = true;
+    } else {
+      lastSpace = false;
+      if (ch === "“" || ch === "”" || ch === "″") ch = '"';
+      else if (ch === "‘" || ch === "’" || ch === "′") ch = "'";
+      else if (ch === "–" || ch === "—" || ch === "‐" || ch === "‑") ch = "-";
+      else ch = ch.toLowerCase();
+    }
+    norm += ch;
+    map.push(i);
+  }
+  return { norm, map };
+}
+
+/** Find `span` inside `source` despite whitespace, case, and quote/dash
+ *  differences, and return the source's OWN text for it (so the page viewer
+ *  matches the PDF's text layer). Falls back to the longest piece around an
+ *  ellipsis, then to the stretch between the span's first and last words.
+ *  null when the model's words aren't really in the passage. */
+export function locateSpan(source: string, span: string): string | null {
+  if (!source || !span) return null;
+  const src = normalizeWithMap(source);
+  const slice = (start: number, len: number) =>
+    source.slice(src.map[start], src.map[start + len - 1] + 1).trim();
+  const find = (needle: string): string | null => {
+    const n = normalizeWithMap(needle).norm.trim();
+    if (n.length < 8) return null;
+    const at = src.norm.indexOf(n);
+    return at >= 0 ? slice(at, n.length) : null;
+  };
+  const direct = find(span);
+  if (direct) return direct;
+  const pieces = span.split(/\s*(?:\.\.\.|…)\s*/).filter((p) => p.trim().length >= 15)
+    .sort((a, b) => b.length - a.length);
+  for (const p of pieces) {
+    const hit = find(p);
+    if (hit) return hit;
+  }
+  // Ends-anchored: the first and last six words both present, in order, at
+  // most 400 chars apart — the model paraphrased the middle.
+  const words = normalizeWithMap(span).norm.trim().split(" ");
+  if (words.length >= 12) {
+    const head = words.slice(0, 6).join(" ");
+    const tail = words.slice(-6).join(" ");
+    const a = src.norm.indexOf(head);
+    if (a >= 0) {
+      const b = src.norm.indexOf(tail, a + head.length);
+      if (b >= 0 && b + tail.length - a <= 400) return slice(a, b + tail.length - a);
+    }
+  }
+  return null;
+}
+
+/** A display window of `text` around `highlight`: up to `radius` chars of
+ *  context either side, cut at word boundaries. null when the highlight
+ *  isn't in the text. */
+export function quoteWindow(
+  text: string, highlight: string, radius = 220,
+): { before: string; hit: string; after: string; clippedStart: boolean; clippedEnd: boolean } | null {
+  if (!text || !highlight) return null;
+  const at = text.indexOf(highlight);
+  if (at < 0) return null;
+  const end = at + highlight.length;
+  let from = Math.max(0, at - radius);
+  let to = Math.min(text.length, end + radius);
+  if (from > 0) { const sp = text.indexOf(" ", from); if (sp >= 0 && sp < at) from = sp + 1; }
+  if (to < text.length) { const sp = text.lastIndexOf(" ", to); if (sp > end) to = sp; }
+  return {
+    before: text.slice(from, at), hit: highlight, after: text.slice(end, to),
+    clippedStart: from > 0, clippedEnd: to < text.length,
+  };
+}
+
 /** Parse the model's structured answer into renderable blocks:
  *  "**Answer:** …" → hero; "**Basis:**" / "**Check:**" → label;
  *  "- …" → bullet; "! …" (or IMPORTANT:/WARNING:/MUST:/Note:) → important —
@@ -520,9 +658,12 @@ export function parseAnswerBlocks(answer: string): AnswerBlock[] {
     // markdown heading. These used to fall through to plain text — every
     // section header of a big answer rendered at body size, which is what
     // turned rich answers into an unscannable wall.
-    const boldHeading = line.match(/^\*\*([^*]{3,70})\*\*$/) ?? line.match(/^#{1,4}\s+(.{3,70})$/);
+    // Markdown headings run long when the model names a table ("### Table 1
+    // — Applicable SEMI Programs … (EP 19-1-1, p.4) [2]"); past 70 chars
+    // they used to render as literal "### …" text.
+    const boldHeading = line.match(/^\*\*([^*]{3,70})\*\*$/) ?? line.match(/^#{1,4}\s+(.{3,140})$/);
     if (boldHeading) {
-      blocks.push({ type: "label", text: boldHeading[1].replace(/:$/, "").trim() });
+      blocks.push({ type: "label", text: boldHeading[1].replace(/\s*\[\d{1,3}\]/g, "").replace(/\*\*/g, "").replace(/:$/, "").trim() });
       continue;
     }
     const bullet = line.match(/^[-*•]\s+(.+)$/) ?? line.match(/^\d{1,2}[.)]\s+(.+)$/);

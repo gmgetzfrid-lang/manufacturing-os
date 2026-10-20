@@ -148,7 +148,9 @@ export default function MessageStream({
                           <Sparkles className="w-3 h-3" /> Drafting
                         </div>
                         <div className="text-sm text-[var(--color-text-muted)] whitespace-pre-wrap leading-relaxed">
-                          {streaming.draft}
+                          {/* The trailing Evidence block is highlight data for
+                              the citations, not prose — never stream it. */}
+                          {streaming.draft.split(/\n\s*(?:#{1,4}\s*)?\*{0,2}Evidence:?\*{0,2}:?\s*(?:\n|$)/i)[0]}
                           <span className="inline-block w-1.5 h-4 ml-0.5 align-text-bottom bg-orange-500/70 animate-pulse rounded-sm" />
                         </div>
                       </div>

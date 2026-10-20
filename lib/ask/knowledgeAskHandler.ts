@@ -38,6 +38,7 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
   parseSearchQueries, parseFollowupPlan, extractCitationNumbers, sanitizeStorageText, truncateSafe,
   type RetrievedChunk, mergeRetrievedRRF,
+  extractEvidenceBlock, locateSpan, type EvidenceSpan, type EvidenceRole,
 } from "@/lib/knowledgeText";
 import { fuseRankings } from "@/lib/hybridRank";
 import { embeddingConnectionFrom } from "@/lib/ai/embeddings";
@@ -88,6 +89,16 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     .map((t) => ({ question: t.question.slice(0, 500), answer: t.answer.slice(0, 1200) }));
   const threadId = typeof body.threadId === "string" && /^[0-9a-f-]{36}$/i.test(body.threadId)
     ? body.threadId : null;
+  // Pages earlier turns of THIS conversation cited, most decisive first.
+  // They ride along as evidence on every follow-up — an answer must never
+  // call a passage "not loaded" that it quoted one turn ago. Every pin is
+  // re-checked against the asker's reachable documents before use.
+  const pinned = (Array.isArray((body as { pinned?: unknown }).pinned) ? (body as { pinned: unknown[] }).pinned : [])
+    .filter((p): p is { documentId: string; page: number } =>
+      !!p && typeof (p as { documentId?: unknown }).documentId === "string"
+      && /^[0-9a-f-]{36}$/i.test((p as { documentId: string }).documentId)
+      && Number.isInteger((p as { page?: unknown }).page) && (p as { page: number }).page >= 1)
+    .slice(0, 12);
   const conversationBlock = history.length > 0
     ? "CONVERSATION SO FAR (the question may refer back to it):\n"
       + history.map((t) => `Q: ${t.question}\nA: ${t.answer}`).join("\n---\n") + "\n\n"
@@ -332,9 +343,26 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     }
   }
 
+  // The documents this conversation has leaned on, heaviest first — the
+  // default subject of a follow-up that names none ("show me table 1").
+  const conversationDocIds: string[] = [];
+  {
+    const weight = new Map<string, number>();
+    pinned.forEach((p, i) => weight.set(p.documentId, (weight.get(p.documentId) ?? 0) + (pinned.length - i)));
+    conversationDocIds.push(...[...weight.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id));
+  }
+  const conversationDocNames = new Map<string, string>();
+  if (conversationDocIds.length > 0) {
+    const { data } = await supabaseAdmin
+      .from("knowledge_documents").select("id, name").in("id", conversationDocIds);
+    for (const d of (data ?? []) as Array<{ id: string; name: string }>) {
+      if (!excludedDocIds.has(d.id)) conversationDocNames.set(d.id, d.name);
+    }
+  }
+
   try {
     // ── Step 1: question → search queries ────────────────────────────────
-    emit({ t: "status", text: "Writing search queries" });
+    emit({ t: "status", text: userImages.length > 0 ? "Reading your attachment and writing search queries" : "Writing search queries" });
     const queryText = await call({
       system:
         'You generate full-text search queries for a technical document library at an oil refinery. ' +
@@ -344,23 +372,33 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         'tables answer "span between supports" questions) — vary the vocabulary across queries. ' +
         'CHECKLIST QUESTIONS ("what do I need to…", "requirements for…") span MANY topics — cover every ' +
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
-        'query per facet. No prose, no code fence — just the JSON array.',
+        'query per facet. ' +
+        'ATTACHED IMAGES are the asker\'s own photo, markup, or document: read every identifying string ' +
+        'in them — spec and grade stencils ("A312 TP304 WLD"), heat numbers, tags, nameplates, drawing ' +
+        'and document numbers — and use those exact terms in the queries alongside the question\'s. ' +
+        'No prose, no code fence — just the JSON array.',
       user: [
         // Follow-ups arrive as fragments ("what about at the boiler?") —
         // the retrieval queries must be written against the CONVERSATION,
         // not the fragment, or every follow-up searches for nothing.
         history.length > 0
           ? "(Follow-up in a conversation. Recent turns:\n" +
-            history.slice(-2).map((t) =>
-              `Q: ${t.question}\nA (abridged): ${truncateSafe(t.answer, 240)}`).join("\n---\n") +
-            "\nResolve pronouns and ellipsis against these turns; carry forward the equipment, " +
-            "documents, and constraints they establish when writing queries.)"
+            history.slice(-3).map((t) =>
+              `Q: ${t.question}\nA (abridged): ${truncateSafe(t.answer, 400)}`).join("\n---\n") +
+            (conversationDocNames.size > 0
+              ? `\nDocuments the conversation has relied on: ${[...conversationDocNames.values()].slice(0, 4).join(", ")}.`
+              : "") +
+            "\nResolve pronouns and ellipsis against these turns; carry forward the material, equipment, " +
+            "documents, and constraints they establish when writing queries. A bare reference like " +
+            "\"table 1\" means the one in the document the conversation is about — name that document " +
+            "in the query.)"
           : "",
         question,
         focus.length > 0 ? `(The user narrowed this to: ${focus.join(", ")} — target the queries there.)` : "",
         inputs ? `(User-provided inputs: ${inputs} — include queries for the tables/values these imply.)` : "",
       ].filter(Boolean).join("\n\n"),
       maxTokens: 1000,
+      ...(userImages.length > 0 ? { images: userImages } : {}),
     });
     const queries = parseSearchQueries(queryText.text, question);
     emit({ t: "status", text: `Searching the library — ${queries.length} quer${queries.length === 1 ? "y" : "ies"}` });
@@ -600,6 +638,45 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         .in("library_id", reachableLibIds);
       reachableDocs = ((data ?? []) as ReachableDoc[]).filter((d) => !excludedDocIds.has(d.id));
     }
+    // Passages that hold their seat no matter how the ranking reshuffles —
+    // proven-ground pages and pages earlier turns cited. A refine round
+    // rebuilds `chunks` from the search results and used to drop these.
+    const reserved: TieredChunk[] = [];
+    const reachableIds = new Set(reachableDocs.map((d) => d.id));
+
+    // ── CONVERSATION EVIDENCE: the pages earlier turns cited ─────────────
+    const pinnedChunkIds = new Set<string>();
+    if (pinned.length > 0) {
+      try {
+        const usablePins = pinned.filter((p) => reachableIds.has(p.documentId));
+        const pinDocIds = [...new Set(usablePins.map((p) => p.documentId))];
+        const pinPages = [...new Set(usablePins.map((p) => p.page))];
+        if (pinDocIds.length > 0) {
+          const { data: pc } = await supabaseAdmin
+            .from("knowledge_chunks").select("id, document_id, page, content, section")
+            .eq("org_id", orgId).in("document_id", pinDocIds).in("page", pinPages)
+            .order("seq", { ascending: true })
+            .limit(80);
+          const rows = (pc ?? []) as RetrievedChunk[];
+          const have = new Set(chunks.map((c) => c.id));
+          for (const p of usablePins) {
+            let perPage = 0;
+            for (const c of rows) {
+              if (c.document_id !== p.documentId || c.page !== p.page || perPage >= 2) continue;
+              perPage++;
+              pinnedChunkIds.add(c.id);
+              const libId = reachableDocs.find((d) => d.id === c.document_id)?.library_id ?? libraryId;
+              const tiered: TieredChunk = {
+                ...c, rank: 1, libraryId: libId, tier: libId === libraryId ? "governing" : "reference",
+              };
+              reserved.push(tiered);
+              if (!have.has(c.id)) { chunks.push(tiered); have.add(c.id); }
+            }
+            if (pinnedChunkIds.size >= 12) break;
+          }
+        }
+      } catch { /* conversation memory is additive — retrieval stands without it */ }
+    }
 
     // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
     //    similar question was answered before and a human confirmed the
@@ -631,7 +708,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           for (const c of (pc ?? []) as RetrievedChunk[]) {
             if (have.has(c.id)) continue;
             have.add(c.id);
-            chunks.push({ ...c, rank: 1, libraryId, tier: "governing" });
+            const tiered: TieredChunk = { ...c, rank: 1, libraryId, tier: "governing" };
+            reserved.push(tiered);
+            chunks.push(tiered);
           }
         }
       }
@@ -650,6 +729,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     // Documents the question NAMED (matched by designation against document
     // names) — candidates for whole-document reading below.
     const namedDocs: Array<{ id: string; name: string; libraryId: string }> = [];
+    const questionDocIds = new Set<string>();
     {
       const preview = chunks.length === 0
         ? "(nothing matched the first-round queries)"
@@ -679,7 +759,12 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
               'clarification is worse than a long answer.\n'
             : '') +
           'If the passages fully cover the question, reply {"queries": [], "missing_documents": []}.',
-        user: `QUESTION: ${question}\n\nRETRIEVED SO FAR:\n${preview}`,
+        user: (history.length > 0
+          ? `EARLIER IN THIS CONVERSATION:\n${history.slice(-3).map((t) => `Q: ${truncateSafe(t.question, 200)}`).join("\n")}` +
+            (conversationDocNames.size > 0
+              ? `\nDocuments relied on so far: ${[...conversationDocNames.values()].slice(0, 4).join(", ")}`
+              : "") + "\n\n"
+          : "") + `QUESTION: ${question}\n\nRETRIEVED SO FAR:\n${preview}`,
         maxTokens: 800,
       }).catch(() => null);
       const plan = refineOut
@@ -722,6 +807,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
             8,
           ),
         ];
+        const have = new Set(chunks.map((c) => c.id));
+        for (const c of reserved) {
+          if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
+        }
       }
       // ── PULL BY NAME: chunk search finds text INSIDE pages, so a document
       //    whose pages don't repeat its own designation is unfindable by
@@ -793,6 +882,23 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
         }
       }
+      // Documents the QUESTION itself names, as opposed to ones the model's
+      // plan brought up — "Table 1" resolves to theirs first.
+      for (const m of question.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
+        const sq = squashName(m[0]);
+        if (sq.length < 4 || !/\d/.test(sq) || !/[A-Z]/.test(sq)) continue;
+        for (const d of reachableDocs) if (squashName(d.name).includes(sq)) questionDocIds.add(d.id);
+      }
+      // A follow-up that names no document is about the one the
+      // conversation has been reading. It joins the named documents (after
+      // any the question names) so whole-document mode reads it in full —
+      // the cure for "Table 1 isn't in the attached pages" two turns after
+      // quoting from the same standard.
+      for (const docId of conversationDocIds.slice(0, 1)) {
+        if (namedDocs.length >= 3 || namedDocs.some((d) => d.id === docId)) continue;
+        const d = reachableDocs.find((x) => x.id === docId);
+        if (d) namedDocs.push({ id: d.id, name: d.name, libraryId: d.library_id });
+      }
       // Validate claimed-missing docs. A NAME match above proves presence. A
       // content probe that hits real passages proves it too — and those
       // passages now JOIN the pool instead of being thrown away (they used
@@ -826,7 +932,11 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       const WHOLE_DOC_MAX_CHUNKS = 130;      // per document
       const WHOLE_DOC_CHAR_BUDGET = 170_000; // across all whole docs (~42k tokens)
       let charBudget = WHOLE_DOC_CHAR_BUDGET;
-      for (const nd of namedDocs.slice(0, 2)) {
+      // Read order: what the question names, then what the conversation is
+      // about, then documents the refine plan brought up.
+      const readRank = (id: string) => questionDocIds.has(id) ? 0 : conversationDocIds.includes(id) ? 1 : 2;
+      const readOrder = [...namedDocs].sort((a, b) => readRank(a.id) - readRank(b.id));
+      for (const nd of readOrder.slice(0, 2)) {
         if (charBudget <= 0) break;
         try {
           const { count } = await supabaseAdmin
@@ -1308,7 +1418,12 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
             const rows = ((aRows ?? []) as typeof anchorHits).filter((r) => r.tag === tag);
             // The Table 3 in the SAME document the prose came from, not a
             // namesake in another standard.
-            const best = rows.find((r) => retrievedDocs.has(r.document_id)) ?? rows[0];
+            // Then: a document the question names, then the one the
+            // conversation is about — "table 1" three turns into an EP 5-2-1
+            // discussion is EP 5-2-1's Table 1, not a SEMI table elsewhere.
+            const best = rows.find((r) => questionDocIds.has(r.document_id))
+              ?? rows.find((r) => conversationDocIds.includes(r.document_id))
+              ?? rows.find((r) => retrievedDocs.has(r.document_id)) ?? rows[0];
             if (best && !excludedDocIds.has(best.document_id)) anchorHits.push(best);
           }
         } catch { /* anchors are additive */ }
@@ -1341,7 +1456,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
             ? `${c.tier === "reference" ? "REFERENCE" : "GOVERNING"} — ${libNameById.get(c.libraryId ?? libraryId) ?? "library"} | `
             : "";
           const wholeTag = wholeDocIds.has(c.document_id) ? "FULL TEXT | " : "";
-          return `[${i + 1}] (${wholeTag}${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
+          const pinTag = pinnedChunkIds.has(c.id) ? "CITED EARLIER IN THIS CONVERSATION | " : "";
+          return `[${i + 1}] (${pinTag}${wholeTag}${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
         }).join("\n\n");
     const graphHopNote = graphHops.length > 0
       ? "\n\nGRAPH HOPS: some passages were pulled by FOLLOWING REFERENCES found in the retrieved " +
@@ -1428,8 +1544,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "COMPLETELY requires documents or values you don't have — a referenced spec or code edition, " +
       "another unit's drawings, a data sheet, a legend, a vendor manual, a measurement only the user " +
       "knows — finish everything you CAN, then end with a short 'To go further I need:' list naming " +
-      "each item and exactly why. When the user must choose between discovered options, ask ONE " +
-      "question listing them rather than assuming.";
+      "each item and exactly why — at most 3 items, and only items that would change the answer or " +
+      "finish the job. When the user must choose between discovered options, ask ONE question " +
+      "listing them rather than assuming.";
     // "How do I determine X?" must leave the reader COVERED — the whole
     // decision path, not a compressed one-liner that skips the estimate
     // rules and floors the source spells out.
@@ -1460,7 +1577,11 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         "in the image list were attached by the asker for THIS question (a photo, a marked-up " +
         "drawing, a screenshot, or pages of a PDF they attached). Read them as context for the " +
         "question. They are NOT library documents — never cite them with [n]; describe what you " +
-        "read in them in words."
+        "read in them in words. When what you see bears on the answer (a stencil reading " +
+        "\"A312 TP304 WLD\", a visible weld seam, corrosion, a nameplate value), the FIRST Basis " +
+        "bullet starts \"From your attachment:\" and says exactly what you read and where in the " +
+        "image — so the asker can confirm you looked at the right thing. If the image is unclear " +
+        "or doesn't show what the question needs, say what's missing in that bullet."
       : "";
     const buildPagesNote = (imgs: typeof pageImages) => askerImagesNote + (imgs.length > 0
       ? "\n\nPRINTED PAGES: attached are the actual page images, in order: " +
@@ -1504,6 +1625,14 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "markers. Mandatory, first. NEVER pack an enumeration into the Answer line — lists of " +
       "requirements, drivers, or steps ALWAYS go in Basis bullets, and the Answer line just says " +
       "what governs and points down.\n" +
+      "VERDICT: when the question asks for a decision — can I / may I / is it allowed, acceptable, " +
+      "required, permitted, OK to use — the Answer line STARTS with exactly one of these words in " +
+      "capitals, then an em dash: YES — / NO — / YES, WITH CONDITIONS — / NOT SETTLED —. " +
+      "YES or NO only when a passage explicitly settles it; YES, WITH CONDITIONS when it is " +
+      "permitted subject to named conditions or approvals (say the conditions in Basis); NOT " +
+      "SETTLED when the passages genuinely don't decide it — then the sentence names which " +
+      "document and section DOES decide it, or who does (e.g. the Owner's Engineer). Answer the " +
+      "question asked, about the item asked — not a neighboring topic.\n" +
       "**Basis:**\n" +
       "- bullets, one fact each, with its [n] marker and the section/table name when the passage " +
       "label shows one (e.g. \"per §5.3 Pipe Supports [2]\").\n" +
@@ -1538,7 +1667,33 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "were handed, not an outline to summarize — leave out anything that doesn't change the asker's " +
       "decision, even when it's from the right document. The one exception: a safety-critical fact " +
       "they didn't ask about but cannot act without gets ONE \"! \" line. An answer that buries the " +
-      "point under adjacent material is a WRONG answer here." +
+      "point under adjacent material is a WRONG answer here.\n\n" +
+      "SCOPE CHECK: before citing a clause, check it covers the SAME material, component, and " +
+      "service the question is about (a carbon-steel table does not govern 304 stainless; a tubing " +
+      "rule does not govern pipe). Cite an out-of-scope clause ONLY to show that it does NOT apply, " +
+      "and say so in the same bullet. Never present one as if it governs.\n\n" +
+      "CONVERSATION: a follow-up continues the same job. Interpret short follow-ups (\"show me " +
+      "table 1\", \"what about fittings\") against the conversation — the same material, item, and " +
+      "document — never as a fresh question about something else. When the user pushes back " +
+      "(\"that doesn't answer it\", \"be more explicit\"), keep the same question and give a SHARPER " +
+      "verdict in FEWER lines — do not add sections. Passages marked CITED EARLIER IN THIS " +
+      "CONVERSATION are evidence you already relied on; they remain valid.\n\n" +
+      "NEVER write that a passage, table, or section is \"not in the attached/loaded pages\" or " +
+      "\"not retrieved\". If a table you need is referenced but its text isn't here, use Fetch. If " +
+      "the library truly doesn't decide the question, say NOT SETTLED and name exactly what you " +
+      "checked and where the answer would live.\n\n" +
+      "NO FILLER: never write a section or bullet with placeholder content (\"Details below.\", " +
+      "\"See below.\"). Leave a section out when it has nothing real in it.\n\n" +
+      "EVIDENCE (mandatory, always LAST): end every answer that cites passages with a line " +
+      "\"**Evidence:**\" followed by one line per cited passage, most decisive first, in this exact " +
+      "shape:\n" +
+      "- [n] decides — <what it proves, 10 words max> — \"<words copied from passage n>\"\n" +
+      "The role is one of: decides (settles the answer), limits (a condition, exception, approval, " +
+      "or a rule shown NOT to apply), context (supporting only). The quoted words must be copied " +
+      "character-for-character from passage n — they are used to highlight that exact sentence " +
+      "on the page — and must be the SHORTEST span that proves the claim (one sentence or one " +
+      "table row, 5-30 words), never a whole paragraph. Every [n] used in the answer gets exactly " +
+      "one Evidence line. The reader never sees this block as text." +
       precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
       fetchDirective;
@@ -1585,12 +1740,22 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         });
       }
     }
-    let answer = answerOut.text;
+    // The Evidence block is machinery: it leaves the answer text and becomes
+    // per-citation highlight spans, each verified against its passage.
+    const evidence = extractEvidenceBlock(answerOut.text);
+    let answer = evidence.answer;
+    const spanByN = new Map<number, EvidenceSpan>();
+    for (const s of evidence.spans) if (!spanByN.has(s.n)) spanByN.set(s.n, s);
 
     // Citations the answer actually used, in order of first use — each
     // carries the VERBATIM passage so the UI can show exactly what the
     // answer was built from (expand → read the source text → open the page).
     let used = extractCitationNumbers(answer);
+    // A passage the Evidence block names as decisive is proof even when the
+    // prose forgot its marker — keep it in the citation list.
+    for (const s of evidence.spans) {
+      if (s.role !== "context" && !used.includes(s.n) && s.n >= 1 && s.n <= chunks.length) used.push(s.n);
+    }
     {
       // A [17] the model invented used to be dropped from the citation
       // PAYLOAD and left in the answer TEXT — the reader sees a marker,
@@ -1604,7 +1769,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         answer +=
           "\n\n! One or more citation markers pointed at no retrieved passage and were removed — " +
           "treat any adjacent claim as uncited.";
-        used = extractCitationNumbers(answer);
+        used = used.filter((n) => n >= 1 && n <= chunks.length);
       }
     }
 
@@ -1650,19 +1815,35 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       n: number; documentId: string; documentName: string; page: number;
       section: string | null; quote: string; tags?: string[];
       libraryName?: string; tier?: string;
+      highlight?: string; role?: EvidenceRole; claim?: string;
     };
     const citations: CitationOut[] = used
       .filter((n) => n >= 1 && n <= chunks.length)
       .map((n) => {
         const c = chunks[n - 1];
         const pageTags = citedPageTags.get(`${c.document_id}:${c.page}`) ?? [];
+        // The exact words that prove the claim, as the PASSAGE spells them —
+        // only when they're really in it. A span the model paraphrased is
+        // dropped, and the citation falls back to the whole passage.
+        const span = spanByN.get(n);
+        const highlight = span ? locateSpan(c.content, span.quote) : null;
+        // A long passage is stored as the window AROUND the proof, so the
+        // highlight is never cut off by the 1,600-char cap.
+        let quote = truncateSafe(c.content, 1600);
+        if (highlight && !quote.includes(highlight)) {
+          const at = c.content.indexOf(highlight);
+          const from = Math.max(0, Math.min(at - 600, c.content.length - 1600));
+          quote = truncateSafe(c.content.slice(from), 1600);
+        }
         return {
           n,
           documentId: c.document_id,
           documentName: docName.get(c.document_id) ?? "Document",
           page: c.page,
           section: c.section ?? null,
-          quote: truncateSafe(c.content, 1600),
+          quote,
+          ...(highlight && quote.includes(highlight) ? { highlight } : {}),
+          ...(span ? { role: span.role, ...(span.claim ? { claim: span.claim } : {}) } : {}),
           ...(pageTags.length > 0 ? { tags: pageTags.slice(0, 12) } : {}),
           ...(hasLinks ? {
             libraryName: libNameById.get(c.libraryId ?? libraryId) ?? "Library",
