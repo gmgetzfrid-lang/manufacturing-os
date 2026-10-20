@@ -72,7 +72,16 @@
 // same 422 `unstampable` question as any file the stamp cannot take, and its
 // record carries the reason (`unstampedReason`), as every unstamped copy's
 // does. A non-PDF is served as application/octet-stream (never a stored
-// content type: a "view" is inline, and the page only previews PDFs).
+// content type).
+//
+// A preview is a PDF preview (DF-P15 fix, on review): channel "view" is
+// refused (400 `not_previewable`, nothing recorded, nothing issued) for a file
+// that is not a PDF or is over the stamping bound — a file the server cannot
+// stamp by construction. A view writes a VIEW audit row, never a distribution
+// row, and the stale-copy recall reads distribution rows only, so a view must
+// not be a way to take the raw bytes of a file the stamp cannot mark. The
+// page previews only PDFs; for anything refused here it keeps its presigned
+// inline frame, as before DF-P15.
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -319,6 +328,17 @@ export async function POST(req: NextRequest) {
   const expiresAt = new Date(now.getTime() + (file.type === "Draft" ? 72 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000));
   const email = caller.email ?? (member as { email?: string | null }).email ?? null;
   const sourceIsPdf = isPdfBytes(head);
+  if (view && (!sourceIsPdf || piped)) {
+    // A preview is a stamped PDF preview (see the header): never the raw bytes
+    // of a file the server cannot stamp by construction.
+    await piped?.cancel().catch(() => {});
+    return json({
+      error: "not_previewable",
+      message: !sourceIsPdf
+        ? "the server previews only a PDF it can stamp, and this file is not a PDF"
+        : `the server previews only a PDF it can stamp, and this file is over the ${COPY_STAMP_MAX_BYTES / (1024 * 1024)} MB it stamps`,
+    }, 400);
+  }
   let out: Uint8Array | null = source;
   let stamped = false;
   let stampProblem: string | null = !sourceIsPdf

@@ -146,12 +146,61 @@ describe("EVID-16 done-when 2 — channel \"view\": the preview is the stamped s
     expect((await post({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true })).status).toBe(200);
     st.inserts = [];
     st.ticket = ticketRow();
-    st.objects[KEY] = new TextEncoder().encode("not a pdf");
+    // a PDF the stamp cannot take (DF-P15 fix: a non-PDF is not previewable at all — below)
+    st.objects[KEY] = new TextEncoder().encode("%PDF-1.4\n%%EOF");
     expect((await post({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true })).status).toBe(422);
     const ok = await post({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true, acceptUnstamped: true });
     expect(ok.status).toBe(200);
     expect(ok.headers.get("x-ticket-copy-stamped")).toBe("0");
     expect(ins("audit_logs")[0]).toMatchObject({ action: "VIEW", details: expect.objectContaining({ watermark: "UNSTAMPED (stamping failed)" }) });
+  });
+  it("DF-P15 fix (review) — a view is a PDF preview: a non-PDF is refused (400 not_previewable) even accepting unstamped, and writes NO row; so is a file over the stamping bound, its stream released, never read whole", async () => {
+    st.objects[KEY] = new TextEncoder().encode("AC1027 a DWG, not a PDF");
+    for (const extra of [{}, { acceptUnstamped: true }]) {
+      const res = await post({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true, ...extra });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "not_previewable", message: "the server previews only a PDF it can stamp, and this file is not a PDF" });
+    }
+    expect(st.inserts).toEqual([]);
+    // the same bytes as a download still go out (unstamped, accepted) with the distribution row the recall reads
+    const dl = await post({ ticketId: T, attachmentId: "f-1", channel: "download", acceptUnstamped: true });
+    expect(dl.status).toBe(200);
+    expect(ins("download_audits")).toEqual([expect.objectContaining({ source: "drafting_unstamped", attachment_id: "f-1" })]);
+    st.inserts = []; st.byteArrayReads = 0;
+    st.objects[KEY] = await pdfBytes();
+    st.meta[KEY] = { contentLength: 70 * MiB };
+    const big = await post({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true, acceptUnstamped: true });
+    expect(big.status).toBe(400);
+    expect((await big.json()).message).toBe("the server previews only a PDF it can stamp, and this file is over the 64 MB it stamps");
+    expect(st.inserts).toEqual([]);
+    expect(st.byteArrayReads).toBe(0);
+  });
+  it("DF-P15 fix (review) — the refused view takes the page's browser path (the client reads the 400 as 'the server cannot issue this file')", async () => {
+    const { requestTicketCopy } = await import("@/lib/ticketCopyRequest");
+    st.objects[KEY] = new TextEncoder().encode("not a pdf");
+    const res = await post({ ticketId: T, attachmentId: "f-1", channel: "view", acknowledged: true, acceptUnstamped: true });
+    const out = await requestTicketCopy({ ticketRowId: T, attachmentId: "f-1", channel: "view", token: "t", fallbackName: "x" }, async () => res);
+    expect(out).toEqual({ kind: "not_server", message: "the server previews only a PDF it can stamp, and this file is not a PDF" });
+  });
+  it("DF-P15 fix (review) — a Contractor-only member outside the scope, before 20261166: the route answers 404 and writes nothing; the page reads it as the browser path (as before DF-P15), said, for print, download and view", async () => {
+    const { takeTicketCopy, READ_SCOPE_FALLBACK_NOTE } = await import("@/lib/ticketCopyRequest");
+    st.user = { id: "u-con", email: "con@vendor.test" };
+    st.member = { uid: "u-con", role: "Contractor", roles: ["Contractor"], email: "con@vendor.test" };
+    // not the requester, drafter, engineer or a watcher; no mention row (the chain answers no rows)
+    for (const channel of ["print", "download", "view"] as const) {
+      const res = await post({ ticketId: T, attachmentId: "f-1", channel });
+      expect(res.status, channel).toBe(404);
+      const out = await takeTicketCopy({
+        ticketRowId: T, attachmentId: "f-1", channel, fallbackName: "ifc-rev1.pdf",
+        getToken: async () => "tok", confirm: async () => true,
+        fetchImpl: async () => res,
+      });
+      expect(out, channel).toEqual({ kind: "browser", message: READ_SCOPE_FALLBACK_NOTE });
+    }
+    expect(st.inserts).toEqual([]);
+    // REGRESSION: the same member on a ticket they follow is in scope and served by the route
+    st.ticket = ticketRow({ watchers: ["u-con"] });
+    expect((await post({ ticketId: T, attachmentId: "f-1", channel: "download" })).status).toBe(200);
   });
   it("a legacy absolute URL is refused for a view too (the page keeps the browser path for it)", async () => {
     st.ticket = ticketRow({ attachments: [{ id: "f-1", name: "x.pdf", url: "https://old.example.com/x.pdf", type: "Final", rev: "1" }] });

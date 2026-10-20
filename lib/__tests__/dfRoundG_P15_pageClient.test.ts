@@ -50,7 +50,7 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
-import { ticketFileCopyPath, requestTicketCopy, takeTicketCopy, filenameFromDisposition, BROWSER_PATH_NOTE, NON_PDF_PRINT_NOTE } from "@/lib/ticketCopyRequest";
+import { ticketFileCopyPath, requestTicketCopy, takeTicketCopy, filenameFromDisposition, BROWSER_PATH_NOTE, NON_PDF_PRINT_NOTE, READ_SCOPE_FALLBACK_NOTE } from "@/lib/ticketCopyRequest";
 import TicketCopyRecallPanel from "@/components/requests/TicketCopyRecallPanel";
 import PublishNewDocumentModal from "@/components/requests/PublishNewDocumentModal";
 
@@ -139,11 +139,11 @@ describe("EVID-16 done-when 2 — the server copy, its questions asked once each
       expect((await takeTicketCopy({ ...base, channel: "print", confirm: async () => true, fetchImpl: f.impl })).kind).toBe("browser");
     }
   });
-  it("anything else is said in words and nothing is copied: 503 unrecorded, 409 archived, 404 not found, 401, a network failure, no session", async () => {
+  it("anything else is said in words and nothing is copied: 503 unrecorded, 409 archived, 404 not in storage, 401, a network failure, no session", async () => {
     for (const ans of [
       json(503, { error: "unrecorded", message: "This copy was not issued: the distribution record refused it." }),
       json(409, { error: "archived", message: "This request is archived…" }),
-      json(404, { error: "Request not found" }),
+      json(404, { error: "That file is not in storage" }),
       json(401, { error: "Unauthorized" }),
     ]) {
       const f = fakeFetch([ans]);
@@ -182,6 +182,33 @@ describe("EVID-16 done-when 2 — the server copy, its questions asked once each
     const broken = new ReadableStream<Uint8Array>({ pull(c) { c.error(new Error("socket hang up")); } });
     const out = await requestTicketCopy({ ...base, channel: "download", token: "t" }, async () => new Response(broken, { status: 200 }));
     expect(out).toEqual({ kind: "not_server", message: "the copy was cut off in transit (socket hang up)" });
+  });
+  it("DF-P15 fix (review) — a Contractor-only member outside the route's read scope, before 20261166: the route's 404 \"Request not found\" keeps the browser path for print, download AND preview, said; nothing is asked", async () => {
+    // Today's database (20261166 unpasted): the tickets RLS still shows this
+    // member the ticket and /api/storage/download-url signs their copy, so
+    // before DF-P15 their print, download and preview worked. The route
+    // applies the narrower scope already (ticketReadScope → 404).
+    for (const channel of ["print", "download", "view"] as const) {
+      const f = fakeFetch([json(404, { error: "Request not found" })]);
+      const confirm = vi.fn(async () => true);
+      const out = await takeTicketCopy({ ...base, channel, confirm, fetchImpl: f.impl });
+      expect(out, channel).toEqual({ kind: "browser", message: READ_SCOPE_FALLBACK_NOTE });
+      expect(f.calls).toHaveLength(1);
+      expect(confirm).not.toHaveBeenCalled();
+    }
+    expect(READ_SCOPE_FALLBACK_NOTE).toMatch(/Contractor read scope, which does not include you on this request/);
+    // the page acts on "browser" for each: print → browserPrint, download → browserDownload, preview → the presigned inline frame, each said
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    const modal = page.slice(page.indexOf("const FileViewerModal = ("), page.indexOf("<DownloadComplianceModal"));
+    expect(modal).toContain("} else if (out.kind === 'browser') {\n          setServerNote(out.message);\n          presign();");
+    const printPart = modal.slice(modal.indexOf("const handlePrint = async"), modal.indexOf("const browserSourceUrl = async"));
+    expect(printPart).toContain("if (out.kind === 'browser') {\n      setServerNote(out.message);");
+    expect(printPart).toContain("return browserPrint();\n    }\n    if (out.kind === 'refused')");
+    const downloadPart = modal.slice(modal.indexOf("const performDownload = async"), modal.indexOf("const browserDownload = async"));
+    expect(downloadPart).toContain("fallBack = true;");
+    expect(downloadPart).toContain("if (fallBack) await browserDownload();");
+    // the viewer says why: serverNote is shown in the amber note
+    expect(page).toContain("? `The server could not issue this file (${serverNote}). Its copies are stamped and recorded from your browser.`");
   });
   it("the file name comes from Content-Disposition, else the fallback", () => {
     expect(filenameFromDisposition('inline; filename="a_Rev2.pdf"', "x")).toBe("a_Rev2.pdf");

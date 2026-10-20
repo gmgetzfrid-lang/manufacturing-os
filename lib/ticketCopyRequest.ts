@@ -21,7 +21,9 @@
 //     frame prints a PDF or an image loaded from the file itself, never an
 //     application/octet-stream blob, which the browser would download). With
 //     the route's streamed body and the fallbacks below, every print and
-//     download that worked before still works for the same people.
+//     download that worked before still works for the same people — a
+//     Contractor-only member outside the route's read scope included (the
+//     "Request not found" fallback below; DF-P15 fix, on review).
 //   * The route's answers (requestTicketCopy): the bytes; 409 `confirm` (a
 //     superseded, withdrawn or in-progress file — asked, then retried with
 //     `acknowledged`); 422 `unstampable` (asked, then retried with
@@ -34,7 +36,17 @@
 //     user still gets the file, stamped and recorded from the tab (DF-P15
 //     fix; the route streams its body, so a large file no longer meets the
 //     host's buffered-response cap — this is the fallback if anything else
-//     does). Anything else (401, 404, 409 `archived`, 503 `unrecorded`, a
+//     does). So is the route's 404 "Request not found" (DF-P15 fix, on
+//     review): the page only opens this viewer for a ticket it has loaded,
+//     so the caller can read the ticket here — the route answers 404 when
+//     its Contractor-only read scope (lib/ticketReadScope.ts, AUTHZ-13 /
+//     DEC-89) leaves the caller out, a scope the database applies only once
+//     migration 20261166 is pasted. Until then the tickets RLS still shows
+//     such a member the whole workspace and /api/storage/download-url signs
+//     their copy, so the browser path keeps what they could do before DF-P15
+//     (READ_SCOPE_FALLBACK_NOTE says why); after the paste the page cannot
+//     load the ticket for them at all, so the fallback is never wider than
+//     the database. Anything else (401, 409 `archived`, 503 `unrecorded`, a
 //     JSON 502 …) is said in words and nothing is copied.
 //   * takeTicketCopy runs the questions in order. A preview ("view") asks
 //     none: the stamp says the file's standing, and an unstampable file is
@@ -57,6 +69,13 @@ export const BROWSER_PATH_NOTE: Record<TicketCopyBrowserReason, string> = {
   outside_request: "This file is kept outside this request's storage (a library file named when the request was filed), so its copies are stamped and recorded from your browser.",
   unaddressable: "This file is not named once on this request, so the server cannot issue it: its copies are stamped and recorded from your browser.",
 };
+
+/** What the viewer says when the copy route answers "Request not found" for a
+ *  ticket this page has loaded: the route's Contractor-only read scope leaves
+ *  the caller out, and the database does not apply that scope yet (20261166
+ *  unpasted) — the browser path, as before DF-P15. */
+export const READ_SCOPE_FALLBACK_NOTE =
+  "the server's copy route applies the Contractor read scope, which does not include you on this request; until this workspace's database applies that scope too, the request stays open to you here";
 
 /** What the viewer says about a non-PDF file the server issues: its print
  *  keeps the browser path (a hidden frame cannot print a downloaded blob). */
@@ -171,6 +190,11 @@ export async function requestTicketCopy(
   }
   if ((res.status === 404 && body.error === "That file is not on this request") || res.status === 400) {
     return { kind: "not_server", message };
+  }
+  if (res.status === 404 && body.error === "Request not found") {
+    // The route's read scope leaves the caller out of a ticket the page could
+    // load — the database's scope is not applied yet (see the header).
+    return { kind: "not_server", message: READ_SCOPE_FALLBACK_NOTE };
   }
   return { kind: "refused", status: res.status, message };
 }
