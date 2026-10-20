@@ -116,8 +116,8 @@ export const PUSH_TITLES: Readonly<Partial<Record<ClassifiedKind, string>>> = Ob
   hold_opened: "A document hold needs your attention",
   ack_requested: "You're asked to acknowledge a document",
   // fix pass 4: "review", not "sign off" — true of the change proposed at
-  // check-in (components/documents/CheckInPanel.tsx), the only producer
-  // that pushes this kind today (the sign-off roster does not yet — OS-14)
+  // check-in (components/documents/CheckInPanel.tsx) and of the sign-off
+  // roster's request (lib/reviewControl.ts openReviewRoster — OS-14, N17)
   review_requested: "You're asked to review a document",
   ticket_mention: "You were mentioned on a request",
   ticket_assigned: "A request was assigned to you",

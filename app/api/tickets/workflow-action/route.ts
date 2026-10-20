@@ -1556,4 +1556,23 @@ async function fanOut(params: {
     const { error: mailErr } = await supabaseAdmin.from("email_notifications").insert(emailRows);
     if (mailErr) console.error("[workflow-action] emails were not queued (transition committed):", mailErr.message);
   }
+
+  // OS-14 (notifications N17): an assignment reaches the push channel —
+  // after the bell and email legs, only when the bell insert landed (never
+  // for a refused or rail-rejected row), to the active audience that got the
+  // ticket_assigned row. The sender (lib/push/sendPush.ts) re-checks the
+  // bell row, push_enabled, membership and the device, and never throws; it
+  // runs after the response (next/server after()).
+  if (cls.inAppKind === "ticket_assigned" && !bellErr) {
+    try {
+      after(async () => {
+        // loaded here, not at module scope: the sender (web-push, the service
+        // role) is needed only once there is something to push
+        const { sendPushSafe } = await import("@/lib/push/sendPush");
+        await sendPushSafe({ orgId: ticket.orgId, kind: "ticket_assigned", resourceId: ticketId, recipients: audience });
+      });
+    } catch (e) {
+      console.warn("[workflow-action] the assignment push was not scheduled (transition, bell and email unaffected):", (e as Error)?.message ?? e);
+    }
+  }
 }

@@ -762,6 +762,26 @@ async function pushLeg(input: PushSendInput, sender: PushSender | undefined): Pr
   }
 }
 
+/** OS-14 (notifications N17): emit()'s push leg for a producer that writes
+ *  its bell rows OUTSIDE emit() — the read-&-understood and sign-off rosters'
+ *  requests (lib/acknowledgments.ts, lib/reviewControl.ts). The caller calls
+ *  it only AFTER its rows landed, naming only the recipients whose row landed
+ *  (never a refused row; these producers write no redacted one). Exactly the
+ *  leg emit() runs: a KIND_META.pushWorthy kind only; in the browser a
+ *  fire-and-forget POST /api/push/notify; on the server only through the
+ *  caller's `serverPush` (none: no push, logged once). The sender re-checks
+ *  the bell row, push_enabled and the device itself. Never throws. */
+export async function pushAfterBellRows(input: PushSendInput, serverPush?: PushSender): Promise<void> {
+  try {
+    if (kindMeta(input.kind)?.pushWorthy !== true) return;
+    const recipients = Array.from(new Set((input.recipients ?? []).filter((u): u is string => typeof u === "string" && u !== "")));
+    if (!input.orgId || !input.resourceId || recipients.length === 0) return;
+    await pushLeg({ orgId: input.orgId, kind: input.kind, resourceId: input.resourceId, recipients }, serverPush);
+  } catch (e) {
+    console.info(`[notify] the ${input?.kind} push did not go out (bell and email are unaffected): ${(e as Error)?.message ?? e}`);
+  }
+}
+
 /** The BROWSER push leg: POST /api/push/notify with the member's own token,
  *  fire-and-forget (`keepalive`, so it survives a navigation) — the emit's
  *  caller never waits on it. The route pushes only for bell rows this member

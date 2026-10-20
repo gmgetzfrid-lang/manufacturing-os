@@ -18,11 +18,20 @@ import { supabase } from "@/lib/supabase";
 // it does not land (lib/complianceNotify.ts).
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { loadScanRetryPlan } from "@/lib/complianceNotify";
+// OS-14 (notifications N17): the roster's requests reach the push channel
+// after their bell rows land — emit()'s own leg (the daily scan's reminders
+// do not: the cron only prunes, DEC-108 §6).
+import { pushAfterBellRows, type PushSendInput } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { resolveEffectiveOwner, effectiveOwnerForDocument, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
 import type { AckPolicy } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
+
+/** The push leg never touches the roster's own outcome (DEC-90: a push
+ *  failure never fails the action or its bell rows). */
+const pushLandedRows = (input: PushSendInput): Promise<void> =>
+  Promise.resolve().then(() => pushAfterBellRows(input)).catch(() => undefined);
 
 type Level = "library" | "collection" | "document";
 interface PolicyCols { ack_policy?: AckPolicy | null }
@@ -404,7 +413,8 @@ export async function recomputeDocumentAck(input: {
       input.writeErrors?.push(`the acknowledgment roster could not be saved (${upsertErr.message})`);
     } else {
       if (input.notifyNew !== false) {
-        await Promise.all(fresh.filter((a) => a.uid !== input.actorId).map((a) =>
+        const asked = fresh.filter((a) => a.uid !== input.actorId);
+        const landed = await Promise.all(asked.map((a) =>
           notify({
             orgId: input.orgId, userId: a.uid, kind: "ack_requested",
             title: `Please read & acknowledge: ${label}${revLabel ? ` Rev ${revLabel}` : ""}`,
@@ -413,6 +423,9 @@ export async function recomputeDocumentAck(input: {
             actorUserId: input.actorId ?? undefined, actorName: input.actorName ?? undefined,
           })
         ));
+        // OS-14: only the assignees whose bell row landed; never awaited
+        // past the request itself (the browser leg is fire-and-forget)
+        await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: doc.id, recipients: asked.filter((_, i) => landed[i] === true).map((a) => a.uid) });
       }
       await logAuditAction({
         action: "ACK_REQUESTED", resourceType: "document", resourceId: doc.id,
@@ -542,13 +555,15 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
   const { data: doc } = await supabase.from("documents").select("library_id, document_number, title, name").eq("id", r.document_id as string).maybeSingle();
   const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
   const rev = (r.revision_label as string) || "";
-  await notify({
+  const landed = await notify({
     orgId: input.orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
     title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
     body: "Please confirm you've read and understood this revision.",
     link: `/documents/${doc?.library_id as string}?doc=${r.document_id as string}`,
     resourceType: "document", resourceId: r.document_id as string,
   });
+  // OS-14: the re-sent request is pushed once its bell row landed
+  if (landed === true) await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: r.document_id as string, recipients: [r.assignee_user_id as string] });
   await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", input.rosterId);
 }
 
