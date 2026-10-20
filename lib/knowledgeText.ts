@@ -619,6 +619,12 @@ export function extractAnswerMeta(answer: string): {
   return { answer: kept.join("\n").trim(), answeringFor, followup, mode, goal, useThis };
 }
 
+/** Does this line carry its provenance — a [n] citation, or an explicit
+ *  "you said / you told me / per your …" for a fact the user supplied? */
+export function hasSource(text: string): boolean {
+  return /\[\d{1,3}\]/.test(text) || /\b(you said|you told|you mentioned|you stated|per your|from your (?:question|photo|attachment)|from your attachment)\b/i.test(text);
+}
+
 /** Documents-only, enforced in code: any line the model itself marked as
  *  coming from outside the library is removed before the reader sees it,
  *  and one line says how many — nothing vanishes silently. (A model that

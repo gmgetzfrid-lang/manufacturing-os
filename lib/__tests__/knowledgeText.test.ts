@@ -6,7 +6,7 @@ import {
   chunkPageText, parseSearchQueries, parseRefineQueries, parseFollowupPlan,
   extractCitationNumbers, mergeRetrieved, isSectionHeading, splitPageIntoSections,
   parseAnswerBlocks, explodeRunOn, proofTerms, highlightQuote, ensurePdfPolyfills, sanitizeStorageText, type RetrievedChunk,
-  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow, extractAnswerMeta, structureAnswer, isMissingFact, enforceDocumentsOnly,
+  splitVerdict, extractEvidenceBlock, locateSpan, quoteWindow, extractAnswerMeta, structureAnswer, isMissingFact, enforceDocumentsOnly, hasSource,
 } from "../knowledgeText";
 
 describe("chunkPageText", () => {
@@ -835,5 +835,13 @@ describe("enforceDocumentsOnly", () => {
   it("leaves a clean answer untouched", () => {
     const a = "**Answer:** YES — listed [1].";
     expect(enforceDocumentsOnly(a)).toEqual({ answer: a, removed: 0 });
+  });
+});
+
+describe("hasSource", () => {
+  it("accepts a citation or something the user said, nothing else", () => {
+    expect(hasSource("§4.3 prohibits slip-ons on fittings [12].")).toBe(true);
+    expect(hasSource("You said the line is in sour service.")).toBe(true);
+    expect(hasSource("The fillet weld sits in the fitting's high-stress transition.")).toBe(false);
   });
 });

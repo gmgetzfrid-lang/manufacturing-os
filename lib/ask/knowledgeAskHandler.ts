@@ -86,6 +86,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   const mode = body.mode === "internet" ? "internet" : "library";
   // How the answer is shaped. Unset = the model picks from the question;
   // set when the asker taps "Rethink as…" under an answer.
+  // The asker's Web switch: this question may also search the internet.
+  // Off unless they turn it on; documents still govern either way.
+  const useWebAsked = (body as { useWeb?: unknown }).useWeb === true;
   const answerMode = body.answerMode === "compliance" || body.answerMode === "explore"
     || body.answerMode === "answer" || body.answerMode === "deviation"
     ? body.answerMode : null;
@@ -132,11 +135,6 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   // Deep read is DEFAULT ON — reading tables/formulas as printed is baseline
   // behavior, not a feature. The checkbox is an opt-OUT for token thrift.
   const visionEnabled = aiFeatures.visionPages !== false;
-  // DOCUMENTS ONLY is the default and the promise of Library mode: every
-  // statement comes from this library's documents (or what the asker said).
-  // General engineering knowledge — still clearly tagged — is an explicit
-  // per-library opt-in, never something the answer drifts into.
-  const allowGeneral = aiFeatures.allowGeneralKnowledge === true;
 
   // Linked reference libraries (the bridge): asked library GOVERNS, links
   // are consulted as REFERENCE. Missing table/column = no links (42P01/42703).
@@ -238,6 +236,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   }
   const provider = conn.provider as AiProviderId;
   const model = conn.model as string;
+  // Live web search with per-sentence sources exists on Claude keys only;
+  // anything else would be the model's memory dressed up as the web.
+  const webOn = useWebAsked && mode === "library" && provider === "anthropic";
+  const webRefused = useWebAsked && mode === "library" && !webOn;
   const apiKey = openAiKey(conn.api_key);
   // Decrypted copy — everything downstream (embeddings included) sees
   // usable keys, never the sealed at-rest form.
@@ -1702,18 +1704,38 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     const baseAnswerSystem =
       "You are the reference-library assistant for an industrial facility's document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
-      (allowGeneral
-        ? "KNOWLEDGE SOURCE — documents first, general knowledge allowed: this library's owner allows " +
-          "general engineering knowledge where the documents are silent. Every such statement must end " +
-          "with \"(not from your library)\" so the reader can tell it apart; never mix it into a cited " +
-          "sentence.\n\n"
-        : "KNOWLEDGE SOURCE — DOCUMENTS ONLY (this library's setting; non-negotiable): every statement must " +
-          "come from the numbered passages, the PIPE CLASS / DRAWING FACTS, or what the user told you. Do " +
-          "NOT add engineering knowledge, code requirements, typical values, or reasons from your own " +
-          "training — not even marked or hedged. When the documents don't say something the answer needs " +
-          "(why a rule exists, a code value, a design basis), say plainly that the library doesn't state " +
-          "it, and name under **To settle this:** what would — the referenced code or standard, the " +
-          "basis document, or who to ask.\n\n") +
+      "PROVENANCE — DOCUMENTS ONLY, NON-NEGOTIABLE. The engineer must be able to check every claim, so " +
+      "every statement you make has a source they can open:\n" +
+      "- Every bullet and sentence in Answer, Why, Engineering trail, Before you act and Don't miss " +
+      "carries the [n] of the passage it comes from — or, for a fact the user gave you, says so " +
+      "(\"you said the line is in sour service\").\n" +
+      "- Never add engineering knowledge, code requirements, typical values, design reasons or " +
+      "\"best practice\" from your own training — not marked, not hedged, not as background. If it " +
+      "isn't in a passage or from the user, it isn't in the answer.\n" +
+      "- WHY A RULE EXISTS: state a reason ONLY when a passage states it, and quote that passage [n]. " +
+      "When the documents give the requirement but not its reason, the answer says exactly that — " +
+      "\"EP 5-2-2 §4.3 states the requirement but not the reason [n]\" — and stops there.\n" +
+      "- WHEN IT CAN'T BE PROVEN FROM WHAT'S HERE, ASK FOR THE SOURCE: under **To settle this:**, " +
+      "name the publication that would answer it. Prefer the ones the passages themselves point to, " +
+      "and quote the pointer (\"EP 5-2-2 §2.0 references ASME B16.5 and ASME B31.3 [n] — upload the " +
+      "flange-attachment requirements from those\"). Say what to look for by TOPIC; never give a " +
+      "clause, table or paragraph number you cannot see in a passage. If no passage points anywhere, " +
+      "ask for the standard's basis/commentary document or the code it was written against.\n\n" +
+      (webOn
+        ? "WEB SEARCH — ON FOR THIS QUESTION (the user turned it on). The documents still come first and " +
+          "GOVERN. You may search the web ONLY to fill what the documents don't cover — why a rule exists, " +
+          "what a referenced code says. Rules:\n" +
+          "- A web statement must come from a page you actually retrieved this turn. The system marks every " +
+          "web-backed sentence with its page automatically; never write web markers or URLs yourself, and " +
+          "never cite a web fact with a passage [n].\n" +
+          "- Prefer the publishers that own the requirement (ASME, API, NACE/AMPP, AWS, ASTM, OSHA) and " +
+          "manufacturers' technical documents; name the publisher in the sentence. Forums and blogs only " +
+          "when nothing better exists, and say so.\n" +
+          "- A web page that summarizes a code is not the code: say that in the sentence, and list the code " +
+          "publication under **To settle this:** so the engineer can verify it in the real document.\n" +
+          "- If a web source conflicts with a library passage, say so; the library governs.\n" +
+          "- Everything outside the web pages and the passages is still off limits.\n\n"
+        : "") +
       "OUTPUT FORMAT — follow it exactly, sections in this order, no preamble, no restating the question:\n" +
       "**Mode:** answer | compliance | explore | deviation — one word, the shape you chose (see ANSWER MODES).\n" +
       "**Heading toward:** (optional) when the conversation shows where the user is going — not just " +
@@ -1850,12 +1872,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "engineer to judge: the Answer line says whether a deviation looks technically supportable " +
       "for THEIR case — YES, WITH CONDITIONS — / NO — / NOT SETTLED —. Why, in order: (1) " +
       "**Requirement:** the rule, quoted [n]; (2) **Why the rule exists:** the reason as the " +
-      "standard or its referenced code states it [n] — " +
-      (allowGeneral
-        ? "when no passage states it, give the generally accepted engineering reason marked (not from your library); "
-        : "when no passage states it, say the library doesn't state the reason and list under **To settle this:** the " +
-          "document that would (the referenced code clause, the standard's basis) — do not supply a reason yourself; ") +
-      "(3) **Does that reason " +
+      "standard or its referenced code states it, quoted [n] — when no passage states it, say the " +
+      "library doesn't state the reason, make the verdict NOT SETTLED, and ask for the source under " +
+      "**To settle this:** (see PROVENANCE); never supply a reason yourself; (3) **Does that reason " +
       "apply here:** what about their case makes the hazard present or absent; (4) **Proposed " +
       "alternative and mitigations.** Before you act: approvals, calculations, inspections the " +
       "deviation needs. One question: the single fact that decides whether the reason applies. " +
@@ -1870,12 +1889,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "CONSEQUENCES: for substitutions and material changes, name what the change affects " +
       "downstream — design basis (pressure rating, wall thickness, weld joint factor), NDE, " +
       "inspection, records — " +
-      (allowGeneral
-        ? "citing passages, or ending the item with \"(not from your library)\" when it comes from general " +
-          "engineering knowledge or a code that isn't here. Any statement not backed by a passage carries " +
-          "that same marker.\n\n"
-        : "only where the passages support it [n]; an effect that would need a code or document that isn't " +
-          "here goes under **To settle this:** as that document, not as a statement.\n\n") +
+      "only where the passages support it [n]; an effect that would need a code or document that isn't " +
+      "here goes under **To settle this:** as that document, not as a statement.\n\n" +
       "EVIDENCE (mandatory, always LAST): end every answer that cites passages with a line " +
       "\"**Evidence:**\" followed by one line per cited passage, most decisive first, in this exact " +
       "shape:\n" +
@@ -1899,7 +1914,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     // ── Answer + Fetch loop: the model can request pages it needs to SEE
     //    (one round). The tool does the reading — the user is never sent to
     //    look up a table by hand.
-    emit({ t: "status", text: "Composing the cited answer" });
+    emit({ t: "status", text: webOn ? "Composing the answer — searching the web for what the documents don't cover" : "Composing the cited answer" });
     const answerImages = (imgs: typeof pageImages) => [
       ...userImages,
       ...imgs.map((img) => ({ base64: img.base64, mediaType: img.mediaType })),
@@ -1907,7 +1922,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     let answerOut = await call({
       system: baseAnswerSystem + orgInstructions + buildPagesNote(pageImages),
       user: answerUser,
-      maxTokens: 4000,
+      maxTokens: webOn ? 5000 : 4000,
+      ...(webOn ? { webSearch: true, markWebCitations: true } : {}),
       ...(answerImages(pageImages).length > 0 ? { images: answerImages(pageImages) } : {}),
       onDelta: (text) => emit({ t: "delta", text }),
     });
@@ -1931,7 +1947,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         answerOut = await call({
           system: baseAnswerSystem + orgInstructions + buildPagesNote(pageImages) + fetchNote,
           user: answerUser,
-          maxTokens: 4000,
+          maxTokens: webOn ? 5000 : 4000,
+          ...(webOn ? { webSearch: true, markWebCitations: true } : {}),
           ...(answerImages(pageImages).length > 0 ? { images: answerImages(pageImages) } : {}),
           onDelta: (text) => emit({ t: "delta", text }),
         });
@@ -1975,7 +1992,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     // Documents only, enforced in code too: a statement the model itself
     // marked as outside the library does not reach the reader of a
     // documents-only library. Said in one line, so nothing vanishes silently.
-    if (!allowGeneral) answer = enforceDocumentsOnly(answer).answer;
+    answer = enforceDocumentsOnly(answer).answer;
     const spanByN = new Map<number, EvidenceSpan>();
     for (const s of evidence.spans) if (!spanByN.has(s.n)) spanByN.set(s.n, s);
 
@@ -2003,6 +2020,32 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           "treat any adjacent claim as uncited.";
         used = used.filter((n) => n >= 1 && n <= chunks.length);
       }
+    }
+    // Web sources become numbered citations past the passages, each tied to
+    // the sentence it backs, with the page's own quoted text as its proof.
+    const webCitations: Array<{ n: number; url: string; title: string; documentName: string; quote?: string; highlight?: string; role: "context"; claim: string }> = [];
+    if (webOn) {
+      const sources = answerOut.webSources;
+      const base = chunks.length;
+      answer = answer.replace(/\[W(\d{1,2})\]/g, (_m, k: string) => {
+        const i = Number(k) - 1;
+        const src = sources[i];
+        if (!src) return "";
+        const n = base + i + 1;
+        if (!webCitations.some((w) => w.n === n)) {
+          let host = src.url;
+          try { host = new URL(src.url).hostname.replace(/^www\./, ""); } catch { /* keep the url */ }
+          webCitations.push({
+            n, url: src.url, title: src.title ?? host, documentName: host, role: "context",
+            claim: src.title ?? host,
+            ...(src.quote ? { quote: src.quote, highlight: src.quote } : {}),
+          });
+        }
+        return `[${n}]`;
+      });
+    }
+    if (webRefused) {
+      answer += "\n\n! Web search is available with a Claude key only — this answer used your documents only.";
     }
 
     // Which equipment tags does the ANSWER talk about? On a drawing, that's
@@ -2083,6 +2126,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           } : {}),
         };
       });
+
+    citations.push(...webCitations.map((w) => ({ ...w, page: 0, documentId: "", section: null, quote: w.quote ?? "" })));
 
     // ── SHOW-ME GUARANTEE for drawings ────────────────────────────────────
     // Text citations exist only where RETRIEVAL found passages. On a P&ID
@@ -2203,7 +2248,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       answer, citations, provider, model, mode: "library", missingDocs, partialDocs, questionId, budget: budget(),
       ...(meta.answeringFor.length > 0 ? { answeringFor: meta.answeringFor } : {}),
       ...(meta.goal ? { goal: meta.goal } : {}),
-      knowledgeSource: allowGeneral ? "documents_and_general" : "documents",
+      knowledgeSource: webOn ? "documents_and_web" : "documents",
       ...(suggestedDocs.length > 0 ? { suggestedDocs } : {}),
       ...(meta.followup ? { followup: meta.followup } : {}),
       answerMode: meta.mode ?? answerMode ?? "answer",

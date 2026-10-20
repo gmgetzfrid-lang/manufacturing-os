@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Paperclip, Send, Square, SlidersHorizontal, ChevronDown, X, Image as ImageIcon, FileText, Loader2, Check,
+  Paperclip, Send, Square, SlidersHorizontal, ChevronDown, X, Image as ImageIcon, FileText, Loader2, Check, Globe,
 } from "lucide-react";
 import type { ChatScope, ChatAttachment } from "@/lib/chatClient";
 import type { KnowledgeLibrary } from "@/lib/knowledge";
@@ -29,7 +29,7 @@ export default function Composer({
   scope, libraryId, libraries, onScopeChange, scopeLocked,
   attachments, onAddFiles, onRemoveAttachment,
   instructionsActive, instructionCount, onToggleInstructions,
-  disabledReason, autoFocus,
+  disabledReason, autoFocus, webOn = false, onToggleWeb,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -51,6 +51,9 @@ export default function Composer({
   /** When set, the composer explains why asking is off instead of a placeholder. */
   disabledReason?: string | null;
   autoFocus?: boolean;
+  /** Library questions: may this one also search the internet? */
+  webOn?: boolean;
+  onToggleWeb?: () => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -200,6 +203,18 @@ export default function Composer({
             </div>
           )}
         </div>
+
+        {scope === "library" && onToggleWeb && (
+          <button onClick={onToggleWeb} aria-pressed={webOn}
+            title={webOn
+              ? "Web ON — your documents first and they govern; the answer may also search the internet, and every web statement links to the page it came from. Click to turn off."
+              : "Web OFF — answers come only from this library's documents. Click to also let this question search the internet."}
+            className={`h-8 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[11px] font-black border transition-colors ${webOn
+              ? "border-sky-400 dark:border-sky-700 text-white bg-sky-600 hover:bg-sky-700"
+              : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+            <Globe className="w-3.5 h-3.5" /> Web {webOn ? "on" : "off"}
+          </button>
+        )}
 
         <span className="flex-1" />
 

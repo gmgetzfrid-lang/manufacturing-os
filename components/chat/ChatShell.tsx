@@ -82,6 +82,9 @@ export default function ChatShell() {
   // ── Composer + run ──
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  // The Web switch. Off on every page load — documents only is the default
+  // a user can rely on; turning the web on is a choice made each session.
+  const [useWeb, setUseWeb] = useState(false);
   const [streaming, setStreaming] = useState<StreamingState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const overloadRetried = useRef(false);
@@ -341,6 +344,7 @@ export default function ChatShell() {
         orgId, scope, libraryId: scope === "tools" ? null : libraryId, threadId, question: q,
         focus: opts.focus, inputs: opts.inputs, approved: opts.approved, attachments: atts,
         ...(opts.answerMode ? { answerMode: opts.answerMode } : {}),
+        ...(scope === "library" && useWeb ? { useWeb: true } : {}),
       }, (ev) => {
         if (controller.signal.aborted) return;
         switch (ev.t) {
@@ -439,7 +443,7 @@ export default function ChatShell() {
       return;
     }
     overloadRetried.current = false;
-  }, [orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router]);
+  }, [orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router, useWeb]);
 
   // ── Asked from the library page: "?ask=" runs the question as soon as the
   //    library it was asked of is selected. Once — the URL is rewritten to
@@ -650,8 +654,13 @@ export default function ChatShell() {
               onToggleInstructions={() => setPanel((p) => (p?.kind === "instructions" ? null : { kind: "instructions" }))}
               disabledReason={disabledReason}
               autoFocus={!isMobile}
+              webOn={useWeb} onToggleWeb={() => setUseWeb((v) => !v)}
             />
-            <p className="mt-1.5 px-1 text-[10px] text-[var(--color-text-faint)] truncate">{SCOPE_META[scope].hint}</p>
+            <p className="mt-1.5 px-1 text-[10px] text-[var(--color-text-faint)] truncate">
+              {scope === "library" && useWeb
+                ? "Documents first — they govern. Web is on: every web statement links to the page it came from."
+                : SCOPE_META[scope].hint}
+            </p>
           </div>
         </div>
       </div>

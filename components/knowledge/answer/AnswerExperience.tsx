@@ -18,7 +18,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import {
-  parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
+  hasSource, parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
   structureAnswer, isMissingFact, extractAnswerMeta, type AnswerBlock, type Verdict,
 } from "@/lib/knowledgeText";
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
@@ -230,6 +230,17 @@ export function InlineAnswer({ text, citations, onCite }: {
                 // chip on every line cluttered the reading flow (design
                 // review). p-1.5/-m-1 keeps a real tap target.
                 className="align-super text-[10px] font-black text-orange-600 dark:text-orange-400 underline decoration-dotted decoration-orange-400/70 underline-offset-2 hover:text-orange-800 dark:hover:text-orange-300 p-1.5 -m-1 cursor-pointer">
+                {cite[1]}
+              </button>
+            );
+          }
+          if (c && c.url) {
+            // A web source: jumps to its card in the proof column, where the
+            // page's own quoted text and the link to it are.
+            return (
+              <button key={i} onClick={(e) => { if (showProof) showProof(c, text, e.currentTarget.getBoundingClientRect()); }}
+                title={`From the web: ${c.title ?? c.url}`}
+                className="align-super text-[10px] font-black text-sky-700 dark:text-sky-400 underline decoration-dotted decoration-sky-400/70 underline-offset-2 hover:text-sky-900 p-1.5 -m-1 cursor-pointer">
                 {cite[1]}
               </button>
             );
@@ -1185,6 +1196,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
   const [shaping, setShaping] = useState(false);
   const [proof, setProof] = useState<ProofState | null>(null);
   const libraryCitations = useMemo(() => answer.citations.filter((c) => !c.url), [answer.citations]);
+  const webCitations = useMemo(() => answer.citations.filter((c) => !!c.url && answer.knowledgeSource === "documents_and_web"), [answer.citations, answer.knowledgeSource]);
   const hasRoles = libraryCitations.some((c) => c.role);
 
   // ── The proof trail's state lives here so a cite tap can drive it ──
@@ -1226,6 +1238,16 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         }));
         return;
       }
+      if (c.url && webCitations.some((x) => x.n === c.n)) {
+        setFlashN(c.n);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          document.getElementById(`${idPrefix}-w-${c.n}`)?.scrollIntoView({
+            behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+            block: "center",
+          });
+        }));
+        return;
+      }
       const w = Math.min(PROOF_W, window.innerWidth - 24);
       const up = anchor.bottom > window.innerHeight - 340;
       setProof({
@@ -1239,6 +1261,19 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
   };
 
   const inline = (text: string) => <InlineAnswer text={text} citations={answer.citations} onCite={onCite} />;
+  // Provenance you can see: a claim with no citation — and not something
+  // the user told it — is tagged, so nothing unsourced passes for fact.
+  const sourced = (text: string) => (
+    <>
+      {inline(text)}
+      {!hasSource(text) && (
+        <span title="No citation — this line isn't tied to a page in your documents. Don't rely on it without checking."
+          className="ml-1.5 inline-block align-baseline px-1.5 rounded font-mono text-[10px] font-bold bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 whitespace-nowrap">
+          no source
+        </span>
+      )}
+    </>
+  );
   // Why: numbered steps; headings become small group labels.
   const renderWhy = (blocks: AnswerBlock[]) => {
     let n = 0;
@@ -1251,11 +1286,11 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         return (
           <div key={i} className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-2.5 items-start">
             <span className="mt-0.5 w-6 h-6 rounded-full border border-[var(--color-border)] font-mono text-[11px] text-[var(--color-text-muted)] flex items-center justify-center">{n}</span>
-            <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
+            <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{sourced(b.text)}</div>
           </div>
         );
       }
-      return <p key={i} className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</p>;
+      return <p key={i} className="text-[14px] leading-relaxed text-[var(--color-text)]">{sourced(b.text)}</p>;
     });
   };
   // Before you act: a checklist; "!" lines are the MUSTs and look it.
@@ -1267,14 +1302,14 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
       return (
         <div key={i} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start rounded-md bg-amber-50 dark:bg-amber-950/30 px-2 py-1.5">
           <AlertTriangle className="mt-0.5 w-4 h-4 text-amber-600" />
-          <div className="text-[14px] font-semibold leading-relaxed text-amber-950 dark:text-amber-100">{inline(b.text)}</div>
+          <div className="text-[14px] font-semibold leading-relaxed text-amber-950 dark:text-amber-100">{sourced(b.text)}</div>
         </div>
       );
     }
     return (
       <div key={i} className="grid grid-cols-[1.125rem_minmax(0,1fr)] gap-2 items-start px-2">
         <span className="mt-1 w-3.5 h-3.5 rounded-[3px] border-[1.5px] border-[var(--color-text-muted)]" />
-        <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
+        <div className="text-[14px] leading-relaxed text-[var(--color-text)]">{sourced(b.text)}</div>
       </div>
     );
   });
@@ -1340,15 +1375,15 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 </span>
                 {/* What this answer was allowed to draw on — visible, not assumed. */}
                 {answer.knowledgeSource === "documents" && (
-                  <span title="Every statement comes from this library's documents or what you said — no AI training knowledge, no web"
+                  <span title="Every statement is cited to a page in this library, or is something you said — no AI training knowledge, no web"
                     className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300">
                     <ShieldCheck className="w-3 h-3" /> Documents only
                   </span>
                 )}
-                {answer.knowledgeSource === "documents_and_general" && (
-                  <span title="This library allows general engineering knowledge where documents are silent — each such statement is tagged"
+                {answer.knowledgeSource === "documents_and_web" && (
+                  <span title="Web was on for this question: documents first and they govern; every web statement links to the page it came from"
                     className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300">
-                    Documents + tagged general knowledge
+                    <Globe className="w-3 h-3" /> Documents + web{webCitations.length > 0 ? ` · ${webCitations.length} web source${webCitations.length === 1 ? "" : "s"}` : " · web not needed"}
                   </span>
                 )}
               </span>
@@ -1409,7 +1444,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 </div>
                 <div className="space-y-1.5">
                   {parts.dontMiss.filter((b) => b.type !== "label").map((b, i) => (
-                    <div key={i} className="text-[14px] leading-relaxed text-[var(--color-text)]">{inline(b.text)}</div>
+                    <div key={i} className="text-[14px] leading-relaxed text-[var(--color-text)]">{sourced(b.text)}</div>
                   ))}
                 </div>
               </div>
@@ -1446,7 +1481,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"}</span>
               <span>·</span>
               {/* Version beacon: which renderer produced this card. */}
-              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt12</span>
+              <span className="font-black text-orange-600/70" title="Answer renderer version">fmt14</span>
             </div>
           </div>
 
@@ -1458,6 +1493,42 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
             </div>
             <ProofTrail citations={libraryCitations} onOpen={onCite} openSet={openSet} onToggle={toggle}
               showRelated={showRelated} onShowRelated={setShowRelated} flashN={flashN} idPrefix={idPrefix} />
+            {webCitations.length > 0 && (
+              <div className="mt-5 space-y-2">
+                <div className="flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
+                  <Globe className="w-3.5 h-3.5" /> From the web <span className="text-[var(--color-text-faint)]">{webCitations.length}</span>
+                </div>
+                <p className="text-[11px] text-[var(--color-text-muted)]">
+                  Not your controlled documents. A web page about a code is not the code — verify against the publication.
+                </p>
+                {webCitations.map((c) => {
+                  let host = c.url ?? "";
+                  try { host = new URL(c.url ?? "").hostname.replace(/^www\./, ""); } catch { /* keep */ }
+                  return (
+                    <div key={c.n} id={`${idPrefix}-w-${c.n}`}
+                      className={`rounded-xl border bg-[var(--color-surface)] px-3 py-2.5 space-y-1.5 scroll-mt-24 transition-shadow duration-300 ${flashN === c.n
+                        ? "border-sky-500 shadow-[0_0_0_3px_rgba(14,165,233,0.25)]" : "border-[var(--color-border)]"}`}>
+                      <div className="flex items-start gap-2">
+                        <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
+                        <span className="min-w-0">
+                          <span className="block text-[13px] font-bold text-[var(--color-text)] leading-snug">{c.title ?? host}</span>
+                          <span className="block font-mono text-[10px] text-[var(--color-text-muted)] truncate">{host}</span>
+                        </span>
+                      </div>
+                      {c.quote && (
+                        <blockquote className="border-l-[3px] border-sky-300 dark:border-sky-800 bg-[var(--color-surface-2)]/50 rounded-r-md pl-3 pr-2 py-1.5 text-[12.5px] leading-relaxed text-[var(--color-text)] italic">
+                          &ldquo;{c.quote}&rdquo;
+                        </blockquote>
+                      )}
+                      <a href={c.url} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-sky-400">
+                        <ExternalLink className="w-3 h-3 text-sky-600" /> Open the page
+                      </a>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </aside>
         </div>
       </div>

@@ -75,6 +75,20 @@ describe("buildAnswerExport", () => {
     expect(exp.html).toContain("[3] EP-5-2-3 · p.40");
   });
 
+  it("marks an uncited claim NO SOURCE in both versions, but not a settle-this request", () => {
+    const e = buildAnswerExport("q", { ...answer, answer: [
+      "**Answer:** NOT SETTLED — the library gives the rule but not its reason [3].",
+      "**To settle this:**",
+      "- **ASME B31.3** — EP 5-2-1 references it [1].",
+      "- **The standard's basis document** — explains why the rule exists.",
+      "**Why:**",
+      "- Fillet welds in a fitting transition can't be examined.",
+    ].join("\n") });
+    expect(e.html.match(/NO SOURCE/g)).toHaveLength(1);
+    expect(e.text).toContain("1. Fillet welds in a fitting transition can't be examined. [NO SOURCE]");
+    expect(e.text).toContain("- The standard's basis document — explains why the rule exists.\n");
+  });
+
   it("is table-based with inline styles only (what Outlook and Gmail keep)", () => {
     expect(exp.html.startsWith("<table")).toBe(true);
     expect(exp.html).not.toMatch(/<style|class=|display:flex/);
@@ -94,5 +108,22 @@ describe("buildAnswerExport", () => {
     expect(exp.text.indexOf("THE PROOF")).toBeLessThan(exp.text.indexOf("TO SETTLE THIS"));
     expect(exp.text).toContain("[3] 1S4 is seamless only — EP-5-2-3 · p.40");
     expect(exp.text).toContain('"ASTM A312 TP304 Seamless"');
+  });
+});
+
+describe("web sources in the export", () => {
+  it("lists them apart from the documents, with link and quoted text", () => {
+    const e = buildAnswerExport("q", {
+      answer: "**Answer:** NO — the library prohibits it [1]; ASME explains the reason [2].",
+      provider: "anthropic", model: "m", mode: "library", knowledgeSource: "documents_and_web",
+      citations: [
+        { n: 1, documentName: "EP-5-2-2", page: 6, role: "decides", quote: "Slip-on flanges shall not be attached directly to fittings.", highlight: "Slip-on flanges shall not be attached directly to fittings" },
+        { n: 2, url: "https://www.asme.org/x", title: "ASME — flange attachment", quote: "Slip-on flanges require straight pipe." },
+      ],
+    });
+    expect(e.html.indexOf("THE PROOF")).toBeLessThan(e.html.indexOf("FROM THE WEB"));
+    expect(e.html).toContain('href="https://www.asme.org/x"');
+    expect(e.text).toContain('[2] ASME — flange attachment — https://www.asme.org/x');
+    expect(e.text).toContain('"Slip-on flanges require straight pipe."');
   });
 });

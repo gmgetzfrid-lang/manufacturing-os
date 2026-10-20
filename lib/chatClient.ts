@@ -392,6 +392,8 @@ export interface AskTurnInput {
   /** How the library answer is shaped: a direct answer, a compliance check
    *  against the standard, or a broader exploration. Unset = the AI picks. */
   answerMode?: "answer" | "compliance" | "explore" | "deviation";
+  /** Library scope: this question may also search the internet. */
+  useWeb?: boolean;
 }
 
 /** Send one turn and read the stream. Resolves when the stream ends; every

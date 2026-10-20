@@ -192,6 +192,7 @@ export async function POST(req: NextRequest) {
   const userPayload: Record<string, unknown> = {};
   if (Array.isArray(body.focus) && body.focus.length > 0) userPayload.focus = body.focus;
   if (typeof body.inputs === "string" && body.inputs) userPayload.inputs = body.inputs;
+  if (body.useWeb === true) userPayload.useWeb = true;
   const { data: userMsg } = await supabaseAdmin.from("chat_messages").insert({
     org_id: orgId, thread_id: threadId, role: "user", content: question,
     payload: Object.keys(userPayload).length > 0 ? userPayload : null,
@@ -233,6 +234,7 @@ export async function POST(req: NextRequest) {
               orgId, libraryId: threadLibrary, question,
               mode: threadScope === "internet" ? "internet" : "library",
               focus: body.focus, inputs: body.inputs, answerMode: body.answerMode,
+              useWeb: body.useWeb === true,
               history: priorTurns.slice(-4), threadId, pinned,
             },
             emit, extraSystem, userImages,

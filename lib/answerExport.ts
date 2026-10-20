@@ -12,7 +12,7 @@
 // tables and every style is inline. Pure, so it is unit-tested.
 
 import {
-  parseAnswerBlocks, structureAnswer, splitVerdict, quoteWindow, extractCitationNumbers,
+  hasSource, parseAnswerBlocks, structureAnswer, splitVerdict, quoteWindow, extractCitationNumbers,
   type AnswerBlock, type Verdict,
 } from "@/lib/knowledgeText";
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
@@ -46,6 +46,11 @@ function inlineHtml(text: string): string {
       `<sup style="color:#c2410c;font-weight:bold;font-size:11px">[${run.match(/\d{1,3}/g)!.join(", ")}]</sup>`);
 }
 
+/** A claim with no citation is marked on the page it's sent on, too. */
+const NO_SOURCE_HTML = ` <span style="background:#ffe4e6;color:#be123c;font-size:11px;font-weight:bold;padding:0 5px">NO SOURCE</span>`;
+const claimHtml = (text: string) => inlineHtml(text) + (hasSource(text) ? "" : NO_SOURCE_HTML);
+const claimText = (text: string) => inlineText(text) + (hasSource(text) ? "" : " [NO SOURCE]");
+
 /** Answer markup → plain text: markers kept as [n], emphasis dropped. */
 function inlineText(text: string): string {
   return text.replace(/\*\*((?:[^*]|\*(?!\*))+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
@@ -68,7 +73,7 @@ function stepsHtml(blocks: AnswerBlock[], color = "#ea580c"): string {
     n += 1;
     return `<tr><td valign="top" style="width:30px;padding:3px 0">` +
       `<div style="width:22px;height:22px;line-height:22px;border-radius:11px;background:${color};color:#fff;text-align:center;${FONT};font-size:12px;font-weight:bold">${n}</div></td>` +
-      `<td style="padding:3px 0 7px;${FONT};font-size:14px;line-height:1.5;color:${INK}">${inlineHtml(b.text)}</td></tr>`;
+      `<td style="padding:3px 0 7px;${FONT};font-size:14px;line-height:1.5;color:${INK}">${claimHtml(b.text)}</td></tr>`;
   });
   return `<tr><td><table role="presentation" cellpadding="0" cellspacing="0" width="100%">${rows.join("")}</table></td></tr>`;
 }
@@ -78,16 +83,16 @@ function checklistHtml(blocks: AnswerBlock[]): string {
   const rows = blocks.filter((b) => b.type !== "label").map((b) => {
     const must = b.type === "important";
     return `<tr><td valign="top" style="width:26px;padding:3px 0;${FONT};font-size:16px;color:${must ? "#b91c1c" : "#475569"}">${must ? "&#9888;" : "&#9744;"}</td>` +
-      `<td style="padding:3px 0 7px;${FONT};font-size:14px;line-height:1.5;color:${must ? "#7f1d1d" : INK};${must ? "font-weight:bold" : ""}">${inlineHtml(b.text)}</td></tr>`;
+      `<td style="padding:3px 0 7px;${FONT};font-size:14px;line-height:1.5;color:${must ? "#7f1d1d" : INK};${must ? "font-weight:bold" : ""}">${claimHtml(b.text)}</td></tr>`;
   });
   return `<tr><td><table role="presentation" cellpadding="0" cellspacing="0" width="100%">${rows.join("")}</table></td></tr>`;
 }
 
 /** A tinted callout box (settle-this, don't-miss). */
-function calloutHtml(title: string, blocks: AnswerBlock[], tone: { bg: string; border: string; ink: string }): string {
+function calloutHtml(title: string, blocks: AnswerBlock[], tone: { bg: string; border: string; ink: string }, claims = false): string {
   const rows = blocks.filter((b) => b.type !== "label").map((b) =>
     `<tr><td valign="top" style="width:16px;padding:3px 0;${FONT};font-size:14px;color:${tone.ink}">&#8226;</td>` +
-    `<td style="padding:3px 0 6px;${FONT};font-size:14px;line-height:1.5;color:${INK}">${inlineHtml(b.text)}</td></tr>`);
+    `<td style="padding:3px 0 6px;${FONT};font-size:14px;line-height:1.5;color:${INK}">${claims ? claimHtml(b.text) : inlineHtml(b.text)}</td></tr>`);
   return `<tr><td style="padding-top:16px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:${tone.bg};border:1px solid ${tone.border};border-left:5px solid ${tone.ink}">` +
     `<tr><td style="padding:12px 14px">` +
     `<div style="${FONT};font-size:13px;font-weight:bold;letter-spacing:0.5px;color:${tone.ink};padding-bottom:6px">${esc(title)}</div>` +
@@ -170,17 +175,17 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
     text.push("");
   }
 
-  const listText = (title: string, blocks: AnswerBlock[], numbered: boolean) => {
+  const listText = (title: string, blocks: AnswerBlock[], numbered: boolean, claims = true) => {
     const items = blocks.filter((b) => b.type !== "label");
     if (items.length === 0) return;
     text.push(title.toUpperCase());
-    items.forEach((b, i) => text.push(`${numbered ? `${i + 1}.` : "-"} ${b.type === "important" ? "MUST: " : ""}${inlineText(b.text)}`));
+    items.forEach((b, i) => text.push(`${numbered ? `${i + 1}.` : "-"} ${b.type === "important" ? "MUST: " : ""}${claims ? claimText(b.text) : inlineText(b.text)}`));
     text.push("");
   };
 
   if (parts.settle.length > 0) {
     rows.push(calloutHtml("TO SETTLE THIS, I NEED", parts.settle, { bg: "#fffbeb", border: "#fde68a", ink: "#b45309" }));
-    listText("To settle this, I need", parts.settle, false);
+    listText("To settle this, I need", parts.settle, false, false);
   }
   if (parts.why.length > 0) {
     rows.push(heading(compliance ? "Findings" : "Why"));
@@ -198,7 +203,7 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
     listText(compliance ? "Required corrections" : "Before you act", parts.before, false);
   }
   if (parts.dontMiss.length > 0) {
-    rows.push(calloutHtml("⚠ DON'T MISS", parts.dontMiss, { bg: "#fef2f2", border: "#fecaca", ink: "#b91c1c" }));
+    rows.push(calloutHtml("⚠ DON'T MISS", parts.dontMiss, { bg: "#fef2f2", border: "#fecaca", ink: "#b91c1c" }, true));
     listText("Don't miss", parts.dontMiss, false);
   }
   if (support.length > 0) {
@@ -209,6 +214,25 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
       text.push(`[${c.n}] ${c.claim ? `${c.claim} — ` : ""}${where(c)}`);
       const q = c.highlight ?? (c.quote ?? "").slice(0, 300);
       if (q) text.push(`    "${q.trim()}"`);
+    }
+    text.push("");
+  }
+
+  // Web sources (only when the Web switch was on): kept apart from the
+  // documents, each with its page and the text it relied on.
+  const web = answer.citations.filter((c) => !!c.url);
+  if (web.length > 0) {
+    rows.push(heading("From the web — not your controlled documents"));
+    rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:12px;color:${MUTED}">A web page about a code is not the code — verify against the publication.</td></tr>`);
+    text.push("FROM THE WEB — not your controlled documents; verify against the publication");
+    for (const c of web) {
+      rows.push(`<tr><td style="padding-bottom:10px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid ${LINE};border-left:5px solid #0284c7;background:#ffffff">` +
+        `<tr><td style="padding:10px 14px 4px;${FONT};font-size:14px;font-weight:bold;color:${INK}"><sup style="color:#0284c7">[${c.n}]</sup> ${esc(c.title ?? c.url ?? "")}</td></tr>` +
+        `<tr><td style="padding:0 14px 4px;${FONT};font-size:12px"><a href="${esc(c.url ?? "")}" style="color:#0369a1">${esc(c.url ?? "")}</a></td></tr>` +
+        (c.quote ? `<tr><td style="padding:4px 14px 12px"><div style="${FONT};font-size:13px;line-height:1.55;color:#334155;background:#f8fafc;border-left:3px solid #bae6fd;padding:8px 10px;font-style:italic">&ldquo;${esc(c.quote)}&rdquo;</div></td></tr>` : "") +
+        `</table></td></tr>`);
+      text.push(`[${c.n}] ${c.title ?? c.url} — ${c.url}`);
+      if (c.quote) text.push(`    "${c.quote.trim()}"`);
     }
     text.push("");
   }

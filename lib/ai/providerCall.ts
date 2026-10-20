@@ -88,6 +88,8 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
 export interface WebSource {
   url: string;
   title: string | null;
+  /** The text on that page the answer relied on (Anthropic cited_text). */
+  quote?: string;
 }
 
 export interface AiCallResult {
@@ -121,6 +123,10 @@ export interface AiCallInput {
    *  is in play) the Anthropic and OpenAI calls stream; the resolved result
    *  is identical either way. Gemini and web-search calls ignore it. */
   onDelta?: (text: string) => void;
+  /** With webSearch: mark each answer sentence that a web page backs with
+   *  "[W<k>]", k = its 1-based index in webSources — so every web claim is
+   *  tied to the page (and quoted text) it came from. Anthropic only. */
+  markWebCitations?: boolean;
   /** Abort the call after this long. Callers running inside a serverless
    *  invocation use it to guarantee they get control back with time to
    *  commit — an unbounded call that outlives its function loses whatever
@@ -180,7 +186,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     type Block = {
       type: string;
       text?: string;
-      citations?: Array<{ url?: string; title?: string }>;
+      citations?: Array<{ url?: string; title?: string; cited_text?: string }>;
     };
     // Server-side web search can pause the turn mid-way (stop_reason
     // "pause_turn"); resume by echoing the assistant content back.
@@ -293,7 +299,34 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       messages.push({ role: "assistant", content: data.content ?? [] });
     }
     const blocks = data.content ?? [];
-    const text = blocks.filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+    const textBlocks = blocks.filter((b) => b.type === "text");
+    let text = textBlocks.map((b) => b.text ?? "").join("");
+    // Per-claim provenance: the provider attaches citations to the text
+    // block they support. Joining blocks used to throw that pairing away,
+    // leaving a source list with no idea which sentence each one backed.
+    const sourceOrder: WebSource[] = [];
+    if (webSearch && input.markWebCitations) {
+      const indexOf = (url: string) => sourceOrder.findIndex((s) => s.url === url);
+      text = textBlocks.map((b) => {
+        const marks: number[] = [];
+        for (const c of b.citations ?? []) {
+          if (!c.url) continue;
+          let i = indexOf(c.url);
+          if (i < 0) {
+            sourceOrder.push({ url: c.url, title: c.title ?? null, ...(c.cited_text ? { quote: c.cited_text.slice(0, 600) } : {}) });
+            i = sourceOrder.length - 1;
+          } else if (!sourceOrder[i].quote && c.cited_text) {
+            sourceOrder[i].quote = c.cited_text.slice(0, 600);
+          }
+          if (!marks.includes(i + 1)) marks.push(i + 1);
+        }
+        const body = b.text ?? "";
+        if (marks.length === 0) return body;
+        // Marker after the cited text, before any trailing newline.
+        const tail = body.match(/\s*$/)?.[0] ?? "";
+        return body.slice(0, body.length - tail.length) + marks.map((k) => `[W${k}]`).join("") + tail;
+      }).join("");
+    }
     if (!text.trim()) {
       // Name the reason when the provider gives one — "empty, try again" with
       // no cause is exactly the kind of dead end this app shouldn't produce.
@@ -302,7 +335,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
         : `no text in the response (stop_reason: ${data.stop_reason ?? "unknown"})`;
       throw new AiCallError(`The model returned an empty answer — ${why}. Try again.`, 502);
     }
-    const webSources = dedupeSources(
+    const webSources = sourceOrder.length > 0 ? sourceOrder : dedupeSources(
       blocks.flatMap((b) => b.citations ?? [])
         .map((c) => ({ url: c.url ?? "", title: c.title ?? null })),
     );
