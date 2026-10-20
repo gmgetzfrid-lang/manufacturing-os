@@ -42,6 +42,7 @@ import {
 import { listProcessFlows } from "@/lib/processFlows";
 import { unitGraphHref } from "@/components/assets/UnitOpsPanels";
 import EquipmentSweepModal from "@/components/documents/EquipmentSweepModal";
+import { AreaWorkPanel } from "@/components/assets/AreaWorkPanel";
 import { countAreaEquipmentProposals, type AreaProposals } from "@/lib/areaEquipmentProposals";
 
 /** Bind the area server-side — the same controller bar as every other
@@ -498,6 +499,10 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           Open any asset below → <b>+ Link document</b> attaches its data sheets and files; drawings that print the tag link themselves.
         </Step>
       </div>
+
+      {/* WIRE-7 (I-26): holds, work packages and milestones in flight on
+          this area — listed through its documents and its equipment. */}
+      <AreaWorkPanel orgId={orgId} unitCode={unit.code} />
 
       {/* AREA-4: the sweep, launched in place — the same dialog the library
           page opens; the route keeps its own gates (writer tier, library ACL). */}
