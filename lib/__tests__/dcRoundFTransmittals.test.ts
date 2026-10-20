@@ -292,7 +292,10 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
 
   it("the composer prints the cover sheet from the outcome's row, not a synthesized object", () => {
     const page = src("app/(protected)/transmittals/page.tsx");
-    expect(page).toMatch(/void openTransmittalSheet\(result\.outcome\.transmittal\);/);
+    // DIST-17 (document-control P27): still the outcome's row — as the register
+    // serves it to this viewer (the portal link only for someone who may read
+    // every item; lib/__tests__/dcRoundGP27TransmittalRegister.test.ts).
+    expect(page).toMatch(/void transmittalForViewer\(result\.outcome\.transmittal\)\.then\(\(v\) => openTransmittalSheet\(v\)\);/);
     expect(page).not.toMatch(/status: "issued", issuedAt: new Date\(\)\.toISOString\(\)/);
     expect(page).not.toMatch(/portal link emailed to \$\{t\.recipientEmail\.trim\(\)\} and /);
   });

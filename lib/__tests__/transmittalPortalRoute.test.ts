@@ -81,6 +81,12 @@ const state = vi.hoisted(() => ({
   versionInSizes: [] as number[],
   ranges: [] as Array<{ table: string; from: number; to: number }>,
   downloadReadError: null as { message: string; code?: string } | null,
+  // DIST-17 (document-control P27, ruling 3): who a bearer names, and the
+  // membership rows the route reads for it (by uid)
+  authUser: null as { id: string } | null,
+  authThrows: false,
+  members: {} as Record<string, { email: string | null } | null>,
+  memberReadError: null as { message: string } | null,
 }));
 
 function chain(table: string) {
@@ -99,7 +105,7 @@ function chain(table: string) {
       // the snapshot's read of the copies that left unmarked
       if (state.downloadReadError) return { data: null, error: state.downloadReadError };
       const rows = state.downloads.filter((d) => d.transmittal_id === filters.transmittal_id && d.source === filters.source);
-      return { data: windowed(rows.map((d) => ({ document_id: d.document_id }))), error: null };
+      return { data: windowed(rows.map((d) => ({ document_id: d.document_id, user_id: d.user_id ?? null }))), error: null };
     }
     if (table === "document_versions") {
       state.fallbackFilters.push({ ...filters });
@@ -162,6 +168,9 @@ function chain(table: string) {
         if (prop === "maybeSingle") {
           if (table === "transmittals") return Promise.resolve({ data: state.transmittal, error: null });
           if (table === "orgs") return Promise.resolve({ data: { name: "Acme" }, error: null });
+          if (table === "org_members" && typeof filters.uid === "string" && Object.prototype.hasOwnProperty.call(state.members, filters.uid)) {
+            return Promise.resolve(state.memberReadError ? { data: null, error: state.memberReadError } : { data: state.members[filters.uid], error: null });
+          }
           if (table === "org_members") return Promise.resolve({ data: state.issuerEmail ? { email: state.issuerEmail } : null, error: null });
           const ok = state.versionRow && filters.org_id === (state.versionRow.org_id ?? null);
           return Promise.resolve({ data: ok ? state.versionRow : null, error: null });
@@ -177,6 +186,12 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   supabaseAdmin: {
     from: (t: string) => chain(t),
     rpc: (fn: string, args: Record<string, unknown>) => { state.rpcs.push({ fn, args }); return Promise.resolve({ error: null }); },
+    auth: {
+      getUser: async () => {
+        if (state.authThrows) throw new Error("auth down");
+        return { data: { user: state.authUser }, error: state.authUser ? null : { message: "invalid JWT" } };
+      },
+    },
   },
 }));
 vi.mock("@/lib/r2", () => ({
@@ -271,6 +286,10 @@ beforeEach(async () => {
   state.versionInSizes = [];
   state.ranges = [];
   state.downloadReadError = null;
+  state.authUser = null;
+  state.authThrows = false;
+  state.members = {};
+  state.memberReadError = null;
 });
 
 describe("GET /api/transmittal file resolver (EGR-1)", () => {
@@ -831,11 +850,15 @@ describe("TRX-15 — a PDF that cannot be stamped: released recorded-unstamped w
     expect(page).not.toMatch(/res\.blob\(\)|\.blob\(\)/);
     expect(page).not.toMatch(/createObjectURL/);
     expect(page).toContain('document.createElement("iframe")');
-    expect(page).toContain("return `/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}&nav=1`;");
-    expect(page).toContain("frame.src = fileHref(token, docId);");
+    // DIST-17 (document-control P27, ruling 3): a signed-in member's address
+    // carries `&member=<ticket>`; the recipient's (no session, no ticket) is
+    // the same address as before.
+    expect(page).toContain("const member = memberTicket ? `&member=${encodeURIComponent(memberTicket)}` : \"\";");
+    expect(page).toContain("return `/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}&nav=1${member}`;");
+    expect(page).toContain("frame.src = fileHref(token, docId, ticket);");
     expect(page).toMatch(/frameRefusal\(text\)/);
     // the fallback: the SAME address, as a top-level navigation, once a download was started
-    expect(page).toMatch(/\{started\.has\(i\.documentId\) && \([\s\S]{0,400}?href=\{fileHref\(token, i\.documentId\)\}\s*\n\s*target="_blank"/);
+    expect(page).toMatch(/\{started\.has\(i\.documentId\) && \([\s\S]{0,400}?href=\{fileHref\(token, i\.documentId, data\.member\?\.ticket \?\? null\)\}\s*\n\s*target="_blank"/);
     expect(page).toContain("Download didn&apos;t start? Open the file directly");
     // and the page never claims the browser saved it
     expect(page).not.toMatch(/your browser is saving the file/);
@@ -1144,12 +1167,162 @@ describe("TRX-15 — the snapshot flags a pinned file that leaves unmarked (the 
 
   it("the page re-reads the snapshot after a download and says a copy left unmarked — a stamper refusal included (fix pass 3)", () => {
     const page = readFileSync("app/transmittal/[token]/page.tsx", "utf8");
-    expect(page).toContain('fetch(`/api/transmittal?token=${encodeURIComponent(token)}${opts?.recheck ? "&recheck=1" : ""}`)');
+    // DIST-17 (ruling 3): the snapshot GET carries this browser's session, if any.
+    expect(page).toContain('fetch(`/api/transmittal?token=${encodeURIComponent(token)}${opts?.recheck ? "&recheck=1" : ""}`, { headers: await sessionHeaders() })');
     expect(page).toMatch(/void refresh\(\{ recheck: true \}\)\.then\(\(fresh\) => \{[\s\S]{0,200}?item\?\.releasedUnmarked === true/);
     expect(page).toContain("window.setTimeout(() => { void refresh({ recheck: true }); }, DOWNLOAD_RECHECK_MS);");
     expect(page).toContain('if (i.unmarkedReason === "stamp_failed") {');
     expect(page).toMatch(/the copy downloaded " \+\s*\n\s*`from this link was released as issued, WITHOUT the marking, the as-issued footer or the verify QR \(the issuer is told\)/);
     // a copy flagged with no reason on the trail still gets a line
     expect(page).toContain("A copy downloaded from this link was released as issued, WITHOUT the UNCONTROLLED marking (the issuer is told).");
+  });
+});
+
+// ─── DIST-17 (document-control P27, ruling 3 under DEC-90) ─────────────────
+// The portal token used by a SIGNED-IN MEMBER of the issuing workspace records
+// the download as that member — never as the outside recipient; the outside
+// recipient's portal works exactly as before.
+describe("DIST-17 ruling 3 — a signed-in member's portal pull is recorded as that member", () => {
+  const TID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const MEMBER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const as = (headers: Record<string, string>, file?: string, extra?: Record<string, string>) => {
+    const u = new URL("https://app/api/transmittal");
+    u.searchParams.set("token", TOKEN);
+    if (file) u.searchParams.set("file", file);
+    for (const [k, v] of Object.entries(extra ?? {})) u.searchParams.set(k, v);
+    return GET(new NextRequest(u, { headers }));
+  };
+  const bearer = { authorization: "Bearer member-jwt" };
+  let ticketMod: typeof import("@/lib/portalMemberTicket");
+  beforeEach(async () => {
+    vi.stubEnv("PORTAL_MEMBER_TICKET_SECRET", "test-secret-p27");
+    ticketMod = await import("@/lib/portalMemberTicket");
+    state.transmittal = { ...state.transmittal!, id: TID };
+    state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "3" };
+  });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("REGRESSION — the outside recipient (no session): no `member` in the snapshot, the open counted; the pull recorded as the recipient's (user_id NULL, their address), the download counted", async () => {
+    const snap = await get();
+    expect(snap.status).toBe(200);
+    expect(await snap.json()).not.toHaveProperty("member");
+    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "open" } }]);
+    state.rpcs = [];
+    expect((await get(DOC)).status).toBe(200);
+    expect(state.downloads[0]).toMatchObject({ user_id: null, user_email: "jane@buildco.com", transmittal_id: TID });
+    expect(state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD")).toMatchObject({ user_id: "issuer1", user_email: "jane@buildco.com" });
+    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "download" } }]);
+  });
+
+  it("a signed-in member of the issuing workspace: the snapshot hands them a ticket naming them (their open is not the recipient's); the ticketed pull is recorded as THEM — download row, trail row — and counts no recipient download", async () => {
+    state.authUser = { id: MEMBER };
+    state.members[MEMBER] = { email: "viewer@plant.example" };
+    const snap = await as(bearer);
+    expect(snap.status).toBe(200);
+    const body = (await snap.json()) as { member?: { email: string | null; ticket: string | null } };
+    expect(body.member?.email).toBe("viewer@plant.example");
+    expect(ticketMod.verifyPortalMemberTicket(TID, body.member?.ticket)).toBe(MEMBER);
+    expect(state.rpcs).toEqual([]); // no open counted for the recipient
+    const res = await as({}, DOC, { member: body.member!.ticket!, nav: "1" });
+    expect(res.status).toBe(200);
+    expect(state.downloads).toHaveLength(1);
+    expect(state.downloads[0]).toMatchObject({ user_id: MEMBER, user_email: "viewer@plant.example", transmittal_id: TID, source: "transmittal_portal" });
+    const trail = state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD")!;
+    expect(trail).toMatchObject({ user_id: MEMBER, user_email: "viewer@plant.example" });
+    expect(trail.details).toMatchObject({ downloadedBy: MEMBER, downloadedByMember: true, issuedBy: "issuer1" });
+    expect(state.rpcs).toEqual([]); // no recipient download counted
+  });
+
+  it("a ticket that does not verify — forged, for another transmittal, expired — refuses the download (401 member_unverified): nothing read, nothing recorded, never the recipient's", async () => {
+    const otherTid = ticketMod.signPortalMemberTicket("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", MEMBER)!;
+    const expired = ticketMod.signPortalMemberTicket(TID, MEMBER, Date.now() - 2 * ticketMod.PORTAL_MEMBER_TICKET_TTL_MS)!;
+    const good = ticketMod.signPortalMemberTicket(TID, MEMBER)!;
+    const forged = good.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
+    for (const t of [otherTid, expired, forged, "garbage"]) {
+      const res = await as({}, DOC, { member: t, nav: "1" });
+      expect(res.status, t).toBe(401);
+      expect(await res.text()).toContain("member_unverified");
+    }
+    expect(state.fetchedKeys).toEqual([]);
+    expect(state.downloads).toEqual([]);
+    expect(state.audits).toEqual([]);
+  });
+
+  it("a session naming someone OUTSIDE the issuing workspace is the recipient (no member field; the open counted)", async () => {
+    state.authUser = { id: MEMBER };
+    state.members[MEMBER] = null;
+    const body = await (await as(bearer)).json();
+    expect(body).not.toHaveProperty("member");
+    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: TID, p_kind: "open" } }]);
+  });
+
+  it("a session that cannot be CHECKED (an invalid token, the auth service down, the membership unreadable) is refused (503) — never treated as the recipient", async () => {
+    state.authUser = null;
+    expect((await as(bearer)).status).toBe(503);
+    state.authThrows = true;
+    expect((await as(bearer)).status).toBe(503);
+    state.authThrows = false;
+    state.authUser = { id: MEMBER };
+    state.members[MEMBER] = { email: "x@plant" };
+    state.memberReadError = { message: "timeout" };
+    const res = await as(bearer);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "member_check_failed" });
+    expect(state.rpcs).toEqual([]);
+  });
+
+  it("a member's copy that left unmarked is theirs: the recipient's page does not show it as a copy from their link; the member's own page does — and no recipient-worded notice goes to the issuer", async () => {
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async () => { throw new Error("Input document to `PDFDocument.load` is encrypted."); });
+    try {
+      const ticket = ticketMod.signPortalMemberTicket(TID, MEMBER)!;
+      state.members[MEMBER] = { email: "viewer@plant.example" };
+      expect((await as({}, DOC, { member: ticket })).status).toBe(200);
+      expect(state.downloads[0]).toMatchObject({ user_id: MEMBER, source: "transmittal_portal_unstamped" });
+      expect(state.notifications).toEqual([]); // the issuer's notice is about the recipient (and deduped per document)
+      // the recipient's snapshot: not flagged as a copy from their link
+      const recipient = (await (await get()).json()) as { items: Array<{ releasedUnmarked: boolean | null }> };
+      expect(recipient.items[0].releasedUnmarked).not.toBe(true);
+      // the member's own snapshot: their copy is said
+      state.authUser = { id: MEMBER };
+      const mine = (await (await as(bearer)).json()) as { items: Array<{ releasedUnmarked: boolean | null; unmarkedReason: string | null }> };
+      expect(mine.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: "stamp_failed" });
+    } finally {
+      vi.mocked(applyStampToPdfDoc).mockReset();
+      vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); return { mapped: [] }; });
+    }
+  });
+
+  it("the page: the snapshot GET carries this browser's session, every file address carries the member's ticket, a ticket is renewed when old and never skipped, and the recipient's address is unchanged", () => {
+    const page = readFileSync("app/transmittal/[token]/page.tsx", "utf8");
+    expect(page).toContain('import { supabase } from "@/lib/supabase";');
+    expect(page).toMatch(/const \{ data: \{ session \} \} = await supabase\.auth\.getSession\(\);\s*\n\s*return session\?\.access_token \? \{ Authorization: `Bearer \$\{session\.access_token\}` \} : \{\};/);
+    expect(page).toMatch(/if \(data\?\.member\) \{[\s\S]{0,300}?if \(Date\.now\(\) - ticketAt\.current > MEMBER_TICKET_RENEW_MS\)[\s\S]{0,200}?if \(!ticket\) \{ setMsg\(\{ tone: "err", text: MEMBER_UNNAMED \}\); return; \}/);
+    expect(page).toContain('data-testid="portal-member-notice"');
+    expect(page).toContain('if (code === "member_unverified")');
+  });
+});
+
+describe("DIST-17 ruling 3 — lib/portalMemberTicket", () => {
+  const TID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const UID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  afterEach(() => { vi.unstubAllEnvs(); });
+  it("round-trips for its transmittal only, expires, refuses a tampered or far-future ticket, and makes none without a key", async () => {
+    vi.stubEnv("PORTAL_MEMBER_TICKET_SECRET", "k1");
+    const { signPortalMemberTicket, verifyPortalMemberTicket, PORTAL_MEMBER_TICKET_TTL_MS } = await import("@/lib/portalMemberTicket");
+    const now = Date.UTC(2026, 9, 14, 12);
+    const t = signPortalMemberTicket(TID, UID, now)!;
+    expect(verifyPortalMemberTicket(TID, t, now + 1000)).toBe(UID);
+    expect(verifyPortalMemberTicket("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", t, now)).toBeNull();
+    expect(verifyPortalMemberTicket(TID, t, now + PORTAL_MEMBER_TICKET_TTL_MS + 1)).toBeNull();
+    const [u, exp, mac] = t.split(".");
+    expect(verifyPortalMemberTicket(TID, `${u}.${Number(exp) + 1}.${mac}`, now)).toBeNull();
+    expect(verifyPortalMemberTicket(TID, `${u}.${now + 10 * PORTAL_MEMBER_TICKET_TTL_MS}.${mac}`, now)).toBeNull();
+    expect(verifyPortalMemberTicket(TID, null, now)).toBeNull();
+    vi.stubEnv("PORTAL_MEMBER_TICKET_SECRET", "k2");
+    expect(verifyPortalMemberTicket(TID, t, now)).toBeNull();
+    vi.stubEnv("PORTAL_MEMBER_TICKET_SECRET", "");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "");
+    expect(signPortalMemberTicket(TID, UID, now)).toBeNull();
+    expect(verifyPortalMemberTicket(TID, t, now)).toBeNull();
   });
 });
