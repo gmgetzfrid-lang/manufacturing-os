@@ -77,6 +77,22 @@ export interface IngestBatchResult {
 const VISION_PAGE_RESERVE_MS = 25_000;
 /** The drawing reader sends five images to the person's own model. */
 const DRAWING_PAGE_RESERVE_MS = 45_000;
+/** The FIRST vision page of an invocation needs only this much. A request
+ *  gets 45s in all, and some of it is spent fetching and opening the PDF —
+ *  so demanding the full drawing reserve up front meant the first page of a
+ *  drawing never started, no request ever made progress, and every P&ID
+ *  sat "indexing" forever, retried at every login. The model call is
+ *  itself bounded by the deadline, and a page it can't finish is kept as
+ *  text, so starting it can't lose the batch. */
+const FIRST_PAGE_RESERVE_MS = 20_000;
+
+/** May a vision page start now? The first page of an invocation needs only
+ *  FIRST_PAGE_RESERVE_MS; later pages need the full reserve for their kind. */
+export function visionHasTime(o: { now: number; deadlineMs?: number | null; firstOfBatch: boolean; drawingSet: boolean }): boolean {
+  if (!o.deadlineMs) return true;
+  const reserve = o.drawingSet ? DRAWING_PAGE_RESERVE_MS : VISION_PAGE_RESERVE_MS;
+  return o.now + (o.firstOfBatch ? Math.min(reserve, FIRST_PAGE_RESERVE_MS) : reserve) <= o.deadlineMs;
+}
 
 type KnowledgeDocRow = {
   id: string;
@@ -213,8 +229,8 @@ export async function ingestKnowledgeDocBatch(
       // committed progress down with it.
       // A drawing set is read by THE drawing reader (overview + four zoomed
       // tiles, the person's own model) — slower, so it needs more clock.
-      const reserve = drawingSet ? DRAWING_PAGE_RESERVE_MS : VISION_PAGE_RESERVE_MS;
-      const timeForVision = !deadlineMs || Date.now() + reserve <= deadlineMs;
+      const firstOfBatch = p === from + 1;
+      const timeForVision = visionHasTime({ now: Date.now(), deadlineMs, firstOfBatch, drawingSet });
       const priorText = stored.get(p);
       // Same bytes, same text layer: a stored page that holds far more text
       // than the layer itself can only have come from vision. A stored page
@@ -299,13 +315,16 @@ export async function ingestKnowledgeDocBatch(
           // whole document; a later pass can retry it.
           visionLeft--;
         }
-      } else if (vision) {
+      } else if (vision && !(firstOfBatch && !timeForVision)) {
         // Out of page budget, or out of clock — either way stop cleanly at
         // the last finished page so the caller's next call resumes exactly
         // here with a fresh invocation's worth of time.
         if (!timeForVision) stoppedForTime = true; else visionBudgetSpent = true;
         break;
       }
+      // (First page with not even FIRST_PAGE_RESERVE_MS left: a fresh call
+      // would be no better off, so the page is kept from its text layer and
+      // the batch moves on. A stop here would never make progress.)
     }
 
     // ── Drawing intelligence: on sparse (drawing-like) pages, extract

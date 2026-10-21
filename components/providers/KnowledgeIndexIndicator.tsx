@@ -41,7 +41,13 @@ interface DriveState {
   visionPages: number;
   visionSkipReason: string | null;
   finished: number;
+  /** Documents that couldn't finish this session — held back for a while
+   *  instead of being retried every poll. */
+  heldBack: number;
 }
+
+/** A document that failed or stalled waits this long before another try. */
+const RETRY_AFTER_MS = 30 * 60_000;
 
 export default function KnowledgeIndexIndicator() {
   const { activeOrgId, activeRole } = useRole();
@@ -54,6 +60,9 @@ export default function KnowledgeIndexIndicator() {
   // user deliberately tucked away.
   const [minimized, setMinimized] = useState(false);
   const runningRef = useRef(false);
+  // Survives drain passes (every POLL_MS): a document that just failed is
+  // not downloaded and retried again two minutes later.
+  const failedAtRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     if (!activeOrgId || !isController) return;
@@ -82,8 +91,11 @@ export default function KnowledgeIndexIndicator() {
             .in("status", ["pending", "stale", "indexing"])
             .order("created_at", { ascending: true })
             .limit(50);
+          const now = Date.now();
+          const coolingDown = (id: string) => now - (failedAtRef.current.get(id) ?? -Infinity) < RETRY_AFTER_MS;
           const queue = ((data ?? []) as Array<{ id: string; name: string }>)
-            .filter((d) => !attempted.has(d.id) && !isIngestActive(d.id));
+            .filter((d) => !attempted.has(d.id) && !isIngestActive(d.id) && !coolingDown(d.id));
+          const heldBack = ((data ?? []) as Array<{ id: string }>).filter((d) => coolingDown(d.id)).length;
           const next = queue[0];
           if (!next) break;
           attempted.add(next.id);
@@ -91,7 +103,7 @@ export default function KnowledgeIndexIndicator() {
           setHidden(false);
           setState({
             phase: "working", docName: next.name, indexed: 0, total: null,
-            queued: queue.length - 1, visionPages: 0, visionSkipReason: null, finished,
+            queued: queue.length - 1, visionPages: 0, visionSkipReason: null, finished, heldBack,
           });
           try {
             await ingestKnowledgeDocument(next.id, (indexed, total, progress) => {
@@ -101,14 +113,20 @@ export default function KnowledgeIndexIndicator() {
                 queued: queue.length - 1,
                 visionPages: progress?.visionPages ?? 0,
                 visionSkipReason: progress?.visionSkipReason ?? null,
-                finished,
+                finished, heldBack,
               });
             });
             finished++;
-          } catch { /* row is marked errored server-side; move on */ }
+            failedAtRef.current.delete(next.id);
+          } catch {
+            // Errored server-side, or stalled: either way not "done". Held
+            // back for a while, and counted, so the card can't say "caught up".
+            failedAtRef.current.set(next.id, Date.now());
+          }
         }
         if (alive && sawWork) {
-          setState((s) => s ? { ...s, phase: "done", finished } : null);
+          const heldBack = [...failedAtRef.current.values()].filter((t) => Date.now() - t < RETRY_AFTER_MS).length;
+          setState((s) => s ? { ...s, phase: "done", finished, heldBack } : null);
         }
       } finally {
         runningRef.current = false;
@@ -134,7 +152,7 @@ export default function KnowledgeIndexIndicator() {
       <CornerPortal>
         <button
           onClick={() => setMinimized(false)}
-          title={working ? `Indexing ${state.docName} — click to expand` : "Indexing caught up — click to expand"}
+          title={working ? `Indexing ${state.docName} — click to expand` : state.heldBack ? `${state.heldBack} couldn't finish — click to expand` : "Indexing caught up — click to expand"}
           className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg px-3 py-1.5 text-[11px] font-black text-[var(--color-text)] hover:shadow-xl transition-shadow"
         >
           {working
@@ -153,7 +171,7 @@ export default function KnowledgeIndexIndicator() {
           ? <BookOpenText className="w-4 h-4 text-violet-600 shrink-0" />
           : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
         <span className="text-xs font-black text-[var(--color-text)] flex-1 truncate">
-          {working ? "Indexing knowledge in the background" : "Knowledge indexing caught up"}
+          {working ? "Indexing knowledge in the background" : state.heldBack ? "Knowledge indexing paused for some files" : "Knowledge indexing caught up"}
         </span>
         <button onClick={() => setMinimized(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Minimize — indexing keeps running">
           <Minus className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
@@ -196,6 +214,11 @@ export default function KnowledgeIndexIndicator() {
       ) : (
         <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
           {state.finished} document{state.finished === 1 ? "" : "s"} indexed.
+          {state.heldBack > 0 && (
+            <span className="block text-amber-700 dark:text-amber-300">
+              {state.heldBack} couldn&apos;t finish and will be tried again in 30 minutes. The library&apos;s Health panel shows why.
+            </span>
+          )}
         </div>
       )}
     </div>
