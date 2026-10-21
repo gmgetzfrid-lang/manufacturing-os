@@ -92,6 +92,8 @@ const GRANDFATHERED = new Set<string>();
  *  the row and removes the table from here in the same merge — the tripwire
  *  below fails once both say it, so the entry cannot outlive its merge. */
 const ROW_AT_MERGE: Record<string, string> = {
+  // drafting-flow Round G DF-P6 REVIEW-MODEL (intelligence GAP-312 / WIRE-7 criterion 1)
+  ticket_equipment: "20261251_df_roundG_ticket_equipment.sql",
 };
 
 const BASE = "schema.sql (base schema)";

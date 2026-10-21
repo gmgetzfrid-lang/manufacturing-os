@@ -99,6 +99,11 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // ticket_review_slot_events were decided at its merge (EXPORTED after
   // ticket_comments; never imported — IMMUTABLE_TABLES; DEC-90) and are no
   // longer here.
+  // drafting-flow Round G DF-P6 REVIEW-MODEL (20261251): the equipment a request
+  // names. Proposed: EXPORTED after tickets and assets (org-scoped child of a
+  // ticket; asset_id nullable, SET NULL), restored after both — the
+  // integrator decides in lib/exportTables.ts / lib/dataRestore.ts.
+  ticket_equipment: "DF-P6 GAP-312 ticket equipment links — proposed EXPORTED after tickets and assets, restored after both; decided at merge",
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
