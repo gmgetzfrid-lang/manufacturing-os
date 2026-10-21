@@ -66,6 +66,9 @@ export const OPERATOR_SWITCHES: Readonly<Record<string, Record<string, string>>>
  * grant migration (INTK-14 / DRLS-16); 20261224 is I-28's (INTK-19: every
  * policy that calls the bound helpers answers the same before and after it);
  * 20261261 is I-34's (DACL-11: every reader who can read both documents of a
- * supersession reads the same rows before and after its read rail).
+ * supersession reads the same rows before and after its read rail); 20261131
+ * (document control's documents rails) is there for I-34 too: 20261261 pasted
+ * before 20261131 refuses and changes nothing, so 20261131 still reads every
+ * check true.
  */
-export const CHECKPOINTS: readonly string[] = ["20261217", "20261224", "20261261"];
+export const CHECKPOINTS: readonly string[] = ["20261131", "20261217", "20261224", "20261261"];

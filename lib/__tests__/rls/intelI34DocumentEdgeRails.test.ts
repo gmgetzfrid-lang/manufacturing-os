@@ -18,6 +18,16 @@
 // (CHECKPOINTS) and on a copy holding only this suite's workspace, where its
 // ONE result set reads every probe true and the inventory counts exactly the
 // rows each rail hides.
+//
+// 20261261 is held behind 20261131 (whose last check counts EVERY policy on
+// document_supersessions — 20261131:519): pasted before it, on the replay's
+// snapshot taken just before 20261131 (20260615's FOR ALL member policy), or
+// on today's production shape (the FOR ALL policy restored on a seeded copy),
+// it refuses and changes nothing — every role's reads, the upsert and the
+// compensating deletes answer as today, and 20261131 then reads every check
+// true. A re-run of 20261131 after it reads that one count row false until
+// document control counts PERMISSIVE policies only (the merge-time row,
+// DACL-11) — pinned both ways.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -45,6 +55,13 @@ describe.skipIf(skip !== null)("I-34 / DACL-11: document edge read rails, per ta
   const beforeW = `mos_i34_before_w_${pid}`;
   const pasteCp = `mos_i34_paste_cp_${pid}`;
   const pasteOwn = `mos_i34_paste_own_${pid}`;
+  const forAll = `mos_i34_forall_${pid}`;
+  const pre131 = `mos_i34_pre131_${pid}`;
+  const M131 = "20261131_dc_roundF_documents_rails.sql";
+  const sql131 = () => readFileSync(join(process.cwd(), "supabase", "migrations", M131), "utf8");
+  const REFUSED = /20261261 needs 20261131 live with its supersession pair index built/;
+  const ourPolicy = "SELECT count(*) FROM pg_policies WHERE tablename = 'document_supersessions' AND policyname = 'document_supersessions_documents_readable'";
+  const probesOf = (out: string) => out.split("\n").filter((l) => /\|[tf]\|$/.test(l));
   const anon: Caller = { role: "anon" };
   const service: Caller = { role: "service_role" };
 
@@ -87,7 +104,7 @@ describe.skipIf(skip !== null)("I-34 / DACL-11: document edge read rails, per ta
     admin(before, "DROP POLICY document_supersessions_documents_readable ON document_supersessions");
   });
   afterAll(() => {
-    for (const d of [before, afterW, beforeW, pasteCp, pasteOwn]) {
+    for (const d of [before, afterW, beforeW, pasteCp, pasteOwn, forAll, pre131]) {
       try { admin("postgres", `DROP DATABASE IF EXISTS ${d}`); } catch { /* deleted with the cluster */ }
     }
   });
@@ -220,5 +237,84 @@ describe.skipIf(skip !== null)("I-34 / DACL-11: document edge read rails, per ta
     const again = runPsql(mosDb().conn!, pasteOwn, "postgres", { sql: sql() });
     expect(again.error).toBeNull();
     for (const p of again.stdout.split("\n").filter((l) => /\|[tf]\|$/.test(l))) expect(p, p).toMatch(/\|t\|$/);
+  });
+  it("on today's production read policy (20260615's FOR ALL member policy, 20261131 not yet in) the paste refuses and changes nothing: every role's reads, the upsert and the compensating deletes answer as today", () => {
+    // the seeded 'before' copy with 20261131's four per-command policies swapped back for 20260615's FOR ALL one
+    // (the pair index is kept, so the upsert below is the app's statement)
+    admin("postgres", `CREATE DATABASE ${forAll} TEMPLATE ${before}`);
+    const member = "EXISTS (SELECT 1 FROM org_members WHERE org_id = document_supersessions.org_id AND uid = auth.uid() AND status = 'active')";
+    admin(forAll, [
+      "DROP POLICY document_supersessions_select ON document_supersessions",
+      "DROP POLICY document_supersessions_insert ON document_supersessions",
+      "DROP POLICY document_supersessions_update ON document_supersessions",
+      "DROP POLICY document_supersessions_delete ON document_supersessions",
+      `CREATE POLICY "document_supersessions_member_all" ON document_supersessions FOR ALL TO authenticated USING (${member}) WITH CHECK (${member})`,
+    ].join(";\n") + ";");
+    const r = runPsql(mosDb().conn!, forAll, "postgres", { sql: sql() });
+    expect(r.error).toMatch(REFUSED);
+    expect(admin(forAll, ourPolicy)).toBe("0");
+    expect(admin(forAll, "SELECT string_agg(policyname || ':' || cmd, ',') FROM pg_policies WHERE tablename = 'document_supersessions'"))
+      .toBe("document_supersessions_member_all:ALL");
+    // reads: member-wide, as today
+    for (const k of ["engineer", "viewer", "docctrl"]) expect(count(forAll, m[k].caller, "document_supersessions"), k).toBe("3");
+    // the writers' read-back (.eq(superseded).in(replacements)): every member reads both rows, as today
+    for (const k of ["engineer", "viewer", "docctrl"]) {
+      expect(selectAs(forAll, m[k].caller, `SELECT count(*) FROM document_supersessions WHERE superseded_doc_id = '${open1}' AND replacement_doc_id IN ('${open2}', '${priv}')`)[0], k).toBe("2");
+    }
+    // the upsert on the pair (ON CONFLICT DO NOTHING): an existing pair writes nothing, a new one is written
+    const ins = (c: Caller, a: string, b: string, reason: string, by: string) =>
+      asCaller(forAll, c, `INSERT INTO document_supersessions (org_id, superseded_doc_id, replacement_doc_id, reason, created_by) VALUES ('${orgId}', '${a}', '${b}', '${reason}', '${by}') ON CONFLICT (superseded_doc_id, replacement_doc_id) DO NOTHING`);
+    expect(ins(m.engineer.caller, open1, open2, "again", m.engineer.uid)).toEqual({ ok: true, rows: 0 });
+    expect(ins(m.viewer.caller, open1, priv, "again", m.viewer.uid)).toEqual({ ok: true, rows: 0 });
+    expect(ins(m.engineer.caller, open2, open1, "new", m.engineer.uid)).toEqual({ ok: true, rows: 1 });
+    // a non-controller's compensating DELETE (common.ts / revisions.ts) under FOR ALL: its own fresh pair, a visible
+    // pair, and a pair naming a document the Viewer cannot read — each removes the row, as today (the rail is not here)
+    expect(asCaller(forAll, m.engineer.caller, `DELETE FROM document_supersessions WHERE superseded_doc_id = '${open2}' AND replacement_doc_id = '${open1}'`)).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(forAll, m.engineer.caller, `DELETE FROM document_supersessions WHERE superseded_doc_id = '${open1}' AND replacement_doc_id = '${open2}'`)).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(forAll, m.viewer.caller, `DELETE FROM document_supersessions WHERE superseded_doc_id = '${open1}' AND replacement_doc_id = '${priv}'`)).toEqual({ ok: true, rows: 1 });
+    expect(admin(forAll, `SELECT count(*) FROM document_supersessions WHERE org_id = '${orgId}'`)).toBe("1");
+  });
+
+  it("pasted before 20261131 it refuses and changes nothing, so 20261131 then reads every check true; a re-run of 20261131 after it reads only the policy-count row false, and with the merge-time row (count PERMISSIVE policies) every check true", () => {
+    admin("postgres", `CREATE DATABASE ${pre131} TEMPLATE ${mosDb().report!.checkpoints["20261131"]}`);
+    // the snapshot taken just before 20261131: 20260615's FOR ALL member policy, no pair index yet
+    expect(admin(pre131, "SELECT string_agg(policyname || ':' || cmd, ',') FROM pg_policies WHERE tablename = 'document_supersessions'"))
+      .toBe("document_supersessions_member_all:ALL");
+    const early = runPsql(mosDb().conn!, pre131, "postgres", { sql: sql() });
+    expect(early.error).toMatch(REFUSED);
+    expect(admin(pre131, ourPolicy)).toBe("0");
+    // 20261131 as it stands: every check true
+    const first = runPsql(mosDb().conn!, pre131, "postgres", { sql: sql131() });
+    expect(first.error).toBeNull();
+    const p1 = probesOf(first.stdout);
+    expect(p1.length).toBe(11);
+    for (const p of p1) expect(p, p).toMatch(/\|t\|$/);
+    // now 20261261 applies (the 20261170 rails are later than this snapshot: that one probe reads false here)
+    const ours = runPsql(mosDb().conn!, pre131, "postgres", { sql: sql() });
+    expect(ours.error).toBeNull();
+    expect(admin(pre131, ourPolicy)).toBe("1");
+    const p2 = probesOf(ours.stdout);
+    expect(p2.length).toBe(6);
+    for (const p of p2) expect(p, p).toMatch(p.startsWith("document_assets_document_readable and project_documents_document_readable (20261170)") ? /\|f\|$/ : /\|t\|$/);
+    // a re-run of 20261131 after it: only the policy-count row (20261131:519 counts every policy) reads false;
+    // the database is right — the rail is kept (20261131 drops only its own policies by name)
+    const COUNT_ALL = "AND (SELECT COUNT(*) = 4 FROM pg_policies WHERE tablename = 'document_supersessions'), NULL";
+    expect(sql131().split(COUNT_ALL).length).toBe(2);
+    const again = runPsql(mosDb().conn!, pre131, "postgres", { sql: sql131() });
+    expect(again.error).toBeNull();
+    const p3 = probesOf(again.stdout);
+    expect(p3.length).toBe(11);
+    expect(p3.filter((p) => /\|f\|$/.test(p))).toEqual([
+      "document_supersessions: no FOR ALL policy; INSERT/UPDATE need supersession_writable; DELETE is controller-only|f|",
+    ]);
+    expect(admin(pre131, ourPolicy)).toBe("1");
+    // the merge-time row for document control (DACL-11): count PERMISSIVE policies only — every check true
+    const fixed = sql131().replace(COUNT_ALL, "AND (SELECT COUNT(*) = 4 FROM pg_policies WHERE tablename = 'document_supersessions' AND permissive = 'PERMISSIVE'), NULL");
+    const rerun = runPsql(mosDb().conn!, pre131, "postgres", { sql: fixed });
+    expect(rerun.error).toBeNull();
+    const p4 = probesOf(rerun.stdout);
+    expect(p4.length).toBe(11);
+    for (const p of p4) expect(p, p).toMatch(/\|t\|$/);
+    expect(admin(pre131, ourPolicy)).toBe("1");
   });
 });

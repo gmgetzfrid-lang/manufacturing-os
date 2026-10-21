@@ -101,6 +101,26 @@ describe("20261261 — the paste contract (DEC-30)", () => {
     expect(code).not.toMatch(/SELECT \*/);
   });
 
+  it("held behind 20261131: a prerequisite check BEFORE the inventory refuses (nothing changed) until 20261131 is live with its pair index, while 20261131's last check counts every policy", () => {
+    const guard = code.indexOf("DO $$");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(code.indexOf("CREATE TEMP TABLE IF NOT EXISTS _intel_g261_before AS"));
+    const block = code.slice(guard, code.indexOf("END $$;", guard));
+    expect(block).toContain("IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'document_supersessions' AND cmd = 'ALL')");
+    expect(block).toContain("policyname = 'document_supersessions_delete' AND cmd = 'DELETE'");
+    expect(block).toContain("= ARRAY['replacement_doc_id', 'superseded_doc_id']");
+    expect(block).toMatch(/RAISE EXCEPTION '20261261 needs 20261131 live with its supersession pair index built: [^']*Nothing was changed\.';/);
+    // the reason: 20261131's own check counts EVERY policy on the table, so a fifth one (this rail) reads it false
+    const m131 = read("20261131_dc_roundF_documents_rails.sql");
+    if (m131.includes("AND (SELECT COUNT(*) = 4 FROM pg_policies WHERE tablename = 'document_supersessions'), NULL")) {
+      expect(sql).toContain("Paste order: HOLD with 20261131");
+      expect(sql).toContain("(20261131:519, COUNT(*) = 4, every policy counted)");
+    }
+    // the member-read probe no longer accepts a FOR ALL policy
+    expect(code).not.toMatch(/cmd IN \('SELECT', 'ALL'\)/);
+    expect(code).toContain("AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'document_supersessions' AND cmd = 'ALL'),");
+  });
+
   it("the probes are deparse-safe: no bare cast inside a LIKE pattern; the qual is matched on its deparsed text", () => {
     for (const m of code.matchAll(/LIKE '([^']*)'/g)) expect(m[1], m[1]).not.toMatch(/::/);
     expect(code).toContain("qual LIKE '%d.id = document_supersessions.superseded_doc_id%'");

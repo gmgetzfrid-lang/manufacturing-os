@@ -68,20 +68,52 @@
 --
 -- Requires 20260526 (the table), 20261120 and 20261126 (the two rails this
 -- file confirms) and 20261170 (the two it confirms too) — all earlier in the
--- paste order. Works with either read policy on document_supersessions: the
--- member-wide document_supersessions_select of 20261131 or, before it, the
--- FOR ALL document_supersessions_member_all of 20260615 (a RESTRICTIVE policy
--- is ANDed with whichever is there). Paste order: after 20261258 (no object of
--- 20261259 / 20261260 is touched — any order with them works). Deploy order:
+-- paste order — AND 20261131 LIVE, with its supersession pair index built.
+-- 20261131 (document control; on HOLD behind the DRLS-15 / DRLS-17 deploy)
+-- ends with a check that document_supersessions carries exactly FOUR policies
+-- (20261131:519, COUNT(*) = 4, every policy counted). This file's rail is a
+-- fifth, so 20261131 pasted — or re-run after reconciling duplicate pairs, as
+-- the paste guide allows — after this file would read that check false on a
+-- correct database, and the operator would stop. So this file is held behind
+-- 20261131 and refuses (an ERROR, nothing changed) until 20261131 is in: no
+-- FOR ALL policy on document_supersessions, its controller-only DELETE
+-- policy present, and the unique (superseded_doc_id, replacement_doc_id)
+-- index built (20261131 builds it only once no duplicate pairs remain, so no
+-- re-run of 20261131 is pending once this file applies). The rail is never
+-- layered on 20260615's FOR ALL member policy. Once document control makes
+-- that check count PERMISSIVE policies only (a merge-time row, DACL-11), the
+-- order may relax. Paste order: HOLD with 20261131 — after 20261131 (and
+-- its re-run, if it reported duplicate pairs) and after 20261258 (no object
+-- of 20261259 / 20261260 is touched — any order with them works). Do NOT
+-- re-run 20261131 after this file while its check counts every policy: that
+-- one row would read false (the database is still right). Deploy order:
 -- none — no app change. Pre-apply inventory (DEC-30, inventory-first): a TEMP
 -- TABLE captured before the transaction, aggregate counts only — per table,
 -- the rows a rail hides from at least one member, including the cross-
 -- workspace lineage rows above. documents.is_private is NOT counted:
 -- node_visible never reads it (it is enforced in the app), so no rail hides a
--- row for it. Single paste: inventory → BEGIN/DDL/COMMIT → ONE SELECT (check
+-- row for it. Single paste: the 20261131 prerequisite check → inventory →
+-- BEGIN/DDL/COMMIT → ONE SELECT (check
 -- text, ok boolean, n text). Idempotent: a re-paste drops and re-creates the
 -- one policy.
 -- ─────────────────────────────────────────────────────────────────────────────
+
+-- ── Prerequisite: 20261131 live (see the header) — refuse, change nothing ───
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'document_supersessions' AND cmd = 'ALL')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies
+                     WHERE tablename = 'document_supersessions' AND policyname = 'document_supersessions_delete' AND cmd = 'DELETE')
+     OR NOT EXISTS (SELECT 1 FROM pg_index i
+                     WHERE i.indrelid = 'document_supersessions'::regclass AND i.indisunique AND i.indpred IS NULL
+                       AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text)
+                              FROM unnest(i.indkey::int2[]) k
+                              JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k)
+                           = ARRAY['replacement_doc_id', 'superseded_doc_id'])
+  THEN
+    RAISE EXCEPTION '20261261 needs 20261131 live with its supersession pair index built: paste 20261131 first (if its inventory reports duplicate pairs, reconcile and re-run it), then this file. Nothing was changed.';
+  END IF;
+END $$;
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
 -- "Restricted" = a private / hidden document (only controllers, its effective
@@ -158,11 +190,12 @@ SELECT 'DACL-11: document_supersessions rows are readable only with BOTH their d
                   AND qual LIKE '%d.id = document_supersessions.replacement_doc_id%') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'document_supersessions: it is the only RESTRICTIVE policy there, and members still read (a permissive SELECT — 20261131 — or, before it, the FOR ALL member policy)',
+SELECT 'document_supersessions: it is the only RESTRICTIVE policy there, members still read through 20261131''s permissive document_supersessions_select, and no FOR ALL policy is left',
        (SELECT COUNT(*) = 1 FROM pg_policies WHERE tablename = 'document_supersessions' AND permissive = 'RESTRICTIVE')
        AND EXISTS (SELECT 1 FROM pg_policies
-                    WHERE tablename = 'document_supersessions' AND permissive = 'PERMISSIVE'
-                      AND cmd IN ('SELECT', 'ALL') AND qual LIKE '%org_members%'),
+                    WHERE tablename = 'document_supersessions' AND policyname = 'document_supersessions_select'
+                      AND permissive = 'PERMISSIVE' AND cmd = 'SELECT' AND qual LIKE '%org_members%')
+       AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'document_supersessions' AND cmd = 'ALL'),
        NULL
 UNION ALL
 SELECT 'entity_mentions_source_readable (20261120) is in place: RESTRICTIVE SELECT on the document AND the mirror — paste 20261120 first if false',
