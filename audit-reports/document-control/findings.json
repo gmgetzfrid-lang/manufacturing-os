@@ -15,20 +15,19 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 178,
+    "findings": 181,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 56,
-      "MEDIUM": 76,
-      "LOW": 27
+      "MEDIUM": 77,
+      "LOW": 29
     },
     "by_status": {
-      "RESOLVED": 161,
-      "OPEN": 14,
+      "RESOLVED": 162,
+      "OPEN": 17,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
-      "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
-      "OPEN — Partial (2026-10-21, the integrator's fix pass at the P28 merge, `DEC-90`): the library page's bulk archive and the bulk editor's Archived are done; the bulk editor's Superseded and the metadata editor's save to Void / Superseded / Archived remain (below)": 1
+      "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1
     }
   },
   "status_vocabulary": [
@@ -3530,7 +3529,7 @@
       "id": "REV-31",
       "title": "The bulk retirements and the metadata editor's retired save skip what the Archive dialog does around a retirement: the review draft is not voided (REV-6), live share links are not revoked (REV-10), no ARCHIVE_DOC record is written",
       "severity": "MEDIUM",
-      "status": "OPEN — Partial (2026-10-21, the integrator's fix pass at the P28 merge, `DEC-90`): the library page's bulk archive and the bulk editor's Archived are done; the bulk editor's Superseded and the metadata editor's save to Void / Superseded / Archived remain (below)",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (the code on `fleet/P28-status-door-remainders`, base `a21c718`)",
       "blast_radius": null,
@@ -3552,6 +3551,36 @@
       ],
       "refuted": false,
       "summary": "Document Control bulk-archives a folder of 40 sheets. A sheet with a public share link handed to a vendor keeps serving its PDF (the share routes refuse a retired status since REV-10, but the link is not revoked and its count is on no record); a sheet with a draft in review keeps its reviewers' requests open; the audit trail shows a status change with no ARCHIVEDOC and no reason.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-33",
+      "title": "A status editor's save to Superseded skips supersedeDocument's pre-write gates: no MOC reference for a drawing-class document (PSM, OSHA 1910.119(l)) and no publish-authority / checkout-lock pre-check",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (on `fleet/DC-P31-retirement-door-parity`: `components/documents/BulkEditModal.tsx:221` / `:409`; `app/(protected)/documents/[libraryId]/page.tsx:2992` / `:3026` / `:5002`; `lib/revisions.ts:3230`, `:3570`, `:3578`–`:3596`, `:3601`; `supabase/migrations/20261193_dc_roundF_ifc_rev_up_first_issue.sql:171`–`:180`, `:731` — the newest body of `enforce_document_publish_guard`)",
+      "blast_radius": null,
+      "related": [
+        "REV-31",
+        "DCK-1",
+        "REV-34",
+        "REV-18"
+      ],
+      "locations": [
+        "components/documents/BulkEditModal.tsx:221",
+        "app/(protected)/documents/[libraryId]/page.tsx:2992",
+        "lib/revisions.ts:3230",
+        "lib/revisions.ts:3570"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Document Control sets a drawing-class P&ID sheet to Superseded through the metadata editor, or selects twelve sheets in Bulk Edit and sets Superseded. No MOC reference is asked, no lock or authority pre-check runs, and the supersession's SUPERSEDEDOC record (P31) carries mocReference: null. A PSM audit asking for the MOC behind a superseded drawing finds none; the same act through the Supersede di",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
@@ -4548,6 +4577,63 @@
       ],
       "refuted": false,
       "summary": "Document Control saves a Draft drawing as Issued in the metadata editor while the network drops the read just before the write. The page says no issue record was written; the history shows the database's DOCUMENTISSUED. The advice that follows (check its history, start its clocks) is still right; only the clause is wrong.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-32",
+      "title": "A VOID_DOC row reads as its raw action on the document timeline and the activity feed",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (`lib/timeline.ts:651`, `components/documents/TimelineFeed.tsx:140`, `app/(protected)/activity/page.tsx:81`, `app/(protected)/admin/audit/page.tsx:87` on `fleet/DC-P31-retirement-door-parity`)",
+      "blast_radius": null,
+      "related": [
+        "REV-31"
+      ],
+      "locations": [
+        "lib/timeline.ts",
+        "components/documents/TimelineFeed.tsx",
+        "app/(protected)/activity/page.tsx",
+        "app/(protected)/admin/audit/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": null,
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-34",
+      "title": "The status-editor retirements still differ from the single doors around the write: the library bulk archive's ARCHIVE_DOC has no retiredFrom, the metadata save to Archived writes no archive columns, and no status-editor supersession closes the pending acks or sends the holder's notice; the bulk editor re-archives an Archived row but skips a Superseded one",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (on `fleet/DC-P31-retirement-door-parity`: `app/(protected)/documents/[libraryId]/page.tsx:1116`, `:1161`; `components/documents/BulkEditModal.tsx:419`, `:423`, `:465`; `lib/revisions.ts:2250`–`:2252`, `:2386`, `:2419`, `:3316`, `:3746`, `:3754`, `:3766`; `lib/staleCopies.ts:665`; `lib/distributionAcks.ts:280`)",
+      "blast_radius": null,
+      "related": [
+        "REV-31",
+        "REV-33",
+        "DIST-4",
+        "PROD-17"
+      ],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx:1161",
+        "lib/revisions.ts:2250",
+        "lib/revisions.ts:2386",
+        "components/documents/BulkEditModal.tsx:419"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An auditor compares ARCHIVEDOC rows and finds retiredFrom on some and not others, depending on which bulk door was used; a document archived from the metadata editor shows archivereason NULL on its row while its history shows a reason; a report reading distributionacks.supersededat directly counts a bulk-superseded document's acks as open.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },

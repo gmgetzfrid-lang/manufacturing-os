@@ -113,6 +113,38 @@
 // share links revoked, the ARCHIVE_DOC record with the reason). A duty that
 // did not complete is said after the apply, its row named; a refused row
 // does none of it.
+//
+// REV-31 (document-control P31 RETIREMENT DOOR PARITY, 2026-10-21, DEC-90):
+// a change to Superseded does the three retirement duties DEC-90 lists (the
+// review draft voided, the live share links revoked, the record), as
+// Archived does since P28 — NOT the rest of what supersedeDocument does
+// around a supersession: no MOC reference or publish-authority / lock
+// pre-check before the write (REV-33), no closure of the pending
+// distribution acks and no reason notice to the checkout holder or the
+// package owners after it (REV-34; they stay in the recall's watcher
+// audience, and a retired document's acks no longer bind). It asks ONE reason for
+// the whole apply ("Reason for superseding" — Apply waits for it); each row's
+// write is exactly what it was (the status, the recomputed key, updated_at /
+// updated_by — no supersession column: this door names no replacement, and
+// superseded_by_user is what the rollback door trusts); and, for every row
+// the change RETIRED (its fresh prior was not Superseded, or could not be
+// read — a row already Superseded is no retirement and gets no new duty),
+// lib/revisions.ts finishRetirementDuties voids the review draft, revokes the
+// live share links and writes the SUPERSEDE_DOC record with the reason and
+// the row's prior (`retiredFrom`). Archived rows go through the same routine
+// (as finishBulkArchive did), their record now carrying `retiredFrom` too. A
+// duty that did not complete is said after the apply, its row named; a
+// refused row does none of it. The ONE batched recall is unchanged.
+//
+// P31 final fix pass (DEC-90): a row the change to Archived finds ALREADY
+// Archived (its fresh prior) still gets P28's duties — fail-safe: a
+// re-archive can revoke links an older door left live — but its ARCHIVE_DOC
+// claims no retirement: `alreadyRetired: true` and no `retiredFrom`. (A row
+// already Superseded still gets no duty on a change to Superseded — the
+// remaining asymmetry, REV-34 (d).) The reason belongs to the status it was
+// typed for: any change of the field or the status clears it, so a reason
+// typed for Archived never becomes a supersession's (or the reverse), and
+// Apply waits until one is typed for the status now chosen.
 
 import React, { useState } from "react";
 import {
@@ -124,7 +156,7 @@ import { isIssueTransition, isIssueRefusal, isControlledIssueStatus, isRetiredSt
 import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
-import { changeDocumentStatus, recallsCopyHolders, finishBulkArchive, type StatusIssueOutcome } from "@/lib/revisions";
+import { changeDocumentStatus, recallsCopyHolders, finishRetirementDuties, type StatusIssueOutcome } from "@/lib/revisions";
 import { useRole } from "@/components/providers/RoleContext";
 
 interface BulkEditModalProps {
@@ -150,7 +182,8 @@ export default function BulkEditModal({
 }: BulkEditModalProps) {
   const [target, setTarget] = useState<TargetField>({ kind: "status" });
   const [newValue, setNewValue] = useState<string>(STATUS_OPTIONS[0]);
-  // REV-31 (P28 integrator fix pass): one reason for a change to Archived.
+  // REV-31 (P28 integrator fix pass): one reason for a change to Archived —
+  // and (P31) to Superseded.
   const [archiveReason, setArchiveReason] = useState("");
   const [busy, setBusy] = useState(false);
   // REV-19 (P17 review fix): the issue record names who issued it — email and role, not a bare uid.
@@ -173,14 +206,20 @@ export default function BulkEditModal({
      *  more than the code knows (DEC-29). */
     unchecked: Array<{ doc: string; note: string }>;
     /** REV-31 (P28 integrator fix pass): archived rows whose archive duties
-     *  (draft void, share revoke, ARCHIVE_DOC record) did not complete. */
+     *  (draft void, share revoke, ARCHIVE_DOC record) did not complete —
+     *  (P31) or superseded rows whose supersession duties did not. */
     archiveFollowUps?: Array<{ doc: string; problems: string[] }>;
+    /** REV-31 (P31): the retired status those follow-ups belong to. */
+    retiredAs?: string;
   } | null>(null);
 
   if (!isOpen) return null;
 
   // REV-31: a change to Archived is an archive — it takes a reason.
   const archiving = target.kind === "status" && newValue === "Archived";
+  // REV-31 (P31): so is a change to Superseded — a supersession.
+  const superseding = target.kind === "status" && newValue === "Superseded";
+  const asksReason = archiving || superseding;
 
   // REV-18: the selected rows this status change would ISSUE.
   const issuingRows = target.kind === "status"
@@ -193,11 +232,18 @@ export default function BulkEditModal({
     ? docs.filter((d) => isUnguardedEntryIntoForce({ fromStatus: d.status, toStatus: newValue, hasCurrentRevision: !!d.currentVersionId }))
     : [];
 
+  // P31 final fix pass: a reason belongs to the status it was typed for —
+  // choosing another value (or another field) clears it.
+  const chooseValue = (v: string) => {
+    if (v !== newValue) setArchiveReason("");
+    setNewValue(v);
+  };
+
   const customCols = (library.customColumns ?? []).filter((c) => !["title", "rev", "status", "documentNumber"].includes(c.key));
   const selectOptions = target.kind === "custom" && target.def.type === "select" ? (target.def.options ?? []) : null;
 
   const apply = async () => {
-    if (archiving && !archiveReason.trim()) return;
+    if (asksReason && !archiveReason.trim()) return;
     setBusy(true);
     setResults(null);
     const failed: Array<{ doc: string; reason: string; issue: boolean }> = [];
@@ -215,8 +261,9 @@ export default function BulkEditModal({
     const issuing = target.kind === "status" && isControlledIssueStatus(newValue);
     const priorStatusOf = new Map<string, string | null>();
     const retired: Array<{ documentId: string; libraryId: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom: string | null }> = [];
-    // REV-31: the rows this change archived, for their archive duties.
-    const archivedRows: Array<{ documentId: string; label: string; versionId: string | null }> = [];
+    // REV-31: the rows this change archived — (P31) or retired into
+    // Superseded — for their retirement duties.
+    const archivedRows: Array<{ documentId: string; label: string; versionId: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean }> = [];
     const putBack: Array<{ documentId: string; libraryId: string | null; docLabel: string; restoredStatus: string }> = [];
     if (retiring || issuing) {
       const ids = docs.map((d) => d.id).filter((id): id is string => !!id);
@@ -366,7 +413,21 @@ export default function BulkEditModal({
         if (retiring && doc.id) {
           retired.push({ documentId: doc.id, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(doc.id) ?? null), retiredFrom: priorStatusOf.get(doc.id) ?? null });
         }
-        if (archiving && doc.id) archivedRows.push({ documentId: doc.id, label: String(doc.documentNumber || doc.title || doc.id), versionId: doc.currentVersionId ?? null });
+        // REV-31 (P31): every archived row (as before); a superseded row only
+        // when the change retired it — its fresh prior not Superseded, or
+        // unknown (a row already Superseded gets no new duty).
+        if ((archiving || (superseding && (priorStatusOf.get(doc.id ?? "") ?? "").trim() !== "Superseded")) && doc.id) {
+          const known = priorStatusOf.has(doc.id);
+          // P31 final fix pass: an Archived row archived again — the duties
+          // run (fail-safe), the record says no retirement was made.
+          const alreadyRetired = known && (priorStatusOf.get(doc.id) ?? "").trim() === newValue.trim();
+          archivedRows.push({
+            documentId: doc.id, label: String(doc.documentNumber || doc.title || doc.id), versionId: doc.currentVersionId ?? null,
+            ...(alreadyRetired
+              ? { alreadyRetired: true }
+              : { retiredFrom: known ? (priorStatusOf.get(doc.id) ?? null) : null, ...(known ? {} : { priorStatusUnknown: true }) }),
+          });
+        }
       } catch (e) {
         const reason = (e as Error).message;
         // REV-19 (b) (P23): a write TO an issue status refused in the issue
@@ -394,23 +455,23 @@ export default function BulkEditModal({
         console.error(`[bulk-edit] DIST-16: ${putBack.length} document(s) were set to ${newValue} with no workspace known, so no recall withdrawal was sent`);
       }
     }
-    // REV-31: the archive duties of every row this change archived — after
-    // the recall is on its way; each duty checked, a row whose duties did not
-    // complete named below (its archive stands).
+    // REV-31: the retirement duties of every row this change archived (P31:
+    // or superseded) — after the recall is on its way; each duty checked, a
+    // row whose duties did not complete named below (its retirement stands).
     let archiveFollowUps: Array<{ doc: string; problems: string[] }> = [];
     if (archivedRows.length > 0) {
       const orgId = library.orgId || docs.find((d) => d.orgId)?.orgId || null;
       if (orgId) {
-        const { problems } = await finishBulkArchive({
+        const { problems } = await finishRetirementDuties({
           orgId, actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
-          reason: archiveReason, via: "bulk_edit", docs: archivedRows,
+          toStatus: newValue, reason: archiveReason, via: "bulk_edit", docs: archivedRows,
         });
         archiveFollowUps = problems.map((p) => ({ doc: p.label, problems: p.problems }));
       } else {
-        archiveFollowUps = archivedRows.map((r) => ({ doc: r.label, problems: ["its review draft, share links and ARCHIVE_DOC record were not handled: the workspace is not known"] }));
+        archiveFollowUps = archivedRows.map((r) => ({ doc: r.label, problems: [`its review draft, share links and ${archiving ? "ARCHIVE_DOC" : "SUPERSEDE_DOC"} record were not handled: the workspace is not known`] }));
       }
     }
-    setResults({ ok, failed, followUps, notIssued, unseen, unchecked, archiveFollowUps });
+    setResults({ ok, failed, followUps, notIssued, unseen, unchecked, archiveFollowUps, retiredAs: newValue });
     setBusy(false);
     if (ok > 0) onApplied?.();
   };
@@ -436,6 +497,7 @@ export default function BulkEditModal({
               value={target.kind === "custom" ? `custom:${target.def.key}` : target.kind}
               onChange={(e) => {
                 const v = e.target.value;
+                setArchiveReason("");
                 if (v === "status") {
                   setTarget({ kind: "status" }); setNewValue(STATUS_OPTIONS[0]);
                 } else {
@@ -461,7 +523,7 @@ export default function BulkEditModal({
             <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">New value</label>
             {target.kind === "status" ? (
               <select
-                value={newValue} onChange={(e) => setNewValue(e.target.value)}
+                value={newValue} onChange={(e) => chooseValue(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 disabled={busy}
               >
@@ -486,17 +548,17 @@ export default function BulkEditModal({
             )}
           </div>
 
-          {!results && archiving && (
-            // REV-31 (P28 integrator fix pass): one reason for the whole apply.
+          {!results && asksReason && (
+            // REV-31 (P28 integrator fix pass): one reason for the whole apply — (P31) Archived or Superseded.
             <div>
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">Reason for archiving</label>
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">{archiving ? "Reason for archiving" : "Reason for superseding"}</label>
               <input
                 value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
-                placeholder="Recorded on each archived document's history"
+                placeholder={archiving ? "Recorded on each archived document's history" : "Recorded on each superseded document's history"}
                 disabled={busy}
               />
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">Archiving retires each row: its review draft is voided, its live share links revoked, its copy holders recalled and its watchers told.</div>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{archiving ? "Archiving" : "Superseding"} retires each row: its review draft is voided, its live share links revoked, its copy holders recalled if it was issued, and its watchers told.</div>
             </div>
           )}
 
@@ -551,12 +613,12 @@ export default function BulkEditModal({
                 </div>
               )}
               {(results.archiveFollowUps?.length ?? 0) > 0 && (
-                // REV-31 (P28 integrator fix pass): an archive that landed without its duties.
+                // REV-31 (P28 integrator fix pass): an archive (P31: or a supersession) that landed without its duties.
                 <div data-testid="bulk-archive-follow-ups" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
                   <div className="font-bold flex items-center gap-1.5 mb-1">
-                    <AlertTriangle className="w-4 h-4" /> {results.archiveFollowUps!.length} archived row{results.archiveFollowUps!.length === 1 ? "" : "s"} — follow-up steps did not complete
+                    <AlertTriangle className="w-4 h-4" /> {results.archiveFollowUps!.length} {results.retiredAs === "Superseded" ? "superseded" : "archived"} row{results.archiveFollowUps!.length === 1 ? "" : "s"} — follow-up steps did not complete
                   </div>
-                  <div className="mb-1">The archive stands and is not rolled back — do not apply it again. Document Control can finish what did not complete from the document.</div>
+                  <div className="mb-1">The {results.retiredAs === "Superseded" ? "supersession" : "archive"} stands and is not rolled back — do not apply it again. Document Control can finish what did not complete from the document.</div>
                   <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
                     {results.archiveFollowUps!.map((f, i) => (
                       <li key={i}><span className="font-mono">{f.doc}</span> — {f.problems.join("; ")}</li>
@@ -614,7 +676,7 @@ export default function BulkEditModal({
           {!results && (
             <button
               onClick={apply}
-              disabled={busy || !newValue || (archiving && !archiveReason.trim())}
+              disabled={busy || !newValue || (asksReason && !archiveReason.trim())}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold disabled:opacity-50"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />}

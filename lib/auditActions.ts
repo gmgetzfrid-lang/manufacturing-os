@@ -52,6 +52,11 @@ const BY_CATEGORY: Record<AuditCategory, readonly string[]> = {
     "REV_LABEL_CORRECTED", "DISTRIBUTION_RECALL", "DOCUMENT_ISSUED", "REV_CONFLICT_BLOCKED",
     "REV_HOLD_OVERRIDDEN", "REV_HOLD_OVERRIDE_UNDONE", "REV_LOCK_OVERRIDDEN", "BRANCH_RESOLVED",
     "TRANSITION_IN", "WORK_PACKAGE_PIN_MOVED",
+    // document-control P31 (REV-31): a document VOIDED by a status editor's
+    // save (lib/revisions.ts finishRetirementDuties) — no existing action
+    // meant "voided by a status change"; it reads "Void Doc", beside
+    // "Archive Doc" and "Supersede Doc".
+    "VOID_DOC",
   ],
   checkout: ["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE", "JOIN", "FIELD_VERIFIED", "CHECKOUT_RELEASED"],
   holds: ["HOLD_OPENED", "HOLD_RELEASED", "HOLD_KEPT_ON_CLOSE"],
@@ -156,6 +161,8 @@ export const DESTRUCTIVE_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   "DATA_ARCHIVE_RECLAIM", "TICKET_ARCHIVE_RECLAIM",
   "TRANSMITTAL_VOIDED", "COST_DOC_VOIDED", "CHANGE_ORDER_VOIDED",
   "SUPERSEDE_DOC", "ARCHIVE_DOC", "TICKET_BULK_ARCHIVE",
+  // document-control P31 (REV-31): a void is a retirement, as archive and supersede are.
+  "VOID_DOC",
   "REVERT", "DOC_SPLIT_REVERSED", "DOC_MERGE_REVERSED", "DOC_RENUMBER_REVERSED",
   "FORCE_RELEASE", "REV_HOLD_OVERRIDDEN", "REV_LOCK_OVERRIDDEN", "COST_DOC_AWARD_OVERRIDE",
   "TRANSMITTAL_LINK_REVOKED", "SHARE_LINK_REVOKED", "INTAKE_LINK_REVOKED", "INTAKE_LINKS_REVOKED_WITH_PROJECT",

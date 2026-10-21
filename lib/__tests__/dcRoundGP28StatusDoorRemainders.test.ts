@@ -742,7 +742,7 @@ describe("PROD-17 (P28) — the library page's metadata save and bulk archive", 
     expect(retired).toBeLessThan(save.indexOf("if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {"));
     expect(retired).toBeLessThan(save.indexOf('.from("documents").update(payload)'));
     const branch = save.slice(retired, save.indexOf("if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {"));
-    expect(branch).toMatch(/await changeDocumentStatus\(\{\s*orgId: retireOrgId, documentId: selectedDoc\.id, toStatus, door: "metadata",\s*actorUserId: uid, actorEmail: userEmail \?\? null, actorRole: activeRole \?\? null,\s*patch: payload,\s*(?:\/\/[^\n]*\n\s*)*heldStatus: selectedDoc\.status \?\? null,\s*\}\);/);
+    expect(branch).toMatch(/await changeDocumentStatus\(\{\s*orgId: retireOrgId, documentId: selectedDoc\.id, toStatus, door: "metadata",\s*actorUserId: uid, actorEmail: userEmail \?\? null, actorRole: activeRole \?\? null,\s*patch: payload,\s*(?:\/\/[^\n]*\n\s*)*heldStatus: selectedDoc\.status \?\? null,\s*(?:\/\/[^\n]*\n\s*)*(?:reportRetirement: true,\s*)?\}\);/);
     // P28 fix pass: before the actor is known the save is refused (never the bare write that told nobody)
     expect(branch).toMatch(/if \(!uid \|\| !retireOrgId\) \{\s*throw new Error\(`Save refused — nothing was saved: this save writes the status \$\{toStatus\}, which can retire the document/);
     expect(branch).not.toContain("console.error(");

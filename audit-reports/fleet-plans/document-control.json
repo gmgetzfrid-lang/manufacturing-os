@@ -888,6 +888,28 @@
    "sequencingNotes": [
     "Added by the integrator at the P32 merge, 2026-10-21 (DEC-31). Paste after 20261245 (row 187)."
    ]
+  },
+  {
+   "name": "P34 STATUS EDITOR RETIREMENT PARITY II \u2014 the status editors' Superseded / Void / Archived take the single doors' pre-write gates and remaining duties, and VOID_DOC renders as a retirement",
+   "findings": [
+    "document-control REV-33 (assigned at the P31 merge, 2026-10-21; ruled under DEC-90): both doors into Superseded (bulk editor, metadata save) ask the drawing-class MOC reference before the write and apply the foreign-checkout-lock refusal / recorded override as supersedeDocument does; the metadata save to Void takes the same authority / lock / hold pre-check; a non-drawing row writes as today (pin)",
+    "document-control REV-34 (a)-(d) (assigned at the P31 merge; ruled): retiredFrom on the library bulk archive; archive columns on the metadata save to Archived; a status-editor Superseded closes pending acks and sends the holder's notice; every bulk door runs the duties for an already-retired row with alreadyRetired: true",
+    "document-control REV-32 (assigned at the P31 merge): the timeline, activity feed and admin viewer render VOID_DOC as a retirement beside ARCHIVE_DOC / SUPERSEDE_DOC"
+   ],
+   "files": [
+    "components/documents/BulkEditModal.tsx",
+    "app/(protected)/documents/[libraryId]/page.tsx (the metadata save and handleBulkArchive only; keep the AttentionDot markers)",
+    "lib/revisions.ts (finishRetirementDuties; never the approved_by region)",
+    "the timeline / activity feed / admin audit renderers",
+    "tests"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "document-control P31 merged (2026-10-21)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P31 merge, 2026-10-21 (DEC-31). Do not run in parallel with DC P33 if it edits lib/reviewControl.ts call sites in the library page."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [
