@@ -1200,6 +1200,35 @@ export async function mapLibraryCatalog(
   }
 }
 
+/** Index only the library's piping-spec books (found by content), class by
+ *  class. Repeats bounded server rounds until every book is done. */
+export async function indexPipeSpecs(
+  orgId: string, libraryId: string,
+  onProgress?: (p: { books: number; classes: number; pipePages: number; remaining: number }) => void,
+): Promise<{ books: number; classes: number }> {
+  let stalls = 0;
+  let pages = 0;
+  let last = { books: 0, classes: 0 };
+  for (let i = 0; i < 200; i++) {
+    let out: { pipePages: number; remaining: number; books: number; classes: number };
+    try {
+      out = await apiPost("/api/knowledge/catalog", { orgId, libraryId, action: "pipeSpecs" });
+    } catch (e) {
+      if (!(e as { transient?: boolean }).transient || ++stalls > 4) throw e;
+      await new Promise((r) => setTimeout(r, 1500 * stalls));
+      continue;
+    }
+    pages += out.pipePages;
+    last = { books: out.books, classes: out.classes };
+    onProgress?.({ books: out.books, classes: out.classes, pipePages: pages, remaining: out.remaining });
+    if (out.remaining === 0) return last;
+    if (out.pipePages === 0 && ++stalls >= 3) {
+      throw new Error(`Spec indexing stopped with ${out.remaining} book(s) left. Try again, or check your AI key and monthly budget.`);
+    } else if (out.pipePages > 0) stalls = 0;
+  }
+  return last;
+}
+
 export interface DraftedFormField {
   name: string; label: string; kind: "text" | "long" | "date" | "check" | "choice" | "signature";
   options?: string[]; value: string;

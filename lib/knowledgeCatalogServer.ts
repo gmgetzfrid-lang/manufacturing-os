@@ -21,6 +21,8 @@ import { VISION_MODEL } from "@/lib/knowledgeVision";
 import { fetchBytes } from "@/lib/r2Bytes";
 import { renderPdfPages } from "@/lib/knowledgePageRender";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { findRunningKey } from "@/lib/sectionTemplate";
+import { inSlices } from "@/lib/inSlices";
 import {
   normalizeProfile, normalizePipeClasses, parseProfile, parseModelJson,
   type CatalogEntry, type DocProfile, type FieldKind, type PipeClassRecord,
@@ -169,11 +171,84 @@ const PIPE_SYSTEM =
 /** A page likely holds a pipe-class table: material specs and size/class words. */
 const PIPE_PAGE_RE = /\b(A\s?\d{2,3}|B16\.\d+|API\s?(5L|6D|600|602)|SCH(EDULE)?|SMLS|SEAMLESS|CLASS\s*\d{3,4}|RATING)\b/i;
 
+const SECTION_SYSTEM =
+  "You read the OPENING PAGE(S) of ONE section of a piping material specification book — one piping class " +
+  "(also called line class, pipe spec or material class). Its identifier is given. Reply with ONLY JSON:\n" +
+  '{"classes": [{"code": "...", "rating": "...", "service": "...", "material": "...", "corrosionAllowance": "...", ' +
+  '"notes": ["..."], "rows": [{"component": "...", "size": "...", "spec": "...", "details": "...", "notes": "..."}]}]}\n' +
+  "- rating: the pressure class / flange rating as printed (\"150#\", \"Class 300\", \"ANSI 600\"); null if not printed.\n" +
+  "- service: the fluids or services the class is for, as printed (\"Sour hydrocarbon, wet H2S\", \"Steam 150 psig\").\n" +
+  "- material: the base material (\"Carbon steel\", \"316L SS\", \"1-1/4Cr-1/2Mo\").\n" +
+  "- corrosionAllowance: as printed; notes: class-level notes, quoted (NACE, PWHT, hardness, limits).\n" +
+  "- rows: the component rows printed on these pages, if any (pipe, fittings, flanges, gaskets, bolting, valves).\n" +
+  "Copy exactly; never infer a value that isn't printed.";
+
+/** Spec books with a running header: find each section (class) from the
+ *  header — whatever the company's format — and read only its opening
+ *  page(s), as TEXT. One small call per class instead of image-reading every
+ *  page. Returns null when the book has no running header to go by. */
+async function extractPipeClassesFromText(
+  admin: SupabaseClient, conn: CatalogConn, doc: DocRow, profile: DocProfile, deadlineMs: number,
+): Promise<number | null> {
+  // The top of every page (first chunk) is where a running header lives.
+  const { rows: tops } = await fetchAllRows<{ page: number; content: string }>((from, to) => admin
+    .from("knowledge_chunks").select("page, content").eq("document_id", doc.id).eq("seq", 0)
+    .order("page", { ascending: true }).range(from, to), 20_000);
+  const found = findRunningKey(tops.map((t) => ({ page: t.page, text: t.content })));
+  if (!found || found.ranges.length < 2) return null;
+
+  const state = profile.pipeSpec ?? { pagesDone: 0, pageCount: doc.page_count ?? 0, classes: 0, done: false };
+  const todo = found.ranges.filter((r) => r.first > state.pagesDone);
+  let processed = 0;
+  for (const r of todo) {
+    if (Date.now() > deadlineMs - 20_000) break;
+    const lastRead = Math.min(r.last, r.first + 1);
+    const { data: chunks } = await admin.from("knowledge_chunks").select("page, seq, content")
+      .eq("document_id", doc.id).gte("page", r.first).lte("page", lastRead)
+      .order("page", { ascending: true }).order("seq", { ascending: true }).limit(60);
+    const text = ((chunks ?? []) as Array<{ page: number; content: string }>)
+      .map((c) => c.content).join("\n").slice(0, 14_000);
+    if (text.trim()) {
+      const out = await callFast(conn, {
+        system: SECTION_SYSTEM,
+        user: `Section identifier: ${r.key} — pages ${r.first}–${r.last} of "${doc.name}". Its opening page(s):\n\n${text}`,
+        maxTokens: 3000,
+        timeoutMs: Math.max(10_000, deadlineMs - Date.now() - 5_000),
+      });
+      const parsed = parseModelJson(out);
+      const list = Array.isArray(parsed?.classes) ? parsed!.classes as Array<Record<string, unknown>> : [];
+      // The header's key is authoritative for the code.
+      const [rec] = normalizePipeClasses({ classes: [{ ...(list[0] ?? {}), code: r.key }] }, { allowEmptyRows: true });
+      if (rec) {
+        rec.notes = [...(rec.notes ?? []), `Pages ${r.first}–${r.last}`].slice(0, 12);
+        await admin.from("knowledge_page_entities").delete()
+          .eq("document_id", doc.id).eq("kind", "pipe_class").eq("tag", rec.code);
+        await admin.from("knowledge_page_entities").insert({
+          org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+          page: r.first, kind: "pipe_class", tag: rec.code, raw: JSON.stringify(rec),
+        });
+        state.classes += 1;
+      }
+    }
+    state.pagesDone = r.first;
+    processed += r.last - r.first + 1;
+  }
+  state.pageCount = doc.page_count ?? state.pageCount;
+  state.done = found.ranges.every((r) => r.first <= state.pagesDone);
+  profile.pipeSpec = state;
+  await writeProfile(admin, doc, profile);
+  return processed;
+}
+
 /** Extract the next pages' pipe classes. Returns pages processed this call. */
 export async function extractPipeClassesStep(
   admin: SupabaseClient, conn: CatalogConn, doc: DocRow, profile: DocProfile, deadlineMs: number,
 ): Promise<number> {
   if (!doc.file_key) return 0;
+  // Text first: a spec book with a running header is read class by class
+  // from its text. Image reading is the fallback for books without one.
+  const viaText = await extractPipeClassesFromText(admin, conn, doc, profile, deadlineMs);
+  if (viaText !== null) return viaText;
   const state = profile.pipeSpec ?? { pagesDone: 0, pageCount: doc.page_count ?? 0, classes: 0, done: false };
   // Candidate pages from the indexed text: cheap, and skips cover pages,
   // revision logs and prose sections.
@@ -271,6 +346,56 @@ export async function drainCatalog(admin: SupabaseClient, opts: {
     return !p || (p.type === "pipe_spec" && !p.pipeSpec?.done);
   }).length;
   return { profiled, pipePages, remaining, failed };
+}
+
+/** Index the piping-spec books of a library — and only those — without
+ *  mapping every document. A spec book is recognised by its CONTENT (pages
+ *  dense with material specs, schedules, ratings), not its name, so any
+ *  company's books are found however they're titled. Resumable. */
+export async function drainPipeSpecs(admin: SupabaseClient, opts: {
+  orgId: string; libraryId: string; conn: CatalogConn; deadlineMs: number;
+}): Promise<{ pipePages: number; remaining: number; books: number; classes: number }> {
+  const { rows: docList } = await fetchAllRows<DocRow>((from, to) => admin
+    .from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
+    .eq("org_id", opts.orgId).eq("library_id", opts.libraryId).eq("status", "ready")
+    .gte("page_count", 10).order("id").range(from, to));
+  const profiles = await profilesFor(admin, docList.map((d) => d.id));
+  const books: DocRow[] = [];
+  const unprofiled: DocRow[] = [];
+  for (const d of docList) {
+    const p = profiles.get(d.id);
+    if (p?.type === "pipe_spec") books.push(d);
+    else if (!p && (d.page_count ?? 0) >= 30) unprofiled.push(d);
+  }
+  // Big, unprofiled documents: read the tops of their first pages and keep
+  // the ones that read like a spec book.
+  await inSlices(unprofiled, 1, 6, async ([d]) => {
+    if (Date.now() > opts.deadlineMs - 30_000) return;
+    const { data } = await admin.from("knowledge_chunks").select("content")
+      .eq("document_id", d.id).eq("seq", 0).order("page", { ascending: true }).limit(40);
+    const tops = ((data ?? []) as Array<{ content: string }>).map((r) => r.content);
+    const dense = tops.filter((t) => (t.match(new RegExp(PIPE_PAGE_RE.source, "gi")) ?? []).length >= 3).length;
+    if (tops.length >= 10 && dense / tops.length >= 0.3) {
+      const profile: DocProfile = {
+        v: 1, type: "pipe_spec", designation: null, title: d.name.replace(/\.pdf$/i, ""),
+        purpose: "Piping material specifications — one piping class per section",
+        covers: [], references: [], profiledAt: new Date().toISOString(),
+      };
+      await writeProfile(admin, d, profile);
+      profiles.set(d.id, profile);
+      books.push(d);
+    }
+  });
+  let pipePages = 0;
+  for (const d of books) {
+    if (Date.now() > opts.deadlineMs - 25_000) break;
+    const p = profiles.get(d.id)!;
+    if (p.pipeSpec?.done) continue;
+    try { pipePages += await extractPipeClassesStep(admin, opts.conn, d, p, opts.deadlineMs); } catch { /* next call retries */ }
+  }
+  const remaining = books.filter((d) => !profiles.get(d.id)?.pipeSpec?.done).length;
+  const classes = books.reduce((n, d) => n + (profiles.get(d.id)?.pipeSpec?.classes ?? 0), 0);
+  return { pipePages, remaining, books: books.length, classes };
 }
 
 /** Profiles for a set of documents, keyed by document id. */

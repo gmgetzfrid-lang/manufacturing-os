@@ -11,7 +11,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Map as MapIcon, Loader2, FileText, ClipboardCheck, Table2, BookOpen, ChevronDown } from "lucide-react";
-import { getLibraryCatalog, mapLibraryCatalog, type CatalogSummaryEntry } from "@/lib/knowledge";
+import { getLibraryCatalog, mapLibraryCatalog, indexPipeSpecs, type CatalogSummaryEntry } from "@/lib/knowledge";
 
 const TYPE_LABEL: Record<string, string> = {
   standard: "Standards", pipe_spec: "Piping specs", form: "Forms", checklist: "Checklists",
@@ -43,6 +43,19 @@ export default function LibraryMapPanel({ orgId, libraryId }: { orgId: string; l
     finally { setMapping(null); void load(); }
   }, [orgId, libraryId, data?.unmapped, load]);
 
+  // Piping specs only: finds the spec books by their content and reads them
+  // class by class from their text — no need to map the whole library.
+  const [specRun, setSpecRun] = useState<{ books: number; classes: number; pipePages: number; remaining: number; done?: boolean } | null>(null);
+  const runSpecs = useCallback(async () => {
+    setSpecRun({ books: 0, classes: 0, pipePages: 0, remaining: 1 });
+    setError(null);
+    try {
+      const r = await indexPipeSpecs(orgId, libraryId, (p) => setSpecRun(p));
+      setSpecRun({ books: r.books, classes: r.classes, pipePages: 0, remaining: 0, done: true });
+    } catch (e) { setError((e as Error).message); setSpecRun(null); }
+    finally { void load(); }
+  }, [orgId, libraryId, load]);
+
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     if (!data || autoTried.current || mapping) return;
@@ -72,6 +85,13 @@ export default function LibraryMapPanel({ orgId, libraryId }: { orgId: string; l
             What the assistant knows is here — so it can point you to the right form, checklist or spec without being asked.
           </div>
         </div>
+        {data?.canMap && !mapping && !(specRun && !specRun.done) && (
+          <button type="button" onClick={() => void runSpecs()}
+            title="Find the piping-spec books in this library by their content and index every piping class — its pressure class, service and material — from the text. Much cheaper than mapping the whole library."
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 text-xs font-black hover:bg-violet-50 dark:hover:bg-violet-950/30">
+            <Table2 className="w-4 h-4" /> Index piping specs
+          </button>
+        )}
         {data?.canMap && data.unmapped > 0 && !mapping && (
           <button type="button" onClick={() => void runMap()}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-violet-600 text-white text-xs font-black hover:bg-violet-700">
@@ -85,6 +105,16 @@ export default function LibraryMapPanel({ orgId, libraryId }: { orgId: string; l
           <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
           Mapping — {mapping.profiled} profiled{mapping.pipePages > 0 ? `, ${mapping.pipePages} spec pages read` : ""}
           {mapping.remaining > 0 ? `, ${mapping.remaining} to go` : ""}. You can keep working; it continues while this page is open.
+        </div>
+      )}
+      {specRun && (
+        <div className="mt-3 flex items-center gap-2 text-[12px] text-[var(--color-text)]" role="status">
+          {specRun.done ? <Table2 className="w-4 h-4 text-violet-600" /> : <Loader2 className="w-4 h-4 animate-spin text-violet-600" />}
+          {specRun.done
+            ? (specRun.books === 0
+              ? "No piping-spec book found in this library (looked for documents whose pages read like spec tables)."
+              : `${specRun.classes} piping class${specRun.classes === 1 ? "" : "es"} indexed from ${specRun.books} spec book${specRun.books === 1 ? "" : "s"} — questions like "which spec for 150 class sour gas" now look them up.`)
+            : `Indexing piping specs — ${specRun.books ? `${specRun.books} spec book${specRun.books === 1 ? "" : "s"} found, ` : "looking for spec books, "}${specRun.classes} class${specRun.classes === 1 ? "" : "es"} so far. You can keep working.`}
         </div>
       )}
       {error && <div className="mt-3 text-[12px] font-bold text-rose-700 dark:text-rose-400">{error}</div>}

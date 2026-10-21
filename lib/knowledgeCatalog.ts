@@ -193,7 +193,7 @@ export function parseProfile(raw: string | null | undefined): DocProfile | null 
 }
 
 /** Validate one page's pipe-class extraction. */
-export function normalizePipeClasses(raw: Record<string, unknown> | null): PipeClassRecord[] {
+export function normalizePipeClasses(raw: Record<string, unknown> | null, opts: { allowEmptyRows?: boolean } = {}): PipeClassRecord[] {
   const list = Array.isArray(raw?.classes) ? raw!.classes as Array<Record<string, unknown>> : [];
   const out: PipeClassRecord[] = [];
   for (const c of list.slice(0, 12)) {
@@ -209,7 +209,9 @@ export function normalizePipeClasses(raw: Record<string, unknown> | null): PipeC
       }))
       .filter((r) => r.component && r.spec)
       .slice(0, 80);
-    if (rows.length === 0) continue;
+    // A class read from its opening page may have no component rows yet —
+    // its rating, service and material still identify it.
+    if (rows.length === 0 && !(opts.allowEmptyRows && (str(c.rating, 40) || str(c.service, 160) || str(c.material, 80)))) continue;
     out.push({
       code,
       ...(str(c.service, 160) ? { service: str(c.service, 160) } : {}),

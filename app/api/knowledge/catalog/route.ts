@@ -15,7 +15,7 @@ import { openAiKey } from "@/lib/ai/keyVault";
 import { ALLOWED_PROVIDERS, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import type { AiProviderId } from "@/lib/ai/providerCall";
-import { drainCatalog, profilesFor } from "@/lib/knowledgeCatalogServer";
+import { drainPipeSpecs, drainCatalog, profilesFor } from "@/lib/knowledgeCatalogServer";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const user = await authUser(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  let body: { orgId?: string; libraryId?: string; documentId?: string };
+  let body: { orgId?: string; libraryId?: string; documentId?: string; action?: string };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Expected JSON body" }, { status: 400 }); }
   const orgId = String(body.orgId ?? "");
   const libraryId = String(body.libraryId ?? "");
@@ -97,14 +97,18 @@ export async function POST(req: NextRequest) {
   const usage: AiUsage = { inputTokens: 0, outputTokens: 0 };
   let usedModel = conn.model as string;
   try {
-    const result = await drainCatalog(supabaseAdmin, {
-      orgId, libraryId, documentId: body.documentId || undefined,
-      deadlineMs: Date.now() + BUDGET_MS,
-      conn: {
-        provider: conn.provider as AiProviderId, model: conn.model as string, apiKey: openAiKey(conn.api_key as string),
-        onUsage: (u, model) => { usage.inputTokens += u.inputTokens; usage.outputTokens += u.outputTokens; usedModel = model; },
-      },
-    });
+    // "pipeSpecs": index only the library's piping-spec books, by content.
+    const conn2 = {
+      provider: conn.provider as AiProviderId, model: conn.model as string, apiKey: openAiKey(conn.api_key as string),
+      onUsage: (u: AiUsage, model: string) => { usage.inputTokens += u.inputTokens; usage.outputTokens += u.outputTokens; usedModel = model; },
+    };
+    const result = body.action === "pipeSpecs"
+      ? await drainPipeSpecs(supabaseAdmin, { orgId, libraryId, deadlineMs: Date.now() + BUDGET_MS, conn: conn2 })
+      : await drainCatalog(supabaseAdmin, {
+        orgId, libraryId, documentId: body.documentId || undefined,
+        deadlineMs: Date.now() + BUDGET_MS,
+        conn: conn2,
+      });
     await recordAskUsage({ orgId, userId: user.id, provider: conn.provider as string, model: usedModel, usage, ok: true, op: "knowledgeCatalog" });
     return NextResponse.json(result);
   } catch (e) {
