@@ -95,7 +95,7 @@ export default function KnowledgeLibraryPage() {
   // automatically — free-tier hosting kills long server jobs, so the open
   // page is the reliable indexing engine.
   const [autoIndexing, setAutoIndexing] = useState<{
-    name: string; remaining: number; visionPages?: number; visionSkipReason?: string | null;
+    name: string; remaining: number; visionPages?: number; visionSkipReason?: string | null; waiting?: string | null;
   } | null>(null);
   const autoIndexRef = useRef(false);
   const mountedRef = useRef(true);
@@ -166,7 +166,7 @@ export default function KnowledgeLibraryPage() {
         const CONCURRENCY = 3;
         const active = new Map<string, string>();      // id -> name
         let remaining = 0;
-        const report = (progress?: { visionPages?: number; visionSkipReason?: string | null }) => {
+        const report = (progress?: { visionPages?: number; visionSkipReason?: string | null; waiting?: string | null }) => {
           if (!mountedRef.current) return;
           const names = [...active.values()];
           setAutoIndexing({
@@ -175,6 +175,7 @@ export default function KnowledgeLibraryPage() {
             ...(progress ? {
               visionPages: progress.visionPages,
               visionSkipReason: progress.visionSkipReason,
+              waiting: progress.waiting ?? null,
             } : {}),
           });
         };
@@ -525,6 +526,11 @@ export default function KnowledgeLibraryPage() {
               {autoIndexing.visionSkipReason && (
                 <div className="mt-1 flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-400 font-bold">
                   <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {autoIndexing.visionSkipReason}
+                </div>
+              )}
+              {autoIndexing.waiting && (
+                <div role="status" className="mt-1 flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-400 font-bold">
+                  <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {autoIndexing.waiting}
                 </div>
               )}
             </div>

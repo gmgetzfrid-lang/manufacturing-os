@@ -23,6 +23,7 @@ import { DialogHost } from "@/components/providers/DialogProvider";
 import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
 import UpdatePill from "@/components/system/UpdatePill";
 import { Spinner } from "@/components/ui/Spinner";
+import { SlowNotice, useElapsed, startOver } from "@/components/system/SlowNotice";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const { loading, uid, userEmail, membershipState } = useRole();
@@ -31,12 +32,14 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   // them as deps honestly without re-firing every render.
   const openMobileNav = React.useCallback(() => setMobileNavOpen(true), []);
   const closeMobileNav = React.useCallback(() => setMobileNavOpen(false), []);
+  const waited = useElapsed(loading);
 
   if (loading) {
     return (
-      <div className="h-dvh w-full flex flex-col items-center justify-center bg-[var(--color-canvas)] animate-in fade-in">
+      <div className="h-dvh w-full flex flex-col items-center justify-center bg-[var(--color-canvas)] animate-in fade-in px-4">
         <Spinner size="lg" className="mb-4" />
-        <h2 className="text-xl font-bold text-[var(--color-text)]">Authenticating...</h2>
+        <h2 className="text-xl font-bold text-[var(--color-text)]">Loading your workspace…</h2>
+        <div className="w-full max-w-sm"><SlowNotice secs={waited} onStartOver={() => startOver()} /></div>
       </div>
     );
   }

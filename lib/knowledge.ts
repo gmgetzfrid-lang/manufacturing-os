@@ -462,6 +462,8 @@ export interface IngestProgress {
   reusedPages?: number;
   /** Set when vision couldn't run (no key / cap reached). */
   visionSkipReason?: string | null;
+  /** Set while waiting out a busy server — said, never silent. */
+  waiting?: string | null;
 }
 
 // One driver per document per tab. Two loops POSTing the same document race
@@ -517,8 +519,14 @@ async function ingestLoop(
       transientFailures = 0;
     } catch (e) {
       if (!(e as { transient?: boolean }).transient || ++transientFailures > 4) throw e;
-      // Back off and pick up where the last committed batch stopped.
-      await new Promise((r) => setTimeout(r, 1500 * transientFailures));
+      // Back off and pick up where the last committed batch stopped — and
+      // say so: a busy server is information, not something to hide.
+      const wait = 1500 * transientFailures;
+      onIndex?.(Math.max(0, lastIndexed), null, {
+        indexed: Math.max(0, lastIndexed), total: null, visionPages, reusedPages,
+        waiting: `The server is busy — trying again in ${Math.round(wait / 1000)}s (attempt ${transientFailures + 1} of 5). Pages already read are saved.`,
+      });
+      await new Promise((r) => setTimeout(r, wait));
       continue;
     }
     visionPages += out.visionPages ?? 0;

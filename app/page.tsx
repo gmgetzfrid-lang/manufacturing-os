@@ -5,6 +5,7 @@ import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Layout, Lock, Mail, Loader2, AlertCircle, Building2, LogOut } from 'lucide-react';
+import { SlowNotice, useElapsed, startOver } from '@/components/system/SlowNotice';
 
 /** Microsoft's four-square logo (lucide has no brand marks). */
 function MicrosoftLogo({ className }: { className?: string }) {
@@ -42,6 +43,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("checking");
   const [authedEmail, setAuthedEmail] = useState<string | null>(null);
+  const slowSecs = useElapsed(view === "checking" || loading);
 
   // Decide where an authenticated user belongs: into the app if they hold an
   // active membership, otherwise the "no workspace" screen. Also ensures a
@@ -234,6 +236,7 @@ export default function LoginPage() {
       <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4">
         <Loader2 className="w-8 h-8 text-orange-500 animate-spin mb-4" />
         <p className="text-slate-400 text-sm font-medium tracking-wide">Signing you in…</p>
+        <div className="w-full max-w-sm"><SlowNotice secs={slowSecs} onStartOver={() => startOver()} dark /></div>
       </div>
     );
   }
@@ -356,11 +359,12 @@ export default function LoginPage() {
               className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
             >
               {loading ? (
-                <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Authenticating...</>
+                <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Signing in…</>
               ) : (
                 "Sign In to Dashboard"
               )}
             </button>
+            {loading && <SlowNotice secs={slowSecs} onStartOver={() => startOver()} />}
           </form>
 
           <div className="flex items-center gap-3 my-6">

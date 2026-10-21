@@ -40,6 +40,8 @@ interface DriveState {
   queued: number;
   visionPages: number;
   visionSkipReason: string | null;
+  /** Waiting out a busy server — shown, never silent. */
+  waiting: string | null;
   finished: number;
   /** Documents that couldn't finish this session — held back for a while
    *  instead of being retried every poll. */
@@ -103,18 +105,21 @@ export default function KnowledgeIndexIndicator() {
           setHidden(false);
           setState({
             phase: "working", docName: next.name, indexed: 0, total: null,
-            queued: queue.length - 1, visionPages: 0, visionSkipReason: null, finished, heldBack,
+            queued: queue.length - 1, visionPages: 0, visionSkipReason: null, waiting: null, finished, heldBack,
           });
           try {
             await ingestKnowledgeDocument(next.id, (indexed, total, progress) => {
               if (!alive) return;
-              setState({
-                phase: "working", docName: next.name, indexed, total,
+              setState((prev) => ({
+                phase: "working", docName: next.name, indexed,
+                // A busy-server notice carries no page total; keep the last one.
+                total: total ?? prev?.total ?? null,
                 queued: queue.length - 1,
                 visionPages: progress?.visionPages ?? 0,
                 visionSkipReason: progress?.visionSkipReason ?? null,
+                waiting: progress?.waiting ?? null,
                 finished, heldBack,
-              });
+              }));
             });
             finished++;
             failedAtRef.current.delete(next.id);
@@ -206,6 +211,9 @@ export default function KnowledgeIndexIndicator() {
           )}
           {state.visionSkipReason && (
             <div className="text-[10px] text-amber-700">{state.visionSkipReason}</div>
+          )}
+          {state.waiting && (
+            <div role="status" className="text-[10px] text-amber-700 dark:text-amber-300">{state.waiting}</div>
           )}
           <div className="text-[10px] text-[var(--color-text-faint)]">
             Keeps going anywhere in the app — only closing the tab pauses it.
