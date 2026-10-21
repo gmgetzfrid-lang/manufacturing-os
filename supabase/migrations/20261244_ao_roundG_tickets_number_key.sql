@@ -9,13 +9,17 @@
 -- No numbered migration creates or drops it (every file in
 -- supabase/migrations was searched). CREATE TABLE IF NOT EXISTS adds nothing
 -- to a table that already exists, so a database whose tickets table predates
--- that line of schema.sql has no such key — and admin-and-org BKP-5's record
--- says the live key is absent ("tickets.ticket_id is not unique"). Which world
--- a database is in cannot be seen from the repository (DEC-30), so this file
--- serves both:
+-- that line of schema.sql has no such key. admin-and-org BKP-5 fix pass 5
+-- item 3 (audit-reports/admin-and-org/02-backup-restore.md:375) ASSUMED the
+-- number is not unique ("tickets.ticket_id is not unique", reasoned against
+-- the in-memory restore engine); no record observes a live database either
+-- way. Which world a database is in cannot be seen from the repository
+-- (DEC-30) — only this paste's probe 2 / inventory row 5 show it — so this
+-- file serves both:
 --   * the key is there (any plain unique index on exactly org_id, ticket_id —
---     schema.sql's tickets_org_id_ticket_id_key, or another name): NOTHING is
---     changed;
+--     schema.sql's tickets_org_id_ticket_id_key, or another name — that is
+--     VALID, READY and IMMEDIATE, i.e. enforced at every statement): NOTHING
+--     is changed;
 --   * the key is absent and no workspace holds a number twice: the key is
 --     added as the constraint tickets_org_id_ticket_id_key (schema.sql's own
 --     name), under a table lock taken for the check and the build together,
@@ -29,6 +33,15 @@
 --        GROUP BY org_id, ticket_id HAVING COUNT(*) > 1;
 --     in the SQL editor), then re-pastes this file.
 -- No row is ever changed, renumbered or deleted by this file.
+--
+-- AN INVALID INDEX IS NOT THE KEY (P16 fix pass 2): a unique index left by a
+-- failed CREATE UNIQUE INDEX CONCURRENTLY (indisvalid / indisready false)
+-- enforces nothing, and a DEFERRABLE key (indimmediate false) is not checked
+-- at each statement — neither counts as present, in the check, the inventory
+-- (row 5) or the probes. Such an index under another name is left as it is
+-- (the key is added beside it when nothing blocks it); it is the operator's to
+-- drop (DROP INDEX CONCURRENTLY <name>;). One that squats the name
+-- tickets_org_id_ticket_id_key makes the paste raise, changing nothing.
 --
 -- NOT A WIDENING: it lets nobody do anything new. It is a narrowing of what
 -- the table accepts (a second request under one number in one workspace is
@@ -44,10 +57,14 @@
 -- path it already has. No other app path inserts a ticket or writes
 -- tickets.ticket_id (the ticket-shed restore re-fills a stub's content; it
 -- does not insert). The restore (lib/dataRestore.ts applyRestoreChunk, P16)
--- refuses a colliding request number itself, per row, before any write
--- (TICKET_NUMBER_IN_USE) — before this paste that check is the only guard;
--- after it, the database holds the same rule for every writer. No app code
--- reads the key's name.
+-- refuses a backup request whose number a live request holds, per row,
+-- before any write (TICKET_NUMBER_IN_USE), and restores a backup request
+-- whose number ANOTHER REQUEST OF THE SAME BACKUP holds under a fresh number
+-- from ticket_number_counters, the number it was issued recorded
+-- (TICKET_RENUMBERED, P16 fix pass 2) — so it never sends two requests under
+-- one number; before this paste that check is the only guard; after it, the
+-- database holds the same rule for every writer. No app code reads the key's
+-- name.
 --
 -- PASTE ORDER: independent of every other file — it needs only tickets
 -- (supabase/schema.sql); the prerequisite block refuses without it, changing
@@ -107,10 +124,10 @@ UNION ALL
 SELECT 4, 'inventory (before apply): EDGE-5 — workspaces holding at least one number twice',
        (SELECT COUNT(DISTINCT org_id) FROM dup)::text
 UNION ALL
-SELECT 5, 'inventory (before apply): EDGE-5 — plain unique keys on exactly tickets (org_id, ticket_id) before this paste (1 = schema.sql''s key was live; 0 = absent)',
+SELECT 5, 'inventory (before apply): EDGE-5 — plain unique keys on exactly tickets (org_id, ticket_id), valid, ready and immediate, before this paste (1 = schema.sql''s key was live; 0 = absent)',
        (SELECT COUNT(*) FROM pg_index i
          WHERE i.indrelid = 'public.tickets'::regclass AND i.indisunique AND i.indpred IS NULL AND i.indexprs IS NULL
-           AND i.indnkeyatts = 2
+           AND i.indnkeyatts = 2 AND i.indisvalid AND i.indisready AND i.indimmediate
            AND (SELECT array_agg(a.attname::text ORDER BY a.attname) FROM pg_attribute a
                  WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)) = ARRAY['org_id', 'ticket_id'])::text;
 
@@ -125,7 +142,7 @@ DECLARE
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_index i
               WHERE i.indrelid = 'public.tickets'::regclass AND i.indisunique AND i.indpred IS NULL AND i.indexprs IS NULL
-                AND i.indnkeyatts = 2
+                AND i.indnkeyatts = 2 AND i.indisvalid AND i.indisready AND i.indimmediate
                 AND (SELECT array_agg(a.attname::text ORDER BY a.attname) FROM pg_attribute a
                       WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)) = ARRAY['org_id', 'ticket_id']) THEN
     RAISE NOTICE '20261244: tickets already carries a unique key on (org_id, ticket_id) — nothing was changed.';
@@ -158,7 +175,7 @@ SELECT 1 AS sec, 1 AS ord,
        'EDGE-5: tickets carries a unique key on exactly (org_id, ticket_id) — one request per number in a workspace (false only when this paste REFUSED: see probe 2 and inventory rows 2–4)' AS check,
        EXISTS (SELECT 1 FROM pg_index i
                 WHERE i.indrelid = 'public.tickets'::regclass AND i.indisunique AND i.indpred IS NULL AND i.indexprs IS NULL
-                  AND i.indnkeyatts = 2
+                  AND i.indnkeyatts = 2 AND i.indisvalid AND i.indisready AND i.indimmediate
                   AND (SELECT array_agg(a.attname::text ORDER BY a.attname) FROM pg_attribute a
                         WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)) = ARRAY['org_id', 'ticket_id']) AS ok,
        NULL::text AS n
@@ -176,7 +193,7 @@ SELECT 1, 2,
        -- consistent: the key is live exactly when nothing blocked it
        EXISTS (SELECT 1 FROM pg_index i
                 WHERE i.indrelid = 'public.tickets'::regclass AND i.indisunique AND i.indpred IS NULL AND i.indexprs IS NULL
-                  AND i.indnkeyatts = 2
+                  AND i.indnkeyatts = 2 AND i.indisvalid AND i.indisready AND i.indimmediate
                   AND (SELECT array_agg(a.attname::text ORDER BY a.attname) FROM pg_attribute a
                         WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)) = ARRAY['org_id', 'ticket_id'])
          = ((SELECT n FROM _ao_g244_before WHERE ord = 5) <> '0' OR (SELECT n FROM _ao_g244_before WHERE ord = 2) = '0'),

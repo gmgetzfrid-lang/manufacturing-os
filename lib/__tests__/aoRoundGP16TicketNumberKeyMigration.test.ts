@@ -94,8 +94,26 @@ describe("20261244 — the one-paste shape (DEC-30)", () => {
     // the refusal returns before the ALTER, changing nothing
     expect(block.slice(refuse, add)).toMatch(/RAISE NOTICE '20261244 REFUSED: % request number\(s\)[\s\S]*RETURN;/);
     // "the key" means a plain unique index on exactly the two columns
-    expect(block).toMatch(/i\.indisunique AND i\.indpred IS NULL AND i\.indexprs IS NULL\s+AND i\.indnkeyatts = 2/);
+    expect(block).toMatch(/i\.indisunique AND i\.indpred IS NULL AND i\.indexprs IS NULL\s+AND i\.indnkeyatts = 2 AND i\.indisvalid AND i\.indisready AND i\.indimmediate\n/);
     expect(block).toMatch(/= ARRAY\['org_id', 'ticket_id'\]\) THEN/);
+  });
+
+  it("P16 fix pass 2: an INVALID or not-ready unique index (a failed CREATE UNIQUE INDEX CONCURRENTLY) or a DEFERRABLE key is never taken for the key — in the check, the inventory and both probes", () => {
+    // every pg_index predicate in the file (check, inventory row 5, probes 1 and 2) carries the same validity limb
+    const preds = sql.match(/i\.indisunique AND i\.indpred IS NULL AND i\.indexprs IS NULL\s+AND i\.indnkeyatts = 2[^\n]*/g) ?? [];
+    expect(preds).toHaveLength(4);
+    for (const p of preds) expect(p).toMatch(/AND i\.indnkeyatts = 2 AND i\.indisvalid AND i\.indisready AND i\.indimmediate$/);
+    expect(sql.match(/FROM pg_index i/g)).toHaveLength(4);
+    expect(raw).toMatch(/AN INVALID INDEX IS NOT THE KEY \(P16 fix pass 2\)/);
+    expect(raw).toMatch(/it is the operator's to\n-- drop \(DROP INDEX CONCURRENTLY <name>;\)/);
+    expect(sql).toMatch(/valid, ready and immediate, before this paste/);
+  });
+
+  it("P16 fix pass 2: the header does not claim a record observed the live database — BKP-5 assumed it; only the paste shows the world", () => {
+    expect(raw).not.toMatch(/says the live key is absent/);
+    expect(raw).toMatch(/admin-and-org BKP-5 fix pass 5\n-- item 3 \(audit-reports\/admin-and-org\/02-backup-restore\.md:375\) ASSUMED the\n-- number is not unique/);
+    expect(raw).toMatch(/no record observes a live database either\n-- way/);
+    expect(raw).toMatch(/only this paste's probe 2 \/ inventory row 5 show it/);
   });
 
   it("changes nothing else: no row written, no function, policy, trigger, grant or RLS change", () => {
