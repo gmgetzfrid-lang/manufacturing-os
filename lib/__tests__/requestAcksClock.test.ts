@@ -125,9 +125,12 @@ describe("recall email routing (DIST-13, source pins)", () => {
     // P28 fix pass: the bulk put-back's withdrawal (withdrawRetirementBatch:
     // its several-document notice; its one-document notice reuses the single
     // door's builder) — on the recall category too.
+    // P28 integrator fix pass (DEC-90): the bulk doors' FYI grouped per
+    // follower (a follower of several retired documents of one library gets
+    // one notice naming them) — the watched category, as each document's FYI.
     expect(categories).toEqual([
       'category: "recall"', 'category: "watched"',
-      'category: "recall"', 'category: "recall"', 'category: "watched"',
+      'category: "recall"', 'category: "recall"', 'category: "watched"', 'category: "watched"',
       'category: "recall"', 'category: "recall"',
       'category: "recall"', 'category: "recall"',
     ]);

@@ -129,13 +129,15 @@ const labelled = (label: string) => {
   if (!l) throw new Error(`no label "${label}"`);
   return l.parentElement!.querySelector("input, select") as HTMLInputElement | HTMLSelectElement;
 };
-async function apply(docs: DocumentRecord[], value: string, field?: string) {
+async function apply(docs: DocumentRecord[], value: string, field?: string, reason = "Obsolete unit") {
   await act(async () => {
     root.render(React.createElement(BulkEditModal, { isOpen: true, onClose: () => {}, docs, library: LIB, actorUserId: ME, onApplied: () => {} }));
   });
   if (field) await act(async () => setValue(labelled("Field to change") as HTMLSelectElement, field));
   const v = labelled("New value");
   await act(async () => setValue(v, value));
+  // REV-31 (the P28 integrator fix pass): a change to Archived asks one reason for the apply
+  if (value === "Archived" && !field && reason) await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, reason));
   await act(async () => { button(`Apply to ${docs.length}`).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await settle();
 }
@@ -160,11 +162,14 @@ describe("PROD-17 (P28) — the bulk editor's Superseded / Archived: one fresh r
       const readAt = state.db.calls.indexOf(reads()[0]);
       expect(readAt).toBeLessThan(state.db.calls.indexOf(writes()[0]));
       expect(batch).toHaveBeenCalledTimes(1);
+      // DIST-16 done-when 2 (the P28 integrator fix pass): every retired row goes with its prior as
+      // retiredFrom — the already-retired row is no longer left out here; its recall record decides
       expect(batch.mock.calls[0][0]).toEqual({
         orgId: ORG, newStatus: to, actorUserId: ME, actorName: "cara@example.com",
         docs: [
-          { documentId: "a1", libraryId: "lib1", docLabel: "A1", recallCopyHolders: true },
-          { documentId: "a2", libraryId: "lib1", docLabel: "A2", recallCopyHolders: false },
+          { documentId: "a1", libraryId: "lib1", docLabel: "A1", recallCopyHolders: true, retiredFrom: "Issued" },
+          { documentId: "a2", libraryId: "lib1", docLabel: "A2", recallCopyHolders: false, retiredFrom: "Draft" },
+          { documentId: "a3", libraryId: "lib1", docLabel: "A3", recallCopyHolders: false, retiredFrom: to },
         ],
       });
     });
@@ -173,7 +178,7 @@ describe("PROD-17 (P28) — the bulk editor's Superseded / Archived: one fresh r
   it("the fresh read decides over the page's copy: a row the page shows Draft that is Issued in the database recalls its copy holders", async () => {
     const a = seedDoc("f1");
     await apply([asRecord(a, "Draft")], "Archived");
-    expect(batch.mock.calls[0][0].docs).toEqual([{ documentId: "f1", libraryId: "lib1", docLabel: "F1", recallCopyHolders: true }]);
+    expect(batch.mock.calls[0][0].docs).toEqual([{ documentId: "f1", libraryId: "lib1", docLabel: "F1", recallCopyHolders: true, retiredFrom: "Issued" }]);
   });
 
   it("a read that fails leaves the priors unknown, which recalls (a second recall over none); the writes go as before", async () => {
@@ -181,7 +186,7 @@ describe("PROD-17 (P28) — the bulk editor's Superseded / Archived: one fresh r
     state.db.selectErrors!.documents = (cols) => (cols === "id, status" ? { message: "503" } : null);
     await apply([asRecord(a)], "Archived");
     expect(docRow("g1").status).toBe("Archived");
-    expect(batch.mock.calls[0][0].docs).toEqual([{ documentId: "g1", libraryId: "lib1", docLabel: "G1", recallCopyHolders: true }]);
+    expect(batch.mock.calls[0][0].docs).toEqual([{ documentId: "g1", libraryId: "lib1", docLabel: "G1", recallCopyHolders: true, retiredFrom: null }]);
   });
 
   it("a refused row is named as before and left out of the recall", async () => {
@@ -265,5 +270,68 @@ describe("PROD-17 (P28) — the bulk editor's Superseded / Archived: one fresh r
     await apply([asRecord(a), asRecord(b)], "Issued");
     expect(vi.mocked(withdrawRetirementBatch).mock.calls[0][0].docs.map((d) => d.documentId)).toEqual(["r2"]);
     expect(state.emits.filter((e) => e.kind === "library_doc_revised")).toHaveLength(0);
+  });
+});
+
+// ─── REV-31 (document-control P28, the integrator's fix pass at the merge, DEC-90) ──
+describe("REV-31 (P28 integrator fix pass) — the bulk editor's Archived does what the Archive dialog does around each archive", () => {
+  const archiveDocs = () => T("audit_logs").filter((r) => r.action === "ARCHIVE_DOC");
+
+  it("one reason for the apply: each written row carries the archive columns in its same write, and gets its draft voided, its links revoked and an ARCHIVE_DOC record; a refused row gets none of it; the recall is the one batch, as before", async () => {
+    const a = seedDoc("v1", { pending_version_id: "v1-v3" });
+    T("document_versions").push({ id: "v1-v3", org_id: ORG, record_id: "v1", revision_label: "3", superseded_at: null });
+    T("document_shares").push({ id: "sh1", document_id: "v1", org_id: ORG, revoked_at: null, expires_at: null });
+    const b = seedDoc("v2", { status: "Draft" });
+    const c = seedDoc("v3");
+    state.refuse.v3 = "new row violates row-level security policy";
+    await apply([asRecord(a), asRecord(b), asRecord(c)], "Archived", undefined, "  Superseded by the 2027 set ");
+    expect(host.textContent).toMatch(/Applied to 2 documents\./);
+    // REGRESSION: one write per row, as before — now carrying the archive columns
+    expect(writes()).toHaveLength(3 + 1); // three row writes and v1's draft pointer release
+    for (const id of ["v1", "v2"]) expect(docRow(id)).toMatchObject({ status: "Archived", archived_by: ME, archive_reason: "Superseded by the 2027 set", updated_by: ME });
+    expect(docRow("v3").status).toBe("Issued");
+    expect(docRow("v1").pending_version_id).toBeNull();
+    expect(T("document_shares")[0].revoked_at).toBeTruthy();
+    expect(archiveDocs().map((r) => [r.resource_id, (r.details as Row).reason, (r.details as Row).via, (r.details as Row).action]).sort()).toEqual([
+      ["v1", "Superseded by the 2027 set", "bulk_edit", "archive"],
+      ["v2", "Superseded by the 2027 set", "bulk_edit", "archive"],
+    ]);
+    expect((archiveDocs().find((r) => r.resource_id === "v1")!.details as Row)).toMatchObject({ pendingDraftVoided: "v1-v3", revokedShareLinks: 1, versionId: "v1-v2" });
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(batch.mock.calls[0][0].docs.map((d) => d.documentId)).toEqual(["v1", "v2"]);
+    expect(host.querySelector('[data-testid="bulk-archive-follow-ups"]')).toBeNull();
+  });
+
+  it("Apply waits for the reason; the reason field is asked only for Archived — Superseded and the other statuses write exactly as before (no archive columns, no ARCHIVE_DOC)", async () => {
+    const a = seedDoc("x1");
+    await act(async () => {
+      root.render(React.createElement(BulkEditModal, { isOpen: true, onClose: () => {}, docs: [asRecord(a)], library: LIB, actorUserId: ME, onApplied: () => {} }));
+    });
+    await act(async () => setValue(labelled("New value"), "Archived"));
+    expect(button("Apply to 1").disabled).toBe(true);
+    await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, "   "));
+    expect(button("Apply to 1").disabled).toBe(true);
+    await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, "tidy"));
+    expect(button("Apply to 1").disabled).toBe(false);
+    await act(async () => setValue(labelled("New value"), "Superseded"));
+    expect(Array.from(host.querySelectorAll("label")).some((l) => l.textContent?.trim() === "Reason for archiving")).toBe(false);
+    await act(async () => { button("Apply to 1").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await settle();
+    expect(docRow("x1").status).toBe("Superseded");
+    expect(docRow("x1")).not.toHaveProperty("archive_reason");
+    expect(docRow("x1")).not.toHaveProperty("archived_at");
+    expect(archiveDocs()).toEqual([]);
+  });
+
+  it("a duty that did not complete is said after the apply, its row named; the archive stands", async () => {
+    const a = seedDoc("y1");
+    T("document_shares").push({ id: "sh2", document_id: "y1", org_id: ORG, revoked_at: null, expires_at: null });
+    state.db.beforeUpdate!.document_shares = () => { throw { code: "42501", message: "permission denied" }; };
+    await apply([asRecord(a)], "Archived");
+    expect(docRow("y1").status).toBe("Archived");
+    const box = host.querySelector('[data-testid="bulk-archive-follow-ups"]');
+    expect(box?.textContent).toMatch(/1 archived row — follow-up steps did not complete/);
+    expect(box?.textContent).toMatch(/Y1 — its share links could not be revoked \(permission denied\); 1 share link is still live on it/);
+    expect(archiveDocs()).toHaveLength(1);
   });
 });

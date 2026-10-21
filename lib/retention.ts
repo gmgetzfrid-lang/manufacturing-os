@@ -275,8 +275,9 @@ export async function disposeDocument(input: {
   // PROD-17 (document-control P28): a disposal archives the record — a
   // retirement (a record retained from its creation can be live when it is
   // disposed). One lib/revisions.ts recallOnRetirement, fired, never
-  // awaited, with the archive's rules: a record already Superseded or
-  // Archived gets nothing again (skipsRetirementRecall); the copy holders
+  // awaited, with the archive's rules: a record whose retirement notice
+  // already stands on its recall record (a prior not in force — DIST-16
+  // done-when 2, the P28 integrator fix pass) gets nothing again; the copy holders
   // are recalled only when it took away a controlled issue
   // (recallsCopyHolders, DEC-90 R1), the watchers told either way. The
   // disposal tells no checkout holder or package owner, so both stay in the
@@ -291,14 +292,16 @@ export async function disposeDocument(input: {
     console.error(`[retention] PROD-17: document ${input.documentId} was disposed with no actor named, so its retirement recall was not sent`);
     return { ok: true, action };
   }
-  void import("@/lib/revisions").then(({ recallOnRetirement, skipsRetirementRecall, recallsCopyHolders }) => {
-    if (skipsRetirementRecall(priorStatus)) return;
+  // DIST-16 done-when 2 (the P28 integrator fix pass): "already retired" is
+  // the record's to say (`retiredFrom`), no longer the prior status's here.
+  void import("@/lib/revisions").then(({ recallOnRetirement, recallsCopyHolders }) => {
     recallOnRetirement({
       orgId: input.orgId, documentId: input.documentId,
       newStatus: "Archived", replacementNote: "Disposed under its retention schedule.",
       actorUserId: actorId, actorName: input.actorName || actorId,
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
       recallCopyHolders: recallsCopyHolders(priorStatus),
+      retiredFrom: priorStatus,
     });
   }).catch((e) => console.error(`[retention] PROD-17: the retirement recall of disposed document ${input.documentId} did not run`, e));
   return { ok: true, action };

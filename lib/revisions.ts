@@ -542,7 +542,16 @@ export function recallOnRetirement(
   });
 }
 
-/** PROD-17 (P26 fix pass 2): does a door that retires a document out of
+/** DIST-16 done-when 2 (the P28 integrator fix pass, 2026-10-21): the
+ *  retirement doors no longer ask this — archiveDocument, changeDocumentStatus,
+ *  the split, the merge, a reversal's park, a disposal and the two bulk doors
+ *  pass their prior as `retiredFrom` and lib/staleCopies.ts
+ *  recallRetiredDocument / recallRetiredBatch decide "already retired" from
+ *  the document's recall record. Only supersedeDocument still reads it (a
+ *  re-run on a Superseded / Archived document recalls as it always has).
+ *  What follows is the rule as it stood.
+ *
+ *  PROD-17 (P26 fix pass 2): does a door that retires a document out of
  *  `priorStatus` (the status read fresh before its write) skip the whole
  *  recall call — the copy holders' recall AND the watchers' FYI — because
  *  an earlier retirement may already have sent both? Only a Superseded or
@@ -2282,29 +2291,98 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
 
   // PROD-17 (document-control P26): an archive is a retirement — the
   // document's watchers are told and, when it takes away a controlled
-  // issue, every copy holder is recalled, once, never awaited. A
-  // Superseded row (read just before the write) gets neither again
-  // (skipsRetirementRecall). That is not proof it was recalled: a
-  // Superseded set by either status editor's bare write, a reversal's
-  // parking, or any retirement before DIST-1, recalled nothing (PROD-17
-  // residual, document-control P28), so until those doors recall,
-  // archiving such a row recalls no copies and tells no watcher either.
+  // issue, every copy holder is recalled, once, never awaited. (Until the
+  // P28 integrator fix pass a Superseded row read just before the write got
+  // neither again — skipsRetirementRecall — whether or not anything had
+  // been sent for it; see DIST-16 done-when 2 below.)
   // P26 fix pass 4 (the integrator's ruling under DEC-90): the copy holders
   // are recalled only out of a controlled issue (recallsCopyHolders): a
   // Draft, In Review or Void row archived gets the watchers' FYI only. A
   // status the read did not give recalls (a second recall over none). The
   // archive tells no checkout holder or package owner itself, so they stay
   // in the watchers' audience.
-  if (!skipsRetirementRecall(priorStatus)) {
-    recallOnRetirement({
-      orgId, documentId: doc.id, libraryId: doc.libraryId,
-      docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
-      newStatus: "Archived", replacementNote: null,
-      actorUserId, actorName: actorEmail || actorUserId,
-      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
-      recallCopyHolders: recallsCopyHolders(priorStatus),
-    });
-  }
+  // DIST-16 done-when 2 (the P28 integrator fix pass): "already retired"
+  // is the record's to say (`retiredFrom`, lib/staleCopies.ts
+  // recallRetiredDocument), no longer this door's from the prior status.
+  recallOnRetirement({
+    orgId, documentId: doc.id, libraryId: doc.libraryId,
+    docLabel: String(doc.documentNumber || doc.title || doc.name || "document"),
+    newStatus: "Archived", replacementNote: null,
+    actorUserId, actorName: actorEmail || actorUserId,
+    personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+    recallCopyHolders: recallsCopyHolders(priorStatus),
+    retiredFrom: priorStatus,
+  });
+}
+
+// ─── REV-31 (the P28 integrator fix pass): a bulk archive's duties ──────────
+
+/** One archived row's duties that did not complete, said by the door. */
+export type BulkArchiveProblem = { documentId: string; label: string; problems: string[] };
+
+/** REV-31 (document-control P28, the integrator's fix pass at the merge,
+ *  2026-10-21, DEC-90): what archiveDocument does around each archive that a
+ *  BULK archive did not — for every row the bulk write ARCHIVED (the library
+ *  page's bulk archive, the bulk editor's Archived), after that write landed:
+ *  the in-flight review draft voided (voidPendingDraftAfterPublish, REV-6),
+ *  the live share links revoked (revokeLiveSharesForDocument, REV-10 /
+ *  DIST-1), and the ARCHIVE_DOC record written with the ONE reason asked for
+ *  the whole apply (`via` names the door) — the same checked routines and the
+ *  same record fields archiveDocument writes. The retirement recall is NOT
+ *  sent here: the door sends ONE batched recall per apply (lib/staleCopies.ts
+ *  recallRetiredBatch), never one chain per row (PROD-17's burst). Rows run a
+ *  few at a time. Never throws: every duty that did not complete — a draft
+ *  not voided, a revoke refused, links still live, a SHARE_LINK_REVOKED row
+ *  or the ARCHIVE_DOC record not written, a throw — is returned against its
+ *  row, for the door to name; nothing is silently skipped. */
+export async function finishBulkArchive(input: {
+  orgId: string; actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
+  reason: string; via: "bulk_archive" | "bulk_edit";
+  docs: Array<{ documentId: string; label: string; versionId?: string | null }>;
+}): Promise<{ problems: BulkArchiveProblem[] }> {
+  const problems: BulkArchiveProblem[] = [];
+  const reason = input.reason.trim();
+  const one = async (d: (typeof input.docs)[number]): Promise<void> => {
+    const mine: string[] = [];
+    try {
+      const draftVoid = await voidPendingDraftAfterPublish(d.documentId, input.actorUserId);
+      if (draftVoid.problem) mine.push(`its review draft was not voided (${draftVoid.problem})`);
+      const shares = await revokeLiveSharesForDocument(d.documentId, input.actorUserId);
+      if (shares.error) mine.push(`its share links could not be revoked (${shares.error})`);
+      if (shares.liveLeft === null) mine.push("whether share links are still live on it could not be read");
+      else if (shares.liveLeft > 0) mine.push(`${shares.liveLeft} share link${shares.liveLeft === 1 ? " is" : "s are"} still live on it (another person's — Document Control must revoke ${shares.liveLeft === 1 ? "it" : "them"})`);
+      if (shares.auditError) mine.push(shares.auditError);
+      const res = await logRevisionEvent({
+        orgId: input.orgId,
+        documentId: d.documentId,
+        versionId: d.versionId ?? "",
+        userId: input.actorUserId,
+        userEmail: input.actorEmail ?? "",
+        userRole: input.actorRole ?? "",
+        type: "ARCHIVE_DOC",
+        details: {
+          reason, action: "archive", via: input.via,
+          pendingDraftVoided: draftVoid.voidedVersionId,
+          pendingDraftVoidProblem: draftVoid.problem,
+          revokedShareLinks: shares.revoked, shareRevokeError: shares.error,
+          liveShareLinksLeft: shares.liveLeft, shareRevokeAuditError: shares.auditError,
+        },
+      });
+      if (res && res.ok === false) mine.push(`its ARCHIVE_DOC record could not be written (${res.error ?? "refused"}), so the archive and its reason are not on its history`);
+    } catch (e) {
+      mine.push(`its archive duties stopped part-way (${(e as Error)?.message ?? String(e)})`);
+    }
+    if (mine.length > 0) {
+      console.error(`[retire] REV-31: the bulk archive of ${d.documentId} did not complete: ${mine.join("; ")}`);
+      problems.push({ documentId: d.documentId, label: d.label, problems: mine });
+    }
+  };
+  const queue = [...new Map(input.docs.map((d) => [d.documentId, d])).values()];
+  const worker = async () => { for (let d = queue.shift(); d; d = queue.shift()) await one(d); };
+  await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+  const order = new Map(input.docs.map((d, i) => [d.documentId, i]));
+  problems.sort((a, b) => (order.get(a.documentId) ?? 0) - (order.get(b.documentId) ?? 0));
+  return { problems };
 }
 
 // ─── REV-23 (P19): the stamped put-back's recorded door ─────────────────────
@@ -3075,12 +3153,14 @@ export async function changeDocumentStatus(input: {
   withdrawRecall?: boolean;
   /** PROD-17 (document-control P28 fix pass): the status the caller's own
    *  copy of the row holds (the metadata save's selectedDoc). Given, a
-   *  pre-write read that fails is retried ONCE (P28 second fix pass); if it
-   *  fails again and the caller's copy already held the retired status being
-   *  written (a title fix on an Archived document — or a stale page that
-   *  still shows Archived for a document since put back), the copy holders
-   *  are not recalled but the watchers are still told: an unknown prior
-   *  never retires a document silently (DEC-90's fail-safe rule). */
+   *  pre-write read that fails is retried ONCE (P28 second fix pass). Ruled
+   *  by the integrator at the P28 merge, 2026-10-21 (DEC-90): that is all it
+   *  does. If the read fails again the prior is UNKNOWN, and an unknown
+   *  prior recalls the copy holders (recallsCopyHolders(null)) and tells the
+   *  watchers — whatever the caller's copy holds (a title fix on an Archived
+   *  document can send a second recall: the accepted cost of never retiring
+   *  a document silently — the copy may be stale, another session having
+   *  put the document back in force). */
   heldStatus?: string | null;
 }): Promise<StatusIssueOutcome> {
   let before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
@@ -3112,29 +3192,34 @@ export async function changeDocumentStatus(input: {
   // DEC-90: a Draft or In Review moved straight into a retired status, or
   // a Void moved into another, gets the watchers' FYI only); the outcome
   // returned is unchanged. A re-save of the status it already has sends
-  // nothing, and nor does a move out of Superseded or Archived
-  // (skipsRetirementRecall). A pre-write read that failed (fromStatus
+  // nothing; a move out of Superseded or Archived (into another retired
+  // status) is the record's to decide since the P28 integrator fix pass
+  // (DIST-16 done-when 2, below). A pre-write read that failed (fromStatus
   // unknown) recalls: a second recall over none. This door tells no
   // checkout holder or package owner, so they stay in the watchers'
   // audience. (document-control P28: the library page's metadata save routes
   // its retirements here; a caller that routes one here must not also call
-  // recallOnRetirement: that would be a second recall.) P28 fix pass: when
-  // the read failed (twice — second fix pass) and the caller's own copy
-  // already held this retired status, the save most likely re-writes a
-  // status the row had (a metadata edit on a retired document): the copy
-  // holders are not recalled again, but the watchers are told — the copy may
-  // be stale (another session put the document back), and an unknown prior
-  // never retires a document silently.
-  const heldSameRetired = before.readFailed === true && input.heldStatus !== undefined
-    && (input.heldStatus ?? "").trim() === input.toStatus.trim();
-  if (isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim()
-    && !skipsRetirementRecall(before.fromStatus)) {
+  // recallOnRetirement: that would be a second recall.) Ruled by the
+  // integrator at the P28 merge, 2026-10-21 (DEC-90): a read that failed
+  // twice (heldStatus given) leaves the prior UNKNOWN, and the copy holders
+  // ARE recalled (P26's fail-safe — a possible second recall is the accepted
+  // cost); the caller's held status never withholds a recall.
+  // DIST-16 done-when 2 (the P28 integrator fix pass): "already retired" is
+  // decided from the document's RECORD, not from the prior status — every
+  // retirement here calls the recall with the prior as `retiredFrom`, and
+  // lib/staleCopies.ts recallRetiredDocument sends nothing again only for a
+  // prior not in force with a retirement notice standing since the last
+  // return to force (a Void told at the void, archived later: no second
+  // FYI; a Superseded / Archived retired by a door that told nobody: its
+  // watchers told now). An unknown prior (null) is in force for that rule.
+  if (isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim()) {
     recallOnRetirement({
       orgId: input.orgId, documentId: input.documentId,
       newStatus: input.toStatus.trim(), replacementNote: null,
       actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
-      recallCopyHolders: recallsCopyHolders(before.fromStatus) && !heldSameRetired,
+      recallCopyHolders: recallsCopyHolders(before.fromStatus),
+      retiredFrom: before.readFailed === true ? null : (before.fromStatus ?? null),
     });
   }
   // DIST-16 (document-control P28): an issue status written over a prior

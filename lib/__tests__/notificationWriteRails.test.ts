@@ -1596,6 +1596,8 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/revisions.ts#submitForReview(input.actorUserId)",
   "lib/revisions.ts#supersedeDocument(input.actorUserId)",
   "lib/revisions.ts#unarchiveDocument(input.actorUserId)",       // document-control P28 (DIST-16): the un-archive's withdrawal; ArchiveConfirmModal passes the signed-in member
+  "lib/staleCopies.ts#recallRetiredBatch(input.actorUserId)",     // document-control P28 integrator fix pass (DIST-16 race): a recall that finds its document back in force withdraws it; the bulk doors pass the signed-in member
+  "lib/staleCopies.ts#recallRetiredDocument(input.actorUserId)",  // document-control P28 integrator fix pass (DIST-16 race): the same, from the single doors (recallOnRetirement, supersedeDocument forward their own actor)
   "lib/transmittals.ts#issueTransmittal(actor.actorUserId)",          // N9 (PROD-12): the transmittals page's actor (RoleContext's uid)
   "lib/turnover.ts#reviewTurnoverItem(input.actor.uid)",              // N8 (MON-11)
 ];

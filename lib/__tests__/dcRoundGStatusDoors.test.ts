@@ -18,7 +18,10 @@
 //     exactly one recall; a status change that retires nothing (or a re-save
 //     of a retired document) recalls nothing; archiving, splitting or
 //     merging a document already Superseded or Archived (its status read
-//     fresh before the write) sends nothing again (skipsRetirementRecall);
+//     fresh before the write) sends nothing again (skipsRetirementRecall —
+//     since document-control P28's integrator fix pass, DIST-16 done-when 2,
+//     the door passes that prior as retiredFrom and the document's recall
+//     record decides: nothing again only when a retirement notice stands);
 //     a refused write recalls nothing; a rolled-back split recalls nothing.
 //   · fix pass 4 (the integrator's ruling under DEC-90, 2026-10-14): the
 //     copy holders are recalled only when the retirement takes away a
@@ -173,6 +176,12 @@ const LIB = "lib1";
 const ME = "u1";
 const T = (t: string) => (state.db.tables[t] ??= []);
 const audit = (action: string) => T("audit_logs").filter((r) => r.action === action);
+/** DIST-16 done-when 2 (document-control P28 integrator fix pass): a retirement
+ *  that recalled nobody is on the record as a watchers-only row; the RECALL
+ *  rows are the others. */
+const isWatchersOnly = (r: Row) => (r.details as Record<string, unknown> | null)?.watchersOnly === true;
+const recallRowsOnly = () => audit("DISTRIBUTION_RECALL").filter((r) => !isWatchersOnly(r));
+const watchersOnlyFor = (docId: string) => audit("DISTRIBUTION_RECALL").filter((r) => isWatchersOnly(r) && r.resource_id === docId);
 const docRow = (id: string) => T("documents").find((d) => d.id === id)!;
 const recall = vi.mocked(recallRetiredDocument);
 const NO_STATUS_ISSUE = { issued: false, putBack: false, complianceClockErrors: [], recordError: null };
@@ -224,6 +233,8 @@ describe("PROD-17 (P26) — an archive recalls the copies and tells the watchers
       actorUserId: ME, actorName: "dana@x",
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
       recallCopyHolders: true,
+      // DIST-16 done-when 2 (document-control P28 integrator fix pass): the prior goes to the record's rule
+      retiredFrom: "Issued",
     });
     // regression: the status, the ARCHIVE_DOC record and no personal notice, as before
     expect(docRow("p101").status).toBe("Archived");
@@ -241,7 +252,7 @@ describe("PROD-17 (P26) — an archive recalls the copies and tells the watchers
     expect(recall).toHaveBeenCalledTimes(1);
   });
 
-  it("archiving a document already Superseded or Archived (read with the legal hold, just before the write) recalls nothing again; the archive itself is unchanged", async () => {
+  it("DIST-16 done-when 2 (document-control P28 integrator fix pass): archiving a document already Superseded or Archived (read with the legal hold, just before the write) hands \"already retired\" to its record — one call, the prior as retiredFrom, no copy holder recalled; the archive itself is unchanged", async () => {
     for (const [id, status] of [["p104", "Superseded"], ["p107", "Archived"]] as const) {
       const d = seedDoc(id, { status });
       await expect(archiveDocument({ doc: asRecord({ ...d, status: "Issued" }), reason: "tidy", orgId: ORG, actorUserId: ME })).resolves.toBeUndefined();
@@ -249,7 +260,26 @@ describe("PROD-17 (P26) — an archive recalls the copies and tells the watchers
     }
     expect(audit("ARCHIVE_DOC")).toHaveLength(2);
     await settle();
-    expect(recall).not.toHaveBeenCalled();
+    expect(recallsFor("p104")).toEqual([expect.objectContaining({ retiredFrom: "Superseded", recallCopyHolders: false })]);
+    expect(recallsFor("p107")).toEqual([expect.objectContaining({ retiredFrom: "Archived", recallCopyHolders: false })]);
+  });
+
+  it("DIST-16 done-when 2, through the real recall: a Superseded document whose retirement notice is on its record gets nothing again; one retired by a door that told nobody (no notice on record) has its watchers told once — no copy holder recalled either way", async () => {
+    state.realRecall = true;
+    const told = seedDoc("p108", { status: "Superseded" });
+    T("download_audits").push({ document_id: "p108", user_id: "u3", version_id: "p108-v3", created_at: new Date().toISOString() });
+    T("audit_logs").push({ id: "seed-1", action: "DISTRIBUTION_RECALL", resource_type: "document", resource_id: "p108", org_id: ORG, timestamp: "2026-10-01T00:00:00.000Z", details: { retirement: true, newStatus: "Superseded", recipientCount: 1, recipients: ["u3"] } });
+    const silent = seedDoc("p109", { status: "Superseded" });
+    T("download_audits").push({ document_id: "p109", user_id: "u3", version_id: "p109-v3", created_at: new Date().toISOString() });
+    await archiveDocument({ doc: asRecord(told), reason: "tidy", orgId: ORG, actorUserId: ME });
+    await archiveDocument({ doc: asRecord(silent), reason: "tidy", orgId: ORG, actorUserId: ME });
+    await settle();
+    expect(state.emits.filter((e) => e.kind === "doc_recalled")).toEqual([]);
+    expect(state.emits.filter((e) => e.kind === "doc_retired").map((e) => (e.resource as { id: string }).id)).toEqual(["p109"]);
+    // the FYI is on p109's record now (a watchers-only row), so a third retirement would send nothing again
+    expect(audit("DISTRIBUTION_RECALL").filter((r) => r.resource_id === "p109").map((r) => r.details)).toEqual([
+      expect.objectContaining({ retirement: true, newStatus: "Archived", recipients: [], watchersOnly: true }),
+    ]);
   });
 
   it("fix pass 2 / fix pass 4: archiving a VOIDED document tells its watchers (no live door that writes Void tells them) — and recalls no copy holder: Void is not a controlled issue (DEC-90 ruling)", async () => {
@@ -263,6 +293,7 @@ describe("PROD-17 (P26) — an archive recalls the copies and tells the watchers
       actorUserId: ME, actorName: "dana@x",
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
       recallCopyHolders: false,
+      retiredFrom: "Void",
     }]);
   });
 
@@ -297,11 +328,12 @@ describe("PROD-17 (P26) — a status change that retires the document recalls an
         actorUserId: ME, actorName: "dana@x",
         personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
         recallCopyHolders: true,
+        retiredFrom: "Issued",
       });
     });
   }
 
-  it("a re-save of a document already retired (Void → Void, Archived → Void, Superseded → Archived) recalls nothing again", async () => {
+  it("a re-save of a document already retired (Void → Void) recalls nothing again; a move between retired statuses (Archived → Void, Superseded → Archived) hands \"already retired\" to the record (DIST-16 done-when 2, the P28 integrator fix pass) — no copy holder recalled", async () => {
     seedDoc("s2", { status: "Void" });
     seedDoc("s3", { status: "Archived" });
     seedDoc("s3b", { status: "Superseded" });
@@ -309,7 +341,9 @@ describe("PROD-17 (P26) — a status change that retires the document recalls an
     expect(await changeDocumentStatus({ orgId: ORG, documentId: "s3", toStatus: "Void", door: "bulk", actorUserId: ME })).toEqual(NO_STATUS_ISSUE);
     expect(await changeDocumentStatus({ orgId: ORG, documentId: "s3b", toStatus: "Archived", door: "metadata", actorUserId: ME })).toEqual(NO_STATUS_ISSUE);
     await settle();
-    expect(recall).not.toHaveBeenCalled();
+    expect(recallsFor("s2")).toEqual([]);
+    expect(recallsFor("s3")).toEqual([expect.objectContaining({ retiredFrom: "Archived", recallCopyHolders: false })]);
+    expect(recallsFor("s3b")).toEqual([expect.objectContaining({ retiredFrom: "Superseded", recallCopyHolders: false })]);
   });
 
   it("fix pass 2 / fix pass 4: a move out of Void into another retired status (Void → Archived, Void → Superseded) tells the watchers — and recalls no copy holder (Void is not a controlled issue)", async () => {
@@ -403,6 +437,7 @@ describe("PROD-17 (P26) — a split or merge retiring its sources recalls each o
       actorUserId: ME, actorName: "dana@x",
       personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
       recallCopyHolders: true,
+      retiredFrom: "Issued",
     });
     // regression: the holder's own notice, exactly as before; no package notice
     expect(notify).toHaveBeenCalledTimes(1);
@@ -442,12 +477,13 @@ describe("PROD-17 (P26) — a split or merge retiring its sources recalls each o
         actorUserId: ME, actorName: ME,
         personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
         recallCopyHolders: true,
+        retiredFrom: "Issued",
       }]);
     }
     expect(notifyPackagesOfRetirement).not.toHaveBeenCalled();
   });
 
-  it("a source already Superseded before the split / merge (its status read fresh before the flip) is not recalled again; the live one is", async () => {
+  it("a source already Superseded before the split / merge (its status read fresh before the flip) recalls no copy holder and hands \"already retired\" to its record (DIST-16 done-when 2, the P28 integrator fix pass); the live one is recalled", async () => {
     const s0 = seedDoc("rs", { status: "Superseded" });
     const r = await splitDocument({ source: asRecord({ ...s0, status: "Issued" }), libraryId: LIB, targets: [target("RS1"), target("RS2")], reason: "declutter", orgId: ORG, actorUserId: ME });
     expect(r.supersededSourceId).toBe("rs");
@@ -459,9 +495,9 @@ describe("PROD-17 (P26) — a split or merge retiring its sources recalls each o
     });
     expect(m.supersededSourceIds.sort()).toEqual(["ra", "rb"]);
     await settle();
-    expect(recallsFor("rs")).toHaveLength(0);
-    expect(recallsFor("ra")).toHaveLength(0);
-    expect(recallsFor("rb")).toHaveLength(1);
+    expect(recallsFor("rs")).toEqual([expect.objectContaining({ retiredFrom: "Superseded", recallCopyHolders: false })]);
+    expect(recallsFor("ra")).toEqual([expect.objectContaining({ retiredFrom: "Superseded", recallCopyHolders: false })]);
+    expect(recallsFor("rb")).toEqual([expect.objectContaining({ retiredFrom: "Issued", recallCopyHolders: true })]);
   });
 
   it("fix pass 2 / fix pass 4: a VOID source split or merged tells its watchers — and recalls no copy holder (Void is not a controlled issue); the live source beside it does", async () => {
@@ -577,7 +613,9 @@ describe("PROD-17 (P26) — through the real recall: the copy holders first, the
     expect(recallsFor("m1")).toHaveLength(1);
     expect(recallsFor("m2")).toHaveLength(1);
     expect(state.emits.filter((e) => e.kind === "doc_recalled").map((e) => e.audience)).toEqual([{ involved: ["u5"] }]);
-    expect(audit("DISTRIBUTION_RECALL")).toHaveLength(0);
+    expect(recallRowsOnly()).toHaveLength(0);
+    // m2 recalled nobody: its watchers' FYI is on its record (P28 integrator fix pass)
+    expect(watchersOnlyFor("m2")).toHaveLength(1);
   });
 });
 
@@ -648,9 +686,12 @@ describe("PROD-17 (P26 fix pass 4, DEC-90 ruling) — a never-issued document re
     // the recall was sent for both (a door that dropped it would fail here)
     expect(recallsFor("dr")).toHaveLength(1);
     expect(recallsFor("is")).toHaveLength(1);
-    // the never-issued Draft: no copy holder told, nothing on the audit trail
+    // the never-issued Draft: no copy holder told, no recall on the audit trail
     expect(recalledFor("DR")).toHaveLength(0);
-    expect(audit("DISTRIBUTION_RECALL")).toHaveLength(0);
+    expect(recallRowsOnly()).toHaveLength(0);
+    // DIST-16 done-when 2 (P28 integrator fix pass): each FYI is on its record as a watchers-only row naming nobody
+    expect(watchersOnlyFor("dr").map((r) => r.details)).toEqual([expect.objectContaining({ retirement: true, newStatus: "Archived", recipientCount: 0, recipients: [], watchersOnly: true })]);
+    expect(watchersOnlyFor("is")).toHaveLength(1);
     // the watchers' FYI: one each, the same shape — the Draft's copy holders are not left out of it (they were told nothing else)
     const fyiDraft = fyiFor("DR"); const fyiIssued = fyiFor("IS");
     expect(fyiDraft).toHaveLength(1);
@@ -705,8 +746,10 @@ describe("PROD-17 (P26 fix pass 4, DEC-90 ruling) — a never-issued document re
     const recalled = state.emits.filter((e) => e.kind === "doc_recalled");
     expect(recalled).toHaveLength(1);
     expect(recalled[0]).toMatchObject({ title: "MI is now Superseded — your copy is dead paper", audience: { involved: ["u7"] } });
-    expect(audit("DISTRIBUTION_RECALL")).toHaveLength(1);
-    expect(audit("DISTRIBUTION_RECALL")[0].details).toMatchObject({ recipients: ["u7"] });
+    expect(recallRowsOnly()).toHaveLength(1);
+    expect(recallRowsOnly()[0].details).toMatchObject({ recipients: ["u7"] });
+    expect(watchersOnlyFor("sd")).toHaveLength(1);
+    expect(watchersOnlyFor("mr")).toHaveLength(1);
     expect(fyiFor("SD")).toHaveLength(1);
     expect(fyiFor("SD")[0]).toMatchObject({ title: "SD was retired (Superseded)", audience: { followers: true, exclude: [] } });
     expect(fyiFor("MR")).toHaveLength(1);

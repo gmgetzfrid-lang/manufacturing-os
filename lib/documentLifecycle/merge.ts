@@ -12,7 +12,7 @@ import { logRevisionEvent } from "@/lib/audit";
 import {
   revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
   canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp, describeControllerOnlyFirstIssue,
-  recallOnRetirement, skipsRetirementRecall, recallsCopyHolders,
+  recallOnRetirement, recallsCopyHolders,
   type RevUpInput,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
@@ -531,9 +531,11 @@ async function finishMerge(
     ? target.documentNumber.trim()
     : String(target.target.documentNumber || target.target.title || target.target.name || "the kept document");
   const priorStatusOf = new Map(retired.map((r) => [r.sourceDocId, r.priorStatus]));
+  // DIST-16 done-when 2 (document-control P28, the integrator's fix pass at
+  // the merge, 2026-10-21): "already retired" is each source's recall
+  // record's to say (`retiredFrom`), no longer its prior status's here.
   for (const src of absorbed) {
     const priorStatus = priorStatusOf.get(src.id!);
-    if (skipsRetirementRecall(priorStatus)) continue;
     recallOnRetirement({
       orgId, documentId: src.id!, libraryId: src.libraryId || target.libraryId,
       docLabel: String(src.documentNumber || src.title || src.name || "document"),
@@ -542,6 +544,7 @@ async function finishMerge(
       actorUserId, actorName: actorEmail || actorUserId,
       personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
       recallCopyHolders: recallsCopyHolders(priorStatus),
+      retiredFrom: priorStatus ?? null,
     });
   }
 

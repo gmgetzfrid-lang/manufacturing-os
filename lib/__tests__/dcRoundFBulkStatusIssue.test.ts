@@ -197,6 +197,8 @@ async function applyStatus(docs: DocumentRecord[], value: string, library = LIB(
     root.render(React.createElement(BulkEditModal, { isOpen: true, onClose: () => {}, docs, library, actorUserId: ME, onApplied }));
   });
   await act(async () => setValue(labelled("New value") as HTMLSelectElement, value));
+  // REV-31 (document-control P28, the integrator's fix pass at the merge): a change to Archived asks one reason
+  if (value === "Archived") await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, "tidy"));
   await act(async () => { button(`Apply to ${docs.length}`).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await settle();
   return onApplied;

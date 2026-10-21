@@ -34,7 +34,7 @@ import { logAuditAction } from "@/lib/audit";
 import ExportFilesPanel from "@/components/audit/ExportFilesPanel";
 import {
   AUDIT_RESOURCE_TYPES, auditActionFilterOptions, auditActorNote, isDestructiveAuditAction,
-  pairTicketAttempts, prettyAuditAction, ticketAttemptNote, DESTRUCTIVE_AUDIT_ACTIONS, type TicketAttemptOutcome,
+  pairTicketAttempts, prettyAuditAction, auditRowLabel, ticketAttemptNote, DESTRUCTIVE_AUDIT_ACTIONS, type TicketAttemptOutcome,
 } from "@/lib/auditActions";
 import {
   applyAuditFilters, buildAuditCsv, fetchAuditRowsForExport, filterByLibrary, AUDIT_EXPORT_ROW_CEILING, AUDIT_CSV_LINES_BEFORE_HEADER,
@@ -485,7 +485,8 @@ function AuditRowItem({ row, docMeta, attempt, namesAttempt }: AuditRowItemProps
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md border ${style.tone}`}>
-            {prettyAction(row.action)}
+            {/* document-control P28 (DIST-16, the integrator's fix pass): a recall row's details can make it a withdrawal */}
+            {auditRowLabel(row.action, row.details)}
           </span>
           <span className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
             <ResIcon className="w-3 h-3" /> {row.resourceType}

@@ -237,11 +237,11 @@ describe("DELIV-17 — a retirement recall whose copy-holder read fails is never
     expect(errorSpy.mock.calls.some((c: unknown[]) => /DELIV-17: the retirement recall of document d1 \(Archived\) failed part-way/.test(String(c[0])))).toBe(true);
   });
 
-  it("a never-issued document (recallCopyHolders: false) reads no copy holder at all — no retry, no unavailable row", async () => {
+  it("a never-issued document (recallCopyHolders: false) reads no copy holder at all — no retry, no unavailable row (DIST-16 done-when 2: its FYI goes on the record as a watchers-only row naming nobody)", async () => {
     state.failReads.download_audits = 5;
     await recallRetiredDocument({ ...input, recallCopyHolders: false });
     expect(state.failReads.download_audits).toBe(5);
-    expect(recallRows()).toEqual([]);
+    expect(recallRows()).toEqual([{ retirement: true, newStatus: "Archived", recipientCount: 0, recipients: [], watchersOnly: true, versionId: "" }]);
     expect(kinds()).toEqual(["doc_retired"]);
   });
 });
@@ -306,7 +306,9 @@ describe("PROD-17 (P28) — the bulk doors: one recall per holder per apply", ()
     });
     expect(ofKind("doc_recalled").map((e) => (e.audience as { involved: string[] }).involved)).toEqual([["u6"]]);
     const rows = audit("DISTRIBUTION_RECALL");
-    expect(rows.map((r) => [r.resource_id, (r.details as Record<string, unknown>).unavailable ?? false])).toEqual([["n2", true], ["n3", false]]);
+    expect(rows.map((r) => [r.resource_id, (r.details as Record<string, unknown>).unavailable ?? false])).toEqual([["n2", true], ["n3", false], ["n1", false]]);
+    // DIST-16 done-when 2 (P28 integrator fix pass): n1 recalled nobody — its FYI is on its record
+    expect(rows[2].details).toMatchObject({ retirement: true, recipients: [], watchersOnly: true, batch: true });
     expect(ofKind("doc_retired")).toHaveLength(3);
   });
 });
@@ -418,7 +420,7 @@ describe("DIST-16 — a restore withdraws the retirement recall standing on the 
     expect(await withdrawRetirementRecall({ orgId: ORG, documentId: "p5", restoredStatus: "Issued", door: "unarchive", actorUserId: ME })).toBe(1);
   });
 
-  it("DIST-16 done-when 3: a Void that a recalled status change set, archived later, sends no second copy-holder recall (its watchers are told of each retirement)", async () => {
+  it("DIST-16 done-when 3: a Void that a recalled status change set, archived later, sends no second copy-holder recall — and (done-when 2, the P28 integrator fix pass) no second watchers' FYI: the recall on its record stands", async () => {
     seedDoc("v9");
     seedCopies("v9", ["u3"]);
     await changeDocumentStatus({ orgId: ORG, documentId: "v9", toStatus: "Void", door: "metadata", actorUserId: ME });
@@ -427,7 +429,7 @@ describe("DIST-16 — a restore withdraws the retirement recall standing on the 
     await settle();
     expect(ofKind("doc_recalled")).toHaveLength(1);
     expect(audit("DISTRIBUTION_RECALL")).toHaveLength(1);
-    expect(ofKind("doc_retired").map((e) => e.title)).toEqual(["V9 was retired (Void)", "V9 was retired (Archived)"]);
+    expect(ofKind("doc_retired").map((e) => e.title)).toEqual(["V9 was retired (Void)"]);
   });
 
   it("an unavailable recall row (DELIV-17) names nobody, so nobody is sent a withdrawal for it", async () => {
@@ -494,7 +496,10 @@ describe("DIST-16 (P28 second fix pass) — the withdrawal believes a recall row
     await settle();
     expect(docRow("fg1").status).toBe("Issued");
     expect(ofKind("library_doc_revised")).toHaveLength(0);
-    expect(recallRows().some((d) => d.recallWithdrawn === true)).toBe(false);
+    // nobody is withdrawn from; the return to force is recorded naming nobody (P28 integrator fix pass, DIST-16 done-when 2)
+    expect(recallRows().filter((d) => d.recallWithdrawn === true)).toEqual([
+      expect.objectContaining({ recallWithdrawn: true, returnedToForce: true, recipientCount: 0, recipients: [] }),
+    ]);
     expect(warnSpy.mock.calls.some((c: unknown[]) => /DIST-16: a DISTRIBUTION_RECALL row on document fg1 .* names people with no download of it on record/.test(String(c[0])))).toBe(true);
   });
 
@@ -708,7 +713,8 @@ describe("PROD-17 (P28) — supersede recalls copy holders only for a document t
     await supersedeDocument({ doc: asRecord(is), replacementDocNumbers: ["II2"], libraryId: LIB, reason: "x", orgId: ORG, actorUserId: ME });
     await settle();
     expect(ofKind("doc_recalled").map((e) => (e.audience as { involved: string[] }).involved)).toEqual([["u4"]]);
-    expect(audit("DISTRIBUTION_RECALL").map((r) => r.resource_id)).toEqual(["ii"]);
+    // the Draft's FYI is on its record as a watchers-only row naming nobody (P28 integrator fix pass)
+    expect(audit("DISTRIBUTION_RECALL").map((r) => [r.resource_id, (r.details as Record<string, unknown>).watchersOnly === true])).toEqual([["dd", true], ["ii", false]]);
     expect(ofKind("doc_retired").map((e) => e.title).sort()).toEqual(["DD was retired (Superseded)", "II was retired (Superseded)"]);
   });
 
@@ -763,11 +769,13 @@ describe("PROD-17 (P28) — the library page's metadata save and bulk archive", 
     expect(bulk).toContain('await supabase.from("documents").select("id, legal_hold, status").in("id", ids);');
     expect(bulk.match(/supabase\.from\("documents"\)\.select\(/g)).toHaveLength(1);
     expect(bulk).toContain("const held = new Set(readRows.filter((r) => r.legal_hold === true).map((r) => r.id));");
-    expect(bulk).toMatch(/\.update\(\{\s*status: "Archived",\s*archived_at: now,\s*archived_by: uid \?\? null,\s*updated_at: now,\s*updated_by: uid \?\? null,\s*\}\)\.in\("id", targets\)\.select\("id"\);/);
+    // REV-31 (the P28 integrator fix pass): the same write on the same rows, carrying the one reason as archive_reason
+    expect(bulk).toMatch(/\.update\(\{\s*status: "Archived",\s*archived_at: now,\s*archived_by: uid \?\? null,\s*archive_reason: archiveReason\.trim\(\),\s*updated_at: now,\s*updated_by: uid \?\? null,\s*\}\)\.in\("id", targets\)\.select\("id"\);/);
     const at = bulk.indexOf("recallRetiredBatch({");
     expect(at).toBeGreaterThan(bulk.indexOf('.in("id", targets).select("id")'));
-    expect(bulk).toContain(".filter((id) => !skipsRetirementRecall(priorStatusOf.get(id) ?? null))");
-    expect(bulk).toContain("recallCopyHolders: recallsCopyHolders(priorStatusOf.get(id) ?? null)");
+    // DIST-16 done-when 2 (the P28 integrator fix pass): no row is left out by its prior status here — the record decides
+    expect(bulk).not.toContain("skipsRetirementRecall");
+    expect(bulk).toContain("recallCopyHolders: recallsCopyHolders(priorStatusOf.get(id) ?? null), retiredFrom: priorStatusOf.get(id) ?? null");
     expect(bulk).toMatch(/void import\("@\/lib\/staleCopies"\)\.then\(\(\{ recallRetiredBatch \}\) => recallRetiredBatch\(\{\s*orgId: recallOrg, newStatus: "Archived", actorUserId: uid,/);
     // P28 fix pass: refused before the read and the write while the actor or workspace is unknown
     const refuse = bulk.indexOf("if (!uid || !recallOrg) {");

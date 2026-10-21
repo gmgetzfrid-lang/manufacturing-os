@@ -1,6 +1,6 @@
 # 02 · Revisions, publish & supersession
 
-**18 findings** — 2 CRITICAL · 5 HIGH · 8 MEDIUM · 3 LOW.
+**31 findings** — 2 CRITICAL · 5 HIGH · 12 MEDIUM · 12 LOW. `REV-31` (MEDIUM) opened by document-control Round G (P28 STATUS-DOOR REMAINDERS), 2026-10-20 — Partial at the P28 merge, 2026-10-21. *(Counts corrected at the P28 integrator fix pass, 2026-10-21, from the findings' Severity lines — the header had read 18 findings · 8 MEDIUM · 3 LOW since before `REV-15`; the README's row read 30.)*
 
 Every path to a published revision, and which ones skip the guard.
 
@@ -1742,8 +1742,8 @@ Not touched here:
 ## REV-31 · The bulk retirements and the metadata editor's retired save skip what the Archive dialog does around a retirement: the review draft is not voided (REV-6), live share links are not revoked (REV-10), no ARCHIVE_DOC record is written
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
-- **Assigned:** unassigned — document-control, to be planned by the integrator (DEC-31). Opened 2026-10-20 by document-control Round G, P28 STATUS-DOOR REMAINDERS, which routed these doors' recall and watchers' FYI (`PROD-17`) but not the rest of `archiveDocument`'s retirement duties.
+- **Status:** OPEN — Partial (2026-10-21, the integrator's fix pass at the P28 merge, `DEC-90`): the library page's bulk archive and the bulk editor's Archived are done; the bulk editor's Superseded and the metadata editor's save to Void / Superseded / Archived remain (below)
+- **Assigned:** the two remaining doors — document-control, to be planned by the integrator (`DEC-31`). Opened 2026-10-20 by document-control Round G, P28 STATUS-DOOR REMAINDERS, which routed these doors' recall and watchers' FYI (`PROD-17`) but not the rest of `archiveDocument`'s retirement duties; the bulk archive and the bulk editor's Archived taken up by the integrator's fix pass at the P28 merge (ruling 2, `DEC-90`).
 - **Verification:** READ (the code on `fleet/P28-status-door-remainders`, base `a21c718`)
 - **Locations:** `app/(protected)/documents/[libraryId]/page.tsx` `handleBulkArchive` (one bare `update({ status: "Archived", archived_at, archived_by, … }).in("id", targets)`) and `saveMetadata`'s retired branch (`changeDocumentStatus`, a status write); `components/documents/BulkEditModal.tsx` (a bare write per row to Superseded / Archived); for contrast `lib/revisions.ts` `archiveDocument` (`authorizeArchive`, `voidPendingDraftAfterPublish`, `revokeLiveSharesForDocument`, `ARCHIVE_DOC`) and `supersedeDocument`.
 - **Related:** `PROD-17` (notifications `01-producer-census.md` — P28 left these doors on the batched recall instead of routing them through `archiveDocument`, a departure recorded there for the integrator), `REV-6`, `REV-10`, `DIST-1`.
@@ -1759,5 +1759,20 @@ Not touched here:
 - [ ] Tests: each door voids, revokes and records; a refused row does none of it; REGRESSION — the writes and the notices are what they are today.
 
 **Closer:** document-control (the integrator routes it).
+
+**Partial (2026-10-21, document-control Round G — the integrator's fix pass at the P28 merge, `DEC-90`).** Branch `fleet/P28-status-door-remainders`. No migration. Ruled by the integrator at the P28 merge, 2026-10-21 (DEC-90): the bulk archive and the bulk editor's Archived gain, per document, what `archiveDocument` does and they lacked — batched, one reason for the whole apply, one recall batch, checked writes, a per-row failure said and the row named.
+
+- **The duties** — `lib/revisions.ts:2338` `finishBulkArchive` (new): for every row the bulk write ARCHIVED, after that write landed, `voidPendingDraftAfterPublish` (`REV-6`), `revokeLiveSharesForDocument` (`REV-10` / `DIST-1`, each revoked link its `SHARE_LINK_REVOKED` row) and the `ARCHIVE_DOC` record with the same fields `archiveDocument` writes plus `via` (`bulk_archive` / `bulk_edit`), four rows at a time. It never throws: a draft not voided, a revoke refused, links still live (another person's — a non-controller may not revoke them), a `SHARE_LINK_REVOKED` row or the `ARCHIVE_DOC` record not written, or a throw is returned against its row and logged. It sends no notice — the door's ONE `recallRetiredBatch` per apply stays the recall (done-when 2).
+- **The library page's bulk archive** — `app/(protected)/documents/[libraryId]/page.tsx:1064` `handleBulkArchive`: the bare confirm becomes ONE required reason prompt (`appPrompt`, `required: true`; Cancel archives nothing; a blank answer is refused, nothing written); the same one write on the same rows, now carrying `archive_reason` (`:1112` — the column `archiveDocument` writes); the batched recall as before (`:1130`); then `finishBulkArchive` for every archived row (`:1147`); the alert says what it said before (legal holds skipped, rows refused) and, when a duty did not complete, names each such row and what did not complete ("the archive stands; do not archive again").
+- **The bulk editor's Archived** — `components/documents/BulkEditModal.tsx:183`: a change to Archived shows "Reason for archiving" (`:492`) and Apply waits for it; each row's same checked write carries `archived_at`, `archived_by`, `archive_reason` (`:244`); after the apply `finishBulkArchive` runs for every row it archived (`:404`) and a row whose duty did not complete is listed under "archived row(s) — follow-up steps did not complete" (`:555`); a refused row does none of it.
+
+**Tests.** `lib/__tests__/dcRoundGP28IntegratorFixPass.test.ts` "ruling 2 (REV-31)": `finishBulkArchive` voids the draft (its sign-offs void, the pointer released), revokes the link (`SHARE_LINK_REVOKED`), writes each `ARCHIVE_DOC` with the trimmed reason and `via`, sends nothing; a refused revoke and a refused `ARCHIVE_DOC` are returned against their rows, the other row completes; the page's real `handleBulkArchive` (lifted and run): one prompt, REGRESSION — the same one update on the same rows (the legal hold skipped) with the same columns plus `archive_reason`, the one batched recall, the draft voided / link revoked / `ARCHIVE_DOC` per archived row, the same alert as before; Cancel and a blank reason write nothing; a duty that did not complete is said, its row named. `lib/__tests__/dcRoundGP28BulkRetire.test.ts` "REV-31" (jsdom, the real `BulkEditModal`): the archive columns in each row's write, the duties per written row, none for a refused row, the one batch as before; Apply waits for the reason, which is asked only for Archived (Superseded writes exactly as before); a duty that did not complete is listed.
+
+**Done-when.**
+- [ ] Done-when 1 — **partial:** done for the bulk archive and the bulk editor's Archived (above). **Not done:** the bulk editor's Superseded (its record would be `SUPERSEDE_DOC`, whose shape names replacements this door does not have) and the metadata editor's save to Void / Superseded / Archived (`page.tsx` `saveMetadata`, routed through `changeDocumentStatus`; a Void has no record action at all — `lib/audit.ts` `logRevisionEvent` has none, and a new one is an `auditActions.ts` registry entry). **Owner:** document-control, to be planned by the integrator (`DEC-31`).
+- [x] Done-when 2: the bulk doors keep ONE batched recall per apply (`recallRetiredBatch`); `finishBulkArchive` sends no notice.
+- [ ] Done-when 3 — partial with done-when 1: the tests above cover the two doors done (each voids, revokes and records; a refused row does none of it; REGRESSION — the same rows written, the same notices).
+
+**Scope / residual.** The duties run after the write in the person's browser, awaited before the result is shown; a tab closed mid-way leaves the remaining rows' duties undone and nothing names them (as `archiveDocument` itself, one row). `finishBulkArchive` reads no hold: the write it follows was already refused by the database for a held row.
 
 ---

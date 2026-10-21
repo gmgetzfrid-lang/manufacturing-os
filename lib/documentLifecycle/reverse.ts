@@ -104,7 +104,7 @@ import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold, holdReasonLabel } from "@/lib/holdGate";
 import {
   voidPendingDraftAfterPublish, revokeLiveSharesForDocument, putBackRetiredIssue, describePutBackStatus,
-  recallOnRetirement, skipsRetirementRecall, recallsCopyHolders,
+  recallOnRetirement, recallsCopyHolders,
 } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
@@ -383,19 +383,22 @@ async function parkAsSuperseded(docId: string, supersessionReason: string, actor
  *  told and, when the park took away a controlled issue, its copy holders
  *  are recalled: one lib/revisions.ts recallOnRetirement per parked
  *  document, fired, never awaited, with the archive's rules — a document
- *  already Superseded or Archived before the park gets nothing again
- *  (skipsRetirementRecall), a Draft / In Review / Void one the watchers' FYI
+ *  whose retirement notice already stands on its record (a prior not in
+ *  force — DIST-16 done-when 2, the P28 integrator fix pass) gets nothing
+ *  again, a Draft / In Review / Void one the watchers' FYI
  *  only (recallsCopyHolders, DEC-90 R1). A reversal tells no checkout holder
  *  or package owner itself, so both stay in the watchers' audience. */
 function recallParked(parked: Map<string, string | null>, op: "split" | "merge", input: { orgId: string; actorUserId: string; actorEmail?: string }): void {
+  // DIST-16 done-when 2 (the P28 integrator fix pass): "already retired" is
+  // the parked document's recall record's to say (`retiredFrom`).
   for (const [docId, priorStatus] of parked) {
-    if (skipsRetirementRecall(priorStatus)) continue;
     recallOnRetirement({
       orgId: input.orgId, documentId: docId,
       newStatus: "Superseded", replacementNote: `The ${op} that created it was reversed.`,
       actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
       recallCopyHolders: recallsCopyHolders(priorStatus),
+      retiredFrom: priorStatus,
     });
   }
 }

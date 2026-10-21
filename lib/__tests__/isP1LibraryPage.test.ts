@@ -365,7 +365,7 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(T("documents").find((r) => r.id === "r3")!.status).toBe("Issued");
   });
 
-  it("P28 second fix pass: a title fix on a document already Archived whose basis read fails TWICE (read, then one retry) recalls no copy holder, but the watchers are still told — an unknown prior never retires silently; the save lands", async () => {
+  it("ruled by the integrator at the P28 merge (DEC-90): a title fix on a document already Archived whose basis read fails TWICE (read, then one retry) leaves the prior UNKNOWN — the copy holders ARE recalled and the watchers told (a possible second recall is the accepted cost); the save lands", async () => {
     const d = seed("r4", { status: "Archived" });
     const cds = vi.fn(changeDocumentStatus);
     state.db.selectErrors!.documents = (cols) => (cols === "*" ? { message: "503 basis read" } : null);
@@ -376,11 +376,11 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(basisReads()).toHaveLength(2);
     expect(T("documents").find((r) => r.id === "r4")).toMatchObject({ status: "Archived", title: "r4 fixed" });
     expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r4", newStatus: "Archived", recallCopyHolders: false });
+    expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r4", newStatus: "Archived", recallCopyHolders: true, retiredFrom: null });
     expect(st.error).toBeNull();
   });
 
-  it("P28 second fix pass: the STALE page — it shows Archived, another session put the document back to Issued; a title fix whose basis read fails twice still tells the watchers it was retired again (copy holders not recalled: the recorded trade-off)", async () => {
+  it("ruled by the integrator at the P28 merge (DEC-90): the STALE page — it shows Archived, another session put the document back to Issued; a title fix whose basis read fails twice retires it again, and its copy holders ARE recalled (P26's fail-safe — the held status never withholds a recall)", async () => {
     const d = seed("r6", { status: "Issued" });
     state.db.selectErrors!.documents = (cols) => (cols === "*" ? { message: "503 basis read" } : null);
     const { fn } = save(d, { pageSees: { status: "Archived" } });
@@ -388,7 +388,7 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
     expect(T("documents").find((r) => r.id === "r6")!.status).toBe("Archived");
     expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r6", newStatus: "Archived", recallCopyHolders: false });
+    expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r6", newStatus: "Archived", recallCopyHolders: true, retiredFrom: null });
   });
 
   it("P28 second fix pass: the stale page whose basis read fails ONCE — the retry reads the row (Issued), so the save is the retirement it is: copy holders recalled", async () => {
@@ -414,6 +414,22 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(T("documents").find((r) => r.id === "r8")).toMatchObject({ status: "Archived", title: "r8 fixed" });
     expect(recallRetiredDocument).not.toHaveBeenCalled();
     expect(st.error).toBeNull();
+  });
+
+  it("P28 integrator fix pass (PROD-17, DEC-90): before the signed-in member is known, the STALE page — it shows Archived, the row was put back to Issued — a title fix is refused, nothing written (never a re-retirement that tells nobody); a row that cannot be read refuses too", async () => {
+    const d = seed("r9", { status: "Issued" });
+    const cds = vi.fn(changeDocumentStatus);
+    const { fn } = save(d, { uid: null, cds, pageSees: { status: "Archived" } });
+    await expect(fn({ metadata: {}, core: { title: "r9 typo", documentNumber: "R9", status: "Archived" } }))
+      .rejects.toThrow(/^Save refused — nothing was saved: this save writes the status Archived, which can retire the document .* is not known yet\. Try again in a moment\.$/);
+    expect(cds).not.toHaveBeenCalled();
+    expect(updates()).toEqual([]);
+    expect(T("documents").find((r) => r.id === "r9")).toMatchObject({ status: "Issued", title: "r9" });
+    const e = seed("r10", { status: "Archived" });
+    state.db.selectErrors!.documents = (cols) => (cols === "status" ? { message: "503" } : null);
+    const second = save(e, { uid: null, cds });
+    await expect(second.fn({ metadata: {}, core: { title: "r10 typo", documentNumber: "R10", status: "Archived" } })).rejects.toThrow(/^Save refused — nothing was saved/);
+    expect(updates()).toEqual([]);
   });
 
   it("P28 fix pass: REGRESSION — the same failed read on a save that changes the status (page holds Issued, saves Archived) still recalls (an unknown prior recalls)", async () => {

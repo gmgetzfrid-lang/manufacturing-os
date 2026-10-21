@@ -67,7 +67,7 @@ const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
-import { listVersions, changeDocumentStatus, skipsRetirementRecall, recallsCopyHolders } from "@/lib/revisions";
+import { listVersions, changeDocumentStatus, recallsCopyHolders, finishBulkArchive } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import { isIssueTransition, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
@@ -1063,7 +1063,22 @@ export default function LibraryExplorerPage() {
   // via the metadata editor or the per-doc inspector.
   const handleBulkArchive = async () => {
     if (selectedDocIds.size === 0) return;
-    if (!(await appConfirm({ title: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}?`, message: "They keep their history but disappear from the default view." }))) return;
+    // REV-31 (document-control P28, the integrator's fix pass, DEC-90): an
+    // archive takes a reason (the Archive dialog requires one), asked ONCE
+    // for the whole apply, in place of the bare confirm — written to each
+    // archived row and on its ARCHIVE_DOC record. Cancel archives nothing.
+    const archiveReason = await appPrompt({
+      title: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}?`,
+      message: "They keep their history but disappear from the default view. Archiving retires each one: its review draft is voided, its live share links are revoked, its copy holders are recalled and its watchers told. The reason is recorded on each document's history.",
+      placeholder: "Reason for archiving",
+      confirmLabel: "Archive",
+      required: true,
+    });
+    if (archiveReason === null) return;
+    if (!archiveReason.trim()) {
+      await appAlert({ message: "Archive refused — nothing was archived: a reason is required.", tone: "danger" });
+      return;
+    }
     // PROD-17 (document-control P28 fix pass): a bulk archive retires every
     // row it lands, so while who is archiving (or the workspace) is not yet
     // known it is refused, nothing written — never an archive that told
@@ -1094,6 +1109,7 @@ export default function LibraryExplorerPage() {
       status: "Archived",
       archived_at: now,
       archived_by: uid ?? null,
+      archive_reason: archiveReason.trim(),
       updated_at: now,
       updated_by: uid ?? null,
     }).in("id", targets).select("id");
@@ -1104,13 +1120,14 @@ export default function LibraryExplorerPage() {
     // fired, never awaited: each copy holder gets one notice naming every
     // archived document they hold a copy of — recalled only for a row that
     // took away a controlled issue (recallsCopyHolders, DEC-90 R1) — and each
-    // document's watchers its FYI. A row already Superseded or Archived gets
-    // nothing again (skipsRetirementRecall).
+    // document's watchers their FYI. DIST-16 done-when 2 (the P28 integrator
+    // fix pass): each row's prior goes as `retiredFrom` — a row already
+    // retired gets nothing again only when its recall record says its
+    // retirement notice stands (no longer every Superseded / Archived prior).
     const recallDocs = [...done]
-      .filter((id) => !skipsRetirementRecall(priorStatusOf.get(id) ?? null))
       .map((id) => {
         const row = documents.find((d) => d.id === id);
-        return { documentId: id, libraryId, docLabel: row?.documentNumber || row?.title || row?.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(id) ?? null) };
+        return { documentId: id, libraryId, docLabel: row?.documentNumber || row?.title || row?.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(id) ?? null), retiredFrom: priorStatusOf.get(id) ?? null };
       });
     if (recallDocs.length > 0) {
       void import("@/lib/staleCopies").then(({ recallRetiredBatch }) => recallRetiredBatch({
@@ -1121,8 +1138,27 @@ export default function LibraryExplorerPage() {
       done.has(d.id!) ? { ...d, status: "Archived" as DocumentRecord["status"] } : d
     ));
     setSelectedDocIds(new Set());
-    if (held.size > 0 || done.size < targets.length) {
-      await appAlert({ message: `Archived ${done.size} of ${ids.length}. ${held.size ? `${held.size} under legal hold were skipped.` : ""} ${done.size < targets.length ? `${targets.length - done.size} were refused.` : ""}`.trim() });
+    // REV-31 (the P28 integrator fix pass): what the Archive dialog does
+    // around each archive — the review draft voided, the live share links
+    // revoked, the ARCHIVE_DOC record with the reason — for every row the
+    // write archived, checked; a duty that did not complete is said, its row
+    // named (the archive itself stands).
+    const { problems: dutyProblems } = done.size > 0
+      ? await finishBulkArchive({
+        orgId: recallOrg, actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
+        reason: archiveReason, via: "bulk_archive",
+        docs: [...done].map((id) => {
+          const row = documents.find((d) => d.id === id);
+          return { documentId: id, label: String(row?.documentNumber || row?.title || row?.name || id), versionId: row?.currentVersionId ?? null };
+        }),
+      })
+      : { problems: [] };
+    if (held.size > 0 || done.size < targets.length || dutyProblems.length > 0) {
+      const head = `Archived ${done.size} of ${ids.length}. ${held.size ? `${held.size} under legal hold were skipped.` : ""} ${done.size < targets.length ? `${targets.length - done.size} were refused.` : ""}`.trim();
+      const duties = dutyProblems.length > 0
+        ? `\n\n${dutyProblems.length} archived document${dutyProblems.length === 1 ? "" : "s"} — follow-up steps did not complete (the archive stands; do not archive again):\n${dutyProblems.map((p) => `${p.label}: ${p.problems.join("; ")}`).join("\n")}`
+        : "";
+      await appAlert({ message: `${head}${duties}`, tone: dutyProblems.length > 0 ? "danger" : undefined });
     }
   };
 
@@ -2926,6 +2962,19 @@ export default function LibraryExplorerPage() {
     // as before — a plain edit that worked keeps working.
     const retireOrgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
     const retiredUnchanged = toStatus !== undefined && (selectedDoc.status ?? "").trim() === toStatus.trim();
+    // PROD-17 (document-control P28, the integrator's fix pass at the merge,
+    // 2026-10-21, DEC-90 fail-safe): that pre-actor bare write is a plain
+    // edit only while the ROW still holds the retired status — this page's
+    // copy may be stale (another session put the document back in force), and
+    // then the write would re-retire it telling nobody. The row's status is
+    // read first: anything else, or a read that fails, refuses the save with
+    // the pre-actor sentence, nothing written.
+    if (toStatus !== undefined && isRetiredStatus(toStatus) && retiredUnchanged && (!uid || !retireOrgId)) {
+      const { data: rowNow, error: rowNowErr } = await supabase.from("documents").select("status").eq("id", selectedDoc.id).maybeSingle();
+      if (rowNowErr || String((rowNow as { status?: string | null } | null)?.status ?? "").trim() !== toStatus.trim()) {
+        throw new Error(`Save refused — nothing was saved: this save writes the status ${toStatus}, which can retire the document (its copy holders recalled, its watchers told), and who is saving it (your sign-in and workspace) is not known yet. Try again in a moment.`);
+      }
+    }
     if (toStatus !== undefined && isRetiredStatus(toStatus) && !(retiredUnchanged && (!uid || !retireOrgId))) {
       if (!uid || !retireOrgId) {
         throw new Error(`Save refused — nothing was saved: this save writes the status ${toStatus}, which can retire the document (its copy holders recalled, its watchers told), and who is saving it (your sign-in and workspace) is not known yet. Try again in a moment.`);

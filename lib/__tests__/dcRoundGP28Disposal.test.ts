@@ -4,7 +4,9 @@
 //   disposeDocument archives the record; once the disposal has landed, one
 //   lib/revisions.ts recallOnRetirement goes, fired and never awaited, with
 //   the archive's rules, decided from the status read fresh BEFORE the write:
-//   a record already Superseded or Archived gets nothing again; the copy
+//   a record already retired hands "already retired" to its recall record
+//   (retiredFrom — DIST-16 done-when 2, the P28 integrator fix pass; before
+//   it, every Superseded / Archived prior got nothing again); the copy
 //   holders are recalled only when it took away a controlled issue (DEC-90
 //   R1); the watchers are told either way. REGRESSION: every answer the
 //   disposal gave, it gives; a refused, held or legally-held disposal recalls
@@ -61,8 +63,7 @@ vi.mock("@/lib/revisions", async () => {
   const issue = await import("@/lib/issueStatus");
   return {
     recallOnRetirement: vi.fn(),
-    // the real one-liners (lib/revisions.ts skipsRetirementRecall / recallsCopyHolders)
-    skipsRetirementRecall: (s: string | null | undefined) => issue.isRetiredStatus(s) && (s ?? "").trim() !== "Void",
+    // the real one-liner (lib/revisions.ts recallsCopyHolders)
     recallsCopyHolders: (s: string | null | undefined) => issue.isControlledIssueStatus(s),
   };
 });
@@ -106,6 +107,8 @@ describe("PROD-17 (P28) — a retention disposal recalls and tells, once, with t
       actorUserId: "u1", actorName: "dana@x",
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
       recallCopyHolders: true,
+      // DIST-16 done-when 2 (the P28 integrator fix pass): the prior goes to the record's rule
+      retiredFrom: "Issued",
     });
     expect(state.writes.find((w) => w.table === "documents")?.payload).toMatchObject({ disposition_state: "disposed", status: "Archived" });
   });
@@ -121,20 +124,16 @@ describe("PROD-17 (P28) — a retention disposal recalls and tells, once, with t
     state.resolve = db({ statusReadFails: true });
     await disposeDocument({ documentId: "d1", orgId: "org1", actorId: "u1" });
     await settle();
-    expect(recall.mock.calls[0][0]).toMatchObject({ recallCopyHolders: true });
+    expect(recall.mock.calls[0][0]).toMatchObject({ recallCopyHolders: true, retiredFrom: null });
   });
 
-  it("a record already Archived or Superseded gets nothing again; a Void one tells its watchers only", async () => {
-    for (const s of ["Archived", "Superseded"]) {
+  it("DIST-16 done-when 2 (the P28 integrator fix pass): a record already Archived, Superseded or Void recalls no copy holder and hands \"already retired\" to its recall record (retiredFrom) — lib/staleCopies.ts sends nothing again when a retirement notice stands", async () => {
+    for (const s of ["Archived", "Superseded", "Void"]) {
       state.resolve = db({ status: s });
       await disposeDocument({ documentId: "d1", orgId: "org1", actorId: "u1" });
     }
     await settle();
-    expect(recall).not.toHaveBeenCalled();
-    state.resolve = db({ status: "Void" });
-    await disposeDocument({ documentId: "d1", orgId: "org1", actorId: "u1" });
-    await settle();
-    expect(recall.mock.calls.map((c) => c[0].recallCopyHolders)).toEqual([false]);
+    expect(recall.mock.calls.map((c) => [c[0].retiredFrom, c[0].recallCopyHolders])).toEqual([["Archived", false], ["Superseded", false], ["Void", false]]);
   });
 
   it("REGRESSION: a refused, held or legally-held disposal answers as before and recalls nothing", async () => {

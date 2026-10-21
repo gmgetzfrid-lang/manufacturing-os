@@ -304,11 +304,38 @@ export async function recallRetiredDocument(input: {
    *  DISTRIBUTION_RECALL row is written: "destroy old prints" is false for
    *  a document that was never issued. The watchers' FYI below goes as it
    *  does for any retirement. Default true: supersede and every other
-   *  caller recall exactly as before. */
+   *  caller recall exactly as before. (DIST-16 done-when 2, the P28
+   *  integrator fix pass: the watchers' FYI is now on the record too — a
+   *  `watchersOnly` DISTRIBUTION_RECALL row naming nobody, written once the
+   *  FYI went, when no recall row was.) */
   recallCopyHolders?: boolean;
+  /** DIST-16 done-when 2 (document-control P28, the integrator's fix pass at
+   *  the merge, 2026-10-21, DEC-90): the status the door read just before
+   *  its write, given by every door that leaves "already retired" to the
+   *  document's RECORD (the archive, a status change, a split, a merge, a
+   *  reversal's park, a disposal, the bulk doors — each calls this for every
+   *  retirement it lands). A prior that was IN FORCE — a controlled issue,
+   *  or one the read did not give (null; lib/issueStatus.ts
+   *  isControlledIssueStatus counts both) — is never "already retired": the
+   *  recall goes as it always has and the record is not read (a record that
+   *  missed a return to force can never suppress a recall). Any other prior
+   *  (Draft, In Review, Void, Superseded, Archived) is "already retired" only
+   *  when the record shows a retirement notice since the document's last
+   *  return to force (retirementNoticeStands): then nothing goes again — no
+   *  second watchers' FYI, and no copy holder was owed one (that prior took
+   *  away no controlled issue, DEC-90 R1). No notice on record (a
+   *  retirement by a door that told nobody, before this deploy) → its
+   *  watchers are told now. A record that cannot be read sends (a second FYI
+   *  over none). Absent (supersede): the caller decided, as before. */
+  retiredFrom?: string | null;
 }): Promise<number> {
   try {
+    if (input.retiredFrom !== undefined && !isControlledIssueStatus(input.retiredFrom)
+      && (await retirementNoticeStands(input.documentId)) === true) {
+      return 0;
+    }
     let holders: string[] = [];
+    let recorded = false;
     if (input.recallCopyHolders !== false) {
       // DELIV-17 (document-control P28): the read is CHECKED and retried
       // once (readRetirementHolders). A read that still fails is logged and
@@ -317,13 +344,25 @@ export async function recallRetiredDocument(input: {
       // shape) — never the silent "nobody held a copy" it used to be.
       const read = await readRetirementHolders(input.documentId, input.actorUserId);
       if (read.error === null) holders = read.holders;
-      else await recordUncomputedRecall(input, read.error);
+      else { await recordUncomputedRecall(input, read.error); recorded = true; }
     }
     // The copy holders' recall goes out FIRST, with its DIST-10 audit row
     // (review fix, N15): it is the safety notice, and it must not wait on
     // the watchers' FYI below — whose discover check, follower reads and
     // inserts can be slow or never finish (a closed tab, a stalled route).
     if (holders.length > 0) {
+      // DIST-16 race (the P28 integrator fix pass, DEC-90): every door fires
+      // this chain without awaiting it, so a restore can land before it
+      // sends. The document's status is read just before the recall: back
+      // IN FORCE already (a controlled issue, not a retired status — a read
+      // that fails or gives nothing is not "in force", and the recall goes),
+      // nothing is sent — no "your copy is dead paper" for a drawing in
+      // force, no watchers' FYI that it is retired — and it is logged.
+      const backBefore = await readBackInForce(input.documentId);
+      if (backBefore) {
+        console.warn(`[staleCopies] DIST-16: document ${input.documentId} was back in force (${backBefore}) before its retirement recall (${input.newStatus}) was sent, so none was sent`);
+        return 0;
+      }
       await emit({
         orgId: input.orgId,
         category: "recall",
@@ -345,6 +384,22 @@ export async function recallRetiredDocument(input: {
       // investigation must be able to answer "when was it recalled, who was on
       // the list" from the record, not from cleared bell notifications.
       await recordRetirementRecall(input, holders);
+      recorded = true;
+      // DIST-16 race: a restore that landed while the recall was going out
+      // read the record BEFORE the row above existed, so its withdrawal found
+      // nothing to withdraw. The status is read again now that the row is
+      // written: back in force, the recall just sent is withdrawn here
+      // (withdrawRetirementRecall reads the row back — a restore whose own
+      // withdrawal already ran left a withdrawal row, so nothing goes twice),
+      // and no watchers' FYI follows.
+      const backAfter = await readBackInForce(input.documentId);
+      if (backAfter) {
+        await withdrawRetirementRecall({
+          orgId: input.orgId, documentId: input.documentId, libraryId: input.libraryId ?? null, docLabel: input.docLabel,
+          restoredStatus: backAfter, door: "restored_during_recall", actorUserId: input.actorUserId, actorName: null,
+        });
+        return holders.length;
+      }
     }
     // PROD-17 (notifications N15): the document's WATCHERS are told it was
     // retired, in their own words ("your copy is dead paper" is false for a
@@ -383,6 +438,10 @@ export async function recallRetiredDocument(input: {
         metadata: { retirement: true, followerNotice: true, newStatus: input.newStatus },
         emailOnlyWithBell: true,
       });
+      // DIST-16 done-when 2: a retirement that recalled nobody is on the
+      // record too, once its watchers' FYI went — what a later door reads to
+      // know they were told (retirementNoticeStands).
+      if (!recorded) await recordWatchersOnlyRetirement(input);
     } catch { /* the recall above already went out */ }
     return holders.length;
   } catch (e) {
@@ -478,27 +537,117 @@ async function recordRetirementRecall(input: RetirementRecallInput, holders: str
   } catch { /* the recall itself already went out */ }
 }
 
+/** DIST-16 done-when 2 (P28 integrator fix pass): a retirement whose
+ *  watchers were told and whose copy holders were not recalled (none held a
+ *  copy, or the retirement took away no controlled issue) — on the record as
+ *  a DISTRIBUTION_RECALL row naming nobody, `watchersOnly: true` (the audit
+ *  viewers label it a retirement notice). A refused row is logged; the next
+ *  retirement door then tells the watchers again (a second FYI over none). */
+async function recordWatchersOnlyRetirement(input: RetirementRecallInput, extra: Record<string, unknown> = {}): Promise<void> {
+  try {
+    const res = await logRevisionEvent({
+      orgId: input.orgId,
+      documentId: input.documentId,
+      versionId: "",
+      userId: input.actorUserId,
+      userEmail: input.actorName ?? "",
+      userRole: "",
+      type: "DISTRIBUTION_RECALL",
+      details: { retirement: true, newStatus: input.newStatus, recipientCount: 0, recipients: [], watchersOnly: true, ...extra },
+    });
+    if (res && res.ok === false) console.error(`[staleCopies] DIST-16: the record that the watchers of document ${input.documentId} were told of its retirement was refused (${res.error})`);
+  } catch (e) {
+    console.error(`[staleCopies] DIST-16: the record that the watchers of document ${input.documentId} were told of its retirement was not written`, e);
+  }
+}
+
+/** DIST-16 done-when 2 (P28 integrator fix pass): does a retirement notice
+ *  stand on the document since its last return to force? Its
+ *  DISTRIBUTION_RECALL rows newest first: a withdrawal row
+ *  (`recallWithdrawn: true` — every restore that puts back in force a
+ *  document with a retirement notice standing writes one, even when nobody
+ *  was recalled) ends the read with no; a `retirement: true` row before it
+ *  (a recall, an unavailable recall, a watchers-only notice) is yes. null
+ *  when the record cannot be read — the caller then sends (fail-safe).
+ *  Consulted only for a prior that was not in force (a forged row can at
+ *  most withhold a watchers' FYI, never a copy-holder recall). */
+async function retirementNoticeStands(documentId: string): Promise<boolean | null> {
+  try {
+    const { data, error } = await supabase
+      .from("audit_logs")
+      .select("details, timestamp")
+      .eq("resource_type", "document")
+      .eq("resource_id", documentId)
+      .eq("action", "DISTRIBUTION_RECALL")
+      .order("timestamp", { ascending: false })
+      .limit(200);
+    if (error) {
+      console.warn(`[staleCopies] DIST-16: the recall record of document ${documentId} could not be read (${error.message}), so its retirement notice is sent`);
+      return null;
+    }
+    for (const r of ((data as Array<{ details: Record<string, unknown> | null }> | null) ?? [])) {
+      const d = r.details ?? {};
+      if (d.recallWithdrawn === true) return false;
+      if (d.retirement === true) return true;
+    }
+    return false;
+  } catch (e) {
+    console.warn(`[staleCopies] DIST-16: the recall record of document ${documentId} could not be read, so its retirement notice is sent`, e);
+    return null;
+  }
+}
+
+/** DIST-16 race (P28 integrator fix pass): the document's status when it is
+ *  back IN FORCE — a non-blank controlled issue status that is not a
+ *  retired one — else null. A read that fails, throws or finds no row is
+ *  null: the recall is never withheld on a guess. */
+async function readBackInForce(documentId: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.from("documents").select("status").eq("id", documentId).maybeSingle();
+    if (error) return null;
+    const status = String(((data as { status?: string | null } | null)?.status) ?? "").trim();
+    return status && isControlledIssueStatus(status) && !isRetiredStatus(status) ? status : null;
+  } catch {
+    return null;
+  }
+}
+
 /** PROD-17 (document-control P28): the BULK retirement doors' recall — the
  *  library page's bulk archive and the bulk editor's Superseded / Archived.
  *  One call per apply, never awaited by the door (the caller fires it).
  *  Each door reads the selected rows' statuses ONCE, fresh, before its
  *  write (never the page's copy; a failed read leaves a row's prior
- *  unknown, which recalls — lib/revisions.ts recallsCopyHolders), leaves
- *  out the rows already Superseded or Archived (skipsRetirementRecall —
- *  their watchers were told when that retirement happened), and passes
- *  `recallCopyHolders` per row: true only for a row that took away a
- *  controlled issue (DEC-90 R1). Then, here:
+ *  unknown, which recalls — lib/revisions.ts recallsCopyHolders), passes
+ *  every row it retired with `recallCopyHolders` — true only for a row that
+ *  took away a controlled issue (DEC-90 R1) — and its prior as `retiredFrom`
+ *  (DIST-16 done-when 2, the P28 integrator fix pass: a row whose prior was
+ *  not in force is left out when the document's record shows a retirement
+ *  notice since its last return to force, recallRetiredDocument's rule;
+ *  before that pass the doors left out every Superseded / Archived prior
+ *  themselves). Then, here:
  *    · each such document's copy holders are read (checked, retried once —
  *      DELIV-17; a read that fails is logged and recorded unavailable);
+ *    · a document already back IN FORCE (a restore that landed first — the
+ *      DIST-16 race, P28 integrator fix pass) is dropped: nothing is sent
+ *      for it;
  *    · each HOLDER gets ONE doc_recalled for the whole apply, naming every
  *      document of it they hold a copy of — never one notice (and one
  *      preference-exempt safety_recall email) per row: a 150-row bulk
  *      archive used to be the burst P26's fix pass reverted;
  *    · each document gets its own DISTRIBUTION_RECALL row (DIST-10 — the
- *      record a later restore's withdrawal reads back, DIST-16);
- *    · then each document's watchers get its doc_retired FYI, minus that
- *      document's copy holders — the bulk doors send no personal notice to
- *      a checkout holder or a package owner, so those stay in.
+ *      record a later restore's withdrawal reads back, DIST-16); a document
+ *      found back in force once its row is written has that recall
+ *      withdrawn (withdrawRetirementRecall) and no FYI;
+ *    · then the watchers: each follower of ONE retired document of a
+ *      library gets that document's doc_retired FYI, word for word as
+ *      recallRetiredDocument sends it; a follower of SEVERAL retired
+ *      documents of one library gets ONE FYI naming them (P28 integrator fix
+ *      pass, DEC-90 — grouped as the holders' recall is: on the library,
+ *      `namesDocuments` so the dispatcher checks they may discover each one
+ *      it names). Each document's copy holders are left out of its FYI (the
+ *      bulk doors send no personal notice to a checkout holder or a package
+ *      owner, so those stay in). A document that recalled nobody gets a
+ *      watchers-only row once its FYI went (DIST-16 done-when 2).
  *  Returns how many people were recalled. */
 export async function recallRetiredBatch(input: {
   orgId: string;
@@ -506,7 +655,7 @@ export async function recallRetiredBatch(input: {
   actorUserId: string;
   actorName?: string | null;
   replacementNote?: string | null;
-  docs: Array<{ documentId: string; libraryId?: string | null; docLabel: string; recallCopyHolders: boolean }>;
+  docs: Array<{ documentId: string; libraryId?: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom?: string | null }>;
 }): Promise<number> {
   try {
     const per = (d: (typeof input.docs)[number]): RetirementRecallInput => ({
@@ -516,13 +665,33 @@ export async function recallRetiredBatch(input: {
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
       recallCopyHolders: d.recallCopyHolders,
     });
-    const docs = [...new Map(input.docs.map((d) => [d.documentId, d])).values()];
+    const docs: typeof input.docs = [];
+    for (const d of new Map(input.docs.map((x) => [x.documentId, x])).values()) {
+      // DIST-16 done-when 2: "already retired" from the record, for a prior not in force.
+      if (d.retiredFrom !== undefined && !isControlledIssueStatus(d.retiredFrom)
+        && (await retirementNoticeStands(d.documentId)) === true) continue;
+      docs.push(d);
+    }
     const holdersOf = new Map<string, string[]>();
+    const recordedIds = new Set<string>();
+    const backInForce = new Set<string>();
     for (const d of docs) {
       if (!d.recallCopyHolders) continue;
       const read = await readRetirementHolders(d.documentId, input.actorUserId);
-      if (read.error === null) holdersOf.set(d.documentId, read.holders);
-      else await recordUncomputedRecall(per(d), read.error);
+      if (read.error === null) {
+        if (read.holders.length === 0) continue;
+        // DIST-16 race: back in force before anything is sent — dropped.
+        const back = await readBackInForce(d.documentId);
+        if (back) {
+          console.warn(`[staleCopies] DIST-16: document ${d.documentId} was back in force (${back}) before its retirement recall (${input.newStatus}) was sent, so none was sent`);
+          backInForce.add(d.documentId);
+          continue;
+        }
+        holdersOf.set(d.documentId, read.holders);
+      } else {
+        await recordUncomputedRecall(per(d), read.error);
+        recordedIds.add(d.documentId);
+      }
     }
     // One notice per holder for the whole apply: holders with the same set
     // of documents share one emit.
@@ -581,16 +750,37 @@ export async function recallRetiredBatch(input: {
     }
     for (const d of docs) {
       const holders = holdersOf.get(d.documentId) ?? [];
-      if (holders.length > 0) await recordRetirementRecall(per(d), holders, { batch: true });
+      if (holders.length === 0) continue;
+      await recordRetirementRecall(per(d), holders, { batch: true });
+      recordedIds.add(d.documentId);
+      // DIST-16 race: a restore that landed while the recall went out read
+      // the record before this row existed — the recall is withdrawn here.
+      const back = await readBackInForce(d.documentId);
+      if (back) {
+        backInForce.add(d.documentId);
+        await withdrawRetirementRecall({
+          orgId: input.orgId, documentId: d.documentId, libraryId: d.libraryId ?? null, docLabel: d.docLabel || "A document",
+          restoredStatus: back, door: "restored_during_recall", actorUserId: input.actorUserId, actorName: null,
+        });
+      }
     }
-    // Each document's watchers, after every recall and record: the FYI
-    // recallRetiredDocument sends, word for word, minus that document's copy
-    // holders (the bulk doors tell no checkout holder or package owner).
-    for (const doc of docs) {
+    // The watchers, after every recall and record (a document back in force
+    // gets no FYI). A follower of several retired documents of one library
+    // is moved out of each one's own FYI into ONE grouped FYI; the follow
+    // list is read once, checked — unreadable, every document's own FYI goes
+    // to all its watchers, as before (a second notice over none).
+    const fyiDocs = docs.filter((d) => !backInForce.has(d.documentId));
+    const toldElsewhereOf = new Map<string, string[]>();
+    for (const doc of fyiDocs) {
+      try { toldElsewhereOf.set(doc.documentId, await personallyToldOfRetirement(per(doc))); } catch { toldElsewhereOf.set(doc.documentId, []); }
+    }
+    const followerGroups = await groupRetirementFollowers(input.actorUserId, fyiDocs, (id) => [...(holdersOf.get(id) ?? []), ...(toldElsewhereOf.get(id) ?? [])]);
+    for (const doc of fyiDocs) {
       const d = per(doc);
       const holders = holdersOf.get(d.documentId) ?? [];
       try {
-        const toldElsewhere = await personallyToldOfRetirement(d);
+        const toldElsewhere = toldElsewhereOf.get(d.documentId) ?? [];
+        const grouped = followerGroups.movedOut.get(d.documentId) ?? [];
         await emit({
           orgId: input.orgId,
           category: "watched",
@@ -602,9 +792,43 @@ export async function recallRetiredBatch(input: {
           resource: { type: "document", id: d.documentId },
           actorUserId: input.actorUserId,
           actorName: input.actorName ?? undefined,
-          audience: { followers: true, exclude: [...new Set([...holders, ...toldElsewhere])] },
+          audience: { followers: true, exclude: [...new Set([...holders, ...toldElsewhere, ...grouped])] },
           metadata: { retirement: true, followerNotice: true, newStatus: d.newStatus },
           emailOnlyWithBell: true,
+        });
+        if (!recordedIds.has(d.documentId)) await recordWatchersOnlyRetirement(d, { batch: true });
+      } catch { /* the recalls above already went out */ }
+    }
+    for (const g of followerGroups.groups) {
+      const named = g.docIds.map((id) => byId.get(id)!);
+      const shown = named.slice(0, 10);
+      const verb = input.newStatus.toLowerCase();
+      try {
+        await emit({
+          orgId: input.orgId,
+          category: "watched",
+          kind: "doc_retired",
+          title: `${named.length} documents you follow were retired (${input.newStatus})`,
+          body: `${input.actorName || "Someone"} retired these documents (${verb}); there is no current revision of them to work from: ` +
+            `${shown.map((d) => d.docLabel || "A document").join(", ")}${named.length > shown.length ? ` and ${named.length - shown.length} more` : ""}.` +
+            (input.replacementNote ? ` ${input.replacementNote}` : ""),
+          link: `/documents/${g.libraryId}`,
+          resource: { type: "library", id: g.libraryId },
+          actorUserId: input.actorUserId,
+          actorName: input.actorName ?? undefined,
+          audience: { involved: g.followers },
+          metadata: { retirement: true, followerNotice: true, newStatus: input.newStatus, documentIds: g.docIds },
+          emailOnlyWithBell: true,
+          // NEDGE-22: a follower is told the names only while they may
+          // discover every document named; else the notice without them.
+          namesDocuments: {
+            ids: shown.map((d) => d.documentId),
+            unnamed: {
+              title: `Documents you follow were retired (${input.newStatus})`,
+              body: `${input.actorName || "Someone"} retired documents you follow (${verb}); there is no current revision of them to work from. Open the library to see the ones you have access to.`,
+              link: `/documents/${g.libraryId}`,
+            },
+          },
         });
       } catch { /* the recalls above already went out */ }
     }
@@ -613,6 +837,70 @@ export async function recallRetiredBatch(input: {
     console.error(`[staleCopies] DELIV-17: the bulk retirement recall (${input.newStatus}, ${input.docs.length} document(s)) failed part-way`, e);
     return 0;
   }
+}
+
+/** PROD-17 (P28 integrator fix pass, DEC-90): the bulk doors' watchers,
+ *  grouped per follower — each retired document's followers (its
+ *  `subscriptions` rows, read once, checked, in chunks), minus the actor and
+ *  the people `excluded` names for it (its copy holders, anyone told
+ *  personally). A follower of TWO or more of the documents in one library is
+ *  one grouped notice's audience (`groups`: one per library and set of
+ *  documents) and is moved out of each of those documents' own FYI
+ *  (`movedOut`). A follower of one is left to that document's own FYI. A
+ *  document with no library is never grouped. A read that fails groups
+ *  nobody (every document's own FYI goes as before). */
+async function groupRetirementFollowers(
+  actorUserId: string,
+  docs: Array<{ documentId: string; libraryId?: string | null }>,
+  excluded: (documentId: string) => string[],
+): Promise<{ groups: Array<{ libraryId: string; docIds: string[]; followers: string[] }>; movedOut: Map<string, string[]> }> {
+  const none = { groups: [], movedOut: new Map<string, string[]>() };
+  const ids = docs.filter((d) => !!d.libraryId).map((d) => d.documentId);
+  if (ids.length < 2) return none;
+  const followersOf = new Map<string, Set<string>>();
+  try {
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error } = await supabase
+        .from("subscriptions")
+        .select("user_id, resource_id")
+        .eq("resource_type", "document")
+        .in("resource_id", ids.slice(i, i + 100));
+      if (error) {
+        console.warn(`[staleCopies] PROD-17: the follow list of the retired documents could not be read (${error.message}) — each document's own FYI goes to all its watchers`);
+        return none;
+      }
+      for (const r of ((data as Array<{ user_id: string | null; resource_id: string | null }> | null) ?? [])) {
+        if (!r.user_id || !r.resource_id) continue;
+        followersOf.set(r.resource_id, (followersOf.get(r.resource_id) ?? new Set()).add(r.user_id));
+      }
+    }
+  } catch (e) {
+    console.warn("[staleCopies] PROD-17: the follow list of the retired documents could not be read — each document's own FYI goes to all its watchers", e);
+    return none;
+  }
+  const docsOf = new Map<string, { libraryId: string; uid: string; docIds: string[] }>();
+  for (const d of docs) {
+    if (!d.libraryId) continue;
+    const skip = new Set([actorUserId, ...excluded(d.documentId)]);
+    for (const u of followersOf.get(d.documentId) ?? []) {
+      if (skip.has(u)) continue;
+      const key = `${d.libraryId}\u0000${u}`;
+      const e = docsOf.get(key) ?? { libraryId: d.libraryId, uid: u, docIds: [] };
+      e.docIds.push(d.documentId);
+      docsOf.set(key, e);
+    }
+  }
+  const groups = new Map<string, { libraryId: string; docIds: string[]; followers: string[] }>();
+  const movedOut = new Map<string, string[]>();
+  for (const e of docsOf.values()) {
+    if (e.docIds.length < 2) continue;
+    const key = `${e.libraryId}\u0000${e.docIds.join("|")}`;
+    const g = groups.get(key) ?? { libraryId: e.libraryId, docIds: e.docIds, followers: [] };
+    g.followers.push(e.uid);
+    groups.set(key, g);
+    for (const id of e.docIds) movedOut.set(id, [...(movedOut.get(id) ?? []), e.uid]);
+  }
+  return { groups: [...groups.values()], movedOut };
 }
 
 /** DIST-16 (document-control P28): a document put back IN FORCE — an
@@ -646,7 +934,10 @@ export async function withdrawRetirementRecall(input: {
   libraryId?: string | null;
   docLabel?: string | null;
   restoredStatus: string | null;
-  door: "unarchive" | "split_reversed" | "merge_reversed" | "put_back";
+  /** "restored_during_recall" (P28 integrator fix pass): the retirement
+   *  recall itself, finding the document back in force once its row was
+   *  written (recallRetiredDocument / recallRetiredBatch — the DIST-16 race). */
+  door: "unarchive" | "split_reversed" | "merge_reversed" | "put_back" | "restored_during_recall";
   actorUserId: string;
   actorName?: string | null;
 }): Promise<number> {
@@ -659,7 +950,16 @@ export async function withdrawRetirementRecall(input: {
       await recordWithdrawal(input, restored, [], null, { withdrawalUnavailable: true, readError: read.error });
       return 0;
     }
-    if (read.people.length === 0) return 0;
+    if (read.people.length === 0) {
+      // DIST-16 done-when 2 (P28 integrator fix pass): back in force with a
+      // retirement notice standing but nobody to withdraw it from (a
+      // watchers-only notice, an unavailable recall, a row not borne out) —
+      // the return to force is still recorded (a withdrawal row naming
+      // nobody, no notice), so the next retirement door reads it as not
+      // already retired. Nothing is written when no notice stands.
+      if (read.noticeSince) await recordWithdrawal(input, restored, [], null, { returnedToForce: true });
+      return 0;
+    }
     let docLabel = input.docLabel ?? null;
     let libraryId = input.libraryId ?? null;
     if (!docLabel || !libraryId) {
@@ -687,7 +987,9 @@ export async function withdrawRetirementRecall(input: {
 }
 
 type StandingRecall =
-  | { ok: true; people: string[]; recallAt: string | null; recalledAs: string | null }
+  /** noticeSince (P28 integrator fix pass): any `retirement: true` row since
+   *  the last withdrawal — a retirement notice of any kind stands. */
+  | { ok: true; people: string[]; recallAt: string | null; recalledAs: string | null; noticeSince: boolean }
   | { ok: false; error: string };
 
 /** DIST-16: the retirement recall standing on a document — the people every
@@ -726,15 +1028,17 @@ async function readStandingRecall(documentId: string, actorUserId: string): Prom
   if (error) return { ok: false, error: error.message ?? "the recall record could not be read" };
   const rows = ((data as Array<{ details: Record<string, unknown> | null; timestamp: string | null }> | null) ?? []);
   const claimed: Array<{ at: string | null; recipients: string[]; newStatus: string | null }> = [];
+  let noticeSince = false;
   for (const r of rows) {           // newest first
     const d = r.details ?? {};
     if (d.recallWithdrawn === true) break;
+    if (d.retirement === true) noticeSince = true;
     if (d.retirement !== true || d.unavailable === true) continue;
     const recipients = Array.isArray(d.recipients) ? [...new Set((d.recipients as unknown[]).filter((u): u is string => typeof u === "string" && !!u))] : [];
     const newStatus = typeof d.newStatus === "string" && isRetiredStatus(d.newStatus) ? d.newStatus.trim() : null;
     if (recipients.length > 0) claimed.push({ at: r.timestamp ?? null, recipients, newStatus });
   }
-  if (claimed.length === 0) return { ok: true, people: [], recallAt: null, recalledAs: null };
+  if (claimed.length === 0) return { ok: true, people: [], recallAt: null, recalledAs: null, noticeSince };
   const pullers = await readDocumentPullers(documentId, [...new Set(claimed.flatMap((c) => c.recipients))]);
   if (!pullers.ok) return { ok: false, error: pullers.error };
   const standing = claimed.filter((c) => {
@@ -743,7 +1047,7 @@ async function readStandingRecall(documentId: string, actorUserId: string): Prom
     return borne;
   });
   const people = [...new Set(standing.flatMap((s) => s.recipients))].filter((u) => u !== actorUserId && pullers.users.has(u));
-  return { ok: true, people, recallAt: standing[0]?.at ?? null, recalledAs: standing[0]?.newStatus ?? null };
+  return { ok: true, people, recallAt: standing[0]?.at ?? null, recalledAs: standing[0]?.newStatus ?? null, noticeSince };
 }
 
 /** DIST-16 (P28 second fix pass): which of `candidates` the document's
@@ -836,6 +1140,7 @@ export async function withdrawRetirementBatch(input: {
       .map((d) => [d.documentId, d] as const)).values()];
     if (docs.length === 0) return 0;
     const standingOf = new Map<string, { people: string[]; recallAt: string | null; recalledAs: string | null }>();
+    const returnedOnly: typeof docs = [];
     for (const d of docs) {
       let read: StandingRecall;
       try { read = await readStandingRecall(d.documentId, input.actorUserId); } catch (e) { read = { ok: false, error: (e as Error)?.message || String(e) }; }
@@ -845,7 +1150,12 @@ export async function withdrawRetirementBatch(input: {
         continue;
       }
       if (read.people.length > 0) standingOf.set(d.documentId, read);
+      else if (read.noticeSince) returnedOnly.push(d);
     }
+    // DIST-16 done-when 2 (P28 integrator fix pass): as the single door — a
+    // notice standing with nobody to withdraw it from is closed by a
+    // withdrawal row naming nobody (no notice).
+    for (const d of returnedOnly) await recordWithdrawal({ ...input, documentId: d.documentId }, d.restoredStatus, [], null, { returnedToForce: true, batch: true });
     if (standingOf.size === 0) return 0;
     const docsOfPerson = new Map<string, string[]>();
     for (const d of docs) for (const u of standingOf.get(d.documentId)?.people ?? []) docsOfPerson.set(u, [...(docsOfPerson.get(u) ?? []), d.documentId]);
