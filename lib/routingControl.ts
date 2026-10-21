@@ -427,19 +427,62 @@ export function seededSlotsFor(ticket: {
   return out;
 }
 
+/** A routing slot as a save compares it with the stored table: its parsed
+ *  shape with object keys in a fixed order, the opt-in left out (the opt-in
+ *  is what the comparison decides, never part of it). */
+function slotFingerprint(s: RoutingSlot): string {
+  const canon = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(canon);
+    if (v && typeof v === "object") return Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])]));
+    return v;
+  };
+  const rest: Record<string, unknown> = { ...s };
+  delete rest.consent_confirmed;
+  return JSON.stringify(canon(rest));
+}
+
+/**
+ * DEC-90 rulings (2) and (3) for DF-P7 (merge-time fix pass): the slots of
+ * `control` an editor TOUCHED in this save — new (no stored slot of that
+ * kind) or changed (its parsed shape differs from the stored slot's, the
+ * opt-in aside). `stored` is the raw value stored at the level (null: none
+ * declared — every slot is new; a stored value that does not parse is
+ * replaced whole — every slot is new). Pure.
+ */
+export function touchedSlotKinds(control: RoutingControl, stored: unknown): Set<string> {
+  const parsedDraft = parseRoutingControl(control);
+  const draftSlots = parsedDraft && parsedDraft.ok ? parsedDraft.control.slots : control.slots;
+  const parsedStored = parseRoutingControl(stored);
+  const before = new Map((parsedStored && parsedStored.ok ? parsedStored.control.slots : []).map((s) => [s.kind, slotFingerprint(s)]));
+  return new Set(draftSlots.filter((s) => before.get(s.kind) !== slotFingerprint(s)).map((s) => s.kind));
+}
+
+/** The stored slots carrying the opt-in, by kind (pure). */
+function storedConfirmedKinds(stored: unknown): Set<string> {
+  const p = parseRoutingControl(stored);
+  return new Set(p && p.ok ? p.control.slots.filter((s) => s.mode === "consent_window" && s.consent_confirmed === true).map((s) => s.kind) : []);
+}
+
 /** Validate an editor's draft before it is written; the same rule the
- *  resolver applies to a stored value. */
-export function validateRoutingDraft(control: RoutingControl | null): string | null {
+ *  resolver applies to a stored value. `stored` (the raw value stored at
+ *  the level, null for none) lets an untouched stored slot pass — see
+ *  below; omitted, every slot is treated as new. */
+export function validateRoutingDraft(control: RoutingControl | null, stored?: unknown): string | null {
   if (control === null) return null;
   const p = parseRoutingControl(control);
   if (p && !p.ok) return p.error;
   // GAP-109 / DEC-90 ruling (1) for DF-P7: silence never stands in for the
-  // engineering sign-off — the highest class of review — so a NEW table that
+  // engineering sign-off — the highest class of review — so a table that
   // puts a consent window on a slot filled by an engineering capability is
-  // refused with the reason. (A stored one is not invalid: it waits as a
-  // sign-off — lib/consentWindow.ts planConsentWindow — so no in-flight
-  // review changes.)
-  const eng = p?.ok ? p.control.slots.find((s) => s.mode === "consent_window" && !!s.fill.capability && CONSENT_REFUSED_CAPABILITIES.includes(s.fill.capability)) : undefined;
+  // refused with the reason. DEC-90 ruling (2) (merge-time fix pass, no
+  // regression): refused only when THAT slot is new or changed in this
+  // save. A stored one the editor did not touch passes — a save that
+  // edits another slot's label works exactly as before — and it waits as a
+  // sign-off (lib/consentWindow.ts planConsentWindow; the cron re-reads the
+  // slot and never opens or closes a window on it), so no in-flight review
+  // changes.
+  const touched = p?.ok && stored !== undefined ? touchedSlotKinds(p.control, stored) : null;
+  const eng = p?.ok ? p.control.slots.find((s) => s.mode === "consent_window" && !!s.fill.capability && CONSENT_REFUSED_CAPABILITIES.includes(s.fill.capability) && (!touched || touched.has(s.kind))) : undefined;
   if (eng) return `slot "${eng.kind}": a consent window cannot stand in for the engineering sign-off — make it a "must sign off" slot`;
   return null;
 }
@@ -458,10 +501,24 @@ export async function setRoutingControl(input: {
   id: string;
   control: RoutingControl | null;
 }): Promise<void> {
-  const invalid = validateRoutingDraft(input.control);
+  // DEC-90 rulings (2) and (3) (DF-P7 merge-time fix pass): the save is
+  // compared with the table stored at this level — only a slot the editor
+  // touched is held to the new consent rule, and only a consent slot the
+  // editor touched is opted into the consent window. A stored table that
+  // cannot be read is never guessed at (that would opt untouched slots in).
+  let stored: unknown = null;
+  if (input.control !== null) {
+    const before = await readRoutingControlAt(input.level, input.id);
+    if (!before.ok) {
+      if (before.missing) throw new Error("Review routing needs database update 20261241 — ask an Admin to apply it, then try again.");
+      throw new Error(`The routing table was not saved — the table stored here could not be read to compare with: ${before.error}. Try again in a moment.`);
+    }
+    stored = before.value;
+  }
+  const invalid = validateRoutingDraft(input.control, stored);
   if (invalid) throw new Error(`This routing table can't be saved: ${invalid}.`);
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  const res = await checkedWrite(supabase.from(table).update({ routing_control: confirmConsentSlots(input.control) }).eq("id", input.id).select("id"));
+  const res = await checkedWrite(supabase.from(table).update({ routing_control: confirmConsentSlots(input.control, stored) }).eq("id", input.id).select("id"));
   if (res.ok) return;
   if (res.pgCode === "42703" || res.pgCode === "PGRST204") throw new Error("Review routing needs database update 20261241 — ask an Admin to apply it, then try again.");
   if (res.code === "refused") {
@@ -471,17 +528,27 @@ export async function setRoutingControl(input: {
 }
 
 /** GAP-109 (DF-P7 fix pass 3): the table as a controller saves it under the
- *  consent-window label — every consent-window slot carries the opt-in
+ *  consent-window label — a consent-window slot carries the opt-in
  *  (`consent_confirmed: true`), every other slot none. A save is the
- *  re-confirmation DEC-44 (DF-P7-consent) item 18 asks for. Pure. */
-export function confirmConsentSlots(control: RoutingControl | null): RoutingControl | null {
+ *  re-confirmation DEC-44 (DF-P7-consent) item 18 asks for.
+ *  DEC-90 ruling (3) (merge-time fix pass, fail-safe opt-in): with `stored`
+ *  (the raw value stored at the level, null for none) the opt-in is stamped
+ *  ONLY on a consent slot that is new or changed in this save (the editor
+ *  touched it); an untouched consent slot keeps exactly what is stored — a
+ *  pre-DF-P7 consent slot is never opted into silence by an unrelated edit.
+ *  Omitted `stored`: every consent slot is stamped. Pure. */
+export function confirmConsentSlots(control: RoutingControl | null, stored?: unknown): RoutingControl | null {
   if (control === null) return null;
+  const touched = stored !== undefined ? touchedSlotKinds(control, stored) : null;
+  const confirmedBefore = stored !== undefined ? storedConfirmedKinds(stored) : null;
   return {
     ...control,
     slots: control.slots.map((s) => {
       const rest = { ...s };
       delete rest.consent_confirmed;
-      return s.mode === "consent_window" ? { ...rest, consent_confirmed: true as const } : rest;
+      if (s.mode !== "consent_window") return rest;
+      const optIn = !touched || touched.has(s.kind.trim()) || !!confirmedBefore?.has(s.kind.trim());
+      return optIn ? { ...rest, consent_confirmed: true as const } : rest;
     }),
   };
 }

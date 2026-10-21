@@ -262,20 +262,34 @@ export function planConsentWindow(
   if (consent.length === 0) return null;
   const one = consent.length === 1 ? consent[0] : null;
   const label = one ? (one.label || one.kind) : null;
+  // Fix pass 3: a slot stored before the consent-window label existed was
+  // chosen as "waits like a sign-off" — it keeps that meaning until a
+  // controller re-saves it (DEC-90, fail-safe). DEC-90 rulings (4) and (5)
+  // (merge-time fix pass): checked FIRST — before the "columns missing"
+  // branch (its reason never blames the paste) and before every other
+  // reason — so a review whose consent slots are all unconfirmed is today's
+  // review exactly: the route writes no plan and the history no note
+  // (isUnconfirmedConsentPlan).
+  if (consent.every((s) => s.consentConfirmed !== true)) return { kind: "sign_off", slot: one?.kind ?? null, label, reason: CONSENT_REASON.unconfirmed };
   if (!ctx.columns) return { kind: "sign_off", slot: one?.kind ?? null, label, reason: CONSENT_REASON.notPasted };
   if (!one) return { kind: "sign_off", slot: null, label: null, reason: CONSENT_REASON.multiple };
   if (one.engineering) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineeringSlot };
   if (ctx.engineeringRequired) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineered };
   if (ctx.declarationUnchecked) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.declarationUnchecked };
-  // Fix pass 3: a slot stored before the consent-window label existed was
-  // chosen as "waits like a sign-off" — it keeps that meaning until a
-  // controller re-saves the table (DEC-90, fail-safe).
-  if (one.consentConfirmed !== true) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.unconfirmed };
   if (one.fallback || one.primaries.length === 0) return { kind: "blocked", slot: one.kind, label: label!, reason: CONSENT_REASON.nobody };
   const recipients = consentRecipients(one, { drafterId: ctx.drafterId, requesterId: ctx.requesterId }, consentConflictedPeople(roster.slots, one.kind));
   if (recipients.length === 0) return { kind: "blocked", slot: one.kind, label: label!, reason: CONSENT_REASON.onlyParties };
   const cfg = windowConfigOf(one);
   return { kind: "open", slot: one.kind, label: label!, recipients, windowDays: cfg.windowDays, warnFraction: cfg.warnFraction };
+}
+
+/** DEC-90 ruling (5) (DF-P7 merge-time fix pass): a plan that only says the
+ *  consent slot was never confirmed — the route attaches no such plan to
+ *  the roster, the history line adds no note for it, and the response says
+ *  nothing: an existing unconfirmed consent slot reviews byte-for-byte as
+ *  today. */
+export function isUnconfirmedConsentPlan(plan: TicketConsentPlan | null | undefined): boolean {
+  return !!plan && plan.kind === "sign_off" && plan.reason === CONSENT_REASON.unconfirmed;
 }
 
 /** The sentence a roster's history line adds for its consent plan. */

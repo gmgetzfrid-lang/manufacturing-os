@@ -352,13 +352,46 @@ describe("EVID-9 (route limb) — a person not emailed by their own choice gets 
 });
 
 describe("DF-P7 fix pass 3 — the route", () => {
-  it("a consent slot stored WITHOUT the post-DF-P7 opt-in (saved when the editor said it waits like a sign-off): no window, the plan says why", async () => {
+  it("a consent slot stored WITHOUT the post-DF-P7 opt-in (saved when the editor said it waits like a sign-off): no window — and (DEC-90 ruling (5)) today's review byte for byte: no plan, no note, no window fields, no warning", async () => {
     seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["o-1"] } }] });
     state.rpcResult = { data: 1, error: null };
-    const { res, roster } = await submit();
+    const { res, roster, body } = await submit();
     expect(res.status).toBe(200);
-    expect(roster!.consentPlan).toMatchObject({ kind: "sign_off", slot: "ops", reason: CONSENT_REASON.unconfirmed });
+    expect("consentPlan" in roster!).toBe(false);
     expect(rpcs("open_consent_window")).toEqual([]);
+    const ops = roster!.slots.find((s) => s.kind === "ops")!;
+    for (const k of ["windowDays", "warnFraction", "consentConfirmed"]) expect(k in ops).toBe(false);
+    const line = (updates()[0].history as Array<{ action: string; details?: string }>).find((h) => h.action === "Review roster opened")!;
+    expect(line.details).toBe("Sign-offs needed (any order): Requester acceptance, Operations");
+    expect(body.consentWarning).toBeUndefined();
+    expect(inserts("ticket_notice_events")).toEqual([]);
+    expect(CONSENT_REASON.unconfirmed).toBeTruthy();
+  });
+  it("DEC-90 ruling (4): before 20261255 an unconfirmed consent slot's answer never blames the paste — no warning at all (as today), no plan, no note", async () => {
+    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["o-1"] } }] });
+    state.user = { id: "d-1" };
+    const row = ticketRow();
+    for (const c of CONSENT_WINDOW_COLUMNS) delete (row as Record<string, unknown>)[c];
+    state.rows.tickets = [row];
+    const res = await post({ ticketId: "t1", actionType: "submit_draft" });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.consentWarning).toBeUndefined();
+    expect(JSON.stringify(body)).not.toMatch(/20261255/);
+    const roster = (updates()[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
+    expect("consentPlan" in roster).toBe(false);
+    const line = (updates()[0].history as Array<{ action: string; details?: string }>).find((h) => h.action === "Review roster opened")!;
+    expect(line.details).toBe("Sign-offs needed (any order): Requester acceptance, Operations");
+  });
+  it("DEC-90 ruling (5): an unconfirmed consent slot on engineered work — the engineering slot is added as today, and nothing about consent is written", async () => {
+    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["o-1"] } }] });
+    state.rows.org_members!.push(member("req-2", "Requester"));
+    const { res, roster } = await submit({ requester_id: "req-2", requester_role: "Requester" });
+    expect(res.status).toBe(200);
+    expect(roster!.engineeringGateAdded).toBe(true);
+    expect("consentPlan" in roster!).toBe(false);
+    const line = (updates()[0].history as Array<{ action: string; details?: string }>).find((h) => h.action === "Review roster opened")!;
+    expect(line.details).not.toMatch(/consent|object|engineered work/i);
   });
   it("FRIC-5: a submission marked issue-as-is names the mark in the window's notice, its history line and the line's key (what lets the close issue as-is)", async () => {
     seed();

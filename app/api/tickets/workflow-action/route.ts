@@ -37,7 +37,7 @@ import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor, OUTCOME_LABEL } from "@/lib/ticketOutcome";
 import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type OutcomeReason } from "@/lib/ticketOutcomeReasons";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
-import { planConsentWindow, CONSENT_REASON, issueAsIsMarkOf } from "@/lib/consentWindow";
+import { planConsentWindow, CONSENT_REASON, issueAsIsMarkOf, isUnconfirmedConsentPlan } from "@/lib/consentWindow";
 import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenceOf } from "@/lib/consentWindowScan";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
@@ -1167,7 +1167,12 @@ export async function POST(req: NextRequest) {
           drafterId: ticket.assignedDrafterId ?? null, requesterId: ticket.requesterId ?? null,
           declarationUnchecked: declarationUnverified === "unchecked",
         });
-        if (consentPlan && consentColumns) rosterOpen = { ...opened.roster, consentPlan };
+        // DEC-90 rulings (4) and (5) (DF-P7 merge-time fix pass): an
+        // unconfirmed consent slot is checked before the "columns missing"
+        // branch — no plan on the roster, no note, no warning blaming the
+        // paste: the review is today's, byte for byte.
+        if (isUnconfirmedConsentPlan(consentPlan)) { /* today's review, unchanged */ }
+        else if (consentPlan && consentColumns) rosterOpen = { ...opened.roster, consentPlan };
         else if (consentPlan) consentWarning = `${consentPlan.label ? `"${consentPlan.label}"` : "The consent slot"} waits for a sign-off: ${CONSENT_REASON.notPasted}.`;
         consentMembers = members.rows;
       }

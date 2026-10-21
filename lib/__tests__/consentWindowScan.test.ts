@@ -111,7 +111,7 @@ function seedTicket(opts: { accept?: "signed-by-req" | "signed-by-drafter" | "op
   db.tables.tickets = [{
     id: "t1", org_id: "o1", ticket_id: "REQ-1", title: "Gasket", status: "PENDING_REVIEW", request_type: "ISO", requester_id: "req", requester_role: "Manager",
     assigned_drafter_id: "d-1", attachments: [], comments: [], history: [], watchers: [], unread_by: [], revision_count: 0, deliverable_rev: "1A",
-    last_modified: "2026-10-21T09:00:00Z", archived_at: null, metadata: { review_roster: roster }, ...COLS, ...windowCols,
+    last_modified: "2026-10-21T09:00:00Z", archived_at: null, library_id: LIB_ID, metadata: { review_roster: roster }, ...COLS, ...windowCols,
   }];
   // The roster ledger (ticket_review_slots — service-written), agreeing with the roster.
   db.tables.ticket_review_slots = [
@@ -119,6 +119,13 @@ function seedTicket(opts: { accept?: "signed-by-req" | "signed-by-drafter" | "op
     { id: "ls", ticket_id: "t1", roster_id: ROSTER_ID, slot_kind: "ops", mode: "consent_window", status: "open", primaries: ["o-1", "o-2"], independent_of: [], fallback: false },
   ];
 }
+// DEC-90 ruling (1) (merge-time fix pass): the request's EFFECTIVE routing
+// table, re-read by the retry and the close — "ops" a confirmed consent slot.
+const LIB_ID = "lib-1";
+const CONFIRMED_ROUTING = { slots: [
+  { kind: "accept", label: "Acceptance", mode: "blocking", fill: { identity: "requester" } },
+  { kind: "ops", label: "Operations", mode: "consent_window", consent_confirmed: true, fill: { users: ["o-1", "o-2"] } },
+] };
 const ledgerOps = () => db.tables.ticket_review_slots.find((r) => r.slot_kind === "ops")!;
 
 beforeEach(() => {
@@ -132,6 +139,7 @@ beforeEach(() => {
     notifications: [{ id: "n-1", read_at: "2026-10-20T10:00:00Z" }, { id: "n-2", read_at: null }],
     audit_logs: [],
     ticket_review_slots: [],
+    libraries: [{ id: LIB_ID, routing_control: CONFIRMED_ROUTING }],
   };
   db.calls = []; db.errors = {}; db.rpc = {};
 });
@@ -312,7 +320,9 @@ describe("HAND-7 parity (review major): an issuing close runs the source-revisio
   });
   it("the source cannot be read: HELD (never issued unchecked); the audit row records sourceDriftUnchecked", async () => {
     withSource();
-    db.errors.documents = { code: "08006", message: "connection lost" };
+    // The source-revision read fails (the routing re-read — DEC-90 ruling
+    // (1) — locates the source document with its own single-row read first).
+    db.errors["documents:select"] = { code: "08006", message: "connection lost" };
     const r = await runConsentWindowScan({ client, now: NOW });
     expect(r).toMatchObject({ held: 1, issued: 0 });
     const d = (calls("audit_logs", "insert")[0].args[0] as Row).details as Row;
@@ -1094,5 +1104,84 @@ describe("DF-P7 final fix pass — ruling (4): the planned read never re-reads a
     expect(r.sets.planned).toEqual({ read: 2, more: true });
     expect(r.sets.running).toEqual({ read: 0, more: false });
     expect(r.truncated).toBe(true);
+  });
+});
+
+describe("DEC-90 ruling (1) (merge-time fix pass) — the retry and the close re-read the EFFECTIVE routing slot", () => {
+  const routingWith = (ops: Record<string, unknown> | null) => {
+    db.tables.libraries = [{ id: LIB_ID, routing_control: ops === null ? null : { slots: [CONFIRMED_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["o-1", "o-2"] }, ...ops }] } }];
+  };
+  const untouched = (before: Row) => {
+    expect(calls("audit_logs", "insert")).toEqual([]);
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(db.tables.tickets[0]).toEqual(before);
+    expect(ledgerOps().status).toBe("open");
+  };
+  const closeCases: Array<[string, Record<string, unknown> | null, RegExp]> = [
+    ["the slot is not confirmed (a forged or pre-DF-P7 table)", {}, /has not confirmed it as a consent window/],
+    ["the slot is filled by the engineering sign-off", { consent_confirmed: true, fill: { capability: "ticket.final_approve" } }, /fills it with the engineering sign-off/],
+    ["the slot is filled by the engineering review capability", { consent_confirmed: true, fill: { capability: "ticket.eng_review" } }, /fills it with the engineering sign-off/],
+    ["the slot is no longer a consent slot", { consent_confirmed: true, mode: "blocking" }, /no longer makes it a consent slot/],
+    ["no routing table applies any more", null, /no routing table applies/],
+  ];
+  for (const [name, ops, line] of closeCases) {
+    it(`the close: ${name} — not closed, nothing written; a line`, async () => {
+      seedTicket({ warned: "2026-10-21T09:00:00Z" });
+      routingWith(ops);
+      const before = JSON.parse(JSON.stringify(db.tables.tickets[0])) as Row;
+      const r = await runConsentWindowScan({ client, now: NOW });
+      expect(r).toMatchObject({ advanced: 0, issued: 0, held: 0, failed: 1 });
+      expect(r.errors.join(" ")).toMatch(line);
+      expect(r.errors.join(" ")).toMatch(/the window was not closed; "Operations" waits for a sign-off/);
+      untouched(before);
+    });
+  }
+  it("the close: the routing cannot be read — not closed (retried next run), nothing written", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.errors.libraries = { code: "08006", message: "connection lost" };
+    const before = JSON.parse(JSON.stringify(db.tables.tickets[0])) as Row;
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, failed: 1 });
+    expect(r.errors.join(" ")).toMatch(/routing table could not be read .* the window was not closed \(retried next run\)/);
+    untouched(before);
+  });
+  it("REGRESSION: the slot confirmed in the effective table — the close advances exactly as before (and the reminder never reads the routing)", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 1, failed: 0 });
+    seedTicket({ warned: null });
+    db.calls = [];
+    db.errors.libraries = { code: "08006", message: "connection lost" };
+    const w = await runConsentWindowScan({ client, now: Date.parse("2026-10-21T10:00:00Z") });
+    expect(w.warned).toBe(1);
+    expect(db.calls.some((c) => c.table === "libraries")).toBe(false);
+  });
+  it("the retry: a planned window whose effective slot is not confirmed (a forged metadata plan) never opens — blocked once, refusal recorded", async () => {
+    seedTicket({ window: false });
+    routingWith({});
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.opened).toBe(0);
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+    const rr = (db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
+    expect(rr.consentPlan).toMatchObject({ kind: "blocked", slot: "ops", reason: expect.stringMatching(/has not confirmed it as a consent window/) });
+    expect(db.tables.ticket_notice_events.filter((e) => e.kind === "blocked")).toEqual([expect.objectContaining({ details: expect.objectContaining({ reason: "window_never_opened", refusal: expect.objectContaining({ code: "routing_unconfirmed" }) }) })]);
+    db.calls = [];
+    const again = await runConsentWindowScan({ client, now: NOW });
+    expect(again).toMatchObject({ scanned: 0 });
+  });
+  it("the retry: an engineering-filled effective slot never opens", async () => {
+    seedTicket({ window: false });
+    routingWith({ consent_confirmed: true, fill: { capability: "ticket.final_approve" } });
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.opened).toBe(0);
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+  });
+  it("the retry: the routing cannot be read — no call, a line, the plan left to retry", async () => {
+    seedTicket({ window: false });
+    db.errors.libraries = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ opened: 0, failed: 1 });
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+    expect(((db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster.consentPlan as { kind: string }).kind).toBe("open");
   });
 });

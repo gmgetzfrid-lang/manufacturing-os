@@ -211,7 +211,7 @@ describe("routing_control — the slot's window, and the configuration refused (
   });
   it("openRoster freezes the slot's window on the roster slot (later edits never rewrite a running window)", () => {
     const opened = openRoster({
-      id: "r", control: { slots: [{ kind: "accept", mode: "blocking", fill: { identity: "requester" } }, { kind: "ops", mode: "consent_window", fill: { users: ["o-1"] }, window_days: 5 }] },
+      id: "r", control: { slots: [{ kind: "accept", mode: "blocking", fill: { identity: "requester" } }, { kind: "ops", mode: "consent_window", fill: { users: ["o-1"] }, window_days: 5, consent_confirmed: true }] },
       level: "library", cycle: "1A", files: [], ctx: { members: [{ uid: "o-1", role: "Viewer" }, { uid: "req", role: "Viewer" }], policy: null, resource: null, requesterId: "req" },
       openedBy: "d", now: "2026-10-19T09:00:00Z",
     });
@@ -478,8 +478,12 @@ describe("fix pass 3 — a consent slot stored before DF-P7 keeps waiting like a
     expect(p).toMatchObject({ kind: "sign_off", slot: "ops", reason: CONSENT_REASON.unconfirmed });
     expect(CONSENT_REASON.unconfirmed).toMatch(/re-saves the routing table/);
     expect(planConsentWindow(roster([consent({ consentConfirmed: false, primaries: [] })]), cols)).toMatchObject({ kind: "sign_off", reason: CONSENT_REASON.unconfirmed });
-    // The engineered refusals still win (their reason is the stronger one).
-    expect(planConsentWindow(roster([consent({ consentConfirmed: undefined })]), { engineeringRequired: true, columns: true })).toMatchObject({ reason: CONSENT_REASON.engineered });
+    // DEC-90 rulings (4) and (5) (merge-time fix pass): unconfirmed is
+    // checked FIRST — before the engineered refusal and before the "columns
+    // missing" branch — so the plan the route drops (no note, no warning)
+    // is the one an unconfirmed slot always gets.
+    expect(planConsentWindow(roster([consent({ consentConfirmed: undefined })]), { engineeringRequired: true, columns: true })).toMatchObject({ reason: CONSENT_REASON.unconfirmed });
+    expect(planConsentWindow(roster([consent({ consentConfirmed: undefined })]), { engineeringRequired: false, columns: false })).toMatchObject({ kind: "sign_off", reason: CONSENT_REASON.unconfirmed });
     expect(planConsentWindow(roster([consent()]), cols)).toMatchObject({ kind: "open" });
   });
   it("parseRoutingControl keeps consent_confirmed only on a consent-window slot; a save (confirmConsentSlots) stamps every consent slot and strips it elsewhere", () => {
@@ -508,7 +512,10 @@ describe("fix pass 3 — a consent slot stored before DF-P7 keeps waiting like a
     const a = open({ consent_confirmed: true });
     const b = open({});
     expect(a.ok && a.roster.slots.find((s) => s.kind === "ops")!.consentConfirmed).toBe(true);
-    expect(b.ok && b.roster.slots.find((s) => s.kind === "ops")!.consentConfirmed).toBe(false);
+    // DEC-90 ruling (5): an unconfirmed slot carries no flag and no window —
+    // stored exactly as today's roster slot.
+    expect(b.ok && "consentConfirmed" in b.roster.slots.find((s) => s.kind === "ops")!).toBe(false);
+    expect(b.ok && "windowDays" in b.roster.slots.find((s) => s.kind === "ops")!).toBe(false);
     expect(b.ok && "consentConfirmed" in b.roster.slots.find((s) => s.kind === "accept")!).toBe(false);
   });
 });

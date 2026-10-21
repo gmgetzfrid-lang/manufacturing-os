@@ -89,7 +89,12 @@ export const ORG_SCOPED_TABLES = [
   // drafting-flow DF-P7 (20261255): the consent-window and not-emailed notice
   // record — append-only, service-role written; exported as evidence, never
   // imported (lib/dataRestore.ts IMMUTABLE_TABLES; the integrator at the DF-P7
-  // merge, 2026-10-21, DEC-90).
+  // merge, 2026-10-21, DEC-90). PRIVACY (DEC-90 ruling (6), the DF-P7
+  // merge-time fix pass): a 'not_emailed' row's details.reason is a
+  // member's own email-preference reason — it is stripped from every such
+  // row on the way out (EXPORT_ROW_TRANSFORMS below, applied by dumpTable);
+  // every other row of this table, and every other table, is exported
+  // byte-for-byte as before.
   "ticket_notice_events",
   // drafting-flow DF-P6 (20261251): the equipment a request names (the tag as
   // typed and the registry asset it resolved to) — part of the request,
@@ -396,6 +401,34 @@ export const REDACT_COLUMNS: Record<string, { columns: readonly string[]; reason
     reason: "bucket / webhook credentials encrypted under the deployment-wide key — a restore into another workspace on the same deployment would decrypt them (confused deputy); re-enter credentials after a restore",
   },
 };
+
+/** DEC-90 ruling (6) (DF-P7 merge-time fix pass): the narrowest per-table
+ *  row transform the export applies after redaction — for a field inside a
+ *  JSON column that is private on SOME rows, where nulling the whole column
+ *  (REDACT_COLUMNS) would lose the evidence the table is exported for. A
+ *  table with no entry is never touched (its rows pass through as the same
+ *  objects). The restore never imports these tables. Each `reason` is a
+ *  manifest note, kept ASCII (the JSON route's byte count is pinned). */
+export const EXPORT_ROW_TRANSFORMS: Record<string, { reason: string; apply: (row: Record<string, unknown>) => Record<string, unknown> }> = {
+  ticket_notice_events: {
+    reason: "a 'not_emailed' row's details.reason is the member's own email-preference reason (why their preference turned the email off), private to them; the row itself (who was not emailed, when, for which request) is exported, its reason left out",
+    apply: (row) => {
+      if (row.kind !== "not_emailed") return row;
+      const d = row.details;
+      if (!d || typeof d !== "object" || Array.isArray(d) || !Object.prototype.hasOwnProperty.call(d, "reason")) return row;
+      const details = { ...(d as Record<string, unknown>) };
+      delete details.reason;
+      return { ...row, details };
+    },
+  },
+};
+
+/** Apply `table`'s export row transform (EXPORT_ROW_TRANSFORMS), or return
+ *  the row itself — the same object — for a table that declares none. Pure. */
+export function transformExportRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.prototype.hasOwnProperty.call(EXPORT_ROW_TRANSFORMS, table)) return row;
+  return EXPORT_ROW_TRANSFORMS[table].apply(row);
+}
 
 /** The redacted columns of `table` (empty for a table that declares none). */
 export function redactedColumnsFor(table: string): readonly string[] {

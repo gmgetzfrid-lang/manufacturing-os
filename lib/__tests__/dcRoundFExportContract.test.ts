@@ -136,7 +136,9 @@ describe("EGR-7 / XEDGE-10 — the restore never reinstates a bearer column", ()
 
   it("the export applies the redaction to every dumped row and tells the reader (manifest, notes, README)", () => {
     const e = src("lib/dataExport.ts");
-    expect(e).toMatch(/out\.push\(\.\.\.rows\.map\(\(r\) => redactRow\(table, r as Record<string, unknown>\)\)\)/);
+    // DF-P7 merge-time fix pass (DEC-90 ruling (6)): the table's own row
+    // transform runs on the redacted row (a table with none passes through).
+    expect(e).toMatch(/out\.push\(\.\.\.rows\.map\(\(r\) => transformExportRow\(table, redactRow\(table, r as Record<string, unknown>\)\)\)\)/);
     expect(e).toMatch(/redactedColumns: Record<string, string\[\]>;/);
     expect(e).toMatch(/REDACTED credential columns \(secrets never leave the database\)/);
     expect(e).not.toMatch(/"Every column from the source schema is preserved verbatim\. JSON keys/);

@@ -13,7 +13,7 @@ import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTI
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
 import { reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE, isDeclaredLikeInKind } from "@/lib/reviewModel";
-import { consentPlanNote, consentHeldAction, type ConsentHoldReason } from "@/lib/consentWindow";
+import { consentPlanNote, consentHeldAction, isUnconfirmedConsentPlan, type ConsentHoldReason } from "@/lib/consentWindow";
 
 export interface TransitionActor {
   uid?: string | null;
@@ -910,7 +910,13 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   // is told. Leaving PENDING_REVIEW any other way (a revision, a cancel, a
   // force close) closes the roster: its open slots are void.
   if (input.rosterOpen && updates.status === "PENDING_REVIEW") {
-    const r = input.rosterOpen;
+    // DEC-90 ruling (5) (DF-P7 merge-time fix pass): a plan that only says
+    // the consent slot was never confirmed is not written — no consentPlan
+    // in the roster, no note on the line — so an existing unconfirmed
+    // consent slot's history and metadata are byte-identical to today's.
+    const r = isUnconfirmedConsentPlan(input.rosterOpen.consentPlan)
+      ? (({ consentPlan: _unconfirmed, ...rest }) => rest)(input.rosterOpen) as typeof input.rosterOpen
+      : input.rosterOpen;
     const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
     updates.metadata = { ...meta, review_roster: r };
     const blocking = r.slots.filter((x) => x.mode !== "notify_only").map((x) => x.label || x.kind);

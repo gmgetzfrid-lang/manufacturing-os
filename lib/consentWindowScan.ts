@@ -63,11 +63,20 @@
 // planned window open_consent_window refuses for good (22023 / 55000 /
 // 23505) is marked blocked once instead of retried on every run.
 //
+// MERGE-TIME FIX PASS (DEC-90 ruling (1)): the retry and the close re-read
+// the request's EFFECTIVE routing slot (lib/routingControl.ts
+// ticketReviewRouting, bound to the service role) and open or close nothing
+// unless that slot is a consent-window slot carrying the opt-in
+// (consent_confirmed === true) and is not filled by an engineering
+// capability (CONSENT_REFUSED_CAPABILITIES) — a forged metadata plan, or a
+// table changed since the roster opened, can never open or close a window.
+//
 // ticket_notice_events (20261255) is the record that survives any bell
 // purge: append-only, written only by the service role.
 
 import { computeTransition, rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
-import { parseSourceDocuments, revDrift } from "@/lib/sourceDocRef";
+import { parseSourceDocuments, parseSourceDocument, revDrift } from "@/lib/sourceDocRef";
+import { ticketReviewRouting } from "@/lib/routingControl";
 import { currentRoster, ticketResource, engineeringGateRequired, ISSUE_AS_IS_NOTE } from "@/lib/workflow";
 import { isDeclaredLikeInKind, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { heldRoles } from "@/lib/roleHeld";
@@ -84,7 +93,7 @@ import {
   consentWindowStep, isMissingConsentColumn, isMissingConsentSchema, noticeStates, openedHistoryDetails,
   consentConflictedPeople, consentIndependenceHolds, ledgerIndependenceSlot, drafterOnlyOpenSlot,
   recordMoment, warnedHistoryDetails, advancedHistoryDetails, windowSchedule, type ConsentHoldReason, type ConsentWindowState,
-  CONSENT_ISSUE_AS_IS_KEY, issueAsIsMarkOf, issueAsIsNamedAtOpen,
+  CONSENT_ISSUE_AS_IS_KEY, issueAsIsMarkOf, issueAsIsNamedAtOpen, CONSENT_REFUSED_CAPABILITIES,
 } from "@/lib/consentWindow";
 import type { TicketConsentPlan, TicketHistoryEntry, TicketReviewRoster, TicketStatus } from "@/types/schema";
 
@@ -611,6 +620,31 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     return { slots: ((data as LedgerSlot[] | null) ?? []) };
   }
 
+  /** DEC-90 ruling (1) (merge-time fix pass): does the request's EFFECTIVE
+   *  routing table, read now, still make `slotKind` a confirmed consent
+   *  slot that is not the engineering sign-off? `transient`: the routing
+   *  could not be read (proves nothing — nothing is done, retried). */
+  async function routingConfirms(ticket: ReturnType<typeof rowToTicket>, slotKind: string): Promise<{ ok: true } | { ok: false; transient: boolean; why: string }> {
+    let routing: Awaited<ReturnType<typeof ticketReviewRouting>>["routing"];
+    try {
+      // Loaded here, as the workflow route loads it (registering the scoped
+      // client at module load would bind every importer of this module).
+      const { runWithServerClient } = await import("@/lib/serverClientScope");
+      routing = (await runWithServerClient(sb, () => ticketReviewRouting({
+        id: ticket.id!, orgId: ticket.orgId, libraryId: ticket.libraryId ?? null, sourceDocumentId: parseSourceDocument(ticket.metadata)?.id ?? null,
+      }))).routing;
+    } catch (e) {
+      return { ok: false, transient: true, why: `the request's routing table could not be read (${(e as Error)?.message ?? String(e)})` };
+    }
+    if (routing.state === "unconfigured") return { ok: false, transient: false, why: "no routing table applies to the request any more" };
+    if (routing.state === "invalid") return { ok: false, transient: false, why: `the routing table on the request's ${routing.level} can't be used (${routing.error})` };
+    const rs = routing.control.slots.find((x) => x.kind === slotKind);
+    if (!rs || rs.mode !== "consent_window") return { ok: false, transient: false, why: "the routing table no longer makes it a consent slot" };
+    if (rs.consent_confirmed !== true) return { ok: false, transient: false, why: "the routing table has not confirmed it as a consent window (it was saved when the editor said it waits like a sign-off)" };
+    if (rs.fill.capability && CONSENT_REFUSED_CAPABILITIES.includes(rs.fill.capability)) return { ok: false, transient: false, why: "the routing table fills it with the engineering sign-off, which silence never stands in for" };
+    return { ok: true };
+  }
+
   async function handleTicket(row: Record<string, unknown>): Promise<void> {
     const ticket = rowToTicket(row);
     const state = consentWindowFromRow(row);
@@ -659,6 +693,16 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       if (!ls || ls.mode !== "consent_window" || ls.status !== "open" || ls.fallback) {
         report.failed += 1;
         say(`ticket ${ticket.id}: the review's ledger does not show "${plan.label}" as an open consent slot — no window is opened; it waits for a sign-off`);
+        return;
+      }
+      // DEC-90 ruling (1) (merge-time fix pass): the effective routing slot,
+      // read now — confirmed, and never the engineering sign-off — or no
+      // window. A routing read that fails is retried; a slot the table does
+      // not confirm is blocked once (the plan marked, the queue told).
+      const confirmed = await routingConfirms(ticket, plan.slot);
+      if (!confirmed.ok) {
+        if (confirmed.transient) { report.failed += 1; say(`ticket ${ticket.id}: ${confirmed.why} — the consent window was not retried; "${plan.label}" waits for a sign-off`); return; }
+        await blockPlannedWindow(ticket, roster, plan, ctx, row, { reason: `${confirmed.why}, so no window was opened — it waits for a sign-off`, refusal: { code: "routing_unconfirmed", error: confirmed.why } });
         return;
       }
       // DEC-37 slot-to-slot (fix pass 2): nor anyone who signed, or can
@@ -824,6 +868,17 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     if (!ls || ls.mode !== "consent_window" || ls.status !== "open") {
       report.failed += 1;
       say(`ticket ${ticketId}: the review's ledger does not show "${label}" as an open consent slot — the window was not closed; it waits for a sign-off`);
+      return;
+    }
+    // DEC-90 ruling (1) (merge-time fix pass): the effective routing slot,
+    // read now — a window closes on silence only while the table still
+    // confirms the slot as a consent window that is not the engineering
+    // sign-off. Otherwise it is not closed (nothing written); it waits for a
+    // sign-off.
+    const confirmed = await routingConfirms(ticket, slotKind);
+    if (!confirmed.ok) {
+      report.failed += 1;
+      say(`ticket ${ticketId}: ${confirmed.why} — the window was not closed${confirmed.transient ? " (retried next run)" : ""}; "${label}" waits for a sign-off`);
       return;
     }
     // DEC-90 ruling (1) at the close (fix pass 3): never on engineered work —
