@@ -223,6 +223,18 @@ export const slotBlocks = (s: Pick<TicketReviewSlot, "mode">): boolean => s.mode
 
 const DAY_MS = 86_400_000;
 
+/** Has `slot`'s alternate window opened (its timeoutDays elapsed since the
+ *  roster opened)? The one rule slotSignPlan and rosterPartialReleased share
+ *  (DF-P5 fix pass 5). */
+export function slotAlternatesActive(
+  roster: Pick<TicketReviewRoster, "openedAt">,
+  slot: Pick<TicketReviewSlot, "timeoutDays">,
+  now: number,
+): boolean {
+  const opened = Date.parse(roster.openedAt);
+  return slot.timeoutDays !== null && Number.isFinite(opened) && now >= opened + slot.timeoutDays * DAY_MS;
+}
+
 export interface SlotSignPlan {
   /** The open blocking slots this actor's ONE sign-off satisfies now. */
   fillable: Array<{ slot: TicketReviewSlot; via: "primary" | "alternate" | "override" }>;
@@ -251,8 +263,7 @@ export function slotSignPlan(
     || plan.fillable.some((f) => f.slot.kind === kind);
   for (const slot of roster.slots) {
     if (slot.status !== "open" || !slotBlocks(slot)) continue;
-    const opened = Date.parse(roster.openedAt);
-    const alternateActive = slot.timeoutDays !== null && Number.isFinite(opened) && now >= opened + slot.timeoutDays * DAY_MS;
+    const alternateActive = slotAlternatesActive(roster, slot, now);
     const via = slot.primaries.includes(uid) ? "primary" as const
       : alternateActive && slot.alternates.includes(uid) ? "alternate" as const
       : slot.overriders.includes(uid) ? "override" as const

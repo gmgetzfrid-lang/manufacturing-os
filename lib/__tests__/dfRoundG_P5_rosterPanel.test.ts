@@ -13,7 +13,7 @@ import type { Ticket, TicketReviewRoster } from "@/types/schema";
 
 vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}) , auth: { getSession: async () => ({ data: { session: null } }) } } }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "u-1", activeRole: "Admin", roles: ["Admin"] }) }));
-import TicketRosterPanel, { TWO_REVIEWS_NOTE, ENGINEERING_GATE_NOTE, slotQuestion, slotStateText, rosterSignStatement } from "@/components/requests/TicketRosterPanel";
+import TicketRosterPanel, { TWO_REVIEWS_NOTE, ENGINEERING_GATE_NOTE, slotQuestion, slotStateText, rosterSignStatement, postSignOffOnce } from "@/components/requests/TicketRosterPanel";
 import { ISSUE_AS_IS_NOTE, ROUTED_NO_ROSTER_REASON, routedNoRosterReason } from "@/lib/workflow";
 import { draftToControl, controlToDraft, keptNote, routingSavedNote, inFlightConfirmMessage } from "@/components/documents/RoutingControlSection";
 import { parseRoutingControl } from "@/lib/routingControl";
@@ -181,8 +181,11 @@ describe("DF-P5 fix pass 4 — the page says the route's refusal; the panel and 
   const renderRouted = (over: Record<string, unknown>) => renderToStaticMarkup(createElement(TicketRosterPanel, { ticket: ticket({ libraryId: "lib-1" }), orgId: "o1", uid: "req-1", activeMemberCount: 5, ...over }));
 
   it("major 1: the page's 409 branch says the route's coded refusal (workflowRefusalMessage) and keeps 'someone else updated it' for the conflict only", () => {
-    const at = page.indexOf("      if (res.status === 409) {\n        // DF-P5 fix pass 4");
+    // fix pass 5: setActionLoading(null) stays the branch's FIRST statement
+    // (DF-P9's PERS-7 ordering pin reads that exact pair of lines).
+    const at = page.indexOf("      if (res.status === 409) {\n        setActionLoading(null);");
     expect(at).toBeGreaterThan(0);
+    expect(page.indexOf("// DF-P5 fix pass 4", at)).toBeGreaterThan(at);
     const branch = page.slice(at, page.indexOf("return;", at));
     expect(branch).toContain("const refusal = workflowRefusalMessage(await res.clone().json().catch(() => null));");
     expect(branch).toContain('? { title: "Your action wasn\'t applied", message: refusal, tone: "danger" }');
@@ -232,5 +235,31 @@ describe("DF-P5 fix pass 4 — the page says the route's refusal; the panel and 
     expect(save).toContain("const question = inFlightConfirmMessage(levelWord, await reviewsInFlightUnder(level, id));");
     expect(save).toContain("if (question && !(await appConfirm({");
     expect(save).toContain("return;");
+  });
+});
+
+describe("DF-P5 fix pass 5 — the panel retries a sign-off only on the compare-and-set conflict", () => {
+  const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  it("conflict: true → one retry on the fresh row; its answer is what is said", async () => {
+    const post = vi.fn()
+      .mockResolvedValueOnce(reply(409, { error: "The ticket changed while you were acting — refresh and try again", conflict: true }))
+      .mockResolvedValueOnce(reply(200, { ok: true }));
+    const { res } = await postSignOffOnce(post);
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(res.status).toBe(200);
+  });
+  it("a 409 refusal without the conflict flag (no review open, a coded refusal) is NOT re-posted — the route records it once", async () => {
+    for (const body of [{ error: "This request has no review open." }, { error: "x", code: "roster_stale" }]) {
+      const post = vi.fn().mockResolvedValueOnce(reply(409, body)).mockResolvedValueOnce(reply(200, { ok: true }));
+      const { res, out } = await postSignOffOnce(post);
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(409);
+      expect(out.error).toBe(body.error);
+    }
+  });
+  it("the panel's sign() goes through it (no bare re-post on any 409)", () => {
+    const panel = readFileSync(join(process.cwd(), "components", "requests", "TicketRosterPanel.tsx"), "utf8");
+    expect(panel).toContain("const { res, out } = await postSignOffOnce(post);");
+    expect(panel).not.toContain("if (res.status === 409) res = await post();");
   });
 });

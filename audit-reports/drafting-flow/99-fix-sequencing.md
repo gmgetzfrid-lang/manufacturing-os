@@ -573,6 +573,14 @@ DF-P13 SLA DEFAULTS RAIL AND EDITOR resolved `EDGE-16` (code half; migration `20
 12. The buttons row renders `noActionsWhy` beside optional buttons.
 13. The as-is banner, and the `TicketRosterPanel` mount with `userName`, `reviewRouted` and `reviewRoutedReason`.
 
+*DF-P5 ROSTER review fix pass 5 (2026-10-21) — the fifth review's blocker and three minors.*
+- (a) **The full suite is green again** (blocker). Fix pass 4's hunk 6 put a comment and the `workflowRefusalMessage` read between `if (res.status === 409) {` and `setActionLoading(null);`, which broke DF-P9's PERS-7 ordering pin (`lib/__tests__/dfRoundG_P9_ticketPage.test.ts` "PERS-7 fix pass …"). Hunk 6 now keeps `setActionLoading(null);` first and reads the refusal just before the alert; DF-P9's test is untouched. *Corrected (DEC-29): fix pass 4 reported the full suite as not finished; it was red.*
+- (b) **The engineering gate slot is the serial path's** (minor). `lib/ticketRoster.ts` `withEngineeringGate` fills it with the assigned engineer only when one is on the ticket, and with `ticket.final_approve` only when none is; an inactive assigned engineer falls to `openRoster`'s management fallback. `TIER-5` corrected (it said "kept"; it was widened).
+- (c) **One refusal row per refused signature** (minor). `components/requests/TicketRosterPanel.tsx` `postSignOffOnce` re-posts only on `409 conflict: true`.
+- (d) **An active alternate is not released** (minor). `lib/ticketTransitions.ts` `rosterPartialReleased` keeps the alternates of an open blocking slot whose window has opened (`lib/workflow.ts` `slotAlternatesActive`, now also `slotSignPlan`'s rule), taking `now`.
+
+**Edits outside the plan's file list** in fix pass 5: only hunk 6 of `page.tsx` above, reordered (no line added or removed). No migration, no new notification kind, capability or audit action.
+
 **Expected conflicts at merge:** `executeWorkflowAction` (hunks 4–6), the `getActions` context (hunk 7) and the action bar (hunks 8, 9 and 12), for whichever page holder merges next. Fix pass 4 adds no other out-of-plan file: `lib/routingControl.ts`, `lib/workflow.ts`, `lib/ticketTransitions.ts`, the workflow route, `TicketRosterPanel.tsx` and `RoutingControlSection.tsx` are DF-P5's. No new notification kind, capability, cron entry or audit action name.
 
 ## Verification you cannot skip

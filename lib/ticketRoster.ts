@@ -311,10 +311,14 @@ export function tableCarriesEngineeringGate(control: RoutingControl): boolean {
  * ADD reviewers, never drop the org-wide engineering gate. When the gate
  * applies to this ticket (lib/workflow.ts engineerApprovalRequired, or an
  * engineering-first type) and the table has no blocking engineering slot,
- * the seed's engineering slot is appended — filled by `ticket.final_approve`
- * with the assigned engineer (when one is on the ticket) named as a primary,
- * the management tier standing in as an override as on the serial path —
- * independent of the drafter. Pure. `added` says whether the slot was appended (the roster and
+ * the seed's engineering slot is appended, independent of the drafter, with
+ * the management tier standing in as an override — as on the serial path
+ * (lib/workflow.ts PENDING_FINAL_APPROVAL). Fix pass 5: when an engineer is
+ * assigned the slot is filled by THAT engineer only (the serial path admits
+ * no other engineer); only with none assigned does it fill by
+ * `ticket.final_approve`. An assigned engineer who is no longer an active
+ * member leaves the slot empty, and openRoster's management fallback stands
+ * in — again as on the serial path. Pure. `added` says whether the slot was appended (the roster and
  * the audit row record it).
  */
 export function withEngineeringGate(
@@ -329,7 +333,7 @@ export function withEngineeringGate(
     kind,
     label: "Engineering sign-off",
     mode: "blocking",
-    fill: { ...(gate.assignedEngineerId ? { users: [gate.assignedEngineerId] } : {}), capability: "ticket.final_approve" },
+    fill: gate.assignedEngineerId ? { users: [gate.assignedEngineerId] } : { capability: "ticket.final_approve" },
     independent_of: ["drafter"],
     waivable_by: { capability: "ticket.manage" },
   };
@@ -354,6 +358,9 @@ export function openRoster(input: {
 }): OpenRosterResult {
   const { ctx } = input;
   const { control, added: gateAdded } = withEngineeringGate(input.control, input.engineeringGate);
+  // The appended gate slot IS the engineering approval even when it names
+  // the assigned engineer rather than the capability (fix pass 5).
+  const gateKind = gateAdded ? control.slots[control.slots.length - 1].kind : null;
   const management = resolveFill({ capability: "ticket.manage" }, ctx);
   const slots: TicketReviewSlot[] = [];
   for (const s of control.slots) {
@@ -377,7 +384,7 @@ export function openRoster(input: {
       independentOf: [...(s.independent_of ?? [])],
       timeoutDays: s.timeoutDays ?? null,
       fallback,
-      ...(s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability) ? { engineering: true } : {}),
+      ...((s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability)) || s.kind === gateKind ? { engineering: true } : {}),
       status: slotBlocks(s) ? "open" : "told",
     });
   }

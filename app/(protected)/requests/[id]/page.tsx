@@ -2057,11 +2057,6 @@ export default function TicketDetailView() {
       }
 
       if (res.status === 409) {
-        // DF-P5 fix pass 4: a refusal with its own code (the routing needs a
-        // roster, an unconfirmed issue-as-is, a routing table that can't be
-        // used…) is said with its way forward — only the compare-and-set
-        // conflict is "someone else updated it".
-        const refusal = workflowRefusalMessage(await res.clone().json().catch(() => null));
         setActionLoading(null);
         setPendingAction(null);
         setShowCommentModal(false);
@@ -2069,6 +2064,11 @@ export default function TicketDetailView() {
         setShowUploadIFC(false);
         setPendingRedlineBlob(null);
         setFileToRedline(null);
+        // DF-P5 fix pass 4: a refusal with its own code (the routing needs a
+        // roster, an unconfirmed issue-as-is, a routing table that can't be
+        // used…) is said with its way forward — only the compare-and-set
+        // conflict is "someone else updated it".
+        const refusal = workflowRefusalMessage(await res.clone().json().catch(() => null));
         await appAlert(refusal
           ? { title: "Your action wasn't applied", message: refusal, tone: "danger" }
           : { message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.", tone: "danger" });

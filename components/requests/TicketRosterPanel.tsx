@@ -108,6 +108,24 @@ export function slotStateText(slot: TicketReviewSlot, names: ReadonlyMap<string,
   return waiting;
 }
 
+/**
+ * Post a sign-off. Two people signing at the same moment: one write wins the
+ * compare-and-set, the other is retried once on the fresh row — neither waits
+ * on the other. DF-P5 fix pass 5: ONLY the compare-and-set conflict
+ * (`conflict: true`) is retried; any other 409 is a refusal the route has
+ * already recorded once (recordRefusedSignOff), and is returned as is — so a
+ * refused signature is never refused (and recorded) twice.
+ */
+export async function postSignOffOnce(post: () => Promise<Response>): Promise<{ res: Response; out: { error?: string; warning?: string; conflict?: boolean } }> {
+  let res = await post();
+  let out = (await res.json().catch(() => ({}))) as { error?: string; warning?: string; conflict?: boolean };
+  if (res.status === 409 && out.conflict === true) {
+    res = await post();
+    out = (await res.json().catch(() => ({}))) as typeof out;
+  }
+  return { res, out };
+}
+
 export default function TicketRosterPanel({
   ticket, orgId, uid, userName, capPolicy, activeMemberCount, requesterRoles, onChanged, reviewRouted, reviewRoutedReason,
 }: TicketRosterPanelProps) {
@@ -175,12 +193,7 @@ export default function TicketRosterPanel({
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
         body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", signatureId: sig.id }),
       });
-      // Two people signing at the same moment: one write wins the
-      // compare-and-set, the other is retried once on the fresh row — neither
-      // waits on the other.
-      let res = await post();
-      if (res.status === 409) res = await post();
-      const out = (await res.json().catch(() => ({}))) as { error?: string; warning?: string };
+      const { res, out } = await postSignOffOnce(post);
       if (!res.ok) throw new Error(out.error || `The sign-off was not recorded (HTTP ${res.status})`);
       setSigning(false);
       if (out.warning) setError(out.warning);

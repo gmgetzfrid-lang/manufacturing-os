@@ -1535,6 +1535,8 @@ no router.
 
 *Landed 2026-10-21 (drafting-flow Round G, DF-P5 ROSTER review fix pass 4): the UI and the records now say what fail-closed does. The request page shows the route's own refusal on a 409 (`lib/workflow.ts` `workflowRefusalMessage`), not "someone else updated it". A routing table that cannot be used names the document controller, not a revision (`routedNoRosterReason`, `409 routing_invalid`). The roster panel shows "No sign-off roster" instead of the unconfigured seed. Declaring a table where there was none counts the requests in review it stops (`lib/routingControl.ts` `reviewsInFlightUnder`) and asks before saving. The save note no longer says "applies from each request's next submission" (DEC-29). Paste order: `20261242` before (or together with) `20261241`, so that no request submitted "the usual way" becomes a routed review with no roster. See `TIER-5`.*
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P5 ROSTER review fix pass 5): a routing table keeps the org-wide engineering gate exactly as the serial path has it, not wider. The slot `withEngineeringGate` appends names the assigned engineer only when one is on the ticket (management stands in through `waivable_by`, and through `openRoster`'s fallback when that engineer is no longer an active member); only with no engineer assigned does it fill by `ticket.final_approve`. Fix pass 2's fill (the assigned engineer AND every `ticket.final_approve` holder) widened who could sign the gate — corrected in `TIER-5` (DEC-29).*
+
 <a id="dec-37"></a>
 ## DEC-37 · One person, many hats
 

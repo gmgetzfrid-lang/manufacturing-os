@@ -9,7 +9,7 @@
 // lib/__tests__/ticketTransitions.test.ts freezes it.
 
 import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster, TicketStatus } from "@/types/schema";
-import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTIONS, slotBlocks } from "@/lib/workflow";
+import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTIONS, slotBlocks, slotAlternatesActive } from "@/lib/workflow";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
 
@@ -276,14 +276,19 @@ export function issueAsIsFinals(ticket: Pick<Ticket, "attachments" | "deliverabl
  *  ticket no longer waits on — the occupants of every slot now satisfied,
  *  less anyone an open blocking slot still waits on, less today's
  *  participants (requester, drafter, assigned engineer) and the signer.
+ *  Fix pass 5: an open blocking slot whose alternate window has opened
+ *  (lib/workflow.ts slotAlternatesActive — slotSignPlan's own rule) still
+ *  waits on its alternates too, so they are kept.
  *  They leave `unread_by`, and the route retires their action alerts. */
 export function rosterPartialReleased(
-  roster: Pick<TicketReviewRoster, "slots">,
+  roster: Pick<TicketReviewRoster, "slots" | "openedAt">,
   ticket: Pick<Ticket, "requesterId" | "assignedDrafterId" | "assignedEngineerId">,
   actorUid: string | null | undefined,
+  now: number = Date.now(),
 ): string[] {
   const keep = new Set<string>([
-    ...roster.slots.filter((x) => slotBlocks(x) && x.status === "open").flatMap((x) => x.primaries),
+    ...roster.slots.filter((x) => slotBlocks(x) && x.status === "open")
+      .flatMap((x) => [...x.primaries, ...(slotAlternatesActive(roster, x, now) ? x.alternates : [])]),
     ...[ticket.requesterId, ticket.assignedDrafterId, ticket.assignedEngineerId, actorUid].filter((u): u is string => !!u),
   ]);
   return Array.from(new Set(roster.slots.filter((x) => x.status === "satisfied").flatMap((x) => x.primaries))).filter((u) => !!u && !keep.has(u));
@@ -571,7 +576,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
           // waited on no more — they leave unread_by (rosterPartialReleased),
           // and the route retires their action alerts with the signer's.
           const waiting = roster.slots.filter((x) => slotBlocks(x) && x.status === "open").flatMap((x) => x.primaries);
-          const released = new Set(rosterPartialReleased(roster, ticket, actorUid));
+          const released = new Set(rosterPartialReleased(roster, ticket, actorUid, Date.parse(now)));
           updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []).filter((u) => !released.has(u)), ...newUnreadBy, ...waiting])).filter((u) => !!u && u !== actorUid);
         }
       }

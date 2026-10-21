@@ -645,8 +645,18 @@ describe("DF-P5 fix pass 2 — withEngineeringGate: a table adds reviewers, neve
     expect(g.control.slots[1]).toEqual({ kind: "engineering", label: "Engineering sign-off", mode: "blocking", fill: { capability: "ticket.final_approve" }, independent_of: ["drafter"], waivable_by: { capability: "ticket.manage" } });
     expect(parseRoutingControl(g.control)).toMatchObject({ ok: true });
   });
-  it("an assigned engineer is named as a primary", () => {
-    expect(withEngineeringGate(REQ_ONLY.control, { required: true, assignedEngineerId: "e-2" }).control.slots[1].fill).toEqual({ users: ["e-2"], capability: "ticket.final_approve" });
+  it("fix pass 5: an assigned engineer is the slot's ONLY primary (as on the serial path) — no other final_approve holder is told or may sign; management stays the override", () => {
+    expect(withEngineeringGate(REQ_ONLY.control, { required: true, assignedEngineerId: "e-2" }).control.slots[1].fill).toEqual({ users: ["e-2"] });
+    const r = openRoster({ id: "r1", control: REQ_ONLY.control, level: "library", cycle: "1A", files: FILES, ctx, openedBy: "d-1", now: NOW, engineeringGate: { required: true, assignedEngineerId: "e-2" } });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.roster.slots[1]).toMatchObject({ kind: "engineering", primaries: ["e-2"], overriders: ["a-1", "q-1"], fallback: false, engineering: true });
+    // E1 holds final_approve but was never assigned: not a primary, so not offered the slot
+    const plan = slotSignPlan(r.roster, withRoster(r.roster), "e-1", true);
+    expect(plan.fillable.map((f) => f.slot.kind)).not.toContain("engineering");
+    // the assigned engineer no longer an active member → the management fallback stands in
+    const gone = openRoster({ id: "r2", control: REQ_ONLY.control, level: "library", cycle: "1A", files: FILES, ctx, openedBy: "d-1", now: NOW, engineeringGate: { required: true, assignedEngineerId: "e-gone" } });
+    expect(gone.ok && gone.roster.slots[1]).toMatchObject({ primaries: ["a-1", "q-1"], fallback: true, engineering: true });
   });
   it("a table carrying a BLOCKING engineering-capability slot keeps its own; a notify-only one or a role-named one does not count (DEC-35: never guessed)", () => {
     const cap = { slots: [{ kind: "eng", mode: "blocking" as const, fill: { capability: "ticket.eng_review" as const } }] };
@@ -839,6 +849,25 @@ describe("DF-P5 fix pass 4 — after a partial sign-off, the co-occupants of a s
     expect(rosterPartialReleased(both, t, "e-1")).toEqual([]);
     // e-2 is the assigned engineer (a participant): kept
     expect(rosterPartialReleased(signed, withRoster(r, { assignedEngineerId: "e-2" }), "e-1")).toEqual([]);
+  });
+  it("fix pass 5: a co-occupant who is an ACTIVE alternate on a still-open slot (its timeout elapsed) is kept; before the timeout, released (slotSignPlan's rule)", () => {
+    // A (primaries P=e-1, Q=e-2) and B (primary R=q-1, alternates [Q], timeoutDays 3), open 5 days
+    const base = opened();
+    const openedAt = "2026-10-16T12:00:00.000Z";
+    const r: TicketReviewRoster = { ...base, openedAt, slots: [
+      { ...base.slots.find((x) => x.kind === "check")!, kind: "a", primaries: ["e-1", "e-2"], alternates: [], status: "open" },
+      { ...base.slots.find((x) => x.kind === "check")!, kind: "b", primaries: ["q-1"], alternates: ["e-2"], timeoutDays: 3, independentOf: [], status: "open" },
+    ] };
+    const t = withRoster(r);
+    const signed = applySignPlan(r, { fillable: [{ slot: r.slots[0], via: "primary" }], blocked: [] }, { uid: "e-1", name: "P" }, "sig", NOW);
+    const nowMs = Date.parse(NOW); // 5 days after openedAt
+    expect(slotSignPlan(signed, t, "e-2", true, nowMs).fillable.map((f) => f.slot.kind)).toEqual(["b"]);
+    expect(rosterPartialReleased(signed, t, "e-1", nowMs)).toEqual([]);
+    // two days in: B's alternate window is not open yet — Q is waited on by nothing and released
+    expect(rosterPartialReleased(signed, t, "e-1", Date.parse("2026-10-18T12:00:00.000Z"))).toEqual(["e-2"]);
+    // computeTransition passes its own clock: Q keeps the unread marker
+    const out = computeTransition(withRoster(r, { unreadBy: ["e-2"] }), input({ rosterSign: { roster: signed, complete: false, labels: ["a"] } }));
+    expect(out.updates.unread_by as string[]).toContain("e-2");
   });
   it("computeTransition: the released co-occupant leaves unread_by and the recipients; the still-waited-on and today's participants stay", () => {
     const r = opened();
