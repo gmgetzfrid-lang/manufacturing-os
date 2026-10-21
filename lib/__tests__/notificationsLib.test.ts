@@ -6,6 +6,8 @@
 // silently mis-routes notifications.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   extractMentionUids,
   tokenizeMentions,
@@ -43,6 +45,10 @@ const world = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   insertError: null as null | { code: string; message: string },
   sessionThrows: false,
+  /** notifications N18: whether 20261258 is pasted. Before it (the default
+   *  here, so every case above it pins today's path) the status CHECK
+   *  refuses a not_emailed row with 23514, exactly as the database does. */
+  pasted258: false,
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -98,6 +104,9 @@ vi.mock("@/lib/supabase", () => {
         Promise.resolve({ data: run(), error: null }).then(res, rej),
       insert: async (row: Row) => {
         if (world.insertError) return { data: null, error: world.insertError };
+        if (row.status === "not_emailed" && !world.pasted258) {
+          return { data: null, error: { code: "23514", message: 'new row for relation "email_notifications" violates check constraint "email_notifications_status_check"' } };
+        }
         world.emails.push({ ...row, created_at: new Date().toISOString() });
         return { data: null, error: null };
       },
@@ -125,7 +134,7 @@ vi.mock("@/lib/supabase", () => {
     }
     if (args.p_resource_id) {
       const since = Date.now() - 60_000;
-      const last = world.emails.filter((e) => e.to_user_id === args.p_to_user && e.event_type === args.p_event_type
+      const last = world.emails.filter((e) => e.status !== "not_emailed" && e.to_user_id === args.p_to_user && e.event_type === args.p_event_type
         && e.resource_id === args.p_resource_id && e.org_id === args.p_org && Date.parse(e.created_at as string) >= since).at(-1);
       if (last && args.p_subject != null && args.p_body != null
         && last.subject === args.p_subject && last.body_text === args.p_body) return { data: false, error: null };
@@ -254,6 +263,7 @@ beforeEach(() => {
   world.rpcCalls.length = 0;
   world.insertError = null;
   world.sessionThrows = false;
+  world.pasted258 = false;
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   err = vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
@@ -557,7 +567,7 @@ describe("a gate that cannot answer is never a silent all-on", () => {
 
   it("a refused insert is logged as an error, never reported as queued", async () => {
     world.insertError = { code: "42501", message: "new row violates row-level security policy" };
-    await expect(queueEmail(mail())).resolves.toBeUndefined();
+    await expect(queueEmail(mail())).resolves.toBe("failed");
     expect(world.emails).toHaveLength(0);
     expect(err).toHaveBeenCalledWith(expect.stringMatching(/queueEmail/), expect.objectContaining({ code: "42501" }));
   });
@@ -565,5 +575,122 @@ describe("a gate that cannot answer is never a silent all-on", () => {
   it("link rides on the row for the drain to render (N6), and nothing else changes", async () => {
     await queueEmail(mail({ link: "https://app.example.test/documents/x" }));
     expect(world.emails[0].metadata).toEqual({ link: "https://app.example.test/documents/x" });
+  });
+});
+
+// ── notifications Round G, N18 DELIVERY RECORD (drafting-flow EVID-9 dw2) ──
+// A recipient whose OWN preference turns an email off now leaves one row with
+// status 'not_emailed' — once 20261258 is pasted. Before it (every case above
+// runs that way) the status CHECK refuses the row and nothing is recorded:
+// today's path, said once. Who is emailed never changes.
+describe("N18 — 'not emailed by their choice' is recorded, never sent", () => {
+  const queued = () => world.emails.filter((e) => e.status === "queued");
+  const notEmailed = () => world.emails.filter((e) => e.status === "not_emailed");
+  let info: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => { info = vi.spyOn(console, "info").mockImplementation(() => undefined); });
+  afterEach(() => { info.mockRestore(); });
+
+  it("after 20261258: email off, queued from another member's browser — no email queued; one not_emailed row with what it would have said; the gate asked once more with no resource", async () => {
+    world.pasted258 = true;
+    setPrefs(B, { email_enabled: false });
+    await expect(queueEmail(mail({ link: "https://app.example.test/documents/x" }))).resolves.toBe("not_emailed");
+    expect(queued()).toHaveLength(0);
+    expect(notEmailed()).toHaveLength(1);
+    expect(notEmailed()[0]).toMatchObject({
+      org_id: ORG, to_user_id: B, to_email: "b@example.test", subject: "Subject", body_text: "Body",
+      resource_type: "document", resource_id: DOC1, event_type: "comment_mention", status: "not_emailed",
+      metadata: { link: "https://app.example.test/documents/x", not_emailed: { byTheirChoice: true, reason: "preference" } },
+    });
+    // the second ask: the same person and event, no resource (its preference rules alone)
+    expect(world.rpcCalls.map((c) => c.args.p_resource_id)).toEqual([DOC1, null]);
+    expect(world.rpcCalls[1].args).toMatchObject({ p_org: ORG, p_to_user: B, p_event_type: "comment_mention", p_subject: null, p_body: null });
+  });
+
+  it("the person's preference is never written down — only that it was their choice (the row is readable by their Admins, as every email row is)", async () => {
+    world.pasted258 = true;
+    setPrefs(B, { email_on_mention: false });
+    await queueEmail(mail());
+    const meta = JSON.stringify(notEmailed()[0].metadata);
+    expect(meta).not.toMatch(/email_on_mention|email_enabled|digest|switch|turned/);
+  });
+
+  it("a per-event switch off: that event is recorded not_emailed; another event to the same person is queued as before", async () => {
+    world.pasted258 = true;
+    setPrefs(B, { email_on_mention: false });
+    await expect(queueEmail(mail())).resolves.toBe("not_emailed");
+    await expect(queueEmail(mail({ eventType: "assignment" }))).resolves.toBe("queued");
+    expect(notEmailed().map((e) => e.event_type)).toEqual(["comment_mention"]);
+    expect(queued().map((e) => e.event_type)).toEqual(["assignment"]);
+  });
+
+  it("a repeat inside 60 seconds (preferences on) writes nothing — it is not their choice", async () => {
+    world.pasted258 = true;
+    await expect(queueEmail(mail())).resolves.toBe("queued");
+    await expect(queueEmail(mail())).resolves.toBe("repeat");
+    expect(world.emails).toHaveLength(1);
+    expect(notEmailed()).toHaveLength(0);
+  });
+
+  it("a recall or a PSM alert is never 'their choice': still queued with every switch off", async () => {
+    world.pasted258 = true;
+    setPrefs(B, { email_enabled: false, digest_frequency: "never" });
+    await expect(queueEmail(mail({ eventType: "safety_recall" }))).resolves.toBe("queued");
+    await expect(queueEmail(mail({ eventType: "safety_alert", subject: "PSM" }))).resolves.toBe("queued");
+    expect(notEmailed()).toHaveLength(0);
+  });
+
+  it("an email about no resource: the gate's no can only be the preference — recorded without a second ask", async () => {
+    world.pasted258 = true;
+    setPrefs(B, { digest_frequency: "never" });
+    await expect(queueEmail(mail({ resourceId: undefined, resourceType: undefined }))).resolves.toBe("not_emailed");
+    expect(world.rpcCalls).toHaveLength(1);
+    expect(notEmailed()[0]).toMatchObject({ resource_id: null, resource_type: null });
+  });
+
+  it("the person turns email back on within the minute: the next notice is emailed exactly as today (a not_emailed record is never a repeat)", async () => {
+    world.pasted258 = true;
+    setPrefs(B, { email_enabled: false });
+    await queueEmail(mail());
+    setPrefs(B, { email_enabled: true });
+    await expect(queueEmail(mail())).resolves.toBe("queued");
+    expect(queued()).toHaveLength(1);
+  });
+
+  it("BEFORE 20261258: the CHECK refuses the record — nothing is written, nothing is sent, the gap is said once (today's path)", async () => {
+    setPrefs(B, { email_enabled: false });
+    await expect(queueEmail(mail())).resolves.toBe("suppressed");
+    await expect(queueEmail(mail({ resourceId: DOC2 }))).resolves.toBe("suppressed");
+    expect(world.emails).toHaveLength(0);
+    expect(err).not.toHaveBeenCalled();
+    const said = info.mock.calls.filter((c) => /needs migration 20261258/.test(String(c[0])));
+    expect(said.length).toBeLessThanOrEqual(1);
+  });
+
+  it("the server path (service role) records it too, through the same gate", async () => {
+    world.pasted258 = true;
+    world.ctx = "service";
+    setPrefs(C, { email_enabled: false });
+    await expect(queueEmail(mail({ toUserId: C, toEmail: "c@example.test" }))).resolves.toBe("not_emailed");
+    expect(notEmailed()[0]).toMatchObject({ to_user_id: C });
+  });
+
+  it("before 20261148 (the caller-side fallback): a preference read that says no is recorded only where the record lands", async () => {
+    world.pasted258 = true;
+    world.rpc = "missing";
+    world.ctx = "service";
+    setPrefs(C, { email_enabled: false });
+    await expect(queueEmail(mail({ toUserId: C, toEmail: "c@example.test" }))).resolves.toBe("not_emailed");
+    // a repeat under the fallback is a repeat, never a record
+    world.prefs.clear();
+    await queueEmail(mail({ toUserId: C, toEmail: "c@example.test", subject: "Again" }));
+    await expect(queueEmail(mail({ toUserId: C, toEmail: "c@example.test", subject: "Again" }))).resolves.toBe("repeat");
+    expect(notEmailed()).toHaveLength(1);
+  });
+
+  it("no drain kick for a record: nothing in it is ever sent (queueEmail's kick follows a queued row only)", () => {
+    const lib = readFileSync(join(process.cwd(), "lib/notifications.ts"), "utf8");
+    const rec = lib.slice(lib.indexOf("async function recordNotEmailed"), lib.indexOf("// queueExternalEmail was removed"));
+    expect(rec).toContain('status: "not_emailed"');
+    expect(rec).not.toMatch(/kickEmailDrain/);
   });
 });

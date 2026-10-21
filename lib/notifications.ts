@@ -11,6 +11,11 @@
 //   2. Writes a row to `email_notifications` (status='queued')
 //   3. Hits /api/notifications/send-queued to flush new rows immediately
 //      so the recipient sees the email within seconds, not minutes
+//   When the recipient's OWN preferences turn the email off, it writes
+//   instead one row with status='not_emailed' — "not emailed by their
+//   choice" — which nothing ever sends (drafting-flow EVID-9 done-when 2,
+//   notifications N18; 20261258). A repeat inside 60 seconds writes nothing,
+//   as before.
 //
 // Mentions are extracted from comment text via the @[name](uid) syntax
 // produced by MentionableTextarea.
@@ -64,7 +69,16 @@ export async function kickEmailDrain(): Promise<Response | null> {
  *  is worse than an unwanted one) and the row says so in metadata.pref_gate. */
 type GateVerdict = "send" | "suppress" | "unverified";
 
-async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
+/** The gate's answer and, for a suppression, whether it was the recipient's
+ *  own preference (true) rather than a repeat inside 60 seconds (false), or
+ *  could not be told apart (null — nothing is recorded then). */
+type GateAnswer = { verdict: GateVerdict; byPreference: boolean | null };
+
+/** email_gate()'s repeat check runs only for a uuid resource; without one a
+ *  suppression can only be the preference. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function evaluateEmailGate(input: QueueEmailInput): Promise<GateAnswer> {
   const { data, error } = await supabase.rpc("email_gate", {
     p_org: input.orgId,
     p_to_user: input.toUserId,
@@ -73,7 +87,10 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
     p_subject: input.subject,
     p_body: storedBody(input).text,
   });
-  if (!error) return data === false ? "suppress" : "send";
+  if (!error) {
+    if (data !== false) return { verdict: "send", byPreference: null };
+    return { verdict: "suppress", byPreference: await suppressedByPreference(input) };
+  }
   if (isMissingEmailGate(error)) {
     console.warn(
       "queueEmail: email_gate() is not deployed (paste migration 20261148) — falling back to the caller-side preference read, which cannot see another member's opt-out",
@@ -83,7 +100,30 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
   console.warn(
     `queueEmail: email_gate failed (${error.code ?? "?"}: ${error.message}) — sending anyway, stamped pref_gate=unverified`,
   );
-  return "unverified";
+  return { verdict: "unverified", byPreference: null };
+}
+
+/** EVID-9 (N18): whether email_gate()'s "no" was the recipient's preference.
+ *  Without a uuid resource its repeat check never ran, so it was; with one,
+ *  the gate is asked once more with no resource (its preference rules alone —
+ *  the same call 20261258's insert rail makes). Anything but a clear "no" is
+ *  a repeat or unknown: nothing is recorded. Never throws. */
+async function suppressedByPreference(input: QueueEmailInput): Promise<boolean | null> {
+  if (!input.resourceId || !UUID_RE.test(input.resourceId)) return true;
+  try {
+    const { data, error } = await supabase.rpc("email_gate", {
+      p_org: input.orgId,
+      p_to_user: input.toUserId,
+      p_event_type: input.eventType,
+      p_resource_id: null,
+      p_subject: null,
+      p_body: null,
+    });
+    if (error) return null;
+    return data === false;
+  } catch {
+    return null;
+  }
 }
 
 /** The pre-20261148 gate: the recipient's row and the 60-second window read
@@ -94,13 +134,15 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
  *  hides another member's row, so there a missing row is reported as
  *  'unverified' rather than read as all-on. A recall or PSM alert is never
  *  'unverified': no preference bears on it. */
-async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
+async function legacyEmailGate(input: QueueEmailInput): Promise<GateAnswer> {
+  const suppress = (byPreference: boolean): GateAnswer => ({ verdict: "suppress", byPreference });
+  const answer = (verdict: GateVerdict): GateAnswer => ({ verdict, byPreference: null });
   const { data: prefs, error: prefsErr } = await supabase
     .from("notification_preferences")
     .select("*")
     .eq("user_id", input.toUserId)
     .maybeSingle();
-  if (!emailAllowedByPrefs(prefs ?? null, input.eventType)) return "suppress";
+  if (!emailAllowedByPrefs(prefs ?? null, input.eventType)) return suppress(true);
 
   if (input.resourceId) {
     const sixtySecAgo = new Date(Date.now() - 60_000).toISOString();
@@ -114,12 +156,12 @@ async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
       .order("created_at", { ascending: false })
       .limit(1);
     const last = (latest as Array<{ subject?: unknown; body_text?: unknown }> | null)?.[0];
-    if (last && last.subject === input.subject && last.body_text === storedBody(input).text) return "suppress";
+    if (last && last.subject === input.subject && last.body_text === storedBody(input).text) return suppress(false);
   }
-  if (isPreferenceExempt(input.eventType)) return "send";
-  if (prefsErr) return "unverified";
-  if (prefs) return "send";
-  return (await callerSeesRecipientRow(input.toUserId)) ? "send" : "unverified";
+  if (isPreferenceExempt(input.eventType)) return answer("send");
+  if (prefsErr) return answer("unverified");
+  if (prefs) return answer("send");
+  return answer((await callerSeesRecipientRow(input.toUserId)) ? "send" : "unverified");
 }
 
 /** The body the row stores and the drain sends: the render layer's, when
@@ -153,13 +195,16 @@ async function callerSeesRecipientRow(toUserId: string): Promise<boolean> {
  * email_gate(). Fires-and-forgets a fetch to the send-queued endpoint so
  * delivery feels instant.
  */
-export async function queueEmail(input: QueueEmailInput): Promise<void> {
+export async function queueEmail(input: QueueEmailInput): Promise<QueueEmailOutcome> {
   try {
     // The recipient's preferences + the 60-second dedupe (a repeat of the
     // latest email to this recipient about the same event and resource: same
     // subject and body), evaluated by email_gate() where both are visible.
-    const verdict = await evaluateEmailGate(input);
-    if (verdict === "suppress") return;
+    const { verdict, byPreference } = await evaluateEmailGate(input);
+    if (verdict === "suppress") {
+      if (byPreference !== true) return "repeat";
+      return (await recordNotEmailed(input)) ? "not_emailed" : "suppressed";
+    }
 
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
     if (input.link) metadata.link = input.link;
@@ -182,7 +227,7 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
     });
     if (insErr) {
       console.error("queueEmail: the email was not queued:", insErr);
-      return;
+      return "failed";
     }
 
     // Best-effort kick the sender. If this fails the row is still safely
@@ -191,8 +236,68 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
     void kickEmailDrain().then((r) => {
       if (r && !r.ok) console.warn(`send-queued kick returned HTTP ${r.status}; queued for cron retry`);
     });
+    return "queued";
   } catch (e) {
     console.error("queueEmail failed:", e);
+    return "failed";
+  }
+}
+
+/** What queueEmail did (EVID-9, N18). Callers that ignore it are unchanged:
+ *  "queued" — the email is queued (sent on the next drain); "repeat" — the
+ *  same email went to this person inside 60 seconds, nothing written;
+ *  "not_emailed" — their own preference turned it off and that is recorded
+ *  (a row nothing sends); "suppressed" — their preference turned it off and
+ *  the record could not be written (before 20261258, or refused); "failed" —
+ *  the queue refused the row. */
+export type QueueEmailOutcome = "queued" | "repeat" | "not_emailed" | "suppressed" | "failed";
+
+/** Said once per process: the not_emailed record is not installed yet. */
+let notEmailedUnrecordedLogged = false;
+
+/** EVID-9 done-when 2 (N18): one row saying the person was not emailed by
+ *  their own choice — status 'not_emailed', which the send-queued drain never
+ *  claims, recovers or reclaims, so nothing is ever sent from it. The same
+ *  columns a queued row carries (who, which address, what it would have
+ *  said, about what, which event), and metadata.not_emailed naming the
+ *  cause: their preference — never which switch (a preference is theirs;
+ *  the row is readable by them and their workspace's Admins and Managers, as
+ *  every email row is). No drain kick. 20261258's insert rail accepts it from
+ *  a browser only when email_gate() agrees the preference turns this email
+ *  off. Before 20261258 the status CHECK refuses it (23514): said once,
+ *  nothing recorded — today's path. Answers whether the row landed; never
+ *  throws. */
+async function recordNotEmailed(input: QueueEmailInput): Promise<boolean> {
+  try {
+    const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
+    if (input.link) metadata.link = input.link;
+    if (input.rendered) metadata.rendered = true;
+    metadata.not_emailed = { byTheirChoice: true, reason: "preference" };
+    const body = storedBody(input);
+    const { error } = await supabase.from("email_notifications").insert({
+      org_id: input.orgId,
+      to_user_id: input.toUserId,
+      to_email: input.toEmail,
+      subject: input.subject,
+      body_text: body.text,
+      body_html: body.html,
+      resource_type: input.resourceType || null,
+      resource_id: input.resourceId || null,
+      event_type: input.eventType,
+      metadata,
+      status: "not_emailed",
+    });
+    if (!error) return true;
+    if (!notEmailedUnrecordedLogged) {
+      notEmailedUnrecordedLogged = true;
+      const notPasted = error.code === "23514" || /email_notifications_status_check|violates check constraint/i.test(error.message ?? "");
+      console.info(notPasted
+        ? "queueEmail: a recipient's preference turned an email off; the record of it needs migration 20261258 — not recorded (the email is not sent, as before)"
+        : `queueEmail: the record that a recipient's preference turned an email off was not written (${error.code ?? "?"}: ${error.message}) — the email is not sent, as before`);
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 
