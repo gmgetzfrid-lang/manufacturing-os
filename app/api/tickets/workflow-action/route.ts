@@ -32,7 +32,7 @@ import { parseSourceDocument, parseSourceDocuments, revDrift } from "@/lib/sourc
 import { reviewClassOptions, resolveReviewClass, hasReviewModelColumns, isDeclaredLikeInKind, engineerPickAvailable as pickAvailableFrom, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
 import { heldRoles } from "@/lib/roleHeld";
-import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";
+import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, noteDeliverableNotInAnyRegister, deliverableStateOf, latestFinalAttachment } from "@/lib/ticketHandback";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor, OUTCOME_LABEL } from "@/lib/ticketOutcome";
 import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type OutcomeReason } from "@/lib/ticketOutcomeReasons";
@@ -1265,7 +1265,7 @@ export async function POST(req: NextRequest) {
     consentObjection: action.action === "object_consent_window",
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
-  const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
+  const { updates, newStatus, recipients: transitionRecipients, newComment, historyEntry: transitionHistoryEntry } = computeTransition(ticket, input);
   // FRIC-5 / EVID-12 (DF-P5 fix pass 2): the Finals an issue-as-is approval
   // recorded, for the audit row — on a roster with the sha256 the roster
   // bound the Draft (same bytes) to; on today's path the Draft's hash is in
@@ -1507,8 +1507,24 @@ export async function POST(req: NextRequest) {
   // append-only: no row is ever updated. The details name what was decided
   // on: the deliverable revision, and the identity of every file the action
   // carried or approved.
+  const auditRowId = crypto.randomUUID();
+  // SM-7 (DF-P8): the transition's own history line names this audit row
+  // (`attempt`), written in the same compare-and-set as the status — so the
+  // ticket itself proves whether the attempt landed. The maintenance drain
+  // (lib/ticketAuditDrain.ts) reads it to write the TICKET_<ACTION>_NOT_APPLIED
+  // row this route could only log when that row failed twice; the attempt row
+  // says it is checkable (`historyAttempt`). Nothing else in the update moves.
+  let historyAttempt = false;
+  if (Array.isArray(updates.history) && transitionHistoryEntry) {
+    const hist = updates.history as Array<Record<string, unknown>>;
+    const at = hist.lastIndexOf(transitionHistoryEntry as unknown as Record<string, unknown>);
+    if (at >= 0) {
+      hist[at] = { ...hist[at], attempt: auditRowId };
+      historyAttempt = true;
+    }
+  }
   const auditRow = {
-    id: crypto.randomUUID(),
+    id: auditRowId,
     action: `TICKET_${action.action.toUpperCase()}`,
     resource_id: body.ticketId,
     resource_type: "ticket",
@@ -1589,6 +1605,7 @@ export async function POST(req: NextRequest) {
       // Written before the compare-and-set; a TICKET_<ACTION>_NOT_APPLIED row
       // naming this id follows when the transition did not land.
       recordedBeforeApply: true,
+      ...(historyAttempt ? { historyAttempt: true } : {}),
     },
   };
   const auditErr = await insertAuditRowOnce(auditRow);
@@ -1715,6 +1732,21 @@ export async function POST(req: NextRequest) {
         handbackNote = `Closed without a register document: the recorded publication could not be matched to a document in ${label}. The deliverable is treated as not published.`;
         const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
         updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+      } else if (!src?.id && !ticket.libraryId && recorded?.state !== "published" && latestFinalAttachment(ticket.attachments)) {
+        // DCW-4 remainder (DF-P8; DEC-90 ruling (5) for DF-P8): a request with
+        // neither a source document nor a library (DEC-107) that closes with
+        // an issued (Final) deliverable never published records that the
+        // register does not have it — the state (no document, no library),
+        // the history line and the note, as DF-P4 did for a library-only
+        // request. A library-less request with no Final closes exactly as
+        // before (nothing written); the close itself is unchanged either way.
+        const merged = noteDeliverableNotInAnyRegister(closeMeta);
+        if (merged) {
+          updates.metadata = merged;
+          handbackNote = "Closed without a register document: the issued deliverable was not published into the register. This request names no library, so no register holds it — publish it as a new document to put it under control.";
+          const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
+          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+        }
       }
     } catch (e) {
       console.warn("[workflow-action] deliverable-state note failed (non-blocking)", e);

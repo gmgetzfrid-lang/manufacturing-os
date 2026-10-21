@@ -719,7 +719,7 @@ export interface FlagCollisionInput {
  *  contractor's portal can request redlines against the ticket. */
 export async function flagCollisionToDrafting(
   input: FlagCollisionInput,
-): Promise<{ ok: boolean; ticketNumber?: string; error?: string; warning?: string }> {
+): Promise<{ ok: boolean; ticketNumber?: string; ticketId?: string; error?: string; warning?: string }> {
   const { orgId, projectId, candidate, impact } = input;
 
   // Which intake link authored this sheet (if any) — lets the contractor's
@@ -799,8 +799,21 @@ export async function flagCollisionToDrafting(
         overlaps: impact.overlapDocs.map((o) => o.label),
       },
     }).then(() => undefined, () => undefined);
+    // PROJ-12 dw2 (DF-P8): the same flag filed against the PROJECT too, so the
+    // project's audit trail retrieves it (audit_logs is read by resource).
+    const { error: projAuditErr } = await supabase.from("audit_logs").insert({
+      action: "INTAKE_COLLISION_FLAGGED",
+      resource_type: "project", resource_id: projectId,
+      org_id: orgId, user_id: input.actorId, user_email: input.actorEmail,
+      details: { documentId: candidate.docId, ticketNumber, ticketRef: String(row.id), intakeLinkId },
+    });
+    if (projAuditErr) console.warn(`[transitionIn] the collision flag could not be filed against the project: ${projAuditErr.message}`);
 
-    return { ok: true, ticketNumber, ...(notTold ? { warning: notTold } : {}) };
+    // PROJ-12 (DF-P8): the request's row id rides back so the flagger's
+    // notice links to /requests/<id>; the request names the project in
+    // tickets.project_id (the create route writes it from this origin) and
+    // appears on the project's Drafting requests card.
+    return { ok: true, ticketNumber, ticketId: String(row.id), ...(notTold ? { warning: notTold } : {}) };
   } catch (e) {
     return { ok: false, error: userFacingCaughtError(e, { context: "flagCollisionToDrafting" }) };
   }

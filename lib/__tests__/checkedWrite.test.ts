@@ -177,7 +177,7 @@ const LIB_RATCHET: Record<string, number> = {
     "lib/knowledgeIngest.ts": 17, "lib/knowledgeSourceSync.ts": 4, "lib/libraryCollections.ts": 6, "lib/libraryViews.ts": 4,
     "lib/markupRequests.ts": 1, "lib/markups.ts": 1, "lib/mentionIndexer.ts": 1, "lib/milestones.ts": 12, "lib/notes.ts": 4,
     "lib/operationalGraph.ts": 6, "lib/plotPlans.ts": 2, "lib/processFlows.ts": 2, "lib/projectReport.ts": 1,
-    "lib/projects.ts": 9, "lib/retention.ts": 3, "lib/reviewControl.ts": 9, "lib/reviewCycles.ts": 5, "lib/revisions.ts": 6,
+    "lib/projects.ts": 8, "lib/retention.ts": 3, "lib/reviewControl.ts": 9, "lib/reviewCycles.ts": 5, "lib/revisions.ts": 6,
     "lib/watches.ts": 1, "lib/tableViews.ts": 1, "lib/teams.ts": 3, "lib/transmittals.ts": 1, "lib/unitCodeDecode.ts": 1,
     "lib/whiteboard.ts": 1,
 };

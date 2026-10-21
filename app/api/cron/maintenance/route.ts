@@ -124,6 +124,7 @@ import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";
 import { runDepartureBackstop, type DepartureBackstopReport, type DepartureRpcClient } from "@/lib/ticketDepartureBackstop";
 import { drainAuditDeadLetters, type AuditOutboxReport } from "@/lib/auditOutboxDrain";
 import { runConsentWindowScan, type ConsentScanReport } from "@/lib/consentWindowScan";
+import { runTicketAuditDrain, type TicketAuditDrainReport } from "@/lib/ticketAuditDrain";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -203,6 +204,8 @@ async function handler(req: NextRequest) {
     ticketSla?: Omit<SlaScanReport, "errors">;
     /** GAP-109 (DF-P7): the consent-window step (5c). */
     consentWindows?: Omit<ConsentScanReport, "errors">;
+    /** SM-7 / EVID-12 (drafting-flow DF-P8): the ticket audit drain (5d). */
+    ticketAuditDrain?: Omit<TicketAuditDrainReport, "errors">;
     /** EDGE-4 (fix pass 3): the departure backstop (5b(i)). */
     ticketDeparture?: Omit<DepartureBackstopReport, "errors">;
     /** DELIV-11: what the drain did — an empty queue, a batch that failed, and
@@ -513,6 +516,28 @@ async function handler(req: NextRequest) {
       if (cw.truncated) result.errors.push("consent-window: this run stopped before every window was read (its read cap or time ran out) — the next run continues; nothing is closed without its turn");
     } catch (e) {
       result.errors.push(`consent-window: ${(e as Error).message}`);
+    }
+  }
+
+  // 5d. TICKET AUDIT DRAIN (drafting-flow SM-7 / EVID-12, DF-P8) — one step
+  //     on this cron (a third vercel.json entry fails deployment; see step
+  //     10). Reconciles what the workflow route could only log: a
+  //     ticket_comments mirror that failed twice (from tickets.comments), and
+  //     the _NOT_APPLIED row of an attempt whose transition never landed
+  //     (from the ticket's history, which names each landed attempt). Never
+  //     throws; every failure is a line. At most TICKET_AUDIT_DRAIN_MS, and it
+  //     stops TICKET_SLA_RESERVE_MS before the run's end, as the steps above.
+  const auditDrainDeadlineAt = Math.min(Date.now() + TICKET_AUDIT_DRAIN_MS, runEnd - TICKET_SLA_RESERVE_MS);
+  if (auditDrainDeadlineAt - Date.now() < TICKET_AUDIT_DRAIN_MIN_MS) {
+    result.errors.push(`ticket-audit-drain: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left; the next run reconciles what is due`);
+  } else {
+    try {
+      const drained = await runTicketAuditDrain({ client: sb as unknown as Parameters<typeof runTicketAuditDrain>[0]["client"], deadlineAt: auditDrainDeadlineAt });
+      const { errors: drainErrors, ...drainCounts } = drained;
+      result.ticketAuditDrain = drainCounts;
+      for (const line of drainErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+    } catch (e) {
+      result.errors.push(`ticket-audit-drain: ${(e as Error).message}`);
     }
   }
 
@@ -1167,6 +1192,10 @@ const TICKET_SLA_MIN_MS = 5_000;
  *  below what it is not run (it says so). */
 const CONSENT_WINDOW_MS = 20_000;
 const CONSENT_WINDOW_MIN_MS = 3_000;
+/** SM-7 (step 5d, drafting-flow DF-P8): the ticket audit drain's share of the
+ *  run, and below what it is not run (it says so). */
+const TICKET_AUDIT_DRAIN_MS = 10_000;
+const TICKET_AUDIT_DRAIN_MIN_MS = 2_000;
 /** EDGE-4 (step 5b(i), fix pass 3): the departure backstop's share of the run,
  *  and below what it is not run (it says so). */
 const TICKET_DEPARTURE_MS = 15_000;

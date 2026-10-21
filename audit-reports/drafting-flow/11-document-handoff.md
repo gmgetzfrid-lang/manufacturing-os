@@ -227,6 +227,8 @@ app/(protected)/requests/[id]/page.tsx:649-651 —
 
 **Scope / residual.** Done-when 2 → DF-P10 (`PHYS-9`). Status stays OPEN for it.
 
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* re-verify every done-when against what DF-P1, DF-P2, DF-P9 and DF-P10 landed and close by record, or name what remains → drafting-flow **DF-P23 TRANSITION RECORD AND RECONCILE** (the last Scope line above still points done-when 2 at DF-P10, whose own Partial says nothing is left for it).
+
 ---
 
 <a id="hand-4"></a>

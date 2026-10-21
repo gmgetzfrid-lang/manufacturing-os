@@ -687,11 +687,42 @@ describe("DCW-4 remainder (DEC-90 ruling) — the close re-checks a library-less
     expect(res.status).toBe(503);
     expect(ticketUpdates()).toEqual([]);
   });
-  it("REGRESSION: a library-less request with nothing recorded closes exactly as before (no metadata written, no note)", async () => {
+  it("DCW-4 remainder (DF-P8, DEC-90 ruling (5)): a library-less request with an issued Final and nothing recorded closes as before AND records the register does not have it; with no Final it closes exactly as before (no metadata written, no note)", async () => {
     seed(null);
     expect((await act({ actionType: "close_ticket" })).status).toBe(200);
     const upd = ticketUpdates()[0];
-    expect("metadata" in upd).toBe(false);
-    expect((upd.history as Row[]).some((h) => h.action === "Closed — deliverable not in the register")).toBe(false);
+    expect(upd.status).toBe("CLOSED");
+    expect((upd.metadata as Row).deliverable).toMatchObject({ state: "not_in_register", document_id: null, library_id: null });
+    expect((upd.history as Row[]).filter((h) => h.action === "Closed — deliverable not in the register")).toHaveLength(1);
+    // REGRESSION: no Final (nothing was issued) — exactly as before
+    state.calls = [];
+    seed(null);
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", library_id: null, deliverable_rev: "1", attachments: [DRAFT], metadata: {} })];
+    expect((await act({ actionType: "close_ticket" })).status).toBe(200);
+    const plain = ticketUpdates()[0];
+    expect("metadata" in plain).toBe(false);
+    expect((plain.history as Row[]).some((h) => h.action === "Closed — deliverable not in the register")).toBe(false);
+  });
+  it("SM-7 (DF-P8): the transition's own history line names its audit row (`attempt`), written in the same compare-and-set; the attempt row says it is checkable (historyAttempt) — nothing else in the update moves", async () => {
+    seed(published, backing);
+    expect((await act({ actionType: "close_ticket" })).status).toBe(200);
+    const attempt = auditRows().find((a) => a.action === "TICKET_CLOSE_TICKET" && (a.details as Row)?.recordedBeforeApply === true)!;
+    expect((attempt.details as Row).historyAttempt).toBe(true);
+    const hist = ticketUpdates()[0].history as Row[];
+    expect(hist.filter((h) => h.attempt === attempt.id)).toHaveLength(1);
+    expect(hist.filter((h) => "attempt" in h)).toHaveLength(1);
+  });
+  it("SM-4 done-whens 2-3 (DF-P8): a reopen of a CLOSED request the archive has claimed (archive_id set) clears the claim in the same write; REGRESSION: an unclaimed reopen writes no archive_id at all", async () => {
+    seed(null);
+    state.rows.tickets = [ticketRow({ status: "CLOSED", library_id: null, deliverable_rev: "1", attachments: [DRAFT, FINAL1], archive_id: "arch-1", closed_at: LM, metadata: {} })];
+    expect((await act({ actionType: "reopen_ticket", comment: "As-built did not match" })).status).toBe(200);
+    const upd = ticketUpdates()[0];
+    expect(upd.status).toBe("PENDING_REVIEW");
+    expect(upd.archive_id).toBeNull();
+    state.calls = [];
+    seed(null);
+    state.rows.tickets = [ticketRow({ status: "CLOSED", library_id: null, deliverable_rev: "1", attachments: [DRAFT, FINAL1], closed_at: LM, metadata: {} })];
+    expect((await act({ actionType: "reopen_ticket", comment: "again" })).status).toBe(200);
+    expect("archive_id" in ticketUpdates()[0]).toBe(false);
   });
 });

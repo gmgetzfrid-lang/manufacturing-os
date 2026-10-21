@@ -112,9 +112,10 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   // UX-7 / A11Y-6: one notice, with a tone — a failed action reads as an
   // error (role="alert"), a landed one as a confirmation (role="status").
   // setMsg(text) is an error unless the call site says otherwise.
-  const [msg, setNotice] = useState<{ tone: "error" | "success" | "info"; text: string } | null>(null);
-  const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error") => {
-    setNotice(text == null ? null : { tone, text });
+  const [msg, setNotice] = useState<{ tone: "error" | "success" | "info"; text: string; href?: string } | null>(null);
+  // PROJ-12 (DF-P8): a notice may carry a link (the flagged request).
+  const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error", href?: string) => {
+    setNotice(text == null ? null : { tone, text, ...(href ? { href } : {}) });
   }, []);
   /** SAF-9 (J14 last review): the contractor's notice never holds up the
    *  decision. The decision's message shows and the list refreshes as soon
@@ -606,14 +607,15 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     });
     // EDGE-8: filed, but the assignment queue could not be told — said, not
     // a green "in the queue" that looks told.
+    const href = res.ok && res.ticketId ? `/requests/${res.ticketId}` : undefined;
     if (res.ok && res.warning) {
-      setMsg(`${candidate.label} flagged to drafting — ${res.warning}`, "info");
+      setMsg(`${candidate.label} flagged to drafting — ${res.warning}`, "info", href);
       return;
     }
     setMsg(res.ok
       ? `${candidate.label} flagged to drafting — ticket ${res.ticketNumber} is in the assignment queue.`
       : (res.error ?? "Couldn't flag the collision."),
-    res.ok ? "success" : "error");
+    res.ok ? "success" : "error", href);
   };
 
   if (loading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
@@ -629,6 +631,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-800 dark:text-emerald-300"
                 : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
             {msg.text}
+            {msg.href && <> <a href={msg.href} className="underline underline-offset-2">Open the request</a></>}
           </div>
         )}
       </div>

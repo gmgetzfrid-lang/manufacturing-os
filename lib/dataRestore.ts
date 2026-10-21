@@ -305,7 +305,12 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   checklist_items: fkRules("checklist_id>project_checklists"),
   checkout_episodes: fkRules("document_id>documents library_id>libraries"),
   checkout_messages: fkRules("document_id>documents parent_message_id>checkout_messages episode_id>checkout_episodes"),
-  checkout_sessions: fkRules("document_id>documents library_id>libraries linked_ticket_id>tickets project_id>projects episode_id>checkout_episodes"),
+  // drafting-flow DF-P8 (DEC-90 fix pass at the merge): the request a check-in
+  // session raised (20261256 re-creates the key ON DELETE SET NULL) is an
+  // optional pointer that gates no read — a session whose request is not in
+  // this workspace lands with it CLEARED, as the live key leaves it when the
+  // request is deleted. It was strict, refusing the whole session.
+  checkout_sessions: fkRules("document_id>documents library_id>libraries linked_ticket_id>tickets? project_id>projects episode_id>checkout_episodes"),
   collections: fkRules("library_id>libraries parent_id>collections"),
   companies: fkRules("quality_manual_doc_id>documents"),
   company_events: fkRules("company_id>companies project_id>projects"),
@@ -388,7 +393,7 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   // ACL: the library is not in the ticket's capability resource
   // (lib/workflow.ts ticketResource) — whoever adds it there (DF-P5) revisits
   // this rule. Refusing would drop the whole ticket, with its history.
-  tickets: fkRules("library_id>libraries?"),
+  tickets: fkRules("library_id>libraries? project_id>projects?"),
   transmittals: fkRules("project_id>projects"),
   turnover_items: fkRules("project_id>projects party_id>project_parties document_id>documents"),
   units: fkRules("plant_id>plants"),
@@ -965,7 +970,8 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // Projects after documents: projects.sow_document_id references documents (20261013).
   "projects", "project_members",
   // Tickets before the holds and milestones that cite them (origin_ticket_id,
-  // linked_ticket_id); a ticket references nothing but its org.
+  // linked_ticket_id); a ticket references its library and (drafting-flow
+  // DF-P8, 20261256) its project — both above, both cleared when not restored.
   "ticket_number_counters", "tickets",
   "document_holds", "document_assets", "document_shares",
   "document_equipment_suggestions",

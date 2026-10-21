@@ -1322,6 +1322,25 @@
       "sequencingNotes": [
         "Added by the integrator at the I-25 merge, 2026-10-20 (DEC-31; DEC-90 A17's later path)."
       ]
+    },
+    {
+     "name": "I-34 DOCUMENT EDGE READ RAILS — the remaining document-linked tables read only rows whose documents the reader can see, and edge counts reveal no hidden node",
+     "findings": [
+      "intelligence DACL-11 (Partial at I-11: 20261170 railed document_assets and project_documents): RESTRICTIVE SELECT rails on document_related_resources and entity_mentions (doc_is_visible on every document column), document_supersessions with document control's lineage readers (both columns), and existence-only surfaces (impact panel counts, graph degree) that count only visible nodes — every reader that works today for a person who can read the documents unchanged (pin with the npm run test:db harness)"
+     ],
+     "files": [
+      "supabase/migrations/** (one DEC-30 file)",
+      "lib/impact.ts",
+      "lib/orgGraph.ts (counts only; not alongside DF-P23)",
+      "tests"
+     ],
+     "migrationsLikely": 1,
+     "dependsOn": [
+      "not alongside drafting-flow DF-P23 (lib/orgGraph.ts)"
+     ],
+     "sequencingNotes": [
+      "Re-owned by the integrator at the DF-P8 merge, 2026-10-21 (DEC-31): its last listed owner (the DF-P8 pointer) has merged."
+     ]
     }
   ],
   "crossAreaFileOverlaps": [

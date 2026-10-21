@@ -1238,6 +1238,32 @@
     "drafting-flow DF-P3 merged (limb (c)'s panel sentence; components/projects/IntakePanel.tsx)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-13 at the J19 merge (DEC-31): J19 proposed 'J20 INTAKE DOOR UNDER RLS' for SEC-22 and an unnamed projects-joint owner for SEC-24 and UX-17; one package owns them all."
+  },
+  {
+   "name": "J21 DRAFTING-REQUEST PROJECT REMAINDERS \u2014 the project side of a drafting request after DF-P8: the deliverable referenced when its review completes, attach/detach on the audit trail, the intake source and timeline, the milestone link",
+   "findings": [
+    "drafting-flow PROJ-1 (Partial at DF-P8): a deliverable published into document review is referenced on the project register (project_documents) when the review completes (lib/reviewControl.ts \u2014 after document-control P39 merges, which holds it now), by the same register policy DF-P8 uses on every other path; plus the integrator's reading of dw1 ('the same path intake submissions use') \u2014 record it",
+    "drafting-flow PROJ-3 (Partial at DF-P8; dw1 / dw3 by pointer to PM-8 / SEC-17, 20261102): dw2 \u2014 a server-side audit_logs row for every project_documents attach and detach",
+    "drafting-flow PROJ-5 (Partial at DF-P8): source='intake' on project_documents (a CHECK widening, inventory-first) and the project timeline entry",
+    "drafting-flow PROJ-10 (Partial at DF-P8; dw1 built): dw2 \u2014 wire or drop milestones.linked_ticket_id (record the choice; no regression either way)",
+    "drafting-flow GAP-114 (built by DF-P8 except the review-completion reference, PROJ-1): close the gap by record once PROJ-1 lands"
+   ],
+   "files": [
+    "lib/reviewControl.ts (the review-completion reference only)",
+    "lib/projects.ts",
+    "components/projects/**",
+    "app/api/projects/** (if an attach/detach route is needed)",
+    "supabase/migrations/** (at most one DEC-30 file)",
+    "tests"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "drafting-flow DF-P8 merged (tickets.project_id, 20261256)",
+    "document-control P39 merged (it holds lib/reviewControl.ts)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P8 merge, 2026-10-21 (DEC-31)."
+   ]
   }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",

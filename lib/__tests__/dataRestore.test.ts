@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,8 +8,9 @@ import {
   RESTORE_TABLE_ORDER, RESTORE_PARENT_RULES, RESTORE_FK_PARENT_WAIVERS, ORG_LESS_RESTORE_PARENTS, restoreParentRulesFor,
   restoreRowsInOrder, restoreTableRefusal,
   RESTORE_GENERATED_COLUMNS, RESTORE_USER_REFERENCES, restoreUserReferencesFor, landRestoredRow, foreignStorageKey,
-  RESTORE_SERVICE_ROLE_WAIVERS, IMMUTABLE_TABLES,
+  RESTORE_SERVICE_ROLE_WAIVERS, IMMUTABLE_TABLES, applyRestoreChunk,
 } from "@/lib/dataRestore";
+import { db as memDb, from as memFrom } from "./helpers/restoreMemoryDb";
 import { censusSchema, censusServiceRoleWriteTables } from "./helpers/schemaKeys";
 
 function env(overrides: Partial<RestoreEnvelopeLike> = {}): RestoreEnvelopeLike {
@@ -489,7 +490,7 @@ describe("BKP-5 / ORG-1 (fix pass 2) — every foreign key onto users is read be
 
 describe("ORG-1 (fix pass 2) — a pointer is cleared instead of refusing its row only where that never widens access", () => {
   const schema = censusSchema();
-  it("every clearWhenMissing rule is a nullable ON DELETE SET NULL foreign key — and the set is exactly the five reviewed pointers", () => {
+  it("every clearWhenMissing rule is a nullable ON DELETE SET NULL foreign key — and the set is exactly the reviewed pointers listed here", () => {
     const clearable = Object.entries(RESTORE_PARENT_RULES).flatMap(([t, rules]) => rules.filter((r) => r.clearWhenMissing).map((r) => ({ t, r })));
     for (const { t, r } of clearable) {
       const f = schema.get(t)?.fks.find((x) => x.columns.length === 1 && x.columns[0] === r.column && x.parent === r.parent);
@@ -506,7 +507,14 @@ describe("ORG-1 (fix pass 2) — a pointer is cleared instead of refusing its ro
     // ticket_equipment.asset_id (drafting-flow DF-P6, the integrator at its merge): the asset a
     // request's typed tag resolved to; it gates no read (the row is read through its ticket) and,
     // cleared, the typed tag stays and reads as not found — as the live FK leaves it.
-    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["libraries.owner_team_id", "print_sheet_tokens.cover_print_id", "projects.sow_document_id", "ticket_equipment.asset_id", "tickets.library_id"]);
+    // tickets.project_id (drafting-flow DF-P8, 20261256): the project a request belongs to, by
+    // reference; it grants no read (the request is read as tickets are) — cleared, the request
+    // simply names no project, as the live FK leaves it when the project is deleted.
+    // checkout_sessions.linked_ticket_id (drafting-flow DF-P8, DEC-90 fix pass at the merge;
+    // 20261256 section (4) re-creates it ON DELETE SET NULL): the request a check-in session
+    // raised; it gates no read (a session is read as checkout sessions are) — cleared, the
+    // session simply names no request, as the live FK leaves it when the request is deleted.
+    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["checkout_sessions.linked_ticket_id", "libraries.owner_team_id", "print_sheet_tokens.cover_print_id", "projects.sow_document_id", "ticket_equipment.asset_id", "tickets.library_id", "tickets.project_id"]);
     expect(restoreParentRulesFor("documents").find((r) => r.column === "collection_id")?.clearWhenMissing).toBeUndefined();
   });
 });
@@ -592,3 +600,53 @@ describe("ORG-1 (fix pass 4) — every service-role-only contract table is skipp
   });
 });
 
+
+// drafting-flow DF-P8 (DEC-90 fix pass at the merge): 20261256 section (4)
+// makes checkout_sessions.linked_ticket_id ON DELETE SET NULL and DF-P8
+// writes it, so the restore treats it as the module's other optional
+// pointers: a session whose request is not a row of this workspace lands
+// with the pointer CLEARED (reported), never refused.
+describe("DF-P8 — a checkout session whose request is not here restores with linked_ticket_id cleared", () => {
+  const ORG = "org-1";
+  beforeEach(() => {
+    memDb.rows = {
+      orgs: [{ id: ORG, name: "Acme" }, { id: "org-victim", name: "Victim" }],
+      documents: [{ id: "d-1", org_id: ORG }],
+      tickets: [{ id: "t-here", org_id: ORG }, { id: "t-theirs", org_id: "org-victim" }],
+    };
+    memDb.keys = {}; memDb.writeError = null; memDb.readError = {}; memDb.writes = []; memDb.attempts = [];
+    memDb.countless = false; memDb.fks = {}; memDb.maxRows = 1000; memDb.generated = {}; memDb.authUsers = null;
+    memDb.defaults = {}; memDb.missingColumns = {};
+  });
+  it("absent (or another workspace's) request: the session lands, its pointer cleared and reported; a request that is here is kept", async () => {
+    expect(restoreParentRulesFor("checkout_sessions").find((r) => r.column === "linked_ticket_id")).toEqual({ column: "linked_ticket_id", parent: "tickets", clearWhenMissing: true });
+    const r = await applyRestoreChunk({ from: memFrom } as never, {
+      orgId: ORG, table: "checkout_sessions", idRemap: { orgId: { "backup-org": ORG }, uid: {} },
+      rows: [
+        { id: "cs-gone", org_id: "backup-org", document_id: "d-1", status: "completed", linked_ticket_id: "t-gone" },
+        { id: "cs-theirs", org_id: "backup-org", document_id: "d-1", status: "completed", linked_ticket_id: "t-theirs" },
+        { id: "cs-here", org_id: "backup-org", document_id: "d-1", status: "completed", linked_ticket_id: "t-here" },
+        { id: "cs-none", org_id: "backup-org", document_id: "d-1", status: "active", linked_ticket_id: null },
+      ],
+    });
+    expect(r).toMatchObject({ ok: true, inserted: 4 });
+    expect(r.refused ?? []).toEqual([]);
+    expect(r.cleared).toEqual([
+      { id: "cs-gone", code: "parent_outside_workspace", message: "linked_ticket_id t-gone cleared: not a tickets row of this workspace" },
+      { id: "cs-theirs", code: "parent_outside_workspace", message: "linked_ticket_id t-theirs cleared: not a tickets row of this workspace" },
+    ]);
+    const landed = Object.fromEntries((memDb.rows.checkout_sessions ?? []).map((x) => [x.id, x]));
+    expect(landed["cs-gone"]).toMatchObject({ org_id: ORG, linked_ticket_id: null });
+    expect(landed["cs-theirs"]).toMatchObject({ org_id: ORG, linked_ticket_id: null });
+    expect(landed["cs-here"]).toMatchObject({ org_id: ORG, linked_ticket_id: "t-here" });
+    expect(landed["cs-none"].linked_ticket_id).toBeNull();
+  });
+  it("REGRESSION: the session's document is still a strict parent — one on a document that is not here is refused, never written", async () => {
+    const r = await applyRestoreChunk({ from: memFrom } as never, {
+      orgId: ORG, table: "checkout_sessions", idRemap: { orgId: { "backup-org": ORG }, uid: {} },
+      rows: [{ id: "cs-x", org_id: "backup-org", document_id: "d-elsewhere", linked_ticket_id: "t-gone" }],
+    });
+    expect(r).toMatchObject({ ok: true, inserted: 0, refused: [expect.objectContaining({ id: "cs-x", code: "parent_outside_workspace" })] });
+    expect(memDb.rows.checkout_sessions ?? []).toEqual([]);
+  });
+});

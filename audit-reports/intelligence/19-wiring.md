@@ -361,6 +361,8 @@ types/schema.ts:1112 `unit: string;` on Ticket; supabase/schema.sql:403 `unit TE
 
 *Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): criterion 1 — a drafting request carries a reference to equipment: `ticket_equipment` (`20261251`, pending paste; ticket, asset, tag as typed; RLS through the ticket's read scope; written only by the create route). See `GAP-312`. The other carriers (hold, checkout, work package, milestone) are unchanged by this package. Corrected at the DF-P6 review fix pass (DEC-29): the request page lists the equipment but cannot add or correct it after filing — see `GAP-312`.*
 
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* criterion 1 → drafting-flow **DF-P23 TRANSITION RECORD AND RECONCILE** (re-verify against DF-P6's `ticket_equipment`, 20261251; build `unit_code` only if it still does not hold). DF-P6 has merged.
+
 ---
 
 <a id="wire-8"></a>

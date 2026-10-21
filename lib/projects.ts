@@ -24,6 +24,7 @@ import type {
   ProjectStatus, ProjectVisibility, ProjectMemberRole,
   CheckoutSession, Timestamp, Role,
 } from "@/types/schema";
+import type { ProjectLinkResult } from "@/lib/ticketProjectClient";
 
 /** Structural type for either the RLS-scoped browser client or a
  *  service-role client (cron). Same shape; lets server callers pass their
@@ -339,7 +340,7 @@ export type StatusTransitionInput = {
 /** One closeout gate as recorded and rendered: `ok` null = the read it
  *  depends on failed or is not migrated — unknown, never a pass. */
 export interface CloseoutGateLine {
-  key: "punch" | "turnover" | "checklists" | "checklistsVoided" | "changeOrders";
+  key: "punch" | "turnover" | "checklists" | "checklistsVoided" | "changeOrders" | "draftingRequests";
   ok: boolean | null;
   text: string;
   /** How many items are open behind the gate (null = unknown). Named so
@@ -405,6 +406,19 @@ export function closeoutGateLines(s: ProjectStateSnapshot): CloseoutGateLine[] {
     unknown(SNAPSHOT_READS.changeOrders)
       ? { key: "changeOrders", ok: null, text: "Change orders — could not be read", openCount: null }
       : { key: "changeOrders", ok: s.openChangeOrders === 0, text: s.openChangeOrders === 0 ? "No change orders awaiting decision" : `${plural(s.openChangeOrders, "change order")} awaiting decision`, openCount: s.openChangeOrders },
+    // PROJ-6 (drafting-flow DF-P8): open drafting requests linked to the
+    // project — a warning like every other line (warnings, not walls), and
+    // recorded with the completion (SAF-14: the audit row's gates, the
+    // report). Absent before 20261256: the line is not shown. A count of
+    // only the requests the viewer can read is never "clear": none visible
+    // is unknown, some visible is "at least" (DF-P8 fix pass).
+    ...(s.openDraftingRequests === undefined ? [] : [s.openDraftingRequests === null
+      ? { key: "draftingRequests" as const, ok: null, text: "Drafting requests — could not be read", openCount: null }
+      : s.openDraftingRequestsVisibleOnly
+        ? s.openDraftingRequests === 0
+          ? { key: "draftingRequests" as const, ok: null, text: "Drafting requests — only those visible to you counted (none of them open)", openCount: null }
+          : { key: "draftingRequests" as const, ok: false, text: `At least ${plural(s.openDraftingRequests, "drafting request")} still open — only those visible to you counted`, openCount: null }
+        : { key: "draftingRequests" as const, ok: s.openDraftingRequests === 0, text: s.openDraftingRequests === 0 ? "No open drafting requests" : `${plural(s.openDraftingRequests, "drafting request")} still open`, openCount: s.openDraftingRequests }]),
   ];
 }
 
@@ -846,6 +860,9 @@ export interface ProjectDocumentRow {
   /** DEC-40: false for a superseded / voided / archived document — the tab
    *  says so rather than presenting it as the drawing in force. */
   isCurrent: boolean;
+  /** PROJ-5 (drafting-flow DF-P8): a register row whose document still sits
+   *  in the project's intake folder — referenced, not yet adopted. */
+  inIntakeFolder?: boolean;
 }
 
 export interface ProjectDocumentRegister {
@@ -905,8 +922,8 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
   }
   const proj = (projRes.error ? null : projRes.data) as { org_id: string; intake_collection_id: string | null } | null;
 
-  const COLS = "id, document_number, title, name, rev, status, library_id, archived_at";
-  type DocRow = { id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; status: string | null; library_id: string | null; archived_at?: string | null };
+  const COLS = "id, document_number, title, name, rev, status, library_id, archived_at, collection_id";
+  type DocRow = { id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; status: string | null; library_id: string | null; archived_at?: string | null; collection_id?: string | null };
   const linkedIds = [...new Set(links.map((l) => String(l.document_id)))];
   const readLinked = async (): Promise<DocRow[]> => {
     const out: DocRow[] = [];
@@ -940,6 +957,10 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
     source: link ? (link.source === "manual" ? "manual" : "checkout") : "intake",
     lastSeenAt: link?.last_seen_at ?? null,
     isCurrent: !d.archived_at && !NOT_CURRENT_STATUSES.has(d.status ?? ""),
+    // PROJ-5 (drafting-flow DF-P8): a register row whose document is still in
+    // the project's intake folder (the intake door references what it
+    // creates — DEC-40 J1) has not been adopted yet.
+    ...(link && proj?.intake_collection_id && d.collection_id === proj.intake_collection_id ? { inIntakeFolder: true } : {}),
   });
 
   const rows: ProjectDocumentRow[] = [];
@@ -1482,12 +1503,15 @@ export async function updateProjectMeta(input: {
   patch: {
     name?: string; description?: string | null; mocReference?: string | null;
     targetCompletionDate?: string | null; visibility?: ProjectVisibility;
+    /** PROJ-13 (drafting-flow DF-P8): the request this project was created
+     *  from — set or cleared, so a mislink is correctable. */
+    linkedTicketId?: string | null;
   };
   actorUserId: string; actorEmail?: string; actorRole?: string;
 }): Promise<void> {
   const proj = await assertCanManageProject(input.projectId, input.actorUserId);
   const { data: beforeRow } = await supabase.from("projects")
-    .select("name, description, moc_reference, target_completion_date, visibility")
+    .select("name, description, moc_reference, target_completion_date, visibility, linked_ticket_id")
     .eq("id", input.projectId).maybeSingle();
   const update: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -1502,6 +1526,7 @@ export async function updateProjectMeta(input: {
   if (input.patch.mocReference !== undefined) update.moc_reference = input.patch.mocReference?.trim() || null;
   if (input.patch.targetCompletionDate !== undefined) update.target_completion_date = input.patch.targetCompletionDate || null;
   if (input.patch.visibility !== undefined) update.visibility = input.patch.visibility;
+  if (input.patch.linkedTicketId !== undefined) update.linked_ticket_id = input.patch.linkedTicketId || null;
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
   if (error) throw new Error(userFacingError(error, { context: "projects" }));
 
@@ -1539,10 +1564,25 @@ export async function listStaleCheckoutsForUser(userId: string): Promise<Checkou
 }
 
 // ─── TICKET ↔ PROJECT INTEGRATION ────────────────────────────────────────
-// Converts a ticket from the request portal into a project. The project
-// inherits the ticket title + description, links back to the ticket so the
-// ticket page can show the linked project, and writes audit + activity rows
-// on both sides.
+// PROJ-13 / GAP-114 (drafting-flow Round G, DF-P8): "Create project from this
+// request" on the request page (management or the requester — DEC-90 ruling
+// (3)). The project inherits the request's title and description and names
+// it in projects.linked_ticket_id (the header chip, PROJ-13); the request is
+// then linked to the project BY REFERENCE through /api/tickets/project-link,
+// which writes tickets.project_id and the request's one history line
+// ("Converted to Project") as the service role, in one compare-and-set.
+// LEAK-4 / EVID-1 / PERS-2: the browser no longer reads and rewrites the
+// request's `history` array itself.
+
+export type ConvertTicketResult = {
+  project: Project;
+  /** false when the project exists but the request could not be linked to
+   *  it (the reason is in linkError) — never thrown, so a retry does not
+   *  create a second project. */
+  linked: boolean;
+  linkError?: string;
+  linkWarning?: string;
+};
 
 export async function convertTicketToProject(input: {
   ticketId: string;
@@ -1550,11 +1590,11 @@ export async function convertTicketToProject(input: {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
-}): Promise<Project> {
-  // Fetch the ticket so we can copy title/description/moc onto the project
+}): Promise<ConvertTicketResult> {
+  // Fetch the ticket so we can copy title/description onto the project
   const { data: ticket, error: tErr } = await supabase
     .from("tickets")
-    .select("id, title, description, request_type, requester_id, requester_name")
+    .select("id, ticket_id, title, description, request_type, requester_id, requester_name")
     .eq("id", input.ticketId)
     .single();
   if (tErr || !ticket) throw new Error(tErr ? userFacingReadError(tErr, "projects") : "Ticket not found");
@@ -1562,9 +1602,9 @@ export async function convertTicketToProject(input: {
   // Description is required by createProject. If the ticket has none, fall
   // back to the title so the project is still meaningfully described and
   // the user can edit it on the project page after conversion.
-  const ticketTitle = (ticket.title as string) ?? "Converted ticket";
+  const ticketTitle = (ticket.title as string) ?? "Converted request";
   const ticketDescription = ((ticket.description as string | undefined) || "").trim()
-    || `Converted from ticket ${ticket.id}. Originally: ${ticketTitle}`;
+    || `Created from drafting request ${(ticket.ticket_id as string | undefined) ?? ticket.id}. Originally: ${ticketTitle}`;
 
   const project = await createProject({
     orgId: input.orgId,
@@ -1577,37 +1617,37 @@ export async function convertTicketToProject(input: {
   });
 
   // Optional: also add the original requester as a member so they show up.
+  // The project EXISTS from here on: nothing after this point throws (DF-P8
+  // fix pass 2), so the caller always learns the project and a retry links
+  // it instead of creating a second one naming this request. A refused
+  // member row is said in linkWarning, never thrown.
+  let memberWarning: string | null = null;
   if (ticket.requester_id && ticket.requester_id !== input.actorUserId) {
-    await addMember({
-      projectId: project.id!,
-      orgId: input.orgId,
-      userId: ticket.requester_id as string,
-      userName: (ticket.requester_name as string | undefined) ?? undefined,
-      actorUserId: input.actorUserId,
-      actorEmail: input.actorEmail,
-    });
+    try {
+      await addMember({
+        projectId: project.id!,
+        orgId: input.orgId,
+        userId: ticket.requester_id as string,
+        userName: (ticket.requester_name as string | undefined) ?? undefined,
+        actorUserId: input.actorUserId,
+        actorEmail: input.actorEmail,
+      });
+    } catch (e) {
+      memberWarning = `The request's requester was not added to the project's members: ${(e as Error)?.message || "the member row was refused"} — add them from the project's Team card.`;
+    }
   }
 
-  // Append a history entry on the ticket so the ticket page reflects the link.
+  // The request side of the link — server-side, one history line.
+  let res: ProjectLinkResult;
   try {
-    const { data: existing } = await supabase
-      .from("tickets")
-      .select("history")
-      .eq("id", input.ticketId)
-      .single();
-    const history = Array.isArray(existing?.history) ? existing.history : [];
-    history.push({
-      action: "Converted to Project",
-      user: input.actorEmail || input.actorUserId,
-      date: new Date().toISOString(),
-      details: `Project ${project.id} (${project.name})`,
-    });
-    await supabase.from("tickets").update({ history }).eq("id", input.ticketId);
+    const { postProjectLink } = await import("@/lib/ticketProjectClient");
+    res = await postProjectLink({ ticketId: input.ticketId, projectId: project.id!, converted: true });
   } catch (e) {
-    console.error("Failed to update ticket history", e);
+    res = { ok: false, status: 0, error: (e as Error)?.message || "the link could not be sent" };
   }
-
-  return project;
+  const warning = [memberWarning, res.ok ? res.warning ?? null : null].filter((w): w is string => !!w).join(" ");
+  if (!res.ok) return { project, linked: false, linkError: res.error, ...(warning ? { linkWarning: warning } : {}) };
+  return { project, linked: true, ...(warning ? { linkWarning: warning } : {}) };
 }
 
 // ─── BULK CHECKOUT ───────────────────────────────────────────────────────

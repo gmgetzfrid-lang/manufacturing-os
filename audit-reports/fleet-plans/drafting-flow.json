@@ -880,6 +880,32 @@
      "sequencingNotes": [
       "Added by the integrator at the DF-P7 merge, 2026-10-21 (DEC-31)."
      ]
+    },
+    {
+     "name": "DF-P23 TRANSITION RECORD AND RECONCILE — the status write and its audit row in one transaction, the actor on every history line, and the ticket-side records whose limbs have all landed",
+     "findings": [
+      "drafting-flow EVID-12 (dw1, assigned to DF-P8, not built there under DEC-90 ruling 6 because it would change transition outcomes; DF-P8 built the drain): the transition-and-audit RPC — status write and its audit row in ONE transaction — built only if every transition's outcome is unchanged (per-action columns, per-column 42703 retries, the hold release after the CAS); otherwise record why and keep the drain",
+      "drafting-flow EVID-1 (dw3, Partial at DF-P8): the actor uid on every ticket history entry, written server-side",
+      "drafting-flow HAND-3 (re-verify: DF-P1, DF-P2, DF-P9 and DF-P10 each landed a limb — the register-backed close, the captured base version, the page's drift chip and the deliverable stamp): close by record with file:line if every done-when holds as written, else name what remains with an owner",
+      "intelligence WIRE-7 (criterion 1: tickets gain a unit_code checked against codebook_entries plus an optional equipment tag list) — re-verify against DF-P6's ticket_equipment (20261251); build the unit_code column only if it still does not hold, inventory-first",
+      "drafting-flow PROJ-7 (pointer to intelligence WIRE-4 / WIRE-7): the request ↔ project edge in lib/orgGraph.ts now that tickets.project_id exists (intelligence's file — declare it under filesOutsidePlan)"
+     ],
+     "files": [
+      "app/api/tickets/workflow-action/route.ts",
+      "lib/ticketTransitions.ts",
+      "lib/workflow.ts",
+      "lib/orgGraph.ts (the ticket↔project edge only; intelligence's file)",
+      "supabase/migrations/** (at most one DEC-30 file)",
+      "tests"
+     ],
+     "migrationsLikely": 1,
+     "dependsOn": [
+      "drafting-flow DF-P8 merged",
+      "after DF-P22 (the drafting packages hold the workflow route one at a time)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P8 merge, 2026-10-21 (DEC-31). Serial with the other drafting-flow packages that hold the workflow route."
+     ]
     }
   ],
   "crossAreaFileOverlaps": [

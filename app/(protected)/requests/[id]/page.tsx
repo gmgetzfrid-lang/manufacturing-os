@@ -12,7 +12,7 @@ import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogPr
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord, type CustomCategoryConfig, type OrgDraftingSettings } from '@/types/schema';
 import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, currentRoster, routedNoRosterReason, workflowRefusalMessage, engineerPickQuestionApplies, separationOfDutiesActive } from '@/lib/workflow';
 import { ticketReviewRouting } from '@/lib/routingControl';
-import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
+import { loadCapabilityPolicyEntry, policyAllows, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { affordancePolicyFault } from '@/lib/checkoutAffordances';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
 // drafting-flow Round G, DF-P9 TICKET-PAGE: the page's display layer and
@@ -55,6 +55,7 @@ import RevUpModal from '@/components/documents/RevUpModal';
 import PublishNewDocumentModal from '@/components/requests/PublishNewDocumentModal';
 import { findTicketNewDocumentVersion, newDocumentNotRecordedMessage, type TicketNewDocumentVersion } from '@/lib/ticketNewDocumentHandback';
 import TicketCopyRecallPanel from '@/components/requests/TicketCopyRecallPanel';
+import TicketProjectActions from '@/components/requests/TicketProjectActions';
 import { canPutFirstRevisionInContainer } from '@/lib/revisions';
 import { publicOrigin } from '@/lib/publicOrigin';
 import { ticketCopyPlan, recordTicketCopy, type TicketCopyLiveFacts } from '@/lib/ticketDeliverableCopy';
@@ -1341,6 +1342,8 @@ export default function TicketDetailView() {
       // DCW-1: the triage picker starts on the ticket's library (20261208;
       // absent before the paste — no library, as today).
       libraryId: typeof r.library_id === 'string' ? r.library_id : null,
+      // GAP-114 (DF-P8, 20261256): the project, by reference — undefined before the paste.
+      ...('project_id' in r ? { projectId: typeof r.project_id === 'string' ? r.project_id : null } : {}),
       // DF-P6 (20261250): the engine's engineering gate reads the work, not
       // who asked — undefined before the paste (today's gate decides). The
       // one mapper the route's rowToTicket shares (lib/reviewModel.ts).
@@ -1537,7 +1540,7 @@ export default function TicketDetailView() {
 
   // PROJ-9: the project a request is linked to (an intake collision names it),
   // read through RLS — a project the viewer cannot see shows as a reference only.
-  const projectRef = useMemo(() => projectRefOf(ticket?.metadata), [ticket?.metadata]);
+  const projectRef = useMemo(() => projectRefOf(ticket?.metadata, ticket?.projectId), [ticket?.metadata, ticket?.projectId]);
   const [projectName, setProjectName] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -3030,6 +3033,16 @@ export default function TicketDetailView() {
                 </Link>
               </div>
             )}
+            {/* GAP-114 / PROJ-13 (DF-P8): link, unlink, or create a project from this request —
+                the requester or a member who manages requests (DEC-90 ruling (3)); only once
+                tickets.project_id exists (20261256), so nothing new shows before the paste. */}
+            {ticket.id && uid && ticket.projectId !== undefined && !ticket.archivedAt && (
+              <TicketProjectActions
+                ticketId={ticket.id} orgId={ticket.orgId} linkedProjectId={ticket.projectId ?? null}
+                canAct={uid === ticket.requesterId || policyAllows(capPolicy, 'ticket.manage', activeRole, roles, uid)}
+                actorUserId={uid} actorEmail={userEmail} actorRole={activeRole ?? undefined}
+              />
+            )}
           </div>
 
           <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden flex flex-col">
@@ -3286,8 +3299,14 @@ export default function TicketDetailView() {
                {/* DCW-4 remainder (DEC-90 ruling at the DF-P15 merge): a request with neither a
                    source document nor a library — where its deliverable stands, and the offer to
                    publish it as a new document in a library the publisher chooses. */}
-               {chooseNewDocLibrary && (deliverable?.state === 'published' || canOfferChosenLibraryDocument || canRecordExistingChosenLibraryDocument) && (
+               {chooseNewDocLibrary && (deliverable?.state === 'published' || deliverable?.state === 'not_in_register' || canOfferChosenLibraryDocument || canRecordExistingChosenLibraryDocument) && (
                  <div className="mt-3 flex flex-wrap items-center gap-2 relative z-10">
+                   {/* DCW-4 remainder (DF-P8): the close recorded that the register does not have it. */}
+                   {deliverable?.state === 'not_in_register' && (
+                     <span data-testid="deliverable-not-in-register" className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                       <AlertTriangle className="w-3 h-3" /> Closed — deliverable not in the register
+                     </span>
+                   )}
                    {deliverable?.state === 'published' && (
                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
                        <CheckCircle2 className="w-3 h-3" /> {deliverable.in_review ? `Draft ${deliverable.revision_label} in document review` : (deliverable as { filed_as_draft?: boolean }).filed_as_draft ? 'Filed in the register as a Draft document' : `Published as Rev ${deliverable.revision_label}`}

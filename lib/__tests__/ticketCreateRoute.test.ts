@@ -66,12 +66,20 @@ const s = vi.hoisted(() => ({
   /** next_ticket_number as the caller-scoped client sees it. */
   counter: new Map<string, number>(),
   rpcCalls: [] as Array<{ client: "admin" | "caller"; fn: string; args: Record<string, unknown> }>,
+  // DF-P8 fix pass 2: the caller's answers for the register-authority
+  // functions (is_org_controller / can_manage_project); unset → false.
+  callerRpc: {} as Record<string, (args: Record<string, unknown>) => { data: unknown; error: { code?: string; message: string } | null }>,
   callerToken: "" as string,
   emailGate: null as null | ((args: Record<string, unknown>) => { data: unknown; error: Err | null }),
   /** notifications N18: whether 20261258 is pasted (the status CHECK admits 'not_emailed'). */
   pasted258: false,
   /** `${table}.${op}` → errors handed out one per call, in order. */
   errors: {} as Record<string, Array<Err | null>>,
+  /** Columns a table does NOT have (a database a migration has not reached):
+   *  a read naming one answers 42703, an insert carrying one 42703, as
+   *  Postgres does — every time, not once (DEC-90 fix pass at the DF-P8
+   *  merge: the world before 20261256). Unset, every column exists. */
+  missingColumns: {} as Record<string, string[]>,
   /** `${table}.${op}` → the statement RUNS (the row is written) and then this
    *  error is what the caller sees: a write that committed but whose reply
    *  was lost on the way back. */
@@ -112,14 +120,25 @@ function chain(table: string, client: "admin" | "anon" | "caller") {
   if (client === "caller" && table === "documents") {
     filters.push((r) => !Array.isArray(r.visible_to) || (r.visible_to as string[]).includes(String(callerUid())));
   }
+  // projects_select (project_visible_to_me) the same way (DF-P8 fix pass 3).
+  if (client === "caller" && table === "projects") {
+    filters.push((r) => !Array.isArray(r.visible_to) || (r.visible_to as string[]).includes(String(callerUid())));
+  }
   let op: "select" | "insert" | "update" | "delete" = "select";
   let payload: Row | Row[] | null = null;
   let order: { col: string; asc: boolean } | null = null;
   let limitN: number | null = null;
   let single: "one" | "maybe" | null = null;
   let returning = false;
+  let selected = "*";
   const run = (): { data: unknown; error: Err | null } => {
     for (const h of s.hooks) h(table, op);
+    const missing = s.missingColumns[table] ?? [];
+    if (missing.length > 0) {
+      const named = op === "select" ? selected.split(",").map((c) => c.trim()) : op === "insert" || op === "update" ? (Array.isArray(payload) ? payload : [payload ?? {}]).flatMap((r) => Object.keys(r)) : [];
+      const col = missing.find((c) => named.includes(c));
+      if (col) return { data: null, error: { code: "42703", message: op === "select" ? `column ${table}.${col} does not exist` : `column "${col}" of relation "${table}" does not exist` } };
+    }
     const errs = s.errors[`${table}.${op}`];
     if (errs && errs.length > 0) {
       const e = errs.shift();
@@ -172,7 +191,7 @@ function chain(table: string, client: "admin" | "anon" | "caller") {
     return { data: out, error: null };
   };
   const q: Record<string, unknown> = {
-    select(_cols?: string) { if (op !== "select") returning = true; return q; },
+    select(cols?: string) { if (op !== "select") returning = true; else selected = cols ?? "*"; return q; },
     insert(p: Row | Row[]) { op = "insert"; payload = p; return q; },
     upsert(p: Row | Row[]) { op = "insert"; payload = p; return q; },
     update(p: Row) { op = "update"; payload = p; return q; },
@@ -251,6 +270,7 @@ vi.mock("@/lib/serverAuth", () => ({
       from: (t: string) => chain(t, "caller"),
       rpc: async (fn: string, args: { p_org: string; p_year: number }) => {
         s.rpcCalls.push({ client: "caller", fn, args });
+        if (fn !== "next_ticket_number") { const answer = s.callerRpc[fn]; return answer ? answer(args) : { data: false, error: null }; }
         const errs = s.errors[`rpc.${fn}`];
         if (errs && errs.length > 0) { const e = errs.shift(); if (e) return { data: null, error: e }; }
         const uid = s.users[token]?.id;
@@ -306,6 +326,7 @@ import {
   BUILTIN_REQUEST_TYPES, stampedRequesterRole, parseTicketCreateBody, insertFailureKind, requestNumberYear, checkinNoteOf,
   psmAlertNotice, capSourceDocuments, MAX_SOURCE_DOCUMENTS, MAX_COLLISION_OVERLAPS,
 } from "@/lib/ticketCreate";
+import { recordedRegisterAuthority } from "@/lib/ticketProject";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG = "22222222-2222-4222-8222-222222222222";
@@ -388,10 +409,12 @@ beforeEach(() => {
   seed();
   s.counter = new Map();
   s.rpcCalls = [];
+  s.callerRpc = {};
   s.emailGate = null;
   s.pasted258 = false;
   resetDeliveryRecordLatches();
   s.errors = {};
+  s.missingColumns = {};
   s.lostReply = {};
   s.hooks = [];
   s.r2Fail = {};
@@ -902,8 +925,8 @@ describe("FRIC-3 / DCW-7 — the unit is optional, explicit when unknown, resolv
   });
 });
 
-describe("the contract's seams: the DEC-40 projectId travels and is ignored; the DEC-34 declaration is DF-P6's (lib/__tests__/reviewModel.test.ts)", () => {
-  it("a projectId is parsed and not written; a declaration that is present but malformed is refused with the reason, and a blank one never blocks", async () => {
+describe("the contract's seams: the DEC-40 projectId is DF-P8's (confirmed, then written — lib/__tests__/dfRoundG_P8_projects.test.ts); the DEC-34 declaration is DF-P6's (lib/__tests__/reviewModel.test.ts)", () => {
+  it("a projectId is parsed and, for a project of the workspace the caller sees, written; a declaration that is present but malformed is refused with the reason, and a blank one never blocks", async () => {
     const parsed = parseTicketCreateBody({ ...portal(), projectId: PROJECT });
     expect(parsed.ok && parsed.input.projectId).toBe(PROJECT);
     const malformed = parseTicketCreateBody({ ...portal(), declaration: { text: "like for like" } });
@@ -912,7 +935,7 @@ describe("the contract's seams: the DEC-40 projectId travels and is ignored; the
     const blank = parseTicketCreateBody({ ...portal(), declaration: null });
     expect(blank.ok && blank.input.declaration).toBeFalsy();
     await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
-    expect(tickets()[0].project_id).toBeUndefined();
+    expect(tickets()[0].project_id).toBe(PROJECT);
     expect(JSON.stringify(tickets()[0].metadata)).not.toContain("declaration");
     // no declaration: nothing is written for one — the database's default (engineered) is the answer
     expect(tickets()[0].engineering_required).toBeUndefined();
@@ -2045,5 +2068,205 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
     expect(res.status).toBe(201);
     expect(JSON.stringify((await res.json()).warnings)).toMatch(/20261251 is not applied/);
     expect(tickets()).toHaveLength(1);
+  });
+});
+
+// ── drafting-flow Round G, DF-P8 PROJECTS — GAP-114 / DEC-40 / PROJ-4 / PROJ-10 / PROJ-12 ──
+describe("DF-P8 — a request filed into a project names it BY REFERENCE (tickets.project_id), confirmed by the route", () => {
+  const activity = () => (s.tables.project_activity ?? []) as Row[];
+  it("the request form: a project of the workspace the caller can see is written, with one project feed row; REGRESSION: no projectId → no project_id, no feed row", async () => {
+    const res = await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect(res.status).toBe(201);
+    expect(tickets()[0].project_id).toBe(PROJECT);
+    expect(activity()).toHaveLength(1);
+    expect(activity()[0]).toMatchObject({ project_id: PROJECT, org_id: ORG, type: "request_linked" });
+    s.tables.tickets = []; s.tables.project_activity = [];
+    const plain = await POST(req(portal({ attachments: [] })));
+    expect(plain.status).toBe(201);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect(activity()).toHaveLength(0);
+  });
+  it("the request form: an unknown, malformed, another workspace's or closed project is dropped with a warning — never a refusal", async () => {
+    for (const projectId of ["ffffffff-0000-4000-8000-0000000000aa", "not-a-uuid"]) {
+      s.tables.tickets = [];
+      const res = await POST(req({ ...portal({ attachments: [] }), projectId }));
+      expect(res.status).toBe(201);
+      expect(JSON.stringify((await res.json()).warnings)).toMatch(/project named is not one you can see/);
+      expect("project_id" in tickets()[0]).toBe(false);
+    }
+    s.tables.tickets = [];
+    (s.tables.projects as Row[])[1].status = "completed";
+    const closed = await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT2 }));
+    expect(JSON.stringify((await closed.json()).warnings)).toMatch(/or it is closed/);
+    expect("project_id" in tickets()[0]).toBe(false);
+  });
+  it("PROJ-4 / PROJ-10: a check-in takes the project of the requester's OWN checkout session (whatever the body says) and stamps that session with the request", async () => {
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    const res = await POST(req({ ...checkin(), projectId: PROJECT2 }));
+    expect(res.status).toBe(201);
+    const t = tickets()[0];
+    expect(t.project_id).toBe(PROJECT);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(t.id);
+    expect((s.tables.checkout_sessions as Row[])[1].linked_ticket_id).toBeUndefined();
+    expect(activity().map((a) => a.project_id)).toEqual([PROJECT]);
+    // fix pass 3: a requester who merely sees the project is not its register's authority
+    expect((t.metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "checkin", registerAuthority: false });
+  });
+  it("REGRESSION: an ad-hoc check-in (a session with no project) files as today — no project_id, no feed row — and its session is still stamped with the request", async () => {
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect(activity()).toHaveLength(0);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(tickets()[0].id);
+  });
+  it("PROJ-12: an intake collision names its verified project in the column (and still in metadata.intake_collision), with a feed row", async () => {
+    const res = await POST(req(collision()));
+    expect(res.status).toBe(201);
+    const t = tickets()[0];
+    expect(t.project_id).toBe(PROJECT);
+    expect((t.metadata as Row).intake_collision).toMatchObject({ projectId: PROJECT });
+    expect(activity()[0]).toMatchObject({ project_id: PROJECT, type: "request_linked" });
+  });
+  it("before 20261256: the insert answers 42703 naming project_id — retried once without it, the request filed; the request form says the project was not recorded, a collision says nothing (its metadata carries the project, as today)", async () => {
+    s.errors["tickets.insert"] = [{ code: "42703", message: 'column "project_id" of relation "tickets" does not exist' }];
+    const res = await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect(res.status).toBe(201);
+    expect(JSON.stringify((await res.json()).warnings)).toMatch(/20261256 is not applied/);
+    expect(tickets()).toHaveLength(1);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect(activity()).toHaveLength(0);
+    s.tables.tickets = [];
+    s.errors["tickets.insert"] = [{ code: "PGRST204", message: "Could not find the 'project_id' column of 'tickets' in the schema cache" }];
+    const col = await POST(req(collision()));
+    expect(col.status).toBe(201);
+    expect(JSON.stringify((await col.json()).warnings ?? [])).not.toMatch(/20261256/);
+    expect((tickets()[0].metadata as Row).intake_collision).toMatchObject({ projectId: PROJECT });
+    // no reference recorded → no link record either (the paste's backfill still fills it)
+    expect((tickets()[0].metadata as Row).project_link).toBeUndefined();
+  });
+  it("fix pass 2 (PM-8 / SEC-17): the link is recorded with whether the project register's policy admits who made it — a form project only for a caller who manages it (asked AS THE CALLER); a check-in's or a collision's project is the server's own record", async () => {
+    // a requester who merely sees the project
+    await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "portal", registerAuthority: false });
+    expect(s.rpcCalls.filter((c) => c.client === "caller" && c.fn === "can_manage_project").map((c) => c.args)).toEqual([{ p_project: PROJECT }]);
+    // one who manages it
+    s.tables.tickets = []; s.tables.project_activity = [];
+    s.callerRpc = { can_manage_project: (a) => ({ data: a.p_project === PROJECT, error: null }) };
+    await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ registerAuthority: true });
+    // an unanswerable check is never a yes
+    s.tables.tickets = [];
+    s.callerRpc = { is_org_controller: () => ({ data: null, error: { message: "timeout" } }), can_manage_project: () => ({ data: null, error: { message: "timeout" } }) };
+    await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ registerAuthority: false });
+    // fix pass 3: a collision is held to the same rule — the caller's own authority
+    s.tables.tickets = []; s.callerRpc = {};
+    await POST(req(collision()));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "intake_collision", registerAuthority: false });
+    s.tables.tickets = [];
+    s.callerRpc = { is_org_controller: (a) => ({ data: a.p_org === ORG, error: null }) };
+    await POST(req(collision()));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "intake_collision", registerAuthority: true });
+    s.callerRpc = {};
+    // REGRESSION: no project → no link record
+    s.tables.tickets = [];
+    await POST(req(portal({ attachments: [] })));
+    expect((tickets()[0].metadata as Row).project_link).toBeUndefined();
+  });
+  it("fix pass 3 (review, major): REGRESSION — a member who is neither a controller nor a manager of the project, filing an intake collision by direct call, records registerAuthority false, so the hand-back writes nothing on the register", async () => {
+    const res = await POST(req(collision()));
+    expect(res.status).toBe(201);
+    const t = tickets()[0];
+    expect(t.project_id).toBe(PROJECT);
+    expect((t.metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "intake_collision", registerAuthority: false });
+    // asked AS THE CALLER, never as the service role
+    expect(s.rpcCalls.filter((c) => c.fn === "can_manage_project").map((c) => [c.client, c.args])).toEqual([["caller", { p_project: PROJECT }]]);
+    expect(s.rpcCalls.filter((c) => c.fn === "is_org_controller").map((c) => [c.client, c.args])).toEqual([["caller", { p_org: ORG }]]);
+    // the hand-back's own reader (app/api/tickets/handback/route.ts) answers no
+    expect(recordedRegisterAuthority(t.metadata, PROJECT)).toBe(false);
+  });
+  it("fix pass 3 (review, major): a collision or a check-in on a project the caller cannot see keeps the request's project but records no authority and writes no project feed row as the service role", async () => {
+    (s.tables.projects as Row[])[0].visible_to = [SUP];
+    s.callerRpc = { is_org_controller: () => ({ data: true, error: null }), can_manage_project: () => ({ data: true, error: null }) };
+    const col = await POST(req(collision()));
+    expect(col.status).toBe(201);
+    expect(tickets()[0].project_id).toBe(PROJECT);
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ registerAuthority: false });
+    expect(activity()).toHaveLength(0);
+    // the policy's functions are not even asked for a project the caller cannot see
+    expect(s.rpcCalls.filter((c) => c.fn === "can_manage_project" || c.fn === "is_org_controller")).toEqual([]);
+    s.tables.tickets = [];
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    const ci = await POST(req(checkin()));
+    expect(ci.status).toBe(201);
+    expect(tickets()[0].project_id).toBe(PROJECT);
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ authority: "checkin", registerAuthority: false });
+    expect(activity()).toHaveLength(0);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(tickets()[0].id);
+  });
+  it("fix pass 3: a check-in by a caller who manages the checkout's project records registerAuthority true", async () => {
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    s.callerRpc = { can_manage_project: (a) => ({ data: a.p_project === PROJECT, error: null }) };
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "checkin", registerAuthority: true });
+    expect(recordedRegisterAuthority(tickets()[0].metadata, PROJECT)).toBe(true);
+  });
+  // DEC-90 fix pass at the DF-P8 merge: until 20261256 section (4) is pasted,
+  // checkout_sessions.linked_ticket_id is the baseline key with NO delete
+  // action — a stamped session would make the request undeletable (23503).
+  // "Deploy first, then paste" is true only if nothing is stamped before the
+  // paste: exactly as before DF-P8.
+  it("PROJ-10, before 20261256 (tickets.project_id absent): an ad-hoc check-in files as today and stamps NO checkout session", async () => {
+    s.missingColumns = { tickets: ["project_id"] };
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect(tickets()).toHaveLength(1);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect(activity()).toHaveLength(0);
+    for (const sess of s.tables.checkout_sessions as Row[]) expect(sess.linked_ticket_id).toBeUndefined();
+  });
+  it("PROJ-10, before 20261256: a check-in under a project checkout files without the project (retried once, as today) and stamps NO checkout session", async () => {
+    s.missingColumns = { tickets: ["project_id"] };
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect(tickets()).toHaveLength(1);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect((tickets()[0].metadata as Row).project_link).toBeUndefined();
+    expect(activity()).toHaveLength(0);
+    for (const sess of s.tables.checkout_sessions as Row[]) expect(sess.linked_ticket_id).toBeUndefined();
+  });
+  it("PROJ-10: a probe of tickets.project_id that fails some other way (a timeout) is never read as 'applied' — no stamp, the request filed", async () => {
+    let armed = true;
+    s.hooks.push((t, op) => {
+      if (armed && t === "tickets" && op === "select" && tickets().length > 0) {
+        armed = false;
+        s.errors["tickets.select"] = [{ code: "57014", message: "canceling statement due to statement timeout" }];
+      }
+    });
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect(armed).toBe(false);
+    expect(s.errors["tickets.select"]).toEqual([]); // the probe met the timeout
+    expect(tickets()).toHaveLength(1);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBeUndefined();
+  });
+  it("PROJ-10, after 20261256: the same ad-hoc check-in and the project check-in are stamped (the world the earlier tests pin), and a project check-in needs no probe — its insert carried tickets.project_id", async () => {
+    const reads: string[] = [];
+    s.hooks.push((t, op) => { if (t === "tickets" && op === "select" && tickets().length > 0) reads.push(t); });
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect(tickets()[0].project_id).toBe(PROJECT);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(tickets()[0].id);
+    const withProject = reads.length;
+    s.tables.tickets = []; reads.length = 0;
+    delete (s.tables.checkout_sessions as Row[])[0].project_id;
+    delete (s.tables.checkout_sessions as Row[])[0].linked_ticket_id;
+    const adhoc = await POST(req(checkin()));
+    expect(adhoc.status).toBe(201);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(tickets()[0].id);
+    expect(reads.length).toBe(withProject + 1); // the one probe, only where the insert carried no project
   });
 });

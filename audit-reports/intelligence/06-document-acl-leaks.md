@@ -811,6 +811,8 @@ The impact panel (`lib/impact.ts`), revision fanout (`lib/revisionImpact.ts`) an
 
 **Fix pass 2 (2026-10-02, review): a consequence outside this area, handed to projects.** The `project_documents_document_readable` rail returns a link row only while its document is readable. `lib/projects.ts` `listProjectDocuments` therefore no longer sees the rows it counted as hidden. Once 20261170 is pasted, `hiddenByPermissions` and `hiddenDocIds` read 0. The projects register's deliberate "N linked documents are hidden by your permissions" note (ProjectDocumentsCard in `components/projects/**`, and `documentsTabCount`'s badge contribution) goes dark: the hiding becomes total instead of disclosed. That trades a disclosure for the leak this finding closes, since the note itself told a reader that a restricted document is linked to the project. The projects package (owner of `lib/projects.ts` and `components/projects/**`) should drop the note or re-source it, for example from a SECURITY DEFINER count of the project's links the caller cannot read, if the disclosure is wanted. Its tests' fixtures, which still return those rows, no longer describe the database. Recorded in the 20261170 header and in DEC-96's Risk; not edited here (not this package's files).
 
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* the remaining rails (`document_related_resources`, `entity_mentions`, `document_supersessions` with document control's lineage readers) and the existence-only counts → intelligence **I-34 DOCUMENT EDGE READ RAILS** (re-owned: its last listed owner, the DF-P8 pointer, has merged).
+
 ---
 
 <a id="dacl-12"></a>

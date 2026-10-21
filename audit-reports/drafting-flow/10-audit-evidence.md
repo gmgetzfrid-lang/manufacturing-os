@@ -73,6 +73,20 @@ lib/projects.ts:832-839 —
 
 **Scope / residual.** The project push → **DF-P8** (fleet plan: "the project push limb is DF-P8's"). The actor uid, the e-signature id and the content hash on the approving entry → **DF-P5** (signatures minted against the ticket resource), with the hash itself `EVID-12`'s residual.
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. The project push limb: the browser's "Converted to Project" history push is gone; the line is written by `/api/tickets/project-link` (service role, audit row first, compare-and-set), as `LEAK-4` records.
+
+**Done-when.**
+- ✓ (as recorded) history / status / deliverable_rev / engineer_approved_at are not member-writable beyond an own-name append.
+- ✓ Every ticket state change and history line flows through a server route — `lib/projects.ts`'s push is moved server-side.
+- ✗ History entries carry the actor's email, not their uid; e-signature id and content hash as recorded (DF-P5 / `EVID-12`).
+- ✓ (as recorded) the direct-update test.
+
+**Scope / residual.** Done-when 3 (actor uid on each history entry) → the next holder of `lib/ticketTransitions.ts` / the workflow route (the integrator assigns; DF-P8 did not change the entry shape beyond `attempt`). Stays OPEN on done-when 3.
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path, a request with no project; independent of every other migration).
+
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* done-when 3 (the actor uid on every history entry) → drafting-flow **DF-P23 TRANSITION RECORD AND RECONCILE**.
+
 ---
 
 <a id="evid-2"></a>
@@ -886,6 +900,19 @@ Tests: `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("approve_draft_ifc: the 
 - ✗ (4) on the serial path of an unconfigured workspace — ruled out by the integrator for that path (above); ✓ on every routed sign-off.
 
 **Scope / residual.** Done-when 4 is closed for this fleet by the ruling unless the integrator re-opens it; done-when 1 remains, owned by DF-P8 PROJECTS. Stays OPEN on done-when 1.
+
+**Partial (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. Done-when 1 assessed under DEC-90 ruling (6) for DF-P8 ("build the transition-and-audit RPC only if no transition's outcome changes"): not built, because it would change outcomes. The route's update is assembled per action (dynamic columns), retries per column on 42703 before migrations are pasted, and releases or keeps holds only after its compare-and-set lands (`HOLDS_NOT_RELEASED`); one SQL function would have to re-implement each of those or change what a transition does when one fails. Built instead, the drain (`lib/ticketAuditDrain.ts`, the maintenance cron's step 5d, `app/api/cron/maintenance/route.ts:535`): the transition's own history line now names its attempt row (`attempt`, stamped in the SAME compare-and-set, `app/api/tickets/workflow-action/route.ts:1510-1523`) and the attempt row says it is checkable (`details.historyAttempt`, `:1608`); an attempt older than 15 minutes with no follow-up naming it, on a live ticket whose history has no line naming it, gets its `_NOT_APPLIED` row (`reason: "reconciled"`). Coverage (corrected by the DF-P8 fix pass — the first version read only the newest 300 attempt rows per run, which did not cover the window): both legs keyset-page the WHOLE 7-day window, oldest first, on (timestamp, id) (`lib/ticketAuditDrain.ts` `keysetAfter`), and the follow-up read is keyset-paged on id, so no fixed slice of already-decided rows and no PostgREST row cap can starve an older row or hide a follow-up; a run stops only at its deadline (the step's 10 s; leg (a) at most half of it) and a run that stops before the end of the window says so as an ERROR line in the cron's result (and `truncated`). Because the oldest rows are read first, every attempt row in the window is decided before it leaves the window as long as one daily run can read about one day's attempt rows; when it cannot, every run reports it. `audit_logs` stays append-only. The link route's `TICKET_PROJECT_LINKED` / `_UNLINKED` attempt rows are drained the same way (their history line names them too).
+
+**Done-when.**
+- ✗ (1) one transaction — not built (above); the pairing it was for is now reconciled by the drain. Remainder: the transition-and-audit RPC. **Owner:** proposed: a NEW drafting-flow package, provisionally **DF-P23** (DF-P21 and DF-P22 are taken — the integrator assigns, and renumbers if DF-P23 is taken at the merge) — the next holder of `app/api/tickets/workflow-action/route.ts` and `lib/ticketTransitions.ts`. *(Corrected at DF-P8 fix pass 3: this line first named DF-P21, which is already DF-P21 RENUMBERED FILES AFTER THE GUARD PASTES.)*
+- ✓ (2), ✓ (3) as recorded.
+- ✗ (4) as recorded (ruled for the serial path).
+
+**Scope / residual.** Done-when 1's RPC → proposed DF-P23 (new; see the owner line above). An attempt row written before this deploy carries no `historyAttempt`, so the drain never reads or decides it (a pre-DF-P8 transition's history line names no attempt); an attempt whose ticket is archived or gone is counted `undecidable` and left alone. Stays OPEN on done-when 1.
+
+**Pending migration:** none for this limb (it works before and after `20261256`).
+
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* done-when 1's transaction form (the transition-and-audit RPC — DF-P8 built the drain instead, DEC-90 ruling 6) → drafting-flow **DF-P23 TRANSITION RECORD AND RECONCILE**, built only if no transition's outcome changes.
 
 ---
 

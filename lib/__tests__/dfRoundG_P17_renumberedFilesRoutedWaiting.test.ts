@@ -605,7 +605,7 @@ describe("EDGE-19 — the restore's rows through the workflow route's file check
       const audit = state.calls.find((c) => c.table === "audit_logs" && c.method === "insert" && String((c.args[0] as { action?: string }).action) === "TICKET_SUBMIT_FINAL")?.args[0] as { details: Record<string, unknown> } | undefined;
       return { status: res.status, update, audit, heads: state.calls.filter((c) => c.table === "r2").map((c) => c.args[0]) };
     };
-    const strip = (u: Record<string, unknown> | undefined) => JSON.parse(JSON.stringify(u ?? {}, (k, v) => (["id", "uploadedAt", "date", "last_modified", "lastModified", "updated_at"].includes(k) ? undefined : v)));
+    const strip = (u: Record<string, unknown> | undefined) => JSON.parse(JSON.stringify(u ?? {}, (k, v) => (["id", "uploadedAt", "date", "last_modified", "lastModified", "updated_at", "attempt"].includes(k) ? undefined : v)));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const ok = await run(() => undefined);
     expect(ok.status).toBe(200);

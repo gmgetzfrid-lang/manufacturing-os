@@ -54,6 +54,35 @@ Searches proving absence: `grep -rn "from('documents')|from(\"documents\")|docum
 
 **Scope / residual.** Promotion of a source-less deliverable ("publish as a new document in library X") → **DF-P4** (`GAP-105`, the ticket gets a library). The project reference on promotion → **DF-P8** (`GAP-114`; `DEC-40`: reference, never copy). The fleet plan named only DF-P4; the project half is DF-P8's by its own brief.
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. The project half. `supabase/migrations/20261256_df_roundG_ticket_project.sql` adds `tickets.project_id` (nullable UUID → `projects(id)` ON DELETE SET NULL, partial index), an org-equality rail for every caller (23514) and a client limb (a signed-in member neither inserts nor changes it, 42501; the FK's own SET NULL passes), set only by the service role through `/api/tickets/create` and `/api/tickets/project-link` (`DEC-40`: one reference, no copy). `/api/tickets/handback` (`:230`) calls `lib/ticketProject.ts` `referenceDeliverableInProject` when a request that belongs to a project records a publication outside document review: an `ignoreDuplicates` upsert of a `project_documents` row (the shape "attach to project" writes — a reference to the controlled document, no bytes moved) and a `doc_added` feed row; a document already on the register is left as it is; a refusal is the answer's `warning`, the hand-back stands. `/api/tickets/project-link` does the same when a request with an already-published deliverable is linked later. *Corrected by fix pass 2 (below):* both routes write that row as the service role only when the register's own policy (`project_documents_insert`, `20261102`) would admit it. The project page lists the deliverable as a live reference (`components/projects/ProjectRequestsCard.tsx`, `lib/ticketProject.ts` `deliverableReference`).
+
+**Done-when.**
+- ✓ (in part, as recorded) Promotion through the register's own publish contract holds for every request shape since DF-P4 / DF-P15 (source document, target library, or neither — `DCW-4`). It is not literally the intake route; whether `publish_revision` satisfies the wording "the same path intake submissions use" is the integrator's ruling, so this finding is not flipped here.
+- ✓ (in part — see fix pass 2) The promotion puts a `project_documents` reference on the request's project when the register's policy admits the person behind it: on the hand-back, when the request was put on the project with that authority (recorded) or the publisher holds it; on a later link, when the linker holds it. Otherwise no reference is written and the answer says a project manager attaches it from the project's Documents card.
+- ✓ The promoted version records its request (`document_versions.related_ticket_id`, as recorded).
+
+**Scope / residual.** (1) Done-when 1's wording → the integrator (ruling only; no code owed). (2) A deliverable published INTO document review is not put on the register when the review later completes — the completion runs in `lib/reviewControl.ts`, which this package may not edit; the project page still lists it ("In document review.") and a re-link writes the reference once it is published. Owner: the next holder of `lib/reviewControl.ts` (proposed: projects-joint).
+
+**Fix pass 2 (2026-10-21, drafting-flow Round G — the second independent review).** The register reference was written as the service role for anyone who could reach the route, which goes around `project_documents_insert` (`20261102`: `is_org_controller(org_id) OR can_manage_project(project_id)`, in a visible project; `PM-8` / `SEC-17`). A requester who could only SEE a project could link their request to it and put its published deliverable on that project's register (and its CSV export, turnover and timeline) with a `doc_added` feed row. The same happened on the hand-back of a request filed "into" such a project. Now:
+- `lib/ticketProject.ts` `callerHoldsRegisterAuthority` asks the policy's own functions (`is_org_controller`, `can_manage_project`) AS THE CALLER. A failed check is never read as a yes.
+- `recordedRegisterAuthority` reads `metadata.project_link.registerAuthority`, which is workflow-owned (only the service role writes `metadata`; `20261250`'s `ticket_update_guard`). It counts only for the project it was recorded for.
+- `/api/tickets/project-link` records `authority` and `registerAuthority` on the link and writes the reference only when the caller holds that authority.
+- `/api/tickets/create` records the same. The project of a check-in or an intake collision is the server's own record, so it counts as held; a project named on the request form counts only when the caller manages it.
+- `/api/tickets/handback` writes the reference when the recorded authority holds for the request's project or the publisher holds it.
+- Otherwise nothing is written, and the answer says "a project manager can attach it from the project's Documents card".
+
+Tests: `dfRoundG_P8_projects.test.ts` "REGRESSION (fix pass 2, PM-8 / SEC-17): a requester who can SEE a project but does not manage it …" (no `project_documents` call, no `doc_added`), "… who DOES manage the project (or a controller) …", and the hand-back describe "fix pass 2 (PM-8 / SEC-17) — /api/tickets/handback …" (three cases). `ticketCreateRoute.test.ts` "fix pass 2 (PM-8 / SEC-17): the link is recorded with whether the project register's policy admits who made it …". Still OPEN for the reasons above.
+
+**Fix pass 3 (2026-10-21, drafting-flow Round G — the third independent review; corrects fix pass 2 where it overstated).** Fix pass 2's create-route bullet ("the project of a check-in or an intake collision is the server's own record, so it counts as held") broke its own rule: `/api/tickets/create` recorded `registerAuthority: true` for every intake collision and for every check-in whose checkout session named a project, without asking anything of the caller. A member who was neither a controller nor a manager of the project, but could read one of its intake sheets, could call the route directly with `origin: intake_collision`, and the hand-back would then write the register reference (and a `doc_added` row) as the service role — a write `project_documents_insert` refuses that member. Now:
+- `resolveRequestProject` (`app/api/tickets/create/route.ts`) records the CALLER's own answer for every origin: the project is read AS THE CALLER (`project_visible_to_me`, as the policy requires) and `callerHoldsRegisterAuthority` is asked as the caller (`authorityAsCaller`). A check-in's or a collision's project is still the request's project (`PROJ-4`, `PROJ-12`); it is never authority over the register by itself.
+- A server-derived project the caller cannot see keeps its reference on the request but records no authority, and the create route writes no `request_linked` feed row into it as the service role (`visibleToCaller`).
+- The feed row that accompanies a landed reference is `doc_added` only when `project_activity_insert` would admit the actor for `doc_added` (`is_org_controller` or `is_project_owner`, asked as the caller — `lib/ticketProject.ts` `callerMayStampDocAdded`); a manager who is not the owner gets a `request_deliverable_referenced` row (`REQUEST_DELIVERABLE_REFERENCED`), in both the link route and the hand-back.
+With this, done-when 2's sentence holds for every path: the service role writes the reference only when `project_documents_insert` would admit the linker (as recorded) or the publisher. Tests: `ticketCreateRoute.test.ts` "fix pass 3 (review, major): REGRESSION — a member who is neither a controller nor a manager … records registerAuthority false, so the hand-back writes nothing on the register" (asked as the caller; `recordedRegisterAuthority` answers false), "… a collision or a check-in on a project the caller cannot see …" (no authority, no feed row, the policy functions not even asked), "… a check-in by a caller who manages the checkout's project records registerAuthority true"; the fix-pass-2 case now expects `false` for a non-manager collision / check-in and `true` for a controller. `dfRoundG_P8_projects.test.ts` "fix pass 3 (review, minor): the feed row is doc_added only for an actor … (controller / owner)" plus the link and hand-back cases asserting `is_project_owner` is asked as the caller. Still OPEN for the reasons above.
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path — a request with no project, and no checkout session stamped with its request (the stamp waits for the paste: DEC-90 fix pass at the DF-P8 merge, `PROJ-10`); independent of every other migration).
+
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* what remains (the deliverable referenced when its review completes, and the reading of done-when 1) → projects-joint **J21 DRAFTING-REQUEST PROJECT REMAINDERS** (after document-control P39, which holds `lib/reviewControl.ts`).
+
 ---
 
 <a id="proj-2"></a>
@@ -120,6 +149,19 @@ Searches for a later override: `grep -rn "ON project_documents" supabase/` (inde
 - [ ] attach/detach writes an `audit_logs` row server-side, not only a client-written project_activity row
 - [ ] the checkout trigger's inserts still succeed under the narrowed policy (it runs as the checking-out user)
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS; corrected by fix pass 2 (the first version of this block wrongly said the org-wide policy was still in place). Re-verified on `db3a1f3`: the policy and trigger limbs were closed by projects-and-cost `PM-8` / projects-tab `SEC-17` (both RESOLVED; they name this finding as closing by pointer) in `supabase/migrations/20261102_prj_roundG_project_rails.sql` section 4 (`:377` on). That section drops `project_documents_member_all` (`:378`). It scopes SELECT to `project_visible_to_me(project_id)` (`:380-383`). INSERT and UPDATE are narrowed to `is_org_controller(org_id) OR can_manage_project(project_id)`, with `org_id = project_org(project_id)` and visibility (`:385-398`). DELETE is narrowed to the controller or the active owner (`:420-423`). A link never moves (`enforce_project_document_link_fixed`, `:400-418`). `checkouts_resync_project_documents` is re-created SECURITY DEFINER with `search_path` pinned (`:425-430` and on): a collaborator's checkout still links its document, and a signed-in caller links only their own session into a project they can see. DF-P8's own register write (`lib/ticketProject.ts` `referenceDeliverableInProject`, run as the service role) now goes only where that policy would admit the person behind it (`PROJ-1`'s fix pass 2).
+
+**Done-when.**
+- ✓ SELECT honours project visibility; INSERT / DELETE narrowed to controllers, the project owner or the project's managers (`20261102:378-423`, by pointer to `PM-8` / `SEC-17`; the INSERT follows the fleet plan's `can_manage_project`, `DEC-54` item 6).
+- ✗ An `audit_logs` row written server-side for an attach / detach. `PM-8` accepted, as its own done-when 4, a `doc_added` / `doc_removed` feed row that the actor cannot forge: the author is stamped by the database and the types are gated to the register's authority (`20261102:317-324`, `project_activity_insert`). But that row is written by the client (`ProjectDocumentsCard` `writeActivity`), and no `audit_logs` row is written on either path. So an attach or detach that the policy admits, made by direct API call, leaves no record. Not done. Owner: projects-and-cost (proposed: the next projects-joint package), with an AFTER INSERT / DELETE trigger on `project_documents` or a server route for the card.
+- ✓ The checkout trigger's inserts still succeed under the narrowed policy (SECURITY DEFINER, pinned; `20261102:425-430` and on, by pointer to `PM-8` dw3 / `SEC-17`).
+
+**Scope / residual.** Only done-when 2, the server-side attach / detach audit row, remains → projects-and-cost (proposed projects-joint). Stays OPEN for that limb alone.
+
+**Pending migration:** none for this limb (it works before and after `20261256`).
+
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* done-when 2 (a server-side audit row for every attach / detach) → projects-joint **J21 DRAFTING-REQUEST PROJECT REMAINDERS**.
+
 ---
 
 <a id="proj-4"></a>
@@ -127,7 +169,7 @@ Searches for a later override: `grep -rn "ON project_documents" supabase/` (inde
 ## PROJ-4 · CheckInPanel discards the project id it is already holding when it creates a drafting request from a project checkout
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CheckInPanel.tsx:56`, `components/documents/CheckInPanel.tsx:261`, `components/documents/CheckInPanel.tsx:263`, `types/schema.ts:929`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — the panel holds the project id and drops it, and tickets have no project_id column at all (the only project link any ticket carries is transitionIn.ts:323 metadata.intake_collision.projectId). One indirect route the finding does not mention: the ticket does carry metadata.source_document.id, and lib/impact.ts:117 `.eq("metadata->source_document->>id", documentId)` surfaces it on the document's Impact panel, which is reachable from the project's Documents card — but nothing on the project page itself shows it.
@@ -154,6 +196,18 @@ components/documents/CheckoutFlowModal.tsx:322 — `project_id: projectId,`
 - [ ] The check-in ticket records the originating project (as a real column once one exists, or at minimum `metadata.checkin.projectId` alongside episodeId)
 - [ ] the same is done for the `metadata.source_document` sibling path so a project→requests query has a single shape to match
 
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. `supabase/migrations/20261256_df_roundG_ticket_project.sql` adds `tickets.project_id` (nullable UUID → `projects(id)` ON DELETE SET NULL, partial index), an org-equality rail for every caller (23514) and a client limb (a signed-in member neither inserts nor changes it, 42501; the FK's own SET NULL passes), set only by the service role through `/api/tickets/create` and `/api/tickets/project-link` (`DEC-40`: one reference, no copy). `components/documents/CheckInPanel.tsx:338` sends `projectId: mySession.projectId ?? null`; `/api/tickets/create` `resolveRequestProject` (`:1022`, called at `:518`) does not trust it: for a check-in it reads the caller's OWN checkout session and takes that session's project (and id); for a portal request the project is read through the caller's client (visible, same org, not closed — otherwise dropped with a warning); for an intake collision the origin's project. The row carries `project_id` (`insertTicketRow`, `:809`, retried without the column before the paste with a warning), a `request_linked` feed row follows, and the session is stamped (`PROJ-10`; once `20261256` is applied — before it nothing is stamped, DEC-90 fix pass at the merge).
+
+**Done-when.**
+- ✓ The check-in ticket records the originating project as a real column (`tickets.project_id`). Tests: `lib/__tests__/ticketCreateRoute.test.ts` "DF-P8 — a request filed into a project names it BY REFERENCE" (6 cases: the request form's visible project written with one feed row (REGRESSION: none → none); an unknown / malformed / foreign / closed project dropped with a warning; "PROJ-4 / PROJ-10: a check-in takes the project of the requester's OWN checkout session (whatever the body says) and stamps that session"; the ad-hoc check-in REGRESSION; the collision's verified project; before 20261256).
+- ✓ The `metadata.source_document` sibling path has the same single shape: every creation path writes `tickets.project_id`; a project→requests query is one `eq("project_id", …)` (`lib/projectSnapshot.ts`, `ProjectRequestsCard`).
+
+**Scope / residual.** None. A request with no project is filed exactly as before (DEC-90 ruling (1) for DF-P8).
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path — a request with no project, and no checkout session stamped with its request (the stamp waits for the paste: DEC-90 fix pass at the DF-P8 merge, `PROJ-10`); independent of every other migration).
+
+
+**Fix pass (2026-10-21, drafting-flow Round G — the independent review).** `lib/ticketProject.ts` `isMissingProjectColumn` matched a 42703 / PGRST204 with an EMPTY message, so in `insertTicketRow` a different missing column answered without a message (the library, a declaration column) dropped a project already confirmed and blamed `20261256`. It now matches only an answer naming `project_id`, as `missingLibraryColumn` / `isMissingReviewModelColumn` do (test: `dfRoundG_P8_projects.test.ts` "isMissingProjectColumn …"). DEC-90 ruling (1) is now pinned across every status: `lib/__tests__/helpers/noProjectTransitionMatrix.ts` walks every TicketStatus × role × identity × offered action for a row with `project_id` null and no archive claim, and its digests equal `lib/__tests__/fixtures/dfP8NoProjectBaseline.json`, generated by the same helper at the base commit `db3a1f3` (1,158 transitions; no update writes `project_id` or `archive_id`); the workflow route's SM-7 `attempt` stamp is added after `computeTransition` and is not in those updates.
 ---
 
 <a id="proj-5"></a>
@@ -187,6 +241,19 @@ lib/projectExport.ts:42 — `supabase.from("project_documents").select("*").eq("
 - [ ] the Documents card badges intake-sourced rows distinctly so a PM can tell adopted from not-yet-adopted
 - [ ] project timeline and CSV export include them
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. Re-verified on `db3a1f3`: the intake door already references what it creates (`app/api/intake/upload/route.ts:2082-2097`, `project_documents` upsert, J1 / SEC-22) — so the two definitions now meet — but it writes `source: "manual"` (the column's CHECK admits only `checkout` / `manual`, `20260609`). `lib/projects.ts` `listProjectDocuments` marks a register row whose document still sits in the project's intake folder (`inIntakeFolder`, `:956`), and `components/projects/ProjectDocumentsCard.tsx:239-242` badges it "in intake — not adopted".
+
+**Done-when.**
+- ✓ (in part) the door upserts a `project_documents` row at creation (J1); ✗ a source value distinguishing intake — needs a CHECK widening on a projects-model table this fleet does not own.
+- ✓ the Documents card badges intake rows distinctly (by folder, not by source).
+- ✓ (in part) the CSV export lists them (they are `project_documents` rows); ✗ the project timeline is not checked or changed here.
+
+**Scope / residual.** A `source = 'intake'` value (CHECK widening + the door's write) and the timeline → owner: projects-joint (projects-and-cost / intake area, no fleet plan yet). Stays OPEN.
+
+**Pending migration:** none for this limb (it works before and after `20261256`).
+
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* the source='intake' value and the timeline → projects-joint **J21 DRAFTING-REQUEST PROJECT REMAINDERS**.
+
 ---
 
 <a id="proj-6"></a>
@@ -194,7 +261,7 @@ lib/projectExport.ts:42 — `supabase.from("project_documents").select("*").eq("
 ## PROJ-6 · Project completion has no open-drafting-request gate and structurally cannot have one — the closeout snapshot never queries tickets
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/projects/[id]/page.tsx:627`, `app/(protected)/projects/[id]/page.tsx:646`, `lib/projectSnapshot.ts:22`, `lib/projects.ts:259`, `lib/projects.ts:300`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually confirmed — no ticket gate exists and the snapshot never queries tickets (nor could it usefully, since no ticket carries a project id). Severity is too high, though: every existing gate is advisory, not blocking (page.tsx:646 explicitly says the owner can complete anyway), so the missing gate would only add one more warning line — it removes no enforcement that exists today.
@@ -222,6 +289,21 @@ Searches: `grep -n 'from("' lib/projectSnapshot.ts lib/projectReport.ts lib/proj
 - [ ] the count appears in the generated closeout report so the record shows what was open at completion
 - [ ] completing with open requests still writes the count into the PROJECT_COMPLETED audit details
 
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. `lib/projectSnapshot.ts` counts the project's open drafting requests by reference (`:281-321`: `tickets` `project_id = …`, not archived, status not in `TERMINAL_TICKET_STATUSES`; counted, never listed, as the viewer reads them; `undefined` before the paste, `null` on a failed read) into `ProjectStateSnapshot.openDraftingRequests` (`lib/projectHealth.ts`). `lib/projects.ts` `closeoutGateLines` (`:408-420`) adds a `draftingRequests` line — a warning like every other gate (warnings, not walls); unknown when the read failed, never clear; not shown before the paste (today's dialog).
+
+**Done-when.**
+- ✓ The snapshot counts open drafting requests and a closeout gate reports them. Test: `dfRoundG_P8_projects.test.ts` "PROJ-6: the closeout gates gain an 'open drafting requests' WARNING line".
+- ✓ The count reaches the generated closeout report: the gates recorded at completion (`lib/projects.ts:514`) are what `lib/projectReport.ts:212` renders.
+- ✓ Completing with open requests writes the line, with its `openCount`, into the `PROJECT_COMPLETED` audit details (the same `gates` array).
+
+**Scope / residual.** None.
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path — a request with no project, and no checkout session stamped with its request (the stamp waits for the paste: DEC-90 fix pass at the DF-P8 merge, `PROJ-10`); independent of every other migration).
+
+
+**Fix pass (2026-10-21, drafting-flow Round G — the independent review).** The count is read as the viewer, so a completer under AUTHZ-13's narrower ticket scope (Contractor-only, `20261166`) counted only the requests they could see and the gate recorded "No open drafting requests" (`ok: true`) in the `PROJECT_COMPLETED` gates and the report when it did not know that. Now `lib/projectSnapshot.ts` asks whether the viewer reads every request of the workspace (`viewerReadsEveryRequest`: their own `org_members` row, `isContractorOnly` from `lib/ticketReadScope.ts`; a refused read or no session answers no) and marks a partial count `openDraftingRequestsVisibleOnly` (`lib/projectHealth.ts`); `closeoutGateLines` then never says clear — none visible is unknown (`ok: null`, "Drafting requests — only those visible to you counted (none of them open)"), some visible is "At least N … still open — only those visible to you counted" (`ok: false`, `openCount: null`). A completer who reads every request gets the whole count exactly as before. Tests: `dfRoundG_P8_projects.test.ts` "PROJ-6 fix pass (minor 3)"; `dfRoundG_P8_projectsFixPass.test.ts` "PROJ-6 fix pass …" (whole count; Contractor-only; unconfirmed scope; no scope read before the paste or after a failed count). Residual: a restricted completer still cannot learn the whole count (no SECURITY DEFINER count was added — a migration change this pass did not take); the line says so instead.
+
+**Fix pass 4 (2026-10-21, drafting-flow Round G — the fourth independent review).** `lib/projectSnapshot.ts` read ANY 42703 / PGRST204 on the open-requests count as "20261256 not pasted" (`MISSING_COLUMN.has(code)` → `undefined`), so a different missing column made the gate line vanish instead of reading "could not be read". It now uses `isMissingProjectColumn` (`lib/ticketProject.ts`): only an answer naming `project_id` drops the line; any other refusal is `openDraftingRequests: null` ("Drafting requests — could not be read"). Test: `dfRoundG_P8_projectsFixPass.test.ts` "before 20261256 (42703) no line …" (now also: a 42703 naming another column and a bare PGRST204 read "could not be read"; a PGRST204 naming `project_id` still drops the line).
 ---
 
 <a id="proj-7"></a>
@@ -256,6 +338,19 @@ Search: `grep -n "ticket" lib/orgGraph.ts` → no output.
 - [ ] once a project reference exists, a project↔ticket edge is drawn from the same real rows
 - [ ] the edges are capped and the truncation reported like every other edge source in the module
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. Not edited: `lib/orgGraph.ts` belongs to intelligence (fleet plan: "PROJ-7 closes by pointer to intelligence WIRE-4 / WIRE-7"). What changed under it: the project reference done-when 2 waited for now exists (`tickets.project_id`, `20261256`), so a project↔ticket edge can be drawn from real rows.
+
+**Done-when.**
+- ✗ ticket node type and document↔ticket edge — owner: intelligence `WIRE-4` / `WIRE-7`.
+- ✗ project↔ticket edge from `tickets.project_id` — owner: intelligence (now unblocked).
+- ✗ caps and truncation — owner: intelligence.
+
+**Scope / residual.** All three → intelligence (`lib/orgGraph.ts`; no fleet plan yet). Stays OPEN.
+
+**Pending migration:** none for this limb (it works before and after `20261256`).
+
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* the request ↔ project edge in `lib/orgGraph.ts` (unblocked by `tickets.project_id`) → drafting-flow **DF-P23 TRANSITION RECORD AND RECONCILE** (intelligence's file, declared).
+
 ---
 
 <a id="proj-8"></a>
@@ -263,7 +358,7 @@ Search: `grep -n "ticket" lib/orgGraph.ts` → no output.
 ## PROJ-8 · The project document register accepts Superseded and Archived documents with no guard and no warning
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/ProjectDocumentsCard.tsx:95`, `components/projects/ProjectDocumentsCard.tsx:123`, `components/projects/ProjectDocumentsCard.tsx:211`, `lib/impact.ts:96`, `lib/transitionIn.ts:167`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The guard genuinely is missing at pick time (compare lib/impact.ts:96 and lib/transitionIn.ts:167, which both `.filter((d) => d.status !== "Superseded" && d.status !== "Archived")`). But "no warning" is only true of the picker: the attached row carries a SUPERSEDED badge and the export carries a Status column, so a reviewer is not handed an unlabelled superseded drawing. LOW.
@@ -288,6 +383,17 @@ lib/impact.ts:95-96 — `.filter((d) => d.status !== "Superseded" && d.status !=
 - [ ] The attach picker selects `status` and either excludes Superseded/Archived or labels them unmistakably before the click
 - [ ] already-attached rows in a non-current status render as a warning, not a neutral pill
 - [ ] the CSV export marks non-current documents
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. `components/projects/ProjectDocumentsCard.tsx`: the attach picker selects `status` and `archived_at`, hides a Superseded / Void / Archived match by default (`NOT_CURRENT_STATUSES`, `:198`) behind a "Show N superseded / void / archived matches (not current)" checkbox, and labels one shown "<status> — not current" before the click (`:206`). `lib/projectExport.ts` adds a `Current` column (`NOT CURRENT` / `yes`, `archived_at` now selected).
+
+**Done-when.**
+- ✓ The picker selects status and excludes non-current matches by default, labelling them when shown.
+- ✓ An attached row in a non-current status renders as an amber "Not current" warning with a struck-through label (`:229-237`, present since DEC-40's tab work; re-verified).
+- ✓ The CSV export marks non-current documents. Test: `dfRoundG_P8_projects.test.ts` "PROJ-8: the attach picker hides superseded / void / archived matches by default …".
+
+**Scope / residual.** None. The picker still allows a deliberate attach of a non-current document (it is shown, labelled) — a warning, not a wall.
+
+**Pending migration:** none for this limb (it works before and after `20261256`).
 
 ---
 
@@ -364,6 +470,22 @@ Searches: `grep -rn "linked_ticket_id" lib/ app/ components/` (7 hits, all mappi
 - [ ] A checkout raised to service a drafting request stamps `linked_ticket_id`, or the unused column and its mapping are removed
 - [ ] the same decision is made for milestones.linked_ticket_id so the schema stops advertising three dead links
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. `/api/tickets/create` stamps `checkout_sessions.linked_ticket_id` on the originating session of a check-in request (`:938`: the caller's own session, only where it is still null, checked — a refusal is logged server-side, the request stands; since the merge-time fix pass, only once `20261256` is applied — see below). The one transitive project→request route now has a writer, beside the direct `tickets.project_id`.
+
+**Done-when.**
+- ✓ A checkout raised to service a drafting request stamps `linked_ticket_id` — once `20261256` is applied (before it, nothing is stamped: the merge-time fix pass below). Tests: `ticketCreateRoute.test.ts` DF-P8 "PROJ-4 / PROJ-10: a check-in takes the project of the requester's OWN checkout session … and stamps that session with the request" and its ad-hoc REGRESSION (a session with no project is still stamped), both in the world with the column; the world without it is pinned by the merge-time tests below.
+- ✗ `milestones.linked_ticket_id` — not decided here (a milestone is the projects model's; no writer added, none removed).
+
+**Scope / residual.** `milestones.linked_ticket_id` (wire or drop) → owner: projects-joint (projects-and-cost). Stays OPEN on done-when 2.
+
+**Fix pass 4 (2026-10-21, drafting-flow Round G — the fourth independent review).** Stamping the session coupled it to the request: the baseline declares `checkout_sessions.linked_ticket_id UUID REFERENCES tickets(id)` with no delete action (`supabase/schema.sql`), so once a check-in session named its request, deleting that request (e.g. under `tickets_delete_controllers`, `20261166`) would fail with 23503 where it succeeded before DF-P8. `20261256` section (4) now re-creates the key ON DELETE SET NULL — `milestones.linked_ticket_id`'s shape (`20260614`): every key on that column to `tickets` that is not already SET NULL is dropped by catalog (whatever its name), the SET NULL key is added once (re-runnable), and probe 7 checks there is exactly a SET NULL key. Deleting the request clears the session's pointer; the session stays (no guard on `checkout_sessions` covers `linked_ticket_id`: `enforce_checkout_session_guard` watches `user_id` / `outcome*`, the release rail `status`, and the project-documents resync fires only on `project_id` / `document_id`). Tests: `dfRoundG_P8_projects.test.ts` "fix pass 4 (review, minor): checkout_sessions.linked_ticket_id is re-created ON DELETE SET NULL …" (shape); PG16 `rls/dfP8TicketProject.test.ts` "fix pass 4: a request a check-in session names … can still be deleted" (the service role stamps the session, deletes the request, the session stays with its pointer cleared; exactly one key, `confdeltype = 'n'`) and the re-paste case now expects 7 probes, all true.
+
+**Fix pass at the merge (2026-10-21, DEC-90 — the final review round; corrects fix pass 4 where it overstated, DEC-29).** Fix pass 4 recommended "deploy first, then paste" and called either order safe, but the create route stamped the session from the deploy onward — and until `20261256` section (4) is pasted the key is still the baseline one with no delete action, so in the recommended window a request a stamped session named could not be deleted (23503). Now the route writes the stamp only once `20261256` is applied (`app/api/tickets/create/route.ts:935`): known for certain when the ticket insert that landed carried `tickets.project_id` with no `isMissingProjectColumn` fallback, otherwise asked with a zero-row read of `tickets.project_id` (`lib/ticketProject.ts` `ticketProjectColumnPresent`; the paste is one transaction, so the column is there exactly when section (4) is). A read that fails any other way stamps nothing. Before the paste no session is stamped — exactly as before DF-P8 — so "either order is safe" now holds as written. The restore follows the live key: `lib/dataRestore.ts` `RESTORE_PARENT_RULES.checkout_sessions` reads `linked_ticket_id>tickets?` (`:312`), so a session whose request is not a row of the target workspace lands with the pointer cleared and reported, instead of the whole session being refused. Tests: `ticketCreateRoute.test.ts` "PROJ-10, before 20261256 (tickets.project_id absent): an ad-hoc check-in … stamps NO checkout session", "PROJ-10, before 20261256: a check-in under a project checkout … stamps NO checkout session", "PROJ-10: a probe of tickets.project_id that fails some other way … no stamp", "PROJ-10, after 20261256: … stamped … a project check-in needs no probe" (the harness now models a database without the column: `missingColumns`); `dataRestore.test.ts` "DF-P8 — a checkout session whose request is not here restores with linked_ticket_id cleared" (and the clearable-pointer pin now lists `checkout_sessions.linked_ticket_id`).
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path — a request with no project, and no checkout session stamped with its request (the stamp waits for the paste: DEC-90 fix pass at the DF-P8 merge, `PROJ-10`); independent of every other migration).
+
+*Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* done-when 2 (wire or drop `milestones.linked_ticket_id`) → projects-joint **J21 DRAFTING-REQUEST PROJECT REMAINDERS**.
+
 ---
 
 <a id="proj-11"></a>
@@ -413,7 +535,7 @@ lib/__tests__/reviewControl.test.ts:42 asserts the bypass: `expect(effectiveMode
 ## PROJ-12 · flagCollisionToDrafting writes a project id onto the ticket that nothing reads, and reports the result as a disposable toast with no link
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transitionIn.ts:321`, `lib/transitionIn.ts:356`, `components/projects/IntakePanel.tsx:283`, `app/api/intake/upload/route.ts:154`, `app/(protected)/admin/audit/page.tsx:137`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both specifics are accurate (projectId is written and read by nothing; the toast carries a ticket number but no link). Severity lowered because the association is not actually lost — it is persisted on the ticket row (metadata.intake_collision.projectId) and duplicated into audit_logs details (transitionIn.ts:362), so a future surface can recover it; the ticket itself is also routed and linked for its recipients via emit(link: `/requests/${row.id}`, :344). That is strictly less harmful than PROJ-4, where the id is discarded outright.
@@ -439,6 +561,17 @@ app/api/intake/upload/route.ts:154-155 — `const meta = (ticket.metadata ?? {})
 - [ ] the audit row is retrievable by project — either filed against the project or with the project id in an indexed position
 - [ ] `metadata.intake_collision.projectId` is either read or replaced by the real project reference
 
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. `lib/transitionIn.ts` `flagCollisionToDrafting` files the request with the project as `project_id` (through `/api/tickets/create`'s collision path), returns its id, and writes a second, checked `INTAKE_COLLISION_FLAGGED` audit row filed against the project (`resource_type: "project"`, `resource_id`, `:805`). `components/projects/IntakePanel.tsx` keeps the notice with an "Open the request" link to `/requests/<id>`. The project page lists the request persistently (`ProjectRequestsCard`, mounted at `app/(protected)/projects/[id]/page.tsx:669`). `20261256` backfills `project_id` from `metadata.intake_collision.projectId` (inventory first; only a UUID naming a project of the same org; never a request whose link was recorded; `last_modified` untouched — DEC-90 ruling (2)).
+
+**Done-when.**
+- ✓ The collision request is reachable from the project (the requests card) and the notice links to it. Test: `dfRoundG_P8_projects.test.ts` "PROJ-4 … PROJ-12: the collision notice links to the request"; `lib/__tests__/transitionInCollisionCreate.test.ts` (ticket id, two audit rows).
+- ✓ The audit row is retrievable by project (filed against it).
+- ✓ `metadata.intake_collision.projectId` is replaced by the real reference: backfilled, and `lib/ticketPage.ts` `projectRefOf` reads the column first (the metadata only before the paste). Tests: `lib/__tests__/rls/dfP8TicketProject.test.ts` "DEC-90 ruling (2): the backfill …" (PostgreSQL 16).
+
+**Scope / residual.** None.
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path — a request with no project, and no checkout session stamped with its request (the stamp waits for the paste: DEC-90 fix pass at the DF-P8 merge, `PROJ-10`); independent of every other migration).
+
 ---
 
 <a id="proj-13"></a>
@@ -446,7 +579,7 @@ app/api/intake/upload/route.ts:154-155 — `const meta = (ticket.metadata ?? {})
 ## PROJ-13 · projects.linked_ticket_id is a dead column — its only writer's only caller has zero call sites, so the project page's "Linked ticket" chip can never render
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/projects.ts:112`, `lib/projects.ts:781`, `lib/projects.ts:807`, `app/(protected)/projects/[id]/page.tsx:308`, `supabase/schema.sql:906`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Confirmed — zero call sites, so the column is always NULL. Severity lowered: this is a never-invoked feature plus a conditional that never fires (no wrong data, no wrong behavior), the same class as PROJ-10.
@@ -473,4 +606,32 @@ Searches for callers: `grep -rn "convertTicketToProject"` over .ts/.tsx (1 hit: 
 - [ ] Either `convertTicketToProject` is reachable from a UI affordance (e.g. a "Convert to project" action on the request detail page) and the project header chip renders, or the dead function and the unreachable chip are removed so the schema stops advertising a link that cannot be made
 - [ ] if kept, `updateProjectMeta` (or an equivalent) can set/clear `linked_ticket_id` so a mislink is correctable
 
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. Decision taken as the plan's default (DEC-90 ruling (3) for DF-P8): wired, column kept. `components/requests/TicketProjectActions.tsx` on the request page (`app/(protected)/requests/[id]/page.tsx:3040`; the requester or a member with `ticket.manage`) offers "Create project from this request": `lib/projects.ts` `convertTicketToProject` (`:1586`) creates the project naming the request in `projects.linked_ticket_id`, then links the request through `/api/tickets/project-link` (`converted: true`), which writes the reference and the one "Converted to Project" history line server-side. A project whose link fails is returned with `linked: false` and the reason — never thrown, so a retry does not create a second one.
+
+**Done-when.**
+- ✓ `convertTicketToProject` is reachable from a UI affordance and the project header chip renders (the column has a writer).
+- ✓ A mislink is correctable: `updateProjectMeta` accepts `linkedTicketId` (set / clear), and unlinking the request clears `projects.linked_ticket_id` where it names that request. Test: `dfRoundG_P8_projects.test.ts` "unlink: … PROJ-13 — a project created from this request stops naming it".
+
+**Scope / residual.** None.
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path — a request with no project, and no checkout session stamped with its request (the stamp waits for the paste: DEC-90 fix pass at the DF-P8 merge, `PROJ-10`); independent of every other migration).
+
+
+**Fix pass (2026-10-21, drafting-flow Round G — the independent review).** (1) The "management or the requester" limit was enforced only in the browser (`TicketProjectActions` `canAct`): `/api/tickets/project-link` accepted `converted: true` from any manager of the target project and, on a move, asked only about the target. Now the route (a) asks `can_manage_project` about EVERY project a change touches (`lib/ticketProject.ts` `projectsTouched`: both the current and the target project on a move, so the manager of one project cannot take a request off a project another team manages, clear its origin chip or write its feed); (b) allows `converted` only to the requester or `ticket.manage` (`projectLinkAllowed({ converted })`) and only for a project whose `linked_ticket_id` names this request (else 400) — so no forged "Converted to Project" line. (2) When the project was created but the link failed, the Create button stayed: now the component remembers the created project and offers "Link to <project>" instead, which retries `postProjectLink({ …, converted: true })`; a second project is never made by a second click. (3) The link's history line names its audit row (`attempt`) and the row carries `details.historyAttempt`, so the SM-7 drain reconciles a link whose `_NOT_APPLIED` write failed twice. Tests: `dfRoundG_P8_projects.test.ts` "fix pass (major 1a)", "(major 1b)", "(minor 7)"; `dfRoundG_P8_projectsFixPass.test.ts` "PROJ-13 fix pass …" (rendered: the retry replaces Create, a failed retry keeps it, a landed one says so).
+
+**Fix pass 2 (2026-10-21, drafting-flow Round G — the second independent review).**
+- (1) `convertTicketToProject` no longer throws once `createProject` has made the project. Previously a refused requester-membership row (`addMember` throws on any insert error) escaped before the result was returned, so the page never recorded the project, showed "Create project" again, and a second click made a second project naming the same request. The member step is now wrapped: a refusal becomes `linkWarning`. The link call is wrapped as well, and the result always carries the project, so the page offers "Link to <project>". Tests: `lib/__tests__/dfRoundG_P8_projectsConvert.test.ts` (rendered, real `convertTicketToProject`: member row refused and link failed → retry button, no second project insert; member row refused and link landed → a warning; regression).
+- (2) The link route's history line names no project. Ticket history is read by every reader of the request, and a private project's name is not theirs to read (`PROJ-9`). On an unlink the old name had been read as the service role, past project visibility; it is no longer read at all. The line carries the project's id (`projectId`) and shows no name. The request page's project chip names the current project only through the viewer's own RLS read, as before (`PROJ-9`). Test: "fix pass 2 (minor 3): the history line names NO project …".
+
+**Fix pass 3 (2026-10-21, drafting-flow Round G — the third independent review).**
+- (1) Done-when 1's "never a second project" depended on the page's realtime refresh: after a link or a create that landed, `TicketProjectActions` kept no state of its own, so with realtime down "Create project from this request" stayed clickable and a second click made a second project (and the converted link moved the request onto it). The component now holds what its own successful change left the request linked to (`landed`, with the page's value it was made against): Create and Link give way to Unlink the moment the link lands, an unlink that lands shows Link / Create again, and the page's value takes over as soon as it changes. Tests: `dfRoundG_P8_projectsConvert.test.ts` "fix pass 3 (review, minor): a Create that links at once replaces Create and Link with Unlink before any realtime refresh …", "fix pass 3: a link from the picker that lands shows Unlink at once; a refused link leaves the controls as they were", and the retry case now also asserts Unlink.
+- (2) The project page's requests card (`components/projects/ProjectRequestsCard.tsx`) said "with <drafter>" in every status, so a request in engineering review or sign-off named the drafter. It now names who the request waits on by role, from its status (`lib/ticketProject.ts` `requestHolderLabel`: "Engineer: …" in `PENDING_ENG_TEAM` / `PENDING_FINAL_APPROVAL`, "Drafter: …" in `DRAFTING` / `REVISION_REQ` / `PENDING_IFC`, the requester in `PENDING_REVIEW` and `FINAL_DRAFT` — or, in a routed review, the roster's open slots — and the drafting queue in `PENDING_ASSIGNMENT`), reading `assigned_engineer_name` too. Test: `dfRoundG_P8_projects.test.ts` "fix pass 3 (review, minor): requestHolderLabel …". *Corrected by fix pass 4: as first landed, fix pass 3 mapped `PENDING_REVIEW` to the engineer ("Engineer: …" / "Awaiting an engineer"), which was wrong — see below.*
+
+**Fix pass 4 (2026-10-21, drafting-flow Round G — the fourth independent review; corrects fix pass 3 where it overstated).**
+- (1) Fix pass 3's `requestHolderLabel` said a `PENDING_REVIEW` request waits on the engineer. In this workflow it waits on the REQUESTER's review (`lib/workflow.ts` WF-24 "the ticket waits on the REQUESTER's review"; `lib/ticketSla.ts` `waitingParty` maps `PENDING_REVIEW` to the requester), or, on a routed request, on the roster's open blocking slots. `requestHolderLabel(status, names, metadata)` now answers "Awaiting review from: <requester>" (or "Awaiting the requester's review"), and when the row carries a current review roster (`lib/workflow.ts` `currentRoster`: `PENDING_REVIEW`, `metadata.review_roster` v1, not closed) "Awaiting routed review: <slot labels>" — the `lib/ticketRoster.ts` `waitingSlotLabels` rule (open and not notify-only, via `slotBlocks`) — or "Reviewers (routed review)" when none is still open. `PENDING_ENG_TEAM` / `PENDING_FINAL_APPROVAL` still name the engineer. The card passes each row's `metadata`. Tests: `dfRoundG_P8_projects.test.ts` "fix pass 3 (review, minor): requestHolderLabel …" (now expects "Awaiting review from: Rita") and "fix pass 4 (review, major): a ROUTED review …" (open slots named; notify-only and satisfied slots never wait; a closed roster or a roster outside review is not current); `dfRoundG_P8_projectsCard.test.ts` (rendered card: requester, no-requester, routed, drafter; the engineer is never named in review).
+- (2) The card's header said "{open} open · {closed} closed" over only the newest `PROJECT_REQUESTS_LIMIT` (200) rows. It now reads the project's totals: the list query carries `count: "exact"` and the open requests are counted by their own head query (same `org_id` / `project_id` / `archived_at` filters, `status not in TERMINAL_TICKET_STATUSES`); a truncated list adds "newest 200 shown". When a total cannot be read the figures are labelled "newest 200 shown — N open · M closed of those shown", never presented as the project's totals. Test: `dfRoundG_P8_projectsCard.test.ts` "260 linked requests, 30 of the oldest still open …", "a total that cannot be read …", "a short list …".
+- (3) The card hid itself on ANY 42703 / PGRST204. It now hides only when the answer names `project_id` (`isMissingProjectColumn`, as the routes do since the first fix pass); any other refusal shows the card's read-failure line. Test: `dfRoundG_P8_projectsCard.test.ts` "the card hides itself only when project_id itself is missing".
+- (4) `/api/tickets/project-link` wrote the `request_unlinked` feed row into the PREVIOUS project as the service role without asking whether the caller can see it (a requester unlinking or moving a request off a private project). The route now reads the previous project AS THE CALLER (`callerClient.from("projects").select("id")`) and writes the feed row only when it is visible; otherwise (or when that read fails) it writes none and logs a server-side warning, telling the caller nothing about a project they cannot see. The `linked_ticket_id` clear stays a service-role write (it only removes this request's own id). Test: `dfRoundG_P8_projects.test.ts` "fix pass 4 (review, minor): an unlink or a move off a project the CALLER cannot see …" (fails against fix pass 3's route).
+
+**Fix pass at the merge (2026-10-21, DEC-90 — the final review round; narrows the "never a second project" claims above to what holds, DEC-29).** Fix passes 1–3 kept "never a second project" only within ONE page load: the created project was remembered in component state, so after a Create whose link failed, a reload offered "Create project from this request" again. Now, before Create is offered — on mount, and again inside "Create project" right before `convertTicketToProject` runs — `components/requests/TicketProjectActions.tsx` `findProjectNamingRequest` (`:234`) reads, through the viewer's own client, the projects of this workspace whose `linked_ticket_id` names this request, newest first; the newest one that is not closed is offered as "Link to <its name>" (`postProjectLink({ …, converted: true })`) in place of Create, beside "Link to a project" as today. What holds now: a second click, a reload or another tab does not create a second project while a project that names this request is one the viewer can read and is not closed, and that read succeeds. What does not: if the read fails, Create stays (today's behaviour) and the page says it could not check ("check the Projects list before creating one"); a project naming the request that is closed (the link route refuses a closed project) or that the viewer cannot read does not take Create away; and two Creates that both pass the check at the same instant are not serialized — there is no database constraint on `projects.linked_ticket_id`. Tests: `dfRoundG_P8_projectsFixPass.test.ts` "REMOUNT: a project an earlier load created from this request (link never landed) is offered as 'Link to <project>' …" (rendered: create, link fails, unmount, fresh mount → no Create, the converted link, no second `convertTicketToProject`), "the check is asked again inside Create …", "REGRESSION: a closed project naming the request, or another request's project, does not take Create away …", "a failed read never removes Create …".
 ---

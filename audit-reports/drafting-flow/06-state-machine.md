@@ -223,7 +223,7 @@ Tests: `lib/__tests__/reviewModel.test.ts` "SM-3 — only an engineer signs as t
 ## SM-4 · Archive commit never re-checks status: a closed ticket that is reopened after "produce" has its entire comment thread, history and attachment binaries destroyed while it is live and in review
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P8 PROJECTS — done-whens 2 and 3 (in `app/api/tickets/**`: clear `archive_id` in the reopen / cancel-undo transitions; refuse an action on a row with a non-null `archive_id`) — assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31 (DF-P8 is the next drafting-flow package that holds the workflow route; the integrator adds it to DF-P8's plan). Ruled by the integrator at the DF-P11 merge, 2026-10-21 (DEC-90).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/ticket-shed/route.ts:131-146`, `app/api/admin/ticket-shed/commit/route.ts:125-172`, `lib/ticketTransitions.ts:288-290`, `app/api/tickets/workflow-action/route.ts:69-74`, `app/(protected)/admin/storage/page.tsx:520-585`
@@ -282,6 +282,18 @@ if ((row as { archived_at?: string | null }).archived_at) {
 - (review fix pass 2, ALOG-8) the 409 `changed_since_capture` refusal is itself recorded: each un-link (`archive_id → null`) selects the row it matched and counts a ticket as returned only when it matched one (a raced or already-gone row is reported as not returned); one `TICKET_ARCHIVE_RECLAIM` row (`partial: true`, `stoppedAt: "changed_since_capture"`, the released and unreleased ticket ids, each changed ticket's reason) is written before the 409, and a refused audit insert is carried in the answer (`auditError`). Tests: `ticketShedCommit.test.ts` "DF-P11 fix pass 2 (ALOG-8) — the changed-since-capture refusal is audited and counts only rows it returned".
 
 **Scope / residual.** Done-when 2 and 3 → the workflow route's owner (drafting-flow DF-P15, which holds `app/api/tickets/**` this round): clear `archive_id` in the reopen / cancel-undo transitions and refuse an action on a row with a non-null `archive_id`. *(DF-P15 has merged without them; owner now drafting-flow DF-P8 PROJECTS — assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31.)*
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. Done-whens 2-3. `lib/ticketTransitions.ts` `computeTransition` (`:1052`): a transition that leaves a claimed row non-terminal (a reopen or cancel-undo, or any later transition on a row a reopen left claimed) clears `archive_id` in the SAME compare-and-set update, so the shed and the workflow never both own a live row. A row with no claim gets exactly the updates it got before; a terminal transition never clears one; an archived stub is refused by the route before this runs.
+
+**Done-when.**
+- ✓ (1) the shed's commit re-check (DF-P11, as recorded).
+- ✓ (2) `reopen_ticket` and every transition out of CLOSED / CANCELED clear `archive_id` in the same atomic update.
+- ✓ (3) by its second form — the transition clears the claim (rather than refusing the action), so a reopened request is never stamped or freed and carries no stale claim. Tests: `dfRoundG_P15_routes.test.ts` "SM-4 done-whens 2-3 (DF-P8) …" (route, with REGRESSION: an unclaimed reopen writes no `archive_id`); `dfRoundG_P8_projects.test.ts` "SM-4: a reopen clears the archive's claim …".
+- ✓ (4) produce → reopen → commit (DF-P11, as recorded).
+
+**Scope / residual.** None.
+
+**Pending migration:** none for this limb (it works before and after `20261256`).
 
 ---
 
@@ -459,7 +471,7 @@ if (ticket.assignedDrafterId === uid) {
 ## SM-7 · A transition performs four sequential writes with no transaction and no error check on the audit insert — the audit row can be lost while the status change stands
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:155-223`, `app/api/tickets/workflow-action/route.ts:197-211`, `app/api/tickets/workflow-action/route.ts:214-223`, `app/api/tickets/workflow-action/route.ts:279-294`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanical claim is exactly right — four unsynchronised writes, and the audit insert's error is discarded. Severity is too high: the ticket's own `history` JSONB records who acted, with what label, in what role, and when, atomically with the status change, so what a lost audit row costs is the from→to mirror in audit_logs, not the compliance record itself.
@@ -518,6 +530,21 @@ if (newComment) {
 **Done-when.** ✗ (in part) done-when 1 unchanged (no retry queue); 2 and 3 ✓ as recorded above.
 
 **Scope / residual.** → the next holder of `app/api/cron/maintenance/route.ts` (admin-and-org P5) for the drain (reconcile a twice-failed `ticket_comments` mirror from `tickets.comments`; write the `_NOT_APPLIED` row for an attempt row whose transition never landed, read from the ticket's history), or DF-P15 for the one-RPC form. Re-assignment is the integrator's. *(Re-assigned: drafting-flow DF-P8 PROJECTS — assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31.)*
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. The drain (DEC-90 ruling (6) for DF-P8; the RPC form is `EVID-12`'s remainder). `lib/ticketAuditDrain.ts` `runTicketAuditDrain`, run as one step of the maintenance cron (`app/api/cron/maintenance/route.ts:535`, step 5d, 10 s budget; no new cron entry, no new table): (a) a workflow comment in `tickets.comments` (every live ticket modified in the last 7 days, keyset-paged — see the fix pass below) with no `ticket_comments` row of its id is inserted in the route's own mirror shape — a row that exists, even soft-deleted, is never touched; (b) an attempt row marked `details.historyAttempt` (the transition's history line now names it, stamped in the same compare-and-set — `app/api/tickets/workflow-action/route.ts:1510-1523`, `:1608`), settled 15 minutes, with no follow-up naming it, on a live ticket whose history has no line naming it, gets its `_NOT_APPLIED` row (`reason: "reconciled"`, `reconciledBy: "maintenance"`); a history line naming it means it landed and nothing is written. A failed read writes nothing and says so; never throws.
+
+**Done-when.**
+- ✓ (1) by its second form: the audit insert's error is checked and refuses the transition (DF-P1, as recorded), and what the route can only log — a `_NOT_APPLIED` row that failed twice — is reconciled by the drain from the ticket's history.
+- ✓ (2) the mirror failure is logged (as recorded) and now reconciled.
+- ✓ (3) as recorded. Tests: `dfRoundG_P8_projects.test.ts` "SM-7 / EVID-12 (DEC-90 ruling (6)): the drain …" (5 cases: pure shapes, mirror reconcile, attempt reconcile with landed / follow-up / archived / pre-DF-P8 rows, a failed read, the cron step); `dfRoundG_P15_routes.test.ts` "SM-7 (DF-P8): the transition's own history line names its audit row …".
+
+**Scope / residual.** The one-transaction RPC → `EVID-12`'s remainder (proposed owner: a NEW drafting-flow package, provisionally **DF-P23** (DF-P21 and DF-P22 are taken — the integrator assigns, and renumbers if DF-P23 is taken at the merge) — the next holder of `app/api/tickets/workflow-action/route.ts` and `lib/ticketTransitions.ts`; corrected at DF-P8 fix pass 3 — this line first named DF-P21, which is the renumbered-files package). An attempt row written before this deploy is never decided by the drain.
+
+**Fix pass (2026-10-21, drafting-flow Round G — the independent review).** The first version read only the newest 300 tickets (leg a) and the newest 300 attempt rows (leg b) per run, across every workspace, with no cursor, and the follow-up read had no paging: on a deployment with more than ~300 transitions a day, already-decided rows filled those slots every night and an older lost attempt left the window unread. Corrected: both legs keyset-page the WHOLE 7-day window, oldest first, on (timestamp, id) (`lib/ticketAuditDrain.ts` `keysetAfter`), and the follow-up read is keyset-paged on id, so no fixed slice of already-decided rows and no PostgREST row cap can starve an older row or hide a follow-up; a run stops only at its deadline (the step's 10 s; leg (a) at most half of it) and a run that stops before the end of the window says so as an ERROR line in the cron's result (and `truncated`). Because the oldest rows are read first, every attempt row in the window is decided before it leaves the window as long as one daily run can read about one day's attempt rows; when it cannot, every run reports it. The `/api/tickets/project-link` attempt rows now carry `details.historyAttempt` and their history line names them (`attempt`), so a link whose `_NOT_APPLIED` write failed twice is reconciled too. The report gains `ticketsRead` / `attemptsRead`. Tests: `dfRoundG_P8_projects.test.ts` "fix pass (major 2)" — a lost attempt 6 days old behind 700 newer landed ones is reached and paired once (a second run writes nothing); 1,500 follow-ups past a 1,000-row cap still settle the attempt they name; a lost mirror on the 650th ticket is reconciled; a run out of time writes nothing undecided and reports two error lines — against a stand-in that honours order, limit, the keyset `or()` and a row cap. Done-when 1 stays ✓ on that basis; the bound (one daily run's 10 s must cover about a day's rows) is said by the run itself whenever it does not hold.
+
+**Fix pass 2 (2026-10-21, drafting-flow Round G — the second independent review).** Leg (a) sent every recent comment id in one `.in('id', …)` on the uuid column `ticket_comments.id`. A single legacy non-UUID id therefore made PostgREST refuse the whole read (22P02), on every run. The window was also compared as strings, so a non-ISO date such as "Tue Oct …" sorted as recent, and the mirror dropped the comment's mentions. Now only a comment whose id is a UUID and whose date parses (`Date.parse`) is decided. The window is compared on parsed times. Every other comment is counted in the report's `commentsUndecidable` and is never read or written. The mirror carries `mentionedUserIds` (UUIDs only) as `mentioned_uids`, which `lib/ticketReadScope.ts` reads (`lib/ticketAuditDrain.ts` `commentTime`, `mirrorRowFor`). Tests: `dfRoundG_P8_projects.test.ts` "fix pass 2 (minor 5): a legacy comment whose id is not a UUID, or whose date is not ISO, is counted and skipped …" (its stand-in refuses a non-UUID `in()` with 22P02, as the column does), plus the extended pure-shape test.
+
+**Pending migration:** none for this limb (it works before and after `20261256`).
 
 ---
 

@@ -447,7 +447,7 @@ CREATE POLICY notifications_org_insert ON notifications FOR INSERT WITH CHECK (
 ## DELIV-7 · Fire-and-forget by design: no notification insert anywhere is retried, and most swallow their error — including four inside the cron that count successes they never verified
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P8 PROJECTS, through `DELIV-16` (done-when 2's one remaining producer, `CheckInPanel.tsx`) — by the integrator at the N15 merge, 2026-10-14 (DEC-31). Done-when 1's last two scans were N15's and are done.
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (dw1's last two scans: `scanDistributionAcks` in `lib/distributionAcks.ts` and `scanStaleHolds` in `lib/holds.ts` adopt `notifyCompliance` as the six scans in N14's files do — no reminder marked sent for a dead-lettered recipient, delivered counted apart from attempted) — by the integrator, 2026-10-13 (at the N14 merge, DEC-31: N14 named notifications N9 for these limbs, but N9 merged before N14 — re-owned; fleet plan updated).
 - **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31), as N6's Scope / residual names: the remaining callers of done-when 1 and the raw inserts of done-when 3.
@@ -578,6 +578,16 @@ export async function notify(input: NotificationInput): Promise<void> {
 - ✓ 4.
 
 **Scope / residual.** Stays OPEN on done-when 2 only, through `DELIV-16`.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. Done-when 2 was carried by `DELIV-16`'s `CheckInPanel` limb, which holds (see `DELIV-16`'s Resolution of the same date).
+
+**Done-when.**
+- ✓ 1, ✓ 3, ✓ 4 (as recorded).
+- ✓ 2 — through `DELIV-16`.
+
+**Scope / residual.** As `DELIV-16`.
+
+**Pending migration:** `20261206` (as recorded at N15).
 
 ---
 
@@ -1112,7 +1122,7 @@ The chain reaction held too: the `CRON_SECRET` comment named `reminders/run`.
 ## DELIV-16 · A compliance notice's bell row has no retry: a refused or failed insert is logged and lost, with no outbox and no dead letter
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P8 PROJECTS (the one remaining limb: `components/documents/CheckInPanel.tsx`'s `review_requested` adopts `notifyCompliance`) — re-owned by the integrator at the N15 merge, 2026-10-14 (DEC-31): DF-P4's brief kept `CheckInPanel.tsx` off-limits while document-control P23 held it, so DF-P4 did not take it; DF-P8 is the queued drafting-flow package that edits `CheckInPanel.tsx`. N15's limbs are done (its Partial below).
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (the compliance producers N14 could not edit: `lib/distributionAcks.ts`, `lib/postPublish.ts`, `lib/staleCopies.ts`, `lib/revisionImpact.ts`, `lib/workPackages.ts`, `emit()`'s in-app leg in `lib/notify/dispatch.ts` for `lib/holds.ts` / `lib/distributionAcks.ts`, the intake door's `review_requested` / `doc_superseded` in `app/api/intake/upload/route.ts`; and the browser writer learning whether its own notice to another member landed); drafting-flow DF-P4 LIBRARY (`components/documents/CheckInPanel.tsx`'s `review_requested`, assigned at the DF-P2 merge) — by the integrator, 2026-10-13 (at the N14 merge, DEC-31: N14 named notifications N9 for these limbs, but N9 merged before N14 — re-owned; fleet plan updated).
 - **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31). Opened 2026-10-07 by notifications Round G (N6 EMAIL-PIPELINE-AND-CRON) as the remainder of `DELIV-7` done-when 2.
@@ -1223,6 +1233,16 @@ The chain reaction held too: the `CRON_SECRET` comment named `reminders/run`.
 **Scope / residual.**
 - Stays OPEN on DF-P4's limb. `DEC-102` Risk (b) is unchanged, no owner: the read-back can miss a row whose insert is still executing.
 - **Pending migration:** `20261206` (fix pass 3: paste BEFORE the deploy, `TAX-17`; the app works before and after). *(Fix pass 4: paste it again, REQUIRED, after the next maintenance run following the deploy (`TAX-17`). The new SECURITY DEFINER `notification_i_wrote` in that number is RATIFIED by the integrator under `DEC-90`.)*
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS — the `CheckInPanel` limb (re-owned at the N15 merge). Re-verified on `db3a1f3`: `components/documents/CheckInPanel.tsx:467-469` sends its `review_requested` through `lib/notify/dispatch.ts` `emit()`; `review_requested` is a compliance kind (`lib/notificationKinds.ts:250`), and since N15 emit's in-app leg writes each compliance row through `notifyCompliance` (`lib/notify/dispatch.ts:565-571`) — the retry through `notification_i_wrote` and the dead letter. So the limb already holds; nothing is changed (a direct `notifyCompliance` call would drop the email leg emit sends). The audience is unchanged: the document's owner, or the controllers, never the actor.
+
+**Done-when.**
+- ✓ Done-when 1 for every compliance producer, the check-in's included (after `20261206`). Test: `lib/__tests__/dfRoundG_P8_projects.test.ts` "DELIV-16 / DELIV-7 dw2: CheckInPanel's review_requested is an emit() of a COMPLIANCE kind …" (source pin).
+- ✓ Done-when 2 (N14).
+
+**Scope / residual.** `DEC-102` Risk (b) stays as recorded (no owner).
+
+**Pending migration:** `20261206` (as recorded at N15); nothing new for this limb.
 
 ---
 

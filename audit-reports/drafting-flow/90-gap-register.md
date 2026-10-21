@@ -1666,6 +1666,7 @@ everywhere it appears.
 **Related findings:** `DCW-1`, `DCW-5`, `LEAK-9`.
 **Related gaps:** `GAP-105` (ticket → library binding — same migration).
 
+**Built (2026-10-21, drafting-flow DF-P8 PROJECTS).** The request ↔ project link by reference (DEC-40): `tickets.project_id` with an org-equality rail (20261256, PASTE row 200), settable only through `/api/tickets/project-link` and the create route; the check-in and collision paths carry it; the project page lists its requests and warns at closeout about open ones; the published deliverable is referenced on the project register by the hand-back and the link route. *Remaining:* the reference when a deliverable's document review completes (`PROJ-1`) → projects-joint **J21** (the integrator at the DF-P8 merge, DEC-31); this gap closes with it.
 
 ---
 
