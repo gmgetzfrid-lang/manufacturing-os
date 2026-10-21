@@ -64,6 +64,7 @@ import BulkEditModal from "@/components/documents/BulkEditModal";
 import { recallRetiredBatch } from "@/lib/staleCopies";
 import { notify } from "@/lib/inAppNotifications";
 import { SUPERSEDE_MOC_REQUIRED } from "@/lib/revisions";
+import { shareStatusRefusal } from "@/lib/shareRules";
 import type { DocumentRecord, LibraryConfig } from "@/types/schema";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -269,5 +270,46 @@ describe("REV-33 (P34) — the bulk editor's Superseded takes supersedeDocument'
     await apply([asRecord(b)], "Draft");
     expect(docRow("r2").status).toBe("Draft");
     expect(T("audit_logs").filter((r) => ["SUPERSEDE_DOC", "VOID_DOC"].includes(String(r.action)))).toEqual([]);
+  });
+});
+
+// P34 review fix 3 (REV-34 (b)): the bulk editor writes the archive columns on
+// an archive (since P28); a row it moves OUT of Archived (its fresh prior) has
+// them cleared in that row's same write, as unarchiveDocument does.
+describe("P34 review fix 3 — the bulk editor clears the archive columns of a row it moves out of Archived", () => {
+  const CLEARED = { archived_at: null, archived_by: null, archive_reason: null };
+  const remount = async () => { await act(async () => root.unmount()); root = createRoot(host); };
+
+  it("archived in the bulk editor, then set back to Issued in it: the restore's write (changeDocumentStatus) clears the archive columns, and the document can be shared again", async () => {
+    seedDoc("x1");
+    await apply([asRecord(docRow("x1"))], "Archived");
+    expect(docRow("x1")).toMatchObject({ status: "Archived", archive_reason: "Tidy" });
+    expect(shareStatusRefusal(docRow("x1"))).not.toBeNull();
+    await remount();
+    await apply([asRecord(docRow("x1"))], "Issued");
+    expect(host.textContent).toMatch(/Applied to 1 document\./);
+    expect(statusWrites()[1].args[0]).toMatchObject({ status: "Issued", ...CLEARED });
+    expect(docRow("x1")).toMatchObject({ status: "Issued", ...CLEARED });
+    expect(shareStatusRefusal(docRow("x1"))).toBeNull();
+  });
+
+  it("an Archived row set to Draft (the bare write) is cleared in its same write; an Issued row in the same apply is written exactly as before", async () => {
+    const a = seedDoc("x2", { status: "Archived", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
+    const b = seedDoc("x3");
+    await apply([asRecord(a), asRecord(b)], "Draft");
+    expect(host.textContent).toMatch(/Applied to 2 documents\./);
+    const [wa, wb] = statusWrites().map((c) => c.args[0] as Row);
+    expect(Object.keys(wa).sort()).toEqual(["archive_reason", "archived_at", "archived_by", "status", "uniqueness_key", "updated_at", "updated_by"]);
+    expect(Object.keys(wb).sort()).toEqual(["status", "uniqueness_key", "updated_at", "updated_by"]);
+    expect(docRow("x2")).toMatchObject({ status: "Draft", ...CLEARED });
+    expect(docRow("x3")).toMatchObject({ status: "Draft" });
+  });
+
+  it("REGRESSION — a prior the read could not give: the row is written as before, its archive columns left as they are", async () => {
+    const a = seedDoc("x4", { status: "Archived", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
+    state.db.selectErrors!.documents = (cols) => (cols === "id, status" ? { message: "503" } : null);
+    await apply([asRecord(a)], "Draft");
+    expect(Object.keys(statusWrites()[0].args[0] as Row).sort()).toEqual(["status", "uniqueness_key", "updated_at", "updated_by"]);
+    expect(docRow("x4")).toMatchObject({ status: "Draft", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
   });
 });

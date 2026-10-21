@@ -295,7 +295,10 @@ export default function BulkEditModal({
       mocReference?: string | null; checkoutHolder?: { checkedOutBy: string | null; checkedOutByName?: string | null } | null; libraryId?: string | null;
     }> = [];
     const putBack: Array<{ documentId: string; libraryId: string | null; docLabel: string; restoredStatus: string }> = [];
-    if (retiring || issuing) {
+    // REV-34 (b) (P34 review fix 3): so does every other status change (a
+    // row it moves OUT of Archived has its archive columns cleared, below).
+    const leavingArchiveCandidate = target.kind === "status" && newValue.trim() !== "Archived";
+    if (retiring || issuing || leavingArchiveCandidate) {
       const ids = docs.map((d) => d.id).filter((id): id is string => !!id);
       // A read that fails (or throws) leaves the priors unknown — which
       // recalls — and never stops the apply.
@@ -330,8 +333,16 @@ export default function BulkEditModal({
           }
         }
         const updates: Record<string, unknown> = { updated_at: now, updated_by: actorUserId };
+        // REV-34 (b) (P34 review fix 3): a row whose fresh prior is Archived,
+        // moved to any other status, has the archive columns cleared in its
+        // same write, as unarchiveDocument does — a document put back in force
+        // with archived_at still set cannot be shared, transmitted or read by
+        // the AI. A prior the read did not give: written exactly as before.
+        const leavesArchive = leavingArchiveCandidate && !!doc.id && (priorStatusOf.get(doc.id) ?? "").trim() === "Archived";
+        const archiveCleared = leavesArchive ? { archived_at: null, archived_by: null, archive_reason: null } : {};
         if (target.kind === "status") {
           updates.status = newValue;
+          Object.assign(updates, archiveCleared);
           // REV-31: the Archive dialog's archive columns, in the same write.
           if (archiving) {
             updates.archived_at = now;
@@ -371,7 +382,7 @@ export default function BulkEditModal({
           // review clock left as it was).
           // changeDocumentStatus writes the status, updated_at and updated_by
           // itself; the recomputed uniqueness key rides in the same UPDATE.
-          const patch: Record<string, unknown> = "uniqueness_key" in updates ? { uniqueness_key: updates.uniqueness_key } : {};
+          const patch: Record<string, unknown> = { ...("uniqueness_key" in updates ? { uniqueness_key: updates.uniqueness_key } : {}), ...archiveCleared };
           const outcome: StatusIssueOutcome = await changeDocumentStatus({
             orgId: doc.orgId || library.orgId, documentId: doc.id, toStatus: newValue, door: "bulk",
             actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null, patch,

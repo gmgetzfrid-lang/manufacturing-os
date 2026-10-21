@@ -11,7 +11,9 @@
 //   retired: recallCopyHolders only for a row that took away a controlled
 //   issue (DEC-90 R1), a row already Superseded or Archived left out, a
 //   refused row left out. A failed read leaves the priors unknown, which
-//   recalls. A change that retires nothing reads nothing and recalls nothing.
+//   recalls. A change that retires nothing recalls nothing (since P34's
+//   review fix 3 a status change reads the statuses once, for a row it moves
+//   out of Archived; a custom-field change reads nothing).
 //
 // Rendered (jsdom) against the in-memory PostgREST with the REAL
 // BulkEditModal and lib/revisions.ts; lib/staleCopies.ts is a spy.
@@ -207,15 +209,21 @@ describe("PROD-17 (P28) — the bulk editor's Superseded / Archived: one fresh r
     expect(batch).not.toHaveBeenCalled();
   });
 
-  it("REGRESSION: a change that retires nothing (Draft; a custom field) reads nothing and recalls nothing", async () => {
+  it("REGRESSION: a change that retires nothing (Draft; a custom field) recalls nothing; a custom field reads nothing", async () => {
     const a = seedDoc("k1");
     await apply([asRecord(a)], "Draft");
-    expect(reads()).toHaveLength(0);
+    // P34 review fix 3 (REV-34 (b)): a status change reads the rows' statuses
+    // once (a row moved out of Archived has its archive columns cleared); a
+    // row that was not Archived is written exactly as before.
+    expect(reads()).toHaveLength(1);
+    expect(writes()).toHaveLength(1);
+    expect(Object.keys(writes()[0].args[0] as Row)).not.toContain("archived_at");
     expect(batch).not.toHaveBeenCalled();
     await act(async () => root.unmount());
     root = createRoot(host);
     await apply([asRecord(seedDoc("k2"))], "North", "custom:area");
-    expect(reads()).toHaveLength(0);
+    // the custom-field change adds no read (the one above is the Draft change's)
+    expect(reads()).toHaveLength(1);
     expect(batch).not.toHaveBeenCalled();
   });
 

@@ -75,6 +75,7 @@ import { isIssueTransition, isControlledIssueStatus, isRetiredStatus } from "@/l
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { summarizeAudit } from "@/lib/timeline";
+import { shareStatusRefusal } from "@/lib/shareRules";
 import type { DocumentRecord } from "@/types/schema";
 
 const ORG = "o1";
@@ -480,6 +481,49 @@ describe("REV-33 / REV-34 (b) / (c) — the library page's metadata save into a 
     await save(d).fn(core(d, "Superseded"));
     await settle();
     expect(vi.mocked(recallRetiredDocument).mock.calls.map((x) => x[0].documentId)).toEqual(["r6"]);
+  });
+
+  // P34 review fix 3 (REV-34 (b)): the archive columns the metadata archive
+  // writes are cleared by a save that moves the row OUT of Archived, as
+  // unarchiveDocument clears them — never left on a document back in force.
+  const ARCHIVE_CLEARED = { archived_at: null, archived_by: null, archive_reason: null };
+  it("P34 review fix 3 — archived by mistake in the metadata editor, then set back to Issued in the same editor: the archive columns are cleared in the restore's same write, and the document can be shared again", async () => {
+    const d = seedDoc("u1");
+    await save(d).fn(core(d, "Archived"));
+    expect(docRow("u1")).toMatchObject({ status: "Archived", archived_by: ME, archive_reason: "Obsolete unit" });
+    expect(docRow("u1").archived_at).toBeTruthy();
+    expect(shareStatusRefusal(docRow("u1"))).not.toBeNull();
+    const { st, fn } = save(docRow("u1"));
+    await fn(core(docRow("u1"), "Issued"));
+    expect(st.error).toBeNull();
+    expect(statusWrites()).toHaveLength(2);
+    expect(statusWrites()[1].args[0]).toMatchObject({ status: "Issued", ...ARCHIVE_CLEARED });
+    expect(docRow("u1")).toMatchObject({ status: "Issued", ...ARCHIVE_CLEARED });
+    expect(shareStatusRefusal(docRow("u1"))).toBeNull();
+  });
+
+  it("P34 review fix 3 — an Archived row (archived by any door) moved to Draft (the bare write) or to Superseded (a retirement) has its archive columns cleared in that same write", async () => {
+    const a = seedDoc("u2", { status: "Archived", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
+    await save(a).fn(core(a, "Draft"));
+    expect(statusWrites()).toHaveLength(1);
+    expect(Object.keys(statusWrites()[0].args[0] as Row).sort()).toEqual([...BARE, "archive_reason", "archived_at", "archived_by"].sort());
+    expect(docRow("u2")).toMatchObject({ status: "Draft", ...ARCHIVE_CLEARED });
+    const b = seedDoc("u3", { status: "Archived", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
+    await save(b).fn(core(b, "Superseded"));
+    expect(docRow("u3")).toMatchObject({ status: "Superseded", ...ARCHIVE_CLEARED });
+    expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ retiredFrom: "Archived" });
+  });
+
+  it("REGRESSION (P34 review fix 3) — a save on a row that is not Archived writes exactly the columns it did; a row whose status cannot be read is written as before (its archive columns left as they are)", async () => {
+    const d = seedDoc("u4");
+    await save(d).fn({ metadata: {}, core: { title: "fixed", documentNumber: "U4", status: "Issued" } });
+    expect(Object.keys(statusWrites()[0].args[0] as Row).sort()).toEqual(BARE);
+    expect(docRow("u4")).toMatchObject({ status: "Issued", title: "fixed" });
+    const e = seedDoc("u5", { status: "Archived", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
+    state.db.selectErrors!.documents = (cols) => (cols === "status" ? { message: "503" } : null);
+    await save(e).fn(core(e, "Draft"));
+    expect(Object.keys(statusWrites()[1].args[0] as Row).sort()).toEqual(BARE);
+    expect(docRow("u5")).toMatchObject({ status: "Draft", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
   });
 });
 

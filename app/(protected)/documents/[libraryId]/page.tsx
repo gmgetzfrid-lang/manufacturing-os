@@ -3098,9 +3098,14 @@ export default function LibraryExplorerPage() {
       // columns in its same write, as archiveDocument does (the reason asked,
       // or the sentence naming this door for an archive this page did not
       // see); a save on a row already Archived leaves them as they are.
+      // P34 review fix 3: a save that moves a row the read gave as Archived
+      // into another retired status clears them, as unarchiveDocument does —
+      // the document is no longer archived (a read that failed: as before).
       const retirePatch = retiring && toStatus.trim() === "Archived"
         ? { ...payload, archived_at: payload.updated_at, archived_by: uid, archive_reason: dutyReason }
-        : payload;
+        : (rowStatus ?? "").trim() === "Archived" && toStatus.trim() !== "Archived"
+          ? { ...payload, archived_at: null, archived_by: null, archive_reason: null }
+          : payload;
       let retiredOutcome: Awaited<ReturnType<typeof changeDocumentStatus>>;
       try {
         retiredOutcome = await changeDocumentStatus({
@@ -3152,6 +3157,23 @@ export default function LibraryExplorerPage() {
         }
       }
       return;
+    }
+    // REV-34 (b) (P34 review fix 3): a save that moves the document OUT of
+    // Archived (the row read first, never this page's copy alone) clears the
+    // archive columns in its same write, as unarchiveDocument does — since
+    // P34 the metadata archive writes them, and a document put back in force
+    // with archived_at still set cannot be shared, transmitted or read by the
+    // AI. A read that fails (or a row in any other status) writes exactly as
+    // before.
+    if (toStatus !== undefined && toStatus.trim() !== "Archived") {
+      try {
+        const { data: archNow, error: archErr } = await supabase.from("documents").select("status").eq("id", selectedDoc.id).maybeSingle();
+        if (!archErr && String((archNow as { status?: string | null } | null)?.status ?? "").trim() === "Archived") {
+          payload.archived_at = null;
+          payload.archived_by = null;
+          payload.archive_reason = null;
+        }
+      } catch { /* unread: as before */ }
     }
     if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {
       const orgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
