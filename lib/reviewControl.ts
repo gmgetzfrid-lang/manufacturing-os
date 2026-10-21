@@ -1236,7 +1236,13 @@ async function promoteReviewedDraftAtomically(p: {
   let { data, error } = await supabase.rpc("finalize_reviewed_promote", { ...args, p_report_over_checkout: true });
   // DCK-18: before 20261252 there is no p_report_over_checkout — the same
   // call without it, exactly as it always was (and, before 20261151, the
-  // same "no such function" again: the three-step promote).
+  // same "no such function" again: the three-step promote). Right after the
+  // paste, until PostgREST reloads its schema cache (20261252 sends NOTIFY
+  // pgrst at its COMMIT), a stale cache can answer PGRST202 here although the
+  // new function exists: the re-call then reaches it, it records and tells
+  // and answers plain 'promoted', and the caller writes its own notice and
+  // record too — a promote over a checkout recorded and told twice in that
+  // window, never fewer.
   if (error && missing(error)) ({ data, error } = await supabase.rpc("finalize_reviewed_promote", args));
   if (error) {
     const msg = error.message ?? "";

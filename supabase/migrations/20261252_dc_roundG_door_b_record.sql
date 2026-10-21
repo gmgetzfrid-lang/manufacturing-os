@@ -77,7 +77,16 @@
 -- WITH this paste. An app before P35 keeps working after the paste (its
 -- calls answer 'promoted' as always) but writes its own notice and row too,
 -- so a reviewed promote over a foreign checkout is recorded and told twice
--- until the deploy — over-recording, never under (fail-safe).
+-- until the deploy — over-recording, never under (fail-safe). The same double
+-- can happen with the app carrying P35 in the moments right after this paste,
+-- until PostgREST reloads its schema cache: a cache that still lists only the
+-- seven-argument form answers PGRST202 to the call with
+-- p_report_over_checkout, the app's plain re-call then reaches the new
+-- function (which records and tells, and answers plain 'promoted'), and the
+-- app writes its own notice and record as well. This file ends its
+-- transaction with NOTIFY pgrst, 'reload schema' (delivered at COMMIT) to
+-- shorten that window; until the reload lands, a promote over a checkout may
+-- be recorded and told twice — again more, never fewer.
 --
 -- DCK-18 done-when 3 — the door-shaped submissions pending at 20261247's
 -- paste (its inventory row 2, informational). A door-shaped in-review row a
@@ -91,7 +100,10 @@
 -- route recorded — its INTAKE_SUBMISSION audit row, written by the server
 -- with no person named (user_id NULL, which a signed-in session cannot write
 -- since 20260813's audit_logs_insert), names the version — came through the
--- route; the others are the ones to look over.
+-- route. Of the others, the ones on a project's Intake tab are the ones to
+-- look over (the tab lists only DOCUMENT links — purpose 'documents' — so a
+-- submission filed against a quote link, a link that no longer exists, or no
+-- link at all is NOT listed there; query 3 lists those separately).
 --
 --   1. How many:
 --      WITH s AS (
@@ -99,21 +111,26 @@
 --               EXISTS (SELECT 1 FROM audit_logs a
 --                        WHERE a.resource_type = 'document' AND a.resource_id = d.id::text
 --                          AND a.action = 'INTAKE_SUBMISSION' AND a.user_id IS NULL
---                          AND a.details->>'versionId' = v.id::text) AS route_recorded
+--                          AND a.details->>'versionId' = v.id::text) AS route_recorded,
+--               EXISTS (SELECT 1 FROM project_intake_links l
+--                        WHERE l.id = v.intake_link_id
+--                          AND COALESCE(l.purpose, 'documents') = 'documents') AS on_intake_tab
 --          FROM documents d JOIN document_versions v ON v.id = d.pending_version_id
 --         WHERE v.review_state = 'in_review' AND COALESCE(v.provenance, '') = 'external'
 --           AND (v.created_by IS NULL OR v.created_by = v.intake_link_id))
 --      SELECT COUNT(*) AS pending_external_submissions,
 --             COUNT(*) FILTER (WHERE route_recorded) AS recorded_by_the_intake_route,
---             COUNT(*) FILTER (WHERE NOT route_recorded) AS to_look_over
+--             COUNT(*) FILTER (WHERE NOT route_recorded AND on_intake_tab) AS to_look_over,
+--             COUNT(*) FILTER (WHERE NOT route_recorded AND NOT on_intake_tab) AS not_on_any_intake_tab
 --        FROM s;
 --
---   2. Which (the ones to look over), oldest first:
+--   2. Which (the ones to look over — on a project's Intake tab), oldest first:
 --      SELECT p.name AS project, l.company_name AS company, d.document_number, d.title,
 --             v.revision_label, v.created_at AS submitted_at, d.checked_out_by_name AS checked_out_by,
 --             d.id AS document_id, v.id AS version_id
 --        FROM documents d JOIN document_versions v ON v.id = d.pending_version_id
---        LEFT JOIN project_intake_links l ON l.id = v.intake_link_id
+--        JOIN project_intake_links l ON l.id = v.intake_link_id
+--         AND COALESCE(l.purpose, 'documents') = 'documents'
 --        LEFT JOIN projects p ON p.id = l.project_id
 --       WHERE v.review_state = 'in_review' AND COALESCE(v.provenance, '') = 'external'
 --         AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)
@@ -123,16 +140,41 @@
 --                            AND a.details->>'versionId' = v.id::text)
 --       ORDER BY v.created_at;
 --
---   Then, for each: open the project's Intake tab (the submission is listed
---   under its pending submissions — the tab lists every in-review revision
---   filed through one of the project's links that its document points at).
+--   3. Which are NOT on any Intake tab (a quote link, a link gone, no link):
+--      SELECT l.purpose AS link_purpose, p.name AS project, l.company_name AS company,
+--             d.document_number, d.title, v.revision_label, v.created_at AS submitted_at,
+--             d.checked_out_by_name AS checked_out_by, d.id AS document_id, v.id AS version_id
+--        FROM documents d JOIN document_versions v ON v.id = d.pending_version_id
+--        LEFT JOIN project_intake_links l ON l.id = v.intake_link_id
+--        LEFT JOIN projects p ON p.id = l.project_id
+--       WHERE v.review_state = 'in_review' AND COALESCE(v.provenance, '') = 'external'
+--         AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)
+--         AND (l.id IS NULL OR COALESCE(l.purpose, 'documents') <> 'documents')
+--         AND NOT EXISTS (SELECT 1 FROM audit_logs a
+--                          WHERE a.resource_type = 'document' AND a.resource_id = d.id::text
+--                            AND a.action = 'INTAKE_SUBMISSION' AND a.user_id IS NULL
+--                            AND a.details->>'versionId' = v.id::text)
+--       ORDER BY v.created_at;
+--
+--   Then, for each row of query 2: open the project's Intake tab (the
+--   submission is listed under its pending submissions — the tab lists every
+--   in-review revision filed through one of the project's DOCUMENT links,
+--   purpose 'documents'; a quote link's submissions are not there).
 --   CONFIRM it as the company's by approving it there (a reviewed promote:
 --   recorded, and the holder told, by this file), or RETIRE it with Reject
 --   (the existing action, components/projects/IntakePanel.tsx: in_review →
 --   rejected with your reason, the pending pointer cleared, any sign-offs
 --   voided, INTAKE_REJECTED recorded — no new write path; the reason is shown
 --   on the link's submission portal). Expected on legitimate data: 0 to look
---   over. Tell the integrator the counts (rows 3-5) and what you decided.
+--   over. For a row of query 3 there is NO app action — no Intake tab lists
+--   it, so neither approve nor Reject reaches it; door (b)'s intake limb can
+--   promote one over a checkout only while its link still exists in the org
+--   and authored or was assigned the document (a quote link so set up by
+--   hand); a row whose link is gone or absent is not admitted by that limb.
+--   Do not edit those rows by hand: give the integrator their count (row 6)
+--   and their document and version ids, and the integrator assigns their
+--   retirement. Expected on legitimate data: 0. Tell the integrator the
+--   counts (rows 3-6) and what you decided.
 --
 -- PASTE ORDER: AFTER 20261247 (required — the prerequisite below refuses,
 -- changing nothing, without 20261247's column guard or 20261151's
@@ -141,9 +183,9 @@
 -- waits with them. ⚠ Never re-paste 20261151 after this one: it would put
 -- back the seven-argument function beside this one (two signatures —
 -- PostgREST's call by name becomes ambiguous) and drop the record.
--- Single paste: prerequisite check → temp-table inventory (counts only, 5
--- rows, all informational) → BEGIN/DDL/COMMIT → one SELECT (check text,
--- ok boolean, n text): 6 probes (ok = true) + the 5 rows.
+-- Single paste: prerequisite check → temp-table inventory (counts only, 6
+-- rows, all informational) → BEGIN/DDL/NOTIFY pgrst/COMMIT → one SELECT
+-- (check text, ok boolean, n text): 6 probes (ok = true) + the 6 rows.
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -160,10 +202,11 @@ END
 $$;
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
--- Counts only, never a row. Rows 3-5 are DCK-18 done-when 3's: the
+-- Counts only, never a row. Rows 3-6 are DCK-18 done-when 3's: the
 -- door-shaped submissions pending now (20261247's row 2, recounted), split
--- by whether the intake route's own record names them; the header's two
--- queries list the ones to look over.
+-- by whether the intake route's own record names them and, of those it does
+-- not, whether a project's Intake tab lists them (a DOCUMENT link — the tab
+-- reads only purpose 'documents'); the header's queries 2 and 3 list them.
 DROP TABLE IF EXISTS dc_round_g_252_before;
 CREATE TEMP TABLE dc_round_g_252_before AS
 WITH s AS (
@@ -171,7 +214,10 @@ WITH s AS (
          EXISTS (SELECT 1 FROM audit_logs a
                   WHERE a.resource_type = 'document' AND a.resource_id = d.id::text
                     AND a.action = 'INTAKE_SUBMISSION' AND a.user_id IS NULL
-                    AND a.details->>'versionId' = v.id::text) AS route_recorded
+                    AND a.details->>'versionId' = v.id::text) AS route_recorded,
+         EXISTS (SELECT 1 FROM project_intake_links l
+                  WHERE l.id = v.intake_link_id
+                    AND COALESCE(l.purpose, 'documents') = 'documents') AS on_intake_tab
     FROM documents d JOIN document_versions v ON v.id = d.pending_version_id
    WHERE v.review_state = 'in_review' AND COALESCE(v.provenance, '') = 'external'
      AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)
@@ -193,9 +239,13 @@ SELECT 'inventory (before apply): of those, named by the intake route''s own rec
        COUNT(*)::text
   FROM s WHERE route_recorded
 UNION ALL
-SELECT 'inventory (before apply): of those, with no such record — look these over: the header''s query 2 lists them; confirm each from its project''s Intake tab (approve) or retire it there (Reject); expected 0 on legitimate data',
+SELECT 'inventory (before apply): of those, with no such record and listed on a project''s Intake tab — look these over: the header''s query 2 lists them; confirm each from its project''s Intake tab (approve) or retire it there (Reject); expected 0 on legitimate data',
        COUNT(*)::text
-  FROM s WHERE NOT route_recorded;
+  FROM s WHERE NOT route_recorded AND on_intake_tab
+UNION ALL
+SELECT 'inventory (before apply): of those, with no route record and NOT listed on any project''s Intake tab (a quote link, a link gone, or no link — no app action reaches them): the header''s query 3 lists them; do not edit them by hand — give the integrator this count and their ids; expected 0 on legitimate data',
+       COUNT(*)::text
+  FROM s WHERE NOT route_recorded AND NOT on_intake_tab;
 
 BEGIN;
 
@@ -409,10 +459,16 @@ $$;
 REVOKE ALL ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text, boolean) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text, boolean) TO authenticated, service_role;
 
+-- PostgREST reloads its schema cache when this transaction commits (a NOTIFY
+-- is delivered only at COMMIT, never on a rollback), so the window in which a
+-- stale cache sends the app's call down its plain re-call — a promote over a
+-- checkout recorded and told twice — is as short as the reload. No result set.
+NOTIFY pgrst, 'reload schema';
+
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
--- Probes: ok = true × 6. Inventory rows (5): n = the aggregate count.
+-- Probes: ok = true × 6. Inventory rows (6): n = the aggregate count.
 -- pg_proc.prosrc is verbatim (an apostrophe inside a body's string literal is
 -- '''' here).
 SELECT 'DCK-18 (P35): finalize_reviewed_promote has ONE signature — the eight-argument form — SECURITY INVOKER with search_path pinned' AS check,

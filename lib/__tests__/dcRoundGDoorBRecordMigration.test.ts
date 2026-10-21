@@ -190,7 +190,7 @@ describe("20261252 — one paste for the SQL editor (DEC-30)", () => {
   it("the inventory is aggregate counts only — every row a COUNT(*), never a customer column", () => {
     const inv = between(code, "CREATE TEMP TABLE dc_round_g_252_before AS", "\nBEGIN;");
     const selects = inv.split(/\bUNION ALL\b/);
-    expect(selects).toHaveLength(5);
+    expect(selects).toHaveLength(6);
     for (const s of selects) expect(s, s.slice(0, 120)).toMatch(/COUNT\(\*\)::text/);
     const outer = inv.slice(inv.indexOf("\nSELECT 'inventory"));
     expect(outer).not.toMatch(/SELECT\s+(?!'inventory|COUNT)\w+\.\w+/);
@@ -214,11 +214,34 @@ describe("20261252 — one paste for the SQL editor (DEC-30)", () => {
 
   it("the header's operator queries (DCK-18 done-when 3) only read — no INSERT / UPDATE / DELETE — and name the intake route's own record and the Intake tab's Reject (the existing retire path)", () => {
     const header = M.slice(0, M.indexOf("-- PASTE ORDER:"));
-    const queries = header.slice(header.indexOf("--   1. How many:"), header.indexOf("--   Then, for each:"));
+    const queries = header.slice(header.indexOf("--   1. How many:"), header.indexOf("--   Then, for each"));
     expect(queries).toContain("a.action = 'INTAKE_SUBMISSION' AND a.user_id IS NULL");
     expect(queries).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP)\b/);
     expect(header).toContain("RETIRE it with Reject");
     expect(header).toContain("components/projects/IntakePanel.tsx");
+  });
+
+  it("review fix: the Intake tab lists only DOCUMENT links, so the look-over list (query 2, row 5) is only those, and a submission on any other link — or none — is counted (row 6) and listed (query 3) apart, with no claim that the tab retires it", () => {
+    const panel = readFileSync(join(root, "components", "projects", "IntakePanel.tsx"), "utf8");
+    expect(panel).toContain('.eq("purpose", "documents")');
+    const header = M.slice(0, M.indexOf("-- PASTE ORDER:"));
+    const q2 = header.slice(header.indexOf("--   2. Which"), header.indexOf("--   3. Which"));
+    const q3 = header.slice(header.indexOf("--   3. Which"), header.indexOf("--   Then, for each"));
+    expect(q2).toContain("--        JOIN project_intake_links l ON l.id = v.intake_link_id\n--         AND COALESCE(l.purpose, 'documents') = 'documents'");
+    expect(q3).toContain("AND (l.id IS NULL OR COALESCE(l.purpose, 'documents') <> 'documents')");
+    expect(header).not.toContain("filed through one of the project's links that its document points at");
+    expect(header).toContain("For a row of query 3 there is NO app action");
+    const inv = between(code, "CREATE TEMP TABLE dc_round_g_252_before AS", "\nBEGIN;");
+    expect(inv).toContain("AND COALESCE(l.purpose, 'documents') = 'documents') AS on_intake_tab");
+    expect(inv).toContain("FROM s WHERE NOT route_recorded AND on_intake_tab\n");
+    expect(inv).toContain("FROM s WHERE NOT route_recorded AND NOT on_intake_tab;");
+  });
+
+  it("review fix: PostgREST is told to reload its schema cache inside the transaction (delivered at COMMIT), and the stale-cache double is stated in the header", () => {
+    const tx = between(code, "\nBEGIN;", "\nCOMMIT;");
+    expect(tx).toMatch(/\nNOTIFY pgrst, 'reload schema';\n\s*\nCOMMIT;$/);
+    expect(code.match(/NOTIFY pgrst/g)).toHaveLength(1);
+    expect(M).toContain("until the reload lands, a promote over a checkout may\n-- be recorded and told twice");
   });
 });
 

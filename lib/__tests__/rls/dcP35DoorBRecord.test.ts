@@ -273,11 +273,12 @@ describe.skipIf(skip !== null)("20261252 pasted as ONE script, as the SQL editor
     return { check, ok, n };
   });
 
-  it("on a copy with 20261252 undone: every probe true, the five inventory rows are counts, a re-paste is clean — and the done-when-3 rows split the pending door-shaped submissions by the intake route's own record; the header's two read-only queries count and list the same rows", () => {
+  it("on a copy with 20261252 undone: every probe true, the six inventory rows are counts, a re-paste is clean — and the done-when-3 rows split the pending door-shaped submissions by the intake route's own record and by whether a project's Intake tab (DOCUMENT links only) lists them; the header's three read-only queries count and list the same rows", () => {
     admin("postgres", `DROP DATABASE IF EXISTS ${SCRATCH}`);
     admin("postgres", `CREATE DATABASE ${SCRATCH} TEMPLATE ${AFTER}`);
     const o = { org: randomUUID(), lib: randomUUID(), link: randomUUID(), project: randomUUID(),
-      dGenuine: randomUUID(), gA: randomUUID(), g2A: randomUUID(), dForged: randomUUID(), xA: randomUUID(), x2A: randomUUID() };
+      dGenuine: randomUUID(), gA: randomUUID(), g2A: randomUUID(), dForged: randomUUID(), xA: randomUUID(), x2A: randomUUID(),
+      qlink: randomUUID(), dQuote: randomUUID(), qA: randomUUID(), q2A: randomUUID() };
     const tag = o.org.slice(0, 8);
     const world = `ALTER TABLE document_versions ALTER COLUMN created_by DROP NOT NULL;
       SET session_replication_role = replica;
@@ -286,21 +287,28 @@ describe.skipIf(skip !== null)("20261252 pasted as ONE script, as the SQL editor
       INSERT INTO projects (id, org_id, name, owner_user_id, created_by) VALUES ('${o.project}', '${o.org}', 'P35 inventory project', gen_random_uuid(), gen_random_uuid());
       INSERT INTO project_intake_links (id, org_id, project_id, company_name, token_hash, expires_at, created_by, assigned_doc_ids)
         VALUES ('${o.link}', '${o.org}', '${o.project}', 'Inv Co', md5('${o.link}') || md5('${o.org}'), now() + interval '30 days', gen_random_uuid(), ARRAY[]::uuid[]);
+      -- a QUOTE link (20261013): the Intake tab never lists it, so a door-shaped row naming it is not one the tab retires
+      INSERT INTO project_intake_links (id, org_id, project_id, company_name, token_hash, expires_at, created_by, assigned_doc_ids, purpose)
+        VALUES ('${o.qlink}', '${o.org}', '${o.project}', 'Quote Co', md5('${o.qlink}') || md5('${o.org}'), now() + interval '30 days', gen_random_uuid(), ARRAY[]::uuid[], 'quote');
       INSERT INTO documents (id, org_id, library_id, title, document_number, status) VALUES
         ('${o.dGenuine}', '${o.org}', '${o.lib}', 'Genuine', 'P35-G-${tag}', 'Issued'),
-        ('${o.dForged}',  '${o.org}', '${o.lib}', 'Forged',  'P35-X-${tag}', 'Issued');
+        ('${o.dForged}',  '${o.org}', '${o.lib}', 'Forged',  'P35-X-${tag}', 'Issued'),
+        ('${o.dQuote}',   '${o.org}', '${o.lib}', 'OnQuote', 'P35-Q-${tag}', 'Issued');
       INSERT INTO document_versions (id, org_id, record_id, revision_label, file_url, change_type, created_by, review_state, provenance, intake_link_id) VALUES
         ('${o.gA}',  '${o.org}', '${o.dGenuine}', 'A',  'p35inv/ga.pdf',  'Minor', NULL, NULL, NULL, NULL),
         ('${o.g2A}', '${o.org}', '${o.dGenuine}', '2A', 'p35inv/g2a.pdf', 'Major', NULL, 'in_review', 'external', '${o.link}'),
         ('${o.xA}',  '${o.org}', '${o.dForged}',  'A',  'p35inv/xa.pdf',  'Minor', NULL, NULL, NULL, NULL),
-        ('${o.x2A}', '${o.org}', '${o.dForged}',  '2A', 'p35inv/x2a.pdf', 'Major', '${o.link}', 'in_review', 'external', '${o.link}');
+        ('${o.x2A}', '${o.org}', '${o.dForged}',  '2A', 'p35inv/x2a.pdf', 'Major', '${o.link}', 'in_review', 'external', '${o.link}'),
+        ('${o.qA}',  '${o.org}', '${o.dQuote}',   'A',  'p35inv/qa.pdf',  'Minor', NULL, NULL, NULL, NULL),
+        ('${o.q2A}', '${o.org}', '${o.dQuote}',   '2A', 'p35inv/q2a.pdf', 'Major', '${o.qlink}', 'in_review', 'external', '${o.qlink}');
       UPDATE documents SET current_version_id = '${o.gA}', pending_version_id = '${o.g2A}' WHERE id = '${o.dGenuine}';
       UPDATE documents SET current_version_id = '${o.xA}', pending_version_id = '${o.x2A}', checked_out_by = gen_random_uuid() WHERE id = '${o.dForged}';
+      UPDATE documents SET current_version_id = '${o.qA}', pending_version_id = '${o.q2A}' WHERE id = '${o.dQuote}';
       -- the route's own record of the genuine one (server-written, no person named)
       INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
         VALUES ('INTAKE_SUBMISSION', '${o.dGenuine}', 'document', '${o.org}', NULL, jsonb_build_object('versionId', '${o.g2A}', 'company', 'Inv Co'));
       RESET session_replication_role;`;
-    const LABELS = { checkedOut: "documents checked out right now whose pending draft is in review", sigs: "finalize_reviewed_promote signatures", pending: "row 2, recounted", recorded: "named by the intake route", look: "with no such record" } as const;
+    const LABELS = { checkedOut: "documents checked out right now whose pending draft is in review", sigs: "finalize_reviewed_promote signatures", pending: "row 2, recounted", recorded: "named by the intake route", look: "listed on a project's Intake tab — look these over", offTab: "NOT listed on any project's Intake tab" } as const;
     type Counts = Record<keyof typeof LABELS, number>;
     // the header's own queries, cut from the file and uncommented (read-only: they never write)
     const header = mig(FILE).slice(0, mig(FILE).indexOf("-- PASTE ORDER:"));
@@ -308,6 +316,7 @@ describe.skipIf(skip !== null)("20261252 pasted as ONE script, as the SQL editor
       .split("\n").map((l) => l.replace(/^--\s{0,6}/, "")).join("\n");
     const countQuery = query("WITH s AS (", "FROM s;");
     const listQuery = query("SELECT p.name AS project", "ORDER BY v.created_at;");
+    const offTabQuery = query("SELECT l.purpose AS link_purpose", "ORDER BY v.created_at;");
     try {
       admin(SCRATCH, UNDO_252);
       const counts: Counts[] = [];
@@ -321,7 +330,7 @@ describe.skipIf(skip !== null)("20261252 pasted as ONE script, as the SQL editor
         expect(probes.length, `pass ${pass}`).toBe(6);
         expect(probes.filter((p) => p.ok !== "t"), JSON.stringify(probes)).toEqual([]);
         expect(probes.every((p) => p.n === "")).toBe(true);
-        expect(inventory.length).toBe(5);
+        expect(inventory.length).toBe(6);
         expect(inventory.every((x) => /^\d+$/.test(x.n)), JSON.stringify(inventory)).toBe(true);
         const c = {} as Counts;
         for (const [k, label] of Object.entries(LABELS) as Array<[keyof typeof LABELS, string]>) {
@@ -334,17 +343,23 @@ describe.skipIf(skip !== null)("20261252 pasted as ONE script, as the SQL editor
       // first paste: the seven-argument base; the re-pastes: this file's own eight-argument form
       expect(counts[0].sigs).toBe(1);
       expect(counts[1].sigs).toBe(1);
-      // the world adds two pending door-shaped submissions: the route recorded one; the other — the forged
-      // look, also checked out (a pending draft in review) — is the one to look over
-      expect(counts[1]).toEqual({ ...counts[0], checkedOut: counts[0].checkedOut + 1, pending: counts[0].pending + 2, recorded: counts[0].recorded + 1, look: counts[0].look + 1 });
+      // the world adds three pending door-shaped submissions: the route recorded one; the forged look on the
+      // document link, also checked out (a pending draft in review), is the one to look over; the one on the
+      // quote link is on no Intake tab, so it is counted apart (row 6), never as one the tab retires
+      expect(counts[1]).toEqual({ ...counts[0], checkedOut: counts[0].checkedOut + 1, pending: counts[0].pending + 3, recorded: counts[0].recorded + 1, look: counts[0].look + 1, offTab: counts[0].offTab + 1 });
       expect(counts[2]).toEqual(counts[1]);
       // the header's queries: the same split, and the list names only the forged one
       const totals = admin(SCRATCH, countQuery);
-      expect(totals).toBe(`${counts[1].pending}|${counts[1].recorded}|${counts[1].look}`);
-      const list = admin(SCRATCH, listQuery).split("\n").filter((l) => l.includes(o.dForged) || l.includes(o.dGenuine));
+      expect(totals).toBe(`${counts[1].pending}|${counts[1].recorded}|${counts[1].look}|${counts[1].offTab}`);
+      const mine = (out: string) => out.split("\n").filter((l) => l.includes(o.dForged) || l.includes(o.dGenuine) || l.includes(o.dQuote));
+      const list = mine(admin(SCRATCH, listQuery));
       expect(list).toHaveLength(1);
       expect(list[0]).toContain(`P35 inventory project|Inv Co|P35-X-${tag}|Forged|2A|`);
       expect(list[0]).toContain(`|${o.dForged}|${o.x2A}`);
+      const offTab = mine(admin(SCRATCH, offTabQuery));
+      expect(offTab).toHaveLength(1);
+      expect(offTab[0]).toContain(`quote|P35 inventory project|Quote Co|P35-Q-${tag}|OnQuote|2A|`);
+      expect(offTab[0]).toContain(`|${o.dQuote}|${o.q2A}`);
     } finally {
       admin("postgres", `DROP DATABASE IF EXISTS ${SCRATCH}`);
     }
