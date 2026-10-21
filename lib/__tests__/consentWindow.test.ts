@@ -53,6 +53,11 @@ describe("planConsentWindow — where a window can exist (DEC-90 rulings for DF-
   it("NEVER on the highest work class: an engineered request's consent slot waits for a sign-off", () => {
     expect(planConsentWindow(roster([consent()]), { engineeringRequired: true, columns: true })).toMatchObject({ kind: "sign_off", reason: CONSENT_REASON.engineered });
   });
+  it("DEC-90 ruling (3) (final fix pass): a declaration whose e-signature could not be read plans no window — an ordinary sign-off; engineered still wins; unset is today's plan", () => {
+    expect(planConsentWindow(roster([consent()]), { ...cols, declarationUnchecked: true })).toMatchObject({ kind: "sign_off", slot: "ops", reason: CONSENT_REASON.declarationUnchecked });
+    expect(planConsentWindow(roster([consent()]), { engineeringRequired: true, columns: true, declarationUnchecked: true })).toMatchObject({ reason: CONSENT_REASON.engineered });
+    expect(planConsentWindow(roster([consent()]), { ...cols, declarationUnchecked: false })).toMatchObject({ kind: "open" });
+  });
   it("NEVER as the engineering sign-off (a slot filled by an engineering capability)", () => {
     expect(planConsentWindow(roster([consent({ engineering: true })]), cols)).toMatchObject({ kind: "sign_off", reason: CONSENT_REASON.engineeringSlot });
   });

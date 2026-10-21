@@ -37,7 +37,8 @@
 //   (4) An empty recipient set never advances (DEC-39): a consent slot whose
 //       own fill named nobody (the roster stood the management tier in —
 //       `fallback`) is BLOCKED — it waits as a sign-off and the assignment
-//       queue is told (the "ack_unsatisfiable" polarity).
+//       queue is told (the "ack_unsatisfiable" polarity). The record says so
+//       only once the bell landed (DEC-90 ruling (1), final fix pass).
 //   (4a) DEC-12 / DEC-37 (fix pass): the people asked are never the
 //       assigned drafter (the producer's own silence is never a check) and
 //       never a party the slot declares itself independent of (`drafter`,
@@ -88,14 +89,22 @@ export const CONSENT_WINDOW_ACTOR = "system:consent-window";
  *  import that one, which hashes with node:crypto). */
 export const CONSENT_REFUSED_CAPABILITIES: readonly string[] = ["ticket.final_approve", "ticket.eng_review"];
 
+// DEC-90 ruling (1) at the DF-P7 final fix pass: no reason claims that anyone
+// was told. Whether the assignment queue heard is recorded on the blocked
+// notice event (its `escalatedTo` names exactly who the bell reached) and
+// said only once the bell landed.
 export const CONSENT_REASON = {
   notPasted: `consent windows need database update ${CONSENT_WINDOW_MIGRATION} — until an Admin applies it, this waits for a sign-off as before`,
   multiple: "this routing table has more than one consent slot, and a review runs one consent window at most — each waits for a sign-off",
   engineeringSlot: "a consent window never stands in for the engineering sign-off — it waits for a sign-off",
   engineered: "this request is engineered work (an engineer's sign-off is required), and a consent window never applies to it — it waits for a sign-off",
-  nobody: "its routing named nobody who could be asked (the management tier was rostered instead), so no window was opened — it waits for a sign-off, and the assignment queue was told",
-  onlyParties: "the only people its routing names are the drafter or a party it must be independent of, and their silence is never consent, so no window was opened — it waits for a sign-off, and the assignment queue was told",
-  noLongerAskable: "nobody it could ask is still an active member who may be asked, so no window was opened — it waits for a sign-off, and the assignment queue was told",
+  nobody: "its routing named nobody who could be asked (the management tier was rostered instead), so no window was opened — it waits for a sign-off",
+  onlyParties: "the only people its routing names are the drafter or a party it must be independent of, and their silence is never consent, so no window was opened — it waits for a sign-off",
+  noLongerAskable: "nobody it could ask is still an active member who may be asked, so no window was opened — it waits for a sign-off",
+  // DEC-90 ruling (3) at the DF-P7 final fix pass: a declaration whose
+  // e-signature could not be read when the request was submitted proves
+  // nothing either way — the slot waits as an ordinary sign-off.
+  declarationUnchecked: "this request's like-in-kind declaration could not be checked when it was submitted (the declaration decides whether an engineer must sign), so no consent window was opened — it waits for a sign-off",
   unconfirmed: "this consent slot was saved before consent windows existed (the routing editor then said it waits like a sign-off), so it still waits for a sign-off — a document controller re-saves the routing table to turn the consent window on",
 } as const;
 
@@ -236,10 +245,18 @@ export function windowSchedule(openedAtMs: number, cfg: { windowDays: number; wa
  *     now).
  *   * `sign_off` — the slot waits for a sign-off, for `reason`.
  *   * `blocked` — nobody could be asked: waits for a sign-off, escalated.
+ *   * `opened` — never planned here: the cron and the route mark an `open`
+ *     plan `opened` once its window opened (DEC-90 ruling (4)).
  */
 export function planConsentWindow(
   roster: Pick<TicketReviewRoster, "slots">,
-  ctx: { engineeringRequired: boolean; columns: boolean; drafterId?: string | null; requesterId?: string | null },
+  ctx: {
+    engineeringRequired: boolean; columns: boolean; drafterId?: string | null; requesterId?: string | null;
+    /** DEC-90 ruling (3) (DF-P7 final fix pass): the route could not read the
+     *  declaration's e-signature (lib/reviewModel.ts
+     *  declarationSignatureStands — 'unchecked'): no window is planned. */
+    declarationUnchecked?: boolean;
+  },
 ): TicketConsentPlan | null {
   const consent = roster.slots.filter((s) => s.mode === "consent_window");
   if (consent.length === 0) return null;
@@ -249,6 +266,7 @@ export function planConsentWindow(
   if (!one) return { kind: "sign_off", slot: null, label: null, reason: CONSENT_REASON.multiple };
   if (one.engineering) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineeringSlot };
   if (ctx.engineeringRequired) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineered };
+  if (ctx.declarationUnchecked) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.declarationUnchecked };
   // Fix pass 3: a slot stored before the consent-window label existed was
   // chosen as "waits like a sign-off" — it keeps that meaning until a
   // controller re-saves the table (DEC-90, fail-safe).
@@ -263,7 +281,7 @@ export function planConsentWindow(
 /** The sentence a roster's history line adds for its consent plan. */
 export function consentPlanNote(plan: TicketConsentPlan | null | undefined): string | null {
   if (!plan) return null;
-  if (plan.kind === "open") return `"${plan.label}" may object within ${plan.windowDays} working day${plan.windowDays === 1 ? "" : "s"} — the window opens once every one of them has been told`;
+  if (plan.kind === "open" || plan.kind === "opened") return `"${plan.label}" may object within ${plan.windowDays} working day${plan.windowDays === 1 ? "" : "s"} — the window opens once every one of them has been told`;
   return plan.label ? `"${plan.label}": ${plan.reason}` : `Consent slots: ${plan.reason}`;
 }
 

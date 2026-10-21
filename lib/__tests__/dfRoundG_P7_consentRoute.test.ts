@@ -172,7 +172,9 @@ describe("DEC-38 — the window opens after the review exists, through ONE call 
     const { res } = await submit();
     expect(res.status).toBe(200);
     const call = rpcs("open_consent_window")[0];
-    expect((call.p_history as { details: string }).details).toMatch(/Each was told in the app; by email as well: o-1; in the app only: e-1 \(they turned assignment emails off\)\./);
+    expect((call.p_history as { details: string }).details).toMatch(/Each was told in the app; by email as well: o-1; in the app only: e-1\./);
+    // DEC-90 ruling (2): no preference reason in the history (any ticket reader sees it).
+    expect((call.p_history as { details: string }).details).not.toMatch(/turned|preference/);
     const windowMails = inserts("email_notifications").filter((m) => (m.metadata as { action?: string } | undefined)?.action === "consent_window_opened");
     expect(windowMails.map((m) => m.to_user_id)).toEqual(["o-1"]);
     expect(windowMails[0]).toMatchObject({ event_type: "assignment", resource_id: "t1", status: "queued" });
@@ -378,5 +380,58 @@ describe("DF-P7 fix pass 3 — the route", () => {
     const call = rpcs("open_consent_window")[0];
     expect(String(call.p_body)).not.toContain(ISSUE_AS_IS_NOTE);
     expect("consentIssueAsIs" in (call.p_history as Record<string, unknown>)).toBe(false);
+  });
+});
+
+describe("DF-P7 final fix pass — the route (DEC-90 rulings (1) and (3))", () => {
+  it("ruling (1): the submitting drafter is the only assigner — nobody is belled, and neither the history nor the answer says anyone was told", async () => {
+    seed({ slots: [{ kind: "ops", label: "Peer check", mode: "consent_window", consent_confirmed: true, fill: { users: ["d-1"] }, independent_of: ["drafter"] }] });
+    state.rows.org_configurations = [{ org_id: "o1", key: "capability_policy", data: { caps: { "ticket.assign": [{ tokens: ["Drafter"] }] } }, updated_at: null }];
+    state.rpcResult = { data: 1, error: null };
+    const { res, roster, body } = await submit();
+    expect(res.status).toBe(200);
+    expect(roster!.consentPlan).toMatchObject({ kind: "blocked", slot: "ops" });
+    const history = JSON.stringify(updates()[0].history);
+    expect(history).not.toMatch(/told/);
+    expect(String(body.consentWarning)).not.toMatch(/told/);
+    expect(inserts("notifications").filter((n) => (n.metadata as { action?: string } | null)?.action === "consent_window_blocked")).toEqual([]);
+    expect(inserts("ticket_notice_events")).toEqual([expect.objectContaining({ kind: "blocked", details: expect.objectContaining({ escalatedTo: [] }) })]);
+  });
+
+  const SIG = "5a000000-0000-4000-8000-000000000001";
+  const DECLARED = {
+    engineering_required: false, review_model_filed: true, like_in_kind_statement: "Like for like: same gasket, same rating",
+    like_in_kind_declared_at: "2026-10-18T09:00:00Z", like_in_kind_declared_by: "req-1", like_in_kind_signature_id: SIG,
+  };
+  const goodSig = { id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: "req-1" };
+  it("ruling (3) REGRESSION: a declared request whose signature stands plans and opens the window as before", async () => {
+    seed();
+    state.rows.e_signatures = [goodSig];
+    state.rpcResult = { data: 1, error: null };
+    const { res, roster } = await submit(DECLARED);
+    expect(res.status).toBe(200);
+    expect(roster!.consentPlan).toMatchObject({ kind: "open", recipients: ["o-1"] });
+    expect(rpcs("open_consent_window")).toHaveLength(1);
+  });
+  it("ruling (3): the declaration's signature cannot be read ('unchecked') — the submission stands, no window is planned, the slot waits as an ordinary sign-off, said", async () => {
+    seed();
+    state.errors.e_signatures = { code: "57014", message: "timeout" };
+    state.rpcResult = { data: 1, error: null };
+    const { res, roster } = await submit(DECLARED);
+    expect(res.status).toBe(200);
+    expect(roster!.consentPlan).toMatchObject({ kind: "sign_off", slot: "ops", reason: CONSENT_REASON.declarationUnchecked });
+    expect(roster!.slots.find((s) => s.kind === "ops")).toMatchObject({ mode: "consent_window", status: "open" });
+    expect(rpcs("open_consent_window")).toEqual([]);
+    const line = (updates()[0].history as Array<{ action: string; details?: string }>).find((h) => h.action === "Review roster opened")!;
+    expect(line.details).toContain(CONSENT_REASON.declarationUnchecked);
+  });
+  it("ruling (3): the signature is known missing — engineered work: no window, the consent slot waits for a sign-off", async () => {
+    seed();
+    state.rows.e_signatures = [];
+    state.rpcResult = { data: 1, error: null };
+    const { res, roster } = await submit(DECLARED);
+    expect(res.status).toBe(200);
+    expect(roster!.consentPlan).toMatchObject({ kind: "sign_off", slot: "ops", reason: CONSENT_REASON.engineered });
+    expect(rpcs("open_consent_window")).toEqual([]);
   });
 });

@@ -1158,9 +1158,14 @@ export async function POST(req: NextRequest) {
         // asked are never the drafter, nor a party the slot is independent
         // of — nobody else left is a block, escalated.
         const consentColumns = Object.prototype.hasOwnProperty.call(row, "consent_window_opened_at");
+        // DEC-90 ruling (3) (DF-P7 final fix pass): a declaration whose
+        // e-signature could not be read ('unchecked') proves nothing, so no
+        // window is planned — the slot waits as an ordinary sign-off, said.
+        // ('missing' already made this engineered work above.)
         const consentPlan = planConsentWindow(opened.roster, {
           engineeringRequired: engineeringGate.required, columns: consentColumns,
           drafterId: ticket.assignedDrafterId ?? null, requesterId: ticket.requesterId ?? null,
+          declarationUnchecked: declarationUnverified === "unchecked",
         });
         if (consentPlan && consentColumns) rosterOpen = { ...opened.roster, consentPlan };
         else if (consentPlan) consentWarning = `${consentPlan.label ? `"${consentPlan.label}"` : "The consent slot"} waits for a sign-off: ${CONSENT_REASON.notPasted}.`;

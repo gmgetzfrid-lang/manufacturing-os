@@ -8,10 +8,10 @@
 // floor → never silence over the drafter's own sign-off.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { runConsentWindowScan, emailPreferenceReason, emailPreferenceOf, assignmentQueueOf, memberNameOf, CONSENT_EMAIL_EVENT, CONSENT_ISSUE_AS_IS_NOTE } from "@/lib/consentWindowScan";
+import { runConsentWindowScan, emailPreferenceReason, emailPreferenceOf, assignmentQueueOf, memberNameOf, CONSENT_EMAIL_EVENT, CONSENT_ISSUE_AS_IS_NOTE, afterRosterOpened, consentChannelNote, markConsentPlanOpened } from "@/lib/consentWindowScan";
 import { ISSUE_AS_IS_NOTE } from "@/lib/workflow";
 import { emailAllowedByPrefs, PREFERENCE_EXEMPT_EVENT_TYPES } from "@/lib/notificationPrefs";
-import { CONSENT_WINDOW_COLUMNS, CONSENT_WARN_LEAD_MS } from "@/lib/consentWindow";
+import { CONSENT_WINDOW_COLUMNS, CONSENT_WARN_LEAD_MS, CONSENT_REASON, consentPlanNote } from "@/lib/consentWindow";
 import type { TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 
 type Row = Record<string, unknown>;
@@ -99,7 +99,9 @@ function seedTicket(opts: { accept?: "signed-by-req" | "signed-by-drafter" | "op
   const roster: TicketReviewRoster = {
     v: 1, id: ROSTER_ID, openedAt: "2026-10-19T09:00:00Z", openedBy: "d-1", level: "library", cycle: "1A", contentHash: "h", files: [],
     slots: [acceptSlot, slot({ kind: "ops", label: "Operations", mode: "consent_window", primaries: ["o-1", "o-2"], windowDays: 3, warnFraction: 2 / 3 })],
-    consentPlan: { kind: "open", slot: "ops", label: "Operations", recipients: ["o-1", "o-2"], windowDays: 3, warnFraction: 2 / 3 },
+    // DEC-90 ruling (4): a window that opened has its plan marked "opened"
+    // (markConsentPlanOpened); a plan still to open is "open".
+    consentPlan: { kind: opts.window === false ? "open" : "opened", slot: "ops", label: "Operations", recipients: ["o-1", "o-2"], windowDays: 3, warnFraction: 2 / 3 },
     ...(opts.window === false ? {} : { consentWindow: { slot: "ops", openedAt: "2026-10-19T09:00:00Z", warnAt: "2026-10-21T09:00:00Z", closesAt: "2026-10-22T09:00:00Z", recipients: ["o-1", "o-2"], ...(opts.warned ? { warnedAt: opts.warned } : {}) } }),
   };
   const windowCols = opts.window === false ? {} : {
@@ -611,7 +613,10 @@ describe("EVID-9 / DEC-38 for the window itself (review major 4): its notices ar
     const ne = db.tables.ticket_notice_events.filter((e) => e.kind === "not_emailed");
     expect(ne).toEqual([expect.objectContaining({ recipient: "o-2", roster_id: ROSTER_ID, slot_kind: "ops", details: expect.objectContaining({ reason: "they turned email off", byTheirChoice: true, action: "consent_window_warned" }) })]);
     const hist = (calls("rpc:record_consent_window_warning", "rpc")[0].args[0] as { p_history: { details: string } }).p_history.details;
-    expect(hist).toMatch(/Each was told in the app; by email as well: O-1, (A-1, REQ|REQ, A-1); in the app only: O-2 \(they turned email off\)\./);
+    // DEC-90 ruling (2): the history names the channel only — the reason a
+    // preference gives stays in O-2's own not_emailed row (above).
+    expect(hist).toMatch(/Each was told in the app; by email as well: O-1, (A-1, REQ|REQ, A-1); in the app only: O-2\./);
+    expect(hist).not.toMatch(/turned|preference/);
   });
   it("the open (the retry): the people asked are emailed after the RPC lands, and its history line names the channel", async () => {
     seedTicket({ window: false });
@@ -851,5 +856,243 @@ describe("fix pass 3 — FRIC-5: silence issues as-is only on a mark the notice 
     db.calls = [];
     await runConsentWindowScan({ client, now: Date.parse("2026-10-21T10:00:00Z") });
     expect(String((calls("rpc:record_consent_window_warning", "rpc")[0].args[0] as Row).p_body)).not.toContain(ISSUE_AS_IS_NOTE);
+  });
+});
+
+// ─── DF-P7 final fix pass — the integrator's rulings (DEC-90) ───────────────
+describe("DF-P7 final fix pass — ruling (1): history never claims a notification that did not happen", () => {
+  it("no consent reason, and no roster history note built from one, says anyone was told", () => {
+    for (const [k, v] of Object.entries(CONSENT_REASON)) expect(v, k).not.toMatch(/told/);
+    for (const reason of [CONSENT_REASON.nobody, CONSENT_REASON.onlyParties, CONSENT_REASON.noLongerAskable]) {
+      expect(consentPlanNote({ kind: "blocked", slot: "ops", label: "Operations", reason })).not.toMatch(/told/);
+    }
+  });
+  it("the actor is the only assigner: nobody is belled, the answer and the plan's history note never say anyone was told, and the notice event names nobody", async () => {
+    db.tables.org_members = [member("a-1", "Admin"), member("d-1", "Drafter"), member("o-1", "Viewer"), member("req", "Viewer")];
+    const roster: TicketReviewRoster = {
+      v: 1, id: ROSTER_ID, openedAt: "2026-10-19T09:00:00Z", openedBy: "a-1", level: "library", cycle: "1A", contentHash: "h", files: [],
+      slots: [slot({ kind: "ops", label: "Operations", mode: "consent_window", primaries: [], fallback: true })],
+      consentPlan: { kind: "blocked", slot: "ops", label: "Operations", reason: CONSENT_REASON.nobody },
+    };
+    expect(assignmentQueueOf({ members: db.tables.org_members, policy: null, resource: null, requesterId: "req" })).toEqual(["a-1"]);
+    const msg = await afterRosterOpened(client, {
+      ticketId: "t1", orgId: "o1", ticketLabel: "REQ-1 Gasket", roster, members: db.tables.org_members, policy: null, resource: null,
+      requesterId: "req", actor: { uid: "a-1", name: "A-1" },
+    });
+    expect(msg).toMatch(/named nobody who could be asked/);
+    expect(msg).not.toMatch(/told/);
+    expect(calls("notifications", "insert")).toEqual([]);
+    expect(consentPlanNote(roster.consentPlan)).not.toMatch(/told/);
+    const ev = db.tables.ticket_notice_events.filter((e) => e.kind === "blocked");
+    expect(ev).toEqual([expect.objectContaining({ details: expect.objectContaining({ escalatedTo: [] }) })]);
+  });
+  it("the route's block: the queue's bell is refused — the answer does not say told; the event records nobody told and who was not", async () => {
+    const roster: TicketReviewRoster = {
+      v: 1, id: ROSTER_ID, openedAt: "2026-10-19T09:00:00Z", openedBy: "d-1", level: "library", cycle: "1A", contentHash: "h", files: [],
+      slots: [slot({ kind: "ops", label: "Operations", mode: "consent_window", primaries: [], fallback: true })],
+      consentPlan: { kind: "blocked", slot: "ops", label: "Operations", reason: CONSENT_REASON.nobody },
+    };
+    db.errors["notifications:insert"] = { code: "57014", message: "timeout" };
+    const msg = await afterRosterOpened(client, {
+      ticketId: "t1", orgId: "o1", ticketLabel: "REQ-1", roster, members: db.tables.org_members, policy: null, resource: null,
+      requesterId: "req", actor: { uid: "d-1", name: "D-1" },
+    });
+    expect(msg).not.toMatch(/told/);
+    const ev = db.tables.ticket_notice_events.filter((e) => e.kind === "blocked")[0];
+    expect(ev.details).toMatchObject({ escalatedTo: [], notTold: ["a-1", "req"], escalationError: "timeout" });
+    // …and when the bell lands, the answer says so and the event names who heard
+    delete db.errors["notifications:insert"];
+    db.tables.ticket_notice_events = [];
+    const ok = await afterRosterOpened(client, {
+      ticketId: "t1", orgId: "o1", ticketLabel: "REQ-1", roster, members: db.tables.org_members, policy: null, resource: null,
+      requesterId: "req", actor: { uid: "d-1", name: "D-1" },
+    });
+    expect(ok).toMatch(/the assignment queue was told/);
+    expect(db.tables.ticket_notice_events.filter((e) => e.kind === "blocked")[0].details).toMatchObject({ escalatedTo: ["a-1", "req"] });
+  });
+  it("the cron's block of a planned window: a refused bell — the plan's reason, the run's line and the event never say told", async () => {
+    seedTicket({ window: false });
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== "o-1" && m.uid !== "o-2");
+    db.errors["notifications:insert"] = { code: "57014", message: "timeout" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(rosterOf().consentPlan).toMatchObject({ kind: "blocked", reason: CONSENT_REASON.noLongerAskable });
+    expect(r.errors.filter((l) => /nobody "Operations" names/.test(l)).join(" ")).not.toMatch(/told/);
+    expect(db.tables.ticket_notice_events.filter((e) => e.kind === "blocked")[0].details).toMatchObject({ escalatedTo: [], notTold: ["a-1", "req"] });
+    // a permanent refusal's reason never claims it either
+    seedTicket({ window: false });
+    delete db.errors["notifications:insert"];
+    db.rpc.open_consent_window = { data: null, error: { code: "22023", message: "refused" } };
+    await runConsentWindowScan({ client, now: NOW });
+    expect((rosterOf().consentPlan as { reason: string }).reason).not.toMatch(/told/);
+  });
+  it("the close held 'no_longer_member': the history never says told; the event names only those whose bell landed", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== "o-1" && m.uid !== "o-2");
+    db.errors["notifications:insert"] = { code: "57014", message: "timeout" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.held).toBe(1);
+    // ("Told, not opened" names the people the window asked — never the queue)
+    expect(lastHistory().details).not.toMatch(/assignment queue|queue was told/);
+    expect(lastHistory().action).not.toMatch(/assignment queue|queue was told/);
+    const blk = db.tables.ticket_notice_events.filter((e) => e.kind === "blocked");
+    expect(blk).toEqual([expect.objectContaining({ details: expect.objectContaining({ reason: "no_longer_member", escalatedTo: [], notTold: expect.arrayContaining(["a-1"]) }) })]);
+  });
+});
+
+describe("DF-P7 final fix pass — ruling (2): a member's email-preference reason never reaches ticket history", () => {
+  const PREFS: Array<[Row, string]> = [
+    [{ user_id: "o-2", email_enabled: false }, "they turned email off"],
+    [{ user_id: "o-2", digest_frequency: "never" }, "they set email delivery to never"],
+    [{ user_id: "o-2", email_on_assignment: false }, "they turned assignment emails off"],
+  ];
+  it("consentChannelNote: a preference names the channel only; a cause that is not a preference keeps its reason", () => {
+    const nameOf = (u: string) => u.toUpperCase();
+    const note = consentChannelNote({ emails: [{ uid: "o-1", email: "o-1@x.io" }], notEmailed: [
+      { uid: "o-2", reason: "they turned email off", byTheirChoice: true },
+      { uid: "o-3", reason: "no email address is on record for them", byTheirChoice: false },
+    ] }, nameOf);
+    expect(note).toBe(" Each was told in the app; by email as well: O-1; in the app only: O-2, O-3 (no email address is on record for them).");
+  });
+  it("the retry's open and the reminder: no preference reason in p_history; the reason is in the person's own not_emailed row", async () => {
+    for (const [pref, reason] of PREFS) {
+      seedTicket({ window: false });
+      db.tables.ticket_notice_events = [];
+      db.tables.notification_preferences = [pref];
+      db.calls = [];
+      await runConsentWindowScan({ client, now: NOW });
+      const open = calls("rpc:open_consent_window", "rpc")[0].args[0] as { p_history: Row; p_body: string };
+      expect(JSON.stringify(open.p_history), reason).not.toContain(reason);
+      expect(String(open.p_history.details)).toMatch(/in the app only: O-2\./);
+      expect(open.p_body).not.toContain(reason);
+      expect(db.tables.ticket_notice_events.filter((e) => e.kind === "not_emailed")).toEqual([
+        expect.objectContaining({ recipient: "o-2", details: expect.objectContaining({ reason, byTheirChoice: true }) }),
+      ]);
+
+      seedTicket({ warned: null });
+      db.tables.notification_preferences = [pref];
+      db.calls = [];
+      await runConsentWindowScan({ client, now: Date.parse("2026-10-21T10:00:00Z") });
+      const warn = calls("rpc:record_consent_window_warning", "rpc")[0].args[0] as { p_history: Row };
+      expect(JSON.stringify(warn.p_history), reason).not.toContain(reason);
+    }
+  });
+});
+
+describe("DF-P7 final fix pass — ruling (3): a consent close is an issuing act — the declaration stands only on its e-signature", () => {
+  const SIG = "5a000000-0000-4000-8000-000000000001";
+  const declare = () => Object.assign(db.tables.tickets[0], {
+    engineering_required: false, review_model_filed: true, like_in_kind_statement: "Like for like: same gasket, same rating",
+    like_in_kind_declared_at: "2026-10-18T09:00:00Z", like_in_kind_declared_by: "req", like_in_kind_signature_id: SIG,
+  });
+  const goodSig = { id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: "req" };
+  it("REGRESSION: the signature stands — the close issues exactly as before", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    declare();
+    db.tables.e_signatures = [goodSig];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 1, held: 0, failed: 0 });
+    expect(auditDetails()).not.toHaveProperty("declarationUnverified");
+  });
+  it("the signature is missing (or signed by someone else, or another ticket's): HELD as 'engineered' — never closed on silence", async () => {
+    for (const sigs of [[], [{ ...goodSig, signer_user_id: "o-1" }], [{ ...goodSig, resource_id: "t9" }]]) {
+      seedTicket({ warned: "2026-10-21T09:00:00Z" });
+      declare();
+      db.tables.e_signatures = sigs;
+      db.calls = [];
+      const r = await runConsentWindowScan({ client, now: NOW });
+      expect(r, JSON.stringify(sigs)).toMatchObject({ held: 1, advanced: 0, issued: 0 });
+      expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+      expect(auditDetails()).toMatchObject({ holdReason: "engineered", engineered: true, declarationUnverified: "missing" });
+      expect(rosterOf().slots.find((s) => s.kind === "ops")).toMatchObject({ status: "open" });
+      expect(ledgerOps()).toMatchObject({ status: "open" });
+    }
+  });
+  it("the signature cannot be read: not closed this run — a recorded failure, nothing written, retried next run", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    declare();
+    db.errors.e_signatures = { code: "57014", message: "timeout" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ held: 0, advanced: 0, failed: 1 });
+    expect(r.errors.join(" ")).toMatch(/declaration's signature could not be read.* not closed \(retried next run\)/);
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("audit_logs", "insert")).toEqual([]);
+    // the next run, with the read back, closes it
+    delete db.errors.e_signatures;
+    db.tables.e_signatures = [goodSig];
+    const again = await runConsentWindowScan({ client, now: NOW + 60_000 });
+    expect(again).toMatchObject({ advanced: 1, issued: 1 });
+  });
+  it("REGRESSION: an undeclared request never reads e_signatures", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.errors.e_signatures = { code: "57014", message: "would fail if read" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 1 });
+    expect(db.calls.some((c) => c.table === "e_signatures")).toBe(false);
+  });
+});
+
+describe("DF-P7 final fix pass — ruling (4): the planned read never re-reads a window already opened", () => {
+  // open_consent_window's stamp, as 20261255 writes it (the columns, the mirror, last_modified)
+  const stamping = {
+    from: client.from,
+    rpc: async (fn: string, args?: Record<string, unknown>) => {
+      if (fn !== "open_consent_window") return client.rpc(fn, args);
+      db.calls.push({ table: `rpc:${fn}`, method: "rpc", args: [args] });
+      const t = db.tables.tickets.find((r) => r.id === args!.p_ticket)!;
+      const at = new Date(NOW).toISOString();
+      Object.assign(t, {
+        consent_window_opened_at: at, consent_window_recipients: args!.p_recipients, consent_window_slot: args!.p_slot, consent_window_roster: args!.p_roster,
+        consent_window_warn_at: args!.p_warn_at, consent_window_closes_at: args!.p_closes_at, consent_window_warned_at: null, consent_window_expired_at: null,
+        consent_window_objected_at: null, consent_window_objected_by: null, last_modified: at,
+      });
+      const rr = (t.metadata as { review_roster: TicketReviewRoster }).review_roster;
+      rr.consentWindow = { slot: String(args!.p_slot), openedAt: at, warnAt: String(args!.p_warn_at), closesAt: String(args!.p_closes_at), recipients: args!.p_recipients as string[] };
+      return { data: (args!.p_recipients as string[]).length, error: null };
+    },
+  };
+  it("a window the retry opens has its plan marked 'opened' (CAS, last_modified untouched) — the next run's planned read does not return it; it is read as running", async () => {
+    seedTicket({ window: false });
+    const r = await runConsentWindowScan({ client: stamping, now: NOW });
+    expect(r.opened).toBe(1);
+    expect(r.sets.planned).toEqual({ read: 1, more: false });
+    expect(rosterOf().consentPlan).toMatchObject({ kind: "opened", slot: "ops", recipients: ["o-1", "o-2"] });
+    expect(db.tables.tickets[0].last_modified).toBe(new Date(NOW).toISOString());
+    db.calls = [];
+    const next = await runConsentWindowScan({ client: stamping, now: NOW + 3_600_000 });
+    expect(next.sets).toEqual({ running: { read: 1, more: false }, planned: { read: 0, more: false } });
+    expect(next.opened).toBe(0);
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+  });
+  it("a window opened before the mark existed (plan still 'open'): marked on its next read, then gone from the planned set; reminded as before", async () => {
+    seedTicket({ warned: null });
+    rosterOf().consentPlan = { kind: "open", slot: "ops", label: "Operations", recipients: ["o-1", "o-2"], windowDays: 3, warnFraction: 2 / 3 };
+    const lm = db.tables.tickets[0].last_modified;
+    const r = await runConsentWindowScan({ client, now: Date.parse("2026-10-20T00:00:00Z") });
+    expect(r.sets.planned.read).toBe(1);
+    expect(rosterOf().consentPlan).toMatchObject({ kind: "opened" });
+    expect(db.tables.tickets[0].last_modified).toBe(lm);
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+    db.calls = [];
+    const next = await runConsentWindowScan({ client, now: Date.parse("2026-10-21T10:00:00Z") });
+    expect(next.sets.planned.read).toBe(0);
+    expect(next.warned).toBe(1);
+  });
+  it("markConsentPlanOpened writes nothing when the window is not this roster's, or the plan is not 'open'", async () => {
+    seedTicket({ window: false });
+    expect(await markConsentPlanOpened(client, { ticketId: "t1", rosterId: ROSTER_ID })).toBeNull();
+    expect(calls("tickets", "update")).toEqual([]);
+    seedTicket({ warned: null });
+    db.calls = [];
+    expect(await markConsentPlanOpened(client, { ticketId: "t1", rosterId: ROSTER_ID })).toBeNull();
+    expect(calls("tickets", "update")).toEqual([]);
+  });
+  it("each set's size is in the step's result, so a truncated set is visible", async () => {
+    seedTicket({ window: false });
+    const t1 = db.tables.tickets[0];
+    db.tables.tickets.push({ ...structuredClone(t1), id: "t2" }, { ...structuredClone(t1), id: "t3" });
+    const r = await runConsentWindowScan({ client, now: Date.parse("2026-10-20T00:00:00Z"), maxTickets: 2, pivot: "t0" });
+    expect(r.sets.planned).toEqual({ read: 2, more: true });
+    expect(r.sets.running).toEqual({ read: 0, more: false });
+    expect(r.truncated).toBe(true);
   });
 });

@@ -1189,6 +1189,10 @@ export interface TicketReviewSlot {
  *  window when it opened (lib/consentWindow.ts planConsentWindow). */
 export type TicketConsentPlan =
   | { kind: "open"; slot: string; label: string; recipients: string[]; windowDays: number; warnFraction: number }
+  /** DEC-90 ruling (4) (DF-P7 final fix pass): the planned window was opened
+   *  (open_consent_window landed) — marked by compare-and-set so the cron's
+   *  "still to open" read no longer returns it. Same fields as `open`. */
+  | { kind: "opened"; slot: string; label: string; recipients: string[]; windowDays: number; warnFraction: number }
   | { kind: "sign_off"; slot: string | null; label: string | null; reason: string }
   | { kind: "blocked"; slot: string; label: string; reason: string };
 
