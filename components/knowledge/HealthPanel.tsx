@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { getLibraryHealth, repairLibrary, fixLinkedDocumentNames, type KnowledgeHealthReport, type RepairResult } from "@/lib/knowledge";
 import type { NameRepairResult } from "@/lib/documentNameRepair";
+import { MEANING_PROGRESS_EVENT } from "@/components/knowledge/SemanticIndexPanel";
 import { STATUS_LABEL, FIXABLE, NOT_INDEXABLE, type HealthStatus } from "@/lib/knowledgeHealth";
 
 const ORDER: HealthStatus[] = [
@@ -75,6 +76,16 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
     setChecking(false);
   }, [orgId, libraryId]);
   useEffect(() => { void Promise.resolve().then(check); }, [check]);
+  // The meaning-index panel's numbers, live, so the two never disagree.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ libraryId: string; chunks: number; embedded: number }>).detail;
+      if (d?.libraryId !== libraryId) return;
+      setReport((r) => r ? { ...r, meaning: { chunks: d.chunks, embedded: d.embedded } } : r);
+    };
+    window.addEventListener(MEANING_PROGRESS_EVENT, on);
+    return () => window.removeEventListener(MEANING_PROGRESS_EVENT, on);
+  }, [libraryId]);
 
   const repair = async () => {
     setRepairing(true);

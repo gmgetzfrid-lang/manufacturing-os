@@ -34,6 +34,14 @@ import {
  *  this is a floor-of-magnitude estimate, not a quote. */
 const CENTS_PER_1K_PASSAGES = 1;
 
+/** Other panels showing the same library's meaning index (the Health panel)
+ *  listen for this, so the two never show different numbers. */
+export const MEANING_PROGRESS_EVENT = "knowledge:meaning-progress";
+function announce(libraryId: string, p: SemanticProgress | null) {
+  if (!p || p.countUnavailable || typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(MEANING_PROGRESS_EVENT, { detail: { libraryId, chunks: p.total, embedded: p.coveredNow } }));
+}
+
 export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   orgId: string;
   libraryId: string;
@@ -66,6 +74,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       }
       if (!status.busy) lastGood.current = status;
       setState({ key, status, unavailable: null });
+      announce(libraryId, status);
     } catch (e) {
       // A gateway hiccup is weather: keep what's on screen, look again soon.
       if ((e as { transient?: boolean }).transient) {
@@ -96,6 +105,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         (p) => {
           if (!p.estimated && !p.countUnavailable) lastGood.current = p;
           setState((s) => ({ ...s, key, status: p, unavailable: null }));
+          announce(libraryId, p);
         },
         () => stopRef.current,
         lastGood.current ?? status,

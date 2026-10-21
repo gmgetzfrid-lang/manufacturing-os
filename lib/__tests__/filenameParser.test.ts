@@ -68,3 +68,20 @@ describe("planNameFix", () => {
     expect(planNameFix(doc("200-ISO-014_RevA.pdf"))).toBeNull();
   });
 });
+
+describe("drawing-set file names with an export date", () => {
+  it("drops the _MM-DD-YY stamp, keeps the drawing number", () => {
+    const r = parseFilename("2002-D_1001_CRUDE_UNIT_09-14-26.pdf");
+    expect(r.hints.datestamp).toBe("09-14-26");
+    expect(r.documentNumber).toBe("2002-D_1001_CRUDE_UNIT");
+    expect(parseFilename("3502-D_1085_PLATFORMER_08-19-26.pdf").documentNumber).toBe("3502-D_1085_PLATFORMER");
+  });
+  it("the name repair leaves these alone (the old reader already got them right)", () => {
+    const file = "2002-D_1001_CRUDE_UNIT_09-14-26.pdf";
+    const old = legacyParseFilename(file);
+    expect(planNameFix({ id: "d", name: file, document_number: old.documentNumber, title: old.title, rev: old.rev })).toBeNull();
+  });
+  it("unpadded a-b-c is still a number, not a date", () => {
+    expect(parseFilename("SOP_5-3-10.pdf").documentNumber).toBe("SOP_5-3-10");
+  });
+});

@@ -48,9 +48,11 @@ const DOC_TYPE_TOKENS: Array<{ pattern: RegExp; label: string }> = [
 const REV_TOKEN = /(?:^|[_\-. ])(?:rev(?:ision)?[._\- ]?([A-Z]\d{0,2}|\d{1,3})|r(\d{1,3}))(?=$|[_\-. ])/gi;
 // Sheet: SHT01, SHEET_2, SH-3 — again as its own token.
 const SHEET_TOKEN = /(?:^|[_\-. ])(?:SHT|SHEET|SH)[._\- ]?(\d{1,3})(?=$|[_\-. ])/gi;
-// Only unmistakable dates: 2024-03-15, 15-03-2024, 3_15_2024. A short
-// a-b-c like 5-3-10 is a document number far more often than a date.
-const DATE_TOKEN = /\b(?:(?:19|20)\d{2}[-_.]\d{1,2}[-_.]\d{1,2}|\d{1,2}[-_.]\d{1,2}[-_.](?:19|20)\d{2})\b/g;
+// Only unmistakable dates: 2024-03-15, 15-03-2024, 3_15_2024, and the
+// CAD-export stamp "_09-14-26" (zero-padded month-day-year after an
+// underscore). A short a-b-c like 5-3-10 is a document number far more
+// often than a date.
+const DATE_TOKEN = /\b(?:(?:19|20)\d{2}[-_.]\d{1,2}[-_.]\d{1,2}|\d{1,2}[-_.]\d{1,2}[-_.](?:19|20)\d{2})\b|(?<=_)(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])-\d{2}(?=$|[_. ])/g;
 // "NUMBER - Title": a spaced dash (or en/em dash) separating the two.
 const NUMBER_TITLE = /^(.+?)\s+[-\u2013\u2014]\s+(.+)$/;
 

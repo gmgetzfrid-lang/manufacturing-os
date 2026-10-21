@@ -31,11 +31,16 @@ export const maxDuration = 60;
 
 /** Stop well short of the platform's kill so the last batch commits and the
  *  response is a real answer rather than a 504 the client has to guess at. */
-const BUDGET_MS = 32_000;
+const BUDGET_MS = 30_000;
 /** Absolute ceiling for the in-flight embed call: whatever is running gets
  *  aborted by this point (elapsed ms), leaving time to commit, count and
  *  respond inside maxDuration=60. */
-const EMBED_HARD_STOP_MS = 42_000;
+const EMBED_HARD_STOP_MS = 38_000;
+/** Everything — setup, embedding, writes, the closing count — is measured
+ *  from the moment the request arrived, and answered by this point. The
+ *  platform cuts a request at 60s, and a cut request is the "504" in the
+ *  console. */
+const RESPOND_BY_MS = 52_000;
 /** A progress count gets this long. While a build rewrites every passage the
  *  table is busy and an exact count can crawl; past this we answer with the
  *  last known numbers instead of letting the platform kill the request. */
@@ -49,11 +54,11 @@ type Coverage = { total: number; embedded: number };
 
 /** "missing" = the migration isn't applied (a setup state); "busy" = the
  *  database didn't answer in time (weather — say nothing alarming). */
-async function coverage(orgId: string, libraryId: string): Promise<Coverage | "missing" | "busy"> {
+async function coverage(orgId: string, libraryId: string, budgetMs = COUNT_BUDGET_MS): Promise<Coverage | "missing" | "busy"> {
   try {
     const { data, error } = await supabaseAdmin
       .rpc("semantic_coverage", { p_org_id: orgId, p_library_id: libraryId })
-      .abortSignal(AbortSignal.timeout(COUNT_BUDGET_MS));
+      .abortSignal(AbortSignal.timeout(budgetMs));
     if (error) {
       return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message)
         ? "missing" : "busy";
@@ -68,6 +73,7 @@ async function coverage(orgId: string, libraryId: string): Promise<Coverage | "m
 const MIGRATION_MESSAGE = "Semantic search needs migration 20260930 — run it in Supabase, then try again.";
 
 export async function POST(req: NextRequest) {
+  const arrived = Date.now();
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return bad("Unauthorized", 401);
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
@@ -190,12 +196,25 @@ export async function POST(req: NextRequest) {
     stats = c === "busy" ? null : c;
   }
 
+  // Setup (sign-in, key, budget, marker) already used part of the clock on a
+  // busy database; the slice gets what is left, not a fresh 30 seconds. If
+  // setup alone ate most of it, answer "busy" now — the caller waits a
+  // moment and calls again — rather than start work that can't finish.
+  const spent = Date.now() - arrived;
+  if (spent > 25_000) {
+    return NextResponse.json({
+      embedded: 0, total: stats?.total ?? 0, coveredNow: stats?.embedded ?? 0,
+      remaining: stats ? stats.total - stats.embedded : 0,
+      done: false, error: null, spentThisRun: 0, busy: true, estimated: true, countUnavailable: !stats,
+    });
+  }
   const slice = await embedLibrarySlice({
     orgId, libraryId,
     connection: embedding,
     batchSize,
-    budgetMs: BUDGET_MS,
-    hardStopMs: EMBED_HARD_STOP_MS,
+    budgetMs: Math.max(5_000, BUDGET_MS - spent),
+    hardStopMs: Math.max(10_000, EMBED_HARD_STOP_MS - spent),
+    finishBy: arrived + RESPOND_BY_MS - 6_000,
   });
   const usage = slice.usage;
   const embedded = slice.embedded;
@@ -222,7 +241,9 @@ export async function POST(req: NextRequest) {
   // Finished = the slice looked for a passage without a vector and found
   // none. That's exact, and needs no count.
   const exhausted = slice.exhausted && !lastError;
-  const counted = await coverage(orgId, libraryId);
+  // The closing count only if it fits; otherwise last known + this call.
+  const countRoom = arrived + RESPOND_BY_MS - Date.now() - 2_000;
+  const counted = countRoom >= 2_000 ? await coverage(orgId, libraryId, Math.min(COUNT_BUDGET_MS, countRoom)) : "busy" as const;
   const after: Coverage | null = typeof counted === "object" ? counted
     // Too busy to count: last known + what this call wrote. Shown as is;
     // the next successful count corrects it.

@@ -115,6 +115,7 @@ export async function drainEmbedBacklog(opts: {
           batchSize: paced ? PACED_BATCH : FULL_BATCH,
           budgetMs: Math.min(SLICE_BUDGET_MS, left - 15_000),
           hardStopMs: Math.min(SLICE_HARD_STOP_MS, left - 10_000),
+          finishBy: startedAt + budgetMs,
         });
         embedded += slice.embedded;
         usage.inputTokens += slice.usage.inputTokens;

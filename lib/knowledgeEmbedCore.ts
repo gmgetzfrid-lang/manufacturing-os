@@ -41,7 +41,7 @@ export interface EmbedSliceResult {
  *  meaning-index build rewrites every passage row and its vector index, and
  *  on a small database that load surfaces as these. */
 export function isBusyDbError(message: string | null | undefined): boolean {
-  return /statement timeout|canceling statement|lock timeout|deadlock|could not serialize|too many connections|connection (?:reset|refused|terminated|closed)|ECONNRESET|ETIMEDOUT|fetch failed|socket hang up|upstream|gateway|\b50[234]\b/i.test(message ?? "");
+  return /statement timeout|canceling statement|lock timeout|deadlock|could not serialize|too many connections|connection (?:reset|refused|terminated|closed)|ECONNRESET|ETIMEDOUT|fetch failed|socket hang up|upstream|gateway|abort|\b50[234]\b/i.test(message ?? "");
 }
 
 /** Embed one time-bounded slice of a library. Never throws — every outcome
@@ -56,8 +56,17 @@ export async function embedLibrarySlice(opts: {
   /** Abort the in-flight provider call at this many ms — must leave room
    *  for the write-back inside the caller's platform limit. */
   hardStopMs: number;
+  /** Absolute time (epoch ms) by which the slice must have returned, writes
+   *  included. Retries of busy writes stop here; past it the caller would
+   *  be cut off by the platform and the vectors lost anyway. */
+  finishBy?: number;
 }): Promise<EmbedSliceResult> {
   const { orgId, libraryId, connection, batchSize, budgetMs, hardStopMs } = opts;
+  const finishBy = opts.finishBy ?? Infinity;
+  // Every database call is bounded by what's left before finishBy: one read
+  // hanging on a busy database must not hold the request past the platform
+  // limit. A call cut short reads as "busy" and the next call carries on.
+  const sig = (capMs: number) => AbortSignal.timeout(Math.max(1_000, Math.min(capMs, finishBy - Date.now())));
   const startedAt = Date.now();
   const usage = { inputTokens: 0, outputTokens: 0 };
   let embedded = 0;
@@ -74,7 +83,8 @@ export async function embedLibrarySlice(opts: {
       .from("knowledge_chunks").select("id, content, section, page, document_id")
       .eq("org_id", orgId).eq("library_id", libraryId)
       .is("embedding", null)
-      .limit(batchSize);
+      .limit(batchSize)
+      .abortSignal(sig(15_000));
     if (error) { fail(error.message); break; }
     const batch = (chunks ?? []) as Array<{
       id: string; content: string; section: string | null; page: number; document_id: string;
@@ -90,14 +100,16 @@ export async function embedLibrarySlice(opts: {
     // embedded by the same model — a re-added file, a copy filed in two
     // places, a retired copy — lends its vector. Only the rest are sent.
     {
-      const reused = await reuseTwinVectors(orgId, batch, connection.model);
+      const reused = Date.now() + 10_000 < finishBy
+        ? await reuseTwinVectors(orgId, batch, connection.model, () => sig(6_000))
+        : new Map<string, string>();
       if (reused.size > 0) {
         for (let i = 0; i < batch.length && !lastError && !busy; i += 8) {
           const group = batch.slice(i, i + 8).filter((c) => reused.has(c.id));
           const results = await Promise.all(group.map((c) =>
             supabaseAdmin.from("knowledge_chunks")
               .update({ embedding: reused.get(c.id)!, embedding_model: connection.model })
-              .eq("id", c.id)));
+              .eq("id", c.id).abortSignal(sig(10_000))));
           for (const r of results) {
             if (r.error) { fail(r.error.message); continue; }
             embedded += 1;
@@ -119,7 +131,7 @@ export async function embedLibrarySlice(opts: {
       {
         const ids = [...new Set(batch.map((c) => c.document_id))];
         const { data: docs } = await supabaseAdmin
-          .from("knowledge_documents").select("id, name").in("id", ids);
+          .from("knowledge_documents").select("id, name").in("id", ids).abortSignal(sig(6_000));
         for (const d of (docs ?? []) as Array<{ id: string; name: string }>) {
           docNames.set(d.id, d.name);
         }
@@ -155,7 +167,7 @@ export async function embedLibrarySlice(opts: {
     // to take is retried one at a time before anything is given up.
     const write = (k: number) => supabaseAdmin.from("knowledge_chunks")
       .update({ embedding: toVectorLiteral(vectors[k]), embedding_model: connection.model })
-      .eq("id", batch[k].id);
+      .eq("id", batch[k].id).abortSignal(sig(15_000));
     const retry: number[] = [];
     for (let i = 0; i < batch.length && !lastError; i += 8) {
       const idx = batch.slice(i, i + 8).map((_, j) => i + j);
@@ -168,6 +180,7 @@ export async function embedLibrarySlice(opts: {
     }
     for (const k of retry) {
       if (lastError) break;
+      if (Date.now() + 2_000 > finishBy) { busy = true; break; } // left for the next call
       await new Promise((r) => setTimeout(r, 750));
       const r = await write(k);
       if (!r.error) embedded += 1;
@@ -185,18 +198,19 @@ async function reuseTwinVectors(
   orgId: string,
   batch: Array<{ id: string; content: string; page: number; document_id: string }>,
   model: string,
+  signal: () => AbortSignal = () => AbortSignal.timeout(6_000),
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   try {
     const docIds = [...new Set(batch.map((c) => c.document_id))];
     const { data: docs } = await supabaseAdmin.from("knowledge_documents")
-      .select("id, file_hash").in("id", docIds);
+      .select("id, file_hash").in("id", docIds).abortSignal(signal());
     const hashOf = new Map(((docs ?? []) as Array<{ id: string; file_hash: string | null }>)
       .filter((d) => d.file_hash).map((d) => [d.id, d.file_hash as string]));
     const hashes = [...new Set(hashOf.values())];
     if (hashes.length === 0) return out;
     const { data: twins } = await supabaseAdmin.from("knowledge_documents")
-      .select("id, file_hash").eq("org_id", orgId).in("file_hash", hashes);
+      .select("id, file_hash").eq("org_id", orgId).in("file_hash", hashes).abortSignal(signal());
     const twinsByHash = new Map<string, string[]>();
     for (const t of (twins ?? []) as Array<{ id: string; file_hash: string }>) {
       if (docIds.includes(t.id)) continue;
@@ -208,7 +222,7 @@ async function reuseTwinVectors(
     const { data: rows } = await supabaseAdmin.from("knowledge_chunks")
       .select("document_id, page, content, embedding")
       .in("document_id", twinIds).in("page", pages)
-      .eq("embedding_model", model).not("embedding", "is", null).limit(500);
+      .eq("embedding_model", model).not("embedding", "is", null).limit(500).abortSignal(signal());
     const byKey = new Map<string, string>();
     for (const r of (rows ?? []) as Array<{ document_id: string; page: number; content: string; embedding: unknown }>) {
       const hash = [...twinsByHash.entries()].find(([, ids]) => ids.includes(r.document_id))?.[0];
