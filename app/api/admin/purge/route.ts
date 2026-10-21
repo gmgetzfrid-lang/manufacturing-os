@@ -20,6 +20,22 @@
 //                          count, kinds, dates — before the confirm, and an
 //                          audit row records it BEFORE the delete (no record,
 //                          no delete)
+//   notifications        — read_at IS NOT NULL, a RECORD notice (a compliance
+//     (records)            kind, or a ticket workflow alert — metadata.action),
+//                          listed as its OWN line and kept for the workspace's
+//                          notice-record retention (drafting-flow EVID-13 dw3,
+//                          notifications N18): a superseded alert keeps
+//                          read_at NULL (a mark, never a read — EVID-13) and
+//                          so is never purge-eligible; read_at is only ever
+//                          the recipient's own act
+//   email_notifications  — status = sent and status = not_emailed (the record
+//     (sent / not emailed) that a person chose not to be emailed — 20261258)
+//                          are kept for the notice-record retention too
+//                          (EVID-9 dw3, DEC-90 ruling (3)): the cutoff is the
+//                          earlier of the window and the retention
+//                          (lib/noticeRetention.ts), so no row is kept a
+//                          shorter time than before; a retention that cannot
+//                          be read purges none of these lines
 //   ai_usage_events      — before the current UTC month only (the AI spend
 //                          ledger: every monthly AI cap is enforced from the
 //                          month's rows, so they are never purge-eligible —
@@ -36,6 +52,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { monthStartIso } from "@/lib/ai/usageServer";
+import { RECORD_NOTICE_KINDS, noticeRecordRetention, recordCutoff, type NoticeRetention } from "@/lib/noticeRetention";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -61,16 +78,28 @@ const TARGETS: PurgeTarget[] = [
     reason: "Bell items the recipient has already read. Disposable once read and aged — the lasting record of any action lives in the audit log. Rows the daily scans use to remember an escalation they already sent are kept, so a purge never re-sends one.",
   },
   {
+    key: "notifications_record",
+    table: "notifications",
+    label: "Read in-app notices that are records",
+    reason: "Bell items the recipient has read that belong to a record — an acknowledgment, a review, a recall, a retention or recertification notice, a request's workflow alert. They are kept for the workspace's notice-record retention as well as the window you chose, whichever is longer; a notice the workflow retired unread is never listed (it was never read).",
+  },
+  {
     key: "email_notifications_sent",
     table: "email_notifications",
     label: "Delivered email queue rows",
-    reason: "Outbound emails already sent. The delivery is done; the queue row is a disposable byproduct.",
+    reason: "Outbound emails already sent, with what the provider later reported (delivered, bounced). They are the record that a person was emailed, so they are kept for the workspace's notice-record retention as well as the window you chose, whichever is longer.",
   },
   {
     key: "email_notifications_suppressed",
     table: "email_notifications",
     label: "Abandoned email queue rows (never sent)",
     reason: "Emails an earlier version parked as 'suppressed' while email was not configured, older than the drain's 7-day recovery window. They were never delivered and will never be sent; purging drops the only copy. Before they are deleted an audit row records how many, of which kinds and from when — if that record cannot be written, they are not deleted.",
+  },
+  {
+    key: "email_notifications_not_emailed",
+    table: "email_notifications",
+    label: "Records of emails not sent by the recipient's choice",
+    reason: "Rows recording that a person's own email preferences kept an email from them (they still had the in-app notice). Nothing ever sends them. Kept for the workspace's notice-record retention as well as the window you chose, whichever is longer.",
   },
   {
     key: "ai_usage_events",
@@ -98,6 +127,23 @@ function cutoffFor(table: string, cutoffIso: string): string {
   return cutoffIso < floor ? cutoffIso : floor;
 }
 
+/** EVID-9 dw3 / EVID-13 dw3 (notifications N18): the lines that hold notice
+ *  records — purged only past the earlier of the window and the workspace's
+ *  notice-record retention (lib/noticeRetention.ts). */
+const RECORD_LINES: ReadonlySet<string> = new Set(["notifications_record", "email_notifications_sent", "email_notifications_not_emailed"]);
+
+/** A line's cutoff, or null when it holds records and the retention could
+ *  not be read (then the line is not purged — never a guess). */
+function lineCutoff(t: PurgeTarget, cutoffIso: string, retention: NoticeRetention): string | null {
+  if (!RECORD_LINES.has(t.key)) return cutoffFor(t.table, cutoffIso);
+  return retention.days === null ? null : recordCutoff(cutoffIso, retention.days);
+}
+
+/** Why a record line was not purged (the retention could not be read). */
+function retentionUnreadable(retention: NoticeRetention): string {
+  return `not purged — the workspace's notice-record retention could not be read${retention.source === "unreadable" ? `: ${retention.error}` : ""}`;
+}
+
 /** DELIV-8 dw3: the server's dedupe watermarks — the metadata keys and kinds
  *  20261160's enforce_notification_insert() refuses from a browser, because
  *  the daily scans read them to remember an escalation they already sent
@@ -114,6 +160,7 @@ type FilterBuilder = {
   not: (column: string, op: string, value: unknown) => FilterBuilder;
   is: (column: string, value: null) => FilterBuilder;
   eq: (column: string, value: unknown) => FilterBuilder;
+  or: (filters: string) => FilterBuilder;
 } & PromiseLike<{ count?: number | null; error: { message: string } | null }>;
 
 /** A read of the abandoned line (abandonedDetail) — structural, like
@@ -133,10 +180,21 @@ function floorOf(key: string, q: FilterBuilder): FilterBuilder {
   if (key === "notifications") {
     let n = q.not("read_at", "is", null).not("kind", "in", `(${PURGE_KEEPS_KINDS.join(",")})`);
     for (const k of PURGE_KEEPS_WATERMARK_KEYS) n = n.is(`metadata->>${k}`, null);
-    return n;
+    // EVID-13 dw3 (N18): a record notice — a compliance kind, or a ticket
+    // workflow alert (metadata.action) — is its own line below, kept for the
+    // notice-record retention; every other read row keeps today's floor.
+    return n.not("kind", "in", `(${RECORD_NOTICE_KINDS.join(",")})`).is("metadata->>action", null);
+  }
+  if (key === "notifications_record") {
+    // the same read-rows floor (read_at set — the recipient's own act — and
+    // no watermark row), only for the record notices
+    let n = q.not("read_at", "is", null).not("kind", "in", `(${PURGE_KEEPS_KINDS.join(",")})`);
+    for (const k of PURGE_KEEPS_WATERMARK_KEYS) n = n.is(`metadata->>${k}`, null);
+    return n.or(`kind.in.(${RECORD_NOTICE_KINDS.join(",")}),metadata->>action.not.is.null`);
   }
   if (key === "email_notifications_sent") return q.eq("status", "sent");
   if (key === "email_notifications_suppressed") return q.eq("status", "suppressed");
+  if (key === "email_notifications_not_emailed") return q.eq("status", "not_emailed");
   return q;
 }
 
@@ -248,11 +306,18 @@ export async function GET(req: NextRequest) {
 
   // Each line's `table` is its key (the page keys and labels lines by it);
   // `sourceTable` is the table it purges.
+  const retention = await noticeRecordRetention(sb, orgId);
   const targets: Array<Omit<PurgeTarget, "key"> & { sourceTable: string; rows: number; estBytes: number; cutoffIso: string }> = [];
   let totalRows = 0;
   let totalEstBytes = 0;
   for (const t of TARGETS) {
-    const cut = cutoffFor(t.table, cutoffIso);
+    const lineCut = lineCutoff(t, cutoffIso, retention);
+    if (lineCut === null) {
+      // the retention could not be read: the line is shown, empty, and why
+      targets.push({ table: t.key, sourceTable: t.table, label: t.label, reason: `${t.reason} ${retentionUnreadable(retention)}.`, rows: 0, estBytes: 0, cutoffIso });
+      continue;
+    }
+    const cut = lineCut;
     let rows = 0;
     try {
       rows = await countTarget(sb, t, orgId, cut);
@@ -261,6 +326,9 @@ export async function GET(req: NextRequest) {
       rows = 0;
     }
     let reason = t.reason;
+    if (RECORD_LINES.has(t.key) && retention.days !== null) {
+      reason += ` Notice-record retention: ${retention.days} days (${retention.source === "configured" ? "set for this workspace" : "the default"}).`;
+    }
     if (t.key === "email_notifications_suppressed" && rows > 0) {
       const d = await abandonedDetail(sb, orgId, cut);
       if (d) reason += describeAbandoned(d);
@@ -281,6 +349,8 @@ export async function GET(req: NextRequest) {
     // A purge's `tables` names lines by their `table` key above; these older
     // names are still accepted, each for the one line given.
     legacyTableNames: LEGACY_TARGET_NAMES,
+    // EVID-9 dw3 / EVID-13 dw3 (N18): the retention the record lines keep
+    noticeRecordRetention: retention.days === null ? { days: null, source: "unreadable" } : retention,
     note:
       "Counts are exact for your workspace; byte figures are estimates from average row size " +
       "(actual reclaim depends on Postgres VACUUM). Only disposable byproducts are listed — records are never eligible.",
@@ -310,10 +380,16 @@ export async function POST(req: NextRequest) {
   const named = new Set((Array.isArray(body.tables) ? body.tables : []).map((n) => (Object.hasOwn(LEGACY_TARGET_NAMES, n) ? LEGACY_TARGET_NAMES[n] : n)));
   const requested = named.size > 0 ? TARGETS.filter((t) => named.has(t.key)) : TARGETS;
 
+  const retention = await noticeRecordRetention(sb, orgId);
   const deleted: Array<{ table: string; rows: number; cutoffIso: string; error?: string; abandoned?: unknown }> = [];
   let totalDeleted = 0;
   for (const t of requested) {
-    const cut = cutoffFor(t.table, cutoffIso);
+    const lineCut = lineCutoff(t, cutoffIso, retention);
+    if (lineCut === null) {
+      deleted.push({ table: t.key, rows: 0, cutoffIso, error: retentionUnreadable(retention) });
+      continue;
+    }
+    const cut = lineCut;
     try {
       // Count first so we can report an exact number, then delete the same set.
       const rows = await countTarget(sb, t, orgId, cut);
@@ -363,7 +439,7 @@ export async function POST(req: NextRequest) {
       user_id: actor.userId,
       user_email: actor.email,
       user_role: actor.admittedRole,
-      details: { cutoffDays: days, cutoffIso, deleted, totalDeleted },
+      details: { cutoffDays: days, cutoffIso, deleted, totalDeleted, noticeRecordRetentionDays: retention.days },
     });
     if (error) auditError = error.message;
   } catch (e) {
