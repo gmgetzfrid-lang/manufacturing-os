@@ -15,6 +15,7 @@ import Link from "next/link";
 import { Loader2, RefreshCw, Boxes, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { CoverageReport as Report, CoverageWhere } from "@/lib/bridgeCoverage";
+import { sheetMarkOf } from "@/lib/relationProvenance";
 
 type Tab = "agree" | "listOnly" | "sheetOnly" | "disagree";
 
@@ -25,9 +26,12 @@ const TAB_LABEL: Record<Tab, string> = {
   disagree: "Disagree",
 };
 
-function whereText(w: CoverageWhere): string {
-  // GOV-9: a sheet address read off an AI transcription is a reading, not an identity.
-  const at = w.sheet ? (w.aiRead ? `${w.sheet} (AI-read, unconfirmed)` : w.sheet)
+export function whereText(w: CoverageWhere): string {
+  // GOV-9: a sheet address read off an AI transcription is a reading, not an
+  // identity; GOV-16 (I-32 merge): nor is the sweep's address on a person's
+  // (adopted) link — both marks from lib/relationProvenance.ts.
+  const mark = w.sheet ? sheetMarkOf(w.aiRead ? "ai" : w.sheetUnconfirmed ? "sweep" : null) : null;
+  const at = w.sheet ? (mark ? `${w.sheet} (${mark})` : w.sheet)
     : (w.pages.length > 0 ? `page${w.pages.length === 1 ? "" : "s"} ${w.pages.join(", ")}` : null);
   // GAP-307 acceptance 3: an upload's link recorded in its own relation (20261235).
   const door = w.door === "knowledge" ? (w.via === "relation" ? " (knowledge upload · linked)" : " (knowledge upload)")

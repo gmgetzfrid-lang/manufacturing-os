@@ -109,8 +109,11 @@ function withEdge(g: OrgGraph, e: GraphEdge): OrgGraph {
 
 /** AREA-2 (fix pass) — a drawing-held pair just adopted is now the person's
  *  link: its edge says so at once (asserted by a person, where on the sheet
- *  it was read kept, the AI-read mark gone — what the adopted row says and
- *  the next load would draw), never the machine's colour and label. */
+ *  it was read kept — what the adopted row says and the next load would
+ *  draw), never the machine's colour and label. I-32 (GOV-9 criterion 4):
+ *  the adopted row keeps the sweep's sheet address and no longer names the
+ *  model, so the address is the sweep's, unconfirmed (lib/
+ *  relationProvenance.ts) — never a plain fact, as the next load draws it. */
 function withAdoptedTag(g: OrgGraph, a: string, b: string): OrgGraph {
   let found = false;
   const edges = g.edges.map((x) => {
@@ -118,6 +121,8 @@ function withAdoptedTag(g: OrgGraph, a: string, b: string): OrgGraph {
     found = true;
     const mine: GraphEdge = { ...x, assertedBy: "human" };
     delete mine.aiRead;
+    delete mine.personAlso;
+    if (mine.sheet) mine.sheetUnconfirmed = true;
     return mine;
   });
   return found ? { ...g, edges } : { ...g, edges: [...g.edges, { a, b, type: "tag", assertedBy: "human" }] };

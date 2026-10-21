@@ -692,7 +692,7 @@ Tests: `askRouteUnits.test.ts` "GOV-8: a refusal and an empty answer throw AiCal
 ## GOV-9 · AI page transcriptions are cited to the reader as verbatim quotes from the controlled drawing, with no per-citation provenance
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-26 BRIDGE REMAINDERS (criterion 4's remaining consumers: the drawing audit and the drawing route's sheet name) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`). Criterion 4's graph label limb: intelligence I-32 PROVENANCE VIEW AND WIZARD ADOPT (I-15 has merged; the integrator adds the limb to I-32's plan entry) — Ruled by the integrator at the I-26 merge, 2026-10-20 (DEC-90).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeVision.ts:32-54`, `lib/knowledgeVision.ts:84-94`, `app/api/knowledge/ask/route.ts:1627-1650`, `supabase/migrations/20260922_vision_pages.sql:13`, `lib/knowledgeIngest.ts:458-470`
@@ -805,6 +805,38 @@ Tests: `lib/__tests__/globalSearchTags.test.ts`, `equipmentSweepModalRender.test
 *Fix pass (2026-10-20, the integrator's fix pass at the I-26 merge; Ruled by the integrator at the I-26 merge, 2026-10-20 (DEC-90)).* The mark was decided over every `self` row of the sheet, so a sheet whose number came from its text layer was marked AI-read when an unrelated number sat on an AI-transcribed page of it. `declaredAiRead` (the readout) and `identityAiRead` (the record) now weigh only the `self` rows that derive the identity — the base itself or a sheet-addressed form of it (`<base>-SHn`) — through one helper, `identityIsAiRead` (`app/api/knowledge/drawing/route.ts`). Test: `intelRoundGDrawingRoutes.test.ts` "REGRESSION (review): only the self rows that derive the identity decide it — a text layer's number plus an unrelated self tag on an AI-transcribed page is NOT marked; a vision-only identity still IS" (fails on the pre-fix route).
 
 **Scope / residual.** OPEN on criterion 4's graph label limb (intelligence I-32). "A human confirming them" is shown, not enforced: the mark tells the reader to check the number against the drawing; nothing stores a confirmation (no criterion asks for one; ruled acceptable above).
+
+
+**Resolution (2026-10-20, intelligence Round G).** Package I-32 PROVENANCE VIEW AND WIZARD ADOPT — criterion 4's graph label limb, the last part left on this record, under `DEC-90` ruling (2): the org graph marks a sheet number read only off an AI transcription "AI-read, unconfirmed", and its edges agree with the provenance view. Reproduced first (`DEC-29`). On `a21c718` the only labels the graph shows that come from a title-block reading are a doc ↔ equipment edge's sheet address (`relationOf`'s `sheet`, shown through `edgeLabelFor` in the peek's "Connected in this view" notes and the path steps). Every other label is a person's metadata: `documents.sheet_number` is set only by the set manager, the split and the lifecycle (no writer reads a title block).
+
+That edge carried "(AI-read, unconfirmed)" only while the row was a machine's. A pair a person adopted through the Bridge keeps the sweep's `sheet_label` and clears its `model` (`HUMAN_PROVENANCE`). On the graph it read "Shared equipment · SHT 4" — the address a plain fact, at once after the adopt (`withAdoptedTag`) and on every load. With the base `lib/orgGraph.ts` and `components/graph/graphTheme.ts` put back, that case of `lib/__tests__/intelRoundGI32Provenance.test.ts` fails.
+
+What landed:
+- `lib/relationProvenance.ts` (new): `sheetReadingOf` / `sheetMarkOf`, the one reading the graph, the asset hub and its provenance view share. A sheet with a model is `AI_READ_MARK`. A machine's text-layer reading carries no sheet mark; the "read from drawing" label beside it says how it was read. The sweep's address on a person's link is `SWEEP_SHEET_MARK` ("read by the equipment sweep, unconfirmed"): whether that reading was an AI transcription is no longer on the row, so it is never called AI-read (`DEC-29`) and never shown as fact (fail toward the warning).
+- `lib/orgGraph.ts` `relationOf` sets `sheetUnconfirmed`.
+- `components/graph/graphTheme.ts` `edgeLabelFor` writes the mark.
+- `app/(protected)/graph/page.tsx` `withAdoptedTag` keeps the address unconfirmed after an adopt.
+- The asset hub's sheet chip (`app/(protected)/assets/[tag]/page.tsx`) carries the same mark.
+- A machine reading's AI-read mark is unchanged, including on an edge now drawn as a person's too (`personAlso`, `GAP-303`'s graph remainder).
+
+Tests:
+- `lib/__tests__/intelRoundGI32Provenance.test.ts`: "a person's link carrying the sweep's sheet address shows it unconfirmed — never as a plain fact", the scoped read, the agreement matrix (every sheet mark in the view equals the edge label's), and the regression pin on the machine reading's AI-read label.
+- `lib/__tests__/graphPageRender.test.ts`: the adopt case.
+- `lib/__tests__/intelRoundGI32ProvenancePanel.test.ts`: the hub chip.
+
+**Done-when.**
+1. ✓ (2026-09-30).
+2. ✓ (2026-10-01, I-03).
+3. ✓ (2026-10-01, I-03).
+4. ✓ as ruled at the I-26 merge (confirmation shown, not enforced; `DEC-90`), for every consumer the plan assigned:
+   - the ask route's DRAWING FACTS (I-03);
+   - the sheet address on the sweep, ⌘K, the coverage report and the asset hub (I-11);
+   - the drawing audit, its record and the equipment table (I-26);
+   - now the org graph's labels, a person's adopted link included (I-32).
+
+   Split under `DEC-31`: an adopted pair's address on ⌘K and on the coverage report still reads without a mark. Those surfaces read the row's `model` alone. It is `GOV-16` (LOW, opened here), which this record does not claim. Ruled by the integrator at the I-32 merge, 2026-10-21 (DEC-90): `GOV-16` is resolved in the same merge, so ⌘K and the coverage report now carry the mark too (see `GOV-16`).
+
+**Scope / residual.** None. `GOV-16` was resolved at the I-32 merge (Ruled by the integrator at the I-32 merge, 2026-10-21 (DEC-90)). No migration.
 
 ---
 
@@ -1672,5 +1704,38 @@ Done-when:
 - The roster (`p_other_holders`) is read before the function's transaction. A grant or revoke of `ai.manage_caps` that lands between that read and the lock is seen by the next change, not this one. A holder read as the sole holder at the instant a second holder is granted raises their own cap audited `soleHolder: true`, as a sole holder does. Changing who holds the capability is a critical, Admin-only policy change, not a cap change.
 - App-side, the sequential failure cases audit as on `052271b`, not as fix passes 10–11 did. A default raise that does not land writes no record and no `notApplied` companion (done-when 3: audit-first only where it is a control). A cap that cannot be read back after a write is no longer checked: the re-read is deleted. A write that matches no row answers 409 (another person's override is no longer re-inserted).
 - Through the function, an error rolls its transaction back: 500, nothing changed, nobody told.
+
+---
+
+<a id="gov-16"></a>
+
+## GOV-16 · An adopted pair's sheet address reads as fact on ⌘K and in the coverage report
+
+- **Severity:** LOW
+- **Status:** RESOLVED
+- **Assigned:** intelligence I-32 PROVENANCE VIEW AND WIZARD ADOPT, the integrator's fix pass at its merge — Ruled by the integrator at the I-32 merge, 2026-10-21 (DEC-90): resolve it in that pass, not leave it unowned. (Opened 2026-10-20 by I-32 as the remainder of `GOV-9` criterion 4, `DEC-31`.)
+- **Verification:** CONFIRMED (by reading, on `a21c718`)
+- **Independently verified:** — (`author`: opened by I-32; not yet challenged by a second party).
+- **Locations:** `lib/search.ts:180` (`aiRead: !!l.model`), `lib/globalSearch.ts:105`, `lib/bridgeCoverage.ts:130`, `components/assets/CoverageReport.tsx:30`, `lib/equipmentBridgeServer.ts:256-259` (`HUMAN_PROVENANCE`)
+
+**Mechanism.** The Bridge's adopt (`adoptDrawingRelation`, `lib/equipmentBridgeServer.ts:1570`) turns a drawing-held pair into a person's link. It keeps the row's `sheet_label` and clears its `model` (`HUMAN_PROVENANCE`). Only the adopt does this: a removal that hands a pair back to the person's tags (`source 'jsonb_sync'`, `lib/equipmentBridgeServer.ts:1123`) clears `sheet_label` and `pages`, so it carries no address and is not in scope here *(corrected at the I-32 review fix pass: first written as if the hand-back kept the address too)*. ⌘K (`lookupTag` → `globalSearch` "appears on <sheet> (AI-read, unconfirmed)") and the coverage report (`aiRead: !!r.model`) decide the mark from `model` alone. An adopted pair whose sheet address was read off an AI transcription therefore reads as a plain fact on both. The org graph, the asset hub and its provenance view mark it "read by the equipment sweep, unconfirmed" since I-32 (`lib/relationProvenance.ts` `sheetReadingOf` / `SWEEP_SHEET_MARK`).
+
+**Failure scenario.** The sweep reads P-101 on PID-1, "PID-1 SHT 4", off an AI transcription. A controller links P-101 to PID-1 from the registry drawer: a 23505, then an adopt. ⌘K for P-101 now says "appears on PID-1 SHT 4", with no mark, where the graph and the hub say it is unconfirmed.
+
+**Done when.**
+- [x] ⌘K and the coverage report read the sheet address through `lib/relationProvenance.ts` `sheetReadingOf` / `sheetMarkOf`. The relation's `source` / `asserted_by` are already selected beside `model`. The sweep's address on a person's link then carries `SWEEP_SHEET_MARK`, and a machine's AI reading keeps `AI_READ_MARK`.
+- [x] A test on each surface: an adopted pair's sheet is marked, and a machine reading reads exactly as before.
+
+**Scope.** Display only. No row, no authority and no migration is involved.
+
+**Resolution (2026-10-21, the integrator's fix pass at the I-32 merge; Ruled by the integrator at the I-32 merge, 2026-10-21 (DEC-90)).** Reproduced first (`DEC-29`): with the pre-fix `lib/search.ts`, `lib/globalSearch.ts` and `lib/bridgeCoverage.ts` put back, all five new cases fail. ⌘K reads "FV-2201 appears on PID-3 SHT 7 · Drawing adopted", and the coverage row carries no mark, which the pre-fix `whereText` words "PID-3 · PID-3 SHT 7": both plain facts. Both surfaces now read the row through the one reading the graph and the hub use:
+- **⌘K.** `lookupTag` reads each link with `sheetReadingOf` (`lib/search.ts:188`). It marks a person's link carrying the sweep's address `sheetUnconfirmed: true`, and only that link (`:217`; typed at `:121`). The subtitle's mark comes from `sheetMarkOf` (`sheetMarkSuffix`, `lib/globalSearch.ts:26`, used at `:118`): "(AI-read, unconfirmed)" for an AI reading, as before, and "(read by the equipment sweep, unconfirmed)" for the adopted pair. On a database before `20261171` (no `model` column) an adopted pair still reads as the sweep's.
+- **The coverage report.** `buildCoverage` marks a controlled relation row `sheetUnconfirmed: true` when `sheetReadingOf` says "sweep" (`lib/bridgeCoverage.ts:137`; typed at `:95`). `whereText` words it with `sheetMarkOf` (`components/assets/CoverageReport.tsx:33`; now exported for its test). The knowledge uploads' own relation rows are not adoptable and are untouched.
+- An AI-read machine reading is unchanged everywhere. Every other ⌘K result and coverage row is byte-identical: the field is present only on the adopted pair.
+- Tests (`lib/__tests__/intelRoundGI32SweepSheetMark.test.ts`, 5):
+  - the adopted pair is marked on ⌘K and in the coverage report, and the AI-read reading keeps its mark;
+  - a regression pin re-states the pre-ruling wording, and shows every other lookup document, ⌘K hit and coverage row identical to it, in data and in words. On ⌘K that covers AI-read, text-layer, plain manual and tag-sync rows; in the coverage report it adds knowledge uploads and extracted tags. The report as a whole differs only by the adopted row's flag;
+  - the pre-`20261171` tier.
+  - The existing `globalSearchTags.test.ts`, `bridgeCoverage.test.ts` and `coverageReportRender.test.ts` pass unchanged.
 
 ---

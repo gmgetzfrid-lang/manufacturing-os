@@ -73,9 +73,10 @@
 // uses when a database predates them.
 
 import { supabase } from "@/lib/supabase";
-import type { CodebookEntry } from "@/lib/codebook";
+import { tagKey, type CodebookEntry } from "@/lib/codebook";
 import type { ResolvedScope, ScopeRef } from "@/lib/scope";
 import type { PendingPairsRead } from "@/lib/linkProposals";
+import { assetTagsName, sheetReadingOf } from "@/lib/relationProvenance";
 
 export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot";
 
@@ -150,6 +151,18 @@ export interface GraphEdge {
   pages?: number[];
   assertedBy?: "machine" | "human";
   aiRead?: boolean;
+  /** I-32 (GAP-303 graph remainder) — a machine's reading whose document's
+   *  own equipment tags (documents.asset_tags, typed by a person) also name
+   *  the tag: a person asserted it too, as the asset hub and its provenance
+   *  view say ("tagged · also on drawing"). Absent when the tags were not
+   *  read (the read failed — the edge stays the sweep's alone). */
+  personAlso?: boolean;
+  /** I-32 (GOV-9 criterion 4, the graph's label limb) — a person's link
+   *  carrying the sheet address the equipment sweep read (lib/
+   *  relationProvenance.ts SWEEP_SHEET_MARK): whether off an AI
+   *  transcription is not recorded on the row, so the address is
+   *  unconfirmed, never a plain fact. */
+  sheetUnconfirmed?: boolean;
 }
 
 /** IRLS-14 (the lib/orgGraph.ts half): what the mention read found. It tells
@@ -272,6 +285,10 @@ export interface GraphRows {
    *  library-only upload). A missing key means it could not be resolved. */
   mirrorOf: Map<string, string | null>;
   flows: Array<{ from_kind: string; from_ref: string; to_kind: string; to_ref: string; status: string }>;
+  /** I-32 — document id → its equipment tags (documents.asset_tags), for
+   *  the documents a machine reading links (personAlsoTags). A missing key:
+   *  no tags of its own, or not read (the edge stays the sweep's alone). */
+  docTags?: Map<string, unknown>;
 }
 
 export const emptyGraphRows = (): GraphRows => ({
@@ -354,10 +371,11 @@ export async function pageRows<T extends { id: string }>(
 }
 
 /** pageRows over `column IN values`, chunked (IN_CHUNK ids per request, up
- *  to IN_WAVE requests in flight); rows de-duplicated by id, ordered by id. */
+ *  to IN_WAVE requests in flight); rows de-duplicated by id, ordered by id.
+ *  `narrow` adds a filter to every chunk's read. */
 export async function pageIn<T extends { id: string }>(
   table: string, select: string, orgId: string, column: string,
-  values: readonly string[], cap: number,
+  values: readonly string[], cap: number, narrow?: (q: Filterable) => Filterable,
 ): Promise<PagedRows<T>> {
   const seen = new Map<string, T>();
   const uniq = [...new Set(values.filter(Boolean))];
@@ -372,7 +390,7 @@ export async function pageIn<T extends { id: string }>(
     const room = cap - seen.size;
     if (room <= 0) return done({ capped: true });
     const wave = await Promise.all(chunks.slice(w, w + IN_WAVE).map((chunk) =>
-      pageRows<T>(table, select, orgId, room, (q) => q.in(column, chunk))));
+      pageRows<T>(table, select, orgId, room, (q) => (narrow ? narrow(q.in(column, chunk)) : q.in(column, chunk)))));
     for (const r of wave) {
       if (r.missing) return { rows: [...seen.values()], capped: false, missing: true, total: null, error: null };
       for (const row of r.rows) seen.set(String(row.id), row);
@@ -432,6 +450,75 @@ async function readDocAssetsTiered(
     r = await read(cols);
   }
   return r;
+}
+
+/** I-32 (GAP-303 graph remainder) — the documents' own equipment tags
+ *  (documents.asset_tags, typed by a person), so a machine reading a person
+ *  also tagged the document with is drawn as the asset hub and its
+ *  provenance view say it ("tagged · also on drawing").
+ *
+ *  No round trip of its own (DEC-90, ruled by the integrator at the I-32
+ *  merge, 2026-10-21): the read never waits on another read's answer. The
+ *  org-wide map reads it in the first wave, beside the documents read, in
+ *  that read's own order (most recently updated first) — every tagged
+ *  document on the map is among the first DOC_CAP + 1 tagged documents in
+ *  that order; a scoped map reads it beside the relation read, keyed by the
+ *  scope's documents (already in hand). So it adds no wave to any load: the
+ *  documents read it shadows is at least as long.
+ *
+ *  What crosses the wire: `id, asset_tags`, only for documents whose own
+ *  tags are not empty (`asset_tags <> '[]'`, which leaves out NULL too), at
+ *  most DOC_CAP + 1 = 1,501 rows (org-wide: ≤ 2 windows of EDGE_PAGE;
+ *  scoped: ≤ 11 keyed requests of IN_CHUNK, IN_WAVE at a time). The
+ *  (document, asset) decision is made here (personAlsoTags), not by the
+ *  database: the tag's spelling is folded by the one tag grammar (lib/
+ *  codebook tagKey), which a PostgREST filter cannot do without a new
+ *  database function — so no migration.
+ *
+ *  Never throws. A read that fails marks nothing — every edge stays the
+ *  sweep's alone, exactly as before this file — and, when a machine reading
+ *  is on the map, the map says so. */
+type DocTagRow = { id: string; asset_tags?: unknown };
+type DocTagsRead = { rows: DocTagRow[]; error: PgErr | null };
+const DOC_TAG_COLS = "id, asset_tags";
+const failedTagsRead = (e: unknown): DocTagsRead => ({ rows: [], error: { message: e instanceof Error ? e.message : String(e) } });
+
+async function readDocTagsByRecency(orgId: string): Promise<DocTagsRead> {
+  try {
+    return await readByRange<DocTagRow>((from, to) =>
+      (supabase.from("documents").select(DOC_TAG_COLS) as unknown as Filterable).eq("org_id", orgId)
+        .not("asset_tags", "eq", "[]")
+        .order("updated_at", { ascending: false, nullsFirst: false }).order("id").range(from, to), DOC_CAP + 1);
+  } catch (e) {
+    return failedTagsRead(e);
+  }
+}
+
+async function readDocTagsIn(orgId: string, ids: readonly string[]): Promise<DocTagsRead> {
+  try {
+    const r = await pageIn<DocTagRow>("documents", DOC_TAG_COLS, orgId, "id", ids, ids.length + 1,
+      (q) => q.not("asset_tags", "eq", "[]"));
+    return { rows: r.rows, error: r.error };
+  } catch (e) {
+    return failedTagsRead(e);
+  }
+}
+
+const isMachineRow = (r: DocAssetRow) => r.asserted_by === "machine" || (!r.asserted_by && r.source === "drawing");
+
+/** The tags of the documents a machine reading links (document id → its
+ *  asset_tags); a document missing from the map has none of its own (or was
+ *  not read) — its machine readings stay the sweep's alone. */
+function personAlsoTags(read: DocTagsRead, docAssets: readonly DocAssetRow[], notes: string[]): Map<string, unknown> {
+  const tags = new Map<string, unknown>();
+  const machineDocs = new Set(docAssets.filter(isMachineRow).map((r) => String(r.document_id)));
+  if (machineDocs.size === 0) return tags;
+  if (read.error) {
+    notes.push(`Which equipment-sweep readings a person also tagged could not be read (${read.error.message}) — those links are drawn as the sweep's alone.`);
+    return tags;
+  }
+  for (const d of read.rows) if (machineDocs.has(String(d.id))) tags.set(String(d.id), d.asset_tags ?? null);
+  return tags;
 }
 
 type Res = { data: unknown; error: PgErr | null; count?: number | null };
@@ -640,9 +727,11 @@ function refusedNote(n: number): string {
 async function readOrgRows(
   orgId: string, notes: string[], gate: ReadableDocs | null = null,
 ): Promise<{ rows: GraphRows; mentions: { installed: boolean; capped: boolean }; refused: Set<string> }> {
+  // Windowed (max-rows): DOC_CAP + 1 rows can arrive, so the cap note below
+  // fires exactly when the cap is exceeded.
   const [
     structure, libsRes, projectsRes, docsR, assetsR, plotRes,
-    docAssets, projectDocs, related, supersessions, mentions, flows,
+    docAssets, projectDocs, related, supersessions, mentions, flows, docTagsRead,
   ] = await Promise.all([
     readStructure(orgId, notes),
     supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name").order("id").limit(LIST_CAP + 1) as unknown as PromiseLike<Res>,
@@ -670,6 +759,9 @@ async function readOrgRows(
     // proposed ones are counted). A pre-migration org contributes nothing.
     pageRows<{ id: string; from_kind: string; from_ref: string; to_kind: string; to_ref: string; status: string }>(
       "process_flows", "id, from_kind, from_ref, to_kind, to_ref, status", orgId, EDGE_CAP),
+    // I-32: the documents' own equipment tags (readDocTagsByRecency) — in
+    // this wave, so the person-also marks cost no round trip.
+    readDocTagsByRecency(orgId),
   ]);
 
   // Documents and libraries are the core — a real error there is fatal.
@@ -714,6 +806,7 @@ async function readOrgRows(
   const kdocIds = [...new Set(mentions.rows.filter((m) => !m.document_id && m.knowledge_document_id)
     .map((m) => String(m.knowledge_document_id)))];
   const mirrorOf = await resolveMirrors(orgId, kdocIds, notes);
+  const docTags = personAlsoTags(docTagsRead, docAssets.rows, notes);
 
   const boundLibraries = [...new Set(codebookUnits.map((u) => (u.meta?.knowledgeLibraryId ?? "").trim()).filter(Boolean))];
   let knowledgeLibraries: GraphRows["knowledgeLibraries"] = [];
@@ -728,7 +821,7 @@ async function readOrgRows(
       codebookUnits, units, plants, systems, libraries, knowledgeLibraries, projects, plotPlans,
       documents, assets,
       docAssets: docAssets.rows, projectDocs: projectDocs.rows, related: related.rows,
-      supersessions: supersessions.rows, mentions: mentions.rows, mirrorOf, flows: flows.rows,
+      supersessions: supersessions.rows, mentions: mentions.rows, mirrorOf, flows: flows.rows, docTags,
     }, gated.refused),
     mentions: { installed: !mentions.missing, capped: mentions.capped },
     refused: gated.refused,
@@ -793,7 +886,7 @@ async function readScopeRows(
   if (klR.error) notes.push(`Knowledge libraries could not be loaded (${klR.error.message}) — the map is incomplete.`);
 
   const ids = documents.map((d) => d.id);
-  const [docAssets, projectDocs, relA, relB, supA, supB, mentByAsset, mentByDoc, mirrorsOfDocs] = await Promise.all([
+  const [docAssets, projectDocs, relA, relB, supA, supB, mentByAsset, mentByDoc, mirrorsOfDocs, docTagsRead] = await Promise.all([
     readDocAssetsTiered((cols) => pageIn<DocAssetRead>("document_assets", cols, orgId, "document_id", ids, BIG)),
     pageIn<{ id: string; project_id: string; document_id: string }>("project_documents", "id, project_id, document_id", orgId, "document_id", ids, BIG),
     pageIn<{ id: string; document_id: string; target_document_id: string | null; kind: string }>(
@@ -810,6 +903,9 @@ async function readScopeRows(
       "entity_mentions", "id, asset_id, document_id, knowledge_document_id", orgId, "document_id", ids, BIG),
     pageIn<{ id: string; source_document_id: string | null }>(
       "knowledge_documents", "id, source_document_id", orgId, "source_document_id", ids, BIG),
+    // I-32: the scope's documents' own equipment tags — in this wave, keyed
+    // by the documents already in hand, so they cost no round trip.
+    readDocTagsIn(orgId, ids),
   ]);
   const mentByMirror = await pageIn<{ id: string; asset_id: string; document_id: string | null; knowledge_document_id: string | null }>(
     "entity_mentions", "id, asset_id, document_id, knowledge_document_id", orgId, "knowledge_document_id",
@@ -845,6 +941,7 @@ async function readScopeRows(
   const unresolved = [...new Set(mentions.filter((m) => !m.document_id && m.knowledge_document_id && !mirrorOf.has(String(m.knowledge_document_id)))
     .map((m) => String(m.knowledge_document_id)))];
   for (const [k, v] of await resolveMirrors(orgId, unresolved, notes)) mirrorOf.set(k, v);
+  const docTags = personAlsoTags(docTagsRead, docAssets.rows, notes);
 
   return {
     rows: withoutRefused({
@@ -860,7 +957,7 @@ async function readScopeRows(
       documents, assets,
       docAssets: docAssets.rows, projectDocs: projectDocs.rows,
       related: union(relA, relB), supersessions: union(supA, supB),
-      mentions, mirrorOf, flows: flows.rows,
+      mentions, mirrorOf, flows: flows.rows, docTags,
     }, gated.refused),
     // A read with no ids issues no request and cannot report a missing
     // table, so the index is installed only if no read found it missing.
@@ -895,9 +992,14 @@ export interface AssembleOptions {
  *  pages it was read on, who asserted it, and whether the page was read off
  *  an AI transcription. Only what the row says; undefined when it says
  *  nothing (a database before 20261170, or a link a person made with no
- *  sheet), so such an edge is exactly the pair it always was. */
-export function relationOf(r: DocAssetRow): Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead"> | undefined {
-  const out: Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead"> = {};
+ *  sheet), so such an edge is exactly the pair it always was.
+ *  I-32: the sheet address is read through lib/relationProvenance.ts
+ *  sheetReadingOf — the one reading the asset hub's provenance view uses — so
+ *  a person's link carrying the sweep's address is `sheetUnconfirmed` (GOV-9
+ *  criterion 4); `personTagged` (the document's own equipment tags name the
+ *  tag) makes a machine reading `personAlso`. */
+export function relationOf(r: DocAssetRow, personTagged = false): Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead" | "personAlso" | "sheetUnconfirmed"> | undefined {
+  const out: Pick<GraphEdge, "sheet" | "pages" | "assertedBy" | "aiRead" | "personAlso" | "sheetUnconfirmed"> = {};
   const sheet = typeof r.sheet_label === "string" ? r.sheet_label.trim() : "";
   if (sheet) out.sheet = sheet;
   const pages = Array.isArray(r.pages)
@@ -910,6 +1012,10 @@ export function relationOf(r: DocAssetRow): Pick<GraphEdge, "sheet" | "pages" | 
     ? r.asserted_by : r.source === "drawing" ? "machine" : null;
   if (by) out.assertedBy = by;
   if (by === "machine" && typeof r.model === "string" && r.model.trim()) out.aiRead = true;
+  const reading = sheetReadingOf(r);
+  if (reading === "ai") out.aiRead = true;
+  else if (reading === "sweep") out.sheetUnconfirmed = true;
+  if (by === "machine" && personTagged) out.personAlso = true;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -934,7 +1040,7 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
   const put = (n: GraphNode) => { if (!inScope || inScope(n.id)) nodes.set(n.id, n); };
 
   type Outcome = "added" | "duplicate" | "self" | "severed" | "boundary" | "unrelated";
-  const addEdge = (a: string, b: string, type: GraphEdgeType, extra?: Pick<GraphEdge, "via" | "note" | "folderIds" | "sheet" | "pages" | "assertedBy" | "aiRead">): Outcome => {
+  const addEdge = (a: string, b: string, type: GraphEdgeType, extra?: Pick<GraphEdge, "via" | "note" | "folderIds" | "sheet" | "pages" | "assertedBy" | "aiRead" | "personAlso" | "sheetUnconfirmed">): Outcome => {
     if (a === b) return "self";
     const hasA = nodes.has(a), hasB = nodes.has(b);
     if (!hasA || !hasB) {
@@ -1131,7 +1237,15 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
     if (d.plant_id) addEdge(`doc:${d.id}`, `plant:${d.plant_id}`, "unit");
     addEdge(`doc:${d.id}`, `lib:${d.library_id}`, "library");
   }
-  for (const r of rows.docAssets) addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag", relationOf(r));
+  // I-32: a machine reading a person also tagged the document with is drawn
+  // as theirs too — the tag is the asset's own (the one tag grammar).
+  const tagOfAsset = new Map(rows.assets.map((a) => [String(a.id), a.tag] as const));
+  for (const r of rows.docAssets) {
+    const docTags = rows.docTags?.get(String(r.document_id));
+    const tag = tagOfAsset.get(String(r.asset_id));
+    const personTagged = docTags !== undefined && !!tag && assetTagsName(docTags, new Set([tagKey(tag)]));
+    addEdge(`doc:${r.document_id}`, `asset:${r.asset_id}`, "tag", relationOf(r, personTagged));
+  }
   for (const r of rows.projectDocs) addEdge(`proj:${r.project_id}`, `doc:${r.document_id}`, "project");
   for (const r of rows.related) {
     if (r.kind === "document" && r.target_document_id) {

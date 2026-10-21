@@ -25,17 +25,17 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 275,
+    "findings": 276,
     "gaps": 16,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
       "MEDIUM": 151,
-      "LOW": 56
+      "LOW": 57
     },
     "by_status": {
-      "RESOLVED": 246,
-      "OPEN": 21,
+      "RESOLVED": 249,
+      "OPEN": 19,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -3554,7 +3554,7 @@
       "id": "GOV-9",
       "title": "AI page transcriptions are cited to the reader as verbatim quotes from the controlled drawing, with no per-citation provenance",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -6002,7 +6002,7 @@
       "id": "AREA-12",
       "title": "The shape wizard's document ↔ equipment link takes a 23505 for \"already linked\" and never adopts the drawing's row",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -6473,6 +6473,32 @@
       "summary": "The owner asks for \"which equipment is on which sheet\" on the map. The rows already exist — tag, page, x, y, per document — and the graph can never draw them, because the only consumer able to read them is a server route. Any attempt to add a sheet edge type to buildOrgGraph returns an empty result set with no error (PostgREST reports a permission failure that optional() at orgGraph.ts:152 would s",
       "area": "intelligence",
       "report": "audit-reports/intelligence/07-graph-model.md"
+    },
+    {
+      "id": "GOV-16",
+      "title": "An adopted pair's sheet address reads as fact on ⌘K and in the coverage report",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading, on `a21c718`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/search.ts:180",
+        "lib/globalSearch.ts:105",
+        "lib/bridgeCoverage.ts:130",
+        "components/assets/CoverageReport.tsx:30",
+        "lib/equipmentBridgeServer.ts:256-259"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "The sweep reads P-101 on PID-1, \"PID-1 SHT 4\", off an AI transcription. A controller links P-101 to PID-1 from the registry drawer: a 23505, then an adopt. ⌘K for P-101 now says \"appears on PID-1 SHT 4\", with no mark, where the graph and the hub say it is unconfirmed.",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/04-ai-governance.md"
     },
     {
       "id": "GPV-4",

@@ -31,6 +31,7 @@ import { supabase } from "@/lib/supabase";
 import type { DocumentStatus, TicketStatus } from "@/types/schema";
 import type { Asset } from "@/lib/assets";
 import { tagKey } from "@/lib/codebook";
+import { sheetReadingOf } from "@/lib/relationProvenance";
 import { expandQueryToTsquery } from "@/lib/searchSynonyms";
 
 /** Equipment-tag identity matching: people type "e22", "E22", "E-22", or
@@ -110,10 +111,14 @@ export interface TagLookupHit {
    *  the sheet address the relation carries (GAP-301 — "2002-D-10001 SHT 4"),
    *  whether a machine read it off the drawing (GAP-303), whether that
    *  reading came from an AI transcription (GOV-9: the sheet address is then
-   *  unconfirmed), and whether a person also tagged the document with it. */
+   *  unconfirmed), and whether a person also tagged the document with it.
+   *  `sheetUnconfirmed` (GOV-16, I-32 merge): a person's link carrying the
+   *  sheet address the equipment sweep read (lib/relationProvenance.ts
+   *  sheetReadingOf "sweep" — an adopted pair); present only then. */
   documents: Array<{
     id: string; library_id: string; document_number: string | null; title: string | null;
     sheetLabel?: string | null; fromDrawing?: boolean; aiRead?: boolean; personTagged?: boolean;
+    sheetUnconfirmed?: true;
   }>;
 }
 
@@ -172,12 +177,16 @@ export async function lookupTag(orgId: string, query: string, opts: { documentsP
     if (linkRes.error) throw new TagLookupReadError(`The drawings ${live.map((f) => f.row.tag).join(", ")} ${live.length === 1 ? "is" : "are"} on could not be read: ${linkRes.error.message ?? "read failed"}`);
     const links = linkRes.data;
     const docIdsByAsset = new Map<string, string[]>();
-    const linkMeta = new Map<string, { sheetLabel: string | null; fromDrawing: boolean; aiRead: boolean }>(); // `${asset}:${doc}`
+    const linkMeta = new Map<string, { sheetLabel: string | null; fromDrawing: boolean; aiRead: boolean; sweepSheet: boolean }>(); // `${asset}:${doc}`
     for (const l of ((links ?? []) as Array<{ asset_id: string; document_id: string; sheet_label?: string | null; source?: string | null; model?: string | null }>)) {
       const list = docIdsByAsset.get(l.asset_id) ?? [];
       if (!list.includes(l.document_id) && list.length < perAsset) list.push(l.document_id);
       docIdsByAsset.set(l.asset_id, list);
-      linkMeta.set(`${l.asset_id}:${l.document_id}`, { sheetLabel: l.sheet_label ?? null, fromDrawing: l.source === "drawing", aiRead: !!l.model });
+      linkMeta.set(`${l.asset_id}:${l.document_id}`, {
+        sheetLabel: l.sheet_label ?? null, fromDrawing: l.source === "drawing", aiRead: !!l.model,
+        // GOV-16: the one reading of the row's sheet address (an adopted pair's is the sweep's, unconfirmed).
+        sweepSheet: sheetReadingOf(l) === "sweep",
+      });
     }
     const allDocIds = [...new Set([...docIdsByAsset.values()].flat())];
     type DocRow = TagLookupHit["documents"][number] & { asset_tags?: unknown };
@@ -205,6 +214,7 @@ export async function lookupTag(orgId: string, query: string, opts: { documentsP
           return [{
             ...d, sheetLabel: meta?.sheetLabel ?? null, fromDrawing: meta?.fromDrawing ?? false,
             aiRead: meta?.aiRead ?? false, personTagged: typedOn(doc, row.tag),
+            ...(meta?.sweepSheet ? { sheetUnconfirmed: true as const } : {}),
           }];
         }),
     }));

@@ -1506,9 +1506,14 @@ describe("AREA-2 graph limb — Connect writes a document ↔ equipment link onl
     expect(g.pairReads).toBe(1);
     expect(g.fetches.find((f) => f.url === "/api/equipment-bridge")?.body).toMatchObject({ action: "adopt" });
     const after = last().edges.filter((e) => e.type === "tag" && e.a === "doc:d2");
-    expect(after).toEqual([{ a: "doc:d2", b: "asset:a2", type: "tag", sheet: "SHT 4", pages: [4], assertedBy: "human" }]);
+    // I-32 (GOV-9 criterion 4, DEC-90 ruling 2): the adopted row keeps the
+    // sweep's sheet address and no longer names the model, so the address is
+    // the sweep's, unconfirmed — never a plain fact (what the next load draws
+    // through relationOf). The link itself is the person's: slate, no
+    // "Read from the drawing", no AI-read claim.
+    expect(after).toEqual([{ a: "doc:d2", b: "asset:a2", type: "tag", sheet: "SHT 4", pages: [4], assertedBy: "human", sheetUnconfirmed: true }]);
     expect(edgeRgbFor(after[0])).toBe(EDGE_RGB.tag);
-    expect(edgeLabelFor(after[0])).toBe("Shared equipment · SHT 4");
+    expect(edgeLabelFor(after[0])).toBe("Shared equipment · SHT 4 (read by the equipment sweep, unconfirmed)");
     expect(edgeLabelFor(after[0])).not.toMatch(/AI-read|Read from the drawing/);
     expect(text()).toContain("Connected LOOSE-2 ↔ P-102 ✓");
   });
