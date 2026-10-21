@@ -1187,6 +1187,11 @@ export interface RestoreRowRefusal {
    *  number the request was issued, the number it was restored under, and the
    *  request holding the old one (the `renumbered` lists are built from it). */
   renumbered?: { from: string; to: string; numberHeldBy: string; unconfirmed?: true };
+  /** admin-and-org BKP-16 (Round G P17): on a TICKET_NUMBER_IN_USE or
+   *  TICKET_NUMBER_UNSETTLED refusal, the request number the backup row
+   *  carries — so the restore page names it from a field, not from the
+   *  message's text. Additive: every other refusal is unchanged. */
+  ticketNumber?: string;
 }
 
 export interface RestoreChunkResult {
@@ -1613,7 +1618,7 @@ const liveTicketHolder = (live: Map<string, string[]>, r: Record<string, unknown
  *  already carried. Nothing of it was written; a re-run renumbers it. */
 function ticketRemintRefusal(id: string | null, n: string, holder: string, why: string): RestoreRowRefusal {
   return {
-    id, code: TICKET_NUMBER_IN_USE,
+    id, code: TICKET_NUMBER_IN_USE, ticketNumber: n,
     message: `request number "${n}" is already carried in this workspace by request ${holder} — this request was to be restored under a fresh number, but none could be taken now (${why}); not restored (a restore never files two requests under one number). Run the restore again: a re-run renumbers it`,
   };
 }
@@ -2269,7 +2274,7 @@ export async function applyRestoreChunk(
     if (round >= RESTORE_HELD_BACK_ROUNDS) {
       for (const r of pending) {
         refused.push({
-          id: label(r), code: TICKET_NUMBER_UNSETTLED,
+          id: label(r), code: TICKET_NUMBER_UNSETTLED, ticketNumber: String(r.ticket_id),
           message: `request number "${String(r.ticket_id)}" is carried by other rows of this restore request, and ${RESTORE_HELD_BACK_ROUNDS} rounds each wrote one of them that did not land (refused by the database — see their own refusals — or skipped), so this row was not judged — not restored (a restore never files two requests under one number). Fix the refused rows, or send this one in a request of its own, and run the restore again`,
         });
       }

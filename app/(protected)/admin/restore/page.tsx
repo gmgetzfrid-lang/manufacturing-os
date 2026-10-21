@@ -32,7 +32,7 @@ import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, readBackupArchive, RESTORE_ADDITIVE_NOTE,
-  RESTORE_HELD_ELSEWHERE_NOTE, RESTORE_LINK_MEMBER_STATUSES, restoreRefusalLabel, isDanglingFlowRefusal, DANGLING_FLOW_CODE,
+  RESTORE_HELD_ELSEWHERE_NOTE, RESTORE_LINK_MEMBER_STATUSES,
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead, clearSkippedNodeImagePointers, nodeImagePointerLabel, overflowLines, type SkippedNodeImage,
   restoreEnvelopeNodeIds, nodeIdsPresentBeforeRestore, addRestoredNodeIds, storageAnsweredInRun, RESTORE_FILES_POINTER_NOTE,
@@ -40,6 +40,7 @@ import {
 } from "@/lib/dataRestore";
 import { restoreUploadRequest, isWorkspaceLogoKey, isNodeImageKey } from "@/lib/storageKey";
 import { withRestoreMembershipCheck, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
+import { RestoreResultPanel, fmtNum } from "./RestoreResultPanel";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
@@ -80,8 +81,6 @@ interface FilesProgress {
   /** ORG-18: a read or write of those pointers that failed, in words. */
   nodeImagePointerErrors?: string[];
 }
-
-function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
 
 /** ORG-18: every line of a restore list, behind a "Show all" toggle, so a
  *  list longer than the panel's summary still names every node. */
@@ -760,112 +759,6 @@ export default function RestorePage() {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-/** BKP-5: what the restore did, said plainly — never a green panel over a
- *  run that stopped, refused rows, cleared pointers, wrote nothing, wrote
- *  rows the server did not count, or met ids another workspace holds. */
-function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
-  const stopped = result.stoppedAt;
-  // An uncounted write is unknown — never "nothing new" (fix pass 2).
-  const nothingNew = result.totalInserted === 0 && result.totalUncounted === 0;
-  const tone = stopped || result.totalHeldElsewhere > 0
-    ? "border-red-200 bg-red-50 text-red-900"
-    : result.totalDanglingFlows > 0 || result.totalRefused > 0 || result.totalCleared > 0 || result.totalUncounted > 0 || nothingNew ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
-  // BKP-15: a process flow whose equipment or unit is gone is said on its own
-  // line — it was dangling in the backup — never counted with real refusals.
-  const refusedByTable = result.tables
-    .map((t) => ({ ...t, refused: t.refused.filter((r) => !isDanglingFlowRefusal(r)) }))
-    .filter((t) => t.refused.length > 0);
-  const danglingByTable = result.tables
-    .map((t) => ({ name: t.name, n: t.refused.filter(isDanglingFlowRefusal).length }))
-    .filter((t) => t.n > 0);
-  const clearedByTable = result.tables.filter((t) => t.cleared.length > 0);
-  const elsewhereByTable = result.tables.filter((t) => t.heldElsewhere > 0);
-  return (
-    <div className={`rounded-2xl border p-4 ${tone}`}>
-      <div className="flex items-center gap-2 text-sm font-black mb-1">
-        {stopped
-          ? <><AlertTriangle className="w-4 h-4" /> Restore stopped at <span className="font-mono">{stopped.table}</span> — {result.notAttempted.length} table(s) not attempted</>
-          : result.totalHeldElsewhere > 0
-            ? <><AlertTriangle className="w-4 h-4" /> {fmtNum(result.totalHeldElsewhere)} record(s) could NOT be restored — their ids are in use elsewhere</>
-            : nothingNew
-              ? <><AlertTriangle className="w-4 h-4" /> Nothing new was restored</>
-              : result.totalRefused > 0
-                ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalRefused)} row(s) refused</>
-                : result.totalDanglingFlows > 0
-                  ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalDanglingFlows)} dangling process flow(s) not restored</>
-                  : result.totalUncounted > 0
-                    ? <><AlertTriangle className="w-4 h-4" /> Restored — {fmtNum(result.totalUncounted)} record(s) the server did not count</>
-                    : result.totalCleared > 0
-                      ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalCleared)} pointer(s) cleared</>
-                      : <><CheckCircle2 className="w-4 h-4" /> Records restored</>}
-      </div>
-      <div className="text-[11px] leading-relaxed space-y-1">
-        <div>
-          Imported <b>{fmtNum(result.totalInserted)}</b> new record(s) · <b>{fmtNum(result.totalExisting)}</b> already here, kept exactly as they were
-          {result.totalHeldElsewhere > 0 && <> · <b>{fmtNum(result.totalHeldElsewhere)}</b> NOT restored (ids in use by another workspace)</>}
-          {result.totalUncounted > 0 && <> · <b>{fmtNum(result.totalUncounted)}</b> not counted by the server</>}
-          {result.totalFiltered > 0 && <> · <b>{fmtNum(result.totalFiltered)}</b> comment(s) on tickets archived since the backup left out</>}
-          {result.totalAdvanced > 0 && <> · <b>{fmtNum(result.totalAdvanced)}</b> numbering counter(s) advanced past the restored numbers (never lowered; a gap, never a repeat, where this workspace&apos;s prefix differs)</>}
-          {" "}· re-linked <b>{result.linkedUsers}</b> user(s) · created <b>{result.createdUsers}</b> restored placeholder(s).
-        </div>
-        {result.totalExisting > 0 && <div>{RESTORE_ADDITIVE_NOTE}</div>}
-        {result.totalHeldElsewhere > 0 && (
-          <div>
-            <b>Not restored:</b> {RESTORE_HELD_ELSEWHERE_NOTE}{" "}
-            {elsewhereByTable.map((t, i) => <React.Fragment key={t.name}>{i > 0 ? ", " : ""}<span className="font-mono">{t.name}</span> ({fmtNum(t.heldElsewhere)})</React.Fragment>)}.
-          </div>
-        )}
-        {stopped && (
-          <div>
-            <b>Why it stopped:</b> {stopped.error}. Tables restore parents-first, so nothing after <span className="font-mono">{stopped.table}</span> was attempted
-            {result.notAttempted.length > 0 && <> (<span className="font-mono">{result.notAttempted.join(", ")}</span>)</>}.
-            Records already written stay. Fix the cause and run the restore again — rows already restored are skipped, not duplicated.
-          </div>
-        )}
-        {refusedByTable.map((t) => (
-          <div key={t.name}>
-            <span className="font-mono">{t.name}</span>: {t.refused.length} row(s) refused —{" "}
-            {Array.from(new Set(t.refused.map((r) => restoreRefusalLabel(r.code)))).join("; ")} (see the audit log&apos;s RESTORE_CHUNK rows for each id).
-          </div>
-        ))}
-        {danglingByTable.map((t) => (
-          <div key={`dangling-${t.name}`}>
-            <span className="font-mono">{t.name}</span>: {t.n} flow(s) not restored — {restoreRefusalLabel(DANGLING_FLOW_CODE)}. Draw them again once the equipment or unit exists.
-          </div>
-        ))}
-        {clearedByTable.map((t) => (
-          <div key={t.name}>
-            <span className="font-mono">{t.name}</span>: {t.cleared.length} row(s) restored with a pointer cleared —{" "}
-            {Array.from(new Set(t.cleared.map((r) => r.message.split(" ")[0]))).join(", ")} (
-            {Array.from(new Set(t.cleared.map((r) => restoreRefusalLabel(r.code)))).join("; ")}).
-          </div>
-        ))}
-        {result.tables.filter((t) => (t.notApplied ?? []).length > 0).map((t) => (
-          <div key={`not-applied-${t.name}`} data-testid="restore-not-applied">
-            <span className="font-mono">{t.name}</span>: {t.notApplied.length} backup decision(s) not applied — this workspace holds the same{" "}
-            {t.name === "entity_mentions" ? "link" : "row"} under its key, and the live row was kept exactly as it is.
-            {t.notApplied.slice(0, 5).map((r, i) => (
-              <div key={`${t.name}-${r.id ?? i}`} className="ml-3">Backup row <span className="font-mono">{r.id ?? "(no id)"}</span>: {r.message}</div>
-            ))}
-            {t.notApplied.length > 5 && <div className="ml-3">…and {t.notApplied.length - 5} more (each is in the audit log&apos;s RESTORE_CHUNK rows).</div>}
-          </div>
-        ))}
-        {result.unmappedMembers > 0 && (
-          <div>
-            <b>{fmtNum(result.unmappedMembers)}</b> backup member(s) have no email address and no membership here, so no person here could be found for them — every record naming one was refused (above). Add their address to the backup&apos;s org_members and restore again.
-          </div>
-        )}
-        {result.placeholdersWithoutProfile > 0 && (
-          <div>
-            <b>{fmtNum(result.placeholdersWithoutProfile)}</b> restored placeholder(s) have no sign-in account yet, so a team membership naming one was not restored and a team creator / adder naming one was cleared — add them to their teams again once they accept the invitation.
-          </div>
-        )}
-        <div>Restored users are inactive — re-invite them to grant access.</div>
-      </div>
     </div>
   );
 }

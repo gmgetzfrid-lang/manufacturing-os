@@ -298,7 +298,7 @@ for (const world of ["without the number key", "with the number key"] as const) 
       const r = await applyRestoreChunk(sb as never, { orgId: ORG, table: "tickets", rows: [ticket("t-b-1", "KE-DDRT-26-0007"), ticket("t-b-2", "KE-DDRT-26-0007")], idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
       expect(r.ok).toBe(true);
       expect(r.inserted).toBe(1);
-      expect(r.refused).toEqual([{ id: "t-b-2", code: IN_USE, message: expect.stringMatching(/^request number "KE-DDRT-26-0007" is already carried in this workspace by request t-b-1 — this request was to be restored under a fresh number, but none could be taken now \(8 reservations on the counter were tried and each was lost to a concurrent filer.*Run the restore again: a re-run renumbers it$/) }]);
+      expect(r.refused).toEqual([{ id: "t-b-2", code: IN_USE, ticketNumber: "KE-DDRT-26-0007", message: expect.stringMatching(/^request number "KE-DDRT-26-0007" is already carried in this workspace by request t-b-1 — this request was to be restored under a fresh number, but none could be taken now \(8 reservations on the counter were tried and each was lost to a concurrent filer.*Run the restore again: a re-run renumbers it$/) }]);
       expect(r.renumbered).toEqual([]);
       expect(ticketsHere().map((t) => t.id)).toEqual(["t-b-1"]);
       expect(counterHere()).toMatchObject({ next_seq: 5 });
