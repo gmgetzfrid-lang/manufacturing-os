@@ -465,20 +465,30 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   // or dismissed bell row no longer re-opens it. Unreadable (not pasted, or
   // refused): the bell rows below alone, exactly as before. Stopped at its
   // page cap: the bell rows count as well (the union only ever withholds a
-  // nudge something says landed inside the window).
+  // nudge something says landed inside the window). The transition (P39
+  // fix pass): bell rows dated before the workspace's first P39 notice
+  // (`cutover`) still count — a manual re-nudge sent from the app before
+  // P39 is on no record, and still holds the robot's nudge for its one
+  // cooldown; once the window has moved past the cutover, no bell row is read.
   const recorded = await recentDistributionNotices(orgId, cooldownIso);
   if (recorded) {
     for (const k of recorded.reminded) recentlyNagged.add(k);
     for (const k of recorded.escalated) recentlyEscalated.add(k);
   }
-  if (!recorded?.complete) {
+  // the bell rows count: unread or incomplete record — all of them; a
+  // complete record — only those dated before its cutover (none once the
+  // window starts after it; all while no P39 notice has landed yet)
+  const bellsBefore = recorded?.complete && recorded.cutover ? recorded.cutover : null;
+  if (!recorded?.complete || !bellsBefore || bellsBefore > cooldownIso) {
     try {
-      const { data: recent } = await supabase
+      let bellQuery = supabase
         .from("notifications")
         .select("user_id, resource_id, metadata")
         .eq("org_id", orgId)
         .in("kind", ["ack_requested", "ack_overdue"])
         .gte("created_at", cooldownIso);
+      if (bellsBefore) bellQuery = bellQuery.lt("created_at", bellsBefore);
+      const { data: recent } = await bellQuery;
       for (const r of ((recent ?? []) as Array<Record<string, unknown>>)) {
         const meta = (r.metadata as Record<string, unknown> | null) ?? {};
         const key = `${r.user_id as string}:${r.resource_id as string}`;

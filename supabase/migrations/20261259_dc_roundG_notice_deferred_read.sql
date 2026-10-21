@@ -35,21 +35,32 @@
 -- SELECT policy narrows one action and touches nothing else; it is new,
 -- re-creates nothing, and narrows only.
 --
--- NOTE (re-paste of earlier files): like 20261163 / 20261257 for INSERT, this
--- is a second RESTRICTIVE policy on audit_logs, so a later re-paste of
--- 20261142 / 20261157 reads their "one RESTRICTIVE" probe false (already so
--- since 20261163), and a re-paste of 20261219 reads its "ONE restrictive
--- overlay" probe false (it counts RESTRICTIVE SELECT policies) — expected;
--- neither re-paste removes this policy, so the read rule stays in force.
+-- NOTE (20261142 / 20261157 / 20261219 — corrected at the P39 fix pass).
+-- Like 20261163 / 20261257 for INSERT, this is a second RESTRICTIVE policy
+-- on audit_logs:
+--   * 20261142 / 20261157 count EVERY restrictive policy on audit_logs, so
+--     their "one RESTRICTIVE" probe already reads false since 20261163 —
+--     unchanged by this file.
+--   * 20261219 (admin-and-org P13, NOT YET PASTED — row 172) counts the
+--     restrictive SELECT policies and expects ONE (its own overlay). ANY
+--     paste of 20261219 after this file — its FIRST paste as much as a
+--     re-paste — reads that one probe ("the read side is still one
+--     permissive member read (audit_logs_org_access) and ONE restrictive
+--     overlay ...") false. Expected, and harmless: 20261219 re-creates only
+--     audit_logs_admin_trail, never removes this policy (the read rule here
+--     stays in force), and every other probe of its result set reads true.
 -- ROLLBACK of this policy alone:
 --   DROP POLICY IF EXISTS audit_logs_notice_deferred_readers ON audit_logs;
 --
--- PASTE / DEPLOY ORDER. Independent of the P39 deploy and of every other
--- pending paste except 20261257's table being optional: it needs only
--- audit_logs and documents (schema.sql), so it may go in before or after
--- 20261257 (before it, no such audit row exists yet and nothing changes for
--- anyone). Either order with the P39 app is safe — the app never reads these
--- rows through a member's session (the replay is the service role's).
+-- PASTE / DEPLOY ORDER. Paste AFTER 20261219 — and so after the 20261142 /
+-- 20261157 → 20261219 sequence (rows 107 / 128 / 172) — so that 20261219's
+-- result set reads all true as its row says; pasted the other way round,
+-- expect that one false probe on 20261219's paste (above). That is the only
+-- ordering constraint: the file itself needs only audit_logs and documents
+-- (schema.sql), so it may go in before or after 20261257 (before it, no such
+-- audit row exists yet and nothing changes for anyone). Either order with the
+-- P39 app is safe — the app never reads these rows through a member's
+-- session (the replay is the service role's).
 --   * Pasted: a member who cannot read a document no longer reads a deferred
 --     notice row about it; every other row, for every reader, is unchanged.
 --   * Not pasted: today's reads (every member reads every row of the

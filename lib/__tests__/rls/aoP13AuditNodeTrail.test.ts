@@ -44,9 +44,11 @@ describe.skipIf(skip !== null)("ALOG-16: node-level authority rows reach only au
   const paste = (on: string) => runPsql(mosDb().conn!, on, "postgres", { sql: readFileSync(FILE, "utf8") });
   // document-control P39 (DIST-20, 20261259 — declared to admin-and-org): a
   // second RESTRICTIVE SELECT policy on audit_logs (the deferred notice rows'
-  // read rule). A re-paste of this file after it reads its "ONE restrictive
-  // overlay" probe false — expected, and said in both headers — and leaves
-  // that rule in force; every other probe stays true.
+  // read rule). ANY paste of this file after it — its first as much as a
+  // re-paste (20261219 is still pending; the P39 records ask 20261259 to go
+  // after it) — reads its "ONE restrictive overlay" probe false — expected,
+  // and said in 20261259's header — and leaves that rule in force; every
+  // other probe stays true.
   const onlyOverlayProbe = (line: string) => line.startsWith("the read side is still one permissive member read (audit_logs_org_access) and ONE restrictive overlay");
   const deferredRuleStands = (on: string) =>
     admin(on, "SELECT count(*) FROM pg_policies WHERE tablename = 'audit_logs' AND policyname = 'audit_logs_notice_deferred_readers' AND permissive = 'RESTRICTIVE'") === "1";

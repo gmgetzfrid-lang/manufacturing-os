@@ -191,8 +191,9 @@ import { recomputeDocumentAck, nudgeAcknowledgment, scanAndNotifyAcks } from "@/
 import { openReviewRoster, activateAlternate, scanReviews } from "@/lib/reviewControl";
 import { requestAcks, renudgeUnacked, scanDistributionAcks, type DistributionAck } from "@/lib/distributionAcks";
 import {
-  COOLDOWN_NOTICE_PAGES, COOLDOWN_NOTICE_ROWS, DOCUMENT_NOTICE_RECORD_DEFERRED, NOTICE_RECORD_ROUTE, NOTICE_VERIFY_WINDOW_MS, REQUEST_NOTICE_MAX,
-  bellKindsFor, deferredNoticeRow, noticeRow, parseRequestNoticeBody, recentDistributionNotices, recordRequestNotices, requestNoticeId, verifiedRequestRows,
+  COOLDOWN_NOTICE_PAGES, COOLDOWN_NOTICE_ROWS, DOCUMENT_NOTICE_RECORD_DEFERRED, NOTICE_KEEPALIVE_MAX_BODY, NOTICE_RECORD_ROUTE, NOTICE_RECORD_TIMEOUT_MS,
+  NOTICE_SINCE_MARGIN_MS, NOTICE_VERIFY_WINDOW_MS, REQUEST_NOTICE_MAX,
+  bellKindsFor, deferredNoticeRow, noticeRow, parseRequestNoticeBody, recentDistributionNotices, recordRequestNotices, requestNoticeDetails, requestNoticeId, verifiedRequestRows,
 } from "@/lib/documentNoticeRecord";
 import { POST } from "@/app/api/documents/notice-record/route";
 
@@ -378,6 +379,57 @@ describe("verifiedRequestRows — a request path's row is built from the bell ro
     expect(bellKindsFor("review_signoff", "alternate_activated")).toEqual(["review_alternate_activated"]);
     expect(bellKindsFor("distribution_ack", "alternate_activated")).toEqual([]);
   });
+
+  // ── P39 fix pass ──
+  it("a browser clock running FAST never loses the notice: a `since` later than the server's clock is ignored and the whole window is searched", async () => {
+    db.tables.distribution_acks = [ackRow()];
+    // the shop-floor PC is 2 minutes fast: since = server now + 2 min; the bell row landed 1 s ago (database time)
+    const b = bell({ created_at: iso(T0 - 1000) });
+    db.tables.notifications = [b];
+    const r = await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG }], { since: iso(T0 + 2 * 60_000) }), writer, T0);
+    expect(r).toMatchObject({ unmatched: 0, rows: [expect.objectContaining({ notification_id: b.id })] });
+    // a since just behind the server's clock is trusted, with NOTICE_SINCE_MARGIN_MS of room
+    const r2 = await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG }], { since: iso(T0 - 1000 + NOTICE_SINCE_MARGIN_MS - 1) }), writer, T0 + NOTICE_SINCE_MARGIN_MS);
+    expect(r2.rows.map((x) => x.notification_id)).toEqual([b.id]);
+  });
+
+  it("a bell row with no actor (a scan's own notice) is taken only on the server path with no writer — never for a member", async () => {
+    db.tables.distribution_acks = [ackRow()];
+    const scans = bell({ actor_user_id: null, actor_name: "System", metadata: { ackRequest: true, autoNag: true } });
+    db.tables.notifications = [scans];
+    expect(await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: scans.id, details: { manual: true } }]), { uid: ASG, name: "a" }, T0)).toEqual({ rows: [], unmatched: 1 });
+    expect(await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: scans.id, details: { manual: true } }]), writer, T0)).toEqual({ rows: [], unmatched: 1 });
+    expect((await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: scans.id }]), { uid: null, name: null }, T0)).rows).toHaveLength(1);
+  });
+
+  it("a bell row already on the record under a scan's row is never recorded a second time; a repeat of this request's own row is left to ON CONFLICT", async () => {
+    db.tables.distribution_acks = [ackRow()];
+    const b = bell();
+    db.tables.notifications = [b];
+    db.tables.document_notice_events = [{ id: U(7001), org_id: ORG, document_id: DOC, source: "distribution_ack", kind: "reminded", recipient: ASG, notification_id: b.id, noticed_at: b.created_at }];
+    expect(await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: b.id }]), writer, T0)).toEqual({ rows: [], unmatched: 1 });
+    db.tables.document_notice_events = [{ id: requestNoticeId(String(b.id)), org_id: ORG, document_id: DOC, source: "distribution_ack", kind: "reminded", recipient: ASG, notification_id: b.id, noticed_at: b.created_at }];
+    expect((await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: b.id }]), writer, T0)).rows).toHaveLength(1);
+    // before 20261257 the check reads nothing (nothing would be written either); a refused read throws
+    db.tables.document_notice_events = undefined;
+    expect((await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: b.id }]), writer, T0)).rows).toHaveLength(1);
+    db.tables.document_notice_events = [];
+    db.refuseReadOf.add("document_notice_events");
+    await expect(verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: b.id }]), writer, T0)).rejects.toThrow(/record could not be read/);
+  });
+
+  it("what the caller claims is bounded: the subject is the recipient, and the details are `manual` alone on a reminder or activation (none on a request)", async () => {
+    db.tables.distribution_acks = [ackRow(), ackRow({ id: U(902), recipient_user_id: OTHER })];
+    const b = bell();
+    db.tables.notifications = [b];
+    expect(await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, subject: OTHER, notificationId: b.id }]), writer, T0)).toEqual({ rows: [], unmatched: 1 });
+    const r = await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: b.id, details: { manual: true, escalated: true, ageDays: 999 } }]), writer, T0);
+    expect(r.rows[0]).toMatchObject({ subject_user_id: ASG, details: { manual: true, byMember: true } });
+    expect(Object.keys(r.rows[0].details).sort()).toEqual(["byMember", "manual"]);
+    expect(requestNoticeDetails("delivered", { manual: true })).toEqual({});
+    expect(requestNoticeDetails("alternate_activated", { manual: true, cause: "x" })).toEqual({ manual: true });
+    expect(requestNoticeDetails("reminded", { manual: "yes" })).toEqual({});
+  });
 });
 
 // ── the request paths, on the server path (the cron, a service-role route) ──
@@ -538,6 +590,41 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
     expect(sizes).toEqual([REQUEST_NOTICE_MAX, 5]);
   });
 
+  it("P39 fix pass: keepalive only on a first attempt with a small body; a refused keepalive (the browser's shared quota) is repeated without it", async () => {
+    vi.stubGlobal("window", {});
+    db.session = { access_token: "tok", user: { id: CTRL } };
+    const seen: Array<{ keepalive: boolean | undefined; size: number }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: RequestInit) => {
+      seen.push({ keepalive: init.keepalive, size: String(init.body).length });
+      if (init.keepalive) throw new TypeError("Failed to fetch (keepalive quota)");
+      return new Response("{}", { status: 201 });
+    }));
+    const small = { orgId: ORG, documentId: DOC, source: "distribution_ack" as const, notices: [{ kind: "delivered" as const, recipient: ASG }] };
+    expect(await recordRequestNotices(small)).toBe("sent");
+    expect(seen.map((x) => x.keepalive)).toEqual([true, false]);
+    seen.length = 0;
+    const large = { ...small, notices: Array.from({ length: REQUEST_NOTICE_MAX }, (_, i) => ({ kind: "delivered" as const, recipient: U(3000 + i) })) };
+    expect(await recordRequestNotices(large)).toBe("sent");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].size).toBeGreaterThan(NOTICE_KEEPALIVE_MAX_BODY);
+    expect(seen[0].keepalive).toBe(false);
+  });
+
+  it("P39 fix pass: every chunk and repeat of one action shares ONE deadline — once it has passed nothing more is sent, and the action returns (said, not recorded)", async () => {
+    vi.stubGlobal("window", {});
+    db.session = { access_token: "tok", user: { id: CTRL } };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const slow = vi.fn(async () => {
+      vi.setSystemTime(Date.now() + NOTICE_RECORD_TIMEOUT_MS + 1);   // the route took the whole allowance
+      throw new Error("aborted");
+    });
+    vi.stubGlobal("fetch", slow);
+    const notices = Array.from({ length: REQUEST_NOTICE_MAX + 5 }, (_, i) => ({ kind: "delivered" as const, recipient: U(4000 + i) }));
+    expect(await recordRequestNotices({ orgId: ORG, documentId: DOC, source: "distribution_ack", notices })).toBe("failed");
+    expect(slow).toHaveBeenCalledTimes(1);                                 // no repeat, no second chunk past the deadline
+    expect(warn.mock.calls.map((c) => String(c[0])).join(" ")).toMatch(/did not take 5 notice\(s\) \(the action's 8 s for the record had passed\)/);
+  });
+
   it("the route: a signed-in member who can read the document gets the rows the bell rows prove — a landed request is recorded, dated when it landed", async () => {
     auth.actor = { userId: CTRL, email: "cal@x.test" };
     db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG }];
@@ -561,6 +648,33 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ rows: 0, unmatched: 3, outcome: "none" });
     expect(events()).toEqual([]);
+  });
+
+  it("P39 fix pass: through the route a member can neither re-record a scan's own bell row (no actor), nor dress up kind details or a colleague as the subject", async () => {
+    auth.actor = { userId: ASG, email: "ash@x.test" };
+    db.tables.document_acknowledgments = [
+      { id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG },
+      { id: U(902), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: OTHER },
+    ];
+    const scanReminder = seedBell({ actor_user_id: null, actor_name: null });           // the read-&-understood scan's reminder to ASG
+    const own = seedBell({ actor_user_id: ASG, user_id: ASG });
+    const res = await POST(req(body([
+      { kind: "reminded", recipient: ASG, notificationId: scanReminder.id, details: { manual: true } },
+      { kind: "delivered", recipient: ASG, subject: OTHER, notificationId: own.id },
+    ])));
+    expect(await res.json()).toMatchObject({ rows: 0, unmatched: 2 });
+    const res2 = await POST(req(body([{ kind: "delivered", recipient: ASG, notificationId: own.id, details: { manual: true, ageDays: 500 } }])));
+    expect(res2.status).toBe(201);
+    expect(events()).toEqual([expect.objectContaining({ kind: "delivered", subject_user_id: ASG, details: { byMember: true } })]);
+  });
+
+  it("P39 fix pass: a re-nudge from a browser whose clock runs 2 minutes fast is still recorded (the emit fan-out, matched by writer and window)", async () => {
+    auth.actor = { userId: CTRL, email: "cal@x.test" };
+    db.tables.distribution_acks = [{ id: U(801), org_id: ORG, document_id: DOC, version_id: VER, rev_label: "C", recipient_user_id: ASG, acknowledged_at: null }];
+    const b = seedBell({ metadata: { ackRequest: true }, created_at: iso(T0 - 1000) });
+    const res = await POST(req(body([{ kind: "reminded", recipient: ASG, sourceId: U(801), details: { manual: true } }], { source: "distribution_ack", versionId: null, since: iso(T0 + 2 * 60_000) })));
+    expect(res.status).toBe(201);
+    expect(events()).toEqual([expect.objectContaining({ kind: "reminded", notification_id: b.id, details: { manual: true, byMember: true } })]);
   });
 
   it("the route refuses: no session (401), a document the caller cannot read (403), a malformed or oversized body (400 / 413)", async () => {
@@ -617,22 +731,39 @@ describe("DIST-20 — scanDistributionAcks's cooldown reads the record ONLY once
     await renudgeUnacked({ orgId: ORG, documentId: DOC, libraryId: LIB, docLabel: "P-1", revLabel: "C", acks: acksOf().slice(0, 1), actorUserId: CTRL, actorName: "Cal" });
     expect(events("reminded").map((e) => e.recipient)).toEqual([ASG]);
     db.tables.notifications = [];                                          // purged (or dismissed)
-    db.reads = {};
     await run(1);
-    expect(db.reads.notifications ?? 0).toBe(0);                           // the cooldown never read the bell rows
     expect(bellsTo(ASG, "ack_requested")).toHaveLength(0);                 // held by the manual re-nudge on the record
     expect(bellsTo(REV, "ack_requested")).toHaveLength(1);                 // the other recipient: nudged, as today
-    await run(4);                                                          // the window has passed
+    db.reads = {};
+    await run(4);                                                          // the window has passed (and moved past the cutover)
     expect(bellsTo(ASG, "ack_requested")).toHaveLength(1);
+    expect(db.reads.notifications ?? 0).toBe(0);                           // the cooldown read the record alone
   });
 
   it("a manual REQUEST (delivered) holds the robot's nudge too, as its bell row did", async () => {
     seed();
     db.tables.document_notice_events!.push({ id: U(3000), org_id: ORG, document_id: DOC, source: "distribution_ack", source_id: U(801), kind: "delivered", recipient: ASG, noticed_at: daysBefore(1) });
     const got = await recentDistributionNotices(ORG, daysBefore(3));
-    expect(got).toEqual({ reminded: new Set([`${ASG}:${DOC}`]), escalated: new Set(), complete: true });
+    expect(got).toEqual({ reminded: new Set([`${ASG}:${DOC}`]), escalated: new Set(), complete: true, cutover: null });
     await run(0);
     expect(bellsTo(ASG, "ack_requested")).toHaveLength(0);
+  });
+
+  it("P39 fix pass — REGRESSION across the transition: a manual re-nudge sent from the app BEFORE P39 (a bell row, on no record) still holds the robot's nudge for its one cooldown after the deploy and the paste; a bell row after the cutover that is not on the record holds nothing; past the cutover no bell row is read", async () => {
+    seed();
+    // day 0: the P38 app re-nudges ASG — a bell row only
+    db.tables.notifications = [{ id: U(6000), org_id: ORG, user_id: ASG, kind: "ack_requested", resource_type: "document", resource_id: DOC, actor_user_id: CTRL, metadata: { ackRequest: true }, created_at: iso(T0) }];
+    // day 1: P39 deployed and 20261257 pasted; the first scan reads a complete record with no row for ASG
+    await run(1);
+    expect(bellsTo(ASG, "ack_requested")).toHaveLength(1);                 // held by the pre-P39 re-nudge: no double nudge
+    expect(bellsTo(REV, "ack_requested")).toHaveLength(1);                 // REV nudged — the workspace's first P39 notice (the cutover)
+    // a forged ackRequest bell row to REV after the cutover holds nothing once REV's own window has passed
+    db.tables.notifications.push({ id: U(6001), org_id: ORG, user_id: REV, kind: "ack_requested", resource_type: "document", resource_id: DOC, actor_user_id: ASG, metadata: { ackRequest: true }, created_at: iso(T0 + 3.5 * DAY) });
+    db.reads = {};
+    await run(4.5);
+    expect(bellsTo(ASG, "ack_requested")).toHaveLength(2);                 // ASG's window (from day 0) has passed: nudged
+    expect(bellsTo(REV, "ack_requested")).toHaveLength(3);                 // the forged row held nothing
+    expect(db.reads.notifications ?? 0).toBe(0);                           // the window starts after the cutover: the record alone
   });
 
   it("REGRESSION: before 20261257 (or a refused read) the bell rows count, exactly as today — a manual re-nudge's bell row holds the nudge", async () => {

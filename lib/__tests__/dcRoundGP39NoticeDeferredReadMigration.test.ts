@@ -86,6 +86,8 @@ describe("20261259 — the deferred notice rows read as the record reads (DEC-30
 
   it("the header says why a policy and not a service-role-only table (DEC-90 ruling (4) for P39), and what a re-paste of 20261142 / 20261157 / 20261219 reads", () => {
     expect(sql).toMatch(/WHY A POLICY, NOT A SERVICE-ROLE-ONLY DEFERRAL TABLE/);
-    expect(sql).toMatch(/a re-paste of 20261219 reads its "ONE restrictive\n-- overlay" probe false/);
+    // P39 fix pass: 20261219 is not yet pasted — ANY paste of it after this file (its first as much as a re-paste) reads that probe false, so the paste goes after it
+    expect(sql).toMatch(/ANY\n-- {5}paste of 20261219 after this file — its FIRST paste as much as a\n-- {5}re-paste — reads that one probe/);
+    expect(sql).toMatch(/-- PASTE \/ DEPLOY ORDER\. Paste AFTER 20261219/);
   });
 });

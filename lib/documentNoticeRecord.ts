@@ -487,11 +487,19 @@ export async function replayDeferredNotices(orgId: string, source: DocumentNotic
  *  DIST-20 (P39): a request (`delivered`) counts with the reminders — a
  *  manual request or re-nudge is on the record now, and holds the robot's
  *  nudge for one cooldown as its bell row did; with `complete` true the
- *  caller reads the record ONLY. */
-export async function recentDistributionNotices(orgId: string, sinceIso: string): Promise<{ reminded: Set<string>; escalated: Set<string>; complete: boolean } | null> {
+ *  caller reads the record and, for the transition only, the bell rows
+ *  dated before `cutover`.
+ *  `cutover` (P39 fix pass): when this workspace's first notice that names
+ *  its bell row (notification_id — written only by the P39 app, the scans'
+ *  and the request paths' alike) landed; null when there is none yet. A
+ *  bell row dated before it may be a notice the record never got (a manual
+ *  nudge sent from the app before P39), so the caller counts those as well,
+ *  for one cooldown — after which no bell row is read again. */
+export async function recentDistributionNotices(orgId: string, sinceIso: string): Promise<{ reminded: Set<string>; escalated: Set<string>; complete: boolean; cutover: string | null } | null> {
   const reminded = new Set<string>();
   const escalated = new Set<string>();
   let complete = true;
+  let cutover: string | null = null;
   try {
     // a notice dated in the future never holds a nudge (P38 fix pass)
     const nowIso = new Date().toISOString();
@@ -526,7 +534,15 @@ export async function recentDistributionNotices(orgId: string, sinceIso: string)
       if (!last?.noticed_at || !last?.id) break;
       cursor = { at: last.noticed_at, id: last.id };
     }
-    return { reminded, escalated, complete };
+    const { data: first, error: firstError } = await db().from("document_notice_events")
+      .select("noticed_at")
+      .eq("org_id", orgId).eq("source", "distribution_ack")
+      .not("notification_id", "is", null)
+      .order("noticed_at", { ascending: true }).limit(1);
+    if (firstError) return null;
+    const at = ((first ?? []) as Array<{ noticed_at?: unknown }>)[0]?.noticed_at;
+    cutover = typeof at === "string" && at ? at : null;
+    return { reminded, escalated, complete, cutover };
   } catch {
     return null;
   }
@@ -542,13 +558,25 @@ export const REQUEST_NOTICE_KINDS: readonly RequestNoticeKind[] = ["delivered", 
 export const NOTICE_VERIFY_WINDOW_MS = 15 * 60_000;
 /** A bell row dated past the server's clock by more than this is never taken. */
 export const NOTICE_FUTURE_SKEW_MS = 60_000;
+/** A bell row named by no id is searched for from this long before the
+ *  action began (`since`) — and only when `since` is not later than the
+ *  server's own clock: `since` is the writer's clock (the browser's), so a
+ *  later one (a clock running fast) is never trusted and the whole
+ *  NOTICE_VERIFY_WINDOW_MS is searched instead (P39 fix pass). */
+export const NOTICE_SINCE_MARGIN_MS = 5 * 60_000;
 /** Notices one request to the route carries at most (the browser splits a
  *  larger set; one request stays under the 64 kB a keepalive fetch may send). */
 export const REQUEST_NOTICE_MAX = 200;
 /** The browser's door into the record (the member cannot write it). */
 export const NOTICE_RECORD_ROUTE = "/api/documents/notice-record";
-/** The browser waits at most this long for the route. */
+/** The browser waits at most this long for the route — one request, and
+ *  every chunk and repeat of an action together (one deadline, P39 fix
+ *  pass): the action is never delayed past it. */
 export const NOTICE_RECORD_TIMEOUT_MS = 8_000;
+/** A request body above this is sent without `keepalive` (the browser's
+ *  in-flight keepalive bodies share one 64 KiB quota; a refused keepalive
+ *  request is repeated once without it). */
+export const NOTICE_KEEPALIVE_MAX_BODY = 8_000;
 /** The route refuses a body larger than this (413). */
 export const NOTICE_RECORD_MAX_BODY = 64_000;
 
@@ -574,8 +602,10 @@ export interface RequestNoticeInput {
   source: DocumentNoticeSource;
   /** the revision the obligations are on (resolves a notice that names no sourceId) */
   versionId?: string | null;
-  /** when the action began (ISO): a bell row named by no id is searched for
-   *  from a minute before it — never earlier than NOTICE_VERIFY_WINDOW_MS ago */
+  /** when the action began (ISO, the writer's clock): a bell row named by
+   *  no id is searched for from NOTICE_SINCE_MARGIN_MS before it — never
+   *  earlier than NOTICE_VERIFY_WINDOW_MS ago; a `since` later than the
+   *  server's clock is ignored (the whole window is searched) */
   since?: string | null;
   notices: RequestNotice[];
 }
@@ -624,24 +654,35 @@ type BellRow = { id?: unknown; user_id?: unknown; kind?: unknown; actor_user_id?
  * NOTICE_FUTURE_SKEW_MS) and no earlier than NOTICE_VERIFY_WINDOW_MS ago; a
  * distribution notice only a row carrying metadata.ackRequest (what
  * requestAcks / renudgeUnacked write), a read-&-understood notice only one
- * without it. Named by its id when the writer chose one (its actor the
- * writer or none — a browser row before 20261160 carries the actor its
- * writer passed); otherwise the newest such row the writer wrote since the
- * action began. Each bell row is taken once. The obligation row (source_id,
- * revision, label) is read here too: the one named, or the person's row on
- * the revision named. A notice with no landed bell row, or no obligation
- * row, is not recorded (counted in `unmatched`). Throws on a refused read
- * (the caller says it; nothing is written).
+ * without it; ALWAYS one the writer wrote (its actor the writer — a row
+ * with no actor only for a server notice with no actor, never through the
+ * route, so a member can never name a scan's own bell row). Named by its id
+ * when the writer chose one; otherwise the newest such row the writer wrote
+ * since the action began (`since`, the writer's clock, trusted only when not
+ * later than the server's — NOTICE_SINCE_MARGIN_MS). Each bell row is taken
+ * once, and a bell row already on the record under another row (a scan's)
+ * is not taken again. What the caller claims is bounded too (P39 fix pass):
+ * the subject is the recipient (no request path names another), and the
+ * details are `manual` alone (on a reminder or an activation). The
+ * obligation row (source_id, revision, label) is read here too: the one
+ * named, or the person's row on the revision named. A notice with no
+ * landed bell row, or no obligation row, is not recorded (counted in
+ * `unmatched`). Throws on a refused read (the caller says it; nothing is
+ * written).
  */
 export async function verifiedRequestRows(
   client: Db, input: RequestNoticeInput, writer: NoticeWriter, nowMs: number = Date.now(),
 ): Promise<{ rows: DocumentNoticeRow[]; unmatched: number }> {
-  const notices = input.notices.filter((n) => n && REQUEST_NOTICE_KINDS.includes(n.kind) && isText(n.recipient)).slice(0, REQUEST_NOTICE_MAX);
+  const notices = input.notices
+    .filter((n) => n && REQUEST_NOTICE_KINDS.includes(n.kind) && isText(n.recipient) && (!n.subject || n.subject === n.recipient))
+    .slice(0, REQUEST_NOTICE_MAX);
   let unmatched = input.notices.length - notices.length;
   if (notices.length === 0) return { rows: [], unmatched };
   const floor = nowMs - NOTICE_VERIFY_WINDOW_MS;
   const began = input.since ? Date.parse(input.since) : NaN;
-  const searchFrom = Number.isFinite(began) ? Math.max(floor, began - 60_000) : floor;
+  // `since` is the writer's clock: one later than the server's (a fast
+  // browser clock) is never trusted — the whole window is searched
+  const searchFrom = Number.isFinite(began) && began <= nowMs ? Math.max(floor, began - NOTICE_SINCE_MARGIN_MS) : floor;
   const recipients = [...new Set(notices.map((n) => n.recipient))];
   const kinds = [...new Set(notices.flatMap((n) => bellKindsFor(input.source, n.kind)))];
   if (kinds.length === 0) return { rows: [], unmatched: unmatched + notices.length };
@@ -668,9 +709,11 @@ export async function verifiedRequestRows(
       if (input.source === "acknowledgment" && ackRequest) return false;
       return true;
     };
+    // always the writer's own row (a row with no actor only when the writer
+    // is none — a server notice; the route's writer is always its caller)
     const actor = (b: BellRow) => (typeof b.actor_user_id === "string" ? b.actor_user_id : null);
     const bell = n.notificationId
-      ? bells.find((b) => b.id === n.notificationId && fits(b) && (actor(b) === writer.uid || actor(b) === null))
+      ? bells.find((b) => b.id === n.notificationId && fits(b) && actor(b) === writer.uid)
       : bells.find((b) => fits(b) && actor(b) === writer.uid && Date.parse(String(b.created_at)) >= searchFrom);
     if (!bell) { unmatched += 1; continue; }
     used.add(String(bell.id));
@@ -678,8 +721,26 @@ export async function verifiedRequestRows(
   }
   if (matched.length === 0) return { rows: [], unmatched };
 
+  // a bell row already on the record under another row (a scan's own
+  // notice) is never recorded a second time; a repeat of this request is the
+  // same row (its id is the bell row's) and is left to ON CONFLICT
+  const { data: onFile, error: onFileError } = await client.from("document_notice_events")
+    .select("id, notification_id")
+    .eq("org_id", input.orgId).in("notification_id", matched.map((m) => String(m.bell.id)));
+  if (onFileError && !isMissingNoticeSchema(onFileError)) {
+    throw new Error(`the record could not be read (${onFileError.message ?? String(onFileError)})`);
+  }
+  const elsewhere = new Set(((onFileError ? [] : onFile ?? []) as Array<{ id?: unknown; notification_id?: unknown }>)
+    .filter((r) => isText(r.notification_id) && r.id !== requestNoticeId(String(r.notification_id)))
+    .map((r) => String(r.notification_id)));
+  if (elsewhere.size > 0) {
+    unmatched += matched.filter((m) => elsewhere.has(String(m.bell.id))).length;
+    matched.splice(0, matched.length, ...matched.filter((m) => !elsewhere.has(String(m.bell.id))));
+    if (matched.length === 0) return { rows: [], unmatched };
+  }
+
   const ob = OBLIGATION[input.source];
-  const subjects = [...new Set(matched.map((m) => m.n.subject || m.n.recipient))];
+  const subjects = [...new Set(matched.map((m) => m.n.recipient))];
   let q = client.from(ob.table).select(`id, ${ob.person}, ${ob.version}, ${ob.label}`)
     .eq("org_id", input.orgId).eq("document_id", input.documentId).in(ob.person, subjects);
   if (input.versionId) q = q.eq(ob.version, input.versionId);
@@ -689,7 +750,7 @@ export async function verifiedRequestRows(
 
   const rows: DocumentNoticeRow[] = [];
   for (const { n, bell, at } of matched) {
-    const subject = n.subject || n.recipient;
+    const subject = n.recipient;
     const mine = obligations.filter((o) => o[ob.person] === subject && (!n.sourceId || o.id === n.sourceId));
     if (mine.length !== 1 || !isText(mine[0].id)) { unmatched += 1; continue; }
     const o = mine[0];
@@ -702,11 +763,20 @@ export async function verifiedRequestRows(
       recipient: n.recipient, subject_user_id: subject,
       notification_id: String(bell.id),
       actor_name: (typeof bell.actor_name === "string" && bell.actor_name) || writer.name || (writer.uid ? null : "System"),
-      details: { ...deferrableDetails(n.kind, n.details), ...(writer.uid ? { byMember: true } : {}) },
+      details: { ...requestNoticeDetails(n.kind, n.details), ...(writer.uid ? { byMember: true } : {}) },
       noticed_at: new Date(Math.min(at, nowMs)).toISOString(),
     });
   }
   return { rows, unmatched };
+}
+
+/** The details a request path's row may carry: `manual: true` on a reminder
+ *  or an activation, nothing else (a request carries none) — the only
+ *  details the request paths send; anything else the caller adds is
+ *  dropped (P39 fix pass). Pure. */
+export function requestNoticeDetails(kind: RequestNoticeKind, details: unknown): Record<string, unknown> {
+  if (kind === "delivered" || !details || typeof details !== "object" || Array.isArray(details)) return {};
+  return (details as Record<string, unknown>).manual === true ? { manual: true } : {};
 }
 
 /** What a request path's record write came to: as noticeRecorder's, or, in
@@ -714,10 +784,14 @@ export async function verifiedRequestRows(
 export type RequestRecordOutcome = NoticeWriteOutcome | "sent" | "failed";
 
 /** BROWSER: hand the notices to POST /api/documents/notice-record (the
- *  member's own session as the bearer), REQUEST_NOTICE_MAX a request, each
- *  bounded by NOTICE_RECORD_TIMEOUT_MS; a request the route could not take
- *  (unreachable, or a 5xx) is sent once more — a repeat records nothing
- *  twice (the row id is the bell row's). Never throws. */
+ *  member's own session as the bearer), REQUEST_NOTICE_MAX a request; a
+ *  request the route could not take (unreachable, a refused keepalive, or a
+ *  5xx) is sent once more, without keepalive — a repeat records nothing
+ *  twice (the row id is the bell row's). Every request, chunk and repeat
+ *  of one action shares ONE deadline (NOTICE_RECORD_TIMEOUT_MS), so the
+ *  action is never delayed past it; what the deadline cut off is said, not
+ *  recorded. keepalive (the request outlives a closed page) only on a first
+ *  attempt whose body is at most NOTICE_KEEPALIVE_MAX_BODY. Never throws. */
 async function postNoticeRecord(input: RequestNoticeInput): Promise<RequestRecordOutcome> {
   const { data } = await supabase.auth.getSession();
   const token = data?.session?.access_token;
@@ -726,19 +800,22 @@ async function postNoticeRecord(input: RequestNoticeInput): Promise<RequestRecor
     return "failed";
   }
   let failed = false;
+  const deadline = Date.now() + NOTICE_RECORD_TIMEOUT_MS;
   for (let i = 0; i < input.notices.length; i += REQUEST_NOTICE_MAX) {
     const body = JSON.stringify({ ...input, notices: input.notices.slice(i, i + REQUEST_NOTICE_MAX) });
     const count = Math.min(REQUEST_NOTICE_MAX, input.notices.length - i);
     let why = "";
     for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const left = deadline - Date.now();
+      if (left <= 0) { why = why || `the action's ${NOTICE_RECORD_TIMEOUT_MS / 1000} s for the record had passed`; break; }
       const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timer = ctrl ? setTimeout(() => ctrl.abort(), NOTICE_RECORD_TIMEOUT_MS) : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), left) : null;
       try {
         const res = await fetch(NOTICE_RECORD_ROUTE, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
           body,
-          keepalive: true,
+          keepalive: attempt === 1 && body.length <= NOTICE_KEEPALIVE_MAX_BODY,
           ...(ctrl ? { signal: ctrl.signal } : {}),
         });
         if (res.ok) { why = ""; break; }

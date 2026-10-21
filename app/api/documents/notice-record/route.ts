@@ -19,9 +19,13 @@
 //     known kinds and sources, ids that are UUIDs — parseRequestNoticeBody);
 //   * every row is built from the BELL ROW that landed, read here
 //     (verifiedRequestRows): this document's, that person's, of the notice's
-//     kind, written by the caller, within NOTICE_VERIFY_WINDOW_MS — never from
-//     what the body claims. noticed_at is the bell row's created_at; the row
-//     id is derived from the bell row's id, so a repeat writes nothing twice.
+//     kind, written by the caller (never a row with no actor — a scan's),
+//     within NOTICE_VERIFY_WINDOW_MS, and not already on the record under a
+//     scan's row — never from what the body claims. The body's `since` is
+//     the browser's clock and is ignored when later than the server's; the
+//     subject is the recipient and the details are `manual` alone (P39 fix
+//     pass). noticed_at is the bell row's created_at; the row id is derived
+//     from the bell row's id, so a repeat writes nothing twice.
 // The rows are written by noticeRecorder with the shared client bound to the
 // service role for this request (runWithServerClient): checked, retried once,
 // and deferred to one DOCUMENT_NOTICE_RECORD_DEFERRED audit row (the system

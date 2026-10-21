@@ -414,11 +414,25 @@ describe("DIST-19 — the distribution-ack nag (lib/distributionAcks.ts scanDist
     expect(bellsTo("rev", "ack_requested")).toHaveLength(1);
   });
 
-  it("P39 (DIST-20): with the record in place the cooldown reads the record ONLY — a bell row that is not on the record (a manual nudge sent before P39, or a forged one) no longer holds the robot's nudge", async () => {
+  it("P39 (DIST-20, fix pass) — the transition: while no P39 notice is on file, a manual nudge's bell row (sent before P39) still holds the robot's nudge, as today", async () => {
     seed();
     db.tables.notifications = [{ id: "n0", org_id: "o1", user_id: "asg", kind: "ack_requested", resource_id: "d1", metadata: { ackRequest: true }, created_at: daysBefore(1) }];
     await cronRun("distribution-acks", scanDistributionAcks, 0);
-    expect(bellsTo("asg", "ack_requested")).toHaveLength(2);              // the old bell row, and the robot's nudge
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(1);              // only the manual one
+    expect(bellsTo("rev", "ack_requested")).toHaveLength(1);
+  });
+
+  it("P39 (DIST-20, fix pass) — after the workspace's first P39 notice (the cutover) the record answers alone: a bell row dated before it still holds for its one cooldown; one dated after it that is not on the record (a forged one) does not", async () => {
+    seed();
+    // the workspace's first notice that names its bell row landed two and a half days ago
+    db.tables.document_notice_events.push({ id: "p39-first", org_id: "o1", document_id: "dz", source: "distribution_ack", source_id: "kz", kind: "reminded", recipient: "zed", subject_user_id: "zed", notification_id: "bz", details: {}, noticed_at: iso(T0 - 2.5 * DAY) });
+    db.tables.notifications = [
+      { id: "n-before", org_id: "o1", user_id: "asg", kind: "ack_requested", resource_id: "d1", metadata: { ackRequest: true }, created_at: iso(T0 - 2.75 * DAY) },   // a pre-P39 manual nudge
+      { id: "n-after", org_id: "o1", user_id: "rev", kind: "ack_requested", resource_id: "d1", metadata: { ackRequest: true }, created_at: daysBefore(1) },           // not on the record: forged
+    ];
+    await cronRun("distribution-acks", scanDistributionAcks, 0);
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(1);              // held by the pre-cutover bell row
+    expect(bellsTo("rev", "ack_requested")).toHaveLength(2);              // the forged row holds nothing: nudged
   });
 
   it("REGRESSION: before 20261257 the nag counts from the bell rows alone and nudges exactly as before", async () => {
@@ -483,7 +497,7 @@ describe("DIST-19 (P38 fix pass) — the replay trusts only the recorder's own s
   it("the cooldown read never counts a record row dated in the future", async () => {
     seedAcks();
     db.tables.document_notice_events.push({ ...keptRow({ id: "planted", noticed_at: "2099-01-01T00:00:00.000Z" }) });
-    expect(await recentDistributionNotices("o1", daysBefore(3))).toEqual({ reminded: new Set(), escalated: new Set(), complete: true });
+    expect(await recentDistributionNotices("o1", daysBefore(3))).toEqual({ reminded: new Set(), escalated: new Set(), complete: true, cutover: null });
     await cronRun("distribution-acks", scanDistributionAcks, 0);
     expect(bellsTo("asg", "ack_requested")).toHaveLength(1);
   });
@@ -667,7 +681,7 @@ describe("DIST-19 (merge-time fix pass) — the nag's cooldown read of the recor
     const got = await recentDistributionNotices("o1", daysBefore(3));
     expect(got?.reminded.size).toBe(1501);
     expect(got?.reminded.has("asg:d1")).toBe(true);
-    expect(db.noticeReads).toBe(3);                                       // 1000, 501, then the empty page
+    expect(db.noticeReads).toBe(4);                                       // 1000, 501, then the empty page; then the cutover (P39 fix pass)
     db.noticeReads = 0;
     await cronRun("distribution-acks", scanDistributionAcks, 0);
     expect(bellsTo("asg", "ack_requested")).toHaveLength(0);             // one nudge per cooldown, past 1000 rows

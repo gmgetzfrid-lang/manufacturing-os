@@ -1251,11 +1251,20 @@ done-when the integrator added at the P38 merge):
    other action reads exactly as before. Re-creates nothing; no function, no
    trigger. The app never reads these rows through a member's session (the
    scans' replay is the service role's), so either order is safe.
-2. **Independent of every other pending paste** — it needs only
-   `audit_logs` and `documents` (`schema.sql`); before or after `20261257`
-   (before it, no such audit row exists and nothing changes for anyone).
-   Re-runnable. A later re-paste of `20261219` reads its "ONE restrictive
-   overlay" probe false and leaves this rule in force (expected).
+2. **Paste AFTER `20261219`** (admin-and-org P13, row 172 — still
+   PENDING) — and so after the `20261142` / `20261157` → `20261219`
+   sequence (rows 107 / 128 / 172). `20261219` counts the RESTRICTIVE
+   SELECT policies on `audit_logs` and expects one; ANY paste of `20261219`
+   after `20261259` — its FIRST paste as much as a re-paste — reads that one
+   probe ("… and ONE restrictive overlay …") false. That is expected: it
+   leaves `audit_logs_notice_deferred_readers` in force and every other
+   probe reads true — the row must say so for any sitting that pastes
+   `20261219` after this file. Otherwise the file needs only `audit_logs`
+   and `documents` (`schema.sql`); before or after `20261257` (before it, no
+   such audit row exists and nothing changes for anyone). Re-runnable.
+   *(Corrected at the P39 fix pass, 2026-10-21: the first version said
+   "independent of every other pending paste" and spoke only of a "later
+   re-paste" of `20261219`, which is wrong while `20261219` is unpasted.)*
 - **The P39 app before `20261257` is pasted:** every request and manual
   reminder path behaves exactly as today; `POST /api/documents/notice-record`
   answers `missing`; the distribution nag counts its cooldown from the bell
