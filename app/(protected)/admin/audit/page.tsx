@@ -21,7 +21,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ScrollText, AlertTriangle, Filter, RefreshCw, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound } from "lucide-react";
+import { ScrollText, AlertTriangle, Filter, RefreshCw, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound, Ban } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import IsoGuidance from "@/components/ui/IsoGuidance";
@@ -87,6 +87,8 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   SUPERSEDE_DOC:         { icon: ArrowUpRight,  tone: "bg-violet-50 text-violet-700 border-violet-200" },
   REVERT:                { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
   ARCHIVE_DOC:           { icon: ShieldOff,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]" },
+  // REV-32 (document-control P34): the metadata editor's void, a retirement.
+  VOID_DOC:              { icon: Ban,           tone: "bg-rose-50 text-rose-700 border-rose-200" },
   DOC_SPLIT:             { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
   CREATED_FROM_SPLIT:    { icon: Zap,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
   DOC_MERGED:            { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },

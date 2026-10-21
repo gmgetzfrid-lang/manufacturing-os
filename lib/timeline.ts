@@ -650,6 +650,9 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     case "PROJECT_LESSONS_SAVED": return "Lessons learned saved";
     case "SUPERSEDE_DOC":return "Document superseded";
     case "ARCHIVE_DOC":  return d.action === "unarchive" ? "Restored from archive" : "Archived";
+    // REV-32 (document-control P34): the metadata editor's save to Void
+    // (P31's VOID_DOC) is a retirement, read beside its two siblings.
+    case "VOID_DOC":     return "Voided";
     default:             return r.action.replace(/_/g, " ").toLowerCase();
   }
 }

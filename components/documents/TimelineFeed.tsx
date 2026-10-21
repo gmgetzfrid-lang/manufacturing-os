@@ -17,7 +17,7 @@ import {
   FileText, GitBranch, GitCommitVertical, History as HistoryIcon,
   Download as DownloadIcon, Eye, LogIn, LogOut, AlertTriangle,
   Archive, Rewind, Stamp, Layers, Activity, MessageSquare,
-  AlertOctagon, Check, Flag, Split, Merge, Hash, Repeat2, Undo2, Wrench,
+  AlertOctagon, Check, Flag, Split, Merge, Hash, Repeat2, Undo2, Wrench, Ban,
 } from "lucide-react";
 import type { TimelineEvent } from "@/lib/timeline";
 import { auditActorNote, AUDIT_TRAIL_UNSEEN_NOTE } from "@/lib/auditActions";
@@ -139,6 +139,8 @@ function visualsFor(event: TimelineEvent): RowVisuals {
     case "EQUIPMENT_STATE_CHANGED": return { Icon: Wrench,   ringClass: "border-blue-400",   bgClass: "bg-blue-50",     iconColor: "text-blue-700" };
     case "SUPERSEDE_DOC": return { Icon: Stamp,        ringClass: "border-amber-500", bgClass: "bg-amber-50", iconColor: "text-amber-700" };
     case "ARCHIVE_DOC":   return { Icon: Archive,      ringClass: "border-slate-400", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
+    // REV-32 (document-control P34): a void is a retirement, beside its siblings.
+    case "VOID_DOC":      return { Icon: Ban,          ringClass: "border-rose-400",  bgClass: "bg-rose-50", iconColor: "text-rose-700" };
     default:              return { Icon: HistoryIcon,  ringClass: "border-[var(--color-border-strong)]", bgClass: "bg-[var(--color-surface-2)]", iconColor: "text-[var(--color-text-muted)]" };
   }
 }

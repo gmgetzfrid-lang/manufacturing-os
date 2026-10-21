@@ -44,7 +44,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Activity, RefreshCw, AlertTriangle, FileText, Briefcase, Lock, Unlock, AlertOctagon, GitBranch, Zap, Pencil, Trash2, FileSignature, Layers, Download } from "lucide-react";
+import { Activity, RefreshCw, AlertTriangle, FileText, Briefcase, Lock, Unlock, AlertOctagon, GitBranch, Zap, Pencil, Trash2, FileSignature, Layers, Download, Ban } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
@@ -80,6 +80,8 @@ const ACTION_VERBS: Record<string, { verb: string; emoji?: string; icon: React.C
   REV_BACKFILL:        { verb: "backfilled a revision of", icon: GitBranch, tone: "blue" },
   SUPERSEDE_DOC:       { verb: "superseded", icon: GitBranch, tone: "violet" },
   ARCHIVE_DOC:         { verb: "archived", icon: Trash2, tone: "slate" },
+  // REV-32 (document-control P34): the metadata editor's void, a retirement.
+  VOID_DOC:            { verb: "voided", icon: Ban, tone: "rose" },
   DOC_SPLIT:           { verb: "split", icon: GitBranch, tone: "fuchsia" },
   DOC_MERGED:          { verb: "merged", icon: GitBranch, tone: "fuchsia" },
   DOC_RENUMBERED:      { verb: "renumbered", icon: Pencil, tone: "amber" },
@@ -235,7 +237,7 @@ export default function ActivityFeedPage() {
       if (SCOPE_STAMP_ACTIONS.has(r.action)) continue; // SEC-21: one milestone delete counts once
       if (new Date(r.timestamp).toDateString() === todayStr) today++;
       if (r.userEmail) actors.add(r.userEmail);
-      if (["REV_UP", "REV_BACKFILL", "SUPERSEDE_DOC", "DOC_SPLIT", "DOC_MERGED", "DOC_RENUMBERED"].includes(r.action)) cat.revisions++;
+      if (["REV_UP", "REV_BACKFILL", "SUPERSEDE_DOC", "VOID_DOC", "DOC_SPLIT", "DOC_MERGED", "DOC_RENUMBERED"].includes(r.action)) cat.revisions++;
       else if (["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE", "DOCUMENT_CHECKOUT", "DOCUMENT_CHECKIN", "FIELD_VERIFIED", "CHECKOUT_RELEASED"].includes(r.action)) cat.locks++;
       else if (["HOLD_OPENED", "HOLD_RELEASED"].includes(r.action)) cat.holds++;
       else if (r.action.startsWith("MILESTONE_")) cat.milestones++;
