@@ -87,6 +87,16 @@
 // row already Superseded or Archived gets nothing again
 // (skipsRetirementRecall). Never one recall chain per row (the per-row burst
 // P26's fix pass reverted).
+//
+// DIST-16 (document-control P28 fix pass): a change to an ISSUE status reads
+// the rows' statuses the same way, once, before the apply, and every row it
+// writes over a prior that was not a controlled issue (a retired row put
+// back; a Draft / In Review row issued; a prior the read could not give) is
+// one candidate for ONE batched recall withdrawal after the apply
+// (lib/staleCopies.ts withdrawRetirementBatch, fired, never awaited) — each
+// person a standing recall named gets one notice for the whole apply. Each
+// row's changeDocumentStatus is told withdrawRecall: false, so no row starts
+// its own preference-exempt withdrawal.
 
 import React, { useState } from "react";
 import {
@@ -176,9 +186,12 @@ export default function BulkEditModal({
     const now = new Date().toISOString();
     // PROD-17 (P28): a retiring change reads every row's status once, before the apply.
     const retiring = target.kind === "status" && isRetiredStatus(newValue);
+    // DIST-16 (P28 fix pass): so does a change to an issue status (the put-back candidates).
+    const issuing = target.kind === "status" && isControlledIssueStatus(newValue);
     const priorStatusOf = new Map<string, string | null>();
     const retired: Array<{ documentId: string; libraryId: string | null; docLabel: string; recallCopyHolders: boolean }> = [];
-    if (retiring) {
+    const putBack: Array<{ documentId: string; libraryId: string | null; docLabel: string; restoredStatus: string }> = [];
+    if (retiring || issuing) {
       const ids = docs.map((d) => d.id).filter((id): id is string => !!id);
       // A read that fails (or throws) leaves the priors unknown — which
       // recalls — and never stops the apply.
@@ -237,7 +250,13 @@ export default function BulkEditModal({
             // notifications N17 (R2, DEC-90): one bulk edit, many documents —
             // the rosters it opens keep their bell rows and emails, no push
             notifyPush: false,
+            // DIST-16 (P28 fix pass): the recalls are withdrawn ONCE for the apply, below
+            withdrawRecall: false,
           });
+          // Written: a row whose prior was not a controlled issue (or unknown) is a put-back candidate.
+          if (issuing && !isControlledIssueStatus(priorStatusOf.get(doc.id) ?? null)) {
+            putBack.push({ documentId: doc.id, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", restoredStatus: newValue });
+          }
           const label = doc.documentNumber || doc.title || doc.id;
           // Written, but not issued by THIS write (P17 integrator fix): the row
           // was already issued — by another change, after this page loaded —
@@ -325,6 +344,16 @@ export default function BulkEditModal({
         })).catch((e) => console.error("[bulk-edit] PROD-17: the bulk retirement recall did not run", e));
       } else {
         console.error(`[bulk-edit] PROD-17: ${retired.length} document(s) were set to ${newValue} with no workspace known, so no retirement recall was sent`);
+      }
+    }
+    if (putBack.length > 0) {
+      const orgId = library.orgId || docs.find((d) => d.orgId)?.orgId || null;
+      if (orgId) {
+        void import("@/lib/staleCopies").then(({ withdrawRetirementBatch }) => withdrawRetirementBatch({
+          orgId, door: "put_back", actorUserId, actorName: userEmail || actorUserId, docs: putBack,
+        })).catch((e) => console.error("[bulk-edit] DIST-16: the bulk recall withdrawal did not run", e));
+      } else {
+        console.error(`[bulk-edit] DIST-16: ${putBack.length} document(s) were set to ${newValue} with no workspace known, so no recall withdrawal was sent`);
       }
     }
     setResults({ ok, failed, followUps, notIssued, unseen, unchecked });

@@ -1064,6 +1064,15 @@ export default function LibraryExplorerPage() {
   const handleBulkArchive = async () => {
     if (selectedDocIds.size === 0) return;
     if (!(await appConfirm({ title: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}?`, message: "They keep their history but disappear from the default view." }))) return;
+    // PROD-17 (document-control P28 fix pass): a bulk archive retires every
+    // row it lands, so while who is archiving (or the workspace) is not yet
+    // known it is refused, nothing written — never an archive that told
+    // nobody (no recall can be sent without the actor).
+    const recallOrg = activeOrgId || library?.orgId || null;
+    if (!uid || !recallOrg) {
+      await appAlert({ message: "Archive refused — nothing was archived: archiving retires these documents (their copy holders recalled, their watchers told), and who is archiving them (your sign-in and workspace) is not known yet. Try again in a moment.", tone: "danger" });
+      return;
+    }
     const ids = Array.from(selectedDocIds);
     const now = new Date().toISOString();
     // SURF-3: a legal hold freezes the record against every destructive verb,
@@ -1104,14 +1113,9 @@ export default function LibraryExplorerPage() {
         return { documentId: id, libraryId, docLabel: row?.documentNumber || row?.title || row?.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(id) ?? null) };
       });
     if (recallDocs.length > 0) {
-      const recallOrg = activeOrgId || library?.orgId || null;
-      if (uid && recallOrg) {
-        void import("@/lib/staleCopies").then(({ recallRetiredBatch }) => recallRetiredBatch({
-          orgId: recallOrg, newStatus: "Archived", actorUserId: uid, actorName: userEmail || uid, docs: recallDocs,
-        })).catch((e) => console.error("[library] PROD-17: the bulk archive's retirement recall did not run", e));
-      } else {
-        console.error(`[library] PROD-17: ${recallDocs.length} document(s) were archived before who is archiving them was known, so no retirement recall was sent`);
-      }
+      void import("@/lib/staleCopies").then(({ recallRetiredBatch }) => recallRetiredBatch({
+        orgId: recallOrg, newStatus: "Archived", actorUserId: uid, actorName: userEmail || uid, docs: recallDocs,
+      })).catch((e) => console.error("[library] PROD-17: the bulk archive's retirement recall did not run", e));
     }
     setDocuments((prev) => prev.map((d) =>
       done.has(d.id!) ? { ...d, status: "Archived" as DocumentRecord["status"] } : d
@@ -2911,26 +2915,32 @@ export default function LibraryExplorerPage() {
     // outcome for a retirement is NO_STATUS_ISSUE, so there is nothing more
     // to say; a refusal reads as the bare write's did, in the database's own
     // words, and a write that matched no row keeps the bare write's sentence.
-    // While who is saving is not yet known, the save is the bare write it
-    // always was (no recall can be sent without the actor — logged).
+    // P28 fix pass: while who is saving (or the workspace) is not yet known,
+    // the save is refused, nothing written — as the issue route below
+    // refuses — never the bare write that retired a document and told
+    // nobody (no recall can be sent without the actor).
     if (toStatus !== undefined && isRetiredStatus(toStatus)) {
       const retireOrgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
-      if (uid && retireOrgId) {
-        try {
-          await changeDocumentStatus({
-            orgId: retireOrgId, documentId: selectedDoc.id, toStatus, door: "metadata",
-            actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
-            patch: payload,
-          });
-        } catch (e) {
-          const msg = (e as Error)?.message || String(e);
-          throw new Error(/^The status was NOT changed — you don't have authority to change this document/.test(msg)
-            ? "Save refused — nothing was saved: the database updated no document (you may no longer have edit access to it)."
-            : `Save refused — nothing was saved: ${msg}`);
-        }
-        return;
+      if (!uid || !retireOrgId) {
+        throw new Error(`Save refused — nothing was saved: this save writes the status ${toStatus}, which can retire the document (its copy holders recalled, its watchers told), and who is saving it (your sign-in and workspace) is not known yet. Try again in a moment.`);
       }
-      console.error(`[library] PROD-17: document ${selectedDoc.id} is saved as ${toStatus} before who is saving it is known, so no retirement recall is sent`);
+      try {
+        await changeDocumentStatus({
+          orgId: retireOrgId, documentId: selectedDoc.id, toStatus, door: "metadata",
+          actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
+          patch: payload,
+          // P28 fix pass: consulted only if its pre-write read fails — a
+          // metadata edit on a document this page holds as already retired
+          // in this status is then no retirement (nothing recalled).
+          heldStatus: selectedDoc.status ?? null,
+        });
+      } catch (e) {
+        const msg = (e as Error)?.message || String(e);
+        throw new Error(/^The status was NOT changed — you don't have authority to change this document/.test(msg)
+          ? "Save refused — nothing was saved: the database updated no document (you may no longer have edit access to it)."
+          : `Save refused — nothing was saved: ${msg}`);
+      }
+      return;
     }
     if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {
       const orgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;

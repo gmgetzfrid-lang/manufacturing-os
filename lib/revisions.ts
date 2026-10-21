@@ -3068,6 +3068,17 @@ export async function changeDocumentStatus(input: {
    *  many documents) — the roster's requests keep their bell rows and
    *  emails and skip the push leg; the metadata save (one document) omits it. */
   notifyPush?: boolean;
+  /** DIST-16 (document-control P28 fix pass): false from the bulk status
+   *  editor — it withdraws the recalls of every row it put back in force
+   *  ONCE per apply (lib/staleCopies.ts withdrawRetirementBatch), never one
+   *  preference-exempt withdrawal per row; the metadata save omits it. */
+  withdrawRecall?: boolean;
+  /** PROD-17 (document-control P28 fix pass): the status the caller's own
+   *  copy of the row holds (the metadata save's selectedDoc) — consulted
+   *  only when the pre-write read fails: a save that writes the retired
+   *  status the row already held (a title fix on an Archived document) is
+   *  then no retirement, and recalls nobody. */
+  heldStatus?: string | null;
 }): Promise<StatusIssueOutcome> {
   const before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
   const now = new Date().toISOString();
@@ -3099,9 +3110,14 @@ export async function changeDocumentStatus(input: {
   // checkout holder or package owner, so they stay in the watchers'
   // audience. (document-control P28: the library page's metadata save routes
   // its retirements here; a caller that routes one here must not also call
-  // recallOnRetirement: that would be a second recall.)
+  // recallOnRetirement: that would be a second recall.) P28 fix pass: when
+  // the read failed and the caller's own copy already held this retired
+  // status, the save re-writes a status the row had (a metadata edit on a
+  // retired document) — no retirement, nothing sent.
+  const heldSameRetired = before.readFailed === true && input.heldStatus !== undefined
+    && (input.heldStatus ?? "").trim() === input.toStatus.trim();
   if (isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim()
-    && !skipsRetirementRecall(before.fromStatus)) {
+    && !skipsRetirementRecall(before.fromStatus) && !heldSameRetired) {
     recallOnRetirement({
       orgId: input.orgId, documentId: input.documentId,
       newStatus: input.toStatus.trim(), replacementNote: null,
@@ -3110,10 +3126,14 @@ export async function changeDocumentStatus(input: {
       recallCopyHolders: recallsCopyHolders(before.fromStatus),
     });
   }
-  // DIST-16 (document-control P28): a put-back — a retired document written
-  // back into an issue status (or one whose prior status could not be read)
-  // — withdraws the retirement recall standing on it, fired, never awaited.
-  if (isControlledIssueStatus(input.toStatus) && (isRetiredStatus(before.fromStatus) || before.readFailed === true)) {
+  // DIST-16 (document-control P28): an issue status written over a prior
+  // that was not one — a retired document put back, a document restored into
+  // Draft / In Review and issued later (P28 fix pass), or a prior that could
+  // not be read — withdraws the retirement recall standing on it (the record
+  // decides; nothing is sent when none stands), fired, never awaited. The
+  // bulk editor passes withdrawRecall: false and withdraws once per apply.
+  if (input.withdrawRecall !== false && isControlledIssueStatus(input.toStatus)
+    && (before.readFailed === true || !isControlledIssueStatus(before.fromStatus))) {
     void import("@/lib/staleCopies").then(({ withdrawRetirementRecall }) => withdrawRetirementRecall({
       orgId: input.orgId, documentId: input.documentId, restoredStatus: input.toStatus, door: "put_back",
       actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,

@@ -122,10 +122,13 @@ describe("recall email routing (DIST-13, source pins)", () => {
     // doors' batched recall (a one-document notice, a several-document
     // notice: recall; each document's FYI: watched) and a restore's recall
     // withdrawal — on the recall category, to reach everyone the recall did.
+    // P28 fix pass: the bulk put-back's withdrawal (withdrawRetirementBatch:
+    // its several-document notice; its one-document notice reuses the single
+    // door's builder) — on the recall category too.
     expect(categories).toEqual([
       'category: "recall"', 'category: "watched"',
       'category: "recall"', 'category: "recall"', 'category: "watched"',
-      'category: "recall"',
+      'category: "recall"', 'category: "recall"',
       'category: "recall"', 'category: "recall"',
     ]);
   });

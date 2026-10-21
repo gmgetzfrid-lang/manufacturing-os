@@ -19,6 +19,7 @@ import { logAuditAction, logRevisionEvent } from "@/lib/audit";
 import { ticketVerdict, issueInForce, isIssuedTicketRev, type TicketVerdict } from "@/lib/verifyTicketVerdict";
 import { isTerminalTicketStatus } from "@/lib/ticketShed";
 import { isControlledIssueStatus } from "@/lib/issueStatus";
+import { formatRecordDate, orgTimeZone } from "@/lib/recordTime";
 
 /** How far back a download is considered "a copy someone may still hold".
  *  PERSONAL list: 60 days — beyond that, self-service noise outweighs value.
@@ -616,24 +617,29 @@ export async function recallRetiredBatch(input: {
 
 /** DIST-16 (document-control P28): a document put back IN FORCE — an
  *  un-archive, a reversed split or merge restoring it, a status editor's
- *  put-back of a retired issue — withdraws the retirement recall that
- *  stands on it. "Stands" is read from the document's own record: every
- *  DISTRIBUTION_RECALL row with `retirement: true` (and recipients) written
- *  after its last withdrawal row (`recallWithdrawn: true`) — the recall row
- *  is the only evidence a recall went (a bare retirement leaves none). The
- *  people those rows named (the actor aside) get ONE notice that the recall
- *  is withdrawn, naming the status the document is back in and the recall's
- *  date, and the withdrawal goes on the record (the next restore reads from
- *  it). Its kind is library_doc_revised — a declared, NON-compliance,
- *  deletable FYI (20261160 lists it, so it is written before and after
- *  20261206's paste; the integrator's ruling under DEC-90 prefers an
- *  existing kind to a new notification_kinds() row) — on the recall
- *  category, so it reaches everyone the preference-exempt recall reached.
- *  Nothing goes when the document is not back in force (a restore into
- *  Draft or In Review: "do not work from your copy" still holds) or no
- *  recall stands. A record that cannot be read is logged and recorded,
- *  never guessed. Fired, never awaited, by every restore door; returns how
- *  many people were told. */
+ *  write of an issue status over a prior that was not one (a put-back of a
+ *  retired issue, or a document restored into Draft / In Review and issued
+ *  later) — withdraws the retirement recall that stands on it. "Stands" is
+ *  read from the document's own record: every DISTRIBUTION_RECALL row with
+ *  `retirement: true` (and recipients) written after its last withdrawal row
+ *  (`recallWithdrawn: true`) — the recall row is the only evidence a recall
+ *  went (a bare retirement leaves none). The people those rows named (the
+ *  actor aside) get ONE notice that the recall is withdrawn, naming the
+ *  status the document is back in, the recall by its bell title and the
+ *  recall's date in the workspace's zone (lib/recordTime.ts — the bell row
+ *  the holder has shows that day, never a UTC day that can be the next one),
+ *  and the withdrawal goes on the record (the next restore reads from it).
+ *  Its kind is library_doc_revised — a declared, NON-compliance, deletable
+ *  FYI (20261160 lists it, so it is written before and after 20261206's
+ *  paste; the integrator's ruling under DEC-90 prefers an existing kind to a
+ *  new notification_kinds() row) — on the recall category, so it reaches
+ *  everyone the preference-exempt recall reached. Nothing goes when the
+ *  document is not back in force (a restore into Draft or In Review: "do not
+ *  work from your copy" still holds) or no recall stands. A record that
+ *  cannot be read is logged and recorded, never guessed. Fired, never
+ *  awaited, by every single-document restore door (a BULK put-back sends
+ *  withdrawRetirementBatch once per apply instead); returns how many people
+ *  were told. */
 export async function withdrawRetirementRecall(input: {
   orgId: string;
   documentId: string;
@@ -647,32 +653,13 @@ export async function withdrawRetirementRecall(input: {
   const restored = (input.restoredStatus ?? "").trim();
   if (!restored || !isControlledIssueStatus(restored)) return 0;
   try {
-    const { data, error } = await supabase
-      .from("audit_logs")
-      .select("details, timestamp")
-      .eq("resource_type", "document")
-      .eq("resource_id", input.documentId)
-      .eq("action", "DISTRIBUTION_RECALL")
-      .order("timestamp", { ascending: false })
-      .limit(200);
-    if (error) {
-      console.error(`[staleCopies] DIST-16: the recall record of document ${input.documentId} could not be read, so whether a retirement recall stands is unknown and no withdrawal was sent (${error.message})`);
-      await recordWithdrawal(input, restored, [], null, { withdrawalUnavailable: true, readError: error.message });
+    const read = await readStandingRecall(input.documentId, input.actorUserId);
+    if (!read.ok) {
+      console.error(`[staleCopies] DIST-16: the recall record of document ${input.documentId} could not be read, so whether a retirement recall stands is unknown and no withdrawal was sent (${read.error})`);
+      await recordWithdrawal(input, restored, [], null, { withdrawalUnavailable: true, readError: read.error });
       return 0;
     }
-    const rows = ((data as Array<{ details: Record<string, unknown> | null; timestamp: string | null }> | null) ?? []);
-    const standing: Array<{ at: string | null; recipients: string[] }> = [];
-    for (const r of rows) {           // newest first
-      const d = r.details ?? {};
-      if (d.recallWithdrawn === true) break;
-      if (d.retirement !== true || d.unavailable === true) continue;
-      const recipients = Array.isArray(d.recipients) ? (d.recipients as unknown[]).filter((u): u is string => typeof u === "string" && !!u) : [];
-      if (recipients.length > 0) standing.push({ at: r.timestamp ?? null, recipients });
-    }
-    const people = [...new Set(standing.flatMap((s) => s.recipients))].filter((u) => u !== input.actorUserId);
-    if (people.length === 0) return 0;
-    const recallAt = standing[0].at;
-    const when = recallAt ? new Date(recallAt).toISOString().slice(0, 10) : "an earlier date";
+    if (read.people.length === 0) return 0;
     let docLabel = input.docLabel ?? null;
     let libraryId = input.libraryId ?? null;
     if (!docLabel || !libraryId) {
@@ -683,26 +670,179 @@ export async function withdrawRetirementRecall(input: {
         libraryId = libraryId ?? doc?.library_id ?? null;
       } catch { /* named generically below */ }
     }
-    const label = docLabel || "A document";
+    const timeZone = await orgTimeZone(supabase, input.orgId);
     await emit({
-      orgId: input.orgId,
-      category: "recall",
-      kind: "library_doc_revised",
-      title: `${label} is back in force (${restored}) — the recall of ${when} is withdrawn`,
-      body:
-        `${input.actorName || "Someone"} put ${label} back in force as ${restored}. The notice of ${when} telling you to stop work ` +
-        `from your copy and destroy old prints is withdrawn: the document is current again. Before working from a copy, check it is the current revision.`,
-      link: libraryId ? `/documents/${libraryId}?doc=${input.documentId}` : undefined,
-      resource: { type: "document", id: input.documentId },
+      ...singleWithdrawalNotice({
+        orgId: input.orgId, documentId: input.documentId, libraryId, label: docLabel || "A document",
+        restored, read, timeZone, door: input.door, actorName: input.actorName ?? null,
+      }),
       actorUserId: input.actorUserId,
-      actorName: input.actorName ?? undefined,
-      audience: { involved: people },
-      metadata: { recallWithdrawn: true, restoredStatus: restored, withdrawsRecallAt: recallAt, door: input.door },
     });
-    await recordWithdrawal(input, restored, people, recallAt);
-    return people.length;
+    await recordWithdrawal(input, restored, read.people, read.recallAt);
+    return read.people.length;
   } catch (e) {
     console.error(`[staleCopies] DIST-16: the recall withdrawal of document ${input.documentId} failed part-way`, e);
+    return 0;
+  }
+}
+
+type StandingRecall =
+  | { ok: true; people: string[]; recallAt: string | null; recalledAs: string | null }
+  | { ok: false; error: string };
+
+/** DIST-16: the retirement recall standing on a document — the people every
+ *  DISTRIBUTION_RECALL row since its last withdrawal named (the actor
+ *  aside), the newest recall's time and the status it recalled for. */
+async function readStandingRecall(documentId: string, actorUserId: string): Promise<StandingRecall> {
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("details, timestamp")
+    .eq("resource_type", "document")
+    .eq("resource_id", documentId)
+    .eq("action", "DISTRIBUTION_RECALL")
+    .order("timestamp", { ascending: false })
+    .limit(200);
+  if (error) return { ok: false, error: error.message ?? "the recall record could not be read" };
+  const rows = ((data as Array<{ details: Record<string, unknown> | null; timestamp: string | null }> | null) ?? []);
+  const standing: Array<{ at: string | null; recipients: string[]; newStatus: string | null }> = [];
+  for (const r of rows) {           // newest first
+    const d = r.details ?? {};
+    if (d.recallWithdrawn === true) break;
+    if (d.retirement !== true || d.unavailable === true) continue;
+    const recipients = Array.isArray(d.recipients) ? (d.recipients as unknown[]).filter((u): u is string => typeof u === "string" && !!u) : [];
+    if (recipients.length > 0) standing.push({ at: r.timestamp ?? null, recipients, newStatus: typeof d.newStatus === "string" && d.newStatus ? d.newStatus : null });
+  }
+  const people = [...new Set(standing.flatMap((s) => s.recipients))].filter((u) => u !== actorUserId);
+  return { ok: true, people, recallAt: standing[0]?.at ?? null, recalledAs: standing[0]?.newStatus ?? null };
+}
+
+/** DIST-16: the one-document withdrawal notice — the single door's and a
+ *  bulk put-back's for a holder recalled on one document, word for word
+ *  (each caller's emit names its own actor, so the actor census reads it).
+ *  The recall is named by the bell title the holder has ("<doc> is now
+ *  <status> — your copy is dead paper") and by its day in the workspace's
+ *  zone (formatRecordDate names the zone; UTC when none is set). */
+function singleWithdrawalNotice(input: {
+  orgId: string; documentId: string; libraryId: string | null; label: string; restored: string;
+  read: { people: string[]; recallAt: string | null; recalledAs: string | null };
+  timeZone: string | null; door: string; actorName: string | null;
+}): Omit<Parameters<typeof emit>[0], "actorUserId"> {
+  const { label, restored, read } = input;
+  const when = read.recallAt ? formatRecordDate(read.recallAt, input.timeZone) : "an earlier date";
+  const named = read.recalledAs ? ` ("${label} is now ${read.recalledAs} — your copy is dead paper")` : "";
+  return {
+    orgId: input.orgId,
+    category: "recall",
+    kind: "library_doc_revised",
+    title: `${label} is back in force (${restored}) — the recall of ${when} is withdrawn`,
+    body:
+      `${input.actorName || "Someone"} put ${label} back in force as ${restored}. The notice of ${when}${named} telling you to stop work ` +
+      `from your copy and destroy old prints is withdrawn: the document is current again. Before working from a copy, check it is the current revision.`,
+    link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
+    resource: { type: "document", id: input.documentId },
+    actorName: input.actorName ?? undefined,
+    audience: { involved: read.people },
+    metadata: { recallWithdrawn: true, restoredStatus: restored, withdrawsRecallAt: read.recallAt, door: input.door },
+  };
+}
+
+/** DIST-16 (document-control P28 fix pass): a BULK put-back's withdrawal —
+ *  the bulk status editor writing an issue status over rows whose prior was
+ *  not one (read once, fresh, before the apply; a failed read leaves a
+ *  row's prior unknown, which is asked). One call per apply, fired, never
+ *  awaited, instead of one withdrawRetirementRecall per row (each on the
+ *  preference-exempt recall category — a 150-row put-back would have been
+ *  150 notices and 150 safety_recall emails to one holder, the per-row
+ *  burst recallRetiredBatch exists to avoid). Here:
+ *    · each document's standing recall is read (a read that fails is
+ *      logged and recorded as a withdrawal that could not be computed);
+ *    · each person a standing recall named gets ONE notice for the whole
+ *      apply naming every restored document they were recalled on — a
+ *      person recalled on one document gets the single door's notice, word
+ *      for word;
+ *    · each document gets its own recallWithdrawn DISTRIBUTION_RECALL row
+ *      naming the people its recall had named (where the next restore stops
+ *      reading).
+ *  Nothing goes for a document whose status is not an issue status or on
+ *  which no recall stands. Returns how many people were told. */
+export async function withdrawRetirementBatch(input: {
+  orgId: string;
+  door: "put_back";
+  actorUserId: string;
+  actorName?: string | null;
+  docs: Array<{ documentId: string; libraryId?: string | null; docLabel: string; restoredStatus: string }>;
+}): Promise<number> {
+  try {
+    const docs = [...new Map(input.docs
+      .map((d) => ({ ...d, restoredStatus: (d.restoredStatus ?? "").trim() }))
+      .filter((d) => !!d.restoredStatus && isControlledIssueStatus(d.restoredStatus))
+      .map((d) => [d.documentId, d] as const)).values()];
+    if (docs.length === 0) return 0;
+    const standingOf = new Map<string, { people: string[]; recallAt: string | null; recalledAs: string | null }>();
+    for (const d of docs) {
+      let read: StandingRecall;
+      try { read = await readStandingRecall(d.documentId, input.actorUserId); } catch (e) { read = { ok: false, error: (e as Error)?.message || String(e) }; }
+      if (!read.ok) {
+        console.error(`[staleCopies] DIST-16: the recall record of document ${d.documentId} could not be read, so whether a retirement recall stands is unknown and no withdrawal was sent for it (${read.error})`);
+        await recordWithdrawal({ ...input, documentId: d.documentId }, d.restoredStatus, [], null, { withdrawalUnavailable: true, readError: read.error, batch: true });
+        continue;
+      }
+      if (read.people.length > 0) standingOf.set(d.documentId, read);
+    }
+    if (standingOf.size === 0) return 0;
+    const docsOfPerson = new Map<string, string[]>();
+    for (const d of docs) for (const u of standingOf.get(d.documentId)?.people ?? []) docsOfPerson.set(u, [...(docsOfPerson.get(u) ?? []), d.documentId]);
+    const groups = new Map<string, { docIds: string[]; people: string[] }>();
+    for (const [u, ids] of docsOfPerson) {
+      const key = ids.join("|");
+      const g = groups.get(key) ?? { docIds: ids, people: [] };
+      g.people.push(u);
+      groups.set(key, g);
+    }
+    const byId = new Map(docs.map((d) => [d.documentId, d]));
+    const timeZone = await orgTimeZone(supabase, input.orgId);
+    for (const g of groups.values()) {
+      if (g.docIds.length === 1) {
+        const d = byId.get(g.docIds[0])!;
+        const st = standingOf.get(d.documentId)!;
+        await emit({
+          ...singleWithdrawalNotice({
+            orgId: input.orgId, documentId: d.documentId, libraryId: d.libraryId ?? null, label: d.docLabel || "A document",
+            restored: d.restoredStatus, read: { ...st, people: g.people }, timeZone, door: input.door,
+            actorName: input.actorName ?? null,
+          }),
+          actorUserId: input.actorUserId,
+        });
+        continue;
+      }
+      const named = g.docIds.map((id) => byId.get(id)!);
+      const libs = [...new Set(named.map((d) => d.libraryId ?? null))];
+      const shown = named.slice(0, 10).map((d) => `${d.docLabel || "A document"} (${d.restoredStatus})`);
+      await emit({
+        orgId: input.orgId,
+        category: "recall",
+        kind: "library_doc_revised",
+        title: `${named.length} documents you were recalled on are back in force — the recalls are withdrawn`,
+        body:
+          `${input.actorName || "Someone"} put these documents back in force: ` +
+          `${shown.join(", ")}${named.length > shown.length ? ` and ${named.length - shown.length} more` : ""}. ` +
+          `The notices telling you to stop work from your copies of them and destroy old prints are withdrawn: they are current again. ` +
+          `Before working from a copy, check it is the current revision.`,
+        link: libs.length === 1 && libs[0] ? `/documents/${libs[0]}` : undefined,
+        resource: libs.length === 1 && libs[0] ? { type: "library", id: libs[0] } : { type: "document", id: named[0].documentId },
+        actorUserId: input.actorUserId,
+        actorName: input.actorName ?? undefined,
+        audience: { involved: g.people },
+        metadata: { recallWithdrawn: true, documentIds: g.docIds, door: input.door },
+      });
+    }
+    for (const d of docs) {
+      const st = standingOf.get(d.documentId);
+      if (st) await recordWithdrawal({ ...input, documentId: d.documentId }, d.restoredStatus, st.people, st.recallAt, { batch: true });
+    }
+    return docsOfPerson.size;
+  } catch (e) {
+    console.error(`[staleCopies] DIST-16: the bulk recall withdrawal (${input.docs.length} document(s)) failed part-way`, e);
     return 0;
   }
 }

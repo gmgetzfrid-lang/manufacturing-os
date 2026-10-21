@@ -24,6 +24,7 @@ import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fa
 const state = vi.hoisted(() => ({
   db: null as unknown as FakeDb,
   refuse: {} as Record<string, string>,
+  emits: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -42,11 +43,19 @@ vi.mock("@/lib/postPublish", () => ({ runPostPublishSideEffects: vi.fn(async () 
 vi.mock("@/lib/reviewCycles", () => ({ onDocumentIssued: vi.fn(async () => {}) }));
 vi.mock("@/lib/acknowledgments", () => ({ onDocumentIssuedAck: vi.fn(async () => {}) }));
 vi.mock("@/lib/retention", () => ({ recomputeRetention: vi.fn(async () => {}) }));
-vi.mock("@/lib/staleCopies", () => ({
-  recallRetiredDocument: vi.fn(async () => 0),
-  recallRetiredBatch: vi.fn(async () => 0),
-  withdrawRetirementRecall: vi.fn(async () => 0),
-}));
+// DIST-16 (P28 fix pass): the bulk put-back's withdrawal is the REAL
+// withdrawRetirementBatch (only the dispatcher's emit is a spy), so the
+// test counts what a holder is actually sent.
+vi.mock("@/lib/staleCopies", async () => {
+  const real = await vi.importActual<typeof import("@/lib/staleCopies")>("@/lib/staleCopies");
+  return {
+    recallRetiredDocument: vi.fn(async () => 0),
+    recallRetiredBatch: vi.fn(async () => 0),
+    withdrawRetirementRecall: vi.fn(async () => 0),
+    withdrawRetirementBatch: vi.fn(real.withdrawRetirementBatch),
+  };
+});
+vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (p: Record<string, unknown>) => { state.emits.push(p); }) }));
 vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => {}) }));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () => null) }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "ctl1", userEmail: "cara@example.com", activeRole: "DocCtrl" }) }));
@@ -56,7 +65,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 });
 
 import BulkEditModal from "@/components/documents/BulkEditModal";
-import { recallRetiredBatch, recallRetiredDocument, withdrawRetirementRecall } from "@/lib/staleCopies";
+import { recallRetiredBatch, recallRetiredDocument, withdrawRetirementRecall, withdrawRetirementBatch } from "@/lib/staleCopies";
 import type { DocumentRecord, LibraryConfig } from "@/types/schema";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -89,6 +98,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.db = newFakeDb();
   state.refuse = {};
+  state.emits = [];
   state.db.beforeUpdate!.documents = (next) => {
     const r = state.refuse[String(next.id)];
     if (r) throw { code: "42501", message: r };
@@ -202,12 +212,41 @@ describe("PROD-17 (P28) — the bulk editor's Superseded / Archived: one fresh r
     expect(batch).not.toHaveBeenCalled();
   });
 
-  it("DIST-16: a retired row put back to Issued goes through changeDocumentStatus, which withdraws the recall standing on it (fired, never awaited)", async () => {
+  it("DIST-16 (P28 fix pass): a retired row put back to Issued goes through changeDocumentStatus with no withdrawal of its own; ONE batched withdrawal goes after the apply", async () => {
     const a = seedDoc("p1", { status: "Archived" });
     await apply([asRecord(a)], "Issued");
     expect(docRow("p1").status).toBe("Issued");
-    expect(withdrawRetirementRecall).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(withdrawRetirementRecall).mock.calls[0][0]).toMatchObject({ orgId: ORG, documentId: "p1", restoredStatus: "Issued", door: "put_back", actorUserId: ME });
+    expect(withdrawRetirementRecall).not.toHaveBeenCalled();
+    expect(withdrawRetirementBatch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(withdrawRetirementBatch).mock.calls[0][0]).toEqual({
+      orgId: ORG, door: "put_back", actorUserId: ME, actorName: "cara@example.com",
+      docs: [{ documentId: "p1", libraryId: "lib1", docLabel: "P1", restoredStatus: "Issued" }],
+    });
     expect(batch).not.toHaveBeenCalled();
+  });
+
+  it("DIST-16 (P28 fix pass): 2 Archived rows set to Issued, one holder recalled on both — exactly ONE withdrawal emit for that holder (never one preference-exempt notice per row); each document's withdrawal recorded", async () => {
+    const a = seedDoc("q1", { status: "Archived" });
+    const b = seedDoc("q2", { status: "Archived" });
+    for (const [id, at] of [["q1", "2026-10-19T09:00:00.000Z"], ["q2", "2026-10-19T09:00:01.000Z"]]) {
+      T("audit_logs").push({ id: `a-${id}`, org_id: ORG, action: "DISTRIBUTION_RECALL", resource_type: "document", resource_id: id, timestamp: at, details: { retirement: true, newStatus: "Archived", recipientCount: 1, recipients: ["fitter9"] } });
+    }
+    await apply([asRecord(a), asRecord(b)], "Issued");
+    expect(host.textContent).toMatch(/Applied to 2 documents\./);
+    expect(withdrawRetirementRecall).not.toHaveBeenCalled();
+    expect(withdrawRetirementBatch).toHaveBeenCalledTimes(1);
+    const w = state.emits.filter((e) => e.kind === "library_doc_revised");
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatchObject({ category: "recall", audience: { involved: ["fitter9"] }, actorUserId: ME, metadata: { recallWithdrawn: true, documentIds: ["q1", "q2"], door: "put_back" } });
+    const recorded = T("audit_logs").filter((r) => r.action === "DISTRIBUTION_RECALL" && (r.details as Record<string, unknown>).recallWithdrawn === true);
+    expect(recorded.map((r) => r.resource_id).sort()).toEqual(["q1", "q2"]);
+  });
+
+  it("DIST-16 (P28 fix pass): a row already Issued re-saved as Issued is no put-back candidate; a Draft row issued is one (the record decides — nothing stands, nothing sent)", async () => {
+    const a = seedDoc("r1");
+    const b = seedDoc("r2", { status: "Draft" });
+    await apply([asRecord(a), asRecord(b)], "Issued");
+    expect(vi.mocked(withdrawRetirementBatch).mock.calls[0][0].docs.map((d) => d.documentId)).toEqual(["r2"]);
+    expect(state.emits.filter((e) => e.kind === "library_doc_revised")).toHaveLength(0);
   });
 });

@@ -120,7 +120,7 @@ vi.mock("@/lib/notify/dispatch", () => ({
 
 import { archiveDocument, unarchiveDocument, supersedeDocument, changeDocumentStatus } from "@/lib/revisions";
 import { reverseSplit, reverseMerge } from "@/lib/documentLifecycle/reverse";
-import { recallRetiredDocument, recallRetiredBatch, withdrawRetirementRecall } from "@/lib/staleCopies";
+import { recallRetiredDocument, recallRetiredBatch, withdrawRetirementRecall, withdrawRetirementBatch } from "@/lib/staleCopies";
 import { KIND_META } from "@/lib/notificationKinds";
 import type { DocumentRecord } from "@/types/schema";
 
@@ -328,11 +328,13 @@ describe("DIST-16 — a restore withdraws the retirement recall standing on the 
     const recallAt = String(audit("DISTRIBUTION_RECALL")[0].timestamp).slice(0, 10);
     expect(w[0]).toMatchObject({
       category: "recall", resource: { type: "document", id: "p101" }, link: `/documents/${LIB}?doc=p101`,
-      title: `P101 is back in force (Issued) — the recall of ${recallAt} is withdrawn`,
+      title: `P101 is back in force (Issued) — the recall of ${recallAt} (UTC) is withdrawn`,
       audience: { involved: ["u3", "u4"] }, actorUserId: ME,
       metadata: { recallWithdrawn: true, restoredStatus: "Issued", door: "unarchive" },
     });
     expect(String(w[0].body)).toMatch(/is withdrawn: the document is current again/);
+    // P28 fix pass: the recall is named by the bell title the holder has
+    expect(String(w[0].body)).toContain(`The notice of ${recallAt} (UTC) ("P101 is now Archived — your copy is dead paper") telling you to stop work`);
     expect(KIND_META.library_doc_revised.compliance).toBe(false);
     expect(KIND_META.library_doc_revised.actionRequired).toBe(false);
     expect(recallRows()[1]).toMatchObject({ recallWithdrawn: true, retirement: false, restoredStatus: "Issued", door: "unarchive", recipientCount: 2, recipients: ["u3", "u4"] });
@@ -434,6 +436,104 @@ describe("DIST-16 — a restore withdraws the retirement recall standing on the 
     await recallRetiredDocument({ ...base, documentId: "p6", docLabel: "P6", newStatus: "Archived", replacementNote: null });
     expect(await withdrawRetirementRecall({ orgId: ORG, documentId: "p6", restoredStatus: "Issued", door: "unarchive", actorUserId: ME })).toBe(0);
     expect(ofKind("library_doc_revised")).toHaveLength(0);
+  });
+
+  it("P28 fix pass: archive, un-archive into Draft (nothing withdrawn), then a status editor saves it Issued — the recall is withdrawn then", async () => {
+    const d = seedDoc("dr2");
+    seedCopies("dr2", ["u3", "u4"]);
+    await archiveDocument({ doc: asRecord(d), reason: "x", orgId: ORG, actorUserId: ME });
+    await settle();
+    await unarchiveDocument({ doc: asRecord({ ...d, status: "Archived" }), reason: "y", orgId: ORG, actorUserId: ME, restoreStatus: "Draft" });
+    await settle();
+    expect(ofKind("library_doc_revised")).toHaveLength(0);
+    expect(docRow("dr2").status).toBe("Draft");
+    await changeDocumentStatus({ orgId: ORG, documentId: "dr2", toStatus: "Issued", door: "metadata", actorUserId: ME, actorEmail: "dana@x" });
+    await settle();
+    const w = ofKind("library_doc_revised");
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatchObject({ audience: { involved: ["u3", "u4"] }, metadata: { recallWithdrawn: true, restoredStatus: "Issued", door: "put_back" } });
+    // and a Draft → Issued with no recall on record sends nothing
+    seedDoc("dr3", { status: "Draft" });
+    await changeDocumentStatus({ orgId: ORG, documentId: "dr3", toStatus: "Issued", door: "metadata", actorUserId: ME });
+    await settle();
+    expect(ofKind("library_doc_revised")).toHaveLength(1);
+  });
+
+  it("P28 fix pass: changeDocumentStatus with withdrawRecall: false (the bulk editor) starts no withdrawal of its own", async () => {
+    const d = seedDoc("wf");
+    seedCopies("wf", ["u3"]);
+    await archiveDocument({ doc: asRecord(d), reason: "x", orgId: ORG, actorUserId: ME });
+    await settle();
+    await changeDocumentStatus({ orgId: ORG, documentId: "wf", toStatus: "Issued", door: "bulk", actorUserId: ME, withdrawRecall: false });
+    await settle();
+    expect(ofKind("library_doc_revised")).toHaveLength(0);
+  });
+
+  it("P28 fix pass: the recall's date is the workspace's day — a recall at 00:30 UTC on the 21st reads as the 20th in America/Chicago, the zone named", async () => {
+    seedDoc("tz1");
+    T("org_configurations").push({ id: "c1", org_id: ORG, key: "timezone", data: { timeZone: "America/Chicago" } });
+    T("audit_logs").push({ id: "a-tz", org_id: ORG, action: "DISTRIBUTION_RECALL", resource_type: "document", resource_id: "tz1", timestamp: "2026-10-21T00:30:00.000Z", details: { retirement: true, newStatus: "Archived", recipientCount: 1, recipients: ["u3"] } });
+    expect(await withdrawRetirementRecall({ orgId: ORG, documentId: "tz1", docLabel: "TZ-1", libraryId: LIB, restoredStatus: "Issued", door: "unarchive", actorUserId: ME })).toBe(1);
+    const w = ofKind("library_doc_revised")[0];
+    expect(w.title).toBe("TZ-1 is back in force (Issued) — the recall of 2026-10-20 (America/Chicago) is withdrawn");
+    expect(String(w.body)).toContain('The notice of 2026-10-20 (America/Chicago) ("TZ-1 is now Archived — your copy is dead paper")');
+  });
+});
+
+// ─── DIST-16 (P28 fix pass): a BULK put-back withdraws once per apply ──────
+describe("DIST-16 (P28 fix pass) — withdrawRetirementBatch: one notice per person per apply, one record per document", () => {
+  const recall = (docId: string, users: string[], at: string) =>
+    T("audit_logs").push({ id: `a-${docId}-${at}`, org_id: ORG, action: "DISTRIBUTION_RECALL", resource_type: "document", resource_id: docId, timestamp: at, details: { retirement: true, newStatus: "Archived", recipientCount: users.length, recipients: users } });
+
+  it("two restored documents, one person recalled on both and one on one: the first gets ONE notice naming both, the second the single door's notice word for word; each document gets its recallWithdrawn row", async () => {
+    seedDoc("b1"); seedDoc("b2");
+    recall("b1", ["u3", "u4"], "2026-10-19T09:00:00.000Z");
+    recall("b2", ["u3"], "2026-10-19T09:00:01.000Z");
+    const n = await withdrawRetirementBatch({
+      orgId: ORG, door: "put_back", actorUserId: ME, actorName: "dana@x",
+      docs: [
+        { documentId: "b1", libraryId: LIB, docLabel: "B-1", restoredStatus: "Issued" },
+        { documentId: "b2", libraryId: LIB, docLabel: "B-2", restoredStatus: "Issued" },
+      ],
+    });
+    expect(n).toBe(2);
+    const w = ofKind("library_doc_revised");
+    expect(w).toHaveLength(2);
+    const both = w.find((e) => (e.audience as { involved: string[] }).involved.includes("u3"))!;
+    expect(both).toMatchObject({
+      category: "recall", title: "2 documents you were recalled on are back in force — the recalls are withdrawn",
+      audience: { involved: ["u3"] }, resource: { type: "library", id: LIB }, link: `/documents/${LIB}`,
+      metadata: { recallWithdrawn: true, documentIds: ["b1", "b2"], door: "put_back" },
+    });
+    expect(String(both.body)).toContain("B-1 (Issued), B-2 (Issued)");
+    const single = w.find((e) => (e.audience as { involved: string[] }).involved.includes("u4"))!;
+    expect(single).toMatchObject({ title: "B-1 is back in force (Issued) — the recall of 2026-10-19 (UTC) is withdrawn", audience: { involved: ["u4"] }, resource: { type: "document", id: "b1" } });
+    const rows = audit("DISTRIBUTION_RECALL").filter((r) => (r.details as Record<string, unknown>).recallWithdrawn === true);
+    expect(rows.map((r) => [r.resource_id, (r.details as Record<string, unknown>).recipients, (r.details as Record<string, unknown>).batch])).toEqual([
+      ["b1", ["u3", "u4"], true], ["b2", ["u3"], true],
+    ]);
+    // the next restore finds nothing standing
+    expect(await withdrawRetirementRecall({ orgId: ORG, documentId: "b1", restoredStatus: "Issued", door: "put_back", actorUserId: ME })).toBe(0);
+  });
+
+  it("a document with no recall standing, or not in an issue status, sends nothing; a record that cannot be read is logged and recorded, the others still go", async () => {
+    seedDoc("c1"); seedDoc("c2"); seedDoc("c3");
+    recall("c2", ["u5"], "2026-10-19T09:00:00.000Z");
+    expect(await withdrawRetirementBatch({ orgId: ORG, door: "put_back", actorUserId: ME, docs: [
+      { documentId: "c1", docLabel: "C-1", restoredStatus: "Issued" },
+      { documentId: "c2", docLabel: "C-2", restoredStatus: "Draft" },
+    ] })).toBe(0);
+    expect(ofKind("library_doc_revised")).toHaveLength(0);
+    recall("c3", ["u6"], "2026-10-19T09:00:02.000Z");
+    state.failReads.audit_logs = 1;
+    expect(await withdrawRetirementBatch({ orgId: ORG, door: "put_back", actorUserId: ME, docs: [
+      { documentId: "c2", docLabel: "C-2", restoredStatus: "Issued" },
+      { documentId: "c3", docLabel: "C-3", restoredStatus: "Issued" },
+    ] })).toBe(1);
+    expect(errorSpy.mock.calls.some((c: unknown[]) => /DIST-16: the recall record of document c2 could not be read/.test(String(c[0])))).toBe(true);
+    expect(ofKind("library_doc_revised").map((e) => (e.audience as { involved: string[] }).involved)).toEqual([["u6"]]);
+    const c2rows = audit("DISTRIBUTION_RECALL").filter((r) => r.resource_id === "c2").map((r) => r.details as Record<string, unknown>);
+    expect(c2rows[c2rows.length - 1]).toMatchObject({ withdrawalUnavailable: true, batch: true });
   });
 });
 
@@ -541,7 +641,10 @@ describe("PROD-17 (P28) — the library page's metadata save and bulk archive", 
     expect(retired).toBeLessThan(save.indexOf("if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {"));
     expect(retired).toBeLessThan(save.indexOf('.from("documents").update(payload)'));
     const branch = save.slice(retired, save.indexOf("if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {"));
-    expect(branch).toMatch(/await changeDocumentStatus\(\{\s*orgId: retireOrgId, documentId: selectedDoc\.id, toStatus, door: "metadata",\s*actorUserId: uid, actorEmail: userEmail \?\? null, actorRole: activeRole \?\? null,\s*patch: payload,\s*\}\);/);
+    expect(branch).toMatch(/await changeDocumentStatus\(\{\s*orgId: retireOrgId, documentId: selectedDoc\.id, toStatus, door: "metadata",\s*actorUserId: uid, actorEmail: userEmail \?\? null, actorRole: activeRole \?\? null,\s*patch: payload,\s*(?:\/\/[^\n]*\n\s*)*heldStatus: selectedDoc\.status \?\? null,\s*\}\);/);
+    // P28 fix pass: before the actor is known the save is refused (never the bare write that told nobody)
+    expect(branch).toMatch(/if \(!uid \|\| !retireOrgId\) \{\s*throw new Error\(`Save refused — nothing was saved: this save writes the status \$\{toStatus\}, which can retire the document/);
+    expect(branch).not.toContain("console.error(");
     expect(branch).toMatch(/\n\s*return;\n/);
     expect(save).not.toMatch(/\brecallOnRetirement\(|\brecallRetiredDocument\(/);
   });
@@ -571,6 +674,12 @@ describe("PROD-17 (P28) — the library page's metadata save and bulk archive", 
     expect(bulk).toContain(".filter((id) => !skipsRetirementRecall(priorStatusOf.get(id) ?? null))");
     expect(bulk).toContain("recallCopyHolders: recallsCopyHolders(priorStatusOf.get(id) ?? null)");
     expect(bulk).toMatch(/void import\("@\/lib\/staleCopies"\)\.then\(\(\{ recallRetiredBatch \}\) => recallRetiredBatch\(\{\s*orgId: recallOrg, newStatus: "Archived", actorUserId: uid,/);
+    // P28 fix pass: refused before the read and the write while the actor or workspace is unknown
+    const refuse = bulk.indexOf("if (!uid || !recallOrg) {");
+    expect(refuse).toBeGreaterThan(0);
+    expect(refuse).toBeLessThan(bulk.indexOf('.select("id, legal_hold, status")'));
+    expect(bulk.slice(refuse, bulk.indexOf("return;", refuse))).toContain("Archive refused — nothing was archived");
+    expect(bulk).not.toContain("were archived before who is archiving them was known");
     expect(bulk).not.toMatch(/\brecallOnRetirement\(|\brecallRetiredDocument\(/);
   });
 });

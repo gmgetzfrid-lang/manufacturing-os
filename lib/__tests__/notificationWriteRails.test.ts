@@ -1347,6 +1347,7 @@ const ACTOR_PASS_THROUGHS = [
   "lib/staleCopies.ts#recallRetiredDocument(input.actorUserId)",
   "lib/staleCopies.ts#recallRetiredBatch(input.actorUserId)",       // document-control P28 (PROD-17): the bulk doors' one recall per apply; the library page passes RoleContext's uid, the bulk editor its actorUserId prop
   "lib/staleCopies.ts#withdrawRetirementRecall(input.actorUserId)", // document-control P28 (DIST-16): a restore's withdrawal; its callers (unarchiveDocument, changeDocumentStatus, reverseSplit, reverseMerge) forward their own actor
+  "lib/staleCopies.ts#withdrawRetirementBatch(input.actorUserId)",  // document-control P28 fix pass (DIST-16): a bulk put-back's one withdrawal per apply; the bulk editor passes its actorUserId prop
   "lib/turnover.ts#notifyTurnoverRejected(actor.uid)",              // N8 (MON-11)
   "lib/workPackages.ts#notifyPackagesOfRevUp(input.actorUserId)",
 ];

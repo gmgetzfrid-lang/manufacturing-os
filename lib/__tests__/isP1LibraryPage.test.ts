@@ -79,6 +79,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 
 import { supabase } from "@/lib/supabase";
 import { changeDocumentStatus } from "@/lib/revisions";
+import { recallRetiredDocument } from "@/lib/staleCopies";
 import { isIssueTransition, isIssueRefusal, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { computeUniquenessKey } from "@/lib/uniqueness";
@@ -352,18 +353,39 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
       .rejects.toThrow(/^Save refused — nothing was saved: the database updated no document \(you may no longer have edit access to it\)\.$/);
   });
 
-  it("P28: before the signed-in member is known a retired save is the bare checked write it always was (logged: no recall without an actor)", async () => {
+  it("P28 fix pass: before the signed-in member is known a retired save is refused, nothing written — as the issue route refuses — never a retirement that tells nobody", async () => {
     const d = seed("r3", { status: "Issued" });
     const cds = vi.fn(changeDocumentStatus);
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const { fn } = save(d, { uid: null, cds });
-    await fn({ metadata: {}, core: { title: "r3", documentNumber: "R3", status: "Superseded" } });
+    await expect(fn({ metadata: {}, core: { title: "r3", documentNumber: "R3", status: "Superseded" } }))
+      .rejects.toThrow(/^Save refused — nothing was saved: this save writes the status Superseded, which can retire the document \(its copy holders recalled, its watchers told\), and who is saving it \(your sign-in and workspace\) is not known yet\. Try again in a moment\.$/);
     expect(cds).not.toHaveBeenCalled();
-    expect(updates()).toHaveLength(1);
+    expect(updates()).toEqual([]);
     expect(basisReads()).toEqual([]);
-    expect(T("documents").find((r) => r.id === "r3")!.status).toBe("Superseded");
-    expect(err.mock.calls.some((c: unknown[]) => /PROD-17: document r3 is saved as Superseded before who is saving it is known/.test(String(c[0])))).toBe(true);
-    err.mockRestore();
+    expect(T("documents").find((r) => r.id === "r3")!.status).toBe("Issued");
+  });
+
+  it("P28 fix pass: a title fix on a document already Archived whose basis read fails is no retirement — the page's held status is passed, nothing is recalled; the save lands", async () => {
+    const d = seed("r4", { status: "Archived" });
+    const cds = vi.fn(changeDocumentStatus);
+    state.db.selectErrors!.documents = (cols) => (cols === "*" ? { message: "503 basis read" } : null);
+    const { st, fn } = save(d, { cds });
+    await fn({ metadata: {}, core: { title: "r4 fixed", documentNumber: "R4", status: "Archived" } });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(cds.mock.calls[0][0]).toMatchObject({ toStatus: "Archived", heldStatus: "Archived" });
+    expect(T("documents").find((r) => r.id === "r4")).toMatchObject({ status: "Archived", title: "r4 fixed" });
+    expect(recallRetiredDocument).not.toHaveBeenCalled();
+    expect(st.error).toBeNull();
+  });
+
+  it("P28 fix pass: REGRESSION — the same failed read on a save that changes the status (page holds Issued, saves Archived) still recalls (an unknown prior recalls)", async () => {
+    const d = seed("r5", { status: "Issued" });
+    state.db.selectErrors!.documents = (cols) => (cols === "*" ? { message: "503 basis read" } : null);
+    const { fn } = save(d);
+    await fn({ metadata: {}, core: { title: "r5", documentNumber: "R5", status: "Archived" } });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r5", newStatus: "Archived", recallCopyHolders: true });
   });
 
   it("review fix — the page's copy is stale: it shows Issued, another change moved the row back to Draft; a typo fix that carries Issued ISSUES it, so it is recorded with its clocks, and the person is told", async () => {
