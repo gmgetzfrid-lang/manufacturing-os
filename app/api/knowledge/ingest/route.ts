@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { documentId?: string };
+  let body: { documentId?: string; action?: string; reason?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const documentId = String(body.documentId ?? "").trim();
   if (!documentId) return bad("documentId is required");
@@ -62,6 +62,19 @@ export async function POST(req: NextRequest) {
   ]);
   if (!member || (!roles.has("Admin") && !roles.has("DocCtrl"))) {
     return bad("Only Admin or Doc Control can index documents.", 403);
+  }
+
+  // The browser gave up on this file (no page could be read in a request's
+  // time, or the server timed out again and again). Record it as failed,
+  // with the reason, so it shows in the Health panel and is NOT picked up
+  // again at every login; Repair re-queues it.
+  if (body.action === "stalled") {
+    if (["pending", "stale", "indexing"].includes(String(doc.status))) {
+      await supabaseAdmin.from("knowledge_documents")
+        .update({ status: "error", error: String(body.reason ?? "Indexing could not make progress.").slice(0, 500) })
+        .eq("id", documentId);
+    }
+    return NextResponse.json({ ok: true });
   }
 
   if (doc.status === "ready") {

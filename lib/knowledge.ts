@@ -491,6 +491,11 @@ export async function ingestKnowledgeDocument(
   }
 }
 
+/** Best-effort: mark a file the browser gave up on as failed, with why. */
+async function markStalled(documentId: string, reason: string): Promise<void> {
+  await apiPost("/api/knowledge/ingest", { documentId, action: "stalled", reason }).catch(() => undefined);
+}
+
 async function ingestLoop(
   documentId: string,
   onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
@@ -518,6 +523,9 @@ async function ingestLoop(
       out = await apiPost("/api/knowledge/ingest", { documentId });
       transientFailures = 0;
     } catch (e) {
+      if ((e as { transient?: boolean }).transient && transientFailures >= 4) {
+        await markStalled(documentId, "The server timed out 5 times in a row reading this file (usually heavy load). Repair in the Health panel retries it.");
+      }
       if (!(e as { transient?: boolean }).transient || ++transientFailures > 4) throw e;
       // Back off and pick up where the last committed batch stopped — and
       // say so: a busy server is information, not something to hide.
@@ -540,6 +548,11 @@ async function ingestLoop(
     noProgressRounds = out.pagesIndexed > lastIndexed ? 0 : noProgressRounds + 1;
     lastIndexed = Math.max(lastIndexed, out.pagesIndexed);
     if (noProgressRounds >= 3) {
+      // Recorded on the file, so it stops being retried at every login and
+      // the Health panel says why.
+      await markStalled(documentId,
+        `No page could be read in the time one server request allows (stuck at page ${out.pagesIndexed + 1}` +
+        `${out.pageCount ? ` of ${out.pageCount}` : ""}). Repair in the Health panel retries it.`);
       throw new Error(
         `Indexing stalled at page ${out.pagesIndexed}${out.pageCount ? ` of ${out.pageCount}` : ""} — ` +
         "that page is taking longer than one server run allows. Turn off \"Index every page with " +
