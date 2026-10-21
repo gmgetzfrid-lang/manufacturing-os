@@ -19,7 +19,11 @@
 // not counted. A predicate that cannot decide answers 503 (fails closed — no
 // story rather than one that may show what is not theirs to see); any other
 // read that fails is SAID in `notes`, never presented as "none" — and the
-// section it empties says so too (`linksIncomplete`, `decisionsUnread`).
+// section it empties says so too (`linksIncomplete`, `decisionsUnread`). A
+// read cut short by its cap is a read that did not finish: the section says
+// so the same way, never with a count or a "none" (`linksCapped`,
+// `decisionsCapped` — DEC-90 ruling (1), corrected at the second review fix
+// pass).
 //
 // The service role reads only the caller's identity and the access facts the
 // I-12 predicate needs (memberships, teams, libraries, folders, document ACL
@@ -36,7 +40,7 @@ import {
 import { tagKey } from "@/lib/codebook";
 import {
   assembleAssetProvenance, assetCreatorUid, auditNamesAsset, BRIDGE_DECISION_ACTIONS,
-  PROVENANCE_ACCESS_UNCHECKED, PROVENANCE_DECISION_CAP, PROVENANCE_LINK_CAP,
+  PROVENANCE_ACCESS_UNCHECKED, PROVENANCE_DECISION_CAP, PROVENANCE_DECISION_PAGE, PROVENANCE_LINK_CAP,
   type ProvAuditRow, type ProvDocumentRow, type ProvKnowledgeRow, type ProvRelationRow,
 } from "@/lib/assetProvenance";
 
@@ -100,6 +104,8 @@ export async function GET(req: NextRequest) {
   const notes: string[] = [];
   let linksIncomplete = false;
   let decisionsUnread = false;
+  let linksCapped = false;
+  let decisionsCapped = false;
 
   // ── The asset (origin / discovered_from: 20260928; created_by: 20260603).
   const assetRes = await tiered(
@@ -124,7 +130,10 @@ export async function GET(req: NextRequest) {
     notes.push(`The links to controlled documents could not be read (${relRes.error.message ?? "read failed"}) — none of them is shown, which is not the same as none.`);
   } else {
     documentRelations = (relRes.data ?? []) as ProvRelationRow[];
-    if (documentRelations.length >= PROVENANCE_LINK_CAP) notes.push(`Only the first ${PROVENANCE_LINK_CAP} links to controlled documents were read — there may be more.`);
+    if (documentRelations.length >= PROVENANCE_LINK_CAP) {
+      linksCapped = true;
+      notes.push(`Only the first ${PROVENANCE_LINK_CAP} links to controlled documents were read — there may be more.`);
+    }
   }
 
   let knowledgeRelationInstalled = true;
@@ -141,21 +150,50 @@ export async function GET(req: NextRequest) {
     notes.push(`The links to knowledge-library uploads could not be read (${kRes.error.message ?? "read failed"}) — none of them is shown, which is not the same as none.`);
   } else {
     knowledgeRelations = (kRes.data ?? []) as ProvRelationRow[];
-    if (knowledgeRelations.length >= PROVENANCE_LINK_CAP) notes.push(`Only the first ${PROVENANCE_LINK_CAP} links to knowledge-library uploads were read — there may be more.`);
+    if (knowledgeRelations.length >= PROVENANCE_LINK_CAP) {
+      linksCapped = true;
+      notes.push(`Only the first ${PROVENANCE_LINK_CAP} links to knowledge-library uploads were read — there may be more.`);
+    }
   }
 
-  // ── The equipment sweep's decisions, as the caller (the audit trail's own policies).
-  const audRes = await caller.from("audit_logs").select("id, action, resource_type, resource_id, user_id, details, created_at")
-    .eq("org_id", orgId).in("action", [...BRIDGE_DECISION_ACTIONS])
-    .order("created_at", { ascending: false }).limit(PROVENANCE_DECISION_CAP) as unknown as Res;
-  let audits: ProvAuditRow[] = [];
-  if (audRes.error) {
-    decisionsUnread = true;
-    notes.push(`The equipment sweep's recorded decisions could not be read (${audRes.error.message ?? "read failed"}) — none is shown, which is not the same as none.`);
-  } else {
-    const all = (audRes.data ?? []) as ProvAuditRow[];
-    if (all.length >= PROVENANCE_DECISION_CAP) notes.push(`Only the workspace's latest ${PROVENANCE_DECISION_CAP} equipment-sweep decisions were searched — older ones about this equipment may not be listed.`);
-    audits = all.filter((a) => auditNamesAsset(a.details, asset, key));
+  // ── The equipment sweep's decisions, as the caller (the audit trail's own
+  // policies). The details naming the asset are in more than one shape (an
+  // id, a tag in one of several arrays, in any spelling the one tag grammar
+  // folds), so the asset's rows are found here, not by the query: the read
+  // pages back through the workspace's decisions, newest first, until they
+  // run out or PROVENANCE_DECISION_CAP have been searched. Past that cap the
+  // older decisions were NOT searched — said in `notes` and by
+  // `decisionsCapped`, never as "none".
+  const audits: ProvAuditRow[] = [];
+  const seen = new Set<string>(); // a row a newer insert pushed onto the next page is listed once
+  let searched = 0;
+  for (;;) {
+    const audRes = await caller.from("audit_logs").select("id, action, resource_type, resource_id, user_id, details, created_at")
+      .eq("org_id", orgId).in("action", [...BRIDGE_DECISION_ACTIONS])
+      .order("created_at", { ascending: false }).order("id", { ascending: false })
+      .range(searched, searched + PROVENANCE_DECISION_PAGE - 1) as unknown as Res;
+    if (audRes.error) {
+      decisionsUnread = true;
+      notes.push(searched === 0
+        ? `The equipment sweep's recorded decisions could not be read (${audRes.error.message ?? "read failed"}) — none is shown, which is not the same as none.`
+        : `Only the latest ${searched} of the equipment sweep's recorded decisions could be read (${audRes.error.message ?? "read failed"}) — older ones about this equipment are not shown.`);
+      break;
+    }
+    const page = (audRes.data ?? []) as ProvAuditRow[];
+    // An empty page is the end — not a short one: the API's own row ceiling
+    // (max-rows) may hand back fewer than asked while more remain.
+    if (page.length === 0) break;
+    searched += page.length;
+    for (const a of page) {
+      if (a.id && seen.has(String(a.id))) continue;
+      if (a.id) seen.add(String(a.id));
+      if (auditNamesAsset(a.details, asset, key)) audits.push(a);
+    }
+    if (searched >= PROVENANCE_DECISION_CAP) {
+      decisionsCapped = true;
+      notes.push(`Only the workspace's latest ${PROVENANCE_DECISION_CAP} equipment-sweep decisions were searched — older ones about this equipment were not searched and are not listed.`);
+      break;
+    }
   }
 
   // ── Which documents and uploads the story names.
@@ -239,6 +277,9 @@ export async function GET(req: NextRequest) {
   const story = assembleAssetProvenance({
     asset, documentRelations, knowledgeRelations, readableDocuments, readableKnowledge,
     audits, names, notes, knowledgeRelationInstalled, linksIncomplete, decisionsUnread,
+    linksCapped, decisionsCapped,
+    // A discovery source the failed read could not list is unread, not hidden.
+    documentsUnread: !!docsRead.error, knowledgeUnread: !!kdocsRead.error,
   });
   return NextResponse.json(story, { headers: PRIVATE });
 }

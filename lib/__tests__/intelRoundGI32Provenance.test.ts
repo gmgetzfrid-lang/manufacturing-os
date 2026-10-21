@@ -76,7 +76,8 @@ import {
   AI_READ_MARK, SWEEP_SHEET_MARK, assetTagsName, linkStandingOf, relationAsserter, sheetMarkOf, sheetReadingOf,
 } from "@/lib/relationProvenance";
 import {
-  assembleAssetProvenance, PROVENANCE_ACCESS_UNCHECKED, type AssetProvenance, type ProvRelationRow,
+  assembleAssetProvenance, PROVENANCE_ACCESS_UNCHECKED, PROVENANCE_DECISION_CAP, PROVENANCE_DECISION_PAGE, PROVENANCE_LINK_CAP,
+  type AssetProvenance, type ProvRelationRow,
 } from "@/lib/assetProvenance";
 import { PRINCIPAL_UNREADABLE } from "@/lib/knowledgeAccess";
 
@@ -180,6 +181,27 @@ describe("GAP-303 graph remainder — the provenance view and the graph's edges 
     expect(words[4]).toBe("Linked by Ann");
     expect(words[5]).toBe("A person tagged the document with it (its equipment tags)");
     expect(story.links[5].personName).toBeNull();
+    // no adoption record handed in: the adopted link's date is when the pair was first recorded, said so
+    expect(story.links.map((l) => l.atMeaning)).toEqual(["asserted", "asserted", "asserted", "first_recorded", "asserted", "asserted", "asserted"]);
+  });
+
+  it("an adopted link takes its date from the newest EQUIPMENT_BRIDGE_RELATION_ADOPTED naming this asset on that document — not another asset's, not another document's", () => {
+    const adopted = KINDS[3].row;
+    const story = assembleAssetProvenance({
+      asset: ASSET,
+      documentRelations: [{ ...adopted, id: "r3", document_id: "d3", created_at: "2026-03-01T00:00:00Z" }],
+      knowledgeRelations: [],
+      readableDocuments: new Map([["d3", { id: "d3", document_number: "PID-3", library_id: "L1", asset_tags: [] }]]),
+      readableKnowledge: new Map(),
+      audits: [
+        { id: "x1", action: "EQUIPMENT_BRIDGE_RELATION_ADOPTED", resource_type: "document", resource_id: "d3", user_id: "u-ann", details: { assetId: "a1" }, created_at: "2026-10-01T00:00:00Z" },
+        { id: "x2", action: "EQUIPMENT_BRIDGE_RELATION_ADOPTED", resource_type: "document", resource_id: "d3", user_id: "u-ann", details: { assetId: "a1" }, created_at: "2026-06-01T00:00:00Z" },
+        { id: "x3", action: "EQUIPMENT_BRIDGE_RELATION_ADOPTED", resource_type: "document", resource_id: "d3", user_id: "u-ann", details: { assetId: "a-other", tag: "P-101" }, created_at: "2026-12-01T00:00:00Z" },
+        { id: "x4", action: "EQUIPMENT_BRIDGE_RELATION_ADOPTED", resource_type: "document", resource_id: "d9", user_id: "u-ann", details: { assetId: "a1" }, created_at: "2026-12-02T00:00:00Z" },
+      ],
+      names: new Map([["u-ann", "Ann"]]), notes: [], knowledgeRelationInstalled: true,
+    });
+    expect(story.links[0]).toMatchObject({ assertedBy: "Linked by Ann", at: "2026-10-01T00:00:00Z", atMeaning: "asserted" });
   });
 });
 
@@ -492,5 +514,100 @@ describe("GAP-303 acceptance 1 / GAP-316 — GET /api/assets/provenance", () => 
     expect(inArgs).not.toContain("00000000-0000-0000-0000-000000000000");
     ctrlDb.tables.assets = [o({ id: "a1", tag: "P-101", origin: "manual", discovered_from: null, created_by: "u-unknown" })];
     expect((await story("tc")).discovery).toEqual({ kind: "person", recordedBy: null });
+  });
+  // ── Second review fix pass: a read cut short is not a complete read (DEC-90 ruling (1)).
+
+  const otherDecisions = (n: number) => Array.from({ length: n }, (_, i) => o({
+    id: `ox${String(i).padStart(5, "0")}`, action: "EQUIPMENT_BRIDGE_APPLIED", resource_type: "document", resource_id: "d1",
+    user_id: "u-ann", details: { tags: ["E-204"] }, created_at: `2026-10-${String(1 + (i % 28)).padStart(2, "0")}T00:00:00Z`,
+  }));
+
+  it("the decision read pages back past one page: this asset's older decisions are found behind a busy workspace's newer ones — and nothing is said to be cut short", async () => {
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(PROVENANCE_DECISION_PAGE + 500)];
+    const s = await story("tc");
+    expect(s.decisions.map((d) => d.action)).toEqual(["EQUIPMENT_BRIDGE_APPLIED", "EQUIPMENT_BRIDGE_RELATION_ADOPTED", "EQUIPMENT_BRIDGE_DISMISSED"]);
+    expect(s.decisionsCapped).toBe(false);
+    expect(s.decisionsUnread).toBe(false);
+    expect(s.notes).toEqual([]);
+  });
+
+  it("the API's own row ceiling hands back short pages: the read keeps paging until a page comes back empty, never taking a short page for the end", async () => {
+    ctrlDb.maxRows = 300;
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(700)];
+    const s = await story("tc");
+    expect(s.decisions.map((d) => d.action)).toEqual(["EQUIPMENT_BRIDGE_APPLIED", "EQUIPMENT_BRIDGE_RELATION_ADOPTED", "EQUIPMENT_BRIDGE_DISMISSED"]);
+    expect(s.decisionsCapped).toBe(false);
+  });
+
+  it("past PROVENANCE_DECISION_CAP the older decisions were NOT searched: decisionsCapped, said in the notes, the asset's older decisions not presented as absent", async () => {
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(PROVENANCE_DECISION_CAP)];
+    const s = await story("tc");
+    expect(s.decisions).toEqual([]);
+    expect(s.decisionsCapped).toBe(true);
+    expect(s.decisionsUnread).toBe(false);
+    expect(s.notes.join(" ")).toMatch(new RegExp(`latest ${PROVENANCE_DECISION_CAP} equipment-sweep decisions were searched — older ones about this equipment were not searched`));
+    // it stopped at the cap: no page past it was asked for
+    const ranges = ctrlDb.calls.filter((c) => c.table === "audit_logs" && c.method === "range").map((c) => c.args[0]);
+    expect(Math.max(...(ranges as number[]))).toBeLessThan(PROVENANCE_DECISION_CAP);
+  });
+
+  it("a later page that fails marks the decisions unread and says how far the read got", async () => {
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(PROVENANCE_DECISION_PAGE)];
+    let pages = 0;
+    const base = ctrlClient.from.bind(ctrlClient);
+    const failingSecond = {
+      ...ctrlClient,
+      from: (t: string) => {
+        const b = base(t) as Record<string, unknown>;
+        if (t !== "audit_logs") return b;
+        pages += 1;
+        if (pages === 1) return b;
+        const failed: Record<string, unknown> = new Proxy({}, {
+          get: (_t, p: string) => (p === "then"
+            ? (resolve: (v: unknown) => void) => resolve({ data: null, error: { message: "page timeout" } })
+            : () => failed),
+        });
+        return failed;
+      },
+    };
+    st.clients.tc = failingSecond;
+    const s = await story("tc");
+    expect(s.decisionsUnread).toBe(true);
+    expect(s.notes.join(" ")).toMatch(new RegExp(`Only the latest ${PROVENANCE_DECISION_PAGE} of the equipment sweep's recorded decisions could be read \\(page timeout\\)`));
+  });
+
+  it("a relation read that reaches PROVENANCE_LINK_CAP sets linksCapped (no exact count) and says there may be more", async () => {
+    const extra = Array.from({ length: PROVENANCE_LINK_CAP }, (_, i) => o({
+      id: `rx${i}`, document_id: "d1", asset_id: "a1", tag_text: "P-101", source: "drawing", sheet_label: null, pages: null,
+      asserted_by: "machine", asserted_by_user: null, model: null, source_revision: null, vanished_at: null, superseded_at: null, created_at: "2026-08-01T00:00:00Z",
+    }));
+    ctrlDb.tables.document_assets = [...ctrlDb.tables.document_assets, ...extra];
+    const s = await story("tc");
+    expect(s.linksCapped).toBe(true);
+    expect(s.linksIncomplete).toBe(false);
+    expect(s.notes.join(" ")).toMatch(new RegExp(`Only the first ${PROVENANCE_LINK_CAP} links to controlled documents were read — there may be more`));
+    expect((await story("tc")).decisionsCapped).toBe(false);
+  });
+
+  it("a documents read that fails leaves the discovery's source UNREAD — never 'not one you can open'", async () => {
+    ctrlDb.readError.documents = { message: "documents down" };
+    const s = await story("tc");
+    expect(s.discovery).toMatchObject({ kind: "sweep", door: "drawing", source: null, sourceUnread: true, sourceHidden: false });
+    // the reader's own access, read and refused, is still an access verdict
+    const m = await story("tm");
+    expect(m.discovery).toMatchObject({ kind: "sweep", source: null, sourceUnread: false, sourceHidden: true });
+  });
+
+  it("GAP-303 acceptance 1 'when': an adopted link's date is the adoption's record, not the sweep's created_at; with the adoption unread it is said to be when the pair was first recorded", async () => {
+    const adopt = ctrlDb.tables.audit_logs.find((a) => a.id === "au2")!;
+    adopt.created_at = "2026-10-01T00:00:00Z";
+    const s = await story("tc");
+    const pid3 = s.links.find((l) => l.target.label === "PID-3")!;
+    expect(pid3).toMatchObject({ at: "2026-10-01T00:00:00Z", atMeaning: "asserted", assertedBy: "Linked by Ann Operator" });
+    // a machine's reading keeps its own date, as asserted
+    expect(s.links.find((l) => l.target.label === "PID-1")).toMatchObject({ at: "2026-09-02T00:00:00Z", atMeaning: "asserted" });
+    ctrlDb.readError.audit_logs = { message: "audit unreachable" };
+    const u = await story("tc");
+    expect(u.links.find((l) => l.target.label === "PID-3")).toMatchObject({ at: "2026-09-04T00:00:00Z", atMeaning: "first_recorded" });
   });
 });

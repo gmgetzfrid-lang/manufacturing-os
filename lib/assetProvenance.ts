@@ -17,7 +17,9 @@
 // What the reader may not read is not here and not counted: the route passes
 // only the documents and uploads the reader can read, and a link, a decision
 // or a discovery source on anything else is dropped before assembly (the
-// discovery says the source is not one they can open, naming nothing).
+// discovery says the source is not one they can open, naming nothing). A
+// source the route could not read at all is said to be unread — never
+// presented as an access verdict (DEC-90 ruling (1)).
 //
 // Agreement with the graph (GAP-303's graph remainder): machine-read vs
 // person-asserted, and every sheet mark, come from lib/relationProvenance.ts —
@@ -85,11 +87,15 @@ export const BRIDGE_DECISION_ACTIONS = [
   "EQUIPMENT_BRIDGE_DISCOVERED",
 ] as const;
 
-/** The most relation rows each relation read takes; reaching it is said. */
+/** The most relation rows each relation read takes; reaching it is said,
+ *  and the links' section then shows no count (`linksCapped`). */
 export const PROVENANCE_LINK_CAP = 1000;
-/** The most equipment-sweep decisions of the workspace the decision read
- *  searches (newest first); reaching it is said. */
-export const PROVENANCE_DECISION_CAP = 1000;
+/** The decision read pages back through the workspace's equipment-sweep
+ *  decisions this many at a time, newest first … */
+export const PROVENANCE_DECISION_PAGE = 1000;
+/** … and searches at most this many; reaching it is said, and the
+ *  decisions' section then shows no count and no "none" (`decisionsCapped`). */
+export const PROVENANCE_DECISION_CAP = 5000;
 /** GET /api/assets/provenance's 503 when the read predicate cannot decide. */
 export const PROVENANCE_ACCESS_UNCHECKED =
   "Your document access couldn't be checked just now, so this equipment's story is not shown — rather than show links on documents that may not be yours to see. Try again in a moment.";
@@ -120,6 +126,12 @@ export interface ProvLink {
   vanished: boolean;
   superseded: boolean;
   at: string | null;
+  /** What `at` is. "asserted": when the link was made (a machine's reading,
+   *  a person's link, the adoption recorded by EQUIPMENT_BRIDGE_RELATION_ADOPTED).
+   *  "first_recorded": a person's link adopted from the sweep whose adoption
+   *  record was not read — the row's created_at is when the sweep first
+   *  related the pair, not when the person linked it (GAP-303 acceptance 1). */
+  atMeaning: "asserted" | "first_recorded";
 }
 
 export interface ProvDecision {
@@ -142,7 +154,12 @@ export type ProvDiscovery =
   | { kind: "not_recorded"; recordedBy: string | null }
   | { kind: "person"; recordedBy: string | null }
   | {
-      kind: "sweep"; door: "drawing" | "knowledge"; source: ProvTarget | null; sourceHidden: boolean;
+      kind: "sweep"; door: "drawing" | "knowledge"; source: ProvTarget | null;
+      /** The source is not one the reader may open (RLS or the I-12 predicate). */
+      sourceHidden: boolean;
+      /** The read that would list the source failed: said as unread, never as
+       *  an access verdict. */
+      sourceUnread: boolean;
       pages: number[]; sheets: Array<{ page: number | null; label: string; aiRead: boolean }>;
       revision: string | null; automatic: boolean; confirmedByPerson: boolean; recordedBy: string | null;
     };
@@ -161,6 +178,12 @@ export interface AssetProvenance {
   /** A read the decisions depend on failed (the audit trail, or the
    *  documents / uploads it names): an empty list is NOT "no decision". */
   decisionsUnread: boolean;
+  /** A relation read reached PROVENANCE_LINK_CAP: there may be more links
+   *  than are listed, so the section shows no count. */
+  linksCapped: boolean;
+  /** The decision read reached PROVENANCE_DECISION_CAP: older decisions were
+   *  not searched, so the section shows no count and no "none". */
+  decisionsCapped: boolean;
   /** knowledge_document_assets is installed (20261235). */
   knowledgeRelationInstalled: boolean;
 }
@@ -263,6 +286,28 @@ export interface AssembleInput {
   /** See AssetProvenance — false when omitted. */
   linksIncomplete?: boolean;
   decisionsUnread?: boolean;
+  linksCapped?: boolean;
+  decisionsCapped?: boolean;
+  /** The documents / knowledge-uploads read failed (false when omitted): a
+   *  discovery source it would have listed is unread, not hidden. */
+  documentsUnread?: boolean;
+  knowledgeUnread?: boolean;
+}
+
+/** When a person adopted the sweep's pair on this document: the newest
+ *  EQUIPMENT_BRIDGE_RELATION_ADOPTED decision on it naming this asset by id
+ *  (adoptDrawingRelation records details.assetId), else null. */
+function adoptedAt(audits: readonly ProvAuditRow[], documentId: string, assetId: string): string | null {
+  let at: string | null = null;
+  for (const a of audits) {
+    if (a.action !== "EQUIPMENT_BRIDGE_RELATION_ADOPTED" || a.resource_type !== "document") continue;
+    if (String(a.resource_id ?? "") !== documentId) continue;
+    const d = a.details && typeof a.details === "object" ? a.details as Record<string, unknown> : null;
+    if (!d || d.assetId !== assetId) continue;
+    const t = str(a.created_at);
+    if (t && (!at || t > at)) at = t;
+  }
+  return at;
 }
 
 const byTime = (a: { at: string | null; key: string }, b: { at: string | null; key: string }) =>
@@ -280,6 +325,11 @@ export function assembleAssetProvenance(input: AssembleInput): AssetProvenance {
     const standing = linkStandingOf(r, assetTagsName(d.asset_tags, keys));
     const personName = standing === "person" && r.source === "manual" && r.asserted_by_user
       ? input.names.get(String(r.asserted_by_user)) ?? null : null;
+    const reading = sheetReadingOf(r);
+    // A person's link carrying the sweep's sheet was adopted: the row keeps
+    // the sweep's created_at, so "when" is the adoption's own record.
+    const adopted = standing === "person" && reading === "sweep";
+    const adoptAt = adopted ? adoptedAt(input.audits, String(r.document_id), asset.id) : null;
     links.push({
       key: `d:${r.id ?? r.document_id}`,
       target: docTarget(d),
@@ -289,11 +339,12 @@ export function assembleAssetProvenance(input: AssembleInput): AssetProvenance {
       model: standing === "person" ? null : str(r.model),
       revision: standing === "person" ? null : str(r.source_revision),
       sheet: str(r.sheet_label),
-      sheetMark: sheetMarkOf(sheetReadingOf(r)),
+      sheetMark: sheetMarkOf(reading),
       pages: pagesOf(r.pages),
       vanished: !!r.vanished_at,
       superseded: !!r.superseded_at,
-      at: str(r.created_at),
+      at: adoptAt ?? str(r.created_at),
+      atMeaning: adopted && !adoptAt ? "first_recorded" : "asserted",
     });
   }
   for (const r of input.knowledgeRelations) {
@@ -317,6 +368,7 @@ export function assembleAssetProvenance(input: AssembleInput): AssetProvenance {
       vanished: false,
       superseded: false,
       at: str(r.created_at),
+      atMeaning: "asserted",
     });
   }
   links.sort(byTime);
@@ -351,6 +403,8 @@ export function assembleAssetProvenance(input: AssembleInput): AssetProvenance {
     notes: input.notes,
     linksIncomplete: input.linksIncomplete === true,
     decisionsUnread: input.decisionsUnread === true,
+    linksCapped: input.linksCapped === true,
+    decisionsCapped: input.decisionsCapped === true,
     knowledgeRelationInstalled: input.knowledgeRelationInstalled,
   };
 }
@@ -373,8 +427,10 @@ function discoveryOf(asset: ProvAssetRow, input: AssembleInput): ProvDiscovery {
     ? (from.sheets as Array<Record<string, unknown> | null>).filter((x): x is Record<string, unknown> => !!x && typeof x.label === "string")
       .map((x) => ({ page: Number.isInteger(Number(x.page)) ? Number(x.page) : null, label: String(x.label), aiRead: x.aiRead === true }))
     : [];
+  const sourceUnread = !source && !!sourceId
+    && (door === "drawing" ? input.documentsUnread === true : input.knowledgeUnread === true);
   return {
-    kind: "sweep", door, source, sourceHidden: !source && !!sourceId,
+    kind: "sweep", door, source, sourceHidden: !source && !!sourceId && !sourceUnread, sourceUnread,
     // Where on a source the reader cannot open is not said either.
     pages: source ? pagesOf(from.pages) : [],
     sheets: source ? sheets : [],

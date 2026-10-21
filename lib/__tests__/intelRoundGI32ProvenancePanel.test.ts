@@ -77,11 +77,11 @@ const provCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).startsWi
 
 const STORY = {
   asset: { id: "a-e22", tag: "E-22" },
-  discovery: { kind: "sweep", door: "drawing", source: { kind: "document", id: "d1", label: "2002-D-10001", href: "/documents/lib1?doc=d1", archived: false }, sourceHidden: false, pages: [4], sheets: [{ page: 4, label: "2002-D-10001 SHT 4", aiRead: true }], revision: "B", automatic: false, confirmedByPerson: true, recordedBy: "Ann Operator" },
+  discovery: { kind: "sweep", door: "drawing", source: { kind: "document", id: "d1", label: "2002-D-10001", href: "/documents/lib1?doc=d1", archived: false }, sourceHidden: false, sourceUnread: false, pages: [4], sheets: [{ page: 4, label: "2002-D-10001 SHT 4", aiRead: true }], revision: "B", automatic: false, confirmedByPerson: true, recordedBy: "Ann Operator" },
   links: [
-    { key: "d:r1", target: { kind: "document", id: "d1", label: "2002-D-10001", href: "/documents/lib1?doc=d1", archived: false }, standing: "machine", assertedBy: "The equipment sweep read it off the drawing — AI-read (vision-x); not typed by a person", personName: null, model: "vision-x", revision: "B", sheet: "2002-D-10001 SHT 4", sheetMark: "AI-read, unconfirmed", pages: [4], vanished: false, superseded: false, at: "2026-09-02T00:00:00Z" },
-    { key: "d:r3", target: { kind: "document", id: "d3", label: "PID-3", href: "/documents/lib1?doc=d3", archived: false }, standing: "person", assertedBy: "Linked by Ann Operator", personName: "Ann Operator", model: null, revision: null, sheet: "PID-3 SHT 1", sheetMark: "read by the equipment sweep, unconfirmed", pages: [1], vanished: false, superseded: false, at: "2026-09-04T00:00:00Z" },
-    { key: "k:k1", target: { kind: "knowledge", id: "kU", label: "upload.pdf", href: "/knowledge/KL1?doc=kU", archived: false }, standing: "machine", assertedBy: "The equipment sweep read it off the knowledge upload — read from drawing (the PDF's own text); not typed by a person", personName: null, model: null, revision: null, sheet: null, sheetMark: null, pages: [2], vanished: false, superseded: false, at: "2026-09-06T00:00:00Z" },
+    { key: "d:r1", target: { kind: "document", id: "d1", label: "2002-D-10001", href: "/documents/lib1?doc=d1", archived: false }, standing: "machine", assertedBy: "The equipment sweep read it off the drawing — AI-read (vision-x); not typed by a person", personName: null, model: "vision-x", revision: "B", sheet: "2002-D-10001 SHT 4", sheetMark: "AI-read, unconfirmed", pages: [4], vanished: false, superseded: false, at: "2026-09-02T00:00:00Z", atMeaning: "asserted" },
+    { key: "d:r3", target: { kind: "document", id: "d3", label: "PID-3", href: "/documents/lib1?doc=d3", archived: false }, standing: "person", assertedBy: "Linked by Ann Operator", personName: "Ann Operator", model: null, revision: null, sheet: "PID-3 SHT 1", sheetMark: "read by the equipment sweep, unconfirmed", pages: [1], vanished: false, superseded: false, at: "2026-09-04T00:00:00Z", atMeaning: "asserted" },
+    { key: "k:k1", target: { kind: "knowledge", id: "kU", label: "upload.pdf", href: "/knowledge/KL1?doc=kU", archived: false }, standing: "machine", assertedBy: "The equipment sweep read it off the knowledge upload — read from drawing (the PDF's own text); not typed by a person", personName: null, model: null, revision: null, sheet: null, sheetMark: null, pages: [2], vanished: false, superseded: false, at: "2026-09-06T00:00:00Z", atMeaning: "asserted" },
   ],
   decisions: [
     { key: "a:au2", action: "EQUIPMENT_BRIDGE_RELATION_ADOPTED", words: "Made a person's link (adopted from the sweep's reading)", actor: "Ann Operator", target: { kind: "document", id: "d3", label: "PID-3", href: "/documents/lib1?doc=d3", archived: false }, detail: "PID-3 SHT 1, Rev A", at: "2026-09-04T00:00:01Z" },
@@ -89,6 +89,8 @@ const STORY = {
   notes: [],
   linksIncomplete: false,
   decisionsUnread: false,
+  linksCapped: false,
+  decisionsCapped: false,
   knowledgeRelationInstalled: true,
 };
 
@@ -212,6 +214,65 @@ describe("GAP-303 acceptance 1 / GAP-316 — the hub's provenance view", () => {
     await act(async () => { opener().click(); });
     await flush();
     expect(panel()!.querySelector('[data-testid="prov-discovery"]')!.textContent).toMatch(/Created by the equipment sweep \(applied automatically\).*The registry records Cy Admin as accountable for it \(who turned automatic apply on, or filed the drawing\)\. Not yet confirmed by a person\./);
+  });
+
+  it("DEC-90 ruling (1), a read cut short: the decision search reached its cap with no match — neither '(0)' nor 'No recorded …'; it says older decisions were not searched", async () => {
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), decisions: [], decisionsCapped: true, notes: ["Only the workspace's latest 5000 equipment-sweep decisions were searched — older ones about this equipment were not searched and are not listed."] } };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    const p = panel()!;
+    expect(p.textContent).not.toMatch(/Decisions recorded \(0\)/);
+    expect(p.textContent).not.toMatch(/No recorded equipment-sweep decision/);
+    expect(p.querySelector('[data-testid="prov-decisions-capped"]')!.textContent).toBe("None found among the latest 5000 searched; older decisions were not searched.");
+    // the links were read in full: their count stands
+    expect(p.textContent).toContain("Links you can read (3)");
+  });
+
+  it("a decision search cut short that found some keeps them, with no count and the cap said", async () => {
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), decisionsCapped: true } };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    const p = panel()!;
+    expect(p.querySelectorAll('[data-testid="prov-decision"]')).toHaveLength(1);
+    expect(p.textContent).not.toMatch(/Decisions recorded \(1\)/);
+    expect(p.querySelector('[data-testid="prov-decisions-capped"]')!.textContent).toBe("Only the latest 5000 decisions were searched; older ones were not.");
+  });
+
+  it("a link read that reached its cap shows no exact count and says there may be more", async () => {
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), linksCapped: true } };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    const p = panel()!;
+    expect(p.textContent).not.toMatch(/Links you can read \(3\)/);
+    expect(p.textContent).toMatch(/Links you can read(?!\s*\()/);
+    expect(p.querySelector('[data-testid="prov-links-capped"]')!.textContent).toBe("Only the first 1000 links were read — there may be more.");
+    expect(p.textContent).toContain("Decisions recorded (1)");
+  });
+
+  it("a discovery source the failed read could not list is said to be unread — not 'not one you can open'", async () => {
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), discovery: { ...structuredClone(STORY.discovery), source: null, sourceHidden: false, sourceUnread: true, pages: [], sheets: [], revision: null } } };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    const text = panel()!.querySelector('[data-testid="prov-discovery"]')!.textContent ?? "";
+    expect(text).toMatch(/read off a drawing — the source could not be read — see above\./);
+    expect(text).not.toMatch(/not one you can open/);
+  });
+
+  it("GAP-303 'when': an adopted link whose adoption record was not read is dated as first recorded, not as when the person linked it", async () => {
+    const body = structuredClone(STORY);
+    (body.links[1] as Record<string, unknown>).atMeaning = "first_recorded";
+    s.provenance = { status: 200, body };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    const links = [...panel()!.querySelectorAll('[data-testid="prov-link"]')].map((li) => li.textContent ?? "");
+    expect(links[1]).toContain("first recorded 2026-09-04");
+    expect(links[0]).not.toContain("first recorded");
+    expect(links[0]).toContain("2026-09-02");
   });
 
   it("an unregistered tag has no story to tell: no panel", async () => {

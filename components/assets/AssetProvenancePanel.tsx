@@ -13,7 +13,8 @@
 // row-level security, plus the app's document read predicate): a link on a
 // document they may not read is not shown and not counted. A read that fails
 // is said — never "none": a section whose read failed says it could not be
-// read and shows no count (DEC-90 ruling (1)).
+// read and shows no count (DEC-90 ruling (1)); so does a section whose read
+// stopped at its cap (more links, or older decisions, were not read).
 //
 // Closed until asked: opening the hub reads nothing more than it did.
 
@@ -21,7 +22,7 @@ import React, { useCallback, useState } from "react";
 import Link from "next/link";
 import { History, ChevronDown, ChevronRight, RefreshCw, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import type { AssetProvenance, ProvLink, ProvTarget } from "@/lib/assetProvenance";
+import { PROVENANCE_DECISION_CAP, PROVENANCE_LINK_CAP, type AssetProvenance, type ProvLink, type ProvTarget } from "@/lib/assetProvenance";
 
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : null);
 const pagesText = (p: number[]) => (p.length === 0 ? null : `page${p.length === 1 ? "" : "s"} ${p.slice(0, 8).join(", ")}${p.length > 8 ? "…" : ""}`);
@@ -139,7 +140,7 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
                     <>
                       Created by the equipment sweep{d.automatic ? " (applied automatically)" : ""}, read off{" "}
                       {d.source ? <TargetLink t={d.source} /> : d.door === "knowledge" ? "a knowledge-library upload" : "a drawing"}
-                      {d.sourceHidden ? " — the source is not one you can open" : ""}
+                      {d.sourceUnread ? " — the source could not be read — see above" : d.sourceHidden ? " — the source is not one you can open" : ""}
                       {d.sheets.length > 0 ? ` (${d.sheets.map((s) => `${s.label}${s.aiRead ? " (AI-read, unconfirmed)" : ""}`).join("; ")})` : pagesText(d.pages) ? ` (${pagesText(d.pages)})` : ""}
                       {d.revision ? `, Rev ${d.revision}` : ""}.
                       {d.recordedBy ? (d.automatic
@@ -153,11 +154,13 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
 
               <section>
                 <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-                  Links you can read{story.linksIncomplete ? "" : ` (${story.links.length})`}
+                  Links you can read{story.linksIncomplete || story.linksCapped ? "" : ` (${story.links.length})`}
                 </div>
                 {story.links.length === 0 ? (
                   <div className="text-[var(--color-text-faint)] italic" data-testid="prov-no-links">
-                    {story.linksIncomplete ? "The links could not be read — see above." : "No document or upload you can read links this equipment."}
+                    {story.linksIncomplete ? "The links could not be read — see above."
+                      : story.linksCapped ? `None you can read among the first ${PROVENANCE_LINK_CAP} read; the rest were not read.`
+                      : "No document or upload you can read links this equipment."}
                   </div>
                 ) : (
                   <ul className="space-y-1.5" data-testid="prov-links">
@@ -173,7 +176,12 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
                           )}
                           {l.vanished && <span className="text-[10px] font-bold text-amber-800">not on current rev</span>}
                           {l.superseded && !l.vanished && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">earlier rev</span>}
-                          {day(l.at) && <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{day(l.at)}</span>}
+                          {day(l.at) && (
+                            <span className="ml-auto text-[10px] text-[var(--color-text-faint)]"
+                              title={l.atMeaning === "first_recorded" ? "When the equipment sweep first related the pair — when the person linked it was not read" : undefined}>
+                              {l.atMeaning === "first_recorded" ? `first recorded ${day(l.at)}` : day(l.at)}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                           {l.assertedBy}
@@ -187,6 +195,9 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
                 {story.linksIncomplete && story.links.length > 0 && (
                   <div className="mt-1 text-[var(--color-text-faint)] italic" data-testid="prov-links-incomplete">Some links could not be read — see above.</div>
                 )}
+                {story.linksCapped && !story.linksIncomplete && story.links.length > 0 && (
+                  <div className="mt-1 text-[var(--color-text-faint)] italic" data-testid="prov-links-capped">Only the first {PROVENANCE_LINK_CAP} links were read — there may be more.</div>
+                )}
                 {!story.knowledgeRelationInstalled && (
                   <div className="mt-1 text-[10px] text-[var(--color-text-faint)]" data-testid="prov-knowledge-not-installed">
                     Links to knowledge-library uploads are not recorded on this workspace&apos;s database yet.
@@ -196,15 +207,22 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
 
               <section>
                 <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-                  Decisions recorded{story.decisionsUnread ? "" : ` (${story.decisions.length})`}
+                  Decisions recorded{story.decisionsUnread || story.decisionsCapped ? "" : ` (${story.decisions.length})`}
                 </div>
                 {story.decisionsUnread && (
                   <div className="text-[var(--color-text-faint)] italic" data-testid="prov-decisions-unread">
                     {story.decisions.length === 0 ? "The recorded decisions could not be read — see above." : "Some recorded decisions could not be read — see above."}
                   </div>
                 )}
+                {story.decisionsCapped && !story.decisionsUnread && (
+                  <div className="text-[var(--color-text-faint)] italic" data-testid="prov-decisions-capped">
+                    {story.decisions.length === 0
+                      ? `None found among the latest ${PROVENANCE_DECISION_CAP} searched; older decisions were not searched.`
+                      : `Only the latest ${PROVENANCE_DECISION_CAP} decisions were searched; older ones were not.`}
+                  </div>
+                )}
                 {story.decisions.length === 0 ? (
-                  story.decisionsUnread ? null : <div className="text-[var(--color-text-faint)] italic" data-testid="prov-no-decisions">No recorded equipment-sweep decision about {tag} on anything you can read.</div>
+                  story.decisionsUnread || story.decisionsCapped ? null : <div className="text-[var(--color-text-faint)] italic" data-testid="prov-no-decisions">No recorded equipment-sweep decision about {tag} on anything you can read.</div>
                 ) : (
                   <ul className="space-y-1" data-testid="prov-decisions">
                     {story.decisions.map((x) => (
