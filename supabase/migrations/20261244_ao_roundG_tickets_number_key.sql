@@ -57,11 +57,11 @@
 -- path it already has. No other app path inserts a ticket or writes
 -- tickets.ticket_id (the ticket-shed restore re-fills a stub's content; it
 -- does not insert). The restore (lib/dataRestore.ts applyRestoreChunk, P16)
--- refuses a backup request whose number a live request holds, per row,
--- before any write (TICKET_NUMBER_IN_USE), and restores a backup request
--- whose number ANOTHER REQUEST OF THE SAME BACKUP holds under a fresh number
--- from ticket_number_counters, the number it was issued recorded
--- (TICKET_RENUMBERED, P16 fix pass 2) — so it never sends two requests under
+-- restores a backup request whose number a live request of the workspace
+-- holds, or ANOTHER REQUEST OF THE SAME BACKUP carries, under a fresh number
+-- from ticket_number_counters, the number it was issued recorded on the
+-- request and in the chunk's audit row (TICKET_RENUMBERED, P16 fix passes 2
+-- and 3; the holder is kept as it is) — so it never sends two requests under
 -- one number; before this paste that check is the only guard; after it, the
 -- database holds the same rule for every writer. No app code reads the key's
 -- name.
@@ -71,8 +71,8 @@
 -- nothing. Deploy the P16 app first (recommended, not required): until it is
 -- deployed, a restore into a workspace that uses a backup request's number is
 -- refused 23505 per row by this key (reported, the rest of the table lands —
--- BKP-12), and after it, the same row is refused TICKET_NUMBER_IN_USE with
--- its number named.
+-- BKP-12), and after it, the same row is restored under a fresh number, the
+-- number it was issued recorded (TICKET_RENUMBERED).
 --
 -- LOCKING: the check and the build run under ACCESS EXCLUSIVE on tickets,
 -- only in the world where the key is absent (the index build over the table
