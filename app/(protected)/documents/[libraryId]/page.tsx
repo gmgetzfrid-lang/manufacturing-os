@@ -254,11 +254,11 @@ function baseName(filename: string) {
   return idx > 0 ? filename.slice(0, idx) : filename;
 }
 
-// Escape user-controlled strings going into a Supabase .or() ilike
-// pattern. Commas and parentheses would otherwise break the filter
-// syntax; %_ are SQL wildcards we don't want users to inject.
-function escapeIlikeLiteral(s: string): string {
-  return s.replace(/[\\%_,()]/g, (m) => `\\${m}`);
+// Escape a literal for a LIKE pattern: % and _ are wildcards, \\ escapes.
+// Used with .like() on its own (never inside .or(), whose comma/parenthesis
+// syntax a document number like "EP 5-3-10 (A)" would break).
+function escapeLikeLiteral(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
 // Map a raw `documents` row to a DocumentRecord. Module-level so both the
@@ -1169,6 +1169,9 @@ export default function LibraryExplorerPage() {
     ));
     folderDocsCache.current.clear();
     setSelectedDocIds(new Set(ids.filter((id) => !done.has(id))));
+    // Archived = no longer in force: knowledge libraries linked here set
+    // their index aside now, not at the next background sync.
+    if (done.size && activeOrgId) nudgeKnowledgeSources(activeOrgId, libraryId);
     if (failure) setError(`Archived ${done.size} of ${ids.length}. The rest failed: ${failure}`);
   };
 
@@ -2685,19 +2688,29 @@ export default function LibraryExplorerPage() {
         originals.push(baseName(it.file.name));
       }
       const distinctBases = Array.from(new Set(originals));
-      // In slices: a folder of thousands of files would otherwise build one
-      // URL too long for the API and silently skip the duplicate check.
+      // Which numbers are already taken. Exact matches in slices (a folder
+      // of thousands would otherwise build a URL too long for the API); then,
+      // only for numbers that ARE taken, the "-2", "-3"… already issued.
+      // A lookup that fails is retried once and then gives way to the
+      // database's own uniqueness rule — it never stops the upload.
       const usedNumbers = new Set<string>();
-      for (let i = 0; i < distinctBases.length; i += 80) {
-        const orClause = distinctBases.slice(i, i + 80).map((b) => `document_number.ilike.${escapeIlikeLiteral(b)}%`).join(",");
-        const { data: existingRows } = await supabase
-          .from("documents")
-          .select("document_number")
-          .eq("library_id", libraryId)
-          .or(orClause)
-          .not("status", "in", "(Archived,Superseded)")
-          .limit(5000);
-        for (const r of existingRows ?? []) usedNumbers.add(String((r as { document_number: string }).document_number || ""));
+      const live = () => supabase.from("documents").select("document_number")
+        .eq("library_id", libraryId).not("status", "in", "(Archived,Superseded)");
+      const addRows = (rows: unknown[] | null) => {
+        for (const r of rows ?? []) usedNumbers.add(String((r as { document_number: string }).document_number || ""));
+      };
+      for (let i = 0; i < distinctBases.length; i += 100) {
+        const slice = distinctBases.slice(i, i + 100);
+        let res = await live().in("document_number", slice);
+        if (res.error) res = await live().in("document_number", slice);
+        if (res.error) console.warn("[upload] duplicate-number check skipped for a slice:", res.error.message);
+        addRows(res.data);
+      }
+      const takenBases = distinctBases.filter((b) => usedNumbers.has(b));
+      for (let i = 0; i < takenBases.length; i += 8) {
+        const results = await Promise.all(takenBases.slice(i, i + 8).map((b) =>
+          live().like("document_number", `${escapeLikeLiteral(b)}-%`).limit(5000)));
+        for (const res of results) addRows(res.data);
       }
 
       const resolved: Array<{ item: StagedItem; docNumber: string; original: string }> = items.map((item, i) => {

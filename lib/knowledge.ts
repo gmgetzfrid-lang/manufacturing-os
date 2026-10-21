@@ -883,6 +883,15 @@ export interface SemanticProgress {
   /** Provider said "slow down" (free-tier RPM/TPM). Pacing, not failure. */
   rateLimited?: boolean;
   retryAfterMs?: number;
+  /** The database was too busy this round. Pacing, not failure. */
+  busy?: boolean;
+  /** Counts are last-known plus this call's writes (counting was too slow). */
+  estimated?: boolean;
+  /** No numbers at all right now — keep showing the previous ones. */
+  countUnavailable?: boolean;
+  /** The tab stopped waiting on a busy database; the background build
+   *  carries on from where this stopped. Not an error. */
+  paused?: boolean;
 }
 
 /** Coverage only — spends nothing, so it's safe to call on page load. */
@@ -895,8 +904,11 @@ export function nudgeKnowledgeSources(orgId: string, dcLibraryId: string): void 
     .catch(() => { /* the cron remains the backstop */ });
 }
 
-export async function semanticStatus(orgId: string, libraryId: string): Promise<SemanticProgress> {
-  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "status" });
+export async function semanticStatus(orgId: string, libraryId: string, known?: SemanticProgress | null): Promise<SemanticProgress> {
+  return apiPost("/api/knowledge/embed", {
+    orgId, libraryId, action: "status",
+    ...(known && !known.countUnavailable ? { known: { total: known.total, covered: known.coveredNow } } : {}),
+  });
 }
 
 /** Fire-and-forget: ask the server to continue any pending meaning-index
@@ -932,8 +944,11 @@ export async function resetSemanticIndex(orgId: string, libraryId: string): Prom
  *  finish, so callers LOOP until `done` — every committed batch is permanent,
  *  which is what makes this survivable on a platform that can kill a request
  *  at 60 seconds. */
-export async function embedBatch(orgId: string, libraryId: string, batch?: number): Promise<SemanticProgress> {
-  return apiPost("/api/knowledge/embed", { orgId, libraryId, ...(batch ? { batch } : {}) });
+export async function embedBatch(orgId: string, libraryId: string, batch?: number, known?: SemanticProgress | null): Promise<SemanticProgress> {
+  return apiPost("/api/knowledge/embed", {
+    orgId, libraryId, ...(batch ? { batch } : {}),
+    ...(known && !known.countUnavailable ? { known: { total: known.total, covered: known.coveredNow } } : {}),
+  });
 }
 
 /**
@@ -951,6 +966,7 @@ export async function buildSemanticIndex(
   orgId: string, libraryId: string,
   onProgress?: (p: SemanticProgress) => void,
   shouldStop?: () => boolean,
+  known?: SemanticProgress | null,
 ): Promise<SemanticProgress> {
   // Once rate-limited, stay in paced mode for the rest of the build — the
   // provider's window doesn't grow back mid-run, and flapping between full
@@ -964,43 +980,55 @@ export async function buildSemanticIndex(
   };
 
   // Gateway hiccups (a 504 from an invocation the platform killed, a cold
-  // start answering 502) are the WEATHER on serverless, not the build
-  // failing — every committed batch is already permanent, so the only
-  // correct response is to wait a moment and call again.
-  let transientFailures = 0;
-  const embedBatchWithRetry = async (batch?: number): Promise<SemanticProgress> => {
-    for (;;) {
-      try {
-        const out = await embedBatch(orgId, libraryId, batch);
-        transientFailures = 0;
-        return out;
-      } catch (e) {
-        const transient = (e as { transient?: boolean }).transient;
-        if (!transient || ++transientFailures > 5 || shouldStop?.()) throw e;
-        await sleepUnlessStopped(3_000 * transientFailures);
-      }
-    }
-  };
+  // start answering 502) and a busy database are the WEATHER on serverless,
+  // not the build failing — every committed batch is already permanent, so
+  // the only correct response is to wait a moment and call again. After a
+  // long patch of it the tab stops waiting and says so plainly: the build
+  // carries on in the background from exactly where it is.
+  let weather = 0;
+  const MAX_WEATHER = 10;
+  let last: SemanticProgress | null = known ?? null;
+  const paused = (): SemanticProgress => ({
+    ...(last ?? { embedded: 0, total: 0, coveredNow: 0, remaining: 0, done: false, spentThisRun: 0 }),
+    embedded: 0, done: false, error: null, paused: true,
+  });
 
-  let last = await embedBatchWithRetry();
-  onProgress?.(last);
   for (;;) {
-    if (last.done || last.error || shouldStop?.()) break;
-    if (last.rateLimited) {
+    if (shouldStop?.()) break;
+    let next: SemanticProgress;
+    try {
+      next = await embedBatch(orgId, libraryId, paced ? RATE_LIMITED_BATCH : undefined, last);
+    } catch (e) {
+      if (!(e as { transient?: boolean }).transient) throw e;
+      if (++weather > MAX_WEATHER) return paused();
+      await sleepUnlessStopped(Math.min(30_000, 3_000 * weather));
+      continue;
+    }
+    // A round with no numbers keeps the previous ones on screen.
+    if (next.countUnavailable && last) next = { ...next, total: last.total, coveredNow: last.coveredNow + next.embedded, remaining: Math.max(0, last.remaining - next.embedded) };
+    last = next;
+    onProgress?.(next);
+    if (next.done || next.error) break;
+    if (next.rateLimited) {
       // Pacing, not failure: wait out the provider's per-minute window and
       // continue with a batch small enough to fit inside it.
       paced = true;
-      await sleepUnlessStopped(last.retryAfterMs ?? 65_000);
-      if (shouldStop?.()) break;
-    } else if (last.embedded === 0) {
-      // Embedded nothing, not done, not rate-limited — stuck. Hand back
-      // what happened rather than spinning forever.
-      break;
+      weather = 0;
+      await sleepUnlessStopped(next.retryAfterMs ?? 65_000);
+      continue;
     }
-    last = await embedBatchWithRetry(paced ? RATE_LIMITED_BATCH : undefined);
-    onProgress?.(last);
+    if (next.busy) {
+      if (next.embedded > 0) weather = 0;
+      if (++weather > MAX_WEATHER) return paused();
+      await sleepUnlessStopped(Math.min(30_000, 4_000 * weather));
+      continue;
+    }
+    weather = 0;
+    // Embedded nothing, not done, not rate-limited, not busy — stuck. Hand
+    // back what happened rather than spinning forever.
+    if (next.embedded === 0) break;
   }
-  return last;
+  return last ?? paused();
 }
 
 export async function rebuildDrawingIndex(orgId: string, libraryId: string): Promise<{ docs: number }> {
@@ -1182,7 +1210,7 @@ export async function downloadLibraryForm(orgId: string, documentId: string, val
 
 // ── Health check + repair ─────────────────────────────────────────────────
 
-export type { KnowledgeHealthReport, RepairResult } from "@/lib/knowledgeHealthServer";
+export type { KnowledgeHealthReport, RepairResult, NameRepairResponse } from "@/lib/knowledgeHealthServer";
 
 export async function getLibraryHealth(orgId: string, libraryId: string): Promise<import("@/lib/knowledgeHealthServer").KnowledgeHealthReport> {
   return apiGet(`/api/knowledge/health?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}`);
@@ -1190,4 +1218,8 @@ export async function getLibraryHealth(orgId: string, libraryId: string): Promis
 
 export async function repairLibrary(orgId: string, libraryId: string): Promise<import("@/lib/knowledgeHealthServer").RepairResult> {
   return apiPost("/api/knowledge/health", { orgId, libraryId });
+}
+
+export async function fixLinkedDocumentNames(orgId: string, libraryId: string, exclude: string[] = []): Promise<import("@/lib/knowledgeHealthServer").NameRepairResponse> {
+  return apiPost("/api/knowledge/health", { orgId, libraryId, action: "fixNames", exclude });
 }

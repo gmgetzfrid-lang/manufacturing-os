@@ -31,6 +31,7 @@ import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
+import { orIlike } from "@/lib/orFilter";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -188,7 +189,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       const { data } = await supabase
         .from("documents").select("id, document_number, title, name")
         .eq("org_id", orgId)
-        .or(`document_number.ilike.%${q}%,title.ilike.%${q}%,name.ilike.%${q}%`)
+        .or(orIlike(["document_number", "title", "name"], q))
         .limit(8);
       setResults((((data ?? []) as Array<Record<string, unknown>>)).map((d) => ({
         id: String(d.id), label: String(d.document_number || d.title || d.name || "Document"),

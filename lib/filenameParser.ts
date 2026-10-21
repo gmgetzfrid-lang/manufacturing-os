@@ -12,6 +12,7 @@
 //   200-ISO-014_RevA.pdf       -> docNum: 200-ISO-014, rev: A, type: Isometric
 //   P-200-301-AS_BUILT.pdf     -> docNum: P-200-301, type: As-Built
 //   Unit_100_East_PID.pdf      -> hints.unit: 100, type: P&ID
+//   EP 5-3-10 - Ball Valves.pdf -> docNum: EP 5-3-10, title: Ball Valves
 //
 // Each org will eventually want custom regex patterns added to library
 // settings. v1 ships with the universal ones above.
@@ -41,38 +42,47 @@ const DOC_TYPE_TOKENS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /MOC|Management[_\- ]of[_\- ]Change/i, label: "MOC" },
 ];
 
+// A revision token: _R7, -R02, R38, RevA, Rev 3, Rev.B, Revision 2, Rev B1.
+// It must stand on its own — "Relief", "Review", "Revised" are words, not
+// revisions — so it ends at the end of the name or at a separator.
+const REV_TOKEN = /(?:^|[_\-. ])(?:rev(?:ision)?[._\- ]?([A-Z]\d{0,2}|\d{1,3})|r(\d{1,3}))(?=$|[_\-. ])/gi;
+// Sheet: SHT01, SHEET_2, SH-3 — again as its own token.
+const SHEET_TOKEN = /(?:^|[_\-. ])(?:SHT|SHEET|SH)[._\- ]?(\d{1,3})(?=$|[_\-. ])/gi;
+// Only unmistakable dates: 2024-03-15, 15-03-2024, 3_15_2024. A short
+// a-b-c like 5-3-10 is a document number far more often than a date.
+const DATE_TOKEN = /\b(?:(?:19|20)\d{2}[-_.]\d{1,2}[-_.]\d{1,2}|\d{1,2}[-_.]\d{1,2}[-_.](?:19|20)\d{2})\b/g;
+// "NUMBER - Title": a spaced dash (or en/em dash) separating the two.
+const NUMBER_TITLE = /^(.+?)\s+[-\u2013\u2014]\s+(.+)$/;
+
+const tidy = (s: string) => s.replace(/\s+/g, " ").replace(/^[_\-. ]+|[_\-. ]+$/g, "").trim();
+
 export function parseFilename(filename: string): ParsedFilename {
   // Strip extension
   const base = filename.replace(/\.[^.]+$/, "");
 
   // ─── Rev extraction ────────────────────────────────────────────────
-  // Patterns:  _R7, _R02, _Rev7, _RevA, -R38
+  // The LAST revision token wins ("…_R1_R2" means R2).
   let rev = "0";
-  const revMatch = base.match(/[_\- ](?:r(?:ev)?[\.\-]?)([A-Z0-9]+)\b/i);
-  if (revMatch) rev = revMatch[1];
+  for (const m of base.matchAll(REV_TOKEN)) rev = (m[1] ?? m[2]).toUpperCase();
 
   // ─── Sheet extraction ──────────────────────────────────────────────
-  // Patterns: SHT01, SHEET_2, _S1, _SH01
   let sheet: string | undefined;
-  const sheetMatch = base.match(/(?:SHT|SHEET|SH)[._\- ]?(\d{1,3})\b/i);
+  const sheetMatch = [...base.matchAll(SHEET_TOKEN)][0];
   if (sheetMatch) sheet = sheetMatch[1];
 
   // ─── Unit extraction ───────────────────────────────────────────────
-  // Patterns: Unit_100, U-200, 100_Unit, prefix 100-
+  // Patterns: Unit_100, U-200, prefix 100-
   let unit: string | undefined;
-  const unitMatch1 = base.match(/(?:^|[_\- ])U(?:nit)?[._\- ]?(\d{2,4})\b/i);
+  const unitMatch1 = base.match(/(?:^|[_\- ])U(?:nit)?[._\- ]?(\d{2,4})(?=$|[_\-. ])/i);
   if (unitMatch1) {
     unit = unitMatch1[1];
   } else {
-    // Try matching prefix like "100-" or "200-PID..."
     const prefixMatch = base.match(/^(\d{2,4})[\-_]/);
     if (prefixMatch) unit = prefixMatch[1];
   }
 
   // ─── Date extraction ───────────────────────────────────────────────
-  // Strip trailing dates so they don't pollute the doc number
-  const dateMatch = base.match(/(\d{1,2}[\-_]\d{1,2}[\-_]\d{2,4})/);
-  const datestamp = dateMatch ? dateMatch[1] : undefined;
+  const datestamp = base.match(DATE_TOKEN)?.[0];
 
   // ─── Type detection ────────────────────────────────────────────────
   let type: string | undefined;
@@ -80,27 +90,24 @@ export function parseFilename(filename: string): ParsedFilename {
     if (pattern.test(base)) { type = label; break; }
   }
 
-  // ─── Document number ───────────────────────────────────────────────
-  // Strip rev, sheet, date, and known type suffixes. Whatever remains
-  // is the document number.
-  const docNum = base
-    .replace(/[_\- ](?:r(?:ev)?[\.\-]?)[A-Z0-9]+/gi, "")
-    .replace(/(?:SHT|SHEET|SH)[._\- ]?\d{1,3}/gi, "")
-    .replace(/\d{1,2}[\-_]\d{1,2}[\-_]\d{2,4}/g, "")
-    .replace(/[_\- ]+$/, "")
-    .replace(/^[_\- ]+/, "")
-    .trim();
-
-  // ─── Title ─────────────────────────────────────────────────────────
-  // Human-readable: collapse underscores/dashes to spaces
-  const title = base
-    .replace(/[_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  // ─── Number and title ──────────────────────────────────────────────
+  // Rev, sheet and date tokens come out; what is left is the identity.
+  const strip = (s: string) => tidy(s.replace(REV_TOKEN, " ").replace(SHEET_TOKEN, " ").replace(DATE_TOKEN, " "));
+  const split = base.match(NUMBER_TITLE);
+  let docNum: string;
+  let title: string;
+  if (split && /\d/.test(split[1]) && split[1].length <= 40) {
+    // "EP 5-3-10 - Ball Valves": the number, then the title.
+    docNum = strip(split[1]) || tidy(split[1]);
+    title = strip(split[2].replace(/_+/g, " ")) || tidy(split[2]);
+  } else {
+    docNum = strip(base);
+    title = tidy(base.replace(/_+/g, " "));
+  }
 
   return {
     documentNumber: docNum || base,
-    title,
+    title: title || base,
     rev,
     hints: { type, sheet, unit, datestamp },
   };

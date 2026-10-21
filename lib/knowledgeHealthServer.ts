@@ -15,6 +15,9 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { planKnowledgeSources, syncKnowledgeLibrarySources, type SourceSyncSummary } from "@/lib/knowledgeSourceSync";
+import { findNameFixes, repairDocumentNames, type NameRepairResult } from "@/lib/documentNameRepair";
+import type { NameFix } from "@/lib/documentNames";
+import { isBusyDbError } from "@/lib/knowledgeEmbedCore";
 import { summarize, STUCK_AFTER_MS, type HealthSummary, type MirrorFacts, type SourceDocFacts } from "@/lib/knowledgeHealth";
 
 interface MirrorRow {
@@ -31,14 +34,17 @@ export interface KnowledgeHealthReport {
   linked: HealthSummary | null;
   uploaded: { total: number; ready: number; waiting: number; failed: number; partial: number };
   retired: number;
-  meaning: { chunks: number; embedded: number };
+  /** Null when the counts couldn't be read in time (heavy indexing) — not an error. */
+  meaning: { chunks: number; embedded: number } | null;
+  /** Linked documents whose number/revision the old filename reader got wrong. */
+  names: { wrong: number; clashes: number; samples: NameFix[]; checked: boolean };
   /** A read failed part-way — the numbers may be short; Repair won't remove anything. */
   incomplete: boolean;
   errors: string[];
 }
 
-async function count(build: () => PromiseLike<{ count: number | null }>): Promise<number> {
-  try { return (await build()).count ?? 0; } catch { return 0; }
+async function count(build: () => PromiseLike<{ count: number | null; error: unknown }>): Promise<number | null> {
+  try { const r = await build(); return r.error ? null : r.count ?? 0; } catch { return null; }
 }
 
 export async function knowledgeHealthReport(orgId: string, libraryId: string): Promise<KnowledgeHealthReport> {
@@ -100,9 +106,25 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string): P
     partial: uploads.filter((m) => m.status === "ready" && ((m.pages_indexed ?? 0) <= 0 || (m.pages_indexed ?? 0) < (m.page_count ?? 0))).length,
   };
 
+  // Names: only for linked documents (uploaded PDFs are named by hand).
+  const names: KnowledgeHealthReport["names"] = { wrong: 0, clashes: 0, samples: [], checked: false };
+  if (plan) {
+    const found = await findNameFixes(plan.all.map(({ doc }) => doc.id));
+    names.wrong = found.fixes.length;
+    names.clashes = found.fixes.filter((f) => f.clash).length;
+    // Clashes first: they're the ones that need a person.
+    names.samples = [...found.fixes.filter((f) => f.clash), ...found.fixes.filter((f) => !f.clash)].slice(0, 300);
+    names.checked = !found.error;
+    if (found.error) errors.push(`names: ${found.error}`);
+  }
+
+  // While the meaning index is being built the chunk table is busy; a count
+  // that times out is reported as "not available right now", never as 0.
   const [chunks, embedded] = await Promise.all([
-    count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("library_id", libraryId)),
-    count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("library_id", libraryId).not("embedding", "is", null)),
+    count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("library_id", libraryId)
+      .abortSignal(AbortSignal.timeout(8_000))),
+    count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("library_id", libraryId).not("embedding", "is", null)
+      .abortSignal(AbortSignal.timeout(8_000))),
   ]);
 
   return {
@@ -118,9 +140,14 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string): P
     linked,
     uploaded,
     retired: mirrors.filter((m) => m.status === "retired").length,
-    meaning: { chunks, embedded },
-    incomplete: !!plan?.incomplete || !!mErr,
-    errors,
+    meaning: chunks === null || embedded === null ? null : { chunks, embedded },
+    names,
+    incomplete: !!plan?.incomplete || !!mErr || !names.checked && !!plan,
+    // A busy database (usually: the meaning index is being written) is said
+    // once, plainly; other failures keep their reason.
+    errors: Array.from(new Set(errors.map((e) => isBusyDbError(e)
+      ? "The database was busy (the meaning index is being written) — Re-check in a few minutes."
+      : e))),
   };
 }
 
@@ -154,4 +181,27 @@ export async function repairKnowledgeLibrary(orgId: string, libraryId: string): 
 
   const report = await knowledgeHealthReport(orgId, libraryId);
   return { sync, requeued: { failed: failed.length, stuck: stuck.length, partial: partial.length }, report };
+}
+
+export interface NameRepairResponse {
+  names: NameRepairResult;
+  sync: SourceSyncSummary | null;
+  /** Only on the last round. */
+  report: KnowledgeHealthReport | null;
+}
+
+/** Correct the names the old filename reader got wrong in this library's
+ *  linked documents. Works in rounds that fit the host's time limit: the
+ *  caller repeats while `names.remaining > 0`, passing back the ids it was
+ *  told need a person (`exclude`) so they aren't retried. The last round
+ *  syncs, so the index cites the documents by their real names. */
+export async function repairLinkedDocumentNames(orgId: string, libraryId: string, uid: string, exclude: string[] = []): Promise<NameRepairResponse> {
+  const started = Date.now();
+  const plan = await planKnowledgeSources(libraryId, false);
+  const { fixes } = plan ? await findNameFixes(plan.all.map(({ doc }) => doc.id)) : { fixes: [] };
+  const skip = new Set(exclude);
+  const names = await repairDocumentNames(orgId, fixes.filter((f) => !skip.has(f.id)).map((f) => f.id), uid, started + 35_000);
+  if (names.remaining > 0) return { names, sync: null, report: null };
+  const sync = await syncKnowledgeLibrarySources(libraryId);
+  return { names, sync, report: await knowledgeHealthReport(orgId, libraryId) };
 }

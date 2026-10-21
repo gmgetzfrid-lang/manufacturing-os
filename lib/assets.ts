@@ -127,7 +127,7 @@ export async function listAssets(params: {
   if (params.archived === false) q = q.eq("archived", false);
   if (params.search && params.search.trim()) {
     const s = params.search.trim();
-    q = q.or(`tag.ilike.%${s}%,description.ilike.%${s}%,location.ilike.%${s}%`);
+    q = q.or(orIlike(["tag", "description", "location"], s));
   }
   const { data, error } = await q.order("tag", { ascending: true });
   if (error) throw new Error(error.message);
@@ -454,6 +454,7 @@ function ageLabel(days: number): string {
 // Lightweight cache so a list of tag chips doesn't make N queries.
 
 import { useState, useEffect, useCallback } from "react";
+import { orIlike } from "@/lib/orFilter";
 
 const photoCountCache = new Map<string, number>();
 const fileCountCache = new Map<string, number>();         // assetId -> linked-file count

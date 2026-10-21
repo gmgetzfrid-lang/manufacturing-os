@@ -22,6 +22,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import type { ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
+import { orIlike } from "@/lib/orFilter";
 
 export interface ToolContext {
   orgId: string;
@@ -101,7 +102,7 @@ const findDocuments: ToolDef = {
       // honoured here explicitly because this code runs on the service-role
       // key, where RLS would not stop us.
       .eq("ai_excluded", false)
-      .or(`document_number.ilike.%${q}%,title.ilike.%${q}%`)
+      .or(orIlike(["document_number", "title"], q))
       .neq("status", "Archived")
       .order("updated_at", { ascending: false })
       .limit(LIMIT);

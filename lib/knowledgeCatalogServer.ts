@@ -20,6 +20,7 @@ import type { AiUsage } from "@/lib/ai/pricing";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import { fetchBytes } from "@/lib/r2Bytes";
 import { renderPdfPages } from "@/lib/knowledgePageRender";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import {
   normalizeProfile, normalizePipeClasses, parseProfile, parseModelJson,
   type CatalogEntry, type DocProfile, type FieldKind, type PipeClassRecord,
@@ -235,12 +236,15 @@ export async function drainCatalog(admin: SupabaseClient, opts: {
   const { data: lib } = await admin
     .from("knowledge_libraries").select("ai_features").eq("id", opts.libraryId).eq("org_id", opts.orgId).maybeSingle();
   const libraryKind = String(((lib?.ai_features ?? {}) as Record<string, unknown>).kind ?? "") || null;
-  let docQuery = admin
-    .from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
-    .eq("org_id", opts.orgId).eq("library_id", opts.libraryId).eq("status", "ready");
-  if (opts.documentId) docQuery = docQuery.eq("id", opts.documentId);
-  const { data: docs } = await docQuery.limit(2000);
-  const docList = (docs ?? []) as DocRow[];
+  // Paged: a single read stops at 1,000 rows, and documents past it would
+  // never be mapped.
+  const { rows: docList } = await fetchAllRows<DocRow>((from, to) => {
+    let q = admin
+      .from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
+      .eq("org_id", opts.orgId).eq("library_id", opts.libraryId).eq("status", "ready");
+    if (opts.documentId) q = q.eq("id", opts.documentId);
+    return q.order("id").range(from, to);
+  });
   const profiles = await profilesFor(admin, docList.map((d) => d.id));
 
   let profiled = 0;
@@ -304,7 +308,7 @@ export async function loadCatalog(admin: SupabaseClient, opts: {
     for (let i = 0; i < docIds.length; i += 300) {
       const { data } = await admin
         .from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count, source_document_id")
-        .in("id", docIds.slice(i, i + 300));
+        .in("id", docIds.slice(i, i + 300)).neq("status", "retired");
       for (const d of (data ?? []) as DocRow[]) docs.set(d.id, d);
     }
     const libIds = [...new Set([...docs.values()].map((d) => d.library_id))];
@@ -348,7 +352,7 @@ export async function loadPipeClasses(admin: SupabaseClient, opts: {
     const recs = (rows ?? []) as Array<{ document_id: string; library_id: string; page: number; tag: string; raw: string | null }>;
     const { data: docRows } = await admin
       .from("knowledge_documents").select("id, name, library_id, source_document_id")
-      .in("id", [...new Set(recs.map((r) => r.document_id))]);
+      .in("id", [...new Set(recs.map((r) => r.document_id))]).neq("status", "retired");
     const docs = new Map(((docRows ?? []) as Array<{ id: string; name: string; library_id: string; source_document_id: string | null }>).map((d) => [d.id, d]));
     const inScope = new Set(opts.libraryIds);
     const out: Array<PipeClassRecord & { documentId: string; documentName: string; page: number }> = [];

@@ -8,9 +8,10 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  ShieldCheck, ShieldAlert, Loader2, RefreshCw, Wrench, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Info, Unlink,
+  ShieldCheck, ShieldAlert, Loader2, RefreshCw, Wrench, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Info, Unlink, Tag,
 } from "lucide-react";
-import { getLibraryHealth, repairLibrary, type KnowledgeHealthReport, type RepairResult } from "@/lib/knowledge";
+import { getLibraryHealth, repairLibrary, fixLinkedDocumentNames, type KnowledgeHealthReport, type RepairResult } from "@/lib/knowledge";
+import type { NameRepairResult } from "@/lib/documentNameRepair";
 import { STATUS_LABEL, FIXABLE, NOT_INDEXABLE, type HealthStatus } from "@/lib/knowledgeHealth";
 
 const ORDER: HealthStatus[] = [
@@ -47,6 +48,9 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
   const [last, setLast] = useState<RepairResult | null>(null);
   const [open, setOpen] = useState<HealthStatus | "leftovers" | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [naming, setNaming] = useState<{ fixed: number } | null>(null);
+  const [nameResult, setNameResult] = useState<NameRepairResult | null>(null);
+  const [namesOpen, setNamesOpen] = useState(false);
 
   const check = useCallback(async () => {
     setChecking(true);
@@ -69,6 +73,35 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
     finally { setRepairing(false); }
   };
 
+  // Rounds that each fit the host's time limit; every round's corrections
+  // are saved as it goes, so stopping part-way loses nothing.
+  const fixNames = async () => {
+    setNaming({ fixed: 0 });
+    setError(null);
+    const total: NameRepairResult = { fixed: 0, skipped: 0, conflicts: [], failed: [], remaining: 0 };
+    try {
+      for (let round = 0; round < 40; round++) {
+        const exclude = [...total.conflicts.map((c) => c.id), ...total.failed.flatMap((f) => (f.id ? [f.id] : []))];
+        const r = await fixLinkedDocumentNames(orgId, libraryId, exclude);
+        total.fixed += r.names.fixed;
+        total.skipped += r.names.skipped;
+        total.conflicts.push(...r.names.conflicts);
+        total.failed.push(...r.names.failed);
+        total.remaining = r.names.remaining;
+        setNaming({ fixed: total.fixed });
+        if (r.report) { setReport(r.report); break; }
+        if (r.names.fixed === 0 && r.names.conflicts.length === 0 && r.names.failed.length === 0) break; // no progress
+      }
+      setNameResult(total);
+      onRepaired?.();
+    } catch (e) {
+      setNameResult(total);
+      setError(`${(e as Error).message}${total.fixed ? ` — ${total.fixed} corrected before it stopped are saved.` : ""}`);
+    } finally {
+      setNaming(null);
+    }
+  };
+
   if (!report) {
     return (
       <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
@@ -82,10 +115,12 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
   const fixable = L ? [...FIXABLE].reduce((n, k) => n + L.counts[k], 0) + L.leftovers.length : 0;
   const notIndexable = L ? [...NOT_INDEXABLE].reduce((n, k) => n + L.counts[k], 0) : 0;
   const inFlight = L ? L.counts.waiting + L.counts.indexing : 0;
-  const healthy = L ? L.healthy && report.uploaded.failed === 0 && report.uploaded.partial === 0 : report.uploaded.failed === 0 && report.uploaded.partial === 0;
+  const healthy = (L ? L.healthy : true) && report.uploaded.failed === 0 && report.uploaded.partial === 0 && !(report.names?.wrong);
   const deadSources = report.sources.filter((s) => !s.exists);
   const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 100);
-  const meaningPct = pct(report.meaning.embedded, report.meaning.chunks);
+  const meaningPct = report.meaning ? pct(report.meaning.embedded, report.meaning.chunks) : null;
+  const N = report.names;
+  const nameFixable = N ? N.wrong - N.clashes : 0;
 
   return (
     <div className={`mb-4 rounded-2xl border ${healthy && !report.incomplete ? "border-emerald-200 dark:border-emerald-900" : "border-amber-300 dark:border-amber-800"} bg-[var(--color-surface)] overflow-hidden`}>
@@ -103,7 +138,10 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {healthy && !report.incomplete
               ? (inFlight > 0 ? `${inFlight.toLocaleString()} still being read — everything is accounted for.` : "Every linked document is accounted for.")
-              : fixable > 0 ? `${fixable.toLocaleString()} need attention — Repair fixes them without re-paying for work already done.` : "Some numbers may be short — see below."}
+              : fixable > 0 ? `${fixable.toLocaleString()} need attention — Repair fixes them without re-paying for work already done.`
+              : report.incomplete ? "Some numbers may be short — see below."
+              : report.names?.wrong ? "Every document is indexed; some names need correcting — see below."
+              : "Some uploaded PDFs need attention — Repair re-queues them."}
             {notIndexable > 0 && ` ${notIndexable.toLocaleString()} can't be indexed (not PDFs, held back, superseded) — expected.`}
           </div>
         </div>
@@ -160,6 +198,69 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
         <div className="mx-4 mb-2 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 px-3 py-2 text-[11px] text-rose-800 dark:text-rose-200 flex gap-2">
           <Unlink className="w-4 h-4 shrink-0" />
           {deadSources.length === 1 ? "A linked source no longer exists" : `${deadSources.length} linked sources no longer exist`}: {deadSources.map((s) => s.name).join(", ")}. Unlink {deadSources.length === 1 ? "it" : "them"} in Sources below.
+        </div>
+      )}
+
+      {N && N.wrong > 0 && (
+        <div className="mx-4 mb-2 rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20">
+          <div className="px-3 py-2 flex items-start gap-2 text-[11px] text-amber-900 dark:text-amber-200">
+            <Tag className="w-4 h-4 shrink-0 mt-px" />
+            <div className="flex-1 min-w-0">
+              <b>{N.wrong.toLocaleString()} document {N.wrong === 1 ? "number or revision was" : "numbers or revisions were"} read wrong from {N.wrong === 1 ? "its file name" : "their file names"}</b>
+              {" "}(e.g. &ldquo;EP 5-3-10&rdquo; cut to &ldquo;EP&rdquo;). The files, titles and index are fine.
+              {nameFixable > 0 && " Correcting them only touches values nobody has edited since upload; each change is recorded in the document's history."}
+              {N.clashes > 0 && <span className="block mt-0.5">{N.clashes.toLocaleString()} can&apos;t be corrected automatically — their correct number is already used (often two files that are revisions of one document). They&apos;re listed for you to decide.</span>}
+              <button onClick={() => setNamesOpen((v) => !v)} className="mt-1 inline-flex items-center gap-0.5 font-bold underline-offset-2 hover:underline">
+                {namesOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {namesOpen ? "Hide" : "Show"} the list
+              </button>
+            </div>
+            {isController && nameFixable > 0 && (
+              <button onClick={() => void fixNames()} disabled={!!naming || repairing}
+                className="shrink-0 inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-amber-600 text-white text-[11px] font-black hover:bg-amber-700 disabled:opacity-60">
+                {naming ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+                {naming ? `Correcting… ${naming.fixed.toLocaleString()}` : `Correct ${nameFixable.toLocaleString()}`}
+              </button>
+            )}
+          </div>
+          {namesOpen && (
+            <div className="px-3 pb-2">
+              <ul className="max-h-64 overflow-auto divide-y divide-[var(--color-border)] rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
+                {N.samples.map((f) => (
+                  <li key={f.id} className="px-2 py-1 text-[11px] grid sm:grid-cols-[1fr_auto] gap-x-2">
+                    <span className="truncate text-[var(--color-text)]" title={f.fileName}>{f.fileName}</span>
+                    <span className="font-mono text-[var(--color-text-muted)] truncate">
+                      <s>{f.from.documentNumber || "—"}{f.from.rev !== f.to.rev ? ` rev ${f.from.rev}` : ""}</s> → <b className="text-[var(--color-text)]">{f.to.documentNumber}{f.from.rev !== f.to.rev ? ` rev ${f.to.rev}` : ""}</b>
+                    </span>
+                    {f.clash && <span className="sm:col-span-2 text-amber-800 dark:text-amber-300">Needs you: {f.clash}</span>}
+                  </li>
+                ))}
+              </ul>
+              {N.wrong > N.samples.length && <p className="text-[10px] text-[var(--color-text-faint)] mt-1">Showing {N.samples.length} of {N.wrong.toLocaleString()}.</p>}
+            </div>
+          )}
+        </div>
+      )}
+      {nameResult && (
+        <div className="mx-4 mb-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 px-3 py-2 text-[11px] text-emerald-900 dark:text-emerald-200">
+          <div className="flex items-start gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-px" />
+            <span>
+              Corrected {nameResult.fixed.toLocaleString()} {nameResult.fixed === 1 ? "name" : "names"}; the index now cites them by their real numbers.
+              {nameResult.skipped > 0 && ` ${nameResult.skipped} left alone — someone changed them since the check.`}
+              {nameResult.remaining > 0 && ` ${nameResult.remaining} not reached yet — press Correct again to finish.`}
+            </span>
+          </div>
+          {nameResult.conflicts.length > 0 && (
+            <div className="mt-1 text-amber-900 dark:text-amber-200">
+              <b>{nameResult.conflicts.length} need your decision</b> — the correct number is already in use:
+              <ul className="mt-0.5 max-h-32 overflow-auto">
+                {nameResult.conflicts.slice(0, 100).map((c) => <li key={c.id} className="truncate">{c.fileName}: wants {c.wanted}{c.clashesWith ? `, used by ${c.clashesWith}` : ""}</li>)}
+              </ul>
+            </div>
+          )}
+          {nameResult.failed.length > 0 && (
+            <div className="mt-1 text-rose-800 dark:text-rose-300">{nameResult.failed.length} couldn&apos;t be saved — Correct again retries them. {nameResult.failed[0].reason}</div>
+          )}
         </div>
       )}
 
@@ -220,8 +321,14 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           <div className="grid sm:grid-cols-3 gap-2 text-[11px]">
             <div className="rounded-lg border border-[var(--color-border)] px-2.5 py-2">
               <div className="font-black text-[var(--color-text)]">Meaning index</div>
-              <div className="text-[var(--color-text-muted)]">{report.meaning.embedded.toLocaleString()} of {report.meaning.chunks.toLocaleString()} passages ({meaningPct}%)</div>
-              <div className="mt-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-violet-500" style={{ width: `${meaningPct}%` }} /></div>
+              {report.meaning && meaningPct !== null ? (
+                <>
+                  <div className="text-[var(--color-text-muted)]">{report.meaning.embedded.toLocaleString()} of {report.meaning.chunks.toLocaleString()} passages ({meaningPct}%)</div>
+                  <div className="mt-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-violet-500" style={{ width: `${meaningPct}%` }} /></div>
+                </>
+              ) : (
+                <div className="text-[var(--color-text-muted)]">Busy building — the count will show on the next check.</div>
+              )}
             </div>
             <div className="rounded-lg border border-[var(--color-border)] px-2.5 py-2">
               <div className="font-black text-[var(--color-text)]">Uploaded PDFs</div>

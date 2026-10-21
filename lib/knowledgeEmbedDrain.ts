@@ -59,9 +59,17 @@ export async function drainEmbedBacklog(opts: {
 
     for (const lib of (libs ?? []) as Array<{ id: string; org_id: string; ai_features: Record<string, unknown> }>) {
       if (Date.now() - startedAt > budgetMs) break;
-      const marker = (lib.ai_features?.embedBuild ?? null) as { userId?: string } | null;
+      const marker = (lib.ai_features?.embedBuild ?? null) as { userId?: string; at?: string } | null;
       const userId = marker?.userId;
       if (!userId) continue;
+      // A tab is building this library right now (it re-stamps every batch).
+      // Two builders would fetch the SAME passages and pay for them twice —
+      // and fight over the same rows. Leave it to the tab; pick it up once
+      // the tab has been quiet a few minutes.
+      if (marker?.at && Date.now() - new Date(marker.at).getTime() < 3 * 60_000) {
+        drained.push({ libraryId: lib.id, embedded: 0, remaining: -1, note: "being built in an open tab" });
+        continue;
+      }
 
       const remainingBefore = await unembeddedCount(lib.org_id, lib.id);
       if (remainingBefore === 0) {
@@ -81,7 +89,7 @@ export async function drainEmbedBacklog(opts: {
       });
       if (!connection) {
         await setEmbedBuildMarker(lib.id, null);
-        drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore, note: "no embedding key — stamp cleared" });
+        drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore ?? -1, note: "no embedding key — stamp cleared" });
         continue;
       }
 
@@ -90,7 +98,7 @@ export async function drainEmbedBacklog(opts: {
         getMonthUsage(lib.org_id, userId), getCapUsd(lib.org_id, userId),
       ]);
       if (capUsd > 0 && month.spentUsd >= capUsd) {
-        drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore, note: "monthly cap reached" });
+        drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore ?? -1, note: "monthly cap reached" });
         continue;
       }
 
@@ -111,13 +119,19 @@ export async function drainEmbedBacklog(opts: {
         embedded += slice.embedded;
         usage.inputTokens += slice.usage.inputTokens;
         if (slice.error) { drained.push({ libraryId: lib.id, embedded, remaining: -1, note: slice.error }); break; }
+        if (slice.busy) {
+          // Database busy: kept what was written; the next run carries on.
+          if (budgetMs - (Date.now() - startedAt) < 40_000) break;
+          await new Promise((r) => setTimeout(r, 10_000));
+          continue;
+        }
         if (slice.rateLimited) {
           paced = true;
           if (budgetMs - (Date.now() - startedAt) < 85_000) break; // no room to wait out the window
           await new Promise((r) => setTimeout(r, 65_000));
           continue;
         }
-        if (slice.fetchedNone || slice.embedded === 0) break;
+        if (slice.exhausted || slice.fetchedNone || slice.embedded === 0) break;
       }
 
       if (usage.inputTokens > 0) {
@@ -129,7 +143,7 @@ export async function drainEmbedBacklog(opts: {
       const remainingAfter = await unembeddedCount(lib.org_id, lib.id);
       if (remainingAfter === 0) await setEmbedBuildMarker(lib.id, null);
       if (!drained.some((d) => d.libraryId === lib.id)) {
-        drained.push({ libraryId: lib.id, embedded, remaining: remainingAfter });
+        drained.push({ libraryId: lib.id, embedded, remaining: remainingAfter ?? -1 });
       }
     }
   } catch (e) {

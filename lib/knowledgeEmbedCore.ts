@@ -27,8 +27,21 @@ export interface EmbedSliceResult {
   /** Chunks are missing vectors but none could be fetched — the classic
    *  stale-PostgREST-schema-cache symptom after a column rebuild. */
   fetchedNone: boolean;
+  /** A fetch came back empty: nothing in the library lacks a vector. */
+  exhausted: boolean;
+  /** The database was too busy to answer in time (statement timeout, lock
+   *  wait, dropped connection). Weather, not failure: every batch written
+   *  before it is kept, and the next slice simply carries on. */
+  busy: boolean;
   error: string | null;
   usage: { inputTokens: number; outputTokens: number };
+}
+
+/** Database errors that mean "busy right now, ask again", not "broken". A
+ *  meaning-index build rewrites every passage row and its vector index, and
+ *  on a small database that load surfaces as these. */
+export function isBusyDbError(message: string | null | undefined): boolean {
+  return /statement timeout|canceling statement|lock timeout|deadlock|could not serialize|too many connections|connection (?:reset|refused|terminated|closed)|ECONNRESET|ETIMEDOUT|fetch failed|socket hang up|upstream|gateway|\b50[234]\b/i.test(message ?? "");
 }
 
 /** Embed one time-bounded slice of a library. Never throws — every outcome
@@ -50,7 +63,11 @@ export async function embedLibrarySlice(opts: {
   let embedded = 0;
   let rateLimited = false;
   let fetchedNone = false;
+  let exhausted = false;
+  let busy = false;
   let lastError: string | null = null;
+  // Busy is recorded as busy, anything else as the error it is.
+  const fail = (message: string) => { if (isBusyDbError(message)) busy = true; else lastError = message; };
 
   while (Date.now() - startedAt < budgetMs) {
     const { data: chunks, error } = await supabaseAdmin
@@ -58,12 +75,13 @@ export async function embedLibrarySlice(opts: {
       .eq("org_id", orgId).eq("library_id", libraryId)
       .is("embedding", null)
       .limit(batchSize);
-    if (error) { lastError = error.message; break; }
+    if (error) { fail(error.message); break; }
     const batch = (chunks ?? []) as Array<{
       id: string; content: string; section: string | null; page: number; document_id: string;
     }>;
     if (batch.length === 0) {
       if (embedded === 0) fetchedNone = true;
+      exhausted = true;
       break;
     }
 
@@ -74,18 +92,18 @@ export async function embedLibrarySlice(opts: {
     {
       const reused = await reuseTwinVectors(orgId, batch, connection.model);
       if (reused.size > 0) {
-        for (let i = 0; i < batch.length && !lastError; i += 8) {
+        for (let i = 0; i < batch.length && !lastError && !busy; i += 8) {
           const group = batch.slice(i, i + 8).filter((c) => reused.has(c.id));
           const results = await Promise.all(group.map((c) =>
             supabaseAdmin.from("knowledge_chunks")
               .update({ embedding: reused.get(c.id)!, embedding_model: connection.model })
               .eq("id", c.id)));
           for (const r of results) {
-            if (r.error) { lastError = r.error.message; break; }
+            if (r.error) { fail(r.error.message); continue; }
             embedded += 1;
           }
         }
-        if (lastError) break;
+        if (lastError || busy) break;
         const rest = batch.filter((c) => !reused.has(c.id));
         if (rest.length === 0) continue;
         batch.length = 0;
@@ -133,21 +151,32 @@ export async function embedLibrarySlice(opts: {
 
     // Write-back in parallel groups of 8 — primary-key updates are
     // independent, and sequential round trips were a third of the budget.
+    // These vectors are already PAID for: a write the database was too busy
+    // to take is retried one at a time before anything is given up.
+    const write = (k: number) => supabaseAdmin.from("knowledge_chunks")
+      .update({ embedding: toVectorLiteral(vectors[k]), embedding_model: connection.model })
+      .eq("id", batch[k].id);
+    const retry: number[] = [];
     for (let i = 0; i < batch.length && !lastError; i += 8) {
-      const group = batch.slice(i, i + 8);
-      const results = await Promise.all(group.map((c, j) =>
-        supabaseAdmin.from("knowledge_chunks")
-          .update({ embedding: toVectorLiteral(vectors[i + j]), embedding_model: connection.model })
-          .eq("id", c.id)));
-      for (const r of results) {
-        if (r.error) { lastError = r.error.message; break; }
-        embedded += 1;
-      }
+      const idx = batch.slice(i, i + 8).map((_, j) => i + j);
+      const results = await Promise.all(idx.map(write));
+      results.forEach((r, j) => {
+        if (!r.error) embedded += 1;
+        else if (isBusyDbError(r.error.message)) retry.push(idx[j]);
+        else lastError = r.error.message;
+      });
     }
-    if (lastError) break;
+    for (const k of retry) {
+      if (lastError) break;
+      await new Promise((r) => setTimeout(r, 750));
+      const r = await write(k);
+      if (!r.error) embedded += 1;
+      else fail(r.error.message);
+    }
+    if (lastError || busy) break;
   }
 
-  return { embedded, rateLimited, fetchedNone, error: lastError, usage };
+  return { embedded, rateLimited, fetchedNone, exhausted, busy, error: lastError, usage };
 }
 
 /** Vectors for chunks whose identical twin (same file hash, page and text)
@@ -197,11 +226,16 @@ async function reuseTwinVectors(
 }
 
 /** How many chunks in the library still lack vectors (fast partial-index count). */
-export async function unembeddedCount(orgId: string, libraryId: string): Promise<number> {
-  const { count } = await supabaseAdmin
-    .from("knowledge_chunks").select("id", { count: "exact", head: true })
-    .eq("org_id", orgId).eq("library_id", libraryId).is("embedding", null);
-  return count ?? 0;
+export async function unembeddedCount(orgId: string, libraryId: string): Promise<number | null> {
+  // null = couldn't count right now. Never 0: a failed count read as "none
+  // left" would end a build that isn't finished.
+  try {
+    const { count, error } = await supabaseAdmin
+      .from("knowledge_chunks").select("id", { count: "exact", head: true })
+      .eq("org_id", orgId).eq("library_id", libraryId).is("embedding", null)
+      .abortSignal(AbortSignal.timeout(10_000));
+    return error ? null : count ?? 0;
+  } catch { return null; }
 }
 
 /** Set / clear the background-continuation marker on a library. Starting a

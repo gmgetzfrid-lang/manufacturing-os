@@ -47,14 +47,32 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
   const [building, setBuilding] = useState(false);
   const [needsKey, setNeedsKey] = useState<string | null>(null);
   /** The last build's outcome, pinned under the bar — toasts vanish. */
-  const [buildNote, setBuildNote] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  const [buildNote, setBuildNote] = useState<{ tone: "ok" | "info" | "err"; text: string } | null>(null);
   const stopRef = useRef(false);
+  /** Last numbers that were actually read — shown while the database is too
+   *  busy to count, instead of an error or a zero. */
+  const lastGood = useRef<SemanticProgress | null>(null);
+  const [recountTick, setRecountTick] = useState(0);
 
   const load = useCallback(async () => {
+    const prior = lastGood.current;
     try {
-      const status = await semanticStatus(orgId, libraryId);
+      const status = await semanticStatus(orgId, libraryId, prior);
+      if (status.countUnavailable) {
+        // Busy and nothing known yet: say "counting", look again shortly.
+        setState({ key, status: prior, unavailable: null });
+        setTimeout(() => setRecountTick((n) => n + 1), 20_000);
+        return;
+      }
+      if (!status.busy) lastGood.current = status;
       setState({ key, status, unavailable: null });
     } catch (e) {
+      // A gateway hiccup is weather: keep what's on screen, look again soon.
+      if ((e as { transient?: boolean }).transient) {
+        setState({ key, status: prior, unavailable: null });
+        setTimeout(() => setRecountTick((n) => n + 1), 20_000);
+        return;
+      }
       // A missing migration is the common case and is a setup state, not an
       // error to shout about. Anything else is worth showing.
       const message = e instanceof Error ? e.message : "Couldn't read the meaning index.";
@@ -62,7 +80,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     }
   }, [orgId, libraryId, key]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, recountTick]);
 
   const ready = state.key === key;
   const status = ready ? state.status : null;
@@ -75,31 +93,37 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     try {
       const final = await buildSemanticIndex(
         orgId, libraryId,
-        (p) => setState((s) => ({ ...s, key, status: p, unavailable: null })),
+        (p) => {
+          if (!p.estimated && !p.countUnavailable) lastGood.current = p;
+          setState((s) => ({ ...s, key, status: p, unavailable: null }));
+        },
         () => stopRef.current,
+        lastGood.current ?? status,
       );
       if (final.error) {
         setBuildNote({ tone: "err", text: final.error });
-        showToast({ type: "error", title: final.error, duration: 15000 });
       } else if (final.done) {
         setBuildNote({ tone: "ok", text: "Meaning index complete — every passage carries a vector." });
         showToast({ type: "success", title: "Meaning index complete." });
+      } else if (final.paused) {
+        setBuildNote({
+          tone: "info",
+          text: "Paused here while the database catches up — it's busy writing the index. Everything built so far is saved, "
+            + "and the build carries on by itself in the background. Press Build index any time to drive it from this tab again.",
+        });
       } else if (stopRef.current) {
-        setBuildNote({ tone: "ok", text: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
-        showToast({ type: "success", title: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
+        setBuildNote({ tone: "ok", text: `Stopped — ${final.remaining.toLocaleString()} passage(s) left. Resume any time; nothing built is lost.` });
       } else {
         // Ended without finishing, erroring, or being stopped — a silent
         // no-op is the one outcome that must never pass without comment.
-        const text = `Build ended early — ${final.remaining} passage(s) still lack vectors. Try again; if it repeats, tell your admin.`;
-        setBuildNote({ tone: "err", text });
-        showToast({ type: "warning", title: text, duration: 15000 });
+        setBuildNote({ tone: "info", text: `Paused with ${final.remaining.toLocaleString()} passage(s) to go. Everything built so far is saved — press Build index to continue.` });
       }
     } catch (e) {
       const message = (e as Error).message;
       // 412 = no embeddings key. That's a setup step, not a failure — show it
       // where the user is looking rather than as a toast they'll dismiss.
       if (/embeddings key/i.test(message)) setNeedsKey(message);
-      else showToast({ type: "error", title: message });
+      else setBuildNote({ tone: "err", text: message });
     } finally {
       setBuilding(false);
       void load();
@@ -154,7 +178,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       ? strip("warn", <><b>Meaning-based search is waiting on a database migration:</b> {unavailable}</>)
       : strip("warn", <><b>Meaning-based search couldn&apos;t report its status:</b> {unavailable}</>);
   }
-  if (!status) return strip("muted", "Checking the meaning index…");
+  if (!status) return strip("muted", "Counting the meaning index… (slow while it's being built — no action needed)");
   if (status.total === 0) {
     return strip("muted", (
       <>
@@ -224,8 +248,9 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         {building && <Loader2 className="w-3 h-3 animate-spin" />}
         {complete && <Check className="w-3 h-3 text-emerald-600" />}
         <span>
-          <b className="text-[var(--color-text)]">{covered.toLocaleString()}</b> of{" "}
+          <b className="text-[var(--color-text)]">{status.estimated ? "≈ " : ""}{covered.toLocaleString()}</b> of{" "}
           {status.total.toLocaleString()} passages carry meaning vectors ({pct}%).
+          {building && status.busy && " Database busy — pausing a moment, nothing lost."}
         </span>
       </div>
 
@@ -243,7 +268,9 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         <div className={`mt-2 rounded-xl border px-3 py-2 text-[11px] ${
           buildNote.tone === "ok"
             ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-200"
-            : "border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 text-rose-800 dark:text-rose-200"}`}>
+            : buildNote.tone === "info"
+              ? "border-sky-300 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/20 text-sky-900 dark:text-sky-200"
+              : "border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 text-rose-800 dark:text-rose-200"}`}>
           {buildNote.text}
         </div>
       )}

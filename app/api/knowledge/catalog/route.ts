@@ -9,6 +9,7 @@
 //      writes the shared catalog — on the caller's own key, fast tier.
 
 import { NextRequest, NextResponse } from "next/server";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { ALLOWED_PROVIDERS, type AiUsage } from "@/lib/ai/pricing";
@@ -44,10 +45,11 @@ export async function GET(req: NextRequest) {
   const roles = await memberRoles(orgId, user.id);
   if (!roles) return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
 
-  const { data: docs } = await supabaseAdmin
+  // Every entry (paged — one read stops at 1,000 rows), minus those set
+  // aside: a document deleted or moved out of the source must leave the map.
+  const { rows: list } = await fetchAllRows<{ id: string; name: string; status: string }>((from, to) => supabaseAdmin
     .from("knowledge_documents").select("id, name, status")
-    .eq("org_id", orgId).eq("library_id", libraryId).limit(2000);
-  const list = (docs ?? []) as Array<{ id: string; name: string; status: string }>;
+    .eq("org_id", orgId).eq("library_id", libraryId).neq("status", "retired").order("id").range(from, to));
   const profiles = await profilesFor(supabaseAdmin, list.map((d) => d.id));
   const ready = list.filter((d) => d.status === "ready");
   return NextResponse.json({

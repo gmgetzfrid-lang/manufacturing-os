@@ -28,6 +28,8 @@ export interface SourceSyncSummary {
   retired: number;
   /** Retired index work brought back instead of re-reading the file. */
   restored: number;
+  /** Renamed or re-labelled in the document library — name updated, nothing re-read. */
+  renamed: number;
   errors: string[];
 }
 
@@ -248,7 +250,7 @@ export async function planKnowledgeSources(libraryId: string, healNames = false)
 
 /** One full reconcile pass for one knowledge library. Safe to re-run. */
 export async function syncKnowledgeLibrarySources(libraryId: string): Promise<SourceSyncSummary> {
-  const out: SourceSyncSummary = { added: 0, refreshed: 0, removed: 0, retired: 0, restored: 0, errors: [] };
+  const out: SourceSyncSummary = { added: 0, refreshed: 0, removed: 0, retired: 0, restored: 0, renamed: 0, errors: [] };
 
   const plan = await planKnowledgeSources(libraryId, true);
   if (!plan) return out;
@@ -402,6 +404,15 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
       }).eq("id", existing.id as string);
       if (error) out.errors.push(`refresh ${displayName(doc)}: ${error.message}`);
       else out.refreshed++;
+    } else if (existing.name !== displayName(doc) || (existing.source_rev ?? null) !== (version.revision_label ?? null)) {
+      // Same file, new name or revision label (renamed in the document
+      // library, or its name repaired): answers must cite it by its real
+      // name. Only the label changes — nothing is re-read or re-embedded.
+      const { error } = await supabaseAdmin.from("knowledge_documents").update({
+        name: displayName(doc), source_rev: version.revision_label,
+      }).eq("id", existing.id as string);
+      if (error) out.errors.push(`rename ${displayName(doc)}: ${error.message}`);
+      else out.renamed++;
     }
   }
 

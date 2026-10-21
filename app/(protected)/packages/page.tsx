@@ -22,6 +22,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
+import { orIlike } from "@/lib/orFilter";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage,
   setWorkPackageStatus, type WorkPackage,
@@ -67,7 +68,7 @@ export default function PackagesPage() {
         .from("documents")
         .select("id, document_number, title, name, rev, status")
         .eq("org_id", activeOrgId)
-        .or(`document_number.ilike.%${query}%,title.ilike.%${query}%`)
+        .or(orIlike(["document_number", "title"], query))
         .neq("status", "Archived")
         .neq("status", "Superseded")
         .limit(8);

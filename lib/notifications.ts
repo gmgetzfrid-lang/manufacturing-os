@@ -12,6 +12,7 @@
 // produced by MentionableTextarea.
 
 import { supabase } from "@/lib/supabase";
+import { orIlike } from "@/lib/orFilter";
 
 export type QueueEmailInput = {
   orgId: string;
@@ -227,9 +228,9 @@ export async function searchOrgUsers(orgId: string, query: string, limit = 8): P
     .eq("status", "active")
     .limit(limit);
   // Match the typed text against the display name OR the email, so "Mike",
-  // "Leonard", or "mleonard@…" all find the same person. (`*` is the wildcard
-  // inside an or() filter; `%` is only for the standalone .ilike().)
-  if (q) req = req.or(`display_name.ilike.*${q}*,email.ilike.*${q}*`);
+  // "Leonard", or "mleonard@…" all find the same person. Quoted by orIlike,
+  // so a comma or parenthesis in the search can't break the filter.
+  if (q) req = req.or(orIlike(["display_name", "email"], q));
   const { data } = await req;
   return (data ?? []).map((r: { uid: string; email: string | null; role: string | null; display_name?: string | null }) => {
     const email = (r.email as string) || "";

@@ -19,6 +19,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { loadCodebook } from "@/lib/codebook";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot";
 
@@ -80,6 +81,12 @@ interface AssetRowLite {
 }
 
 /** Page through a join table until exhausted or capped. */
+/** fetchAllRows' result in the { data, error } shape the loaders read. */
+async function asResult<T>(p: Promise<{ rows: T[]; error: string | null }>): Promise<{ data: T[]; error: { message: string } | null }> {
+  const { rows, error } = await p;
+  return { data: rows, error: error ? { message: error } : null };
+}
+
 async function pageRows<T>(
   table: string, select: string, orgId: string, cap: number,
 ): Promise<{ rows: T[]; capped: boolean }> {
@@ -114,11 +121,13 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     supabase.from("plants").select("id, name, code").eq("org_id", orgId).eq("archived", false),
     supabase.from("libraries").select("id, name").eq("org_id", orgId).limit(300),
     supabase.from("projects").select("id, name, status").eq("org_id", orgId).limit(300),
-    supabase.from("documents")
+    // Paged up to DOC_CAP (one read stops at 1,000 rows, silently). Archived
+    // documents are out of the library's view, so out of the graph's too.
+    asResult(fetchAllRows<DocRow>((from, to) => supabase.from("documents")
       .select("id, document_number, title, library_id, unit_id, sheet_number, sheet_total")
-      .eq("org_id", orgId)
-      .order("updated_at", { ascending: false, nullsFirst: false })
-      .limit(DOC_CAP),
+      .eq("org_id", orgId).neq("status", "Archived")
+      .order("updated_at", { ascending: false, nullsFirst: false }).order("id")
+      .range(from, Math.min(to, DOC_CAP - 1)), DOC_CAP)),
     supabase.from("assets")
       .select("id, tag, description, unit_code, unit_id, type_id, type_set:metadata->>typeSetBy")
       .eq("org_id", orgId).eq("archived", false)
@@ -146,9 +155,10 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     // Knowledge documents aren't graph nodes; the CONTROLLED document they
     // mirror is. Without this map every mention found in an indexed PDF would
     // be dropped on the floor.
-    supabase.from("knowledge_documents")
+    // Set-aside (retired) entries belong to documents that left the library.
+    asResult(fetchAllRows<{ id: string; source_document_id: string | null }>((from, to) => supabase.from("knowledge_documents")
       .select("id, source_document_id").eq("org_id", orgId)
-      .not("source_document_id", "is", null).limit(5000),
+      .not("source_document_id", "is", null).neq("status", "retired").order("id").range(from, to), 50_000)),
   ]);
 
   // Documents and libraries are the core — a real error there is fatal. The
@@ -288,8 +298,10 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     const [edgesRes, foldersRes, docFoldersRes] = await Promise.all([
       supabase.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied")
         .in("type", ["project_scope", "in_project", "belongs_to_unit", "about_asset", "tagged_to"]).limit(8000),
-      supabase.from("collections").select("id, parent_id").eq("org_id", orgId).limit(20000),
-      supabase.from("documents").select("id, collection_id").eq("org_id", orgId).not("collection_id", "is", null).limit(DOC_CAP),
+      asResult(fetchAllRows<{ id: string; parent_id: string | null }>((from, to) => supabase.from("collections")
+        .select("id, parent_id").eq("org_id", orgId).order("id").range(from, to), 20_000)),
+      asResult(fetchAllRows<{ id: string; collection_id: string }>((from, to) => supabase.from("documents")
+        .select("id, collection_id").eq("org_id", orgId).not("collection_id", "is", null).order("id").range(from, to), 50_000)),
     ]);
     const estate = ((edgesRes.data as Array<{ a: string; b: string; type: string; summary?: string | null }> | null) ?? []);
     const parentOf = new Map<string, string | null>();

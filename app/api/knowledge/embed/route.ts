@@ -24,30 +24,48 @@ import {
   embeddingConnectionFrom, EMBED_BATCH, NO_EMBEDDING_KEY_MESSAGE,
 } from "@/lib/ai/embeddings";
 import { openAiKey } from "@/lib/ai/keyVault";
-import { embedLibrarySlice, setEmbedBuildMarker } from "@/lib/knowledgeEmbedCore";
+import { embedLibrarySlice, setEmbedBuildMarker, isBusyDbError } from "@/lib/knowledgeEmbedCore";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /** Stop well short of the platform's kill so the last batch commits and the
  *  response is a real answer rather than a 504 the client has to guess at. */
-const BUDGET_MS = 35_000;
+const BUDGET_MS = 32_000;
 /** Absolute ceiling for the in-flight embed call: whatever is running gets
- *  aborted by this point (elapsed ms), leaving time to commit and respond
- *  inside maxDuration=60. */
-const EMBED_HARD_STOP_MS = 48_000;
+ *  aborted by this point (elapsed ms), leaving time to commit, count and
+ *  respond inside maxDuration=60. */
+const EMBED_HARD_STOP_MS = 42_000;
+/** A progress count gets this long. While a build rewrites every passage the
+ *  table is busy and an exact count can crawl; past this we answer with the
+ *  last known numbers instead of letting the platform kill the request. */
+const COUNT_BUDGET_MS = 7_000;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-async function coverage(orgId: string, libraryId: string) {
-  const { data, error } = await supabaseAdmin
-    .rpc("semantic_coverage", { p_org_id: orgId, p_library_id: libraryId });
-  if (error) return null;
-  const row = (data as Array<{ total: number; embedded: number }> | null)?.[0];
-  return { total: Number(row?.total ?? 0), embedded: Number(row?.embedded ?? 0) };
+type Coverage = { total: number; embedded: number };
+
+/** "missing" = the migration isn't applied (a setup state); "busy" = the
+ *  database didn't answer in time (weather — say nothing alarming). */
+async function coverage(orgId: string, libraryId: string): Promise<Coverage | "missing" | "busy"> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .rpc("semantic_coverage", { p_org_id: orgId, p_library_id: libraryId })
+      .abortSignal(AbortSignal.timeout(COUNT_BUDGET_MS));
+    if (error) {
+      return error.code === "PGRST202" || error.code === "42883" || /could not find the function/i.test(error.message)
+        ? "missing" : "busy";
+    }
+    const row = (data as Array<{ total: number; embedded: number }> | null)?.[0];
+    return { total: Number(row?.total ?? 0), embedded: Number(row?.embedded ?? 0) };
+  } catch {
+    return "busy";
+  }
 }
+
+const MIGRATION_MESSAGE = "Semantic search needs migration 20260930 — run it in Supabase, then try again.";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -55,7 +73,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; libraryId?: string; action?: string; batch?: number };
+  let body: { orgId?: string; libraryId?: string; action?: string; batch?: number; known?: { total?: number; covered?: number } };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   // Free-tier providers cap tokens-per-minute hard (Voyage without a card:
   // 10K TPM) — a full 96-passage batch can never fit. The client shrinks the
@@ -68,17 +86,22 @@ export async function POST(req: NextRequest) {
   const principal = await loadPrincipal(orgId, user.id);
   if (!principal) return bad("Not a member of this workspace", 403);
 
-  const stats = await coverage(orgId, libraryId);
-  if (!stats) {
-    return bad(
-      "Semantic search needs migration 20260930 — run it in Supabase, then try again.", 424,
-    );
-  }
+  // The caller's last known numbers: what we answer with when the database
+  // is too busy to count, instead of an error or a misleading zero.
+  const known: Coverage | null = Number.isFinite(body.known?.total) && Number.isFinite(body.known?.covered)
+    ? { total: Number(body.known!.total), embedded: Number(body.known!.covered) } : null;
 
   if (body.action === "status") {
+    const stats = await coverage(orgId, libraryId);
+    if (stats === "missing") return bad(MIGRATION_MESSAGE, 424);
+    if (stats === "busy") {
+      return NextResponse.json({
+        embedded: 0, total: known?.total ?? 0, coveredNow: known?.embedded ?? 0,
+        remaining: known ? known.total - known.embedded : 0,
+        done: false, error: null, spentThisRun: 0, busy: true, countUnavailable: !known,
+      });
+    }
     // Mirror the SemanticProgress shape the build path returns EXACTLY.
-    // This response used to omit coveredNow — the one field the panel
-    // renders — so the bar showed 0% forever regardless of the database.
     return NextResponse.json({
       embedded: 0,                       // passages embedded by THIS call: none, it's a read
       total: stats.total,
@@ -112,13 +135,18 @@ export async function POST(req: NextRequest) {
       .eq("org_id", orgId)
       .eq("library_id", libraryId)
       .not("embedding", "is", null);
-    if (error) return bad(`Couldn't clear the existing vectors: ${error.message}`, 500);
+    if (error) {
+      return bad(isBusyDbError(error.message)
+        ? "The database is busy right now (the index is still being written). Nothing was cleared — try the rebuild again in a few minutes."
+        : `Couldn't clear the existing vectors: ${error.message}`, isBusyDbError(error.message) ? 503 : 500);
+    }
     const after = await coverage(orgId, libraryId);
+    const a = typeof after === "object" ? after : null;
     return NextResponse.json({
       embedded: 0,
-      total: after?.total ?? stats.total,
-      coveredNow: after?.embedded ?? 0,
-      remaining: (after?.total ?? stats.total) - (after?.embedded ?? 0),
+      total: a?.total ?? known?.total ?? 0,
+      coveredNow: a?.embedded ?? 0,
+      remaining: (a?.total ?? known?.total ?? 0) - (a?.embedded ?? 0),
       done: false,
       error: null,
       spentThisRun: 0,
@@ -153,6 +181,15 @@ export async function POST(req: NextRequest) {
   // the library is done — the tab is optional from here on.
   await setEmbedBuildMarker(libraryId, user.id);
 
+  // Starting numbers. The caller already knows them from its last call, so
+  // only count when it doesn't — every count competes with the build itself.
+  let stats: Coverage | null = known;
+  if (!stats) {
+    const c = await coverage(orgId, libraryId);
+    if (c === "missing") return bad(MIGRATION_MESSAGE, 424);
+    stats = c === "busy" ? null : c;
+  }
+
   const slice = await embedLibrarySlice({
     orgId, libraryId,
     connection: embedding,
@@ -164,16 +201,16 @@ export async function POST(req: NextRequest) {
   const embedded = slice.embedded;
   const rateLimited = slice.rateLimited;
   let lastError = slice.error;
-  if (slice.fetchedNone && stats.total - stats.embedded > 0) {
+  if (slice.fetchedNone && stats && stats.total - stats.embedded > 0 && !known) {
     // Coverage says passages lack vectors, yet the fetch returned none —
     // the classic symptom of a stale PostgREST schema cache after the
     // embedding column was rebuilt. Say so; silence here reads as "done".
+    // (Only on a fresh count: a remembered one can simply be out of date.)
     lastError =
       `${stats.total - stats.embedded} passages lack vectors but none could be fetched — ` +
       "the API schema cache is likely stale after a column rebuild. In the Supabase SQL " +
       "editor run:  NOTIFY pgrst, 'reload schema';  wait ~10 seconds, then build again.";
   }
-
 
   if (usage.inputTokens > 0) {
     await recordAskUsage({
@@ -182,31 +219,41 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const after = await coverage(orgId, libraryId);
-  // If the post-run count can't be read, DON'T claim done — an unverifiable
-  // "complete" over a 0% bar is exactly the contradiction that burns trust.
-  if (!after && !lastError) {
-    lastError = "Couldn't verify the vector count after writing — re-check the panel; the build may still have succeeded.";
-  }
-  // Wrote vectors but the count didn't move: the writes are vanishing —
+  // Finished = the slice looked for a passage without a vector and found
+  // none. That's exact, and needs no count.
+  const exhausted = slice.exhausted && !lastError;
+  const counted = await coverage(orgId, libraryId);
+  const after: Coverage | null = typeof counted === "object" ? counted
+    // Too busy to count: last known + what this call wrote. Shown as is;
+    // the next successful count corrects it.
+    : stats ? { total: stats.total, embedded: Math.min(stats.total, stats.embedded + embedded) } : null;
+  const exact = typeof counted === "object";
+  // Wrote vectors but an exact count didn't move: the writes are vanishing —
   // that's a bug worth naming, never a success.
-  if (after && embedded > 0 && after.embedded < stats.embedded + embedded && !lastError) {
+  if (exact && stats && !known && embedded > 0 && after!.embedded < stats.embedded + embedded && !lastError) {
     lastError =
-      `Wrote ${embedded} vector(s) but the library's count only shows ${after.embedded} — ` +
+      `Wrote ${embedded} vector(s) but the library's count only shows ${after!.embedded} — ` +
       "writes are not landing. Tell your admin: verify library_id/org_id on knowledge_chunks.";
   }
-  const remaining = after ? after.total - after.embedded : 0;
+  const remaining = exhausted ? 0 : after ? Math.max(0, after.total - after.embedded) : 0;
+  const done = (exhausted || (exact && remaining === 0)) && !lastError && !rateLimited;
   // Build finished: withdraw the background-continuation consent marker so
   // the cron stops looking at this library until someone starts a new build.
-  if (remaining === 0 && !lastError) await setEmbedBuildMarker(libraryId, null);
+  if (done) await setEmbedBuildMarker(libraryId, null);
   return NextResponse.json({
     embedded,
-    total: after?.total ?? stats.total,
-    coveredNow: after?.embedded ?? stats.embedded,
+    total: after?.total ?? 0,
+    coveredNow: exhausted && after ? after.total : after?.embedded ?? 0,
     remaining,
-    done: remaining === 0 && !lastError && !rateLimited,
+    done,
     error: lastError,
     rateLimited,
+    // The database was too busy to take more this round — the caller waits
+    // a moment and continues. Nothing written is lost.
+    busy: slice.busy,
+    /** Numbers are last-known + this call's writes (the count was too slow). */
+    estimated: !exact,
+    countUnavailable: !after,
     // Free tiers meter per minute; a hair over one minute guarantees a
     // fresh window even with clock skew.
     retryAfterMs: rateLimited ? 65_000 : undefined,
