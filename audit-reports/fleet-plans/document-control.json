@@ -864,6 +864,30 @@
    "sequencingNotes": [
     "Added by the integrator at the DF-P11 merge, 2026-10-21 (DEC-31)."
    ]
+  },
+  {
+   "name": "P33 VERSION ROW INTEGRITY \u2014 a signed-in session cannot forge a reviewed or intake-shaped version row, and a review's promote over a checkout tells the holder",
+   "findings": [
+    "document-control DCK-16 (assigned at the P32 merge, 2026-10-21, DEC-31): a signed-in INSERT or UPDATE on document_versions cannot carry provenance 'external', a non-NULL intake_link_id or a created_by other than itself (the door's role and the service role keep writing them); document_versions_insert_integrity re-created from its newest body (20261214) with that limb, its door limb kept \u2014 coordinate with projects (the policy's owner since J16/J20)",
+    "document-control DCK-17 (assigned at the P32 merge): a signed-in session cannot move a version row back to in_review from approved / rejected / superseded, nor clear released_at / superseded_at, nor change supersedes_version_id once set \u2014 one column-guard trigger on document_versions shared with DCK-16's UPDATE limb",
+    "document-control DCK-15 (assigned at the P32 merge): a reviewed promote over another person's checkout tells the holder (episode thread + in-app, as noteOverrideOnHolder) and records an audit row naming the holder, whichever door ran it; finalizeReasonMessage maps the lock leg's 42501 to 'ask the holder to check it in, then approve'; the Inspector says before the click that the document is checked out by someone else (fail-safe, no regression: a review stays finishable \u2014 door (b) ratified under DEC-90)",
+    "drafting-flow HAND-13 done-when 2 remainder: met when DCK-16 and DCK-17 land (the harness's 'remainder DCK-16 records' and 'remainder DCK-17 records' cases refused after the paste; 'a GENUINE external submission' and 'finalize_reviewed_promote by a publisher' still promote)"
+   ],
+   "files": [
+    "supabase/migrations/20261247_dc_roundG_version_row_integrity.sql (one DEC-30 file, after 20261245)",
+    "lib/reviewControl.ts (finalizeReviewedRevision / promoteThreeStep notice + audit; finalizeReasonMessage)",
+    "components/documents/ReviewGateSection.tsx",
+    "components/projects/IntakePanel.tsx (refusal copy only)",
+    "lib/__tests__/rls/ (harness cases)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "document-control P32 merged (20261245, the lock leg)",
+    "projects J20 (the intake door's row shape) merged"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P32 merge, 2026-10-21 (DEC-31). Paste after 20261245 (row 187)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [
